@@ -6,6 +6,7 @@
 // for confirmation first. The renderer only displays name/category/label/
 // email/status and public app logos — never tokens or upstream error text.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { hasCompletedIntegrationConnection, type ConnectedIntegration } from "@matrix-os/contracts";
 import type { GmailConnectionMethod } from "@matrix-os/contracts/integration-marketplace";
 import { fetchGmailConnectionOptions } from "./gmail-connection-request";
 import { diagnosticErrorKind } from "../../lib/errors";
@@ -47,7 +48,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
   const cancelPollRef = useRef<(() => void) | null>(null);
-  const previousIdsRef = useRef<Set<string> | null>(null);
+  const previousConnectionsRef = useRef<ConnectedIntegration[] | null>(null);
   const connectAttemptRef = useRef(0);
   const disconnectAttemptRef = useRef(0);
 
@@ -58,7 +59,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     disconnectAttemptRef.current += 1;
     cancelPollRef.current?.();
     cancelPollRef.current = null;
-    previousIdsRef.current = null;
+    previousConnectionsRef.current = null;
     connectInFlight.current = false;
     setConnectingService(null);
     setManualBusy(false);
@@ -94,8 +95,8 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
       connectAttemptRef.current === attempt && isCurrentRuntimeGeneration(runtimeGeneration);
     setManualNote(null);
     setConnectingService(serviceId);
-    const previousIds = new Set(useIntegrations.getState().connections.map((conn) => conn.id));
-    previousIdsRef.current = previousIds;
+    const previousConnections = useIntegrations.getState().connections.map(connection => ({ ...connection }));
+    previousConnectionsRef.current = previousConnections;
 
     const url = await useIntegrations.getState().startConnect(serviceId, api, connectionMethod);
     if (isCurrentAttempt()) connectInFlight.current = false;
@@ -115,10 +116,9 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     }
     if (!isCurrentAttempt()) return;
 
-    const isLanded = () =>
-      useIntegrations
-        .getState()
-        .connections.some((conn) => conn.service === serviceId && !previousIds.has(conn.id));
+    const isLanded = () => hasCompletedIntegrationConnection(
+      previousConnections, serviceId, useIntegrations.getState().connections,
+    );
 
     cancelConnectPoll();
     cancelPollRef.current = startConnectPoll({
@@ -163,9 +163,9 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     try {
       const result = await useIntegrations.getState().syncNow(api);
       if (!isCurrentAttempt()) return;
-      const landed = useIntegrations
-        .getState()
-        .connections.some((conn) => conn.service === connectingService && !previousIdsRef.current?.has(conn.id));
+      const landed = previousConnectionsRef.current !== null && hasCompletedIntegrationConnection(
+        previousConnectionsRef.current, connectingService, useIntegrations.getState().connections,
+      );
       if (landed) {
         cancelConnectPoll();
         setConnectingService(null);

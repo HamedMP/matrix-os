@@ -11,6 +11,7 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import { useFocusEffect, useRouter } from "expo-router";
 
+import { hasCompletedIntegrationConnection, type IntegrationConnectionSnapshot } from "@matrix-os/contracts";
 import { buildIntegrationSections, integrationDescription, integrationAuthType, type GmailConnectionMethod } from "@matrix-os/contracts/integration-marketplace";
 import { GmailConnectionChoice, type GmailChoiceState } from "@/components/integrations/GmailConnectionChoice";
 import { IntegrationLogo } from "@/components/integrations/IntegrationLogo";
@@ -55,7 +56,7 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
   const pullToRefresh = usePullToRefresh(refresh);
   const [connectingServiceId, setConnectingServiceId] = useState<string | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const previousConnectionIds = useRef(new Set<string>());
+  const previousConnections = useRef<IntegrationConnectionSnapshot[]>([]);
   const syncConnectionsRef = useRef(syncConnections);
   const syncInFlight = useRef(false);
   const connectInFlight = useRef(false);
@@ -80,7 +81,7 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
     connectInFlight.current = true;
     const attempt = gmailAttempt.current;
     setConnectionError(null);
-    previousConnectionIds.current = new Set(connected.map((connection) => connection.id));
+    previousConnections.current = connected.map(connection => ({ ...connection }));
     try {
       const url = await (connectionMethod ? startConnection(service.id, { connectionMethod }) : startConnection(service.id));
       if (gmailAttempt.current !== attempt) return;
@@ -135,9 +136,8 @@ export function ConnectAppsScreen({ openedFrom }: ConnectAppsScreenProps) {
 
   useEffect(() => {
     if (!connectingServiceId) return;
-    const connectedAfterStart = connected.some(
-      (connection) => connection.service === connectingServiceId
-        && !previousConnectionIds.current.has(connection.id),
+    const connectedAfterStart = hasCompletedIntegrationConnection(
+      previousConnections.current, connectingServiceId, connected,
     );
     if (connectedAfterStart) setConnectingServiceId(null);
   }, [connected, connectingServiceId]);

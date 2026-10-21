@@ -140,3 +140,23 @@ export function parseConnectUrl(value: unknown): string | null {
   if (!url || !URL.canParse(url)) return null;
   return new URL(url).protocol === "https:" ? url : null;
 }
+
+export type IntegrationConnectionSnapshot = Pick<ConnectedIntegration, "id" | "service" | "status" | "connectedAt">;
+
+/** Compare the same account against its pre-consent snapshot; reauthorization keeps its ID. */
+export function hasCompletedIntegrationConnection(
+  previous: readonly IntegrationConnectionSnapshot[],
+  service: string,
+  current: readonly IntegrationConnectionSnapshot[],
+): boolean {
+  return current.some(connection => {
+    if (connection.service !== service || connection.status !== "active") return false;
+    const before = previous.find(item => item.id === connection.id);
+    if (!before) return true;
+    if (before.service !== service) return false;
+    if (before.status !== "active") return true;
+    const priorTime = Date.parse(before.connectedAt);
+    const currentTime = Date.parse(connection.connectedAt);
+    return Number.isFinite(priorTime) && Number.isFinite(currentTime) && currentTime > priorTime;
+  });
+}

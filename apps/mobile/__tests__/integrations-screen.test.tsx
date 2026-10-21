@@ -183,6 +183,25 @@ describe("drawer integrations screen", () => {
     await waitFor(() => expect(mockStartConnection).toHaveBeenCalledWith("gmail", { connectionMethod: method }));
     view.unmount(); open.mockRestore();
   });
+  it.each(["timestamp", "status"])("clears same-ID Gmail reauthorization progress after %s recovery", async recovery => {
+    const account = { id: "gmail-work", service: "gmail", accountLabel: "Work", accountEmail: "work@example.invalid", status: "active", connectedAt: "2026-10-01T10:00:00.000Z" };
+    const before = recovery === "status" ? { ...account, status: "expired" } : account;
+    const after = recovery === "timestamp" ? { ...account, connectedAt: "2026-10-08T10:00:00.000Z" } : account;
+    const initial = { ...mockUseComputerIntegrations(), connected: [before] };
+    mockUseComputerIntegrations.mockReturnValue(initial);
+    mockGmailConnectionOptions.mockResolvedValue({ methods: ["matrix", "pipedream"], defaultMethod: "matrix" });
+    mockStartConnection.mockResolvedValue("https://app.matrix-os.com/auth/gmail?state=opaque");
+    const open = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+    const view = render(<IntegrationsScreen />);
+    fireEvent.press(screen.getByLabelText("Connect Gmail integration"));
+    fireEvent.press(await screen.findByLabelText("Connect with Matrix (internal preview)"));
+    await waitFor(() => expect(open).toHaveBeenCalled());
+    expect(screen.getByTestId("integration-connect-spinner-gmail")).toBeTruthy();
+    mockUseComputerIntegrations.mockReturnValue({ ...initial, connected: [after] });
+    view.rerender(<IntegrationsScreen />);
+    await waitFor(() => expect(screen.queryByTestId("integration-connect-spinner-gmail")).toBeNull());
+    view.unmount(); open.mockRestore();
+  });
   it("cancels Gmail choice without a consent request", async () => {
     mockGmailConnectionOptions.mockResolvedValue({ methods: ["matrix", "pipedream"], defaultMethod: "matrix" });
     render(<IntegrationsScreen />);

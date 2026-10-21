@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
 import {
-  hasNewConnectionForService,
+  hasCompletedConnectionForService,
   shouldLogIntegrationWarning,
   type ConnectedService,
 } from "./integrations-helpers";
@@ -179,6 +179,7 @@ export function IntegrationsSection() {
   const handleConnect = async (serviceId: string, label?: string, connectionMethod?: GmailConnectionMethod) => {
     if (connecting || connectInFlight.current) return;
     connectInFlight.current = true;
+    const previousConnections = connected.map(connection => ({ ...connection }));
     let popup: Window | null = null;
     setConnecting(serviceId);
     setError(null);
@@ -218,7 +219,6 @@ export function IntegrationsSection() {
         pollTimeoutRef.current = null;
       }
       // Poll by syncing from Pipedream every 2s
-      const previousIds = new Set(connected.map((c) => c.id));
       pollRef.current = setInterval(async () => {
         try {
           const syncRes = await fetch(`${GATEWAY}/api/integrations/sync`, {
@@ -228,8 +228,8 @@ export function IntegrationsSection() {
           if (syncRes.ok) {
             const data = await syncRes.json();
             const list: ConnectedService[] = data.services ?? [];
-            const hasNew = hasNewConnectionForService(previousIds, serviceId, list);
-            if (hasNew) {
+            const completed = hasCompletedConnectionForService(previousConnections, serviceId, list);
+            if (completed) {
               setConnected(list);
               setConnecting(null);
               if (pollRef.current) {

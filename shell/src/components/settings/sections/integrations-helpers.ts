@@ -1,3 +1,5 @@
+import { hasCompletedIntegrationConnection, type IntegrationConnectionSnapshot } from "@matrix-os/contracts";
+
 export interface ConnectedService {
   id: string;
   service: string;
@@ -7,14 +9,17 @@ export interface ConnectedService {
   connected_at: string;
 }
 
-export function hasNewConnectionForService(
-  previousIds: Set<string>,
+type ConnectionState = Pick<ConnectedService, "id" | "service" | "status" | "connected_at">;
+function connectionSnapshot(connection: ConnectionState): IntegrationConnectionSnapshot {
+  return { id: connection.id, service: connection.service, status: connection.status, connectedAt: connection.connected_at };
+}
+
+export function hasCompletedConnectionForService(
+  previous: readonly ConnectionState[],
   serviceId: string,
-  connections: Array<Pick<ConnectedService, "id" | "service">>,
+  connections: readonly ConnectionState[],
 ): boolean {
-  return connections.some((connection) =>
-    connection.service === serviceId && !previousIds.has(connection.id),
-  );
+  return hasCompletedIntegrationConnection(previous.map(connectionSnapshot), serviceId, connections.map(connectionSnapshot));
 }
 
 export function shouldLogIntegrationWarning(err: unknown): boolean {
