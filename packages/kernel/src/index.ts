@@ -86,3 +86,4 @@ export type { AuditLogger, AuditEntry, AuditLogEntry } from "./audit.js";
 export { detectAppType, createReactScaffold, registerModule } from "./build-pipeline.js";
 export type { ModuleEntry } from "./build-pipeline.js";
 export { generateAppText } from "./app-ai.js";
+export {applyConfinedFileEdits,runConfinedFileAgent} from './confined-file-agent.js';
