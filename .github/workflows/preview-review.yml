@@ -21,28 +21,39 @@ concurrency:
   cancel-in-progress: false
 jobs:
   disabled:
-    if: vars.MATRIX_PREVIEW_REVIEW_ENABLED != 'true' && github.event_name == 'pull_request_target' && github.event.action == 'labeled' && github.event.label.name == 'preview'
+    concurrency:
+      group: preview-review-scheduler
+      cancel-in-progress: false
+    if: >-
+      vars.MATRIX_PREVIEW_REVIEW_ENABLED != 'true' && github.event_name == 'pull_request_target' &&
+      ((github.event.action == 'labeled' && github.event.label.name == 'preview') ||
+       ((github.event.action == 'synchronize' || github.event.action == 'reopened') &&
+        contains(github.event.pull_request.labels.*.name, 'preview')))
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
+      contents: read
       pull-requests: write
     steps:
+      - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        id: source
+        with:
+          script: |
+            const {data} = await github.rest.repos.getBranch({...context.repo, branch:'main', request:{timeout:10000}});
+            if (!/^[a-f0-9]{40}$/.test(data.commit.sha)) throw new Error('Main source unavailable');
+            core.setOutput('sha', data.commit.sha);
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
       - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           retries: 0
           script: |
+            const {publishAwaitingPreviewActivation} = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/preview-review-api.mjs`);
             const pr = context.payload.pull_request;
-            if (pr.head.repo.full_name.toLowerCase() !== 'hamedmp/matrix-os') return;
-            const body = '<!-- matrix-preview-review-v1 -->\n**PR preview: awaiting reviewed controller activation**\n\nThe preview queue is not enabled. Existing CI checks still run normally. Follow ENG-325 activation instructions before requesting runtime capacity.';
-            const comments=[];
-            for(let page=1;page<=50;page++){
-              const {data}=await github.rest.issues.listComments({...context.repo,issue_number:pr.number,per_page:100,page,request:{timeout:10000}});
-              comments.push(...data);if(data.length<100)break;
-              if(page===50)throw new Error('Preview comment inventory limit reached');
-            }
-            const old = comments.find(c => c.user.login === 'github-actions[bot]' && c.body.startsWith('<!-- matrix-preview-review-v1 -->'));
-            if (old) await github.rest.issues.updateComment({...context.repo, comment_id: old.id, body, request: {timeout: 10000}});
-            else await github.rest.issues.createComment({...context.repo, issue_number: pr.number, body, request: {timeout: 10000}});
+            await publishAwaitingPreviewActivation(github, context.repo, pr.number, pr.head.sha);
   route:
     name: Route preview metadata to reviewed execution
     if: vars.MATRIX_PREVIEW_REVIEW_ENABLED == 'true' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')

@@ -70,7 +70,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: preview-platform-${{ github.event.pull_request.number || inputs.pr }}
+  group: preview-platform-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'preview-platform' && github.run_id || github.event.pull_request.number || inputs.pr }}
   cancel-in-progress: true
 
 jobs:
@@ -204,10 +204,25 @@ jobs:
             exit 1
           fi
 
+      - name: Resolve exact PR source
+        id: source
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const number = Number(context.payload.pull_request?.number ?? context.payload.inputs?.pr);
+            if (!Number.isSafeInteger(number) || number < 1 || number > 999999999) throw new Error('Invalid preview PR');
+            const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: number, request: {timeout: 15000}});
+            const repository = `${context.repo.owner}/${context.repo.repo}`.toLowerCase();
+            if (pr.state !== 'open' || pr.head.repo?.full_name?.toLowerCase() !== repository || !/^[a-f0-9]{40}$/.test(pr.head.sha)) throw new Error('Preview PR source unavailable');
+            if (context.payload.pull_request && context.payload.pull_request.head.sha !== pr.head.sha) throw new Error('Preview PR head changed');
+            core.setOutput('head', pr.head.sha);
+
       - uses: actions/checkout@v6
         if: steps.config.outputs.configured == 'true'
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ steps.source.outputs.head }}
+          persist-credentials: false
 
       - name: Authenticate to Google Cloud
         if: steps.config.outputs.configured == 'true'
@@ -300,7 +315,7 @@ jobs:
             echo "Refusing to build a platform preview with the example Clerk key." >&2
             exit 1
           fi
-          head_sha="${{ github.event.pull_request.head.sha || github.sha }}"
+          head_sha="${{ steps.source.outputs.head }}"
           image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${ARTIFACT_REPOSITORY}/matrix-platform:pr-${PR_NUMBER}-${head_sha::12}"
           gcloud builds submit . \
             --project "$GCP_PROJECT_ID" \

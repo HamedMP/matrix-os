@@ -1,3 +1,4 @@
+import { composeAgentPlan, validateAgentPlan, commentSourceHead, PREVIEW_COMMENT } from "./preview-semantic-plan.mjs";
 import { sharedMachine } from "./preview-review-model.mjs";
 export const request = { timeout: 15000 };
 export async function pages(method, args, key) {
@@ -117,7 +118,7 @@ export async function deploymentStates(github, repo, rows) {
     return { ...row, ...states.get(row.node_id) };
   });
 }
-export async function upsertComment(github, repo, pr, body) {
+export async function upsertComment(github, repo, pr, body, beforeWrite) {
   const rows = await pages(github.rest.issues.listComments, {
     ...repo,
     issue_number: pr,
@@ -127,7 +128,9 @@ export async function upsertComment(github, repo, pr, body) {
       c.user?.login === "github-actions[bot]" &&
       c.body?.startsWith("<!-- matrix-preview-review-v1 -->"),
   );
+  body = composeAgentPlan(body, old?.body, { repo, pr });
   if (old?.body === body) return;
+  if (beforeWrite && !(await beforeWrite())) return;
   if (old)
     await github.rest.issues.updateComment({
       ...repo,
@@ -207,6 +210,7 @@ export async function publishReviewComment(
   body,
   snapshot,
 ) {
+  body = composeAgentPlan(body, snapshot.old?.body, { repo, pr: number });
   if (snapshot.old?.body === body) return;
   if (snapshot.old)
     await github.rest.issues.updateComment({
@@ -223,4 +227,46 @@ export async function publishReviewComment(
       body,
       request,
     });
+}
+
+
+// Trusted publisher only. Planning workers receive no GitHub mutation credentials.
+export async function publishAgentTestPlan(github, repo, number, plan) {
+  validateAgentPlan(plan, { repo, pr: number, head: plan?.head });
+  const current = async () => {
+    const { data } = await github.rest.pulls.get({ ...repo, pull_number: number, request });
+    if (data.state !== "open" || data.head?.sha !== plan.head
+      || data.head?.repo?.full_name?.toLowerCase() !== "hamedmp/matrix-os")
+      throw new Error("Agent test plan source changed");
+    return data;
+  };
+  await current();
+  const rows = await pages(github.rest.issues.listComments, { ...repo, issue_number: number });
+  const old = rows.find((c) => c.user?.login === "github-actions[bot]"
+    && c.body?.startsWith(PREVIEW_COMMENT));
+  if (old && commentSourceHead(old.body) !== plan.head)
+    throw new Error("Preview status source changed; refresh status first");
+  const base = old?.body ?? `${PREVIEW_COMMENT}\n**PR test planning**\nSource: \`${plan.head}\`\nNo preview or qualification evidence has been established by this plan.`;
+  const body = composeAgentPlan(base, old?.body, { repo, pr: number, plan });
+  await current();
+  if (old?.body === body) return;
+  if (old) await github.rest.issues.updateComment({ ...repo, comment_id: old.id, body, request });
+  else await github.rest.issues.createComment({ ...repo, issue_number: number, body, request });
+}
+
+export async function publishAwaitingPreviewActivation(github, repo, number, head) {
+  if (`${repo.owner}/${repo.repo}`.toLowerCase() !== "hamedmp/matrix-os" ||
+    !Number.isSafeInteger(number) || number < 1 || !/^[a-f0-9]{40}$/.test(head ?? ""))
+    throw new Error("Invalid preview request");
+  const current = async () => {
+    const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: number, request });
+    return pr.state === "open" && pr.head?.sha === head &&
+      pr.head.repo?.full_name?.toLowerCase() === "hamedmp/matrix-os" &&
+      pr.labels?.some((label) => label.name === "preview");
+  };
+  if (!(await current())) return;
+  await upsertComment(github, repo, number,
+    `${PREVIEW_COMMENT}\n**PR preview: awaiting reviewed controller activation**\n\n` +
+    `Source: \`${head}\`\n\nThe preview queue is not enabled. Existing CI checks remain required. ` +
+    "No runtime has been qualified by this status. Follow ENG-325 activation instructions before requesting runtime capacity.", current);
 }

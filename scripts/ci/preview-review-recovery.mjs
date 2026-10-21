@@ -49,7 +49,8 @@ export async function stopExistingReview({
     if (old)
       snapshot = { ...snapshot, old: { databaseId: old.id, body: old.body } };
   }
-  if (!snapshot.old || snapshot.old.body.includes("**PR preview: Stopped**"))
+  if (!snapshot.old || !snapshot.old.body.startsWith("<!-- matrix-preview-review-v1 -->\n**PR preview:") ||
+    snapshot.old.body.includes("**PR preview: Stopped**"))
     return;
   await publishReviewComment(
     github, repo, pr.number,

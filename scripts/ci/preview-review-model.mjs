@@ -120,6 +120,10 @@ export function needsDesktop(paths) {
         "pnpm-workspace.yaml",
         "scripts/release/build-source.mjs",
         "scripts/release/desktop-update-fixture-server.mjs",
+        "scripts/release/windows-signing-config.mjs",
+        "scripts/ci/preview-windows-smoke.ps1",
+        ".github/workflows/preview-desktop.yml",
+        ".github/workflows/desktop-build.yml",
       ].includes(path),
   );
 }
@@ -138,6 +142,7 @@ export function renderReview({
   active = [],
   runs = [],
   platform = false,
+  desktop,
   occupied = active.length,
 }) {
   const rows = queue
@@ -156,14 +161,15 @@ export function renderReview({
     `- Source: \`${head}\` · @${cell(pr.user?.login)}\n` +
     `- Web Desktop / Web Canvas: ${web ? `[Open preview](${web})` : "Pending; no current-head runtime link yet"}\n` +
     `- Runtime expires: ${expiresAt ?? "Not allocated while queued"}\n` +
-    `- Desktop downloads: ${artifacts.length ? artifacts.map((a) => `[${cell(a.label)}](${a.url}) (expires ${a.expiresAt})`).join("; ") : "Pending, or no desktop build required"}\n` +
+    `- Desktop downloads: ${desktop === false ? "Desktop inputs unchanged; no new installer was built. Use your existing desktop app to test this runtime." : artifacts.length ? artifacts.map((a) => `[${cell(a.label)}](${a.url}) (expires ${a.expiresAt})`).join("; ") : "No current-head downloads available yet; see build status below"}\n` +
     runs
       .map((r) => `- [${cell(r.label)}](${r.url}): ${cell(r.state)}\n`)
       .join("") +
     (platform
       ? "- Platform changes require the separate platform-preview path; this runtime does not qualify isolated platform behavior.\n"
       : "") +
-    "\nExisting CI, signing and 15-minute stability checks remain required. A preview link does not approve merging. Branch desktop installers replace the normal app; select this PR computer after installing. Windows branch installers are not published.\n" +
+    "\nExisting CI, release signing and 15-minute stability checks remain required. Windows preview installers are unsigned; Windows may show an unknown-publisher warning. A preview link does not approve merging. Branch desktop installers replace the normal app.\n" +
+    `\n**How to test**\n1. Open the web preview above once available and sign in.\n2. ${desktop === false ? "Open your existing desktop app" : "Download and extract the matching installer above, install it, then open Matrix OS"}; use the computer selector to choose \`pr-${pr.number}\`.\n3. Exercise the affected surfaces and any attached test plan; compare the source commit above before testing. Report the platform and result in this PR.\n` +
     `\n**Shared preview slots: ${occupied}/${CAPACITY}**\n${slots}\n\n**Waiting PRs and authors**\n\n` +
     (rows.length
       ? "| Position | PR | Author | Change |\n|---|---|---|---|\n" +

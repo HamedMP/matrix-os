@@ -2,9 +2,35 @@ import { describe, expect, it } from "vitest";
 import { fixture, pr, head, now, pin, repo } from "./preview-review-fixture";
 import { planQueue } from "../../scripts/ci/preview-review-model.mjs";
 import { verifyPreviewRequest } from "../../scripts/ci/preview-review-request.mjs";
-const comment = { id: 1, body: "<!-- matrix-preview-review-v1 -->\nQueued", user: { login: "github-actions[bot]" } };
+const comment = { id: 1, body: "<!-- matrix-preview-review-v1 -->\n**PR preview: Queued**", user: { login: "github-actions[bot]" } };
 
 describe("preview queue regression boundaries", () => {
+  it.each(["withdrawn", "closed"])("retains advice/planning comments in snapshot and REST %s recovery", async (mode) => {
+    for (const title of ["PR test advice (advisory only)", "PR test planning"]) {
+      for (const older of [false, true]) {
+        const p = pr(1, mode === "closed" ? { state: "closed" } : { labels: [] });
+        const f = fixture([p]);
+        const body = `<!-- matrix-preview-review-v1 -->\n**${title}**\nSource: \`${head}\`\nSuggested: preview; surfaces: Web Canvas`;
+        const row = { ...comment, body };
+        f.comments.set(1, row);
+        if (older) {
+          const graphql = f.github.graphql;
+          f.github.graphql = async (...args: any[]) => {
+            const data = await graphql(...args);
+            if (args[1].number) {
+              data.repository.pullRequest.comments.nodes = [];
+              data.repository.pullRequest.comments.pageInfo.hasPreviousPage = true;
+            }
+            return data;
+          };
+          f.github.rest.issues.listComments = async () => ({data: [row]});
+        }
+        await f.reconcile({ requestedPr: 1 });
+        expect(f.comments.get(1).body).toBe(body);
+        expect(f.dispatches).toEqual([]);
+      }
+    }
+  });
   it("adopts a verified existing owned machine even when all sixteen slots are occupied", async () => {
     const f = fixture([pr(1), pr(20)]);
     for (let n = 1; n <= 16; n++) f.machine(n);

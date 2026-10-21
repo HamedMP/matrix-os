@@ -152,6 +152,10 @@ describe("preview admission and truthful reviewer status", () => {
       "pnpm-lock.yaml",
       "scripts/release/build-source.mjs",
       "scripts/release/desktop-update-fixture-server.mjs",
+      "scripts/release/windows-signing-config.mjs",
+      "scripts/ci/preview-windows-smoke.ps1",
+      ".github/workflows/preview-desktop.yml",
+      ".github/workflows/desktop-build.yml",
     ])
       expect(needsDesktop([path])).toBe(true);
     expect(needsDesktop(["packages/gateway/src/server.ts"])).toBe(false);
