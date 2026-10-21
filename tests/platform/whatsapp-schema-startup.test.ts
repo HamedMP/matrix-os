@@ -64,6 +64,7 @@ describe('WhatsApp schema startup', () => {
       `.execute(db);
       expect(revisions.rows).toEqual([
         { scope: 'billing-google-purchases', ...GOOGLE_TRACKING_REVISION },
+        { scope: 'billing-marketing-attribution', generation: 1, fingerprint: 'billing-marketing-attribution-v1' },
         { scope: 'core', ...PLATFORM_SCHEMA_REVISION },
         { scope: 'funded-probe-cache', ...FUNDED_PROBE_CACHE_REVISION },
         { scope: 'whatsapp', ...WHATSAPP_SCHEMA_REVISION },

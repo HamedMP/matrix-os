@@ -768,6 +768,8 @@ describe("BillingSection", () => {
   });
 
   it("sends the selected Matrix plan, region, agents, and campaign attribution to monthly checkout", async () => {
+    const consentExpiry = Date.now() + 60000;
+    document.cookie = "matrix_marketing_consent_v1=" + encodeURIComponent(JSON.stringify({ version: 1, choice: "accepted", expiresAt: consentExpiry })) + "; path=/";
     window.history.replaceState({}, "", "/?rdt_cid=reddit-click&utm_source=reddit&utm_medium=cpc&utm_campaign=launch");
     clerkState.isLoaded = true;
     clerkState.activePlan = null;
@@ -805,11 +807,14 @@ describe("BillingSection", () => {
               utm_medium: "cpc",
               utm_campaign: "launch",
               landing_path: "/?rdt_cid=reddit-click&utm_source=reddit&utm_medium=cpc&utm_campaign=launch",
+              marketing_consent: "accepted",
+              consent_expires_at: consentExpiry,
             },
           }),
         }),
       ),
     );
+    document.cookie = "matrix_marketing_consent_v1=; Max-Age=0; path=/";
     window.history.replaceState({}, "", "/");
   });
 

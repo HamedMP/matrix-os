@@ -81,6 +81,8 @@ export async function expireGoogleTracking(db: PlatformDB, at = new Date().toISO
       .where('created_at', '<', new Date(Date.parse(at) - 72 * 3600000).toISOString()).executeTakeFirst();
     const snapshots = await trx.executor.deleteFrom('billing_google_checkout_attribution')
       .where('created_at', '<', new Date(Date.parse(at) - 7 * 86400000).toISOString()).executeTakeFirst();
-    return { purchases: Number(purchases.numUpdatedRows), snapshots: Number(snapshots.numDeletedRows) };
+    const marketingSnapshots = await trx.executor.deleteFrom('billing_marketing_checkout_attribution')
+      .where('created_at', '<', new Date(Date.parse(at) - 7 * 86400000).toISOString()).executeTakeFirst();
+    return { purchases: Number(purchases.numUpdatedRows), snapshots: Number(snapshots.numDeletedRows) + Number(marketingSnapshots.numDeletedRows) };
   });
 }

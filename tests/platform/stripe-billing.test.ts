@@ -25,6 +25,22 @@ describe('platform/stripe-billing', () => {
     expect(request.subscription_data.metadata).toMatchObject(expected);
   });
 
+  it('carries the exact Reddit click and consent expiry to both signed conversion sources', async () => {
+    const create = vi.fn().mockResolvedValue({ id: 'cs_consent', url: 'https://checkout.stripe.test/session' });
+    const client = createStripeBillingClient({ secretKey: 'sk_test_123', stripe: fakeStripe({ checkout: { sessions: { create } } }) });
+    const expiry = Date.now() + 60000;
+    await client.createCheckoutSession({
+      clerkUserId: 'user_123', idempotencyKey: 'attempt_consent', priceId: 'price_starter', mode: 'subscription',
+      automaticTax: true, allowPromotionCodes: true, regionSlug: 'region_fsn1', runtimeSlot: 'primary',
+      redditAttributionExpiresAt: new Date(expiry).toISOString(),
+      successUrl: 'https://app.matrix-os.com/', cancelUrl: 'https://app.matrix-os.com/',
+      attribution: { rdt_cid: 'exact-click', marketing_consent: 'accepted', consent_expires_at: expiry },
+    });
+    const metadata = { matrix_attr_rdt_cid: 'exact-click', matrix_attr_marketing_consent: 'accepted', matrix_attr_consent_expires_at: String(expiry) };
+    expect(create.mock.calls[0][0].metadata).toMatchObject(metadata);
+    expect(create.mock.calls[0][0].subscription_data.metadata).toMatchObject(metadata);
+  });
+
   it('expands final checkout status and invoice presentment through the Stripe adapter', async () => {
     const checkout = { id: 'cs_tracking' };
     const invoice = { id: 'in_tracking' };
@@ -402,6 +418,8 @@ describe('platform/stripe-billing', () => {
       metadata: {
         matrix_attr_reddit_pending: '',
         matrix_attr_reddit_expires_at: '',
+        matrix_attr_marketing_consent: '',
+        matrix_attr_consent_expires_at: '',
         matrix_attr_rdt_cid: '',
         matrix_attr_utm_source: '',
         matrix_attr_utm_medium: '',

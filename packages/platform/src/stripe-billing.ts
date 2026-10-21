@@ -18,6 +18,8 @@ function stripeAttributionMetadata(
   if (!attribution) return {};
   return Object.fromEntries(
     Object.entries({
+      matrix_attr_marketing_consent: attribution.marketing_consent,
+      matrix_attr_consent_expires_at: attribution.consent_expires_at ? String(attribution.consent_expires_at) : undefined,
       matrix_attr_rdt_cid: attribution.rdt_cid,
       matrix_attr_utm_source: attribution.utm_source,
       matrix_attr_utm_medium: attribution.utm_medium,
@@ -131,6 +133,8 @@ export function createStripeBillingClient(options: {
         metadata: {
           matrix_attr_reddit_pending: '',
           matrix_attr_reddit_expires_at: '',
+          matrix_attr_marketing_consent: '',
+          matrix_attr_consent_expires_at: '',
           matrix_attr_rdt_cid: '',
           matrix_attr_utm_source: '',
           matrix_attr_utm_medium: '',

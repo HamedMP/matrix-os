@@ -31,6 +31,8 @@ export const HistoricalBillingRegionSlugSchema = z.enum([
 ]);
 
 export const MarketingAttributionSchema = z.object({
+  marketing_consent: z.enum(['accepted', 'rejected']).optional(),
+  consent_expires_at: z.number().int().positive().optional(),
   rdt_cid: z.string().min(1).max(256).optional(),
   utm_source: z.string().min(1).max(256).optional(),
   utm_medium: z.string().min(1).max(256).optional(),
@@ -41,7 +43,12 @@ export const MarketingAttributionSchema = z.object({
     (value) => isSafeMarketingLandingPath(value),
     { message: 'Invalid marketing landing path' },
   ).optional(),
-}).strict();
+}).strict().transform(value => {
+  const hasConsentFields = value.marketing_consent !== undefined || value.consent_expires_at !== undefined;
+  if (hasConsentFields && (value.marketing_consent !== 'accepted' || value.consent_expires_at === undefined
+    || value.consent_expires_at <= Date.now() || value.consent_expires_at > Date.now() + 180 * 86400000)) return undefined;
+  return value;
+});
 
 export type MarketingAttribution = z.infer<typeof MarketingAttributionSchema>;
 

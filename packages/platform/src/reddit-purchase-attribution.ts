@@ -1,3 +1,4 @@
+import { isValidRedditClickId } from './reddit-conversions.js';
 import type {
   RedditAttributedEventInput,
   RedditConversionsClient,
@@ -98,6 +99,7 @@ function readRedditCheckout(event: StripeEventForRedditAttribution):
     return null;
   }
   const metadata = readMetadata(session.metadata);
+  if (!hasAcceptedMarketingConsent(metadata, event.created * 1_000)) return null;
   const common = {
     eventAt: event.created * 1_000,
     conversionId,
@@ -141,6 +143,7 @@ function readRedditInvoicePurchase(
   if (
     !conversionId
     || !subscriptionId
+    || !hasAcceptedMarketingConsent(metadata, event.created * 1_000)
     || metadata.matrix_attr_reddit_pending !== '1'
     || !Number.isFinite(attributionExpiresAtMs)
     || event.created * 1_000 > attributionExpiresAtMs
@@ -167,19 +170,27 @@ function readRedditInvoicePurchase(
   };
 }
 
+function hasAcceptedMarketingConsent(metadata: Record<string, unknown>, eventAt: number): boolean {
+  const raw = readBoundedString(metadata.matrix_attr_consent_expires_at, 16);
+  const expiresAt = raw && /^[0-9]+$/.test(raw) ? Number(raw) : Number.NaN;
+  return metadata.matrix_attr_marketing_consent === 'accepted'
+    && Number.isSafeInteger(expiresAt) && expiresAt > Math.max(Date.now(), eventAt)
+    && expiresAt <= Date.now() + 180 * DAY_MS;
+}
+
 function readAttribution(metadata: Record<string, unknown>): {
   clickId?: string;
   eventSourceUrl: string;
 } {
-  const clickId = readBoundedString(metadata.matrix_attr_rdt_cid, 256);
+  const rawClickId = readBoundedString(metadata.matrix_attr_rdt_cid, 256);
+  const clickId = rawClickId && isValidRedditClickId(rawClickId) ? rawClickId : undefined;
   const landingPath = readBoundedString(metadata.matrix_attr_landing_path, 512);
   const sourceUrl = new URL(
     landingPath && isSafeMarketingLandingPath(landingPath) ? landingPath : '/',
     'https://matrix-os.com',
   );
-  if (clickId && !sourceUrl.searchParams.has('rdt_cid')) {
-    sourceUrl.searchParams.set('rdt_cid', clickId);
-  }
+  if (clickId) sourceUrl.searchParams.set('rdt_cid', clickId);
+  else sourceUrl.searchParams.delete('rdt_cid');
   return {
     ...(clickId ? { clickId } : {}),
     eventSourceUrl: sourceUrl.toString(),

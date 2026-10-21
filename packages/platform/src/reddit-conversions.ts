@@ -55,6 +55,7 @@ export function createRedditConversionsClient(options: {
       || input.eventAt <= 0
       || !input.conversionId
       || !input.clerkUserId
+      || (input.clickId !== undefined && !isValidRedditClickId(input.clickId))
     ) {
       throw new RedditConversionDeliveryError();
     }
@@ -66,13 +67,14 @@ export function createRedditConversionsClient(options: {
       throw new RedditConversionDeliveryError();
     }
 
+    const eventSourceUrl = sanitizeEventSourceUrl(input.eventSourceUrl);
     const event = {
       event_at: input.eventAt,
       action_source: "WEBSITE",
       type: { tracking_type: trackingType },
-      ...(input.clickId ? { click_id: input.clickId.slice(0, 256) } : {}),
-      ...(validEventSourceUrl(input.eventSourceUrl)
-        ? { event_source_url: input.eventSourceUrl }
+      ...(input.clickId ? { click_id: input.clickId } : {}),
+      ...(eventSourceUrl
+        ? { event_source_url: eventSourceUrl }
         : {}),
       user: {
         external_id: sha256(input.clerkUserId),
@@ -131,13 +133,25 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function validEventSourceUrl(value: string | undefined): value is string {
-  if (!value || value.length > 1024) return false;
+export function isValidRedditClickId(value: string): boolean {
+  return value.length > 0 && value.length <= 256 && !/[\s\x00-\x1f\x7f]/.test(value);
+}
+
+function sanitizeEventSourceUrl(value: string | undefined): string | undefined {
+  if (!value || value.length > 1024) return undefined;
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && url.hostname === "matrix-os.com";
-  } catch (err: unknown) {
-    if (!(err instanceof TypeError)) return false;
-    return false;
+    if (url.protocol !== "https:" || url.origin !== "https://matrix-os.com" || url.username || url.password) return undefined;
+    const clean = new URL(url.toString());
+    clean.search = "";
+    clean.hash = "";
+    for (const key of ["rdt_cid", "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"]) {
+      const item = url.searchParams.get(key);
+      if (item && item.length <= 256 && (key !== "rdt_cid" || isValidRedditClickId(item))) clean.searchParams.set(key, item);
+    }
+    return clean.toString();
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return undefined;
+    throw error;
   }
 }
