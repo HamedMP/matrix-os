@@ -55,17 +55,18 @@ export function matchesGoogleObservedRoute(route: ResolvedGoogleRoute, identity:
  * a model/client. Account references and onward recipients come only from reviewed
  * evidence. Exact observed key/endpoint/adapter matching does not approve evidence. */
 export async function resolveGooglePolicyProfile(repository: GoogleDataRepository, ownerId: string,
-  bindingValue: unknown, identityValue: unknown): Promise<{ profileId: string; route: ResolvedGoogleRoute }> {
+  bindingValue: unknown, identityValue: unknown, purposeValue: unknown): Promise<{ profileId: string; route: ResolvedGoogleRoute }> {
   const binding = GooglePolicyBindingSchema.safeParse(bindingValue);
   const parsed = GoogleInferenceIdentitySchema.safeParse(identityValue);
-  if (!binding.success || !parsed.success) throw new GoogleDataAuthorityError();
+  const purpose = GoogleDataConsentInputSchema.shape.purposeId.safeParse(purposeValue);
+  if (!binding.success || !parsed.success || !purpose.success) throw new GoogleDataAuthorityError();
   const identity = parsed.data;
   // The current managed relay has neither an actual credential generation nor
   // verified downstream proof. No current managed adapter can supply this contract.
   if (binding.data.accessSourceId !== 'owner_anthropic_key' || identity.api !== 'anthropic-messages'
     || identity.credential.kind !== 'api_key' || identity.credential.generation === null) throw new GoogleDataAuthorityError();
   const profiles = await repository.listReviewedProfiles(ownerId);
-  const matches = profiles.filter(({ input }) => input.allowedModels.includes(identity.modelId)
+  const matches = profiles.filter(({ input }) => input.purposeId === purpose.data && input.allowedModels.includes(identity.modelId)
     && matchesGoogleObservedRoute({ ...input.binding, model: identity.modelId }, identity));
   if (matches.length !== 1) throw new GoogleDataAuthorityError();
   const selected = matches[0]!;

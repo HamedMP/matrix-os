@@ -9,6 +9,17 @@ const resolvedRoute = () => route({ credentialKind: 'byo', credentialGeneration:
 const granted = () => ({ resolvedRoute: resolvedRoute(), stamp: { ownerId: 'owner-one', googleAccountId: accountId, purposeId: 'mail-assistance', profileId: generation, profileRevision: 1, evidenceRevision: 1, disclosureRevision: 1, retentionRevision: 1, consentId: '623e4567-e89b-42d3-a456-426614174000', consentRevision: 1, dataKinds: ['gmail-content'], routeDigest: routeDigest(resolvedRoute()), expiresAt: '2026-11-01T00:00:00Z' } });
 afterEach(() => vi.useRealTimers());
 describe('bounded server-only Google policy client', () => {
+  it.each([500, 401, 200])('cancels unread rejected/non-JSON response bodies (status=%s)', async status => {
+    const cancel = vi.fn(); const response = new Response(new ReadableStream({ cancel }), { status });
+    await expect(createGooglePlatformPolicyClient(async () => response).authorize('owner-one', input())).rejects.toBeDefined();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+  it('cancels a transport response arriving after caller cancellation', async () => {
+    const controller = new AbortController(); const cancel = vi.fn(); let finish!: (r: Response) => void;
+    const work = createGooglePlatformPolicyClient(() => new Promise<Response>(r => { finish = r; })).authorize('owner-one', input(), controller.signal);
+    const rejected = expect(work).rejects.toBeDefined(); controller.abort(); await rejected;
+    finish(new Response(new ReadableStream({ cancel }))); await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+  });
   it('rejects unrelated owner/account/purpose/kinds/route responses rather than borrowing authority', async () => {
     for (const override of [{ ownerId: 'other' }, { googleAccountId: generation }, { purposeId: 'other' }, { dataKinds: ['gmail-metadata'] }, { routeDigest: 'b'.repeat(64) }]) {
       const response = granted(); Object.assign(response.stamp, override);
