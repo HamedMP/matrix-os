@@ -7,6 +7,8 @@ export {
   parseAvailableIntegrations,
   parseConnectedIntegrations,
   parseConnectUrl,
+  parseIntegrationConnectResponse,
+  type IntegrationConnectResponse,
   type AvailableIntegration,
   type ConnectedIntegration,
 } from "@matrix-os/contracts";

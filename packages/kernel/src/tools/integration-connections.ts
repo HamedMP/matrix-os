@@ -1,3 +1,4 @@
+import { parseIntegrationAttemptStatus } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
 import { GmailConnectionMethodSchema, GmailConnectionOptionsSchema } from '@matrix-os/contracts/integration-marketplace';
 import { API_TIMEOUT_MS, GATEWAY_BASE, defaultFetcher, gatewayAuthHeaders, textResult, errorResult,
@@ -10,6 +11,7 @@ export const ConnectServiceInputSchema = z.object({
 });
 export type ConnectServiceInput = z.infer<typeof ConnectServiceInputSchema>;
 const validConnect = ConnectServiceInputSchema.refine(input => input.connectionMethod === undefined || input.service === 'gmail');
+export const ConnectionAttemptInputSchema = z.object({ attempt_id: z.uuid() });
 const unavailable = 'Integration service is temporarily unavailable. Please try again later.';
 
 function discardBody(response: GatewayFetchResponse): void {
@@ -65,7 +67,8 @@ export async function connectServiceHandler(input: ConnectServiceInput, fetcher:
         discardBody(response);
         return errorResult(unavailable);
       }
-      const result = z.object({ url: z.url().max(8192).refine(value => new URL(value).protocol === 'https:'), service: z.literal(parsed.data.service) }).parse(await smallJson(response, signal, 16_384));
+      const result = z.object({ url: z.url().max(8192).refine(value => new URL(value).protocol === 'https:'), service: z.literal(parsed.data.service), attemptId: z.uuid().optional() }).parse(await smallJson(response, signal, 16_384));
+      if (result.attemptId) return textResult(`To connect ${result.service}, open this URL in your browser:\n\n${result.url}\n\nAttempt ID: ${result.attemptId}. If get_connection_attempt is available, check this exact attempt with attempt_id. Otherwise confirm it in Connect Apps. Existing account availability does not prove this attempt completed.`);
       return textResult(`To connect ${result.service}, open this URL in your browser:\n\n${result.url}\n\nAfter authorizing, the connection will appear automatically.`);
     });
   } catch (error) { console.error('[integrations] Connection unavailable:', error instanceof Error ? error.name : 'UnknownError'); return errorResult(unavailable); }
@@ -80,4 +83,20 @@ export async function getGmailConnectionOptionsHandler(fetcher: GatewayFetcher =
       return textResult(JSON.stringify(GmailConnectionOptionsSchema.parse(await smallJson(response, signal, 4096))));
     });
   } catch (error) { console.error('[integrations] Connection options unavailable:', error instanceof Error ? error.name : 'UnknownError'); return errorResult('Gmail connection options are currently unavailable.'); }
+}
+
+
+/** Owner metadata only; scoped chat/read surfaces do not advertise this tool. */
+export async function getConnectionAttemptHandler(input: { attempt_id: string }, fetcher: GatewayFetcher = defaultFetcher()): Promise<ToolResult> {
+  const parsed = ConnectionAttemptInputSchema.safeParse(input);
+  if (!parsed.success) return errorResult('Invalid connection attempt.');
+  try {
+    return await bounded(async signal => {
+      const response = await fetcher(`${GATEWAY_BASE}/api/integrations/gmail/pipedream/attempts/${parsed.data.attempt_id}`, { method: 'GET', headers: gatewayAuthHeaders(), redirect: 'error', signal });
+      if (!response.ok) { discardBody(response); return errorResult('Connection confirmation unavailable. Check Connect Apps or start a new connection.'); }
+      const receipt = parseIntegrationAttemptStatus(await smallJson(response, signal, 4096));
+      if (!receipt) return errorResult('Connection confirmation unavailable. Check Connect Apps or start a new connection.');
+      return textResult(JSON.stringify(receipt));
+    });
+  } catch (error) { console.warn('[integrations] Receipt unavailable:', error instanceof Error ? error.name : 'UnknownError'); return errorResult('Connection confirmation unavailable. Check Connect Apps or start a new connection.'); }
 }

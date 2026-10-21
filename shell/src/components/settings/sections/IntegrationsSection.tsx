@@ -1,5 +1,6 @@
 "use client";
 
+import { parseIntegrationConnectResponse, parseIntegrationAttemptStatus, isCompletedIntegrationAttempt } from "@matrix-os/contracts";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { getGatewayUrl, getGatewayWs } from "@/lib/gateway";
 import { buildAuthenticatedWebSocketUrl } from "@/lib/websocket-auth";
@@ -35,6 +36,7 @@ export function IntegrationsSection() {
   const loadGmailOptions = useCallback(() => fetchGmailConnectionOptions(GATEWAY), []);
   const gmailChoice = useGmailConnectionChoice(loadGmailOptions);
   const connectInFlight = useRef(false);
+  const connectGeneration = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -179,6 +181,8 @@ export function IntegrationsSection() {
   const handleConnect = async (serviceId: string, label?: string, connectionMethod?: GmailConnectionMethod) => {
     if (connecting || connectInFlight.current) return;
     connectInFlight.current = true;
+    const generation = ++connectGeneration.current;
+    const isCurrent = () => connectGeneration.current === generation;
     const previousConnections = connected.map(connection => ({ ...connection }));
     let popup: Window | null = null;
     setConnecting(serviceId);
@@ -195,6 +199,7 @@ export function IntegrationsSection() {
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10_000),
       });
+      if (!isCurrent()) { popup?.close(); return; }
       if (!res.ok) {
         setError("Could not start connection. Try again.");
         setConnecting(null);
@@ -202,7 +207,12 @@ export function IntegrationsSection() {
         connectInFlight.current = false;
         return;
       }
-      const { url } = await res.json();
+      const started = parseIntegrationConnectResponse(await res.json());
+      if (!isCurrent()) { popup?.close(); return; }
+      if (!started) {
+        popup?.close(); setError("Could not start connection. Try again."); setConnecting(null); return;
+      }
+      const { url, attemptId } = started;
       const consentUrl = new URL(url);
       if (consentUrl.protocol !== "https:") throw new Error("Invalid consent URL");
       if (!popup) throw new Error("Consent window blocked");
@@ -220,13 +230,42 @@ export function IntegrationsSection() {
       }
       // Poll by syncing from Pipedream every 2s
       pollRef.current = setInterval(async () => {
+        if (!isCurrent()) return;
         try {
+          if (attemptId) {
+            const receiptResponse = await fetch(`${GATEWAY}/api/integrations/gmail/pipedream/attempts/${attemptId}`, { signal: AbortSignal.timeout(10_000) });
+            const receipt = receiptResponse.ok ? parseIntegrationAttemptStatus(await receiptResponse.json()) : null;
+            if (!isCurrent()) return;
+            if (!receipt || receipt.status === "failed" || receipt.status === "expired") {
+              setError("Could not confirm connection. Try connecting again.");
+              setConnecting(null);
+              if (pollRef.current) clearInterval(pollRef.current);
+              pollRef.current = null;
+              if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+              pollTimeoutRef.current = null;
+              return;
+            }
+            if (receipt.status === "pending") return;
+            const response = await fetch(`${GATEWAY}/api/integrations`, { signal: AbortSignal.timeout(10_000) });
+            if (!response.ok) return;
+            const data = await response.json();
+            if (!isCurrent()) return;
+            const list: ConnectedService[] = data.connections ?? data;
+            if (!isCompletedIntegrationAttempt(receipt, serviceId, list.map(item => ({ id: item.id, service: item.service, status: item.status, connectedAt: item.connected_at })))) return;
+            setConnected(list); setConnecting(null);
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+            if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+            pollTimeoutRef.current = null;
+            return;
+          }
           const syncRes = await fetch(`${GATEWAY}/api/integrations/sync`, {
             method: "POST",
             signal: AbortSignal.timeout(10_000),
           });
           if (syncRes.ok) {
             const data = await syncRes.json();
+            if (!isCurrent()) return;
             const list: ConnectedService[] = data.services ?? [];
             const completed = hasCompletedConnectionForService(previousConnections, serviceId, list);
             if (completed) {
@@ -254,6 +293,9 @@ export function IntegrationsSection() {
 
       // Stop polling after 2 minutes
       pollTimeoutRef.current = setTimeout(() => {
+        if (!isCurrent()) return;
+        connectGeneration.current += 1;
+        if (attemptId) setError("Could not confirm connection. Try connecting again.");
         if (pollRef.current) {
           clearInterval(pollRef.current);
           pollRef.current = null;
@@ -269,16 +311,18 @@ export function IntegrationsSection() {
         );
       }
       popup?.close();
+      if (!isCurrent()) return;
       setError("Could not open sign-in. Allow popups and try again.");
       setConnecting(null);
     } finally {
-      connectInFlight.current = false;
+      if (isCurrent()) connectInFlight.current = false;
     }
   };
 
   // react-doctor-disable-next-line react-doctor/exhaustive-deps -- unmount-only teardown must clear whichever poll interval/timeout is live at cleanup time; pollRef/pollTimeoutRef are reassigned by handleConnect, so snapshotting them at mount would always capture the initial null and never clear an active poll.
   useEffect(() => {
     return () => {
+      connectGeneration.current += 1;
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;

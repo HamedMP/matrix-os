@@ -34,7 +34,7 @@ jest.mock("@/lib/queries/use-computer-integrations", () => ({
 
 import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
-import { Linking, RefreshControl, StyleSheet as NativeStyleSheet } from "react-native";
+import { AppState, Linking, RefreshControl, StyleSheet as NativeStyleSheet } from "react-native";
 
 import IntegrationsScreen from "../app/(drawer)/(tabs)/(apps)/integrations";
 import InstalledIntegrationsScreen from "../app/integrations-installed/index";
@@ -180,7 +180,7 @@ describe("drawer integrations screen", () => {
     const view = render(<IntegrationsScreen />);
     fireEvent.press(screen.getByLabelText("Connect Gmail integration"));
     fireEvent.press(await screen.findByLabelText(method === "matrix" ? "Connect with Matrix (internal preview)" : "Connect with Pipedream"));
-    await waitFor(() => expect(mockStartConnection).toHaveBeenCalledWith("gmail", { connectionMethod: method }));
+    await waitFor(() => expect(mockStartConnection).toHaveBeenCalledWith("gmail", { connectionMethod: method, onAttempt: expect.any(Function) }));
     view.unmount(); open.mockRestore();
   });
   it.each(["timestamp", "status"])("clears same-ID Gmail reauthorization progress after %s recovery", async recovery => {
@@ -201,6 +201,31 @@ describe("drawer integrations screen", () => {
     view.rerender(<IntegrationsScreen />);
     await waitFor(() => expect(screen.queryByTestId("integration-connect-spinner-gmail")).toBeNull());
     view.unmount(); open.mockRestore();
+  });
+  it.each(["pending", "succeeded", "expired", "unavailable"])("uses exact receipt %s without inventory fallback", async state => {
+    jest.useFakeTimers();
+    const oldState = AppState.currentState;
+    AppState.currentState = "active";
+    const attemptId = "123e4567-e89b-42d3-a456-426614174000";
+    const account = { id: attemptId, service: "gmail", accountLabel: "Work", accountEmail: "work@example.invalid", status: "active", connectedAt: "2026-10-01T10:00:00Z" };
+    const read = jest.fn(async () => { if (state === "unavailable") throw new Error("Unavailable"); return { status: state, accountId: attemptId }; });
+    const initial = { ...mockUseComputerIntegrations(), connected: [account], readConnectionAttempt: read };
+    mockUseComputerIntegrations.mockReturnValue(initial);
+    mockGmailConnectionOptions.mockResolvedValue({ methods: ["pipedream"], defaultMethod: "pipedream" });
+    mockStartConnection.mockImplementation(async (_service, options) => { options.onAttempt(attemptId); return "https://pipedream.com/connect/test"; });
+    const open = jest.spyOn(Linking, "openURL").mockResolvedValue(true);
+    const view = render(<IntegrationsScreen />);
+    fireEvent.press(screen.getByLabelText("Connect Gmail integration"));
+    await act(async () => {});
+    mockSyncConnections.mockClear();
+    mockUseComputerIntegrations.mockReturnValue({ ...initial, connected: [{ ...account, connectedAt: "2099-01-01" }] });
+    view.rerender(<IntegrationsScreen />);
+    expect(screen.getByTestId("integration-connect-spinner-gmail")).toBeTruthy();
+    await act(async () => { jest.advanceTimersByTime(2_000); });
+    expect(read).toHaveBeenCalledWith(attemptId);
+    if (state === "pending") expect(screen.getByTestId("integration-connect-spinner-gmail")).toBeTruthy();
+    else expect(screen.queryByTestId("integration-connect-spinner-gmail")).toBeNull();
+    view.unmount(); open.mockRestore(); AppState.currentState = oldState; jest.useRealTimers();
   });
   it("cancels Gmail choice without a consent request", async () => {
     mockGmailConnectionOptions.mockResolvedValue({ methods: ["matrix", "pipedream"], defaultMethod: "matrix" });

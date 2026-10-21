@@ -14,6 +14,14 @@ function response(body: unknown) {
 }
 
 describe("matrix-integrations terminal fallback", () => {
+  it('checks the exact receipt from the owner CLI without inventory fallback', async () => {
+    const id = '123e4567-e89b-42d3-a456-426614174000';
+    const fetcher = vi.fn<GatewayFetcher>().mockResolvedValue(response({ status: 'pending' }));
+    expect(JSON.parse(await runIntegrationsCommand(['attempt', id], fetcher))).toEqual({ status: 'pending' });
+    expect(fetcher.mock.calls[0]![0]).toContain('/gmail/pipedream/attempts/' + id);
+    await expect(runIntegrationsCommand(['attempt', 'bad'], fetcher)).rejects.toThrow();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it.each(["matrix", "pipedream"])("preserves service/label positional args with optional %s method", async connectionMethod => {
     const fetcher = vi.fn<GatewayFetcher>().mockResolvedValue(response({ url: "https://connect.test", service: "gmail" }));
     await runIntegrationsCommand(["connect", "gmail", "Work Gmail", connectionMethod], fetcher);

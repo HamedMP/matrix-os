@@ -6,7 +6,7 @@
 // for confirmation first. The renderer only displays name/category/label/
 // email/status and public app logos — never tokens or upstream error text.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { hasCompletedIntegrationConnection, type ConnectedIntegration } from "@matrix-os/contracts";
+import { hasCompletedIntegrationConnection, parseIntegrationAttemptStatus, isCompletedIntegrationAttempt, type IntegrationAttemptStatus, type ConnectedIntegration } from "@matrix-os/contracts";
 import type { GmailConnectionMethod } from "@matrix-os/contracts/integration-marketplace";
 import { fetchGmailConnectionOptions } from "./gmail-connection-request";
 import { diagnosticErrorKind } from "../../lib/errors";
@@ -26,6 +26,12 @@ import { displayIntegrationName } from "./types";
 import { SettingsSectionHeader } from "../settings/sections/section-kit";
 
 const GENERIC_ERROR = categoryMessage("server");
+async function readReceipt(api: NonNullable<ReturnType<typeof useConnection.getState>["api"]>, attemptId: string, isCurrent: () => boolean): Promise<IntegrationAttemptStatus> {
+  const receipt = parseIntegrationAttemptStatus(await api.get(`/api/integrations/gmail/pipedream/attempts/${attemptId}`));
+  if (!receipt || receipt.status === "failed" || receipt.status === "expired") throw new Error("Connection unavailable");
+  if (receipt.status === "succeeded" && isCurrent()) await useIntegrations.getState().refresh(api);
+  return receipt;
+}
 
 export interface IntegrationsSettingsSectionProps {
   // Test-only hook: override the connect poll backoff schedule.
@@ -50,6 +56,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
   const cancelPollRef = useRef<(() => void) | null>(null);
   const previousConnectionsRef = useRef<ConnectedIntegration[] | null>(null);
   const connectAttemptRef = useRef(0);
+  const receiptRef = useRef<string | null>(null);
   const disconnectAttemptRef = useRef(0);
 
   useEffect(() => {
@@ -60,6 +67,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     cancelPollRef.current?.();
     cancelPollRef.current = null;
     previousConnectionsRef.current = null;
+    receiptRef.current = null;
     connectInFlight.current = false;
     setConnectingService(null);
     setManualBusy(false);
@@ -98,7 +106,10 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     const previousConnections = useIntegrations.getState().connections.map(connection => ({ ...connection }));
     previousConnectionsRef.current = previousConnections;
 
-    const url = await useIntegrations.getState().startConnect(serviceId, api, connectionMethod);
+    receiptRef.current = null;
+    let receiptId: string | undefined;
+    const url = await useIntegrations.getState().startConnect(serviceId, api, connectionMethod, response => { receiptId = response.attemptId; });
+    if (isCurrentAttempt()) receiptRef.current = receiptId ?? null;
     if (isCurrentAttempt()) connectInFlight.current = false;
     if (!isCurrentAttempt()) return;
     if (!url) {
@@ -116,9 +127,10 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     }
     if (!isCurrentAttempt()) return;
 
-    const isLanded = () => hasCompletedIntegrationConnection(
-      previousConnections, serviceId, useIntegrations.getState().connections,
-    );
+    let receipt: IntegrationAttemptStatus = { status: "pending" };
+    const isLanded = () => receiptId
+      ? isCompletedIntegrationAttempt(receipt, serviceId, useIntegrations.getState().connections)
+      : hasCompletedIntegrationConnection(previousConnections, serviceId, useIntegrations.getState().connections);
 
     cancelConnectPoll();
     cancelPollRef.current = startConnectPoll({
@@ -126,6 +138,17 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
       tick: async () => {
         if (!isCurrentAttempt()) {
           cancelConnectPoll();
+          return;
+        }
+        if (receiptId) {
+          try {
+            receipt = await readReceipt(api, receiptId, isCurrentAttempt);
+          } catch (error) {
+            console.warn("[integrations] Receipt unavailable:", diagnosticErrorKind(error));
+            if (!isCurrentAttempt()) return;
+            cancelConnectPoll(); setConnectingService(null);
+            useIntegrations.getState().showError(GENERIC_ERROR);
+          }
           return;
         }
         const result = await useIntegrations.getState().syncNow(api);
@@ -161,6 +184,14 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     setManualBusy(true);
     setManualNote(null);
     try {
+      if (receiptRef.current) {
+        const receipt = await readReceipt(api, receiptRef.current, isCurrentAttempt);
+        if (!isCurrentAttempt()) return;
+        if (isCompletedIntegrationAttempt(receipt, connectingService, useIntegrations.getState().connections)) {
+          cancelConnectPoll(); setConnectingService(null);
+        } else setManualNote("Not connected yet — finish the sign-in in your browser, then try again.");
+        return;
+      }
       const result = await useIntegrations.getState().syncNow(api);
       if (!isCurrentAttempt()) return;
       const landed = previousConnectionsRef.current !== null && hasCompletedIntegrationConnection(
@@ -179,6 +210,9 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
       }
       if (result === "superseded") return;
       setManualNote("Not connected yet — finish the sign-in in your browser, then try again.");
+    } catch (error) {
+      console.warn("[integrations] Receipt unavailable:", diagnosticErrorKind(error));
+      if (isCurrentAttempt()) { cancelConnectPoll(); setConnectingService(null); useIntegrations.getState().showError(GENERIC_ERROR); }
     } finally {
       if (isCurrentAttempt()) setManualBusy(false);
     }
@@ -186,6 +220,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
 
   const handleCancelConnect = (): void => {
     connectAttemptRef.current += 1;
+    receiptRef.current = null;
     connectInFlight.current = false;
     cancelConnectPoll();
     setConnectingService(null);

@@ -8,6 +8,8 @@ import {
   callServiceHandler,
   connectServiceHandler,
   getGmailConnectionOptionsHandler,
+  getConnectionAttemptHandler,
+  ConnectionAttemptInputSchema,
   ConnectServiceInputSchema,
   describeServiceHandler,
   disconnectServiceHandler,
@@ -127,6 +129,11 @@ export function createIntegrationsMcpServer(
       "get_gmail_connection_options",
       { description: "Discover the authenticated owner's available Gmail connection methods. Honor their explicit Matrix or Pipedream choice." },
       async () => getGmailConnectionOptionsHandler(fetcher),
+    );
+    if (full) server.registerTool(
+      "get_connection_attempt",
+      { description: "Check the exact consent receipt returned by connect_service; account inventory is not completion proof.", inputSchema: ConnectionAttemptInputSchema.shape },
+      input => getConnectionAttemptHandler(input, fetcher),
     );
     if (!discovery) {
       if (!previewDrive) server.registerTool(

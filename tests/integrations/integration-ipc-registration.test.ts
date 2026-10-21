@@ -13,7 +13,7 @@ describe('kernel registered integration consent tools', () => {
     fetcher.mockClear(); expect((await connect.handler({ service: 'github', connectionMethod })).isError).toBe(true); expect(fetcher).not.toHaveBeenCalled();
   });
   it('registers bounded capability discovery without removing previous management tools', async () => {
-    const tools = registered(); expect(tools.map(tool => tool.name)).toEqual(['list_integration_inventory', 'describe_service', 'get_gmail_connection_options', 'connect_service',
+    const tools = registered(); expect(tools.map(tool => tool.name)).toEqual(['list_integration_inventory', 'describe_service', 'get_gmail_connection_options', 'get_connection_attempt', 'connect_service',
       'call_service', 'list_connected_services', 'sync_services', 'disconnect_service', 'list_custom_mcp_servers', 'describe_custom_mcp_server', 'call_custom_mcp_tool']);
     const options = { methods: ['pipedream'], defaultMethod: 'pipedream' };
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(Response.json(options)); vi.stubGlobal('fetch', fetcher);

@@ -14,7 +14,8 @@ import {
   isValidServiceId,
   parseAvailableIntegrations,
   parseConnectedIntegrations,
-  parseConnectUrl,
+  parseIntegrationConnectResponse,
+  type IntegrationConnectResponse,
   type AvailableIntegration,
   type ConnectedIntegration,
 } from "./types";
@@ -42,7 +43,7 @@ interface IntegrationsState {
   syncNow: (apiOverride?: ApiClient | null) => Promise<"ok" | "failed" | "superseded">;
   // Starts the OAuth flow: returns the HTTPS consent URL to open externally,
   // or null after setting a generic errorMessage.
-  startConnect: (serviceId: string, apiOverride?: ApiClient | null, connectionMethod?: GmailConnectionMethod) => Promise<string | null>;
+  startConnect: (serviceId: string, apiOverride?: ApiClient | null, connectionMethod?: GmailConnectionMethod, onResponse?: (response: IntegrationConnectResponse) => void) => Promise<string | null>;
   // Disconnects one account. On failure the connection stays in the list and
   // errorMessage holds generic copy (partial-failure safe).
   disconnect: (connectionId: string, apiOverride?: ApiClient | null) => Promise<boolean>;
@@ -146,7 +147,7 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
     }
   },
 
-  startConnect: async (serviceId, apiOverride, connectionMethod) => {
+  startConnect: async (serviceId, apiOverride, connectionMethod, onResponse) => {
     const api = resolveApi(apiOverride);
     if (!isValidServiceId(serviceId) || (connectionMethod && (serviceId !== "gmail" || !GmailConnectionMethodSchema.safeParse(connectionMethod).success))) {
       set({ errorMessage: categoryMessage("server") });
@@ -163,14 +164,15 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
     try {
       const raw = await api.post<unknown>(CONNECT_PATH, { service: serviceId, ...(connectionMethod ? { connectionMethod } : {}) });
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
-      const url = parseConnectUrl(raw);
-      if (!url) {
+      const response = parseIntegrationConnectResponse(raw);
+      if (!response) {
         logWarn("connect returned no usable https url", new Error("invalid_connect_url"));
         set({ errorMessage: categoryMessage("server") });
         return null;
       }
       set({ errorMessage: null });
-      return url;
+      onResponse?.(response);
+      return response.url;
     } catch (err: unknown) {
       logWarn("connect failed", err);
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;

@@ -190,3 +190,13 @@ describe("Gmail capability discovery", () => {
     await expect(fetchGmailConnectionOptions("token", "https://app.matrix-os.com")).rejects.toThrow("Could not load Gmail connection options. Try again.");
   });
 });
+
+describe('Gmail receipt metadata', () => {
+  it('keeps the receipt ID separate from the consent URL', async () => {
+    const attemptId = '123e4567-e89b-42d3-a456-426614174000';
+    jest.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ url: 'https://pipedream.com/connect', service: 'gmail', attemptId }) } as Response);
+    const onAttempt = jest.fn();
+    await expect(createIntegrationConnectUrl('token', 'https://app.matrix-os.com/vm/test', 'gmail', { connectionMethod: 'pipedream', onAttempt })).resolves.toBe('https://pipedream.com/connect');
+    expect(onAttempt).toHaveBeenCalledWith(attemptId);
+  });
+});

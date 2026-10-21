@@ -1,6 +1,8 @@
 import {
   connectServiceHandler,
   getGmailConnectionOptionsHandler,
+  getConnectionAttemptHandler,
+  ConnectionAttemptInputSchema,
   ConnectServiceInputSchema,
   describeServiceHandler,
   disconnectServiceHandler,
@@ -13,7 +15,7 @@ import {
 import { z } from "zod/v4";
 import { wrapExternalContent } from "../../kernel/dist/security/external-content.js";
 
-const usage = "Usage: matrix-integrations <inventory|list|describe|gmail-options|connect|sync|call|disconnect> [arguments]";
+const usage = "Usage: matrix-integrations <inventory|list|describe|gmail-options|attempt|connect|sync|call|disconnect> [arguments]";
 const serviceSchema = z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/);
 const catalogSchema = z.array(z.object({
   id: z.string(),
@@ -84,6 +86,9 @@ export async function runIntegrationsCommand(
     case "gmail-options":
       if (rest.length !== 0) throw new Error(usage);
       return text(await getGmailConnectionOptionsHandler(fetcher));
+    case "attempt":
+      if (rest.length !== 1) throw new Error(usage);
+      return text(await getConnectionAttemptHandler(ConnectionAttemptInputSchema.parse({ attempt_id: rest[0] }), fetcher));
     case "connect": {
       if (rest.length < 1 || rest.length > 3) throw new Error(usage);
       const input = ConnectServiceInputSchema.parse({ service: rest[0], label: rest[1], connectionMethod: rest[2] });

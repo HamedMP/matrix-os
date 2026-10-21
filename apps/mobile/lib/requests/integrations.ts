@@ -1,3 +1,4 @@
+import { parseIntegrationAttemptStatus, type IntegrationAttemptStatus } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { GmailConnectionMethodSchema, GmailConnectionOptionsSchema, type GmailConnectionMethod, type GmailConnectionOptions } from "@matrix-os/contracts/integration-marketplace";
 
@@ -63,6 +64,7 @@ const DeleteConnectionResponseSchema = z.object({ ok: z.literal(true) });
 const ConnectIntegrationResponseSchema = z.object({
   url: z.string().max(4096).url().refine(isTrustedConnectUrl),
   service: z.string().regex(SERVICE_ID),
+  attemptId: z.uuid().optional(),
 });
 
 function isTrustedConnectUrl(value: string): boolean {
@@ -156,7 +158,7 @@ export async function fetchGmailConnectionOptions(clerkToken: string, computerGa
     : GmailConnectionOptionsSchema.parse(await response.json()));
 }
 
-export interface IntegrationConnectOptions { connectionMethod?: GmailConnectionMethod; label?: string }
+export interface IntegrationConnectOptions { connectionMethod?: GmailConnectionMethod; label?: string; onAttempt?: (attemptId: string) => void }
 
 export async function createIntegrationConnectUrl(
   clerkToken: string,
@@ -182,7 +184,17 @@ export async function createIntegrationConnectUrl(
       ...(label ? { label } : {}),
     }),
   });
+  if (response.attemptId) options.onAttempt?.(response.attemptId);
   return response.url;
+}
+
+export async function fetchIntegrationConnectionAttempt(clerkToken: string, computerGatewayUrl: string, attemptId: string): Promise<IntegrationAttemptStatus> {
+  if (!CONNECTION_ID.test(attemptId)) throw new Error(INTEGRATION_CONNECT_ERROR);
+  return fetchAuthenticatedJson({
+    url: integrationUrl(computerGatewayUrl, `/api/integrations/gmail/pipedream/attempts/${attemptId}`), token: clerkToken,
+    errorMessage: 'Could not confirm connection. Try connecting again.',
+    schema: z.unknown().transform(value => { const receipt = parseIntegrationAttemptStatus(value); if (!receipt) throw new Error(INTEGRATION_CONNECT_ERROR); return receipt; }),
+  });
 }
 
 export async function syncIntegrationConnections(
