@@ -83,6 +83,18 @@ describe('trusted Google collection client', () => {
     const f = await fixture({ granted: true }); const claim = await f.prepare();
     expect(f.requestConsent).not.toHaveBeenCalled(); expect((await f.contexts.inspect('owner-one', 'chat_one'))?.retentionDeadline).toBe(claim.policyExpiresAt);
   });
+  it.each(['context', 'pin'] as const)('rechecks %s expiry after the final awaited identity lookup', async expired => {
+    const f = await fixture({ granted: true, retentionSeconds: expired === 'context' ? 60 : 3600 });
+    await f.prepare();
+    if (expired === 'pin') {
+      expect(await f.runtime().authorize({ phase: 'dispatch', binding: binding(), identity: identity(), signal: new AbortController().signal })).toMatchObject({ allowed: true });
+      const originalGet = pins.get.bind(pins);
+      vi.spyOn(pins, 'get').mockImplementation(async b => { const value = await originalGet(b); return value ? { ...value, expiresAt: f.future(60000) } : null; });
+    }
+    let reads = 0;
+    f.resolveIdentity.mockImplementation(async () => { if (++reads === 4) f.advance(60001); return identity(); });
+    await expect(f.prepare()).rejects.toBeInstanceOf(GoogleCollectionClientError);
+  });
   it('uses the published duration rather than an invented shorter retention when consent is longer', async () => {
     const f = await fixture({ granted: true, retentionSeconds: 60 });
     // The actual reviewed profile supplies this duration. No caller-selected retention parameter exists.
