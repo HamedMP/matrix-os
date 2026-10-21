@@ -56,6 +56,95 @@ describe.skipIf(!url)("funded terminal owner lock with independent PostgreSQL po
     const r = await reserveSpeech(a, "old-speech"); await a.transaction((trx) => speech.start(trx.executor as Transaction<PlatformDatabase>, r.reservationId));
     clock = new Date(clock.getTime() + 20 * 60_000); return batch();
   }
+  async function strongStart(requestId: string) {
+    const initial = (await rows()).find(row => row.request_id === "old-glm")!;
+    if (initial.status === "in_flight") await repoA.finalizeReservation({ reservationId: initial.reservation_id,
+      tokenId: initial.token_id, mode: "exact", actualCostMicrousd: 0 });
+    const authorized = await authorize(repoA, requestId);
+    return repoA.startReservation({ reservationId: authorized.reservation.reservationId,
+      tokenId: credential.tokenId, executionId: `attempt-${requestId}` });
+  }
+  function proof(start: Awaited<ReturnType<typeof strongStart>>) {
+    return { contractVersion: 1 as const, ...identity, reservationId: start.reservationId, tokenId: start.tokenId,
+      requestId: start.requestId, startedAt: start.startedAt, expiresAt: start.expiresAt, executionId: start.executionId!,
+      terminalState: "failed" as const, terminalAt: clock.toISOString(), outcome: "usage_unknown" as const };
+  }
+  async function waitForPoolBLock() {
+    let waiting = false; const deadline = Date.now() + 2_000;
+    while (!waiting && Date.now() < deadline) {
+      waiting = Boolean((await admin.query("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE application_name='funded-terminal-race-b' AND wait_event_type='Lock') AS waiting")).rows[0].waiting);
+      if (!waiting) await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    expect(waiting).toBe(true);
+  }
+  it("refreshes receipt/release chronology after owner-lock wait and serializes immediate admission", async () => {
+    const started = await strongStart("immediate-a");
+    clock = new Date(clock.getTime() + 30_000); const terminal = proof(started);
+    terminal.terminalAt = new Date(clock.getTime() + 15_000).toISOString();
+    const locked = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
+    const blocker = a.transaction(async trx => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
+      locked.resolve(); await release.promise;
+    });
+    await locked.promise;
+    const receipt = repoB.recordTerminalOutcome(terminal);
+    const received = Promise.allSettled([receipt]);
+    await waitForPoolBLock();
+    clock = new Date(clock.getTime() + 30_000); release.resolve(); await blocker;
+    expect((await received)[0]).toMatchObject({ status: "fulfilled", value: { receivedAt: clock.toISOString() } });
+    const saved = (await rows()).find(row => row.reservation_id === started.reservationId)!;
+    expect(JSON.parse(saved.execution_admission_release!).response.releasedAt).toBe(clock.toISOString());
+    const admissions = await Promise.allSettled([authorize(repoA, "immediate-b"), authorize(repoB, "competing-b")]);
+    expect(admissions.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    const admitted = admissions.find(result => result.status === "fulfilled")!;
+    if (admitted.status !== "fulfilled") throw new Error("Admission missing");
+    const bStart = { reservationId: admitted.value.reservation.reservationId, tokenId: credential.tokenId, executionId: "attempt-b" };
+    const races = await Promise.allSettled([
+      repoA.startReservation({ reservationId: started.reservationId, tokenId: started.tokenId, executionId: started.executionId }),
+      repoB.startReservation(bStart), repoA.finalizeReservation({ reservationId: started.reservationId, tokenId: started.tokenId, mode: "exact", actualCostMicrousd: 10 }),
+      repoB.recordTerminalOutcome(terminal),
+    ]);
+    expect(races[0]).toMatchObject({ status: "rejected", reason: { code: "reservation_closed" } });
+    expect(races.slice(1).every(result => result.status === "fulfilled")).toBe(true);
+    expect((await rows()).find(row => row.reservation_id === bStart.reservationId)).toMatchObject({ status: "in_flight", execution_admission_release: null, actual_microusd: null });
+  });
+  it("takes machine lock before the terminal reservation lock while policy mutation waits", async () => {
+    const started = await strongStart("machine-order"); clock = new Date(clock.getTime() + 30_000);
+    const locked = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
+    const policy = a.transaction(async trx => {
+      await trx.executor.selectFrom("user_machines").select("machine_id").where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirstOrThrow();
+      locked.resolve(); await release.promise;
+      await trx.executor.updateTable("ai_funded_runtime_policies").set({ enabled: false }).where("machine_id", "=", identity.machineId).execute();
+    });
+    await locked.promise;
+    const terminal = repoB.recordTerminalOutcome(proof(started));
+    const results = Promise.allSettled([policy, terminal]);
+    try {
+      await waitForPoolBLock();
+      await admin.query("BEGIN");
+      try { await admin.query(`SELECT reservation_id FROM "${schema}".ai_funded_usage_reservations WHERE reservation_id=$1 FOR UPDATE NOWAIT`, [started.reservationId]); }
+      finally { await admin.query("ROLLBACK"); }
+    } finally { release.resolve(); }
+    expect((await results).every(result => result.status === "fulfilled")).toBe(true);
+  });
+  it("serializes cap-blocked receipt replay, exact settlement and future admission across pools", async () => {
+    const attempts = [];
+    for (let index = 0; index < 3; index++) {
+      const start = await strongStart(`cap-${index}`); clock = new Date(clock.getTime() + 30_000);
+      const terminal = proof(start); await repoA.recordTerminalOutcome(terminal); attempts.push({ start, terminal });
+    }
+    const third = attempts[2];
+    expect((await rows()).find(row => row.reservation_id === third.start.reservationId)!.execution_admission_release).toBeNull();
+    const settlement = { reservationId: attempts[0].start.reservationId, tokenId: credential.tokenId, mode: "exact" as const, actualCostMicrousd: 10 };
+    const outcomes = await Promise.allSettled([repoA.finalizeReservation(settlement), repoB.recordTerminalOutcome(third.terminal), authorize(repoB, "cap-future")]);
+    expect(outcomes[0].status).toBe("fulfilled"); expect(outcomes[1].status).toBe("fulfilled");
+    const saved = await rows();
+    expect(saved.find(row => row.reservation_id === third.start.reservationId)!.execution_admission_release).not.toBeNull();
+    const unknown = saved.filter(row => row.execution_admission_release !== null && row.actual_microusd === null);
+    expect(unknown.map(row => row.execution_recovery_slot).sort()).toEqual([0, 1]);
+    expect(await repoA.finalizeReservation(settlement)).toMatchObject({ actualCostMicrousd: 10 });
+    const next = await authorize(repoB, "cap-future"); expect(next.authorized).toBe(true);
+  });
   it("serializes two automatic admissions into one new dispatch slot", async () => {
     const old = (await rows())[0]; clock = new Date(clock.getTime() + 30_000);
     await repoA.recordTerminalOutcome({ contractVersion: 1, ...identity, reservationId: old.reservation_id, tokenId: old.token_id, requestId: old.request_id,

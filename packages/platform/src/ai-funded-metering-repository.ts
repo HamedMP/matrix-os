@@ -1,4 +1,5 @@
 import { readFundedRecoveryAudit } from "./ai-funded-recovery-audit.js";
+import { reconcileFundedTerminalAfterSettlement } from "./ai-funded-terminal-reconciliation.js";
 import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import { settleWaivedUsage } from './ai-funded-usage-waiver-settlement.js';
 import { readUnknownUsageWaivers } from './ai-funded-usage-waiver-admission.js';
@@ -483,10 +484,12 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .selectAll().where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirst();
       if (!reservation) throw new AiFundedPolicyError("unauthorized");
-      if (reservation.execution_admission_release !== null || reservation.charge_waiver !== null) throw new AiFundedPolicyError("reservation_closed");
+      if (reservation.terminal_outcome !== null || reservation.execution_admission_release !== null || reservation.charge_waiver !== null) throw new AiFundedPolicyError("reservation_closed");
       if (reservation.status === "in_flight") {
         if (reservation.start_response === null) throw new Error("In-flight reservation is missing its response");
-        return FundedAiStartResponseSchema.parse(JSON.parse(reservation.start_response));
+        const saved = FundedAiStartResponseSchema.parse(JSON.parse(reservation.start_response));
+        if (saved.executionId !== request.executionId) throw new AiFundedPolicyError("idempotency_conflict");
+        return saved;
       }
       if (reservation.status !== "reserved") throw new AiFundedPolicyError("reservation_closed");
       if (Date.parse(reservation.expires_at) <= checked.getTime()) {
@@ -514,6 +517,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         startedAt: checkedAt,
         expiresAt,
         status: "in_flight",
+        ...(request.executionId ? { executionId: request.executionId } : {}),
       });
       const updated = await trx.executor.updateTable("ai_funded_usage_reservations").set({
         status: "in_flight",
@@ -767,6 +771,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where("reservation_id", "=", reservation.reservation_id).execute();
       return { response, finalizationMode } as const;
     });
+    if (finalizationMode === "exact") await reconcileFundedTerminalAfterSettlement(options.db, request, options.now);
     return result;
   }
 

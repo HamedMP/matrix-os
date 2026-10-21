@@ -21,8 +21,8 @@ export function boundedBody(
   lifetimeSignal: AbortSignal,
   observer?: {
     push(chunk: Uint8Array): void;
-    complete(): void;
-    ambiguous(): void;
+    complete(): void | Promise<void>;
+    ambiguous(): void | Promise<void>;
   },
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
@@ -31,15 +31,15 @@ export function boundedBody(
   let terminalReported = false;
   let cancelling = false;
   let cancellation: Promise<void> | undefined;
-  const reportComplete = (): void => {
+  const reportComplete = async (): Promise<void> => {
     if (terminalReported) return;
     terminalReported = true;
-    observer?.complete();
+    await observer?.complete();
   };
-  const reportAmbiguous = (): void => {
+  const reportAmbiguous = async (): Promise<void> => {
     if (terminalReported) return;
     terminalReported = true;
-    observer?.ambiguous();
+    await observer?.ambiguous();
   };
   const settle = (): void => {
     if (settled) return;
@@ -70,7 +70,7 @@ export function boundedBody(
       try {
         const result = await reader.read().catch((error: unknown) => { sourceFailed = true; throw error; });
         if (result.done) {
-          if (!cancelling) reportComplete();
+          if (!cancelling) await reportComplete();
           if (!cancelling) settle();
           reader.releaseLock();
           controller.close();
@@ -88,7 +88,7 @@ export function boundedBody(
         observer?.push(result.value);
         controller.enqueue(result.value);
       } catch (error) {
-        if (sourceFailed && !cancelling) reportAmbiguous();
+        if (sourceFailed && !cancelling) await reportAmbiguous();
         else if (!cancelling) await cancelSource("response processing failed").catch((cancelError: unknown) => {
           console.warn("[proxy] Funded AI response cancellation failed", { errorName: cancelError instanceof Error ? cancelError.name : "UnknownError" });
         });

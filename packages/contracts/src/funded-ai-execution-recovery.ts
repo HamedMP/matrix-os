@@ -4,7 +4,7 @@ import { IsoTimestampSchema } from "#contract-primitives";
 export const FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD = 500000;
 /** Maximum owner-wide actual-null audited obligations, independently of live work. */
 export const FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN = 2;
-// Relay permits at most 15 minutes, independent of its configured shorter limit.
+// Legacy unbound Relay/operator proof waits for the full 15-minute limit plus grace.
 export const FUNDED_EXECUTION_RECOVERY_MIN_AGE_MS = 16 * 60000;
 const Reference = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const Evidence = z.string().min(3).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9_.:/-]*$/);

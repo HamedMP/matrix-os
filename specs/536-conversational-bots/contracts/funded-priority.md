@@ -32,7 +32,7 @@ Inside the existing transaction and owner advisory lock:
 
 1. Idempotent replay check (unchanged).
 2. Load live claims for the owner: `expires_at > now()`, ordered by `created_at`.
-3. Conflict test: usage-mode conflicts with any execution-active reservation, and other modes conflict with an execution-active usage-mode reservation. A bounded audited execution recovery may exclude an expired unresolved obligation from execution conflict checks while protecting its complete financial hold. Automatic recovery additionally requires a durable authenticated Relay terminal receipt; timeout or expiry alone cannot exclude work.
+3. Conflict test: usage-mode conflicts with any execution-active reservation, and other modes conflict with an execution-active usage-mode reservation. Bounded audited execution recovery may exclude a proved terminal obligation while protecting its complete financial hold. New attempt-bound Relay proof releases execution promptly; legacy evidence keeps the expiry/lifetime gates below. Timeout or expiry alone cannot exclude work.
 4. Class rules:
    - `background` and any live claim that would conflict with this request exists: reject with `rate_limited` and reason `priority_hold`.
    - `interactive` and a conflicting active reservation exists: upsert the claim for this runtime slot and claim key. On conflict, keep the existing `created_at` and `expires_at`, so a claim is never extended or moved back in line. Reject with `rate_limited` and reason `slot_busy`.
@@ -153,12 +153,18 @@ cannot be misclassified as refundable admission waits.
 
 The approved policy permits automatic **execution admission** recovery under the
 same two-obligation / 500,000 microusd owner bounds. It never clears financial
-holds. Before runtime or balance locks, ordinary authorization takes the funded
-owner lock, validates existing waiver/recovery audits, and checks durable Relay
-terminal evidence. The reservation must be expired, at least sixteen minutes old,
-and at least one minute past confirmed local termination. The current owner,
+holds. The primary trigger is the authenticated terminal receipt transaction:
+under the funded owner lock it validates the exact start attempt, locks machine
+before reservation, refreshes Platform time after waiting, persists the immutable
+receipt and releases eligible execution admission atomically. Strong new Relay
+proof does not wait for financial expiry, sixteen minutes or a one-minute grace.
+Its chronology is start ≤ terminal ≤ receipt ≤ release. The current owner,
 machine and runtime binding must remain running and authorized. Other live work
 outside the reviewed set prevents recovery. Distinct recovery slots remain unique.
+Ordinary authorization is a fallback before runtime/balance locks. Legacy Relay
+starts without a persisted attempt ID and operator single/batch attestations
+retain the original expiry, sixteen-minute minimum age and one-minute terminal
+grace. Their immutable historical audits are not reinterpreted as strong proof.
 
 `POST /internal/ai/funded/terminal` uses the existing Relay control Bearer token,
 constant-time authentication and a strict 4 KiB JSON body. The receipt pins the
@@ -170,8 +176,26 @@ waits for the original response body beneath parsing/normalization to end or for
 its cancellation to be acknowledged. Failed/hanging cancellation cannot create
 terminal proof. Accepted outcomes persist separately in `terminal_outcome` and
 replay idempotently. Unknown outcomes never replace exact settlement; later exact
-usage settles once. Only transient transport failures use the existing bounded
-retry queue. Relay death before durable acceptance remains fail-closed.
+usage settles once. New usage-mode `start` requests bind an optional `executionId`
+in existing saved start JSON; the same attempt replays idempotently, while a
+missing/different ID cannot downgrade or rebind it. Legacy callers receive the
+unchanged response shape. Every accepted terminal receipt fences old authorize/
+start replay even if liability or other-live guards defer release. Exact receipt
+replay reconciles pending eligible release without rewriting evidence.
+
+Relay awaits a bounded acknowledgement (up to twice the control timeout, capped
+at ten seconds) before delivering a nonstream terminal failure or finishing a
+confirmed terminal stream. One prompt retry and later existing queue retries use
+the same immutable receipt. Unknown or rejecting original-body cancellation
+never establishes proof. Shutdown closes admission, drains confirmed cancellation
+and receipt barriers within the same bound, then closes the retry queue. Outage
+or process death before durable acceptance retains holds and execution occupancy.
+Receipt acceptance alone does not promise release when an owner bound refuses it.
+
+Valid receipts survive unrelated recovery-policy validation failures through a
+savepoint; database failures abort and are never reported accepted. Exact usage
+and public speech completion reconcile pending release in a separate transaction
+after financial commit, so unrelated bad recovery history cannot undo valid money.
 
 `POST /api/operator/ai/funded/execution-recovery/batch` uses the existing operator
 secret and a strict 16 KiB body, with no query overrides. It atomically reviews
@@ -191,7 +215,8 @@ Both transitions leave status `in_flight`, actual cost null, settlement null,
 financial balances, monthly reserves, speech allowance reserves, source
 allocations and the credit ledger unchanged. Cleanup rechecks under the owner
 lock and cannot conservatively charge an execution-recovered unknown speech
-reservation. Late exact settlement touches only that reservation's financial
+reservation; speech settlement also refuses a delayed conservative result on a
+recovered obligation. Late exact settlement touches only that reservation's financial
 obligation and cannot unlock newer work. Existing single-row operator recovery
 and immutable version1 audits remain supported. New typed audits are
 `relay_terminal_v2` and `operator_batch_v2`; malformed history fails closed.
@@ -202,13 +227,17 @@ and immutable version1 audits remain supported. New typed audits are
 | `POST /api/operator/ai/funded/execution-recovery/batch` | Existing Platform operator secret | No |
 | `POST /api/operator/ai/funded/runtimes/:handle/policy-execution-release` | Existing Platform operator secret | No |
 
-Core schema generation 20 adds bounded nullable terminal-outcome bytes and
-validates saved receipts during upgrade. Deploy the same recovery-aware version
+Core schema generation 20 introduced bounded nullable terminal-outcome bytes.
+Generation 21 validates saved receipts and kind-specific strong timing during
+upgrade. Deploy the same recovery-aware version
 to Platform **and every cleanup worker before the first version2 audit write**.
 Old version1-only readers cannot validate version2 audits, and old cleanup code
 may charge recovered speech holds. Do not roll either service back while these
-unknown obligations remain. Deploy Platform terminal support before enabling the
-new Relay writer; an old Platform returns404 and retains admission rather than
+unknown obligations remain. Before the first early strong audit, every reader
+must also understand kind-specific timing; the expiry-only predecessor rejects
+these genuine audits and cannot be used for rollback. Deploy Platform attempt
+binding and reader support before enabling the new Relay writer; an old Platform
+rejects the strict start request and retains admission rather than
 inventing a charge. Deployment and live qualification remain separately approved.
 A separate documentation PR in the private site repository is required before
 public release; it is outside this local backend implementation.

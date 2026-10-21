@@ -217,8 +217,9 @@ describe("Cloudflare funded relay control-plane ordering", () => {
           return json(authorized);
         }
         if (action === "start") {
-          expect(body).toEqual({ reservationId: "reservation_123", tokenId: "credential_123" });
-          return json(startResponse("request_123"));
+          expect(body).toEqual({ reservationId: "reservation_123", tokenId: "credential_123",
+            ...(reservationMode === "usage" ? { executionId: expect.any(String) } : {}) });
+          return json({ ...startResponse("request_123"), executionId: JSON.parse(String(init?.body)).executionId });
         }
         if (action === "finalize") {
           expect(body).toEqual({
@@ -526,7 +527,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       if (url.endsWith("/start")) {
         const body = JSON.parse(String(init?.body));
         events.push(`start:${body.reservationId}`);
-        return json(startResponse("request_1", body.reservationId));
+        return json({ ...startResponse("request_1", body.reservationId), executionId: body.executionId });
       }
       if (url.endsWith("/release")) {
         const body = JSON.parse(String(init?.body));
@@ -629,7 +630,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
           reservedMicrousd: 4_801_200,
         } });
       }
-      if (url.endsWith("/start")) { events.push("start"); return json(startResponse("request_123")); }
+      if (url.endsWith("/start")) { events.push("start"); return json({ ...startResponse("request_123"), executionId: JSON.parse(String(init?.body)).executionId }); }
       if (url.endsWith("/release")) { events.push("release"); return json({}); }
       if (url.endsWith("/finalize")) {
         const body = JSON.parse(String(init?.body));
@@ -714,7 +715,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       if (url.endsWith("/check")) return json(checkResponse());
       if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
       if (url.endsWith("/authorize")) return json(authorizationResponse("request_123"));
-      if (url.endsWith("/start")) return json(startResponse("request_123"));
+      if (url.endsWith("/start")) return json({ ...startResponse("request_123"), executionId: JSON.parse(String(init?.body)).executionId });
       if (url.endsWith("/finalize")) {
         return json(finalizationResponse({ requestId: "request_123", actualCostMicrousd: RESERVED_MICROUSD, finalizationMode: "conservative" }));
       }
@@ -766,7 +767,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       if (url.endsWith("/check")) return json(checkResponse());
       if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
       if (url.endsWith("/authorize")) return json(authorizationResponse("request_123"));
-      if (url.endsWith("/start")) { events.push("start"); return json(startResponse("request_123")); }
+      if (url.endsWith("/start")) { events.push("start"); return json({ ...startResponse("request_123"), executionId: JSON.parse(String(init?.body)).executionId }); }
       if (url.endsWith("/release")) events.push("release");
       if (url.endsWith("/finalize")) {
         const body = JSON.parse(String(init?.body));
@@ -799,7 +800,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       if (url.endsWith("/check")) return json(checkResponse());
       if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
       if (url.endsWith("/authorize")) return json(authorizationResponse("request_123"));
-      if (url.endsWith("/start")) { events.push("start"); return json(startResponse("request_123")); }
+      if (url.endsWith("/start")) { events.push("start"); return json({ ...startResponse("request_123"), executionId: JSON.parse(String(init?.body)).executionId }); }
       if (url.endsWith("/release")) { events.push("release"); return json({}); }
       if (url.endsWith("/finalize")) {
         const body = JSON.parse(String(init?.body));

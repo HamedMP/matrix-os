@@ -183,7 +183,7 @@ describe("funded Jev evaluation relay", () => {
         if (action === "start") {
           return json({
             contractVersion: 1, reservationId: "reservation_123", requestId: "request_123",
-            tokenId: "credential_123", startedAt: NOW.toISOString(),
+            tokenId: "credential_123", executionId: body.executionId, startedAt: NOW.toISOString(),
             expiresAt: "2026-09-22T10:30:00.000Z", status: "in_flight",
           });
         }
@@ -404,7 +404,7 @@ describe("funded Jev evaluation relay", () => {
           status: "reserved" as const,
         },
       })),
-      start: vi.fn(async () => ({
+      start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId,
         contractVersion: 1 as const, reservationId: "reservation_123", requestId: "request_123",
         tokenId: "credential_123", startedAt: NOW.toISOString(),
         expiresAt: "2026-09-22T10:30:00.000Z", status: "in_flight" as const,

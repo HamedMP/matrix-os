@@ -1,6 +1,6 @@
 import { FUNDED_EXECUTION_RECOVERY_MIN_AGE_MS, FundedAiAuthorizationResponseSchema, FundedAiExecutionRecoveryRequestSchema, FundedAiExecutionRecoveryResponseSchema, FundedAiExecutionRecoveryBatchRequestSchema, FundedAiExecutionRecoveryBatchResponseSchema, FundedAiTerminalOutcomeRequestSchema, } from "@matrix-os/contracts";
 import { createHash } from "node:crypto";
-import { readTerminalOutcome } from "./ai-funded-terminal-outcome.js";
+import { readTerminalOutcome, readTerminalStart } from "./ai-funded-terminal-outcome.js";
 import type { Selectable } from "kysely";
 import { z } from "zod/v4";
 import type { AiFundedUsageReservationsTable } from "./db.js";
@@ -71,6 +71,7 @@ export function readFundedRecoveryAudit(row: Reservation) {
   const audit = parseSaved(row.execution_admission_release, AuditSchema);
   let request: z.infer<typeof FundedAiExecutionRecoveryRequestSchema>;
   let response: z.infer<typeof FundedAiExecutionRecoveryResponseSchema>;
+  let strongReceivedAt: string | undefined;
   if ("kind" in audit && audit.kind === "operator_batch_v2") {
     const item = audit.request.reservations.find((r) => r.reservationId === row.reservation_id);
     const result = audit.response.reservations.find((r) => r.reservationId === row.reservation_id);
@@ -98,6 +99,7 @@ export function readFundedRecoveryAudit(row: Reservation) {
       localRunId: audit.request.executionId, localRunState: audit.request.terminalState, localRunEndedAt: audit.request.terminalAt,
       evidenceRef: "relay:terminal-outcome", reviewer: "system:funded-relay", acceptUnknownUpstreamLiability: true };
     response = audit.response;
+    if (readTerminalStart(row).executionId !== undefined) strongReceivedAt = terminal.response.receivedAt;
   }
   else {
     if (liability.fundingKind !== "usage" || "kind" in audit)
@@ -112,9 +114,11 @@ export function readFundedRecoveryAudit(row: Reservation) {
     || request.maximumLiabilityMicrousd !== liability.maximumLiabilityMicrousd
     || response.maximumLiabilityMicrousd !== request.maximumLiabilityMicrousd
     || response.reservedMicrousd !== Number(row.reserved_microusd)
-    || released < Date.parse(request.expectedStartedAt) + FUNDED_EXECUTION_RECOVERY_MIN_AGE_MS
-    || released < Date.parse(request.expectedExpiresAt)
-    || released < Date.parse(request.localRunEndedAt) + 60000)
+    || (strongReceivedAt !== undefined
+      ? released < Date.parse(strongReceivedAt)
+      : released < Date.parse(request.expectedStartedAt) + FUNDED_EXECUTION_RECOVERY_MIN_AGE_MS
+        || released < Date.parse(request.expectedExpiresAt)
+        || released < Date.parse(request.localRunEndedAt) + 60000))
     throw new AiFundedPolicyError("idempotency_conflict");
   return { request, response };
 }

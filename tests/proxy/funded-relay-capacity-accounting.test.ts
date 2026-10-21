@@ -27,7 +27,7 @@ function fixture(options: Record<string, unknown> = {}) {
       return { identity: IDENTITY, reservation: { reservationId: "reservation_1", requestId: input.requestId,
         modelId: input.modelId, reservedMicrousd: 1, billingMode: "usage" } };
     }),
-    start: vi.fn(async () => ({ contractVersion: 1, status: "in_flight", startedAt: NOW.toISOString(), expiresAt: "2026-09-10T12:10:00.000Z", reservationId: "reservation_1", requestId: currentRequestId, tokenId: IDENTITY.tokenId })),
+    start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId, contractVersion: 1, status: "in_flight", startedAt: NOW.toISOString(), expiresAt: "2026-09-10T12:10:00.000Z", reservationId: "reservation_1", requestId: currentRequestId, tokenId: IDENTITY.tokenId })),
     release: vi.fn(async () => ({ reservationId: "reservation_1", tokenId: IDENTITY.tokenId, status: "released", reason: "pre_upstream_failure" })), terminal: vi.fn(async () => ({})), finalize: vi.fn(async () => ({})),
   };
   const upstream = vi.fn(async () => new Response(JSON.stringify({ id: "response_1", model: MODEL, choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }),

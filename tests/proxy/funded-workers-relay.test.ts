@@ -26,7 +26,7 @@ function upstream(model:string,stream:boolean,missingUsage=false){
 }
 function platform(){return{
  check:vi.fn(async()=>({identity})),authorize:vi.fn(async(input:{modelId:string,requestId:string})=>({identity,reservation:{reservationId:'reservation_test',requestId:input.requestId,modelId:input.modelId,reservedMicrousd:1,billingMode:'usage'}})),
- start:vi.fn(async()=>({contractVersion:1,status:'in_flight',startedAt:now.toISOString(),expiresAt:'2026-10-15T12:10:00.000Z',reservationId:'reservation_test',requestId:'request_test',tokenId:identity.tokenId})),release:vi.fn(),terminal:vi.fn(async()=>({})),finalize:vi.fn(async()=>({})),
+ start:vi.fn(async(input: { executionId?: string })=>({ executionId: input.executionId,contractVersion:1,status:'in_flight',startedAt:now.toISOString(),expiresAt:'2026-10-15T12:10:00.000Z',reservationId:'reservation_test',requestId:'request_test',tokenId:identity.tokenId})),release:vi.fn(),terminal:vi.fn(async()=>({})),finalize:vi.fn(async()=>({})),
 };}
 
 describe('all approved Workers models through funded Relay',()=>{

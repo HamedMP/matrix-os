@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { reconcileFundedTerminalAfterSettlement } from "../ai-funded-terminal-reconciliation.js";
 import { sql, type Transaction } from "kysely";
 import {
   SpeechExecutionStateSchema,
@@ -411,7 +412,7 @@ export function createSpeechOperationsRepository(options: {
     const checkedAt = checked.toISOString();
     const expiresAt = new Date(checked.getTime() + metadataRetentionMs).toISOString();
     await options.db.ready;
-    return options.db.transaction(async (trx) => {
+    const result = await options.db.transaction(async (trx) => {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
       const row = await scopedRow(trx.executor, identity, requestId, true);
       if (!row) throw new SpeechOperationStateError();
@@ -443,6 +444,8 @@ export function createSpeechOperationsRepository(options: {
       if (!updated) throw new SpeechOperationStateError();
       return operationRecord(updated);
     });
+    await reconcileFundedTerminalAfterSettlement(options.db, { ownerId: identity.ownerId }, now);
+    return result;
   }
 
   async function cancel(

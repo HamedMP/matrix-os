@@ -369,6 +369,7 @@ export function createAiFundedSpeechFundingPort(options: {
     const row = await speechReservation(trx, reservationId);
     if (!row) throw new SpeechFundingError("unavailable");
     if (row.execution_admission_release !== null) readFundedRecoveryAudit(row);
+    if (row.execution_admission_release !== null && input.mode !== "exact") throw new SpeechFundingError("unavailable");
     const reserved = exactInteger(row.reserved_microusd);
     const actual = input.mode === "exact" ? MoneySchema.parse(input.actualCostMicrousd) : reserved;
     if (actual > reserved) throw new SpeechFundingError("unavailable");

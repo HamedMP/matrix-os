@@ -25,7 +25,7 @@ function setup(upstream: () => Response | Promise<Response>, model = SONNET) {
       identity: IDENTITY, reservation: { reservationId: "reservation_1", requestId: input.requestId,
         modelId: input.modelId, reservedMicrousd: 100_000, billingMode: "usage" },
     })),
-    start: vi.fn(async () => ({ contractVersion: 1, status: "in_flight", startedAt: NOW.toISOString(), expiresAt: "2026-09-10T12:10:00.000Z", reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId })),
+    start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId, contractVersion: 1, status: "in_flight", startedAt: NOW.toISOString(), expiresAt: "2026-09-10T12:10:00.000Z", reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId })),
     release: vi.fn(), terminal: vi.fn(async () => ({})), finalize: vi.fn(async (task: unknown, signal: AbortSignal) => { void task; void signal; return {}; }),
   };
   const config = resolveFundedRelayConfig({

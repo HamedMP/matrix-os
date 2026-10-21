@@ -3,7 +3,7 @@ import { sql, type Selectable } from "kysely";
 import type { AiFundedUsageReservationsTable, PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { readFundedRecoveryAudit, readFundedRecoveryLiability } from "./ai-funded-recovery-audit.js";
-import { readTerminalOutcome } from "./ai-funded-terminal-outcome.js";
+import { readTerminalOutcome, readTerminalStart } from "./ai-funded-terminal-outcome.js";
 import { readUnknownUsageWaivers } from "./ai-funded-usage-waiver-admission.js";
 type Row = Selectable<AiFundedUsageReservationsTable>;
 type Executor = PlatformDB["executor"];
@@ -103,7 +103,7 @@ export function recoveryResponse(row: Row, maximum: number, checked: Date) {
   return FundedAiExecutionRecoveryResponseSchema.parse({ contractVersion: 1, executionAdmissionReleased: true, usageKnown: false,
     reservedMicrousd: Number(row.reserved_microusd), maximumLiabilityMicrousd: maximum, releasedAt: checked.toISOString() });
 }
-/** Opportunistic admission recovery; never based on TTL alone. No monetary writes. */
+/** Receipt-triggered execution recovery, with admission as fallback. No monetary writes. */
 export async function recoverTerminalOutcomes(executor: Executor, ownerId: string, checked: Date) {
   const unknown = await readRecoveredUnknowns(executor, ownerId);
   const candidates = await executor.selectFrom("ai_funded_usage_reservations").selectAll().where("owner_id", "=", ownerId)
@@ -116,7 +116,9 @@ export async function recoverTerminalOutcomes(executor: Executor, ownerId: strin
   for (const row of candidates) {
     const terminal = readTerminalOutcome(row);
     try {
-      assertRecoveryAge(row, terminal.request.terminalAt, checked);
+      if (readTerminalStart(row).executionId === undefined) assertRecoveryAge(row, terminal.request.terminalAt, checked);
+      else if (Date.parse(terminal.response.receivedAt) > checked.getTime())
+        throw new AiFundedPolicyError("idempotency_conflict");
     }
     catch (error) {
       if (error instanceof AiFundedPolicyError && error.code === "rate_limited")

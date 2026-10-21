@@ -66,6 +66,15 @@ describe("atomic mixed GLM and speech execution recovery", () => {
       .rejects.toMatchObject({ code: "rate_limited" });
     expect(oldRows.every((r) => r.actual_microusd === null)).toBe(true);
   });
+  it("retains recovered speech's unknown financial hold on a delayed conservative failure", async () => {
+    expect((await send(await request())).status).toBe(200);
+    const before = await finance(); const beforeRows = await rows();
+    await expect(db.transaction((trx) => speech.settle(trx.executor as Transaction<PlatformDatabase>, "speech-reservation", { mode: "conservative" })))
+      .rejects.toThrow();
+    expect(await finance()).toEqual(before); expect(await rows()).toEqual(beforeRows);
+    await db.transaction((trx) => speech.settle(trx.executor as Transaction<PlatformDatabase>, "speech-reservation", { mode: "exact", actualCostMicrousd: 1_000 }));
+    expect((await rows()).find(r => r.reservation_id === "speech-reservation")).toMatchObject({ status: "settled", actual_microusd: 1_000 });
+  });
   it.each(["liability", "identity", "hash", "kind", "early", "future", "outside-live"])("rolls back every row and financial byte for invalid %s", async (kind) => {
     const body = await request();
     if (kind === "liability") body.reservations[1].maximumLiabilityMicrousd++;
