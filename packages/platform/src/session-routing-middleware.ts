@@ -1,4 +1,5 @@
 import { isSharedAppOpenPath } from "@matrix-os/contracts";
+import { isGmailOAuthCallback } from './integration-public-path.js';
 import { readAuthShellRequestBody, resolveAuthShellBrowserHost } from "./auth-shell-request.js";
 import { whatsappPrimaryHandoffResponse } from "./whatsapp/primary-handoff.js";
 import {
@@ -498,9 +499,11 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       return next();
     }
     const isPublicIntegrationPath =
+      isGmailOAuthCallback(c.req.method, reqPath) ||
       reqPath === '/api/integrations/available' ||
       reqPath.startsWith('/api/integrations/webhook/');
     const isIntegrationPath =
+      reqPath === '/auth/gmail' ||
       reqPath === '/api/integrations' || reqPath.startsWith('/api/integrations/');
     const isCustomMcpPath =
       reqPath === '/api/mcp-servers' || reqPath.startsWith('/api/mcp-servers/');
