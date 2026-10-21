@@ -25,6 +25,14 @@ export function isAppGalleryInventoryIdentity(identity: string, routeSlug = iden
     || APP_GALLERY_STARTER_IDENTITIES.some((id) => id === identity));
 }
 
+/** A starter may manage only its own sync; aliases, other apps and arbitrary paths fail closed. */
+export function isAllowedAppSyncBridgeRequest(identity: string, routeSlug: string, url: string, method = "GET"): boolean {
+  if (identity === "app-gallery" || !isAppGalleryInventoryIdentity(identity, routeSlug)) return false;
+  const root = `/api/app-gallery/${identity}/sync`;
+  return url === root ? method === "GET" || method === "POST"
+    : method === "POST" && ["pause", "retry", "resume"].some(action => url === `${root}/${action}`);
+}
+
 /** Runtime catalog roots may be longer than persisted OS-view references. */
 export function canonicalAppRuntimeCatalogPath(row: { path?: unknown; file?: unknown }): string | null {
   for (const [value, fromFile] of [[row.path, false], [row.file, true]] as const) {

@@ -186,7 +186,7 @@ import { createLocalIntegrationTransport, createPlatformIntegrationTransport } f
 import { createBotContinuationAdmitter } from "./bots/continuations.js";
 import { ChatAgentStore } from "./chat/agent-store.js";
 import { initializePlatformIntegrations } from "./startup/platform-integrations.js";
-import { createRuntimeDataImportRoutes } from "./startup/data-imports.js";
+import { registerOwnerImports } from "./startup/owner-imports.js";
 import { getVersion } from "./system-info.js";
 import { createTaskManager } from "./task-manager.js";
 import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
@@ -1325,12 +1325,12 @@ export async function createGateway(config: GatewayConfig) {
     service: integrationCapabilityService,
     audit: agentActionAuditService,
   }));
-  app.route("/api/data-imports", await createRuntimeDataImportRoutes({
-    ownerDatabase: kyselyInstance, homePath, runtimeOwnerIds: terminalRuntimeOwnerIds,
+  const ownerImports = await registerOwnerImports(app, {
+    ownerDatabase: kyselyInstance, homePath, runtimeOwnerIds: terminalRuntimeOwnerIds, dispatcher,
     transport: internalIntegrationBaseUrl && internalPlatformToken
       ? createPlatformIntegrationTransport({ baseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken })
       : integrationRoutes ? createLocalIntegrationTransport(integrationRoutes) : null,
-  }));
+  });
   app.route("/api/admin", createAdminControlRoutes({ service: adminControlService }));
   app.route("/api/company-brain", createCompanyBrainRoutes({ service: companyBrainService }));
   app.route("/api/support-growth", createDraftActionRoutes({ service: draftActionService }));
@@ -1926,6 +1926,7 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      await ownerImports.close();
       await managedFeatureRestart.close();
       await jevInboxRuntime?.close();
       chatDriveContext.close();

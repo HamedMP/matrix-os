@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { isAllowedAppGalleryBridgeRequest, isAppGalleryIdentity, isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
+import { isAllowedAppGalleryBridgeRequest, isAppGalleryIdentity, isAppGalleryInventoryIdentity, isAllowedAppSyncBridgeRequest } from "@matrix-os/contracts/app-gallery-bridge-policy";
 import { parseGalleryInventory } from "@matrix-os/contracts/app-gallery-inventory";
 
 export const NATIVE_APP_GATEWAY_CHANNEL = "native-app:gateway-fetch";
@@ -38,17 +38,27 @@ export const NativeAppGatewayRequestSchema = z.strictObject({
   init: z.strictObject({
     method: z.enum(["GET", "POST"]).optional(),
     headers: z.strictObject({ "Content-Type": z.literal("application/json").optional(), "content-type": z.literal("application/json").optional() }).optional(),
-    body: z.string().max(4096).refine(emptyJsonBody).optional(),
+    body: z.string().max(16384).optional(),
   }).optional(),
 }).refine(({ url, init }) => {
   const method = init?.method ?? "GET";
-  if (!isActivityRead(url, method) && !isAllowedAppGalleryBridgeRequest(url, method)) return false;
-  return method === "POST" ? init?.body !== undefined : init?.body === undefined && init?.headers === undefined;
+  const syncId = /^\/api\/app-gallery\/([a-z][a-z0-9-]{0,47})\/sync(?:\/(?:pause|retry|resume))?$/.exec(url)?.[1];
+  const sync = syncId !== undefined && isAllowedAppSyncBridgeRequest(syncId, syncId, url, method);
+  if (!sync && !isActivityRead(url, method) && !isAllowedAppGalleryBridgeRequest(url, method)) return false;
+  if (method !== "POST") return init?.body === undefined && init?.headers === undefined;
+  if (init?.body === undefined) return false;
+  // Start input is validated by the owner API. Control/install operations accept no body fields.
+  if (sync && url.endsWith("/sync")) {
+    try { const value: unknown = JSON.parse(init.body); return !!value && typeof value === "object" && !Array.isArray(value); }
+    catch (error) { console.warn("[native-app-bridge] invalid sync body", error instanceof Error ? error.name : "UnknownError"); return false; }
+  }
+  return emptyJsonBody(init.body);
 });
 export type NativeAppGatewayRequest = z.infer<typeof NativeAppGatewayRequestSchema>;
 
 export function isAllowedNativeAppGatewayRequest(appIdentity: string, routeSlug: string, request: NativeAppGatewayRequest): boolean {
   const method = request.init?.method ?? "GET";
+  if (isAllowedAppSyncBridgeRequest(appIdentity, routeSlug, request.url, method)) return true;
   if (isNativeAppActivityIdentity(appIdentity, routeSlug)) return isActivityRead(request.url, method);
   if (isAppGalleryIdentity(appIdentity, routeSlug)) return isAllowedAppGalleryBridgeRequest(request.url, method);
   return isAppGalleryInventoryIdentity(appIdentity, routeSlug) && request.url === "/api/integrations" && method === "GET";

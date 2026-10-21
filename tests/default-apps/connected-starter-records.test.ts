@@ -303,11 +303,11 @@ describe("visible conflict and account safety", () => {
     window.MatrixOS = { integrations: async () => inventory, generate };
     render(createElement(ImportDialog, { app: folio, onClose: () => {} }));
     await screen.findByText(/Give each account a unique label/);
-    expect((screen.getByRole("checkbox") as HTMLInputElement).disabled).toBe(
+    expect((screen.getByRole("checkbox", { name: /unique label/ }) as HTMLInputElement).disabled).toBe(
       true,
     );
     fireEvent.click(
-      screen.getByRole("button", { name: "Ask Matrix to import" }),
+      screen.getByRole("button", { name: "Start import" }),
     );
     await screen.findByRole("alert");
     expect(generate).not.toHaveBeenCalled();

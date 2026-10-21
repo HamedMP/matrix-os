@@ -1,14 +1,22 @@
 import { parseGalleryInventory } from "./generated-inventory";
-import { useEffect, useMemo, useState } from "react";
-import { importContextLabel, importPrompt, uniqueConnection } from "./import";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { importContextLabel, importPrompt } from "./import";
 import Sheet from "./Sheet";
+import ImportAccounts from "./ImportAccounts";
+import SyncProgress from "./SyncProgress";
+import { syncRequest } from "./useSync";
+import { gallerySyncIntervalMs, type GallerySyncInput, type GallerySyncSnapshot } from "./generated-sync";
 import type { Connection, Definition } from "./types";
 export function ImportDialog({
   app,
   onClose,
+  onStart,
+  progress,
 }: {
   app: Definition;
   onClose: () => void;
+  onStart?: (input: GallerySyncInput) => Promise<GallerySyncSnapshot>;
+  progress?: GallerySyncSnapshot | null;
 }) {
   const [inventory, setInventory] = useState<Connection[] | null>(null),
     [loaded, setLoaded] = useState(false),
@@ -22,7 +30,10 @@ export function ImportDialog({
       app.collection === "business" ? "work" : "personal",
     ),
     [error, setError] = useState(""),
-    [sent, setSent] = useState(false);
+    [starting, setStarting] = useState(false),
+    [keepUpdated, setKeepUpdated] = useState(true),
+    [accepted, setAccepted] = useState<GallerySyncSnapshot | null>(() => progress && ["queued", "running"].includes(progress.status) ? progress : null);
+  const submission = useRef<{ key: string; requestId: string } | null>(null);
   const selectedKeys = useMemo(() => new Set(chosen), [chosen]);
   const contextLabel = importContextLabel(chosen.map(key => key.split(":")[0]));
   useEffect(() => {
@@ -46,9 +57,10 @@ export function ImportDialog({
       alive = false;
     };
   }, []);
-  function request() {
+  async function request() {
+    if (starting) return;
     try {
-      if (!window.MatrixOS?.generate || inventory === null)
+      if ((!onStart && !window.MatrixOS?.gatewayFetch) || inventory === null)
         throw new Error(
           "Import is unavailable. Check connections and try again.",
         );
@@ -60,13 +72,19 @@ export function ImportDialog({
           connectionId: c.id ?? "",
           expectedEmail: c.account_email ?? null,
         }));
-      const prompt = importPrompt(
+      importPrompt(
         app,
         { accounts, start, end, context: contextLabel ? context : "", scope },
         inventory,
       );
-      window.MatrixOS.generate(prompt);
-      setSent(true);
+      setStarting(true);
+      const selected = { accounts, start, end, context: contextLabel ? context : "", scope, keepUpdated };
+      const key = JSON.stringify(selected);
+      if (submission.current?.key !== key) submission.current = { key, requestId: crypto.randomUUID() };
+      const input = { ...selected, requestId: submission.current.requestId };
+      const result = onStart ? await onStart(input) : await syncRequest(app.id, "start", input);
+      if (!result) throw new Error("Sync unavailable");
+      setAccepted(result);
       setError("");
     } catch (cause) {
       console.error("Import request failed", cause);
@@ -75,22 +93,15 @@ export function ImportDialog({
           ? cause.message
           : "Import could not be requested. Check your connections and try again.",
       );
-    }
+    } finally { setStarting(false); }
   }
   return (
-    <Sheet title={`Connect ${app.name}`} onClose={onClose}>
-      {sent ? (
-        <div className="request-sent">
-          <span className="orb">↗</span>
-          <h3>Request sent to Matrix</h3>
-          <p>
-            Matrix will review your selected sources and save supported records.
-            Return to this app and choose <strong>Check records</strong> to see
-            what was added.
-          </p>
-          <p className="muted">No import has been confirmed yet.</p>
+    <Sheet title={accepted ? `Importing ${app.name}` : `Connect ${app.name}`} onClose={onClose}>
+      {accepted ? (
+        <div className="import-progress">
+          <SyncProgress name={app.name} snapshot={progress ?? accepted} />
           <button className="primary" onClick={onClose}>
-            Back to records
+            Continue using this app
           </button>
         </div>
       ) : (
@@ -98,77 +109,13 @@ export function ImportDialog({
           <p className="muted">
             Select accounts and a date range to import. Your edits and source evidence are preserved.
           </p>
-          {!loaded ? (
-            <p>Checking connections…</p>
-          ) : inventory === null ? (
-            <p className="notice">
-              Connection availability could not be checked.
-            </p>
-          ) : (
-            app.services.map((service) => {
-              const accounts = inventory.filter(
-                (c) => c.service === service.id,
-              );
-              return (
-                <fieldset key={service.id}>
-                  <legend>{service.name}{service.optional ? " · optional source" : ""}</legend>
-                  {accounts.length ? (
-                    accounts
-                      .filter(
-                        (c, i) =>
-                          accounts.findIndex(
-                            (other) =>
-                              other.service === c.service &&
-                              other.account_label === c.account_label,
-                          ) === i,
-                      )
-                      .map((account) => {
-                        const key = `${account.service}:${account.account_label}`;
-                        const ambiguous = !uniqueConnection(
-                          inventory,
-                          account.service,
-                          account.account_label,
-                        );
-                        return (
-                          <label className="check" key={key}>
-                            <input
-                              type="checkbox"
-                              disabled={ambiguous || !account.id}
-                              checked={selectedKeys.has(key)}
-                              onChange={(e) =>
-                                setChosen(
-                                  e.target.checked
-                                    ? [...chosen, key]
-                                    : chosen.filter((k) => k !== key),
-                                )
-                              }
-                            />
-                            <span>
-                              <strong>{account.account_email ?? account.account_label}</strong>
-                              {account.account_email && <small>{account.account_label}</small>}
-                              {(!account.id || ambiguous) && <small>
-                                {!account.id
-                                  ? "Account identity unavailable. Update Matrix before importing."
-                                  : "Account label is shared. Give each account a unique label in Matrix Settings."}
-                              </small>}
-                            </span>
-                          </label>
-                        );
-                      })
-                  ) : (
-                    <p className="muted">
-                      Connect this service in Matrix Settings first.
-                    </p>
-                  )}
-                </fieldset>
-              );
-            })
-          )}
+          <ImportAccounts app={app} inventory={inventory} loaded={loaded} chosen={chosen} onChoose={setChosen} disabled={starting} />
           <div className="date-fields">
             <label>
               <span>From</span>
               <input
                 type="date"
+                disabled={starting}
                 value={start}
                 onChange={(e) => setStart(e.target.value)}
               />
@@ -177,6 +124,7 @@ export function ImportDialog({
               <span>Through</span>
               <input
                 type="date"
+                disabled={starting}
                 value={end}
                 onChange={(e) => setEnd(e.target.value)}
               />
@@ -186,6 +134,7 @@ export function ImportDialog({
             <span>{contextLabel}</span>
             <textarea
               value={context}
+              disabled={starting}
               rows={2}
               maxLength={2000}
               onChange={(e) => setContext(e.target.value)}
@@ -195,6 +144,7 @@ export function ImportDialog({
           <label>
             <span>Imported record group</span>
             <select
+              disabled={starting}
               value={scope}
               onChange={(e) => setScope(e.target.value as "personal" | "work")}
             >
@@ -206,6 +156,10 @@ export function ImportDialog({
             Read-only access. Matrix will use supported actions only, leave
             unknown facts empty, and report incomplete coverage.
           </p>
+          <label className="check">
+            <input type="checkbox" checked={keepUpdated} disabled={starting} onChange={e => setKeepUpdated(e.target.checked)} />
+            <span><strong>Keep this app updated</strong><small>Check selected accounts every {gallerySyncIntervalMs(chosen.map(key => ({ service: key.split(":")[0] }))) / 60_000 === 1 ? "minute" : "15 minutes"} while your Matrix computer is running. New records appear automatically. AI processing uses your Matrix AI allowance. You can pause anytime.</small></span>
+          </label>
           {error && (
             <p role="alert" className="notice error">
               {error}
@@ -213,10 +167,10 @@ export function ImportDialog({
           )}
           <button
             className="primary"
-            disabled={!loaded || inventory === null}
-            onClick={request}
+            disabled={starting || !loaded || inventory === null}
+            onClick={() => void request()}
           >
-            Ask Matrix to import
+            {starting ? "Starting import…" : "Start import"}
           </button>
         </div>
       )}

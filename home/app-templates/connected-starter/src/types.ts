@@ -90,6 +90,7 @@ declare global {
     MatrixOS?: {
       db?: Database;
       integrations?: () => Promise<Connection[]>;
+      gatewayFetch?: (url: string, init?: RequestInit) => Promise<unknown>;
       generate?: (context: string) => void;
       navigate?: (route: string, context?: string) => void;
     };

@@ -1,4 +1,4 @@
-import { isAllowedAppGalleryBridgeRequest, isAppGalleryIdentity, isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
+import { isAllowedAppGalleryBridgeRequest, isAppGalleryIdentity, isAppGalleryInventoryIdentity, isAllowedAppSyncBridgeRequest } from "@matrix-os/contracts/app-gallery-bridge-policy";
 
 const RESOURCE_MANAGER_ACTIVITY_PATH = /^\/api\/system\/activity(?:[?#]|$)/;
 
@@ -20,6 +20,7 @@ export function isAllowedBridgeFetchUrl(
   )
     return false;
   const slug = appSlugFromName(appName);
+  if (isAllowedAppSyncBridgeRequest(appName.replace(/^apps\//, ""), slug, url, method)) return true;
   if (isAppGalleryIdentity(appName.replace(/^apps\//, ""), slug)) return isAllowedAppGalleryBridgeRequest(url, method);
   if (url === "/api/integrations")
     return method === "GET" && isAppGalleryInventoryIdentity(appName.replace(/^apps\//, ""), slug);

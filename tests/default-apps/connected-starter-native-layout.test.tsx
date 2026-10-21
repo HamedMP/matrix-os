@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { acceptedSync } from "./gallery-sync-fixture";
 import React from "react";
 import { readFileSync } from "node:fs";
 import { desktopPalette } from "../../packages/brand/src/tokens";
@@ -42,30 +43,30 @@ describe("compact installed app workflows", () => {
     expect(screen.queryByText("Everything in view")).toBeNull();
   });
   it("offers email accounts without irrelevant source context and preserves the exact selected identity", async () => {
-    const generate = vi.fn();
-    window.MatrixOS = { integrations: async () => [email], generate };
+    const gatewayFetch = vi.fn(async () => acceptedSync(subscriptions.id));
+    window.MatrixOS = { integrations: async () => [email], gatewayFetch };
     render(<ImportDialog app={subscriptions} onClose={vi.fn()} />);
     fireEvent.click(await screen.findByRole("checkbox", { name: /reader@example.test/ }));
     expect(screen.queryByRole("textbox")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Ask Matrix to import" }));
-    expect(generate).toHaveBeenCalledWith(expect.stringContaining('"connectionId":"email_account"'));
-    expect(generate).toHaveBeenCalledWith(expect.stringContaining('"sourceContext":""'));
+    fireEvent.click(screen.getByRole("button", { name: "Start import" }));
+    expect(gatewayFetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: expect.stringContaining('"connectionId":"email_account"') }));
+    expect(gatewayFetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: expect.stringContaining('"context":""') }));
   });
   it("asks for repository scope only after GitHub is selected and validates it before dispatch", async () => {
     const github = { id: "github_account", service: "github", account_label: "Work", status: "active" };
     const app: Definition = { ...subscriptions, services: [{ id: "github", name: "GitHub", actions: ["list_repositories"] }] };
-    const generate = vi.fn();
-    window.MatrixOS = { integrations: async () => [github], generate };
+    const gatewayFetch = vi.fn(async () => acceptedSync(app.id));
+    window.MatrixOS = { integrations: async () => [github], gatewayFetch };
     render(<ImportDialog app={app} onClose={vi.fn()} />);
-    const checkbox = await screen.findByRole("checkbox");
+    const checkbox = await screen.findByRole("checkbox", { name: "Work" });
     expect(screen.queryByRole("textbox")).toBeNull();
     fireEvent.click(checkbox);
     const repository = screen.getByRole("textbox", { name: "Repository" });
-    fireEvent.click(screen.getByRole("button", { name: "Ask Matrix to import" }));
-    expect(generate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Start import" }));
+    expect(gatewayFetch).not.toHaveBeenCalled();
     fireEvent.change(repository, { target: { value: "matrix-os/core" } });
-    fireEvent.click(screen.getByRole("button", { name: "Ask Matrix to import" }));
-    expect(generate).toHaveBeenCalledWith(expect.stringContaining('"sourceContext":"matrix-os/core"'));
+    fireEvent.click(screen.getByRole("button", { name: "Start import" }));
+    expect(gatewayFetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ body: expect.stringContaining('"context":"matrix-os/core"') }));
   });
 });
 
