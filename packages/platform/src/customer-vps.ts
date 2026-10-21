@@ -1,3 +1,4 @@
+import { previewDeletionProof, previewScopeDeletionProof, previewCapacityInventory as readPreviewCapacityInventory } from './customer-vps-preview-deletion.js';
 import type { UserMachineRecord } from './db.js';
 import {
   claimUserMachineDelete,
@@ -545,12 +546,14 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       }
     },
 
+    previewCleanupStatus: (scope) => previewScopeDeletionProof(deps.db, deps.hetzner, scope),
+
     async status(machineId) {
       const row = await getUserMachine(deps.db, machineId);
       if (!row) {
         throw new CustomerVpsError(404, 'not_found', 'Machine not found');
       }
-      return statusResponse(row);
+      return { ...statusResponse(row), ...await previewDeletionProof(row, deps.hetzner, deps.db) };
     },
 
     async delete(machineId) {
@@ -582,6 +585,14 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     async listAllMachines(): Promise<StatusResponse[]> {
       const machines = await listAllUserMachines(deps.db, 500);
       return machines.map(statusResponse);
+    },
+
+    async previewCapacityInventory() {
+      const inventory = await readPreviewCapacityInventory(deps.db, deps.hetzner);
+      return { ...inventory, machines: inventory.machines.map(row => ({
+        ...statusResponse(row),
+        ...(row.previewDeletionConfirmed === undefined ? {} : { previewDeletionConfirmed: row.previewDeletionConfirmed }),
+      })) };
     },
 
     dispatchProvisioningJobs,
