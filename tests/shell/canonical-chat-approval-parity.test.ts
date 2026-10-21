@@ -69,3 +69,14 @@ it("does not apply another run's decision to the current approval", () => {
     type: "approval.resolved", approvalId: "approval_confirm", decision: "cancel" });
   expect(canonicalChatApprovals(detail)[0]?.pending).toBe(true);
 });
+
+it("projects the same browser scope across Web, Electron and Native Mobile", () => {
+  const detail = fixture(); const activity = detail.activities[0]!;
+  if (activity.type !== "approval.requested") throw new Error("Missing request");
+  activity.actionDigest = "f".repeat(64);
+  activity.browserApproval = { kind: "shared_chrome", leaseEpoch: "178ca19d-9760-4e67-a221-62bedf393b90", challengeRevision: 0, scopeVersion: 1, expiresAt: new Date(Date.now()+60_000).toISOString() };
+  const expected = { actionDigest: activity.actionDigest, browserApproval: activity.browserApproval, pending: true };
+  expect(projectCanonicalTranscript(detail).find(m => m.metadata?.canonicalApproval)?.metadata?.canonicalApproval).toMatchObject(expected);
+  expect(buildTranscript(detail).find(m => m.approval)?.approval).toMatchObject(expected);
+  expect(canonicalChatPresentation(detail)[0]?.work.find(item => item.kind === "request")).toMatchObject({ browserApproval: expected });
+});

@@ -62,3 +62,48 @@ describe("tool detail presentation across OS surfaces", () => {
     }
   });
 });
+
+
+it.each(["matrix_pi", "codex", "claude_code"] as const)("keeps %s output semantics across Electron, Web and Mobile after reload", driverKind => {
+  const { snapshot } = createCanonicalChatFixture("completed"); const run = snapshot.runs[0]!;
+  run.driverKind = driverKind;
+  snapshot.messages.push({ id: "msg_snapshot_answer", chatId: snapshot.chat.id, turnId: run.turnId, runId: run.id, role: "assistant", state: "committed", seq: 2, parts: [{ type: "text", text: "Done." }], createdAt: run.createdAt });
+  const base = { chatId: snapshot.chat.id, runId: run.id, occurredAt: run.createdAt };
+  const activities: CanonicalChatRunActivity[] = [
+    { ...base, id: "start", sequence: 1, type: "agent.activity", activityId: "tool_snapshot", kind: "command", label: "Run command", status: "running", preview: "printf managed-proof", previewKind: "command" },
+    { ...base, id: "partial", sequence: 2, type: "tool.output", toolCallId: "tool_snapshot", text: "PARTIAL_RESULT", truncated: false },
+    { ...base, id: "end", sequence: 3, type: "agent.activity", activityId: "tool_snapshot", kind: "command", label: "Run command", status: "completed", preview: "printf managed-proof", previewKind: "command" },
+    { ...base, id: "final", sequence: 4, type: "tool.output", toolCallId: "tool_snapshot", text: "FINAL_RESULT", truncated: false },
+  ];
+  const { providerBinding, activeRun, project, ...chat } = snapshot.chat;
+  const detail = CanonicalChatDetailResponseSchema.parse({ record: { chat }, messages: snapshot.messages, turns: snapshot.turns,
+    runs: snapshot.runs, activities: JSON.parse(JSON.stringify(activities)), queuedTurns: [] });
+  const lists = [canonicalChatPresentation(detail).flatMap(turn => turn.work).flatMap(work => work.kind === "activity-group" ? work.activities : []),
+    projectCanonicalTranscript(detail).flatMap(message => message.toolDisplay ? [message.toolDisplay] : []), buildTranscript(detail).flatMap(message => message.activities)];
+  for (const list of lists) {
+    const cards = list.filter(entry => entry.label === "Run command"); expect(cards).toHaveLength(1);
+    expect(cards[0]?.detail).toContain("FINAL_RESULT");
+    expect(cards[0]?.detail?.includes("PARTIAL_RESULT")).toBe(driverKind !== "matrix_pi");
+    expect(cards[0]?.state).toBe("completed");
+  }
+});
+
+it.each([["aborted", "stopped"], ["failed", "failed"], ["completed", "partial"]] as const)("reconciles unfinished managed tool cards with terminal %s runs after reload", (status, expected) => {
+  const { snapshot } = createCanonicalChatFixture(status); const run = snapshot.runs[0]!; run.driverKind = "matrix_pi";
+  snapshot.messages.push({ id: "msg_pending_tool", chatId: snapshot.chat.id, turnId: run.turnId, runId: run.id, role: "assistant", state: "committed", seq: 2, parts: [{ type: "text", text: "Tool has no confirmed result." }], createdAt: run.createdAt });
+  const base = { chatId: snapshot.chat.id, runId: run.id, occurredAt: run.createdAt };
+  const activities: CanonicalChatRunActivity[] = [
+    { ...base, id: "pending_command", type: "agent.activity", activityId: "pending_command", kind: "command", label: "Run command", status: "running" },
+    { ...base, id: "pending_tool", type: "tool.progress", toolCallId: "pending_tool", label: "Using a tool", status: "running" },
+    { ...base, id: "finished_tool", type: "agent.activity", activityId: "finished_tool", kind: "dynamic_tool", label: "Finished tool", status: "completed" },
+  ];
+  const { providerBinding, activeRun, project, ...chat } = snapshot.chat;
+  const detail = CanonicalChatDetailResponseSchema.parse({ record: { chat }, messages: snapshot.messages, turns: snapshot.turns,
+    runs: snapshot.runs, activities: JSON.parse(JSON.stringify(activities)), queuedTurns: [] });
+  const lists = [canonicalChatPresentation(detail).flatMap(turn => turn.work).flatMap(work => work.kind === "activity-group" ? work.activities : []),
+    projectCanonicalTranscript(detail).flatMap(message => message.toolDisplay ? [message.toolDisplay] : []), buildTranscript(detail).flatMap(message => message.activities)];
+  for (const list of lists) {
+    for (const label of ["Run command", "Using a tool"]) expect(list.find(activity => activity.label === label)?.state).toBe(expected);
+    expect(list.find(activity => activity.label === "Finished tool")?.state).toBe("completed");
+  }
+});

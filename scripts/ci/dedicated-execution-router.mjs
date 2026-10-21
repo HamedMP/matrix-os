@@ -1,6 +1,6 @@
 // Trusted Main bridges route work; they never manufacture candidate coverage.
 import {dispatchExecutionRef,verifyRunExecution,isolatedControllerMarker,isolatedReconciliationScope} from './dedicated-isolated.mjs';
-import {resolveRequestingSource,refreshMarker,refreshExecutionRequested,parseRefreshMarker} from './dedicated-refresh.mjs';
+import {refreshMarker,refreshExecutionRequested,parseRefreshMarker} from './dedicated-refresh.mjs';
 const request={timeout:10_000},sha=/^[a-f0-9]{40}$/;
 const same=(name,repo)=>typeof name==='string'&&name.toLowerCase()===`${repo.owner}/${repo.repo}`.toLowerCase();
 function configuration(controllerSha,snapshot){
@@ -17,10 +17,15 @@ async function existing(github,repo,path,ref,title){
 }
 export async function routeManualCi(github,repo,controllerSha,inputs,snapshot){
  configuration(controllerSha,snapshot);
- if(!/^[1-9][0-9]{0,5}$/.test(inputs.pr_number||'')||![inputs.head_sha,inputs.base_sha,inputs.source_sha].every(v=>sha.test(v||'')))throw new Error('Invalid exact requesting source inputs');
+ const mode=inputs.execution_mode||'linux';
+ if(!['linux','hosted-only'].includes(mode)||!/^[1-9][0-9]{0,5}$/.test(inputs.pr_number||'')||![inputs.head_sha,inputs.base_sha,inputs.source_sha].every(v=>sha.test(v||'')))throw new Error('Invalid exact requesting source inputs');
  const {data:pull}=await github.rest.pulls.get({...repo,pull_number:Number(inputs.pr_number),request});
  if(pull.state!=='open'||pull.draft===true||pull.head?.sha!==inputs.head_sha||pull.base?.ref!=='main'&&pull.base?.sha!==inputs.base_sha)return{routed:true,stale:true};
- const tuple=await resolveRequestingSource(github,repo,{sha:controllerSha,ref:'refs/heads/main',workflowRef:`${repo.owner}/${repo.repo}/.github/workflows/ci.yml@refs/heads/main`},inputs);
+ if(pull.number!==Number(inputs.pr_number)||!same(pull.head?.repo?.full_name,repo)||!same(pull.base?.repo?.full_name,repo))throw new Error('Untrusted PR refresh routing target');
+ // Main routes bounded data only. The isolated workflow authenticates its
+ // origin and validates the exact source before checkout, admission or tests.
+ // A stale or invalid PR merge must fail there, never on Main's commit.
+ const tuple={prNumber:Number(inputs.pr_number),headSha:inputs.head_sha,baseSha:inputs.base_sha,sourceSha:inputs.source_sha,...(mode==='hosted-only'?{executionMode:mode}:{})};
  const ref=await dispatchExecutionRef(github,repo,controllerSha,'.github/workflows/ci.yml');
  const prior=await existing(github,repo,'ci.yml',ref,refreshMarker(tuple));
  if(prior)return{routed:true,runId:prior.id,runAttempt:prior.run_attempt};

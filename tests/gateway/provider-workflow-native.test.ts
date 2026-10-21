@@ -14,8 +14,9 @@ import type { ProviderSettingsStoreWriter } from '../../packages/gateway/src/ai-
 import type { TerminalRuntimeSocketClient } from '@matrix-os/terminal-runtime';
 const ref = { workspaceId: 'tws_11111111111111111111111111111111', tabId: 'tt_11111111111111111111111111111111' };
 function nativeFixture(kind: 'codex' | 'claude' | 'hermes' | 'openclaw' | 'pi' | 'opencode' = 'codex') {
-  const row = { id: `harness_${kind}`, harness: kind, displayName: kind, installState: kind === 'codex' ? 'installed' : 'missing', authState: 'unknown', loginMethods: ['terminal'], selectedAccountId: null };
-  const snapshot = { revision: 0, access: { mode: 'writable' }, harnesses: [row], harnessCatalog: [] };
+  const row = { id: `harness_${kind}`, harness: kind, displayName: kind, installState: kind === 'codex' ? 'installed' : 'missing', authState: 'unknown', loginMethods: ['terminal'], selectedAccountId: null,
+    route: { kind: 'fixed', providerId: 'anthropic', modelId: 'claude-sonnet-5' } };
+  const snapshot = { revision: 0, access: { mode: 'writable' }, harnesses: [row], harnessCatalog: [], accounts: [], accessSources: [] };
   const store = { getSnapshot: vi.fn(async () => snapshot), completeClaudeNativeLogin: vi.fn(async () => ({ kind: "snapshot", snapshot })), mutate: vi.fn(async () => ({ kind: 'login_attempt', snapshot, attempt: { action: { kind: 'open_terminal', terminalSessionId: `${ref.workspaceId}:${ref.tabId}` } } })) } as unknown as ProviderSettingsStoreWriter;
   let observer: Parameters<TerminalRuntimeSocketClient['attach']>[0];
   const close = vi.fn(); const order: string[] = [];
@@ -126,15 +127,20 @@ it('releases a profile on observed native exit and reaps an ambiguous launch bef
   expect(f.terminal.terminateTab).toHaveBeenCalledOnce(); expect(release).toHaveBeenCalledOnce();
 });
 
-it('deliberate successful login enables the exact saved harness before reporting success', async () => {
+it('successful Terminal login selects its exact native account before reporting success', async () => {
   const f = nativeFixture('claude'); f.row.installState = 'installed';
-  Object.assign(f.row, { enabled: false, authState: 'authenticated' });
+  Object.assign(f.row, { enabled: false });
   const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, hostControl: { available: false, run: vi.fn() } });
   const publish = vi.fn();
   await adapter!.start({ registerCleanup: () => {},  request: { harnessInstanceId: 'harness_claude', kind: 'login', method: 'terminal', idempotencyKey: 'connect-off' }, publish });
+  Object.assign(await f.store.getSnapshot(), {
+    accounts: [{ id: 'owner_claude_profile', providerId: 'anthropic', accessSourceId: 'owner_claude_profile', authMethod: 'terminal', authState: 'authenticated' }],
+    accessSources: [{ id: 'owner_claude_profile', kind: 'provider_account', fundingKind: 'owner_account', providerId: 'anthropic', accountId: 'owner_claude_profile', eligibleModelIds: ['claude-sonnet-5'] }],
+  });
   f.observer().onFrame({ type: 'exit', revision: 1, exitCode: 0, terminalRef: ref });
   await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null }));
-  expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_harness_enabled', harnessInstanceId: 'harness_claude', enabled: true, expectedRevision: 0 }));
+  expect(f.store.completeClaudeNativeLogin).toHaveBeenCalledWith(expect.objectContaining({ harnessInstanceId: 'harness_claude', expectedRevision: 0 }));
+  expect(f.store.mutate).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'set_harness_enabled' }));
 });
 it.each(['unverified-profile', 'replaced-harness', 'owner-denied'] as const)('does not confirm Terminal consent from stale or unverified native state: %s', async mode => {
   const f = nativeFixture('claude'); f.row.installState = 'installed'; const snapshot = await f.store.getSnapshot();
@@ -206,31 +212,34 @@ it('keeps embedded device login unavailable while advertising owner Terminal log
 
 describe('Claude native completion with independent execution readiness', () => {
   it.each(['selected', 'unrelated', 'unknown', 'failed', 'wrong-source', 'wrong-source-account'] as const)(
-    'accepts only the exact authenticated selected account: %s', async mode => {
+    'selects only the exact authenticated native account after Terminal exit: %s', async mode => {
       const f = nativeFixture('claude'); f.row.installState = 'installed';
       Object.assign(f.row, {enabled: false, selectedAccountId: 'owner_claude', accessSourceId: 'owner_anthropic_profile', route: {kind: 'fixed', providerId: 'anthropic', modelId: 'gpt-test'}});
       const current = await f.store.getSnapshot();
       Object.assign(current, {
-        accounts: [{id: mode === 'unrelated' ? 'other_account' : 'owner_claude', providerId: 'anthropic', authState: mode === 'unknown' ? 'unknown' : mode === 'failed' ? 'failed' : 'authenticated', accessSourceId: mode === 'wrong-source' ? 'other_source' : 'owner_anthropic_profile'}],
-        accessSources: [{id: 'owner_anthropic_profile', providerId: 'anthropic', accountId: mode === 'wrong-source-account' ? 'other_account' : 'owner_claude', readiness: {state: 'unknown'}}],
+        accounts: [{id: mode === 'unrelated' ? 'other_account' : 'owner_claude_profile', providerId: 'anthropic', authMethod: 'terminal', authState: mode === 'unknown' ? 'unknown' : mode === 'failed' ? 'failed' : 'authenticated', accessSourceId: mode === 'wrong-source' ? 'other_source' : 'owner_claude_profile'}],
+        accessSources: [{id: 'owner_claude_profile', kind: 'provider_account', fundingKind: 'owner_account', providerId: 'anthropic', accountId: mode === 'wrong-source-account' ? 'other_account' : 'owner_claude_profile', eligibleModelIds: ['gpt-test'], readiness: {state: 'unknown'}}],
       });
+      let connected = false;
       vi.mocked(f.store.getSnapshot).mockImplementation(async options => ({...current,
         accounts: current.accounts.map(account => ({...account,
-          authState: options?.includeNativeAccountMetadata ? account.authState : 'unknown',
+          authState: connected && options?.includeNativeAccountMetadata ? account.authState : 'unknown',
         })),
       }));
       const [adapter] = await createNativeProviderWorkflowAdapters({store: f.store, terminal: f.terminal, hostControl: {available: false, run: vi.fn()}});
       const publish = vi.fn();
       await adapter!.start({ registerCleanup: () => {}, request: {harnessInstanceId: 'harness_claude', kind: 'login', method: 'terminal', idempotencyKey: 'exact-account-connect'}, publish });
+      connected = true;
       f.observer().onFrame({ type: 'exit', revision: 1, exitCode: 0, terminalRef: ref });
       if (mode === 'selected') {
         await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({state: 'succeeded', safeFailure: null}));
-        expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({type: 'set_harness_enabled', harnessInstanceId: 'harness_claude', enabled: true, expectedRevision: current.revision}));
+        expect(f.store.completeClaudeNativeLogin).toHaveBeenCalledWith(expect.objectContaining({harnessInstanceId: 'harness_claude', expectedRevision: current.revision}));
         expect(f.row.authState).toBe('unknown');
         expect(f.store.getSnapshot).toHaveBeenCalledWith({refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false});
       } else {
         await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({state: 'failed', safeFailure: 'unavailable'}));
         expect(f.store.mutate).not.toHaveBeenCalledWith(expect.objectContaining({type: 'set_harness_enabled'}));
+        expect(f.store.completeClaudeNativeLogin).not.toHaveBeenCalled();
       }
     },
   );
@@ -249,11 +258,16 @@ it.each(['native-account', 'local-marker-only', 'missing-profile', 'wrong-source
     Object.assign(snapshot, {
       accounts: [{ id: 'owner_claude_profile', providerId: 'anthropic', accessSourceId: mode === 'wrong-source' ? 'owner_anthropic_key' : 'owner_claude_profile',
         authMethod: mode === 'api-key' ? 'api_key' : 'terminal', authState: ['missing-profile', 'local-marker-only'].includes(mode) ? 'unknown' : 'authenticated' }],
-      accessSources: [{ id: 'owner_claude_profile', kind: 'provider_account', providerId: 'anthropic', accountId: 'owner_claude_profile',
+      accessSources: [{ id: 'owner_claude_profile', kind: 'provider_account', fundingKind: 'owner_account', providerId: 'anthropic', accountId: 'owner_claude_profile',
         eligibleModelIds: mode === 'changed-model' ? ['claude-opus-5'] : ['claude-sonnet-5'] }],
       ...(mode === 'read-only' ? { access: { mode: 'read_only' } } : {}),
     });
+    let connected = false;
+    vi.mocked(f.store.getSnapshot).mockImplementation(async () => ({ ...snapshot,
+      accounts: snapshot.accounts.map(account => ({ ...account, authState: connected ? account.authState : 'unknown' })),
+    }));
     const login = vi.fn(async ({ onSuccess }) => {
+      connected = true;
       if (mode === 'replaced-harness') f.row.id = 'replacement';
       await onSuccess(); return { cancel: vi.fn(), submitCode: vi.fn(async () => {}) };
     });
@@ -499,4 +513,25 @@ it('preserves Main read-only suppression of Claude workflow adapters', async () 
     hostControl: { available: false, run: vi.fn() }, claudeBrowserLogin });
   expect(adapters).toEqual([]);
   expect(claudeBrowserLogin).not.toHaveBeenCalled();
+});
+
+
+it.each(['wrong-harness', 'wrong-billing', 'wrong-execution'] as const)('keeps the native Codex login guard before side effects: %s', async mode => {
+  const f = nativeFixture();
+  Object.assign(f.row, { route: { kind: 'fixed', providerId: 'openai', modelId: 'gpt-test' } });
+  f.store.completeCodexNativeLogin = vi.fn(async () => ({ kind: 'snapshot', snapshot: await f.store.getSnapshot() }));
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal });
+  const operation = adapter!.start({ request: { harnessInstanceId: mode === 'wrong-harness' ? 'harness_claude' : f.row.id,
+    kind: 'login', method: 'terminal', idempotencyKey: `codex-guard-${mode}` },
+    connectionOption: { id: 'openai_terminal', providerId: 'openai', authKind: 'subscription', method: 'terminal',
+      billingKind: mode === 'wrong-billing' ? 'api_key' : 'subscription',
+      executionKind: mode === 'wrong-execution' ? 'gateway' as never : 'native', availability: 'available' },
+    publish: vi.fn(), registerCleanup: vi.fn() });
+  try {
+    await expect(operation).rejects.toThrow('unavailable');
+    expect(f.store.mutate).not.toHaveBeenCalled();
+    expect(f.store.completeCodexNativeLogin).not.toHaveBeenCalled();
+    expect(f.store.completeClaudeNativeLogin).not.toHaveBeenCalled();
+    expect(f.terminal.createTab).not.toHaveBeenCalled();
+  } finally { const running = await operation.catch(() => undefined); await running?.cancel(); }
 });

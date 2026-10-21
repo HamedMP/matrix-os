@@ -1,0 +1,135 @@
+.matrix-chat-import {
+  --import-text: var(--text-primary, var(--foreground));
+  --import-muted: var(--text-secondary, var(--muted-foreground));
+  --import-surface: var(--bg-surface, var(--card));
+  --import-sunken: var(--bg-sunken, var(--muted));
+  --import-border: var(--border-default, var(--border));
+  --import-accent: var(--accent, var(--primary));
+  --import-danger: var(--danger, var(--destructive));
+  color: var(--import-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 820px;
+  min-width: 0;
+  margin: 0 auto;
+}
+.matrix-chat-import *, .matrix-chat-import *::before, .matrix-chat-import *::after { box-sizing: border-box; }
+.matrix-chat-import p, .matrix-chat-import h2, .matrix-chat-import h3 { margin: 0; }
+.matrix-chat-import button, .matrix-chat-import input { font: inherit; }
+.matrix-chat-import button { cursor: pointer; }
+.matrix-chat-import button:disabled { opacity: .5; cursor: default; }
+.matrix-chat-import button:focus-visible, .matrix-chat-import input:focus-visible, .matrix-chat-import summary:focus-visible {
+  outline: 2px solid var(--import-accent); outline-offset: 3px;
+}
+.matrix-import-header { margin-bottom: 24px; max-width: 570px; }
+.matrix-import-header h2 { font-family: var(--font-heading, inherit); font-size: 25px; font-weight: 600; letter-spacing: -.6px; }
+.matrix-import-header p { color: var(--import-muted); margin-top: 7px; font-size: 14px; }
+.matrix-import-sources { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+.matrix-import-source { display: flex; align-items: center; gap: 12px; text-align: left; padding: 15px; border: 1px solid var(--import-border); border-radius: 12px; background: var(--import-surface); color: inherit; }
+.matrix-import-source[aria-pressed="true"] { border-color: var(--import-accent); background: color-mix(in srgb, var(--import-accent) 6%, var(--import-surface)); box-shadow: inset 0 0 0 1px var(--import-accent); }
+.matrix-import-source strong { display: block; font-size: 14px; font-weight: 600; }
+.matrix-import-source small { display: block; color: var(--import-muted); margin-top: 2px; font-size: 12px; }
+.matrix-import-source-mark { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 9px; background: var(--import-sunken); font-size: 26px; line-height: 1; }
+.matrix-import-source-check { margin-left: auto; color: var(--import-accent); min-width: 17px; }
+.matrix-import-picker { display: flex; align-items: center; gap: 14px; padding: 22px 18px; border: 1px dashed var(--import-border); border-radius: 12px; }
+.matrix-import-picker > svg { flex-shrink: 0; color: var(--import-muted); }
+.matrix-import-picker > div { flex: 1; }
+.matrix-import-picker strong { font-weight: 500; }
+.matrix-import-picker p { color: var(--import-muted); margin-top: 3px; font-size: 12px; }
+.matrix-import-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--import-border); border-radius: 7px; padding: 8px 13px; color: inherit; background: var(--import-surface); white-space: nowrap; font-weight: 500; }
+.matrix-import-button:hover:enabled { background: var(--import-sunken); }
+.matrix-import-primary { background: var(--import-accent); color: var(--text-on-accent, var(--accent-foreground, var(--primary-foreground))); border-color: var(--import-accent); }
+.matrix-import-primary:hover:enabled { background: var(--accent-hover, var(--import-accent)); }
+.matrix-import-file-picker { position: relative; cursor: pointer; }
+.matrix-import-file-picker[aria-disabled="true"] { opacity: .5; cursor: default; }
+.matrix-import-file-picker:focus-within { outline: 2px solid var(--import-accent); outline-offset: 3px; }
+.matrix-import-file-picker input { opacity: 0; position: absolute; inset: 0; width: 100%; cursor: inherit; }
+.matrix-import-reading { margin-top: 14px !important; color: var(--import-muted); }
+.matrix-import-error { color: var(--import-danger); padding: 12px 0 0; overflow-wrap: anywhere; }
+.matrix-import-review { margin-top: 28px; }
+.matrix-import-review-head { display: flex; align-items: center; gap: 15px; justify-content: space-between; margin-bottom: 12px; }
+.matrix-import-review-head h3 { font-weight: 600; font-size: 15px; }
+.matrix-import-review-head p { color: var(--import-muted); font-size: 12px; margin-top: 3px; }
+.matrix-import-private { display: inline-flex; align-items: center; gap: 5px; color: var(--import-muted); font-size: 12px; }
+.matrix-import-list { padding: 0; margin: 0; list-style: none; border: 1px solid var(--import-border); border-radius: 12px; overflow: hidden; }
+.matrix-import-row { padding: 18px; background: var(--import-surface); }
+.matrix-import-row + .matrix-import-row { border-top: 1px solid var(--import-border); }
+.matrix-import-row-head { display: flex; align-items: center; gap: 12px; }
+.matrix-import-file { color: var(--import-muted); align-self: flex-start; margin-top: 5px; }
+.matrix-import-row[data-status="imported"] .matrix-import-file { color: var(--success, var(--import-accent)); }
+.matrix-import-row-heading { flex: 1; min-width: 0; }
+.matrix-import-title input { width: 100%; min-width: 0; background: transparent; color: inherit; border: 1px solid transparent; padding: 3px 5px; margin-left: -5px; border-radius: 4px; font-size: 14px; font-weight: 500; }
+.matrix-import-title input:hover:enabled { border-color: var(--import-border); }
+.matrix-import-title input:disabled { opacity: 1; }
+.matrix-import-meta { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; color: var(--import-muted); font-size: 11px; }
+.matrix-import-meta > span + span { border-left: 1px solid var(--import-border); padding-left: 9px; }
+.matrix-import-state { color: var(--import-muted); font-size: 11px; flex-shrink: 0; }
+.matrix-import-row[data-status="imported"] .matrix-import-state { color: var(--success, var(--import-accent)); }
+.matrix-import-row[data-status="failed"] .matrix-import-state { color: var(--import-danger); }
+.matrix-import-icon-button { display: grid; place-items: center; padding: 5px; background: transparent; color: var(--import-muted); border: none; border-radius: 5px; }
+.matrix-import-icon-button:hover:enabled { background: var(--import-sunken); }
+.matrix-import-snippet { margin-top: 12px !important; padding-left: 12px; border-left: 2px solid var(--import-border); color: var(--import-muted); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 90px; overflow: auto; font-size: 12px; }
+.matrix-import-details { color: var(--import-muted); margin-top: 12px; font-size: 11px; }
+.matrix-import-details summary { cursor: pointer; width: fit-content; }
+.matrix-import-details > div { margin-top: 8px; overflow-wrap: anywhere; }
+.matrix-import-details p + p { margin-top: 5px; }
+.matrix-import-note { margin-top: 10px !important; font-size: 11px; color: var(--import-muted); }
+.matrix-import-transfer { margin-top: 12px; color: var(--import-muted); font-size: 12px; }
+.matrix-import-transfer progress { display: block; width: 100%; height: 5px; margin-top: 8px; accent-color: var(--import-accent); border: none; border-radius: 4px; overflow: hidden; }
+.matrix-import-transfer progress::-webkit-progress-bar { background: var(--import-sunken); }
+.matrix-import-transfer progress::-webkit-progress-value { background: var(--import-accent); }
+.matrix-import-result { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; font-size: 12px; color: var(--import-muted); }
+.matrix-import-text-button { display: inline-flex; align-items: center; gap: 3px; color: var(--import-accent); background: transparent; border: none; padding: 4px 0; font-size: 12px; }
+.matrix-import-completion { display: flex; align-items: center; gap: 8px; margin-top: 14px !important; color: var(--success, var(--import-accent)); }
+.matrix-import-footer { padding-top: 16px; }
+.matrix-import-privacy { display: flex; align-items: flex-start; gap: 9px; color: var(--import-muted); font-size: 11px; }
+.matrix-import-privacy svg { flex-shrink: 0; margin-top: 2px; }
+.matrix-import-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; }
+.matrix-import-actions > p { color: var(--import-muted); font-size: 11px; max-width: 330px; }
+.matrix-import-actions > div { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.matrix-import-empty { display: flex; align-items: flex-start; gap: 12px; margin: 26px 0 0; padding: 18px; background: var(--import-sunken); border-radius: 10px; color: var(--import-muted); }
+.matrix-import-empty svg { margin-top: 3px; flex-shrink: 0; }
+.matrix-import-empty strong { color: var(--import-text); font-weight: 500; }
+.matrix-import-empty p { font-size: 12px; max-width: 510px; margin-top: 4px; }
+.matrix-import-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (max-width: 600px) {
+  .matrix-import-picker { flex-wrap: wrap; padding: 16px; }
+  .matrix-import-picker > div { flex-basis: calc(100% - 40px); }
+  .matrix-import-picker > .matrix-import-button { margin-left: 39px; }
+  .matrix-import-source { padding: 12px; gap: 8px; }
+  .matrix-import-source-mark { display: none; }
+  .matrix-import-row { padding: 14px; }
+  .matrix-import-row-head { flex-wrap: wrap; gap: 8px; }
+  .matrix-import-state { flex-basis: calc(100% - 33px); margin-left: 32px; }
+  .matrix-import-icon-button { margin-left: auto; }
+  .matrix-import-actions { flex-direction: column; align-items: flex-start; }
+  .matrix-import-result { flex-wrap: wrap; }
+}
+.matrix-import-library { margin-top: 8px; }
+.matrix-import-library-head { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 12px; }
+.matrix-import-library-head h3 { font-size: 14px; font-weight: 500; }
+.matrix-import-library-head p { color: var(--import-muted); font-size: 11px; margin-top: 4px; }
+.matrix-import-search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--import-border); border-radius: 8px; padding: 8px 11px; color: var(--import-muted); }
+.matrix-import-search input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; color: var(--import-text); }
+.matrix-import-search:focus-within { outline: 2px solid var(--import-accent); outline-offset: 2px; }
+.matrix-import-candidates { list-style: none; margin: 12px 0 0; padding: 0; max-height: 320px; overflow: auto; border: 1px solid var(--import-border); border-radius: 10px; }
+.matrix-import-candidates li + li { border-top: 1px solid var(--import-border); }
+.matrix-import-candidate { display: flex; align-items: center; gap: 10px; padding: 12px; cursor: pointer; }
+.matrix-import-candidate:has(input:checked) { background: color-mix(in srgb, var(--import-accent) 6%, var(--import-surface)); }
+.matrix-import-candidate input { accent-color: var(--import-accent); flex-shrink: 0; width: 14px; height: 14px; }
+.matrix-import-candidate-copy { flex: 1; min-width: 0; }
+.matrix-import-candidate-copy strong { display: block; font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.matrix-import-candidate small { display: block; font-size: 11px; color: var(--import-muted); margin-top: 2px; }
+.matrix-import-candidate-date { flex-shrink: 0; text-align: right; color: var(--import-muted); font-size: 11px; }
+.matrix-import-library-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; color: var(--import-muted); font-size: 12px; }
+.matrix-import-library-actions > div { display: flex; gap: 12px; align-items: center; }
+.matrix-import-library-message { padding: 24px 12px; color: var(--import-muted); font-size: 12px; }
+.matrix-import-library-message strong { color: var(--import-text); }
+.matrix-import-library-message p { margin-top: 4px; }
+@media (max-width: 600px) { .matrix-import-library-actions { flex-wrap: wrap; } }
+
+.matrix-import-candidate-wrap { display: flex; align-items: center; padding-right: 12px; gap: 8px; }
+.matrix-import-candidate-wrap > label { flex: 1; min-width: 0; }
+.matrix-import-candidate-error { color: var(--import-danger); font-size: 11px; padding: 0 12px 10px; }
+@media (max-width: 600px) { .matrix-import-library-actions > div { flex-wrap: wrap; } .matrix-import-candidate-date { display: none; } }

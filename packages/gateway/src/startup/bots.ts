@@ -141,6 +141,7 @@ export interface BotServices {
 }
 
 export async function startBots(options: {
+  toolOutputKey?: Buffer;
   runtimeOwnerId?: string | null;
   computerId?: string | null;
   nativeProfileGuard?: NativeProviderProfileGuard;
@@ -155,6 +156,7 @@ export async function startBots(options: {
   integrations?: BotIntegrationTransport;
   jev?: JevBotWorkflowDependencies;
   managedMcp?: { client: import("../chat/managed-pi-mcp-client.js").ManagedPiMcpClient; approvals: import("../chat/custom-mcp-approval-client.js").CustomMcpApprovalClient };
+  sharedBrowser?: import("../shared-browser/broker.js").SharedBrowserBroker;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
   now?: () => Date;
@@ -331,11 +333,14 @@ export async function startBots(options: {
   }) : undefined;
   const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry });
   const managedCapabilities: import("@matrix-os/contracts").BotToolCapability[] = [
+    ...(options.sharedBrowser ? ["browser.action"] as const : []),
     ...(integrationClient ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
     ...(options.managedMcp ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
   ];
-  const managedAdmission = createManagedPiAdmission({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, homePath: options.homePath, host, registry, roots: options.executionRoots, toolCapabilities: managedCapabilities });
-  const ownerTools = createManagedPiOwnerTools({ authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
+  const managedAdmission = createManagedPiAdmission({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, homePath: options.homePath, host, registry, roots: options.executionRoots,
+    supervisedBrowser: typeof options.sharedBrowser?.authorizeAction === "function", toolCapabilities: managedCapabilities });
+  const ownerTools = createManagedPiOwnerTools({ toolOutputKey: options.toolOutputKey, authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
+    ...(options.sharedBrowser ? { sharedBrowser: options.sharedBrowser } : {}),
     ...(integrationClient ? { integrations: integrationClient } : {}),
     ...(options.managedMcp ? { mcp: options.managedMcp.client, approvals: options.managedMcp.approvals } : {}) });
   let forgetRun: (runId: string) => void = () => undefined;
@@ -374,7 +379,7 @@ export async function startBots(options: {
       forgetRun(runId);
     },
   });
-  const managed = createManagedPiRuntime({ personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+  const managed = createManagedPiRuntime({ toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
     homePath: options.homePath, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,

@@ -10,6 +10,7 @@ import { useConnection } from "../../stores/connection";
 import { useAppsQuery } from "../apps/apps.api";
 import { desktopTabsWithLiveAppArtwork } from "./bundled-app-icons";
 import DesktopTabStrip from "./DesktopTabStrip";
+import { nativeBrowserProduct } from "../../../../shared/browser-products";
 
 export default function DesktopHeaderTabs() {
   const tabs = useTabs((state) => state.tabs);
@@ -67,7 +68,7 @@ export default function DesktopHeaderTabs() {
     const wasActive = useTabs.getState().activeTabId === tab.id;
     if (tab.closable) closeTab(tab.id);
     else closeSurface(tab.id);
-    if (tab.kind === "home" || tab.kind === "browser") requestBackgroundRefresh();
+    if (tab.kind === "home" || tab.kind === "browser" || nativeBrowserProduct(tab.appIdentity ?? "", tab.slug ?? "")) requestBackgroundRefresh();
     if (wasActive) focusFallback(tab.id);
   }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh]);
 
@@ -75,7 +76,7 @@ export default function DesktopHeaderTabs() {
     const tab = useTabs.getState().tabs.find((candidate) => candidate.id === tabId);
     restoreAsWindow(tabId);
     focusTab(tabId);
-    if (tab?.kind === "home" || tab?.kind === "browser") requestBackgroundRefresh();
+    if (tab?.kind === "home" || tab?.kind === "browser" || nativeBrowserProduct(tab?.appIdentity ?? "", tab?.slug ?? "")) requestBackgroundRefresh();
   }, [focusTab, requestBackgroundRefresh, restoreAsWindow]);
 
   return (

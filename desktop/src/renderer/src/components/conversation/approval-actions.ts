@@ -1,3 +1,4 @@
+import { browserCanonicalDecision, type BrowserPermissionChoice } from "@matrix-os/contracts";
 import type { ConversationActionPresentation, ConversationPresentationCallbacks } from "./presentation";
 
 type ApprovalAction = Extract<ConversationActionPresentation, { kind: "approval" }>;
@@ -17,4 +18,14 @@ export function offeredApprovalAction(
   ));
   if (!action || (callbacks.canPerformAction && !callbacks.canPerformAction(action))) return null;
   return action;
+}
+
+/** Keep browser choice provenance while applying the same offered-action/viewer gate. */
+export function offeredBrowserApprovalAction(
+  request: { actions?: readonly ConversationActionPresentation[] },
+  callbacks: Pick<ConversationPresentationCallbacks, "performAction" | "canPerformAction">,
+  choice: BrowserPermissionChoice,
+): ApprovalAction | null {
+  const action = offeredApprovalAction(request, callbacks, browserCanonicalDecision(choice));
+  return action ? { ...action, browserChoice: choice } : null;
 }

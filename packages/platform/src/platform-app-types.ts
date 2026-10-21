@@ -15,4 +15,5 @@ export type PlatformApp = Hono<{
     options?: { distinctId?: string },
   ): void;
   shutdownPostHog(): Promise<void>;
+  shutdownBrowserApprovals?(): Promise<void>;
 };

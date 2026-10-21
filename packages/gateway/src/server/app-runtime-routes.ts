@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { registerBrowserLabRoutes, type BrowserLabOptions } from "../browser-lab/routes.js";
 import {
   createAppDispatcher,
   appSessionMiddleware,
@@ -27,6 +28,7 @@ export interface AppRuntimeRouteDeps {
   homePath: string;
   appSessionMasterSecret: string;
   devAppAuthBypass: boolean;
+  browserLab?: Omit<BrowserLabOptions, "deriveKey"> & { onRegistered?: (lab: { close(): void }) => void };
   publicHost: string;
   onAppError: (event: { errorKind: string; appSlug?: string }) => void;
 }
@@ -244,6 +246,16 @@ export function registerAppRuntimeRoutes(app: Hono, deps: AppRuntimeRouteDeps): 
       },
     });
   });
+
+  const browserLab = registerBrowserLabRoutes(app, {
+    enabled: deps.browserLab?.enabled ?? false,
+    deriveKey: (slug) => deriveAppSessionKey(appSessionMasterSecret, slug),
+    isAllowedOrigin: deps.browserLab?.isAllowedOrigin ?? (() => false),
+    upgradeWebSocket: deps.browserLab?.upgradeWebSocket,
+    viewerAuthorization: deps.browserLab?.viewerAuthorization,
+    sharedBrowser: deps.browserLab?.sharedBrowser,
+  });
+  deps.browserLab?.onRegistered?.(browserLab);
 
   if (!devAppAuthBypass) {
     app.use(

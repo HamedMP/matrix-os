@@ -43,7 +43,7 @@ function ComposerForm({ onClose }: { onClose: () => void }) {
     onClose();
     // Agent runs live inside the unified chat now; the new thread is selected
     // in the chat rail (ChatTab focuses the active thread).
-    openTab({ kind: "chat", title: "Hermes", closable: false });
+    openTab({ kind: "chat", title: "Chat", closable: false });
   };
 
   return (

@@ -1,0 +1,49 @@
+{
+  "units": {
+    "matrix-browser-lab.service": "active",
+    "matrix-browser-lab-vnc.service": "active",
+    "matrix-browser-lab-wm.service": "active",
+    "matrix-browser-lab-desktop.service": "active",
+    "matrix-browser-lab-panel.service": "active",
+    "matrix-browser-lab-chrome.service": "active"
+  },
+  "gateway": "active",
+  "bundle": "v2026.10.17-pr2687-39024145844-1-cc96719",
+  "completed": true,
+  "browserFlag": true,
+  "listeners": [
+    "LISTEN 0      5          127.0.0.1:6901       0.0.0.0:*          ",
+    "LISTEN 0      511        127.0.0.1:8730       0.0.0.0:*          ",
+    "LISTEN 0      10         127.0.0.1:9222       0.0.0.0:*          "
+  ],
+  "manifest": {
+    "httpStatus": 200,
+    "name": "Browser Lab",
+    "runtimeState": {
+      "status": "ready"
+    }
+  },
+  "appSessionStatus": 200,
+  "browserStatus": {
+    "httpStatus": 200,
+    "available": true,
+    "chrome": {
+      "present": true,
+      "minimized": false
+    },
+    "humanControlAvailable": false,
+    "automation": {
+      "phase": "idle",
+      "revision": 0,
+      "needsObservation": true,
+      "run": null
+    }
+  },
+  "browserSession": {
+    "httpStatus": 200,
+    "ticketIssued": true
+  },
+  "humanKeyboardNavigationVerified": true,
+  "examplePageConfirmedByCDP": true,
+  "temporaryStageRemoved": true
+}

@@ -96,6 +96,17 @@ const tool = (overrides: Partial<BotToolRequest> = {}) => frame({
 });
 
 describe("bot broker actions", () => {
+  it("gives only browser actions a bounded human pause deadline", async () => {
+    binding.capabilities = ["browser.action"];
+    const timeouts = vi.spyOn(AbortSignal, "timeout");
+    const { actions } = setup({ toolTimeoutMs: 1, tools: { dispatch: async () => {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      return { result: { ok: true, content: [{ type: "text", text: "observe again" }] } };
+    } } });
+    await expect(actions.handleFrame(tool({ capability: "browser.action", args: { action: "snapshot" } })))
+      .resolves.toMatchObject({ ok: true });
+    expect(timeouts).toHaveBeenCalledWith(360_000);
+  });
   it("gives bounded Jev processing time beyond the ordinary tool deadline", async () => {
     binding.capabilities = ["jev.inbox"];
     const timeouts = vi.spyOn(AbortSignal, "timeout");

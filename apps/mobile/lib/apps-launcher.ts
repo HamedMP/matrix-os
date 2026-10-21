@@ -14,7 +14,8 @@ export type DefaultAppDestination =
   | { kind: "screen"; href: "/files" | "/integrations" };
 
 // The desktop defaults that are screens of this app, keyed by the launcher's
-// id for them. Editor, VS Code and Browser have no screen here and are left out.
+// id for them. Editor, VS Code, Browser and Cloud desktop have no screen here
+// and are left out.
 const DEFAULT_APP_DESTINATIONS = {
   chat: { kind: "tab", tab: "chats" },
   terminal: { kind: "tab", tab: "terminal" },

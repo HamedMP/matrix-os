@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Operator-only, explicit opt-in. Ordinary bundle installation never enables Chrome.
+if [ "$(id -u)" != 0 ] || { [ "$#" != 1 ] && [ "$#" != 3 ]; }; then
+  echo 'Usage: sudo matrix-install-browser-preview <exact-preview-handle> [machine-id owner-id]' >&2
+  exit 64
+fi
+bin=/opt/matrix/bin
+archive="$bin/matrix-browser-preview.tar.gz"
+guard="$bin/matrix-browser-preview-guard.py"
+for file in "$archive" "$guard"; do
+  if [ ! -f "$file" ] || [ -L "$file" ]; then
+    echo 'Browser preview payload is missing. Install the reviewed Browser preview bundle first.' >&2
+    exit 64
+  fi
+  # Fresh cloud-init uses root:matrix; in-place updates use root:root. Neither
+  # group may write privileged code. Ownership of the group does not grant execution authority.
+  if [[ ! "$(stat -c '%u:%g:%a' "$file")" =~ ^0:[0-9]+:(644|755)$ ]]; then
+    echo 'Browser preview payload must be root-owned and not writable by the owner account.' >&2
+    exit 64
+  fi
+done
+# Read classification as data, before creating temporary files or changing services.
+/usr/bin/python3 -I "$guard" guard "$@"
+# /run is root-writable only; /run/lock can permit unprivileged symlink creation.
+exec 9>/run/matrix-browser-preview.lock
+flock -w 30 9
+temporary="$(mktemp -d /tmp/matrix-browser-preview.XXXXXX)"
+trap 'rm -rf -- "$temporary"' EXIT
+tar -xzf "$archive" -C "$temporary" --no-same-owner
+legacy_setup_complete() {
+  [ -f /opt/matrix-browser-lab/app/supervisor.mjs ] && [ -f /opt/matrix-browser-lab/viewer.passwd ] || return 1
+  grep -qx 'MATRIX_BROWSER_LAB=true' /opt/matrix/env/host.env || return 1
+  local unit
+  for unit in matrix-browser-lab{,-vnc,-wm,-desktop,-panel,-chrome}.service; do
+    [ -f "/etc/systemd/system/$unit" ] && systemctl is-active --quiet "$unit" || return 1
+  done
+}
+if [ -f /opt/matrix-browser-lab/.setup-complete ] || legacy_setup_complete; then
+  # Preserve Chrome/VNC PIDs, the profile, and existing viewer credentials.
+  timeout --kill-after=30 1800 bash "$temporary/update-experience.sh" "$@"
+else
+  timeout --kill-after=30 1800 bash "$temporary/install.sh" "$@"
+fi
+touch /opt/matrix-browser-lab/.setup-complete
+echo 'Browser preview setup finished. Reopen Browser on this preview computer.'

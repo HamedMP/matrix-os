@@ -2,6 +2,7 @@ import type { createGenericNativeWriter, GenericNativeWriterProfile } from "./ge
 import type { createHermesSettingsConnection } from "./hermes-settings-auth.js";
 import type { NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
 import { nativeWorkflowConnectionOptions } from "./native-workflow-options.js";
+import { createClaudeNativeConnectCompletion } from "./claude-native-connect-completion.js";
 import { observeNativeCommandCompletion } from './native-command-completion.js';
 import { authenticatedNativeHarness } from "./native-workflow-account.js";
 import type { createPiSettingsConnection } from "./pi-settings-auth.js";
@@ -13,7 +14,7 @@ import type { NativeProviderProfileGuard } from "./native-provider-profile-guard
 import type { ProviderKeyVerifier } from "./provider-workflow-key.js";
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { randomUUID, createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { CODEX_VERIFIED_NPM_PACKAGE, type TerminalRef, type AiProviderSnapshotV3, type ProviderWorkflowStart } from '@matrix-os/contracts';
@@ -128,6 +129,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
     ];
     const apiKeyProviders = opencodeCapability.apiKey && settingsConnection && "apiKeyProviders" in settingsConnection
       ? [...await settingsConnection.apiKeyProviders()] : opencodeCapability.apiKey ? ['openai' as const] : keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [];
+    const nativeClaudeCompletion = createClaudeNativeConnectCompletion(options.store, harness.id);
     const confirmNativeLogin = async (idempotencyKey: string, startRevision?: number, current = () => true, verifyNativeAccount?: NativeAccountCompletionProof) => {
       const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
       if (!current()) throw new ProviderWorkflowError('unavailable');
@@ -157,9 +159,22 @@ export async function createNativeProviderWorkflowAdapters(options: {
         const codexTerminalLogin = harness.harness === 'codex' && request.kind === 'login' && request.method === 'terminal';
         // Codex admits only the qualified official native protocol or Terminal handoff.
         if (request.kind === 'login' && harness.harness !== 'claude' && !(harness.harness === 'codex' && (request.method === 'terminal' || request.method === 'device_code' && canDeviceLogin))) throw new ProviderWorkflowNotStartedError();
+        if (request.kind === 'login' && request.harnessInstanceId !== harness.id) throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && (!request.method || !loginMethods.includes(request.method))) throw new ProviderWorkflowNotStartedError();
         if (connectionOption && (connectionOption.availability !== "available" || connectionOption.providerId !== (harness.harness === "claude" ? "anthropic" : "openai"))) throw new ProviderWorkflowNotStartedError();
-        if (request.kind === 'login' && connectionOption && (connectionOption.authKind !== 'subscription' || connectionOption.method !== request.method)) throw new ProviderWorkflowNotStartedError();
+        if (request.kind === 'login' && connectionOption && (connectionOption.authKind !== 'subscription'
+          || connectionOption.billingKind !== 'subscription' || connectionOption.executionKind !== 'native'
+          || connectionOption.method !== request.method)) throw new ProviderWorkflowNotStartedError();
+        if (request.kind === 'login' && harness.harness === 'claude') {
+          // No native resource exists during adoption. Register that fact before
+          // a completion can fail after committing; failure must not strand the
+          // workflow admission or fall back to another authentication process.
+          if (await nativeClaudeCompletion.tryAdopt(request.idempotencyKey,
+            () => registerCleanup(async () => {}))) {
+            publish({ state: 'succeeded', safeFailure: null });
+            return { async cancel() {} };
+          }
+        }
         if (codexTerminalLogin && typeof options.terminal.getCommandResult !== 'function') throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && request.method === 'device_code') {
           if (harness.harness !== 'codex' || !canDeviceLogin || !options.codexSettingsConnection) throw new ProviderWorkflowNotStartedError();
@@ -174,24 +189,8 @@ export async function createNativeProviderWorkflowAdapters(options: {
         }
         if (request.kind === 'login' && request.method === 'browser') {
           if (harness.harness !== 'claude' || !options.claudeBrowserLogin) throw new ProviderWorkflowNotStartedError();
-          return options.claudeBrowserLogin({ publish, registerCleanup, onSuccess: async () => {
-            const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
-            const exact = fresh.harnesses.find(row => row.id === harness.id && row.harness === 'claude');
-            const source = fresh.accessSources.find(row => row.id === 'owner_claude_profile'
-              && row.providerId === 'anthropic' && row.kind === 'provider_account');
-            const account = fresh.accounts.find(row => row.id === source?.accountId
-              && row.providerId === 'anthropic' && row.accessSourceId === source?.id
-              && row.authMethod === 'terminal' && row.authState === 'authenticated');
-            if (!exact || exact.installState !== 'installed' || fresh.access.mode !== 'writable'
-              || !source || !account || exact.route.providerId !== 'anthropic'
-              || !source.eligibleModelIds.includes(exact.route.modelId)) throw new ProviderWorkflowError('unavailable');
-            // Consent selects its exact account even if a saved API-key/Matrix
-            // route was active before login. Do not enable that previous source.
-            if (!options.store.completeClaudeNativeLogin) throw new ProviderWorkflowError('unavailable');
-            await options.store.completeClaudeNativeLogin({ harnessInstanceId: exact.id,
-              expectedRevision: fresh.revision,
-              idempotencyKey: `connect-${createHash("sha256").update(request.idempotencyKey).digest("hex")}` });
-          } });
+          return options.claudeBrowserLogin({ publish, registerCleanup,
+            onSuccess: () => nativeClaudeCompletion.complete(request.idempotencyKey) });
         }
         let releaseProfile: (() => void | Promise<void>) | undefined;
         if (request.kind !== "login" && options.profileGuard && (harness.harness === "codex" || harness.harness === "claude")) releaseProfile = await options.profileGuard.acquire(harness.harness, { kind: "write", durable: true });
@@ -375,7 +374,8 @@ export async function createNativeProviderWorkflowAdapters(options: {
           }
           try {
             if (request.kind === 'login') {
-              await confirmNativeLogin(request.idempotencyKey, nativeLoginStartRevision, () => !codexTerminalLogin || !completionAbort.signal.aborted);
+              if (harness.harness === 'claude') await nativeClaudeCompletion.complete(request.idempotencyKey);
+              else await confirmNativeLogin(request.idempotencyKey, nativeLoginStartRevision, () => !codexTerminalLogin || !completionAbort.signal.aborted);
               publish({ state: 'succeeded', safeFailure: null });
               return;
             }

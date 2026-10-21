@@ -14,6 +14,7 @@ export const OS_VIEW_FIXED_APP_NAMES = [
   "Settings",
   "Connect Apps",
   "Browser",
+  "Cloud desktop",
   "Notes",
   "Whiteboard",
 ] as const;

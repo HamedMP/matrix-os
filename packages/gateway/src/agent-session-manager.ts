@@ -1,3 +1,4 @@
+import { nativeBrowserExecution } from "./chat/native-browser-execution-context.js";
 import { createSessionStartGuard, SessionStartBusyError, type CleanSessionStartFailure, type SessionStartScope } from "./session-start-guard.js";
 import { markSessionStartClean, markSessionStopConfirmed } from "./coding-agents/session-start-cleanup-proof.js";
 import { stopLegacySession, type LegacySessionRuntime } from "./legacy-session-stop.js";
@@ -452,6 +453,7 @@ export function createAgentSessionManager(options: {
       const startedAt = nowIso(options.now);
       let launch;
       try {
+        const browser = request.agent === "codex" ? nativeBrowserExecution(request.ownerId ?? "") : undefined;
         launch = request.kind === "agent"
           ? options.agentLauncher.buildLaunch({
             agent: request.agent!,
@@ -465,7 +467,8 @@ export function createAgentSessionManager(options: {
             sandbox: request.sandbox,
             approvalPolicy: toAgentApprovalPolicy(request.approvalPolicy),
             ...(request.agent === "codex"
-              ? { providerEventPath: codexProviderEventPath(homePath, sessionId) }
+              ? { providerEventPath: codexProviderEventPath(homePath, sessionId),
+                ...(browser ? { codexBrowserAttemptId: browser.attemptId } : {}) }
               : {}),
           })
           : { command: "bash", args: [], cwd, env: {} };

@@ -1,4 +1,5 @@
 import { bootstrapCompanyDriveSharingIndexes } from "./drive-sharing-guard.js";
+import { bootstrapBrowserApprovalMetadata } from "./browser-approval-database.js";
 import { bootstrapChatDriveProjects } from "./drive-project-database.js";
 import { bootstrapChatImports, type ChatImportDatabase } from "./import-database.js";
 export type { ChatImportJobsTable, ChatImportMessagesTable } from "./import-database.js";
@@ -739,6 +740,7 @@ export async function bootstrapChatDatabase<Database extends ChatDatabase>(
   await bootstrapChatReadState(db);
   await bootstrapChatDriveProjects(db);
   await bootstrapCompanyDriveSharingIndexes(db);
+  await bootstrapBrowserApprovalMetadata(db);
 }
 
 // Existing history starts read once on upgrade; subsequent bootstraps preserve user choices.

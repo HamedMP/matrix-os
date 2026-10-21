@@ -40,6 +40,8 @@ import {
 import { useNativeChatStartup, useNativeStartupNavigation } from "./use-native-chat-startup";
 import { useNativeOsViewPersistence } from "./use-native-os-view-persistence";
 import { analyticsKindForTab, FIXED_APP_ANALYTICS_KINDS } from "./desktop-app-analytics";
+import { reconcileNativeProductSurfaces } from "./browser-product-surfaces";
+import { nativeBrowserProduct } from "../../../../shared/browser-products";
 
 function currentViewport(): DesktopViewport {
   if (typeof window === "undefined") return { width: 1280, height: 720 };
@@ -62,7 +64,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const focusTab = useTabs((state) => state.focusTab);
   const closeTab = useTabs((state) => state.closeTab);
   const surfaces = useDesktopSurfaces((state) => state.surfaces);
-  const reconcileTabs = useDesktopSurfaces((state) => state.reconcileTabs);
+  const reconcileTabs = reconcileNativeProductSurfaces;
   const activateSurface = useDesktopSurfaces((state) => state.activateSurface);
   const minimizeSurface = useDesktopSurfaces((state) => state.minimizeSurface);
   const maximizeToTab = useDesktopSurfaces((state) => state.maximizeToTab);
@@ -283,7 +285,8 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         useUi.getState().requestSettingsSection("services");
         openTab({ kind: "settings", title: "Connect Apps" });
       }),
-      browser: () => openRoot(() => openTab({ kind: "browser", title: "Browser" })),
+      browser: () => openRoot(() => openTab({ kind: "app", slug: "browser-lab", appIdentity: "matrix-browser", title: "Browser", icon: fixedApps.find(app => app.id === "browser")?.iconUrl })),
+      "cloud-desktop": () => openRoot(() => openTab({ kind: "app", slug: "browser-lab", appIdentity: "matrix-cloud-desktop", title: "Cloud desktop", icon: fixedApps.find(app => app.id === "cloud-desktop")?.iconUrl })),
       notes: () => openRoot(() => openTab({ kind: "notes", title: "Notes", icon: fixedApps.find((app) => app.id === "notes")?.iconUrl })),
       whiteboard: () => openRoot(() => openTab({ kind: "app", slug: "whiteboard", title: "Whiteboard", icon: fixedApps.find((app) => app.id === "whiteboard")?.iconUrl })),
     };
@@ -365,7 +368,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     const minimizedTab = useTabs.getState().tabs.find((tab) => tab.id === tabId);
     minimizeSurface(tabId);
     if (useTabs.getState().activeTabId === tabId) focusFallback(tabId);
-    if (minimizedTab?.kind === "home" || minimizedTab?.kind === "browser") {
+    if (minimizedTab?.kind === "home" || minimizedTab?.kind === "browser" || nativeBrowserProduct(minimizedTab?.appIdentity ?? "", minimizedTab?.slug ?? "")) {
       requestBackgroundRefresh();
     }
     trackDesktopEvent({ name: "desktop_app_minimized", appKind: analyticsKindForTab(minimizedTab) });
@@ -377,7 +380,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     if (tab.closable) closeTab(tab.id);
     else closeSurface(tab.id);
     if (wasActive) focusFallback(tab.id);
-    if (tab.kind === "home" || tab.kind === "browser") requestBackgroundRefresh();
+    if (tab.kind === "home" || tab.kind === "browser" || nativeBrowserProduct(tab.appIdentity ?? "", tab.slug ?? "")) requestBackgroundRefresh();
     trackDesktopEvent({ name: "desktop_app_closed", appKind: analyticsKindForTab(tab) });
     scheduleDurablePersist();
   }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh, scheduleDurablePersist]);

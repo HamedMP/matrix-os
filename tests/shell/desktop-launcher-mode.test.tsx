@@ -263,6 +263,7 @@ describe("Desktop launcher dock button by mode", () => {
   afterEach(() => {
     // A module reset does not cancel the previous store's debounced save.
     resetLayoutPersistence();
+    vi.useRealTimers();
     queryClient.clear();
     vi.unstubAllGlobals();
   });
@@ -453,6 +454,7 @@ describe("Desktop launcher dock button by mode", () => {
   });
 
   it.each([false, true])("adds a generated app from the launcher without duplicating saved moved placements (moved=%s)", async (moved) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const sushi = {
       name: "Sushi Counter",
       path: moved ? "/files/apps/food/counter/index.html" : "/files/apps/sushi-counter/index.html",
@@ -497,11 +499,13 @@ describe("Desktop launcher dock button by mode", () => {
 
     renderDesktop();
 
-    // Startup now persists Chat. Settle that revision before the icon action;
-    // the fixture must not invent an icon as the startup PATCH response.
-    // Layout persistence is debounced by 500 ms; a loaded CI runner can spend
-    // the default 1 s wait budget before that write reaches the mock endpoint.
-    await waitFor(() => expect(patches).toHaveLength(1), { timeout: 5_000 });
+    // Startup and its debounced save are separate async phases.
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(windowManagerStore.getState().windows).toContainEqual(expect.objectContaining({ path: "__chat__" }));
+    expect(patches).toHaveLength(0);
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(patches).toHaveLength(1);
+    vi.useRealTimers();
     expect(document.apps).toContainEqual(expect.objectContaining({ path: "__chat__", state: "open" }));
 
     fireEvent.click(await screen.findByRole("button", { name: "Open App Launcher" }));
@@ -530,7 +534,7 @@ describe("Desktop launcher dock button by mode", () => {
     expect(document.apps).toContainEqual(expect.objectContaining({ path: "__chat__", state: "open" }));
   });
 
-  it("routes an installed Browser command through the dedicated public browser launch", async () => {
+  it("opens the canonical Browser window from its Web Desktop command without external navigation", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
@@ -564,13 +568,15 @@ describe("Desktop launcher dock button by mode", () => {
     });
     act(() => browserCommand.execute());
 
-    expect(openExternal).toHaveBeenCalledWith("https://www.google.com", "_blank", "noopener,noreferrer");
+    expect(openExternal).not.toHaveBeenCalled();
+    expect(windowManagerStore.getState().windows.filter(windowRecord => windowRecord.path === "__browser__"))
+      .toEqual([expect.objectContaining({ title: "Browser", path: "__browser__" })]);
     expect(windowManagerStore.getState().windows.some(
       (windowRecord) => windowRecord.path === "apps/browser/dist/index.html",
     )).toBe(false);
   });
 
-  it("routes a mobile pinned Browser through the dedicated public browser launch", async () => {
+  it("opens the canonical Browser window from a pinned Web Canvas app without external navigation", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/settings/onboarding-status")) return jsonResponse({ complete: true });
@@ -598,14 +604,16 @@ describe("Desktop launcher dock button by mode", () => {
 
     await waitFor(() => {
       expect(queryClient.getQueryData<ApiAppEntry[]>(appKeys.list())).toEqual(expect.arrayContaining([
-        expect.objectContaining({ path: "__browser__" }),
+        expect.objectContaining({ path: "matrix-app:browser", ownerPath: "__browser__" }),
       ]));
     });
     act(() => desktopConfigStore.setState({ pinnedApps: ["__browser__"] }));
     const browserButtons = await screen.findAllByRole("button", { name: "Browser" });
     fireEvent.click(browserButtons.at(-1)!);
 
-    expect(openExternal).toHaveBeenCalledWith("https://www.google.com", "_blank", "noopener,noreferrer");
+    expect(openExternal).not.toHaveBeenCalled();
+    expect(windowManagerStore.getState().windows.filter(windowRecord => windowRecord.path === "__browser__"))
+      .toEqual([expect.objectContaining({ title: "Browser", path: "__browser__" })]);
     expect(windowManagerStore.getState().windows.some(
       (windowRecord) => windowRecord.path === "apps/browser/dist/index.html",
     )).toBe(false);

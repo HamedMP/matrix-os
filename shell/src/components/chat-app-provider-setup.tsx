@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { rabbitMarkSvg } from "@matrix-os/brand/marks";
 import {
   CanonicalProviderCatalogSchema,
+  canonicalChatTurnModes,
+  type CanonicalChatExecutionControls,
   FUNDED_AI_READINESS_TIMEOUTS,
   isChatgptPlanChatRoute,
   isMatrixAnthropicChatRoute,
@@ -105,6 +107,7 @@ function applySavedSelection(
 export function useChatProviderState(
   currentSelection?: CanonicalChatModelSelection,
   boundInstanceId?: string,
+  context?: { chatId?: string; scopeKey?: string; executionControls?: CanonicalChatExecutionControls },
 ) {
   const [catalog, setCatalog] = useState<CanonicalProviderCatalog | null>(null);
   const [savedChoice, setSavedChoice] = useState(readSavedChoice);
@@ -176,12 +179,14 @@ export function useChatProviderState(
   const choices = catalog ? deriveCanonicalProviderChoices(catalog).filter(choice => catalog.instances.some(instance => instance.id === choice.instanceId && instance.supports.rootChat)
     && (!unavailable || !(isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)))) : [];
   const bindingKey = currentSelection
-    ? `${currentSelection.instanceId}:${currentSelection.model}:${JSON.stringify(currentSelection.options ?? [])}`
+    ? JSON.stringify([context?.scopeKey ?? "", context?.chatId ?? "", currentSelection, context?.executionControls?.runId ?? ""])
     : "";
+  const restoredModes = context?.executionControls?.chatId === context?.chatId
+    ? canonicalChatTurnModes(catalog, currentSelection, context?.executionControls) : null;
   const effectiveSaved = currentSelection
     ? boundDraft?.bindingKey === bindingKey
       ? boundDraft.selection
-      : { key: `${currentSelection.instanceId}:${currentSelection.model}`, options: currentSelection.options ?? [] }
+      : { key: `${currentSelection.instanceId}:${currentSelection.model}`, options: currentSelection.options ?? [], ...restoredModes }
     : savedChoice;
   const personalInstanceId = [MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID]
     .find(instanceId => effectiveSaved.key.startsWith(`${instanceId}:`));

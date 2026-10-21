@@ -892,6 +892,11 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/platform/preview-drive-postgres-concurrency.test.ts --maxWorkers=1 --no-file-parallelism
 
+      - name: Browser approval owner transactions and revocation races
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          pnpm exec vitest run tests/gateway/browser-approval-repository.test.ts --maxWorkers=1 --no-file-parallelism
+
   collaboration-postgres:
     name: Collaboration PostgreSQL
     needs: changes
