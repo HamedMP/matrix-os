@@ -593,6 +593,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
             ambiguous: () => enqueueFinalization({ mode: "conservative" }, "cancelled"),
           };
         })(),
+        Math.min(10_000, 2 * config.platformTimeoutMs),
       );
       state.handedOff = true;
       return new Response(responseBody, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
