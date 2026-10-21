@@ -2,7 +2,6 @@ import { useAuth, useOrganizationList } from "@clerk/clerk-expo";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Keyboard } from "react-native";
 import { useUnistyles } from "react-native-unistyles";
-import * as Haptics from "expo-haptics";
 import { useSegments } from "expo-router";
 import {
   Drawer,
@@ -13,6 +12,7 @@ import {
 
 import { SidePanel } from "@/components/shell/SidePanel";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
+import { tapHaptic } from "@/lib/haptics";
 import { useAgentStatuses } from "@/lib/queries/use-agent-statuses";
 import { useAgents } from "@/lib/queries/use-agents";
 import { useCanonicalChatPages } from "@/lib/queries/use-canonical-chats";
@@ -29,17 +29,6 @@ import {
   sharedScreenParams,
 } from "@/lib/shell-routes";
 import { agentChatIds, withoutAgentChats } from "@/lib/side-panel-chats";
-
-function triggerDrawerHaptic() {
-  void Promise.resolve(
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium),
-  ).catch((error: unknown) => {
-    console.warn(
-      "[mobile] drawer haptic unavailable",
-      error instanceof Error ? error.name : "unknown",
-    );
-  });
-}
 
 /**
  * Puts the keyboard away when the panel closes. The search field keeps it up
@@ -129,7 +118,7 @@ export default function DrawerLayout() {
             const status = getDrawerStatusFromState(data.state);
             if (status !== drawerStatusRef.current) {
               drawerStatusRef.current = status;
-              triggerDrawerHaptic();
+              tapHaptic();
             }
           },
         };

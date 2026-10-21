@@ -2,7 +2,12 @@
 import React, { StrictMode } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { GettingStartedVisibilityProvider, useGettingStartedVisibility, useGettingStartedBlocker } from "../../packages/ui/src/getting-started-visibility";
+import {
+  GettingStartedVisibilityProvider,
+  useGettingStartedAutoOpenSuppression,
+  useGettingStartedBlocker,
+  useGettingStartedVisibility,
+} from "../../packages/ui/src/getting-started-visibility";
 
 function Card() {
   const { visible, blocked, requestedOpen, setRequestedOpen } = useGettingStartedVisibility();
@@ -48,6 +53,27 @@ describe("Getting started visibility", () => {
     expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(true);
     view.rerender(<Scene />);
     expect(screen.queryByRole("dialog")).not.toBeNull();
+  });
+  it("suppresses only automatic opening while another onboarding surface is showing", () => {
+    function Suppressor({ active }: { active: boolean }) {
+      useGettingStartedAutoOpenSuppression(active);
+      return null;
+    }
+    function Probe() {
+      const { autoOpenSuppressed, isAutoOpenSuppressed, blocked } = useGettingStartedVisibility();
+      return <output>{`${autoOpenSuppressed}:${isAutoOpenSuppressed()}:${blocked}`}</output>;
+    }
+    const scene = (active: boolean) => (
+      <StrictMode>
+        <GettingStartedVisibilityProvider scope="one"><Suppressor active={active} /><Probe /><Card /></GettingStartedVisibilityProvider>
+      </StrictMode>
+    );
+    const view = render(scene(true));
+    expect(screen.getByRole("status").textContent).toBe("true:true:false");
+    fireEvent.click(screen.getByRole("button"));
+    expect(screen.queryByRole("dialog")).not.toBeNull();
+    view.rerender(scene(false));
+    expect(screen.getByRole("status").textContent).toBe("false:false:false");
   });
   it("resets intent on scope changes without dropping still-mounted blockers", () => {
     const view = render(<Scene />);

@@ -1,3 +1,5 @@
+import { buildWebTheme } from "@matrix-os/brand/themes/web-theme";
+import { DEFAULT_APPEARANCE } from "@matrix-os/brand/themes/preferences";
 import type { Theme } from "@/hooks/useTheme";
 
 const FONTS = {
@@ -5,63 +7,8 @@ const FONTS = {
   sans: "Inter, system-ui, sans-serif",
 };
 
-export const MATRIX_OS_LIGHT_THEME: Theme = {
-  name: "light",
-  mode: "light",
-  colors: {
-    background: "#FAFAF9",
-    foreground: "#32352E",
-    card: "#FCFCF8",
-    "card-foreground": "#32352E",
-    popover: "#FCFCF8",
-    "popover-foreground": "#32352E",
-    primary: "#434E3F",
-    "primary-foreground": "#F8F7EF",
-    secondary: "#F1F0E3",
-    "secondary-foreground": "#3E4339",
-    muted: "#E1E1D0",
-    "muted-foreground": "#747668",
-    accent: "#F1F0E3",
-    "accent-foreground": "#3E4339",
-    destructive: "#D74A3A",
-    success: "#3A7D44",
-    warning: "#E0A12E",
-    border: "#D8D6C7",
-    input: "#D8D6C7",
-    ring: "#D06F25",
-  },
-  fonts: { ...FONTS },
-  radius: "0.75rem",
-};
-
-export const MATRIX_OS_DARK_THEME: Theme = {
-  name: "matrix-dark",
-  mode: "dark",
-  colors: {
-    background: "#1C2019",
-    foreground: "#F0EFE5",
-    card: "#20241C",
-    "card-foreground": "#F0EFE5",
-    popover: "#20241C",
-    "popover-foreground": "#F0EFE5",
-    primary: "#9CB77A",
-    "primary-foreground": "#15180F",
-    secondary: "#2A2E22",
-    "secondary-foreground": "#C9C7B7",
-    muted: "#2A2E22",
-    "muted-foreground": "#858578",
-    accent: "#2A2E22",
-    "accent-foreground": "#F0EFE5",
-    destructive: "#D85E5E",
-    success: "#5FB85F",
-    warning: "#E0A12E",
-    border: "#2D3127",
-    input: "#2D3127",
-    ring: "#CF7835",
-  },
-  fonts: { ...FONTS },
-  radius: "0.75rem",
-};
+export const MATRIX_OS_LIGHT_THEME: Theme = { ...buildWebTheme(), name: "light" };
+export const MATRIX_OS_DARK_THEME: Theme = { ...buildWebTheme({ ...DEFAULT_APPEARANCE, mode: "dark" }), name: "matrix-dark" };
 
 export const MATRIX_OS_NEON_THEME: Theme = {
   name: "matrix",
@@ -96,27 +43,27 @@ export const MATRIX_OS_APP_THEME_OPTIONS = [
   {
     id: "light",
     label: "Light",
-    description: "Warm paper",
+    description: "Matrix light",
     theme: MATRIX_OS_LIGHT_THEME,
     preview: {
-      background: "#FAFAF9",
-      border: "#00000014",
-      stripe: "#3E4339",
-      dotA: "#3A7D44",
-      dotB: "#D06F25",
+      background: MATRIX_OS_LIGHT_THEME.colors.background,
+      border: MATRIX_OS_LIGHT_THEME.colors.border,
+      stripe: MATRIX_OS_LIGHT_THEME.colors.primary,
+      dotA: MATRIX_OS_LIGHT_THEME.colors.success,
+      dotB: MATRIX_OS_LIGHT_THEME.colors.warning,
     },
   },
   {
     id: "matrix-dark",
     label: "Matrix OS Dark",
-    description: "Warm dark",
+    description: "Matrix dark",
     theme: MATRIX_OS_DARK_THEME,
     preview: {
-      background: "#15180F",
-      border: "#2D3127",
-      stripe: "#C9C7B7",
-      dotA: "#5FB85F",
-      dotB: "#CF7835",
+      background: MATRIX_OS_DARK_THEME.colors.background,
+      border: MATRIX_OS_DARK_THEME.colors.border,
+      stripe: MATRIX_OS_DARK_THEME.colors.primary,
+      dotA: MATRIX_OS_DARK_THEME.colors.success,
+      dotB: MATRIX_OS_DARK_THEME.colors.warning,
     },
   },
   {
@@ -138,34 +85,7 @@ export const THEME_PRESETS: Theme[] = [
   MATRIX_OS_LIGHT_THEME,
   MATRIX_OS_DARK_THEME,
   MATRIX_OS_NEON_THEME,
-  {
-    name: "default",
-    mode: "light",
-    colors: {
-      background: "#FAFAF9",
-      foreground: "#32352E",
-      card: "#FCFCF8",
-      "card-foreground": "#32352E",
-      popover: "#FCFCF8",
-      "popover-foreground": "#32352E",
-      primary: "#434E3F",
-      "primary-foreground": "#FAFAF5",
-      secondary: "#F1F0E3",
-      "secondary-foreground": "#3E4339",
-      muted: "#E1E1D0",
-      "muted-foreground": "#747668",
-      accent: "#F1F0E3",
-      "accent-foreground": "#3E4339",
-      destructive: "#D74A3A",
-      success: "#3A7D44",
-      warning: "#E0A12E",
-      border: "#D8D6C7",
-      input: "#D8D6C7",
-      ring: "#D06F25",
-    },
-    fonts: { ...FONTS },
-    radius: "0.75rem",
-  },
+  { ...MATRIX_OS_LIGHT_THEME, name: "default" },
   {
     name: "dark",
     mode: "dark",

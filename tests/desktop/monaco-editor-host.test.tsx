@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MonacoEditorHost, { MAX_MONACO_FILE_BYTES } from "@desktop/renderer/src/features/editor/MonacoEditorHost";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 
+import { useAppearance } from "@desktop/renderer/src/stores/appearance";
+
 const monacoMocks = vi.hoisted(() => ({
   create: vi.fn(() => {
     throw new Error("monaco failed to initialize");
@@ -17,6 +19,8 @@ vi.mock("monaco-editor", () => ({
   editor: {
     create: monacoMocks.create,
     createModel: monacoMocks.createModel,
+    defineTheme: vi.fn(),
+    setTheme: vi.fn(),
   },
 }));
 
@@ -92,6 +96,7 @@ describe("MonacoEditorHost", () => {
 
       render(<MonacoEditorHost path="projects/app/src/main.ts" active onDirtyChange={vi.fn()} />);
 
+      await waitFor(() => expect(document.querySelector("[data-monaco-state=failed]")).toBeTruthy(), { timeout: 10000 });
       const fallback = await screen.findByRole("textbox", { name: "Edit projects/app/src/main.ts" });
       expect((fallback as HTMLTextAreaElement).value).toBe("export const value = 1;\n");
     } finally {
@@ -99,4 +104,28 @@ describe("MonacoEditorHost", () => {
       Object.defineProperty(navigator, "userAgent", { configurable: true, value: originalUserAgent });
     }
   });
+  it('updates typography and palette without replacing the model or editor', async () => {
+    const originalWorker = globalThis.Worker;
+    const originalUserAgent = navigator.userAgent;
+    Object.defineProperty(globalThis, 'Worker', { configurable: true, value: class WorkerStub {} });
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Matrix OS Electron' });
+    const editor = { dispose: vi.fn(), updateOptions: vi.fn(), onDidChangeModelContent: vi.fn(), getValue: () => 'text' };
+    monacoMocks.create.mockReturnValueOnce(editor as never);
+    monacoMocks.createModel.mockClear();
+    useAppearance.setState({ themeId: 'matrix', resolvedMode: 'light', monoFontId: 'jetbrains', customTheme: null });
+    try {
+      useConnection.setState({ api: makeApi() as never });
+      render(<MonacoEditorHost path='projects/main.ts' active onDirtyChange={vi.fn()} />);
+      await waitFor(() => expect(monacoMocks.createModel).toHaveBeenCalledTimes(1), { timeout: 10000 });
+      await act(async () => { useAppearance.setState({ monoFontId: 'system', themeId: 'nord', resolvedMode: 'dark' }); });
+      await waitFor(() => expect(editor.updateOptions).toHaveBeenCalledWith(expect.objectContaining({ fontFamily: expect.stringContaining('ui-monospace') })));
+      expect(monacoMocks.createModel).toHaveBeenCalledTimes(1);
+      expect(editor.dispose).not.toHaveBeenCalled();
+    } finally {
+      cleanup();
+      Object.defineProperty(globalThis, 'Worker', { configurable: true, value: originalWorker });
+      Object.defineProperty(navigator, 'userAgent', { configurable: true, value: originalUserAgent });
+    }
+  });
+
 });

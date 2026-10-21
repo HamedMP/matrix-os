@@ -3,6 +3,7 @@ import { z } from "zod/v4";
 import { readLocalChatJsonl, type LocalChatSourceEntry } from "#local-chat-import/jsonl";
 import { reconstructLocalChat } from "#local-chat-import/reconstruct";
 import { object, string, type ImportHarness, type ImportBlock } from "#local-chat-import/types";
+import { isLocalChatTitleMetadata } from "#local-chat-import/title";
 const MAX_ENTRIES = 100_000;
 export interface LocalChatImportCounts {
   humanInputs: number; assistantResponses: number; agentInputs: number; toolCalls: number; toolResults: number;
@@ -38,6 +39,7 @@ export async function previewLocalChatSource(harness: ImportHarness, input: {
     attachments: 0, externalReferences: 0, thinkingRecords: 0, contextRecords: 0, unknownRecords: 0, sourceIssues: 0 };
   let sourceId: string | undefined; let sourceAgentId: string | undefined; let identitySeen = false;
   let recordedDirectory: string | undefined; let repositoryUrl: string | undefined; let firstVisibleText = ""; let sourceBytes = 0; let events = 0;
+  let titleText = ""; let commandTitleSkipped = false;
   // Preview lifetime only. Explicit 100k cap; the maps are released on return or rejection.
   const prose = new Map<string, { attachments: number; externalReferences: number }>();
   const calls = new Set<string>();
@@ -76,7 +78,12 @@ export async function previewLocalChatSource(harness: ImportHarness, input: {
       } else if (event.mode === "replace_mirror") { counts.attachments -= prior.attachments; counts.externalReferences -= prior.externalReferences; }
       counts.attachments += assets.attachments; counts.externalReferences += assets.externalReferences;
       prose.set(key, event.mode === "replace_mirror" || !prior ? assets : { attachments: prior.attachments + assets.attachments, externalReferences: prior.externalReferences + assets.externalReferences });
-      if (!firstVisibleText) firstVisibleText = event.blocks.filter((block): block is Extract<ImportBlock, { kind: "text" }> => block.kind === "text").map(block => block.text).join("\n\n").slice(0, 500);
+      const visibleText = event.blocks.filter((block): block is Extract<ImportBlock, { kind: "text" }> => block.kind === "text").map(block => block.text).join("\n\n");
+      if (!firstVisibleText) firstVisibleText = visibleText.slice(0, 500);
+      if (!titleText) {
+        if (isLocalChatTitleMetadata(harness,visibleText)) commandTitleSkipped = true;
+        else if (!commandTitleSkipped || event.origin === "human") titleText = visibleText.slice(0, 500);
+      }
     } else if (event.kind === "tool_call") {
       const key = await digest(JSON.stringify([event.conversation, event.callId]));
       if (!calls.has(key)) { if (calls.size >= MAX_ENTRIES) throw new LocalChatPreviewError("projection_limit"); calls.add(key); counts.toolCalls++; }
@@ -90,7 +97,7 @@ export async function previewLocalChatSource(harness: ImportHarness, input: {
   if (!sourceId || !identitySeen) throw new LocalChatPreviewError("source_mismatch");
   if (!(counts.humanInputs + counts.assistantResponses + counts.agentInputs + counts.toolCalls + counts.toolResults)) throw new LocalChatPreviewError("no_readable_history");
   const sourceHash = await input.sourceHash(); if (!/^[a-f0-9]{64}$/.test(sourceHash)) throw new LocalChatPreviewError("invalid");
-  const title = firstVisibleText.split("\n")[0]!.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 160) || `Imported ${harness === "codex" ? "Codex" : "Claude Code"} Chat`;
+  const title = titleText.split("\n")[0]!.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 160) || `Imported ${harness === "codex" ? "Codex" : "Claude Code"} Chat`;
   return { harness, sourceId, ...(sourceAgentId ? { sourceAgentId } : {}), sourceHash, rawBytes: sourceBytes, title, firstVisibleText,
     ...(recordedDirectory ? { recordedDirectory } : {}), ...(repositoryUrl ? { repositoryUrl } : {}), counts, parserVersion: 1 };
 }

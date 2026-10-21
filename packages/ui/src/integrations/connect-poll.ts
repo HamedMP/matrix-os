@@ -21,6 +21,28 @@ export interface ConnectPollOptions {
   intervals?: number[];
 }
 
+export interface ConnectPollConnection {
+  id: string;
+  service: string;
+  status: string;
+}
+
+// Snapshot taken before consent opens, so an account that was waiting on
+// sign-in can still count once it turns active.
+export function activeConnectionIds(connections: readonly ConnectPollConnection[], service: string): ReadonlySet<string> {
+  return new Set(connections.filter((connection) => connection.service === service && connection.status === "active").map((connection) => connection.id));
+}
+
+// Managed apps list the connection before sign-in finishes, so only an
+// active connection that was not active before consent counts as connected.
+export function hasNewActiveConnection(
+  connections: readonly ConnectPollConnection[],
+  service: string,
+  previouslyActive: ReadonlySet<string>,
+): boolean {
+  return connections.some((connection) => connection.service === service && connection.status === "active" && !previouslyActive.has(connection.id));
+}
+
 // Returns a cancel function. Cancelling is idempotent and guarantees
 // onSettled is never called afterwards.
 export function startConnectPoll(options: ConnectPollOptions): () => void {

@@ -76,7 +76,11 @@ export async function runDedicatedLeaseSession(child,envelope,options){
     if(!hash.test(record.challenge||'')||challenges.has(record.challenge)||challenges.size>=400||!integer(record.deadlineUnixMs)||record.deadlineUnixMs<=Date.now()||record.deadlineUnixMs>Date.now()+(record.type==='locked'?31000:121000))throw new Error('Expired or reused Linux lease challenge');
     challenges.add(record.challenge);
     await revalidate(record,record.type==='locked');
-    if(failed||ended||record.deadlineUnixMs<=Date.now())throw new Error('Lease challenge expired before authenticated revalidation');
+    if(failed||record.deadlineUnixMs<=Date.now())throw new Error('Lease challenge expired before authenticated revalidation');
+    // A successful child can close with its completed receipt already queued
+    // behind this renewal. Drain it without acknowledging a closed stream.
+    if(ended&&record.type==='renewal-required')return;
+    if(ended)throw new Error('Lease challenge expired before authenticated revalidation');
     grantSent=true;child.stdin.write(JSON.stringify({protocolVersion:1,type:record.type==='locked'?'grant':'renew',leaseId:envelope.leaseId,requestDigest:digest,challenge:record.challenge,capability:envelope.capability})+'\n');
     if(record.type==='locked')state='granted';return;
    }

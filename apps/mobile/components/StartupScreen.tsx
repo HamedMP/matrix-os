@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Image, Text, View } from "react-native";
+import { ActivityIndicator, Image, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
 import { AppStatusBar } from "@/components/AppStatusBar";
@@ -52,6 +52,21 @@ export function StartupScreen({ showTitle = true, children }: StartupScreenProps
   );
 }
 
+/**
+ * The startup screen while something is still loading. Every wait at launch
+ * draws this, so the screen holds still from the native splash to the first
+ * real screen instead of changing layout at each step.
+ */
+export function StartupLoading({ message, testID }: { message?: string; testID?: string }) {
+  const colors = useStartupColors();
+  return (
+    <StartupScreen>
+      {message ? <Text style={[styles.message, { color: colors.textSubtle }]}>{message}</Text> : null}
+      <ActivityIndicator size="large" color={colors.textSubtle} style={styles.spinner} testID={testID} />
+    </StartupScreen>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
@@ -78,5 +93,13 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.fonts.display,
     fontSize: 30,
     letterSpacing: -0.5,
+  },
+  message: {
+    fontFamily: theme.fonts.sansMedium,
+    fontSize: 14,
+    marginTop: 8,
+  },
+  spinner: {
+    marginTop: 24,
   },
 }));

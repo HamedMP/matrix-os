@@ -161,7 +161,10 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
             }).where("machine_id", "=", reservation.machine_id)
               .where("owner_id", "=", reservation.owner_id)
               .where("runtime_slot", "=", reservation.runtime_slot)
-              .where(sql<boolean>`period_start <> ${reservation.period_start} OR period_reserved_microusd >= ${reserved}`)
+              .where((eb) => eb.or([
+                eb("period_start", "<>", reservation.period_start),
+                eb("period_reserved_microusd", ">=", reserved),
+              ]))
               .returning("machine_id").executeTakeFirst();
             if (!allowance) throw new Error("Funded AI speech allowance invariant violated");
             const settled = await trx.executor.updateTable("ai_funded_usage_reservations").set({
@@ -225,7 +228,10 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
           }).where("machine_id", "=", reservation.machine_id)
             .where("owner_id", "=", reservation.owner_id)
             .where("runtime_slot", "=", reservation.runtime_slot)
-            .where(sql<boolean>`period_start <> ${reservation.period_start} OR period_reserved_microusd >= ${reserved}`)
+            .where((eb) => eb.or([
+              eb("period_start", "<>", reservation.period_start),
+              eb("period_reserved_microusd", ">=", reserved),
+            ]))
             .returning("machine_id").executeTakeFirst();
           if (!allowance) throw new Error("Funded AI speech allowance invariant violated");
         }
