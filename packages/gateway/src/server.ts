@@ -1586,7 +1586,7 @@ export async function createGateway(config: GatewayConfig) {
     const chatAgents = new ChatAgentStore({ homePath, db: chatRepository.kysely });
     await chatAgents.bootstrap();
     botServices = await startBots({
-      homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
+      toolOutputKey, homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,
       providers: aiProviderService,
       ...(matrixAnthropicRuntime.service ? { matrixAnthropic: matrixAnthropicRuntime.service } : {}),

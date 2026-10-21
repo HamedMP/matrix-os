@@ -10,6 +10,9 @@ import { CanonicalProviderRunEventSchema, type CanonicalProviderRunEvent } from 
 import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
 import type { ManagedPiMcpClient } from "./managed-pi-mcp-client.js";
+import { botToolDisplayInput, botToolDisplayOutput } from "@matrix-os/contracts";
+import { mapBotEvent } from "../bots/chat-adapter.js";
+import type { McpProgressListener } from "../integrations/custom-mcp/tool-progress.js";
 
 const MAX_RUNS = 64;
 const MAX_ACTIONS = 60;
@@ -38,6 +41,7 @@ function text(value: unknown): BotToolResult {
   return { ok: true, content };
 }
 export function createManagedPiOwnerTools(deps: {
+  toolOutputKey?: Buffer;
   authority(binding: ManagedPiRuntimeBinding): Promise<{ permissionMode: string }>;
   signalFor(binding: ManagedPiRuntimeBinding): AbortSignal | null;
   integrations?: Pick<BotIntegrationClient, "inventory" | "describe" | "call">;
@@ -189,8 +193,19 @@ export function createManagedPiOwnerTools(deps: {
       if (request.capability === "mcp.describe") return text(await deps.mcp!.describe(binding.ownerId, request.args.serverId, signal));
       if (request.capability === "mcp.call") {
         if (permissionMode !== "full_access" || !run.generation) throw new BotBrokerActionError("denied");
+        const evidence = botToolDisplayInput("mcp_call", request.args);
+        let updates = 0;
+        const onProgress: McpProgressListener | undefined = deps.toolOutputKey ? progress => {
+          if (signal.aborted || runs.get(binding.runId) !== run || updates >= 3) return;
+          updates++;
+          const text = `Progress: ${progress.progress}${progress.total !== undefined ? ` of ${progress.total}` : ""}${progress.message ? `\n${progress.message}` : ""}`;
+          const output = botToolDisplayOutput({ content: [{ type: "text", text }] }, evidence.privateContext);
+          if (updates === 3) { output.output = `${output.output?.slice(0, 2900)}\n\nLive updates paused until this tool finishes.`; output.truncated = true; }
+          for (const event of mapBotEvent({ type: "tool_progress", toolCallId: request.toolCallId, capability: request.capability,
+            phase: "updated", display: { ...evidence.display, ...output } }, { toolOutputKey: deps.toolOutputKey })) run.emit(event);
+        } : undefined;
         return text(await deps.mcp!.call(binding.ownerId, { ...request.args, runId: binding.runId,
-          ...(prepared.receipt ? { approvalReceipt: prepared.receipt } : {}) }, signal));
+          ...(prepared.receipt ? { approvalReceipt: prepared.receipt } : {}) }, signal, ...(onProgress ? [onProgress] as const : [] as const)));
       }
       throw new BotBrokerActionError("not_granted");
     },
