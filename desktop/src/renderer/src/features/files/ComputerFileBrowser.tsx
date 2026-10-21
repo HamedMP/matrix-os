@@ -70,6 +70,7 @@ export default function ComputerFileBrowser({
   forceList = false,
   mode = "browse",
   onOpenFile,
+  onEditFile,
   onDownload,
   downloadPending = false,
   onSelectionChange,
@@ -94,6 +95,7 @@ export default function ComputerFileBrowser({
   // competes with files. The default "browse" mode is unchanged.
   mode?: "browse" | "folder-picker";
   onOpenFile?: (path: string) => void;
+  onEditFile?: (path: string) => void;
   onDownload?: (path: string, size?: number) => void;
   downloadPending?: boolean;
   onSelectionChange?: (selection: BrowserSelection | null) => void;
@@ -534,8 +536,17 @@ export default function ComputerFileBrowser({
       ) : null}
       <ContextMenu items={mode === "browse"
         ? [
+            ...(contextFile && contextFile.scope === browserScope && onEditFile && !isManagedBrowserPath(contextFile.path)
+              ? [{ label: "Open in Editor", onSelect: () => onEditFile(contextFile.path) }]
+              : []),
             ...(contextFile && contextFile.scope === browserScope && onDownload
               ? [{ label: "Download", disabled: downloadPending, onSelect: () => onDownload(contextFile.path, contextFile.size) }]
+              : []),
+            ...(contextFile?.scope === browserScope || contextDirectory
+              ? [{ label: "Copy Path", onSelect: () => {
+                  const path = contextFile?.scope === browserScope ? contextFile.path : contextDirectory?.path;
+                  if (path) void navigator.clipboard.writeText(`/home/matrix/home/${path}`);
+                } }]
               : []),
             ...(contextDirectory && onOpenFolderInNewTab
               ? [{ label: "Open in new tab", onSelect: () => onOpenFolderInNewTab(contextDirectory.path, contextDirectory.name) }]

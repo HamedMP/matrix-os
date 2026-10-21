@@ -63,7 +63,8 @@ function makeApi(overrides?: ApiOverrides) {
   );
   const getBlob = vi.fn(async () => new Blob([new Uint8Array([1, 2, 3, 4])], { type: "image/png" }));
   const post = vi.fn(async () => ({ ok: true }));
-  return { get, getText, getBlob, post, baseUrl: "https://app.matrix-os.com" };
+  const putText = vi.fn(async () => ({ modified: new Date().toISOString() }));
+  return { get, getText, getBlob, post, putText, baseUrl: "https://app.matrix-os.com" };
 }
 
 async function flushMicrotasks(): Promise<void> {
@@ -412,6 +413,20 @@ describe("Files workspace", () => {
     await waitFor(() => expect(api.get).toHaveBeenCalledWith("/api/files/list?path=workspaces"));
     expect(screen.getByRole("button", { name: "Matrix home" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "workspaces" })).not.toBeNull();
+  });
+
+  it("saves a side edit and protects dirty content when selecting another file", async () => {
+    render(<Tooltip.Provider><FilesWorkspace /></Tooltip.Provider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Open README.md" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit file" }));
+    const editor = await screen.findByRole("textbox", { name: "Edit README.md" });
+    fireEvent.change(editor, { target: { value: "# Changed" } });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(screen.getByRole("button", { name: "Open archive.zip" }));
+    expect(confirm).toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Edit README.md" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Save file" }));
+    await waitFor(() => expect(api.putText).toHaveBeenCalledWith("/api/files/blob?path=README.md&force=true", "# Changed"));
   });
 
   it("previews bounded code as selectable text", async () => {

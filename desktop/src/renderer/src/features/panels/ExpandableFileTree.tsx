@@ -9,10 +9,12 @@ export function ExpandableFileTree({
   loadDirectory,
   onOpenFile,
   selectedPath,
+  directoryPath,
 }: {
   loadDirectory: (path: string) => Promise<InspectorTreeEntry[]>;
   onOpenFile: (path: string) => void;
   selectedPath?: string;
+  directoryPath?: string;
 }) {
   const [expandedPaths, setExpandedPaths] = useState<string[]>([]);
   const [directories, setDirectories] = useState<Record<string, InspectorTreeDirectory>>({});
@@ -59,6 +61,15 @@ export function ExpandableFileTree({
   }, [ensureDirectory, selectedPath]);
 
   useEffect(() => {
+    if (!directoryPath) return;
+    const parts = directoryPath.split("/");
+    const paths = parts.map((_, index) => parts.slice(0, index + 1).join("/"))
+      .slice(0, MAX_EXPANDED_FILE_DIRECTORIES - 1);
+    setExpandedPaths((current) => [...new Set([...current, ...paths])].slice(-(MAX_EXPANDED_FILE_DIRECTORIES - 1)));
+    for (const path of paths) ensureDirectory(path);
+  }, [directoryPath, ensureDirectory]);
+
+  useEffect(() => {
     selectedElement.current?.scrollIntoView?.({ block: "nearest" });
   }, [directories, selectedPath]);
 
@@ -90,14 +101,14 @@ export function ExpandableFileTree({
         <div key={entry.path}>
           <button
             type="button"
-            ref={entry.path === selectedPath ? selectedElement : undefined}
-            aria-current={entry.path === selectedPath ? true : undefined}
+            ref={entry.path === (directoryPath ?? selectedPath) ? selectedElement : undefined}
+            aria-current={entry.path === (directoryPath ?? selectedPath) ? true : undefined}
             aria-label={entry.kind === "directory"
               ? `${expanded ? "Collapse" : "Expand"} folder ${entry.path}`
               : `Open file ${entry.path}`}
             {...(entry.kind === "directory" ? { "aria-expanded": expanded } : {})}
             className="flex w-full items-center gap-2.5 truncate rounded-md px-2.5 py-1.5 text-left text-sm outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]"
-            style={{ paddingLeft: 10 + depth * 20, color: "var(--text-primary)", background: entry.path === selectedPath ? "var(--bg-hover)" : undefined }}
+            style={{ paddingLeft: 10 + depth * 20, color: "var(--text-primary)", background: entry.path === (directoryPath ?? selectedPath) ? "var(--bg-hover)" : undefined }}
             onClick={() => entry.kind === "directory" ? toggleDirectory(entry.path) : onOpenFile(entry.path)}
           >
             {entry.kind === "directory" ? (
@@ -121,4 +132,3 @@ export function ExpandableFileTree({
     </div>
   );
 }
-

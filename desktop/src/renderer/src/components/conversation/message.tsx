@@ -6,7 +6,6 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "../../lib/cn";
 import type { ConversationPresentationCallbacks } from "./presentation";
-import { normalizeDesktopEditorPath } from "../../features/editor/desktop-editor-store";
 
 function MessageGroup({ className, ...props }: React.ComponentProps<"div">) {
   return <div data-slot="message-group" className={cn("flex min-w-0 flex-col gap-2", className)} {...props} />;
@@ -182,6 +181,7 @@ export function MessageMetadata({
 
 const FILE_EXTENSION_PATTERN = /(?:^|\/)[^/]+\.[A-Za-z0-9]{1,12}$/;
 const RELATIVE_PATH_PATTERN = /^(?:[A-Za-z0-9_.@+-]+\/)+[A-Za-z0-9_.@+-]+\/?$/;
+const SINGLE_FOLDER_PATTERN = /^[A-Za-z0-9_.@+-]+\/$/;
 const BARE_FILE_PATTERN = /^[A-Za-z0-9_.@+-]+\.[A-Za-z0-9]{1,12}$/;
 const IMAGE_FILE_PATTERN = /\.(?:png|jpe?g|webp|gif|avif|svg)$/i;
 
@@ -193,6 +193,7 @@ function pathPresentation(value: string): { kind: "file" | "folder"; label: stri
     || normalized.startsWith("./")
     || normalized.startsWith("../")
     || RELATIVE_PATH_PATTERN.test(normalized)
+    || SINGLE_FOLDER_PATTERN.test(normalized)
     || BARE_FILE_PATTERN.test(normalized);
   if (!looksLikePath) return null;
   const withoutTrailingSlash = normalized.replace(/[\\/]+$/, "");
@@ -497,8 +498,9 @@ export function MessageResponse({
       const app = resolveApp?.(value);
       if (app && openApp) return <button type="button" title={value} aria-label={`Open app ${app.name}`} className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[var(--highlight)] hover:bg-[var(--bg-hover)]" onClick={() => callbacks.current.openApp?.(value)}>{app.name}</button>;
       const path = className || !/[\\/]/.test(value) ? null : pathPresentation(value);
-      const editorPath = path?.kind === "file" ? normalizeDesktopEditorPath(value) : null;
-      if (editorPath && hasImageLoader && IMAGE_FILE_PATTERN.test(editorPath) && resolveChatMessageLink(value)?.kind === "file") {
+      const target = path ? resolveChatMessageLink(value) : null;
+      const editorPath = target?.kind === "file" ? target.path : null;
+      if (editorPath && hasImageLoader && IMAGE_FILE_PATTERN.test(editorPath)) {
         return <AttachmentImage src={value} label={path!.label} path={value} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
       }
       if (path && editorPath && hasFileNavigation) {
@@ -510,7 +512,7 @@ export function MessageResponse({
             onClick={() => callbacks.current.openFile?.(value)}
             className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-1.5 py-0.5 align-middle font-mono text-xs text-[var(--highlight)] hover:bg-[var(--bg-hover)]"
           >
-            <FileText size={13} aria-hidden className="shrink-0" />
+            {path.kind === "folder" ? <Folder size={13} aria-hidden className="shrink-0" /> : <FileText size={13} aria-hidden className="shrink-0" />}
             <span className="truncate">{path.label}</span>
           </button>
         );

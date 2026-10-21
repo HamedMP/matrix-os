@@ -50,6 +50,9 @@ import type { ConversationActionPresentation } from "../../components/conversati
 import { normalizeDesktopEditorPath } from "../editor/desktop-editor-store";
 import { useChatFileNavigation } from "../work/ChatFileNavigation";
 import { resolveChatInspectorTargetForRun, resolveWorkFilesScope } from "../work/work-files-scope";
+import { useFilesNavigation } from "../../stores/files-navigation";
+import { useTabs, FILES_WORKSPACE_TAB_SPEC } from "../../stores/tabs";
+import { invoke } from "../../lib/operator";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
@@ -994,7 +997,47 @@ export function CanonicalChatWorkspace({
                   rawPath, scope, executionRoot, controller.detail.record.projectId,
                 );
                 if (!target) return false;
-                fileNavigation.open({ chatId: scope.chatId, target });
+                const connection = useConnection.getState();
+                const generation = captureRuntimeGeneration();
+                const current = () => isCurrentRuntimeGeneration(generation)
+                  && useConnection.getState().runtimeSlot === connection.runtimeSlot
+                  && useConnection.getState().authGeneration === connection.authGeneration;
+                void (async () => {
+                  try {
+                    if (target.kind === "home") {
+                      const stat = await connection.api?.forRuntime(connection.runtimeSlot).get<{ type: "file" | "directory" }>(
+                        `/api/files/stat?path=${encodeURIComponent(target.path)}`,
+                      );
+                      if (!current()) return;
+                      if (!stat) throw new Error("FilesUnavailable");
+                      if (stat.type === "directory") {
+                        useFilesNavigation.getState().navigate(target.path);
+                        useTabs.getState().openTab(FILES_WORKSPACE_TAB_SPEC);
+                      } else {
+                        fileNavigation.open({ chatId: scope.chatId, target });
+                      }
+                    } else {
+                      let directory = false;
+                      try {
+                        await invoke("runtime:browse-files", {
+                          projectId: target.projectId,
+                          ...(target.worktreeId ? { worktreeId: target.worktreeId } : {}),
+                          path: target.path,
+                          limit: 1,
+                        });
+                        directory = true;
+                      } catch (error: unknown) {
+                        // File paths cannot be browsed. The authenticated preview
+                        // resolves the file or displays its permission error.
+                        console.debug("[chat-files] directory lookup unavailable", error instanceof Error ? error.name : "UnknownError");
+                      }
+                      if (current()) fileNavigation.open({ chatId: scope.chatId, target, directory });
+                    }
+                  } catch (error: unknown) {
+                    if (current()) setSubmissionError("This file or folder is unavailable. Check its path and permissions.");
+                    console.warn("[chat-files] path lookup failed", error instanceof Error ? error.name : "UnknownError");
+                  }
+                })();
                 return true;
               },
               ...(api ? { loadImage: loadChatImage } : {}),

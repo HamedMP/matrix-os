@@ -171,6 +171,7 @@ it("keeps absolute owner paths distinct from relative Project paths", async () =
   const { resolveChatInspectorTarget } = await import("@desktop/renderer/src/features/work/work-files-scope");
   const scope = { kind: "project" as const, chatId: "chat", projectId: "matrix-os", label: "Matrix OS", worktreeId: "branch" };
   expect(resolveChatInspectorTarget("src/index.ts", scope)).toMatchObject({ kind: "project", path: "src/index.ts", worktreeId: "branch" });
+  expect(resolveChatInspectorTarget("src/components/", scope)).toMatchObject({ kind: "project", path: "src/components", worktreeId: "branch" });
   expect(resolveChatInspectorTarget("/home/matrix/home/projects/matrix-os/src/index.ts", scope)).toMatchObject({ kind: "home", path: "projects/matrix-os/src/index.ts" });
   expect(resolveChatInspectorTarget("../secret", scope)).toBeNull();
 });

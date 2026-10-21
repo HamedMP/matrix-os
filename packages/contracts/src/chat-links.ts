@@ -43,6 +43,7 @@ export function resolveChatMessageLink(input: string): { kind: "file"; path: str
   else if (value.startsWith("~/") || value.startsWith("./")) value = value.slice(2);
   else if (value.startsWith("/files/")) value = value.slice(7);
   else if (value.startsWith("/")) return null;
+  value = value.replace(/\/+$/, "");
   const parsed = PathSchema.safeParse(value);
   return parsed.success ? { kind: "file", path: parsed.data } : null;
 }

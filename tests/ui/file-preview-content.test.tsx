@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FilePreviewDescriptor } from "@matrix-os/contracts";
 import { FilePreviewContent } from "../../packages/ui/src/files/FilePreviewContent";
@@ -55,5 +55,16 @@ describe("FilePreviewContent", () => {
     const frame = await screen.findByTitle("HTML preview: page.html");
     expect(frame.getAttribute("sandbox")).toBe("");
     expect(frame.getAttribute("srcdoc")).toContain("default-src 'none'");
+    fireEvent.click(screen.getByRole("button", { name: "Source" }));
+    expect(screen.queryByTitle("HTML preview: page.html")).toBeNull();
+    expect(screen.getByText(/parent.bad=true/)).toBeTruthy();
+  });
+
+  it("switches Markdown between rendered and source modes", async () => {
+    render(<FilePreviewContent descriptor={{ ...base, name: "notes.md", kind: "markdown" }}
+      contentUrl="/notes" loadText={vi.fn(async () => "# Notes\n\n**Ready**")} />);
+    expect(await screen.findByRole("heading", { name: "Notes" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Source" }));
+    expect(screen.getByText(/# Notes/)).toBeTruthy();
   });
 });

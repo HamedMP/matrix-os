@@ -16,7 +16,26 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it("classifies links consistently and rejects unsafe file and protocol inputs", () => {
   expect(resolveChatMessageLink("https://example.com")).toEqual({ kind: "web", url: "https://example.com/" });
   expect(resolveChatMessageLink("/home/matrix/home/reports/file.md:12")).toEqual({ kind: "file", path: "reports/file.md" });
+  expect(resolveChatMessageLink("~/projects/demo/src/")).toEqual({ kind: "file", path: "projects/demo/src" });
   for (const input of ["javascript:alert(1)", "../secrets", "file:///etc/passwd", "https://user:password@example.com"]) expect(resolveChatMessageLink(input)).toBeNull();
+});
+
+it("opens folder links and inline folder paths through Chat file navigation", () => {
+  const openFile = vi.fn(() => true);
+  render(<MessageResponse copyText={vi.fn()} openFile={openFile}>
+    {"[Sources](projects/demo/src/) and `projects/demo/src/`"}
+  </MessageResponse>);
+  fireEvent.click(screen.getByRole("link", { name: "Sources" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open src" }));
+  expect(openFile).toHaveBeenNthCalledWith(1, "projects/demo/src/");
+  expect(openFile).toHaveBeenNthCalledWith(2, "projects/demo/src/");
+});
+
+it("recognizes a single relative folder chip", () => {
+  const openFile = vi.fn(() => true);
+  render(<MessageResponse copyText={vi.fn()} openFile={openFile}>{"Open `src/`"}</MessageResponse>);
+  fireEvent.click(screen.getByRole("button", { name: "Open src" }));
+  expect(openFile).toHaveBeenCalledWith("src/");
 });
 
 it("routes web links and file references through separate Chat actions", () => {

@@ -1,5 +1,7 @@
 import type { FilePreviewDescriptor } from "@matrix-os/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const MAX_TEXT_BYTES = 1024 * 1024;
 const MAX_BINARY_BYTES = 50 * 1024 * 1024;
@@ -15,6 +17,7 @@ export interface FilePreviewContentProps {
   retry?: () => void;
   /** A caller that supplies a bounded prefix rather than the complete text. */
   textPreviewBytes?: number;
+  renderSource?: (text: string, name: string) => ReactNode;
 }
 
 function parseDelimited(source: string, separator: "," | "\t"): string[][] {
@@ -58,8 +61,9 @@ function Failure({ retry }: { retry?: () => void }) {
   </div>;
 }
 
-function TextualPreview({ descriptor, contentUrl, loadText, retry, textPreviewBytes }: FilePreviewContentProps) {
+function TextualPreview({ descriptor, contentUrl, loadText, retry, textPreviewBytes, renderSource }: FilePreviewContentProps) {
   const limit = textPreviewBytes === undefined ? MAX_TEXT_BYTES : Math.max(1, Math.min(MAX_TEXT_BYTES, textPreviewBytes));
+  const [mode, setMode] = useState<"preview" | "source">("preview");
   const [state, setState] = useState<{ status: "loading" } | { status: "ready"; text: string } | { status: "failed" }>({ status: "loading" });
   useEffect(() => {
     let active = true;
@@ -82,17 +86,22 @@ function TextualPreview({ descriptor, contentUrl, loadText, retry, textPreviewBy
     const separator = descriptor.mimeType === "text/tab-separated-values" || descriptor.name.toLowerCase().endsWith(".tsv") ? "\t" : ",";
     return <TablePreview name={descriptor.name} rows={parseDelimited(state.text, separator)} />;
   }
-  if (descriptor.kind === "html") {
-    const policy = "default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; font-src data:";
-    return <iframe
+  const rich = descriptor.kind === "html" || descriptor.kind === "markdown";
+  return <div className="flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden">
+    {rich ? <div className="flex shrink-0 gap-1 border-b p-1 text-xs" role="group" aria-label="Preview mode">
+      <button type="button" aria-pressed={mode === "preview"} onClick={() => setMode("preview")} className="rounded px-2 py-1 aria-pressed:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]">Preview</button>
+      <button type="button" aria-pressed={mode === "source"} onClick={() => setMode("source")} className="rounded px-2 py-1 aria-pressed:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]">Source</button>
+    </div> : null}
+    {descriptor.kind === "html" && mode === "preview" ? <iframe
       title={`HTML preview: ${descriptor.name}`}
       sandbox=""
-      srcDoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="${policy}">${state.text}`}
-      className="h-full min-h-96 w-full border-0 bg-white"
-    />;
-  }
-  return <div className="min-h-0 w-full overflow-auto">
-    <pre className="whitespace-pre-wrap break-words p-4 text-xs" data-selectable><code>{state.text}</code></pre>
+      srcDoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; font-src data:">${state.text}`}
+      className="min-h-96 w-full flex-1 border-0 bg-white"
+    /> : descriptor.kind === "markdown" && mode === "preview" ? <div className="min-h-0 flex-1 overflow-auto p-4 text-sm" data-selectable>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ img: ({ alt }) => <span>{alt}</span> }}>{state.text}</ReactMarkdown>
+    </div> : <div className="flex min-h-0 flex-1 flex-col overflow-auto">{renderSource
+      ? renderSource(state.text, descriptor.name)
+      : <pre className="whitespace-pre-wrap break-words p-4 text-xs" data-selectable><code>{state.text}</code></pre>}</div>}
     {descriptor.sizeBytes > limit ? <p role="status" className="px-4 pb-4 text-xs">Preview truncated.</p> : null}
   </div>;
 }

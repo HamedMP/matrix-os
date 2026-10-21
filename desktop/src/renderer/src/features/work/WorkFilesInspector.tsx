@@ -170,13 +170,20 @@ function WorkInspectorContent({
   );
   const [selectedId, setSelectedId] = useState(initialTerminalTab?.id ?? FILES_TAB.id);
   const [selectedFile, setSelectedFile] = useState<InspectorFileTarget | null>(null);
+  const [selectedDirectory, setSelectedDirectory] = useState<InspectorFileTarget | null>(null);
+  const [previewDirty, setPreviewDirty] = useState(false);
   const navigation = useChatFileNavigation();
   const requestedFile = navigation?.request;
+  const handledFileRequest = useRef<typeof requestedFile>(null);
   useEffect(() => {
-    if (!requestedFile || requestedFile.chatId !== scope.chatId) return;
-    setSelectedFile(requestedFile.target);
+    if (!requestedFile || requestedFile.chatId !== scope.chatId || handledFileRequest.current === requestedFile) return;
+    handledFileRequest.current = requestedFile;
+    if (previewDirty && !window.confirm("Discard unsaved changes to this file?")) return;
+    setPreviewDirty(false);
+    setSelectedFile(requestedFile.directory ? null : requestedFile.target);
+    setSelectedDirectory(requestedFile.directory ? requestedFile.target : null);
     setSelectedId(FILES_TAB.id);
-  }, [requestedFile, scope.chatId]);
+  }, [previewDirty, requestedFile, scope.chatId]);
   const [resolvedChatId, setResolvedChatId] = useState<string | null>(
     detail?.record.chat.id ?? initialTerminal?.chatId ?? null,
   );
@@ -194,11 +201,16 @@ function WorkInspectorContent({
   }, [active, refreshSummary, terminalBindingKey, unresolvedBinding]);
 
   const openFile = (target: InspectorFileTarget) => {
+    if (previewDirty && !window.confirm("Discard unsaved changes to this file?")) return;
+    setPreviewDirty(false);
     setSelectedFile(target);
+    setSelectedDirectory(null);
     setSelectedId(FILES_TAB.id);
   };
 
   const openTerminal = (session: TerminalSessionSummary) => {
+    if (previewDirty && !window.confirm("Discard unsaved changes to this file?")) return;
+    setPreviewDirty(false);
     const id = `terminal:${session.id}`;
     setTabs((current) => current.some((tab) => tab.id === id)
       ? current
@@ -343,7 +355,11 @@ function WorkInspectorContent({
                   aria-controls={`work-inspector-panel-${tab.id}`}
                   className={`flex h-full min-w-0 items-center gap-2 px-2 text-xs outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${tab.kind === "terminal" ? "rounded-l-lg" : "rounded-lg"}`}
                   style={{ color: selected.id === tab.id ? "var(--text-primary)" : "var(--text-tertiary)" }}
-                  onClick={() => setSelectedId(tab.id)}
+                  onClick={() => {
+                    if (selected.id !== tab.id && previewDirty && !window.confirm("Discard unsaved changes to this file?")) return;
+                    if (selected.id !== tab.id) setPreviewDirty(false);
+                    setSelectedId(tab.id);
+                  }}
                 >
                   {tab.kind === "terminal" ? <SquareTerminal size={14} aria-hidden /> : <FileCode2 size={14} aria-hidden />}
                   <span className="max-w-32 truncate">{tab.label}</span>
@@ -410,7 +426,11 @@ function WorkInspectorContent({
               title={closeLabel}
               className="flex size-8 shrink-0 items-center justify-center rounded-md outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               style={{ color: "var(--text-tertiary)" }}
-              onClick={onClose}
+              onClick={() => {
+                if (previewDirty && !window.confirm("Discard unsaved changes to this file?")) return;
+                setPreviewDirty(false);
+                onClose();
+              }}
             >
               <PanelRightCloseIcon size={14} aria-hidden />
             </button>
@@ -442,7 +462,7 @@ function WorkInspectorContent({
                 background: "var(--bg-sunken)",
               }}
             >
-              <InspectorFilesPanel scope={selectedFile?.kind === "home" ? { kind: "home", chatId: scope.chatId } : scope} selectedFile={selectedFile} browserOnly forceList onOpenFile={openFile} />
+              <InspectorFilesPanel scope={(selectedFile ?? selectedDirectory)?.kind === "home" ? { kind: "home", chatId: scope.chatId } : scope} selectedFile={selectedFile} selectedDirectory={selectedDirectory} browserOnly forceList onOpenFile={openFile} />
             </section>
           ) : null}
           {selected.kind === "files" && selectedFile ? (
@@ -478,7 +498,7 @@ function WorkInspectorContent({
                 aria-label="File preview"
                 className="flex min-h-0 flex-1 flex-col"
               >
-                <InspectorFilePreview target={selectedFile} />
+                <InspectorFilePreview target={selectedFile} onDirtyChange={setPreviewDirty} />
               </div>
             ) : null}
             {tabs.filter((tab) => tab.kind === "terminal").map((tab) => (

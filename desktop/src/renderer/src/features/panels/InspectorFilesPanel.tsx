@@ -81,6 +81,7 @@ export function InspectorFilesPanel({
   browserOnly = false,
   forceList = false,
   selectedFile,
+  selectedDirectory,
   onOpenFile,
 }: {
   scopeLabel?: string;
@@ -88,6 +89,7 @@ export function InspectorFilesPanel({
   browserOnly?: boolean;
   forceList?: boolean;
   selectedFile?: InspectorFileTarget | null;
+  selectedDirectory?: InspectorFileTarget | null;
   onOpenFile?: (target: InspectorFileTarget) => void;
 }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -107,6 +109,7 @@ export function InspectorFilesPanel({
         key={`${scopeKey}:${scope.projectId}:${scope.worktreeId ?? "root"}`}
         scope={scope}
         selectedPath={selectedFile?.kind === "project" && selectedFile.projectId === scope.projectId && selectedFile.worktreeId === scope.worktreeId ? selectedFile.path : undefined}
+        directoryPath={selectedDirectory?.kind === "project" && selectedDirectory.projectId === scope.projectId && selectedDirectory.worktreeId === scope.worktreeId ? selectedDirectory.path : undefined}
         browserOnly={browserOnly}
         onOpenFile={onOpenFile}
       />
@@ -221,14 +224,16 @@ function ProjectFilesPanel({
   browserOnly,
   onOpenFile,
   selectedPath,
+  directoryPath,
 }: {
   scope: Extract<WorkFilesScope, { kind: "project" }>;
   browserOnly: boolean;
   onOpenFile?: (target: InspectorFileTarget) => void;
   selectedPath?: string;
+  directoryPath?: string;
 }) {
   if (browserOnly) {
-    return <ProjectFilesTree selectedPath={selectedPath} scope={scope} onOpenFile={onOpenFile} />;
+    return <ProjectFilesTree selectedPath={selectedPath} directoryPath={directoryPath} scope={scope} onOpenFile={onOpenFile} />;
   }
   return <ProjectNavigableFilesPanel scope={scope} onOpenFile={onOpenFile} />;
 }
@@ -237,10 +242,12 @@ function ProjectFilesTree({
   scope,
   onOpenFile,
   selectedPath,
+  directoryPath,
 }: {
   scope: Extract<WorkFilesScope, { kind: "project" }>;
   onOpenFile?: (target: InspectorFileTarget) => void;
   selectedPath?: string;
+  directoryPath?: string;
 }) {
   const loadDirectory = useCallback(async (path: string): Promise<InspectorTreeEntry[]> => {
     const response = await browseProjectDirectory(scope, path || undefined);
@@ -262,7 +269,7 @@ function ProjectFilesTree({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ExpandableFileTree selectedPath={selectedPath} loadDirectory={loadDirectory} onOpenFile={openFile} />
+      <ExpandableFileTree selectedPath={selectedPath} directoryPath={directoryPath} loadDirectory={loadDirectory} onOpenFile={openFile} />
     </div>
   );
 }
@@ -381,8 +388,8 @@ function ProjectNavigableFilesPanel({
   );
 }
 
-export function InspectorFilePreview({ target }: { target: InspectorFileTarget }) {
+export function InspectorFilePreview({ target, onDirtyChange }: { target: InspectorFileTarget; onDirtyChange?: (dirty: boolean) => void }) {
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
-  return <InspectorResourcePreview key={`${runtimeSlot}:${authGeneration}:${JSON.stringify(target)}`} target={target} />;
+  return <InspectorResourcePreview key={`${runtimeSlot}:${authGeneration}:${JSON.stringify(target)}`} target={target} onDirtyChange={onDirtyChange} />;
 }

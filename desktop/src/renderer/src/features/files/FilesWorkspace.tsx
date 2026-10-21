@@ -56,6 +56,7 @@ export default function FilesWorkspace() {
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderError, setNewFolderError] = useState<string | null>(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [previewDirty, setPreviewDirty] = useState(false);
   const nextTabId = useRef(1);
   const newFolderInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -64,6 +65,7 @@ export default function FilesWorkspace() {
   const previewSelection = activePath !== null && activeSelection?.entry?.type === "file"
     ? { path: activePath, entry: activeSelection.entry }
     : null;
+  const confirmPreviewChange = () => !previewDirty || window.confirm("Discard unsaved changes to this file?");
 
   useEffect(() => {
     setSelections({});
@@ -95,6 +97,8 @@ export default function FilesWorkspace() {
   }, []);
 
   const openFolderTab = useCallback((path: string, title = pathTitle(path)) => {
+    if (previewDirty && !window.confirm("Discard unsaved changes to this file?")) return;
+    setPreviewDirty(false);
     const existing = tabs.find((tab) => tab.path === path);
     if (existing) {
       setActiveTabId(existing.id);
@@ -103,7 +107,7 @@ export default function FilesWorkspace() {
     const tab = { id: `files-folder-${nextTabId.current++}`, path, initialPath: path, title };
     setTabs([...tabs, tab].slice(-MAX_FILE_TABS));
     setActiveTabId(tab.id);
-  }, [tabs]);
+  }, [previewDirty, tabs]);
 
   useEffect(() => {
     if (!navigation) return;
@@ -120,6 +124,8 @@ export default function FilesWorkspace() {
 
   const closeTab = useCallback((tabId: string) => {
     if (tabs.length === 1) return;
+    if (previewDirty && !window.confirm("Discard unsaved changes to this file?")) return;
+    setPreviewDirty(false);
     const index = tabs.findIndex((tab) => tab.id === tabId);
     const next = tabs.filter((tab) => tab.id !== tabId);
     setTabs(next);
@@ -132,7 +138,7 @@ export default function FilesWorkspace() {
       return next;
     });
     setNewFolderRequest((current) => current?.tabId === tabId ? null : current);
-  }, [activeTabId, tabs]);
+  }, [activeTabId, previewDirty, tabs]);
 
   const requestNewFolder = useCallback((tabId: string, parentPath: string) => {
     setNewFolderRequest({ parentPath, tabId, runtimeSlot, authGeneration });
@@ -186,7 +192,7 @@ export default function FilesWorkspace() {
           const active = tab.id === visibleActiveTabId;
           return (
             <div key={tab.id} className="flex h-8 shrink-0 items-center rounded-t-lg border border-b-0" style={{ borderColor: "var(--border-subtle)", background: active ? "var(--bg-surface)" : "transparent" }}>
-              <button type="button" role="tab" aria-selected={active} aria-label={tab.title} onClick={() => setActiveTabId(tab.id)} className="flex h-full max-w-48 items-center gap-2 px-3 text-xs font-medium outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]" style={{ color: active ? "var(--text-primary)" : "var(--text-tertiary)" }}>
+              <button type="button" role="tab" aria-selected={active} aria-label={tab.title} onClick={() => { if (confirmPreviewChange()) { setPreviewDirty(false); setActiveTabId(tab.id); } }} className="flex h-full max-w-48 items-center gap-2 px-3 text-xs font-medium outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)]" style={{ color: active ? "var(--text-primary)" : "var(--text-tertiary)" }}>
                 <Folder size={14} aria-hidden /><span className="truncate">{tab.title}</span>
               </button>
               {tabs.length > 1 ? <button type="button" aria-label={`Close ${tab.title}`} onClick={() => closeTab(tab.id)} className="mr-1 flex size-6 items-center justify-center rounded hover:bg-[var(--bg-hover)]" style={{ color: "var(--text-tertiary)" }}><X size={13} /></button> : null}
@@ -214,8 +220,13 @@ export default function FilesWorkspace() {
                   // Keep the creation seed stable; current tab path is navigation output.
                   initialPath={tab.initialPath}
                   onPathChange={(path) => updateTabPath(tab.id, path)}
-                  onSelectionChange={(next: BrowserSelection | null) => setSelections((current) => ({ ...current, [tab.id]: next ? { slot: runtimeSlot, authGeneration, path: next.path, entry: next.entry } : null }))}
+                  onSelectionChange={(next: BrowserSelection | null) => {
+                    if (!confirmPreviewChange()) return;
+                    setPreviewDirty(false);
+                    setSelections((current) => ({ ...current, [tab.id]: next ? { slot: runtimeSlot, authGeneration, path: next.path, entry: next.entry } : null }));
+                  }}
                   onDownload={download.download}
+                  onEditFile={openFileInDesktopEditor}
                   downloadPending={download.pending}
                   onOpenFolderInNewTab={openFolderTab}
                   onRequestCreateFolder={(parentPath) => requestNewFolder(tab.id, parentPath)}
@@ -237,7 +248,8 @@ export default function FilesWorkspace() {
               onDownload={download.download}
               downloadPending={download.pending}
               onEdit={openFileInDesktopEditor}
-              onClose={() => setSelections((current) => ({ ...current, [activeTabId]: null }))}
+              onDirtyChange={setPreviewDirty}
+              onClose={() => { setPreviewDirty(false); setSelections((current) => ({ ...current, [activeTabId]: null })); }}
             />
           </Suspense>
         ) : null}
