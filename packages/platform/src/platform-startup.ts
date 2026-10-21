@@ -103,6 +103,7 @@ import {
 import { createConfiguredPlatformSpeechService } from './speech/wiring.js';
 import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
 import { createAccountDeletionIntegrationWebhookAdmission } from './account-deletion/integration-webhook.js';
+import { createPlatformGoogleCollectionAdmission, type InternalGoogleCollectionAdmission } from './google-collection-admission.js';
 
 interface GatewayPlatformUser {
   id: string;
@@ -191,6 +192,7 @@ interface GatewayPipedreamModule {
 }
 
 interface GatewayIntegrationRoutesModule {
+  createGoogleCollectionAdmissionForPlatform(input: { db: GatewayPlatformDb; machineTokenForHandle(handle: string): string }): InternalGoogleCollectionAdmission;
   authorizeInternalJevLabels(c: Context): Promise<boolean>;
   createIntegrationRoutes(opts: {
     db: GatewayPlatformDb;
@@ -204,6 +206,7 @@ interface GatewayIntegrationRoutesModule {
     authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
     mcpPresetBroker?: unknown;
     verifiedConnectedWebhook?: ReturnType<typeof createAccountDeletionIntegrationWebhookAdmission>;
+    googleCollection?: InternalGoogleCollectionAdmission;
   }): Hono;
   executeIntegrationAction(opts: {
     pipedream: unknown; externalUserId: string;
@@ -522,7 +525,7 @@ async function startPlatformServerWithCleanup(
   if ((requiresPlatformGmailRuntime(process.env) || pipedreamGmailAttempts) && !integrationConfig) throw new Error('Gmail integration runtime unavailable');
   if (integrationConfig) {
     const [
-      { createIntegrationRoutes, executeIntegrationAction, authorizeInternalJevLabels },
+      { createIntegrationRoutes, executeIntegrationAction, authorizeInternalJevLabels, createGoogleCollectionAdmissionForPlatform },
       { createPipedreamClient },
       { createPlatformDb: createGatewayPlatformDb },
       { getService, getAction },
@@ -593,6 +596,8 @@ async function startPlatformServerWithCleanup(
     });
     internalIntegrationRoutes = createIntegrationRoutes({
       db: trustedPlatformDb,
+      googleCollection: createPlatformGoogleCollectionAdmission({ integrationDb: trustedPlatformDb, platformSecret,
+        createAdmission: createGoogleCollectionAdmissionForPlatform }),
       pipedream,
       nativeGmail: gmail.oauth,
       pipedreamGmailAttempts,

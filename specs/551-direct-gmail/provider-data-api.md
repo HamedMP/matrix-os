@@ -1,5 +1,7 @@
 # Google-data authority boundaries
 
+Platform startup keeps collection construction in focused adapter modules rather than adding processing logic to its oversized entrypoint. It installs the trusted factory only on internal integration routes, behind the existing machine bearer, signed-owner delegation and account-deletion mutation guard. Canonical integration user UUIDs map to Clerk owners; exact active Gmail connections are rechecked before each send and release. Internal Gmail calls without a processing envelope fail closed, so platform rollout requires matching host signing and owner-consent support. Public owner inspection/export paths retain their own authorization and are not evidence of qualified public model egress.
+
 ENG-355; companion to provider-data-controls.md. All new handling remains disabled until runtime composition and qualification are complete. The profile registry has no user-facing review/approval endpoint. Actual account terms/settings remain operator evidence, not code defaults.
 
 | Route relative to `/api/integrations` | Authority | Behavior |
