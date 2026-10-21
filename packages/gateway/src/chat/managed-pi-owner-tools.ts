@@ -246,7 +246,12 @@ export function createManagedPiOwnerTools(deps: {
             await askOwner(run, "Allow this AI to use Gmail data?", description, consentSignal);
             return true;
           });
-          await live(binding, signal);
+          const afterConsent = await live(binding, signal);
+          await actionFor(binding, request.args, afterConsent.permissionMode, signal);
+          const afterAccount = await account(binding, request.args, signal);
+          if (afterAccount.connectionId !== selected.connectionId || afterAccount.label !== selected.label) throw new BotBrokerActionError("not_granted");
+          const finalAuthority = await live(binding, signal);
+          if (action.risk !== "read" && finalAuthority.permissionMode !== "full_access") throw new BotBrokerActionError("denied");
         }
         return text(await deps.integrations!.call(binding.ownerId, { service: request.args.service, action: request.args.action,
           label: selected.label, connectionId: selected.connectionId, params: request.args.params, read: action.risk === "read",
