@@ -1,8 +1,9 @@
+import { boundedProvenanceTransaction } from "./transaction.js";
 import { sql, type Kysely } from "kysely";
 
 /** Independent tables: host owns the injected pool and scheduling; this module never closes it. */
 export async function migrateGoogleProvenance<DB>(db: Kysely<DB>) {
-  await db.transaction().execute(async tx => {
+  await boundedProvenanceTransaction(db, async tx => {
     await sql`SELECT pg_advisory_xact_lock(551035503)`.execute(tx);
     await sql`CREATE TABLE IF NOT EXISTS google_copy_registry (
       id UUID PRIMARY KEY, owner_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('chat','session','import','attachment','derived')),

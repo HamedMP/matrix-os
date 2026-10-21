@@ -1,3 +1,4 @@
+import { boundedProvenanceTransaction } from "./transaction.js";
 import { randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
 import { GoogleProvenanceUnavailable, validateOpaque, type GoogleEntityKind, type ProvenanceLimits, type PurgeClaim, type PurgeHandlers, type PurgeOutcome } from "./contracts.js";
@@ -6,7 +7,7 @@ export async function claimPurgeJob<DB>(db: Kysely<DB>, cap: ProvenanceLimits, w
   validateOpaque(workerId);
   const leaseMs = input.leaseMs ?? 60_000;
   if (!Number.isInteger(leaseMs) || leaseMs < 1 || leaseMs > 300_000) throw new GoogleProvenanceUnavailable();
-  return db.transaction().execute(async tx => {
+  return boundedProvenanceTransaction(db, async tx => {
     // Crashed workers consume an attempt too; lease churn cannot create infinite retries.
     await sql`UPDATE google_copy_purge_jobs SET state='unresolved',reason='retry_exhausted',revision=revision+1,updated_at=now()
       WHERE (state='pending' OR (state='leased' AND lease_until <= now())) AND attempts >= ${cap.maxAttempts}`.execute(tx);
@@ -25,7 +26,7 @@ export async function claimPurgeJob<DB>(db: Kysely<DB>, cap: ProvenanceLimits, w
 export async function executePurgeClaim<DB>(db: Kysely<DB>, cap: ProvenanceLimits, claim: PurgeClaim, handlers: PurgeHandlers): Promise<"deleted" | "unresolved" | "retry" | "stale"> {
   validateOpaque(claim.ownerId);
   if (![claim.jobId, claim.leaseToken].every(value => /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(value)) || !Number.isSafeInteger(claim.revision) || claim.revision < 1) throw new GoogleProvenanceUnavailable();
-  return db.transaction().execute(async tx => {
+  return boundedProvenanceTransaction(db, async tx => {
     const job = (await sql<{ copy_id: string; attempts: number; remaining_ms: number }>`SELECT copy_id,attempts,
       (extract(epoch FROM lease_until-clock_timestamp())*1000)::int AS remaining_ms FROM google_copy_purge_jobs
       WHERE id=${claim.jobId} AND owner_id=${claim.ownerId} AND lease_token=${claim.leaseToken}

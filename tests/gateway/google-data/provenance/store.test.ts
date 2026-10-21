@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Kysely, PostgresDialect, sql } from "kysely";
 import { Pool } from "pg";
+import { boundedProvenanceTransaction } from "../../../../packages/gateway/src/google-data/provenance/transaction.js";
 import { createGoogleProvenanceStore, type RecordGoogleCopy, type PurgeHandlers } from "../../../../packages/gateway/src/google-data/provenance/index.js";
 
 const suite = process.env.MATRIX_TEST_POSTGRES_URL ? describe : describe.skip;
@@ -226,6 +227,90 @@ suite("durable Google provenance and conservative purge", () => {
     expect(() => createGoogleProvenanceStore(db, { maxAttempts: 100 })).toThrow();
     await store.migrate();
     expect((await store.inspect(owner, "chat", "chat_one"))?.state).toBe("active");
+  });
+  it("rechecks retention after an awaited production advisory lock", async () => {
+    const connection = await db.connection().execute(async held => {
+      await sql`SELECT pg_advisory_lock(551035503)`.execute(held);
+      try {
+        const registration = store.record(copy({ entityRef: "expires_while_waiting", retention: { choice: "until", deadline: new Date(Date.now() + 80).toISOString(), decisionId: "short" } }));
+        const outcome = registration.then(() => "written", () => "rejected");
+        await new Promise(resolve => setTimeout(resolve, 130));
+        await sql`SELECT pg_advisory_unlock(551035503)`.execute(held);
+        return outcome;
+      } finally { await sql`SELECT pg_advisory_unlock_all()`.execute(held); }
+    });
+    expect(connection).toBe("rejected");
+    expect(await store.inspect(owner, "chat", "expires_while_waiting")).toBeNull();
+  });
+  it("sets production transaction timeouts before advisory lock admission", async () => {
+    await db.connection().execute(async held => {
+      await sql`SELECT pg_advisory_lock(551035503)`.execute(held);
+      const started = Date.now();
+      try {
+        await expect(store.record(copy())).rejects.toThrow(/lock timeout/);
+        expect(Date.now() - started).toBeLessThan(4000);
+      } finally { await sql`SELECT pg_advisory_unlock(551035503)`.execute(held); }
+    });
+  });
+  it("configures local production SQL budgets independently of the injected pool", async () => {
+    const settings = await boundedProvenanceTransaction(db, async tx => (await sql<{ statement: string; lock: string }>`SELECT
+      current_setting('statement_timeout') AS statement,current_setting('lock_timeout') AS lock`.execute(tx)).rows[0]);
+    expect(settings).toEqual({ statement: "5s", lock: "2s" });
+  });
+  it("rejects a retention deadline that expires while waiting for the entity row lock", async () => {
+    const initial = await store.record(copy());
+    let completion: Promise<string> | undefined;
+    await db.transaction().execute(async held => {
+      await sql`SELECT id FROM google_copy_registry WHERE owner_id=${owner} FOR UPDATE`.execute(held);
+      const pending = store.record(copy({ baseRevision: initial.revision, contentHash: "b".repeat(64), retention: { choice: "until", deadline: new Date(Date.now() + 100).toISOString(), decisionId: "short" } }));
+      const result = pending.then(() => "written", () => "rejected");
+      await new Promise(resolve => setTimeout(resolve, 140));
+      // End the lock holder before awaiting registration; the outer variable receives the pending result.
+      completion = result;
+    });
+    expect(await completion).toBe("rejected");
+    expect((await store.inspect(owner, "chat", "chat_one"))?.contentHash).toBe(digest);
+  });
+  it("owner metadata finalization requires trusted full-duration account-deletion admission", async () => {
+    await expect(store.finalizeOwnerDeletion(owner)).rejects.toThrow("Google data unavailable");
+    const declining = createGoogleProvenanceStore(db, {}, { withOwnerDeletionAdmission: async () => null });
+    await expect(declining.finalizeOwnerDeletion(owner)).rejects.toThrow("Google data unavailable");
+    let guarded = false;
+    const admitted = createGoogleProvenanceStore(db, {}, { withOwnerDeletionAdmission: async (_owner, work) => {
+      expect(_owner).toBe(owner); guarded = true;
+      try { return await work(); } finally { guarded = false; }
+    } });
+    await admitted.record(copy());
+    await admitted.record(copy({ ownerId: "outsider" }));
+    await expect(admitted.finalizeOwnerDeletion(owner)).rejects.toThrow();
+    const receipt = await admitted.requestPurge(owner, connection, "request");
+    await expect(admitted.finalizeOwnerDeletion(owner)).rejects.toThrow();
+    const claim = (await admitted.claimPurge("worker"))!;
+    await expect(admitted.finalizeOwnerDeletion(owner)).rejects.toThrow();
+    await admitted.executeClaim(claim, { chat: async () => ({ status: "deleted" }) });
+    await sql`UPDATE google_copy_purge_jobs SET lease_token=${randomUUID()},lease_until=now()-interval '1 minute' WHERE owner_id=${owner}`.execute(db);
+    await expect(admitted.finalizeOwnerDeletion(owner)).rejects.toThrow();
+    await sql`UPDATE google_copy_purge_jobs SET lease_token=NULL,lease_until=NULL WHERE owner_id=${owner}`.execute(db);
+    expect(await admitted.finalizeOwnerDeletion(owner)).toEqual({ finalized: true, coverage: "registered-copies-only" });
+    expect(guarded).toBe(false);
+    expect(await admitted.inspect(owner, "chat", "chat_one")).toBeNull();
+    expect(await admitted.status(owner, receipt.id)).toBeNull();
+    expect((await admitted.inspect("outsider", "chat", "chat_one"))?.state).toBe("active");
+    for (const table of ["google_copy_registry", "google_copy_purge_requests", "google_copy_purge_jobs", "google_copy_purge_keys"]) {
+      expect((await sql`SELECT 1 FROM ${sql.id(table)} WHERE owner_id=${owner}`.execute(db)).rows).toHaveLength(0);
+    }
+    expect((await sql`SELECT 1 FROM google_copy_purge_links`.execute(db)).rows).toHaveLength(0);
+  });
+  it("owner finalization refuses unresolved and expired-but-unsettled leases", async () => {
+    const admitted = createGoogleProvenanceStore(db, {}, { withOwnerDeletionAdmission: async (_owner, work) => work() });
+    await admitted.record(copy());
+    await admitted.requestPurge(owner, connection, "request");
+    await admitted.claimPurge("worker", { leaseMs: 1 });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    await expect(admitted.finalizeOwnerDeletion(owner)).rejects.toThrow();
+    await admitted.executeClaim((await admitted.claimPurge("next"))!, {});
+    await expect(admitted.finalizeOwnerDeletion(owner)).rejects.toThrow();
+    expect((await admitted.inspect(owner, "chat", "chat_one"))?.state).toBe("purging");
   });
   it("expired retention queues cleanup and blocks reads", async () => {
     await store.record(copy({ retention: { choice: "until", deadline: new Date(Date.now() + 100).toISOString(), decisionId: "short" } }));
