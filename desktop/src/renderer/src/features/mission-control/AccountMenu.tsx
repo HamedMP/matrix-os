@@ -85,7 +85,7 @@ function AccountMenuTrigger({
     >
       <span
         className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full text-xs font-semibold ${compact ? "size-6" : "h-7 w-7"}`}
-        style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+        style={{ background: "var(--accent-muted)", color: "var(--accent-text)" }}
       >
         <AccountAvatar key={imageUrl} imageUrl={imageUrl} label={primaryLabel} />
       </span>

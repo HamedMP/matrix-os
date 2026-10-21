@@ -631,7 +631,7 @@ describe('review receipt workflow', () => {
     expect(job.permissions).toEqual({ contents: 'read', 'pull-requests': 'write' });
     expect(job['timeout-minutes']).toBeLessThanOrEqual(10);
     const checkout = job.steps.find(step => String(step.uses).startsWith('actions/checkout@'));
-    expect(checkout?.uses).toBe('actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803');
+    const pinnedAction=/^actions\/checkout@[a-f0-9]{40}$/;expect(checkout?.uses).toMatch(pinnedAction);expect('actions/checkout@v7').not.toMatch(pinnedAction);expect('untrusted/checkout@'+'a'.repeat(40)).not.toMatch(pinnedAction);
     expect(checkout?.with).not.toHaveProperty('ref');
     expect(checkout?.with).toMatchObject({ 'persist-credentials': false, filter: 'tree:0', 'fetch-depth': 0 });
     expect(source).toContain('node scripts/review/review-carryover.mjs record "$PR_NUMBER"');

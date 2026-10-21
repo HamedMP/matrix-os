@@ -246,7 +246,7 @@ function CodeBlock({
 }
 
 function escapeMarkdownCell(value: string): string {
-  return value.replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
+  return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
 }
 
 export function tableToMarkdown(table: HTMLTableElement | null): string {

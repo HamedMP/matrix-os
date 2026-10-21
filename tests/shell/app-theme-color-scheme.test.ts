@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { updateWebTheme } from "../../packages/brand/src/themes/web-theme";
 import { getThemeVariables } from "../../shell/src/lib/os-bridge";
 
 import { saveTheme, DEFAULT_THEME } from "../../shell/src/hooks/useTheme";
@@ -10,7 +11,7 @@ afterEach(() => { vi.unstubAllGlobals(); document.documentElement.style.colorSch
 describe("app theme color scheme", () => {
   it.each(["light", "dark"])("applies the chosen %s shell mode to browser controls and app bridges", async (mode) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
-    await saveTheme({ ...DEFAULT_THEME, mode: mode as "light" | "dark" });
+    await saveTheme(updateWebTheme(DEFAULT_THEME, { mode: mode as "light" | "dark" }));
     expect(document.documentElement.dataset.theme).toBe(mode);
     const computed = getComputedStyle(document.documentElement);
     expect(computed.colorScheme).toBe(mode);

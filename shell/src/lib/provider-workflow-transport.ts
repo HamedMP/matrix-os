@@ -43,15 +43,18 @@ async function requestJson(input: {
   return value;
 }
 
-function scopedProviderRequest(options: { fetcher?: typeof fetch; isIdentityCurrent?: () => boolean }) {
-  const gateway = getGatewayUrl();
+function scopedProviderRequest(options: { fetcher?: typeof fetch; isIdentityCurrent?: () => boolean; gatewayUrl?: string }) {
+  const gateway = options.gatewayUrl ?? getGatewayUrl();
+  const boundToMount = options.gatewayUrl !== undefined;
   return (input: ProviderWorkflowRequest) => requestJson({
     ...input, path: `${gateway}${input.path}`, fetcher: options.fetcher ?? fetch,
-    isIdentityCurrent: () => getGatewayUrl() === gateway && options.isIdentityCurrent?.() !== false,
+    // A bound gateway is the computer this page loaded on; in-app routes such as /shared
+    // rewrite the URL without leaving it. Settings still compares against the live URL.
+    isIdentityCurrent: () => (boundToMount || getGatewayUrl() === gateway) && options.isIdentityCurrent?.() !== false,
   });
 }
 
-export function createWebProviderWorkflowClient(options: { fetcher?: typeof fetch; isIdentityCurrent?: () => boolean } = {}) {
+export function createWebProviderWorkflowClient(options: { fetcher?: typeof fetch; isIdentityCurrent?: () => boolean; gatewayUrl?: string } = {}) {
   return createProviderWorkflowClient(scopedProviderRequest(options));
 }
 

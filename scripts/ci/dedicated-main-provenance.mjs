@@ -1,3 +1,4 @@
+import {isolatedRunPin,verifyRunExecution} from './dedicated-isolated.mjs';
 // Public issuer identity pinned by reviewed code. The private signing key stays
 // in the existing main-only matrix-ci environment; candidate data cannot select
 // another App as an authority for historical merge provenance.
@@ -39,6 +40,10 @@ export async function hasMainSourceProvenance(github,repo,snapshot){
    if(['push','schedule'].includes(run.event)&&run.head_branch==='main'&&sha.test(run.head_sha||''))return true;
    if(run.event==='pull_request_target'&&run.head_sha===snapshot.headSha&&run.head_branch===snapshot.headRef)return true;
    if(run.event==='workflow_run'&&((run.head_branch==='main'&&sha.test(run.head_sha||''))||(run.head_sha===snapshot.headSha&&run.head_branch===snapshot.headRef)))return true;
+   if(run.event==='workflow_dispatch'&&isolatedRunPin(run)){
+    const origin=await verifyRunExecution(github,repo,run,'.github/workflows/ci-dedicated.yml',evidence.controllerSha);
+    if(JSON.stringify(origin)===JSON.stringify(evidence.executionOrigin))return true;
+   }
   }
   if(data.check_runs.length<100)return false;
  }

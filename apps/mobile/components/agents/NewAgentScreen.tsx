@@ -3,7 +3,7 @@ import { FlatList, ScrollView, Text, View, type ListRenderItemInfo } from "react
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import { ListRowSkeletonStack, SearchField } from "@/components/shell/Controls";
+import { SearchField } from "@/components/shell/Controls";
 import { TabScreen } from "@/components/shell/TabScreen";
 import {
   AgentMascot,
@@ -14,6 +14,7 @@ import {
   EmptyState,
   Icon,
   ItemRow,
+  ItemRowSkeletons,
   SearchIcon,
   TopBar,
   TopBarButton,
@@ -121,7 +122,7 @@ export function NewAgentScreen({
           ))}
         </ScrollView>
         {state === "loading" ? (
-          <ListRowSkeletonStack testID="template-skeleton-row" />
+          <ItemRowSkeletons testID="template-skeleton-row" leadingSize={36} leadingShape="round" density="comfortable" />
         ) : (
           <FlatList
             ref={list}
