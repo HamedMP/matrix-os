@@ -29,7 +29,7 @@
     "@matrix-os/contracts": "workspace:*",
     "@matrix-os/observability": "workspace:*",
     "dockerode": "^4.0.7",
-    "hono": "^4.11.9",
+    "hono": "^4.13.11",
     "jose": "^6.2.3",
     "kysely": "^0.28.13",
     "pg": "^8.21.0",
