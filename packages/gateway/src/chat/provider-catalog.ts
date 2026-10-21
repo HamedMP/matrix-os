@@ -530,6 +530,7 @@ export function createChatProviderCatalogService(options: {
     refreshAiProvider = false, selection?: CanonicalChatModelSelection): Promise<CanonicalProviderCatalog> {
     const observationScope = options.observationScope?.(principal);
     const scope = chatCatalogDiscoveryScope(selection, observationScope);
+    const nativeCodexIdentityRequired = scope.coding.includes("codex");
     const systemRuntimeReads = Promise.all(scope.readSystems.map(async (kind) => {
       const source = options.systemRuntimeSources?.[kind];
       if (!source) return [kind, null] as const;
@@ -544,7 +545,13 @@ export function createChatProviderCatalogService(options: {
       scope.readCoding ? options.codingProviders.listProviders(principal) : Promise.resolve([]),
       scope.readRuntime ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs) : Promise.resolve(undefined),
       scope.readAi ? options.aiProviderSource?.getSnapshot({ ...scope.snapshotOptions, refresh: refreshAiProvider }) ?? Promise.resolve(undefined) : Promise.resolve(undefined),
-      options.harnessSettingsSource?.getSnapshot(selection || observationScope ? scope.snapshotOptions : undefined) ?? Promise.resolve(undefined),
+      options.harnessSettingsSource?.getSnapshot({
+        ...(selection || observationScope ? scope.snapshotOptions : {}),
+        ...(nativeCodexIdentityRequired ? {
+          includeNativeAccountMetadata: true,
+          includeNativeAccountUsage: false,
+        } : {}),
+      }) ?? Promise.resolve(undefined),
       systemRuntimeReads,
     ]);
     if (codingResult.status === "rejected") {

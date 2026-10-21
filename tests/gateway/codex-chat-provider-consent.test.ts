@@ -1,9 +1,11 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import type {
+  AgentProviderSummary,
   CanonicalProviderInstanceDescriptor,
   ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import { applyHarnessSettings } from "../../packages/gateway/src/chat/harness-catalog-admission.js";
+import { createChatProviderCatalogService } from "../../packages/gateway/src/chat/provider-catalog.js";
 
 const codexInstance = {
   id: "codex_default",
@@ -110,5 +112,53 @@ it("does not advertise a configured Codex subscription without executable consen
     unavailabilityReason: "authentication_required",
     defaultSelection: undefined,
     setupActions: [{ id: "codex_settings", kind: "open_settings", label: "Agents & providers" }],
+  });
+});
+
+it("requests native account identity when revalidating a bound Codex chat", async () => {
+  const selected = { instanceId: "codex_default", model: "gpt-5.4" };
+  const withoutNativeIdentity = structuredClone(settings);
+  withoutNativeIdentity.harnesses[0]!.enabled = true;
+  withoutNativeIdentity.accessSources[0]!.readiness = {
+    state: "ready",
+    checkedAt: "2026-10-20T19:40:00.000Z",
+    staleAfter: "2026-10-20T19:40:30.000Z",
+    action: "none",
+    safeReason: null,
+  };
+  const getSnapshot = vi.fn(async (options?: { includeNativeAccountMetadata?: boolean }) => (
+    options?.includeNativeAccountMetadata ? settings : withoutNativeIdentity
+  ));
+  const provider = {
+    id: "codex",
+    kind: "codex",
+    displayName: "Codex",
+    availability: "available",
+    installStatus: "installed",
+    authStatus: "authenticated",
+    supportedModes: ["default"],
+    defaultMode: "default",
+    defaultModel: "gpt-5.4",
+    setupActions: [],
+  } satisfies AgentProviderSummary;
+  const service = createChatProviderCatalogService({
+    codingProviders: { listProviders: async () => [provider], invalidate() {} },
+    agentRuntimeSource: async () => { throw new Error("system runtime should not be read"); },
+    harnessSettingsSource: { getSnapshot },
+    executableDriverKinds: ["codex"],
+    now: () => new Date("2026-10-20T19:40:10.000Z"),
+  });
+
+  const catalog = await service.getCatalog({ userId: "owner_codex", source: "jwt" }, selected);
+
+  expect(getSnapshot).toHaveBeenCalledWith({
+    refresh: false,
+    includeNativeAccountMetadata: true,
+    includeNativeAccountUsage: false,
+  });
+  expect(catalog.instances[0]).toMatchObject({
+    id: "codex_default",
+    availability: "unavailable",
+    unavailabilityReason: "authentication_required",
   });
 });
