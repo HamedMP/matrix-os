@@ -155,6 +155,7 @@ export function createManagedPiOwnerTools(deps: {
       // Approval preparation itself forwards tool arguments to the control plane.
       await deps.authorizeExternalEgress?.(binding, signal);
       const control = await initializeMcp(run);
+      await deps.authorizeExternalEgress?.(binding, signal);
       prepared.receipt = await new Promise<string | undefined>((resolve, reject) => {
         const abort = () => { signal.removeEventListener("abort", abort); control.onToolPermissionCancel(request.toolCallId); reject(new BotBrokerActionError("denied")); };
         signal.addEventListener("abort", abort, { once: true });

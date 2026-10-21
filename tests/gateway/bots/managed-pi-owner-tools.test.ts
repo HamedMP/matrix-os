@@ -119,3 +119,19 @@ it.each(['browser.action', 'mcp.call'] as const)('checks egress before %s can se
   expect(guard).toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled(); expect(mcpCall).not.toHaveBeenCalled(); expect(remotePrepare).not.toHaveBeenCalled();
   await tools.closeRun(current.runId);
 });
+it('rechecks egress after remote MCP run registration before sending approval arguments', async () => {
+  const current = { ...binding, capabilities: ['mcp.call'] } as ManagedPiRuntimeBinding;
+  let classified = false; let finish!: (value: { generation: number }) => void; let entered!: () => void;
+  const ready = new Promise<void>(r => { entered = r; });
+  const registerRun = vi.fn(() => { entered(); return new Promise<{ generation: number }>(r => { finish = r; }); });
+  const prepare = vi.fn(async () => ({ kind: 'allow' as const })); const call = vi.fn();
+  const tools = createManagedPiOwnerTools({ authority: async () => ({ permissionMode: 'full_access' }), signalFor: () => new AbortController().signal,
+    authorizeExternalEgress: async () => { if (classified) throw new Error('Tool unavailable'); },
+    mcp: { inventory: async () => [], describe: async () => ({}), call } as never,
+    approvals: { registerRun, prepare, revokeRun: async () => true } as never });
+  await tools.open(current, () => undefined);
+  const req = BotToolRequestSchema.parse({ toolCallId: 'mcp_wait', capability: 'mcp.call', args: { serverId: '123e4567-e89b-42d3-a456-426614174000', tool: 'echo', arguments: { text: 'synthetic-private-mail' } } });
+  const pending = tools.dispatch(current, req, new AbortController().signal); const rejected = expect(pending).rejects.toThrow('Tool unavailable');
+  await ready; classified = true; finish({ generation: 1 }); await rejected;
+  expect(prepare).not.toHaveBeenCalled(); expect(call).not.toHaveBeenCalled(); await tools.closeRun(current.runId);
+});
