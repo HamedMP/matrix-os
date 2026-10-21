@@ -11,6 +11,7 @@ import {
   useAudioStream,
 } from "expo-audio";
 import { getRandomValues } from "expo-crypto";
+import { useIsFocused } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AppState, Linking, Platform } from "react-native";
 
@@ -201,6 +202,15 @@ export function useComposerSpeech({
     // Stopping keeps what was said; it does nothing once the recording is over.
     speech.stop();
   }, [endRequests, speech]);
+
+  // Choosing another tab hides the screen without unmounting it. The
+  // microphone does not keep listening there: the recording ends and what was
+  // said goes into the draft, as when leaving the app.
+  const focused = useIsFocused();
+  const { phase, stop: stopRecording } = speech;
+  useEffect(() => {
+    if (!focused && phase === "recording") stopRecording();
+  }, [focused, phase, stopRecording]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {

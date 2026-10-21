@@ -39,6 +39,7 @@ const mockClient = {
   cancel: jest.fn(async () => undefined),
 };
 const mockGateway = { userId: "user_1", computerKey: "alice:primary" };
+const mockFocus = { current: true };
 const mockStream = {
   onBuffer: null as ((buffer: unknown) => void) | null,
   setStreaming: null as ((isStreaming: boolean) => void) | null,
@@ -57,6 +58,7 @@ jest.mock("@/lib/queries/use-active-gateway", () => ({
     session: async () => ({ token: "clerk-token", gatewayUrl: "https://app.matrix-os.com/vm/alice" }),
   }),
 }));
+jest.mock("expo-router", () => ({ useIsFocused: () => mockFocus.current }));
 jest.mock("@/lib/speech/client", () => ({
   ...jest.requireActual("@/lib/speech/client"),
   createGatewaySpeechClient: () => mockClient,
@@ -109,6 +111,7 @@ beforeEach(() => {
   mockStream.start.mockClear();
   mockStream.stop.mockClear();
   mockGateway.computerKey = "alice:primary";
+  mockFocus.current = true;
   mockPermissions.current = { granted: true, canAskAgain: true, status: "granted" };
   mockPermissions.requested = { granted: true, canAskAgain: true, status: "granted" };
   jest.mocked(requestRecordingPermissionsAsync).mockClear();
@@ -236,6 +239,34 @@ describe("useComposerSpeech", () => {
 
     await waitFor(() => expect(onChangeDraft).toHaveBeenCalledWith("hello there"));
     expect(mockStream.stop).toHaveBeenCalled();
+  });
+
+  it("transcribes what was said, and lets go of the microphone, when another tab hides the screen", async () => {
+    const { result, rerender, props, onChangeDraft } = renderSpeech();
+    await waitFor(() => expect(result.current?.phase).toBe("idle"));
+    act(() => result.current?.start());
+    await waitFor(() => expect(result.current?.phase).toBe("recording"));
+    speak();
+
+    // Tab screens stay mounted when another tab is chosen; only their focus changes.
+    mockFocus.current = false;
+    rerender({ ...props });
+
+    await waitFor(() => expect(onChangeDraft).toHaveBeenCalledWith("hello there"));
+    expect(mockStream.stop).toHaveBeenCalled();
+  });
+
+  it("keeps recording while the screen stays in view", async () => {
+    const { result, rerender, props } = renderSpeech();
+    await waitFor(() => expect(result.current?.phase).toBe("idle"));
+    act(() => result.current?.start());
+    await waitFor(() => expect(result.current?.phase).toBe("recording"));
+
+    rerender({ ...props, draft: "typing alongside" });
+    await act(async () => undefined);
+
+    expect(result.current?.phase).toBe("recording");
+    expect(mockStream.stop).not.toHaveBeenCalled();
   });
 
   it("transcribes what was said when the system takes the microphone", async () => {
