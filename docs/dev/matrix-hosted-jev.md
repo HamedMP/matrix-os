@@ -72,9 +72,16 @@ const response = await fetch(`${gatewayUrl}/api/jev/evaluate`, {
 });
 const result: unknown = await response.json();
 if (!response.ok) {
-  // Inspect the bounded `error.code` described below. Preserve the key and
-  // body if the request may have reached Jev; a new key can charge again.
-  throw new Error(`Jev evaluation returned HTTP ${response.status}`);
+  // Preserve the key and body if dispatch may have started; a new key can charge again.
+  const code = typeof result === "object" && result !== null
+    && "error" in result && typeof result.error === "object" && result.error !== null
+    && "code" in result.error && typeof result.error.code === "string"
+      ? result.error.code
+      : "unexpected_response";
+  throw Object.assign(new Error(`Jev evaluation returned HTTP ${response.status}: ${code}`), {
+    status: response.status,
+    code,
+  });
 }
 const evaluation = JevEmailTriageResultSchema.parse(result);
 console.log(evaluation.requestId, evaluation.answers);
