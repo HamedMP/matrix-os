@@ -572,6 +572,7 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     decision: CanonicalChatApprovalDecisionSchema,
     browserApproval: BrowserApprovalLifecycleSchema.optional(),
     browserGrant: BrowserGrantViewSchema.optional(),
+    reason: z.enum(["expired"]).optional(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("input.requested"),

@@ -1,19 +1,20 @@
 import { Children, Fragment, useState, type ReactNode } from "react";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
 import CubeIcon from "@hugeicons/core-free-icons/CubeIcon";
-import { Pressable, Text, TextInput, View, type ColorValue } from "react-native";
+import { Text, TextInput, View, type ColorValue } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import {
   CloseIcon,
   Icon,
   IconButton,
+  PressableScale,
   SearchIcon,
   Skeleton,
   Spacer,
   type IconData,
 } from "@/components/ui";
-import { size, type SpacingSize } from "@/lib/theme-v2";
+import { motion, size, type SpacingSize } from "@/lib/theme-v2";
 
 const CLEAR_BUTTON_SIZE = 32;
 const CLEAR_SLOP = (size.tapTarget - CLEAR_BUTTON_SIZE) / 2;
@@ -101,17 +102,31 @@ export function FileTileSkeletonGrid() {
   return <GridTileSkeletonGrid testID="file-tile-skeleton" />;
 }
 
-export function GridTileSkeletonGrid({ testID = "grid-tile-skeleton" }: { testID?: string }) {
+export function GridTileSkeletonGrid({
+  testID = "grid-tile-skeleton",
+  variant = "card",
+}: {
+  testID?: string;
+  /** "icon" for centered tiles, which draw an icon over a label and no tile behind them. */
+  variant?: "card" | "icon";
+}) {
   return (
     <View style={styles.tileRow}>
-      {Array.from({ length: 3 }, (_, index) => (
+      {Array.from({ length: 3 }, (_, index) => (variant === "icon" ? (
+        <View key={index} testID={testID} style={styles.skeletonIconTile}>
+          <Spacer size="md" />
+          <Skeleton testID={`${testID}-icon`} style={styles.skeletonIcon} />
+          <Spacer size="md" />
+          <Skeleton testID={`${testID}-label`} style={styles.skeletonLabel} />
+        </View>
+      ) : (
         <Skeleton
           key={index}
           testID={testID}
           shimmerTestID={`${testID}-shimmer`}
           style={styles.skeletonTile}
         />
-      ))}
+      )))}
     </View>
   );
 }
@@ -129,17 +144,16 @@ export function GridTile({
 }: GridTileProps) {
   const { theme } = useUnistyles();
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole={onPress ? "button" : undefined}
       accessibilityLabel={accessibilityLabel ?? `Open ${label}`}
       accessibilityState={onPress ? undefined : { disabled: true }}
       disabled={!onPress}
       onPress={onPress}
-      style={({ pressed }) => [
+      style={[
         styles.tile,
         centered && styles.tileCentered,
         accent && styles.tileAccent,
-        pressed && styles.pressed,
       ]}
     >
       <Spacer size="md" />
@@ -159,7 +173,7 @@ export function GridTile({
         {label}
       </Text>
       <Spacer size="md" />
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -174,21 +188,12 @@ interface ListRowProps {
   action?: ReactNode;
   accessibilityLabel?: string;
   onPress?: () => void;
+  onLongPress?: () => void;
 }
 
+/** Rows 12pt apart. The space is a gap rather than views between them, so a row that comes or goes moves alone. */
 export function ListRowStack({ children }: { children: ReactNode }) {
-  const rows = Children.toArray(children);
-
-  return (
-    <View>
-      {rows.map((row, index) => (
-        <Fragment key={index}>
-          {row}
-          {index < rows.length - 1 ? <Spacer size="md" /> : null}
-        </Fragment>
-      ))}
-    </View>
-  );
+  return <View style={styles.rowStack}>{children}</View>;
 }
 
 export function ListRowSkeletonStack({
@@ -223,6 +228,7 @@ export function ListRow({
   action,
   accessibilityLabel,
   onPress,
+  onLongPress,
 }: ListRowProps) {
   const { theme } = useUnistyles();
   const resolvedAccent = accent ?? theme.v2.appColors.soft;
@@ -268,14 +274,16 @@ export function ListRow({
   }
 
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? `Open ${title}`}
       onPress={onPress}
-      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+      onLongPress={onLongPress}
+      pressedScale={motion.rowPressScale}
+      style={styles.row}
     >
       {content}
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -310,6 +318,9 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     columnGap: 10,
   },
+  rowStack: {
+    gap: theme.v2.spacing.md,
+  },
   tileCentered: {
     flexDirection: "column",
     alignItems: "center",
@@ -331,6 +342,22 @@ const styles = StyleSheet.create((theme) => ({
     width: "31.5%",
     aspectRatio: 0.9,
     borderRadius: 18,
+  },
+  skeletonIconTile: {
+    width: "31.5%",
+    aspectRatio: 0.9,
+    alignItems: "center",
+  },
+  // The size and corners of an app's icon, and of its one-line label.
+  skeletonIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 16,
+  },
+  skeletonLabel: {
+    width: "60%",
+    height: 11,
+    borderRadius: theme.v2.radius.full,
   },
   tileLabel: {
     fontFamily: theme.v2.fonts.semibold,
@@ -388,9 +415,5 @@ const styles = StyleSheet.create((theme) => ({
     height: 66,
     borderRadius: 16,
     paddingHorizontal: 13,
-  },
-  pressed: {
-    opacity: 0.7,
-    transform: [{ scale: 0.985 }],
   },
 }));

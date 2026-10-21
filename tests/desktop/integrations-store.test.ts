@@ -435,6 +435,24 @@ describe("useIntegrations store", () => {
     }
   });
 
+  it("startConnect() capability-gates on 404 like refresh() instead of reporting a failed sign-in", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const api = makeApi({
+      post: async () => {
+        throw new AppError("notFound");
+      },
+    });
+    try {
+      await useIntegrations.getState().refresh(api);
+      const url = await useIntegrations.getState().startConnect("gmail", api);
+      expect(url).toBeNull();
+      expect(useIntegrations.getState().status).toBe("unavailable");
+      expect(useIntegrations.getState().errorMessage).toBeNull();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("disconnect() removes the connection on success", async () => {
     const api = makeApi();
     await useIntegrations.getState().refresh(api);

@@ -11,6 +11,15 @@ function broker() {
 }
 
 describe("Custom MCP HTTP boundary", () => {
+  it("shows an administrator setup requirement for a rejected OAuth client without exposing upstream details", async () => {
+    const { CustomMcpBrokerError } = await import("../../packages/gateway/src/integrations/custom-mcp/broker.js");
+    const app = createCustomMcpRoutes({ broker: broker(), resolveUserId: async () => "owner", oauth: {
+      start: vi.fn(async () => { throw new CustomMcpBrokerError("oauth_client_setup_required", "private endpoint and credential detail"); }), complete: vi.fn(),
+    } });
+    const response = await app.request("/5f03d43b-bbc4-47f0-97d2-a281cf15c4c3/connect", { method: "POST" });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "Administrator setup is required before sign-in", code: "oauth_client_setup_required" });
+  });
   it("completes an OAuth callback from state without a Matrix session", async () => {
     const complete = vi.fn(async () => ({
       serverId: "5f03d43b-bbc4-47f0-97d2-a281cf15c4c3",

@@ -9,6 +9,10 @@ describe('golden snapshot developer gate', () => {
     const command = packageJson.scripts['test:golden-snapshots'];
     expect(command).not.toContain('tests/platform/customer-vps*.test.ts');
     expect(command).toContain('tests/platform/customer-vps.test.ts');
+    for (const suite of ['config-contracts','preview-slots','resize','bundle-provisioning','deploy',
+      'registration-delete','recovery','reconcile-billing']) {
+      expect(command).toContain(`tests/platform/customer-vps-${suite}.test.ts`);
+    }
     expect(command).toContain('tests/platform/customer-vps-cloud-init.test.ts');
     expect(command).toContain('tests/platform/customer-vps-hetzner.test.ts');
     expect(command).toContain('tests/platform/customer-vps-host-bundle.test.ts');

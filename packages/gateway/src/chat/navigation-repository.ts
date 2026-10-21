@@ -1,3 +1,4 @@
+import { chatImportHarnessSql, chatImportSource } from "./import-source.js";
 import { CanonicalChatNavigationItemSchema, CanonicalChatNavigationQuerySchema,
   CanonicalChatNavigationResponseSchema, CanonicalOwnerScopeSchema,
   type CanonicalChatNavigationQuery, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
@@ -9,6 +10,7 @@ import { projectReadState } from "./read-state-repository.js";
 type NavigationRow = Pick<Selectable<ChatsTable>, "id" | "title" | "title_version" | "activity_at" | "lifecycle" | "attention"
   | "revision" | "message_count" | "user_state" | "project_id" | "bound_driver_kind" | "bound_instance_id"
   | "bound_at_turn_id" | "collaboration" | "created_at" | "updated_at"> & {
+  import_harness: "claude" | "codex" | null;
   read_through_seq: number | null; pinned: boolean | null; muted: boolean | null;
   marked_unread: boolean | null; read_state_version: number | null; attention_acknowledged_at: Date | string | null;
   incoming_seq: number | null; run_id: string | null; turn_id: string | null; run_status: string | null;
@@ -52,7 +54,7 @@ export function createChatNavigationRepository(db: Kysely<ChatDatabase>): ChatNa
         WHERE b.owner_id=${owner.ownerId} AND b.kind='direct' AND b.removed_at IS NULL
         ORDER BY b.chat_id,b.created_at ASC,b.bot_id ASC
       )
-      SELECT p.*,s.read_through_seq,s.pinned,s.muted,s.marked_unread,s.read_state_version,s.attention_acknowledged_at,
+      SELECT p.*,${chatImportHarnessSql(owner, sql.ref<string>("p.id"))} AS import_harness,s.read_through_seq,s.pinned,s.muted,s.marked_unread,s.read_state_version,s.attention_acknowledged_at,
         incoming.seq AS incoming_seq,active.id AS run_id,active.turn_id,active.status AS run_status,
         completed.id AS completion_run_id,completed.completed_at,bindings.bot_id,
         (SELECT COUNT(*) FROM selected) > ${input.limit} AS truncated
@@ -73,6 +75,7 @@ export function createChatNavigationRepository(db: Kysely<ChatDatabase>): ChatNa
         id: row.completion_run_id, completed_at: row.completed_at,
       } : undefined, row.attention_acknowledged_at);
       return CanonicalChatNavigationItemSchema.parse({
+        ...(row.import_harness ? { importSource: chatImportSource(row.import_harness) } : {}),
         chat: { id: row.id, title: row.title, titleVersion: Number(row.title_version),
           activityAt: asIso(row.activity_at), lifecycle: row.lifecycle, attention: row.attention,
           revision: Number(row.revision), messageCount: Number(row.message_count),

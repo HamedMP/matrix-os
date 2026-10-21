@@ -60,9 +60,7 @@ export async function fenceSharedChatAuthority(
     || membershipScope.owner_id !== scope.owner_id
     || membershipScope.organization_id !== scope.organization_id
     || membershipScope.authority_runtime_id !== scope.authority_runtime_id
-    || (scope.membership_mode === "inherited" && membershipScope.kind !== "project")
-    || Number(scope.auth_epoch) !== (context.resourceAuthEpoch ?? context.authEpoch)
-    || Number(membershipScope.auth_epoch) !== (context.membershipAuthEpoch ?? context.authEpoch)) {
+    || (scope.membership_mode === "inherited" && membershipScope.kind !== "project")) {
     throw new CollaborationAuthorizationError("unavailable", "Shared Chat authority changed");
   }
   const member = await trx.selectFrom("collaboration_members").selectAll()
@@ -98,6 +96,12 @@ export async function fenceSharedChatAuthority(
   }
   if (currentRole !== context.role) {
     throw new CollaborationAuthorizationError("forbidden", "Shared Chat authority changed");
+  }
+  // Revocation is a definitive denial; an otherwise still-authorized stale
+  // context must obtain fresh evidence before any effect can commit.
+  if (Number(scope.auth_epoch) !== (context.resourceAuthEpoch ?? context.authEpoch)
+    || Number(membershipScope.auth_epoch) !== (context.membershipAuthEpoch ?? context.authEpoch)) {
+    throw new CollaborationAuthorizationError("unavailable", "Shared Chat authority changed");
   }
   return context.role;
 }

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { DEFAULT_APPEARANCE } from "@matrix-os/brand/themes/preferences";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { startTestGateway, type TestGateway } from "../fixtures/gateway.js";
@@ -59,7 +60,9 @@ describe("E2E: Settings & Layout Persistence", () => {
     const res = await fetch(`${gw.url}/api/theme`);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.name).toBe("default");
+    expect(body.name).toBe("matrix");
+    expect(body.mode).toBe("light");
+    expect(body.appearance).toEqual(DEFAULT_APPEARANCE);
     expect(body).toHaveProperty("colors");
     expect(body).toHaveProperty("fonts");
   });

@@ -279,6 +279,7 @@ export function createApp(deps: {
   collaboration?: PlatformCollaborationComposition;
   accountDeletion?: AccountDeletionRuntime;
   customerVpsService?: CustomerVpsService;
+  activateManagedFeatures?: import('./managed-feature-activation.js').ManagedFeatureActivator;
   /** Overrides the collaboration organization projection for Private Preview membership. */
   privatePreviewMembership?: PrivatePreviewMembershipCheck;
   goldenSnapshotService?: GoldenSnapshotService;
@@ -785,6 +786,7 @@ export function createApp(deps: {
 
     app.route('/vps', createCustomerVpsRoutes({
       service: deps.customerVpsService,
+      activateManagedFeatures: deps.activateManagedFeatures,
       platformSecret,
       goldenSnapshotOperatorSecret,
       probeMachineHealth,

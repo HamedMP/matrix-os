@@ -4,7 +4,7 @@
  * revision bump, then the operation, event and audit rows. The filesystem
  * side effect happens after the locks and checks and before commit; a failed
  * commit after a successful driver write leaves a file ahead of its catalog
- * revision, which the next write reconciles through the incarnation.
+ * revision. Further access fails closed until explicit owner recovery.
  */
 import { createHash, randomUUID } from "node:crypto";
 import type { Kysely, Transaction } from "kysely";
@@ -13,6 +13,7 @@ import type { CollaborationFileActionRequest } from "@matrix-os/contracts";
 import type { AuthorizedCollaborationContext } from "./authority.js";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import { CollaborationResourceCatalog, ResourceCatalogError, type CatalogEntryRecord } from "./resource-catalog.js";
+import { assertResourceIdentity } from "./resource-identity-admission.js";
 
 const OPERATION_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 type Namespace = { ownerId: string; projectId: string | null };
@@ -20,12 +21,13 @@ type FileAction = Extract<CollaborationFileActionRequest, { type: "write" | "cre
 
 export interface CollaborationResourceDriver {
   read(input: Namespace & { path: string; expectedIncarnation: string }): Promise<{ stream: ReadableStream<Uint8Array>; size: number; contentType?: string }>;
-  write(input: Namespace & { path: string; content: Uint8Array }): Promise<void>;
+  /** Return the identity captured from the created file, never a later destination lookup. */
+  write(input: Namespace & { path: string; content: Uint8Array }): Promise<string>;
   /**
    * Atomic write of a large file the caller never holds whole: the bytes land
    * only when the stream delivered exactly `size` bytes hashing to `sha256`.
    */
-  writeChunks(input: Namespace & { path: string; size: number; sha256: string; chunks: AsyncIterable<Uint8Array> }): Promise<void>;
+  writeChunks(input: Namespace & { path: string; size: number; sha256: string; chunks: AsyncIterable<Uint8Array> }): Promise<string>;
   remove(input: Namespace & { path: string; kind: "file" | "folder" }): Promise<void>;
   rename(input: Namespace & { from: string; to: string }): Promise<void>;
   mkdir(input: Namespace & { path: string }): Promise<void>;
@@ -45,6 +47,11 @@ export interface FileActionResult {
 
 function jsonb(value: unknown) {
   return JSON.stringify(value) as unknown as object;
+}
+
+export function requireCreatedIncarnation(value: string): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 256) throw new ResourceCatalogError("unavailable");
+  return value;
 }
 
 const StoredResultSchema = z.object({ entryId: z.uuid(), revision: z.number().int().nonnegative() }).strict();
@@ -144,28 +151,37 @@ export function createFileActionExecutor(options: {
       // waits behind one cannot put bytes back where the tree used to be.
       const shared = action.type === "create" || action.type === "write";
       await options.catalog.lockNamespace(trx, namespace, shared ? "shared" : "exclusive");
+      await assertResourceIdentity(options.catalog, options.driver, namespace, null, trx);
       let entry: CatalogEntryRecord;
       if (action.type === "create") {
+        const parent = action.parentId ? await options.catalog.resolveForScope(context, action.parentId, trx) : null;
+        await assertResourceIdentity(options.catalog, options.driver, namespace, parent, trx);
         const created = await options.catalog.createWithin(context, {
           kind: action.kind, parentId: action.parentId, path: action.path, incarnation: "pending",
         }, trx);
-        if (action.kind === "folder") await options.driver.mkdir({ ...ns, path: action.path });
-        else await options.driver.write({ ...ns, path: action.path, content: new TextEncoder().encode(action.content ?? "") });
+        let incarnation: string;
+        if (action.kind === "folder") {
+          await options.driver.mkdir({ ...ns, path: action.path });
+          incarnation = await options.driver.fingerprint({ ...ns, path: action.path });
+        } else incarnation = requireCreatedIncarnation(await options.driver.write({ ...ns, path: action.path, content: new TextEncoder().encode(action.content ?? "") }));
         // A created entry commits at revision 1: revision 0 is the catalog row before the bytes exist.
-        entry = await options.catalog.bump(trx, { id: created.id, expectedRevision: 0, incarnation: await options.driver.fingerprint({ ...ns, path: action.path }) });
+        entry = await options.catalog.bump(trx, { id: created.id, expectedRevision: 0, incarnation });
       } else {
         const resolved = await options.catalog.resolveForScope(context, action.fileId, trx);
         const locked = await options.catalog.lock(trx, resolved.id);
         if (locked.revision !== expectedRevision) throw new ResourceCatalogError("conflict");
+        await assertResourceIdentity(options.catalog, options.driver, namespace, locked, trx);
         if (action.type === "write") {
           if (locked.kind !== "file") throw new ResourceCatalogError("invalid");
-          await options.driver.write({ ...ns, path: locked.path, content: new TextEncoder().encode(action.content) });
-          entry = await options.catalog.bump(trx, { id: locked.id, expectedRevision, incarnation: await options.driver.fingerprint({ ...ns, path: locked.path }) });
+          const incarnation = requireCreatedIncarnation(await options.driver.write({ ...ns, path: locked.path, content: new TextEncoder().encode(action.content) }));
+          entry = await options.catalog.bump(trx, { id: locked.id, expectedRevision, incarnation });
         } else if (action.type === "rename") {
           if (namespace.root && namespace.root.id === locked.id) throw new ResourceCatalogError("forbidden");
           if (namespace.root && !action.path.startsWith(`${namespace.root.path}/`)) throw new ResourceCatalogError("not_found");
+          await assertResourceIdentity(options.catalog, options.driver, namespace, null, trx, action.path);
           await options.driver.rename({ ...ns, from: locked.path, to: action.path });
-          entry = await options.catalog.rename({ id: locked.id, path: action.path, expectedRevision, incarnation: await options.driver.fingerprint({ ...ns, path: action.path }), executor: trx });
+          if (await options.driver.fingerprint({ ...ns, path: action.path }) !== locked.incarnation) throw new ResourceCatalogError("not_found");
+          entry = await options.catalog.rename({ id: locked.id, path: action.path, expectedRevision, incarnation: locked.incarnation, executor: trx });
         } else {
           if (namespace.root && namespace.root.id === locked.id) throw new ResourceCatalogError("forbidden");
           // Admit the folder before the recursive filesystem delete: a bound that

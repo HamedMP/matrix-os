@@ -12,6 +12,7 @@ import {
   SidePanelSkeletonRows,
 } from "@/components/shell/SidePanelRows";
 import { Button, CountBadge, FolderIcon, NewChatIcon, SectionLabel, SharedIcon, TopBarButton } from "@/components/ui";
+import { tapHaptic } from "@/lib/haptics";
 import { groupSidePanelChats, searchSidePanelChats } from "@/lib/side-panel-chats";
 
 const SEARCH_DEBOUNCE_MS = 300;
@@ -81,6 +82,7 @@ export function SidePanel({
   async function refresh() {
     if (!onRefresh || refreshInFlight.current) return;
     refreshInFlight.current = true;
+    tapHaptic();
     setRefreshing(true);
     try {
       await onRefresh();

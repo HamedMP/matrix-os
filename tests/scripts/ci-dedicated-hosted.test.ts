@@ -16,3 +16,13 @@ it.each(['missing','skipped','failed','duplicate','attempt','head','truncated','
  if(kind==='fake-app')f.github.rest.checks.get.mockImplementation(async()=>({data:{id:f.jobs.at(-1)!.id,name:'CI Results',app:{slug:'other'},head_sha:sha,status:'completed',conclusion:'success',details_url:'https://github.com/HamedMP/matrix-os/actions/runs/12/job/1'}}));
  await expect(verifyFullHostedCoverage(f.github,repo,f.run)).rejects.toThrow();
 });
+
+it.each(['missing', 'failure', 'cancelled', 'skipped'])('rejects a %s collaboration PostgreSQL lane even when the aggregate is green', async outcome => {
+ const f=fixture();
+ // Keep this name literal: deriving the fixture only from HOSTED_LANES would miss an omitted gate.
+ const lane={...f.jobs[0],id:99,name:'Collaboration PostgreSQL',conclusion:'success'};
+ f.jobs=f.jobs.filter(job=>job.name!=='Collaboration PostgreSQL');
+ if(outcome!=='missing')f.jobs.push({...lane,conclusion:outcome});
+ f.github.rest.actions.listJobsForWorkflowRun.mockImplementation(async()=>({data:{total_count:f.jobs.length,jobs:f.jobs}}));
+ await expect(verifyFullHostedCoverage(f.github,repo,f.run)).rejects.toThrow();
+});

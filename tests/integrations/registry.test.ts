@@ -152,11 +152,17 @@ describe("Service Registry", () => {
     });
   });
 
-  it("keeps Stripe, PostHog, and Granola strictly read-only", () => {
-    for (const serviceId of ["stripe", "posthog", "granola"]) {
+  it("keeps Granola read-only and marks new profile and insight mutations as writes", () => {
+    for (const serviceId of ["granola"]) {
       const actions = Object.values(getService(serviceId)!.actions);
       expect(actions.every((action) => action.risk === "read"), serviceId).toBe(true);
     }
+  });
+
+  it("requires write approval for Stripe customer profiles and PostHog insights", () => {
+    expect(getService("stripe")!.actions.create_customer.risk).toBe("write");
+    expect(getService("posthog")!.actions.create_insight.risk).toBe("write");
+    expect(getService("posthog")!.actions.update_insight.risk).toBe("write");
   });
 
   it("exposes bounded X read and write actions through the Twitter connector", () => {

@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { expect, it, vi } from 'vitest';
 import { normalizeGroupMail } from '../../packages/platform/src/ats-group-mail.js';
 import worker from '../../packages/platform/src/ats-email-worker.js';
@@ -100,4 +102,32 @@ it('routes same-zone intake requests through the public edge authentication laye
  const {readFile}=await import('node:fs/promises');
  const config=await readFile('packages/platform/wrangler.ats.toml','utf8');
  expect(config).toMatch(/compatibility_flags\s*=\s*\[[^\]]*"global_fetch_strictly_public"/);
+});
+it('extracts HTML mail as text without leaving split or loosely closed script markup', async () => {
+  const html = '<p>Hello</p><script>steal()</script ><scr<b></b>ipt>x()</script><style type="x">p{}</style\n>Thanks';
+  const htmlRaw = raw.replace('Content-Type: text/plain; charset=utf-8', 'Content-Type: text/html; charset=utf-8').replace('Hello hiring team', html);
+  const result = await normalizeGroupMail(new TextEncoder().encode(htmlRaw), receivedAt);
+  expect(result.body).not.toMatch(/<script|steal|<style|p\{\}/i);
+  expect(result.body).toContain('Hello');
+  expect(result.body).toContain('Thanks');
+});
+
+it("keeps HTML mail block breaks and decoded entities as plain text", async () => {
+  const html = '<scripture>Keep</scripture><styleguide>this</styleguide><p>A&amp;B</p><div>C<br>D</div>&lt;literal&gt;';
+  const htmlRaw = raw.replace('Content-Type: text/plain; charset=utf-8', 'Content-Type: text/html; charset=utf-8').replace('Hello hiring team', html);
+  const result = await normalizeGroupMail(new TextEncoder().encode(htmlRaw), receivedAt);
+  expect(result.body.trimEnd()).toBe('KeepthisA&B\nC\nD\n<literal>');
+});
+
+it.each(["<", "<script>", "<style>"])("bounds HTML mail extraction for repeated %s", async (token) => {
+  const moduleUrl = new URL("../../packages/platform/src/ats-group-mail.ts", import.meta.url).href;
+  const script = `
+    import { normalizeGroupMail } from ${JSON.stringify(moduleUrl)};
+    const content = ${JSON.stringify(token)}.repeat(100_000) + "tail";
+    const mail = ${JSON.stringify(raw.replace('Content-Type: text/plain; charset=utf-8', 'Content-Type: text/html; charset=utf-8'))}.replace("Hello hiring team", content);
+    const result = await normalizeGroupMail(new TextEncoder().encode(mail), ${JSON.stringify(receivedAt)});
+    process.stdout.write(String(result.body.trimEnd().endsWith("tail")));
+  `;
+  const { stdout } = await promisify(execFile)(process.execPath, ["--import=tsx", "--input-type=module", "--eval", script], { timeout: 2_000, maxBuffer: 4096 });
+  expect(stdout).toBe("true");
 });
