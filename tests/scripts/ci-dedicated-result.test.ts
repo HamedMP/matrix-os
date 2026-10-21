@@ -7,16 +7,16 @@ const expected={requestingRunId:321,requestingRunAttempt:1,imageDigest:"sha256:"
 function fixture(change:Record<string,unknown>={}) {
   const summary={schemaVersion:3,requestingRunId:321,requestingRunAttempt:1,imageDigest:expected.imageDigest,harnessDigest:expected.harnessDigest,mode:expected.mode,receiptVerified:true,requestDigest:"9".repeat(64),leaseId:"8".repeat(32),baseRef:"main",controllerAttempt:1,suite:"qualification",headSha,baseSha,sourceSha,prNumber:2440,controllerSha,controllerRef:"refs/heads/main",controllerWorkflow:".github/workflows/ci-dedicated.yml",...change};
   const check={id:10,name:"Dedicated CI Results",head_sha:headSha,status:"completed",conclusion:"success",app:{slug:"github-actions"},check_suite:{id:456},details_url:"https://github.com/HamedMP/matrix-os/actions/runs/123",output:{summary:JSON.stringify(summary)}};
-  const run={id:123,check_suite_id:456,head_branch:"feature/source",display_title:`dedicated-ci-v2 pr=2440 head=${headSha} base=${baseSha} requested=true`,run_attempt:1,workflow_id:99,event:"pull_request_target",path:".github/workflows/ci-dedicated.yml@main",status:"completed",conclusion:"success",head_sha:headSha,repository:{full_name:"HamedMP/matrix-os"},head_repository:{full_name:"HamedMP/matrix-os"}};
-  const github={rest:{repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:baseSha}}})),getCommit:vi.fn(async()=>({data:{sha:sourceSha,parents:[{sha:baseSha},{sha:headSha}]}}))},pulls:{get:vi.fn(async()=>({data:{number:2440,state:"open",draft:false,labels:[{name:"ready-for-ci"},{name:"fast-ci"}],head:{sha:headSha,ref:"feature/source",repo:{full_name:"HamedMP/matrix-os"}},base:{sha:baseSha,ref:"main",repo:{full_name:"HamedMP/matrix-os"}},merge_commit_sha:sourceSha}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[check]}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:99,path:".github/workflows/ci-dedicated.yml"}})),getWorkflowRun:vi.fn(async(_args:{run_id:number})=>({data:run})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[run]}})),listWorkflowRunArtifacts:vi.fn(async()=>({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}})),listJobsForWorkflowRun:vi.fn(async()=>({data:{jobs:[{name:"benchmark",status:"completed",conclusion:"success"}]}}))}}};
-  const ci={...run,id:321,workflow_id:98,event:'pull_request',path:'.github/workflows/ci.yml',display_title:`CI coverage-v1 · ${sourceSha}`,pull_requests:[{number:2440,head:{sha:headSha},base:{sha:baseSha,ref:'main'}}]};
+  const run={id:123,created_at:'2026-10-18T11:59:30Z',check_suite_id:456,head_branch:"feature/source",display_title:`dedicated-ci-v2 pr=2440 head=${headSha} base=${baseSha} requested=true`,run_attempt:1,workflow_id:99,event:"pull_request_target",path:".github/workflows/ci-dedicated.yml@main",status:"completed",conclusion:"success",head_sha:headSha,repository:{full_name:"HamedMP/matrix-os"},head_repository:{full_name:"HamedMP/matrix-os"}};
+  const github={rest:{repos:{getBranch:vi.fn(async(args:any)=>({data:{name:args.branch,commit:{sha:baseSha}}})),getCommit:vi.fn(async()=>({data:{sha:sourceSha,parents:[{sha:baseSha},{sha:headSha}]}}))},pulls:{get:vi.fn(async()=>({data:{number:2440,state:"open",draft:false,labels:[{name:"ready-for-ci"},{name:"fast-ci"}],head:{sha:headSha,ref:"feature/source",repo:{full_name:"HamedMP/matrix-os"}},base:{sha:baseSha,ref:"main",repo:{full_name:"HamedMP/matrix-os"}},merge_commit_sha:sourceSha}}))},checks:{listForRef:vi.fn(async()=>({data:{check_runs:[check]}}))},actions:{getWorkflow:vi.fn(async()=>({data:{id:99,path:".github/workflows/ci-dedicated.yml"}})),getWorkflowRun:vi.fn(async(_args:{run_id:number})=>({data:_args.run_id===321?ci:run})),listWorkflowRuns:vi.fn(async()=>({data:{workflow_runs:[run]}})),listWorkflowRunArtifacts:vi.fn(async()=>({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:123}}]}})),listJobsForWorkflowRun:vi.fn(async()=>({data:{jobs:[{name:"benchmark",status:"completed",conclusion:"success"}]}}))}}};
+  const ci={...run,id:321,created_at:'2026-10-18T12:00:00Z',workflow_id:98,event:change.sourceKind==='main'?'push':'pull_request',head_sha:change.sourceKind==='main'?sourceSha:headSha,head_branch:change.sourceKind==='main'?'main':'feature/source',path:'.github/workflows/ci.yml',display_title:`CI coverage-v1 · ${sourceSha}`,pull_requests:[{number:2440,head:{sha:headSha},base:{sha:baseSha,ref:change.baseRef??'main'}}]};
   github.rest.actions.getWorkflow.mockImplementation(async(args:any)=>({data:{id:args.workflow_id==='ci.yml'?98:99,path:'.github/workflows/'+args.workflow_id}}));
   // Controller-history perturbations below remain scoped to that workflow;
   // independently serve the genuine requester stream for supersession checks.
   const controllerHistory=github.rest.actions.listWorkflowRuns;
   github.rest.actions.listWorkflowRuns=new Proxy(controllerHistory,{apply(target,receiver,args){return args[0].workflow_id===98?Promise.resolve({data:{workflow_runs:[ci]}}):Reflect.apply(target,receiver,args);}});
   pinArtifactFixture(github,check,run);if(Object.hasOwn(change,'requestDigest'))check.output.summary=JSON.stringify({...JSON.parse(check.output.summary),requestDigest:change.requestDigest});
-  return {github,check,run};
+  return {github,check,run,ci};
 }
 const options={maxAttempts:2,delay:async()=>{}};
 describe("exact merge revision dedicated qualification evidence",()=>{
@@ -48,9 +48,9 @@ describe("exact merge revision dedicated qualification evidence",()=>{
     expect(github.rest.actions.listWorkflowRunArtifacts).toHaveBeenCalled();
   });
   it('rejects older-controller receipt substitution behind a normalized check URL',async()=>{
-    const {github,check,run}=fixture();check.details_url=`https://github.com/HamedMP/matrix-os/runs/${check.id}`;
+    const {github,check,run,ci}=fixture();check.details_url=`https://github.com/HamedMP/matrix-os/runs/${check.id}`;
     const latest={...run,id:124};github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[latest,run]}});
-    github.rest.actions.getWorkflowRun.mockResolvedValue({data:latest});
+    github.rest.actions.getWorkflowRun.mockImplementation(async({run_id})=>({data:run_id===321?ci:latest}));
     github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:124}}]}});
     await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow('Immutable controller request scope mismatch');
   });
@@ -130,10 +130,10 @@ describe('stack lifecycle and retry evidence',()=>{
     await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow(/stale/);
   });
   it('ignores an older failed result while the newest authenticated controller is pending',async()=>{
-    const {github,check,run}=fixture();const pending={...check,id:11,status:'in_progress',details_url:'https://github.com/HamedMP/matrix-os/actions/runs/124'};
+    const {github,check,run,ci}=fixture();const pending={...check,id:11,status:'in_progress',details_url:'https://github.com/HamedMP/matrix-os/actions/runs/124'};
     github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[{...check,conclusion:'failure'},pending]}});
     github.rest.actions.listWorkflowRuns.mockImplementation(async()=>({data:{workflow_runs:[run,{...run,id:124,status:pending.status==='completed'?'completed':'in_progress'}]}}));
-    github.rest.actions.getWorkflowRun.mockImplementation(async ({run_id}: {run_id:number})=>({data:run_id===123?{...run,conclusion:'failure'}:{...run,id:124,status:pending.status==='completed'?'completed':'in_progress'}}));
+    github.rest.actions.getWorkflowRun.mockImplementation(async ({run_id}: {run_id:number})=>({data:run_id===321?ci:run_id===123?{...run,conclusion:'failure'}:{...run,id:124,status:pending.status==='completed'?'completed':'in_progress'}}));
     github.rest.actions.listWorkflowRunArtifacts.mockResolvedValue({data:{artifacts:[{name:`dedicated-qualification-${headSha}-${sourceSha}-${baseSha}-pr2440-request321-1-attempt1`,id:55,expired:false,size_in_bytes:1024,workflow_run:{id:124}}]}});
     pinArtifactFixture(github,pending,{...run,id:124});
     const delay=vi.fn(async()=>{pending.status='completed';});
@@ -141,23 +141,23 @@ describe('stack lifecycle and retry evidence',()=>{
     expect(delay).toHaveBeenCalledOnce();
   });
   it('does not let an older successful controller hide the newest failure',async()=>{
-    const {github,check,run}=fixture();const latest={...check,id:11,conclusion:'failure',details_url:'https://github.com/HamedMP/matrix-os/actions/runs/124'};
+    const {github,check,run,ci}=fixture();const latest={...check,id:11,conclusion:'failure',details_url:'https://github.com/HamedMP/matrix-os/actions/runs/124'};
     github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[check,latest]}});
     github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[run,{...run,id:124,conclusion:'failure'}]}});
-    github.rest.actions.getWorkflowRun.mockImplementation(async ({run_id}: {run_id:number})=>({data:{...run,id:run_id,conclusion:run_id===124?'failure':'success'}}));
+    github.rest.actions.getWorkflowRun.mockImplementation(async ({run_id}: {run_id:number})=>({data:run_id===321?ci:{...run,id:run_id,conclusion:run_id===124?'failure':'success'}}));
     await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow(/failed/);
   });
   it('ignores a completed successful stand-down controller with no result check',async()=>{
-    const {github,run}=fixture();const stoodDown={...run,id:124,status:'completed',conclusion:'success'};
+    const {github,run,ci}=fixture();const stoodDown={...run,id:124,status:'completed',conclusion:'success'};
     github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[stoodDown,run]}});
-    github.rest.actions.getWorkflowRun.mockImplementation(async({run_id})=>({data:run_id===124?stoodDown:run}));
+    github.rest.actions.getWorkflowRun.mockImplementation(async({run_id})=>({data:run_id===321?ci:run_id===124?stoodDown:run}));
     await expect(waitForDedicatedResult(github,expected,options)).resolves.toEqual({runId:123,sourceSha});
   });
   it('does not assign an older normalized result check to a newer stand-down controller',async()=>{
-    const {github,check,run}=fixture();check.details_url=`https://github.com/HamedMP/matrix-os/runs/${check.id}`;
+    const {github,check,run,ci}=fixture();check.details_url=`https://github.com/HamedMP/matrix-os/runs/${check.id}`;
     const stoodDown={...run,id:124,check_suite_id:457,status:'completed',conclusion:'success'};
     github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[stoodDown,run]}});
-    github.rest.actions.getWorkflowRun.mockImplementation(async({run_id})=>({data:run_id===124?stoodDown:run}));
+    github.rest.actions.getWorkflowRun.mockImplementation(async({run_id})=>({data:run_id===321?ci:run_id===124?stoodDown:run}));
     await expect(waitForDedicatedResult(github,expected,options)).resolves.toEqual({runId:123,sourceSha});
   });
   it('accepts only the current rerun attempt and its immutable artifact',async()=>{
@@ -176,10 +176,10 @@ describe('stack lifecycle and retry evidence',()=>{
 
 describe('pre-admission default-controller retry coordination',()=>{
   it('does not settle an older failure while a newer queued request has no check yet',async()=>{
-    const {github,check,run}=fixture();check.conclusion='failure';run.conclusion='failure';
+    const {github,check,run,ci}=fixture();check.conclusion='failure';run.conclusion='failure';
     const queued={...run,id:124,status:'queued',conclusion:'success'};
     github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:[run,queued]}});
-    github.rest.actions.getWorkflowRun.mockImplementation(async({run_id})=>({data:run_id===124?queued:run}));
+    github.rest.actions.getWorkflowRun.mockImplementation(async({run_id})=>({data:run_id===321?ci:run_id===124?queued:run}));
     const delay=vi.fn(async()=>{
       queued.status='completed';const latest={...check,id:11,conclusion:'success',output:{...check.output},details_url:'https://github.com/HamedMP/matrix-os/actions/runs/124'};pinArtifactFixture(github,latest,queued);
       github.rest.checks.listForRef.mockResolvedValue({data:{check_runs:[check,latest]}});
@@ -227,7 +227,7 @@ describe('pre-admission default-controller retry coordination',()=>{
     await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow('No verified');
   });
   it('rejects saturated source history without valid creation timestamps',async()=>{
-    const {github,run}=fixture();github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:Array.from({length:100},(_,index)=>({...run,id:200+index,display_title:'other source request'}))}});
+    const {github,run}=fixture();github.rest.actions.listWorkflowRuns.mockResolvedValue({data:{workflow_runs:Array.from({length:100},(_,index)=>({...run,id:200+index,created_at:undefined,display_title:'other source request'}))}});
     await expect(waitForDedicatedResult(github,expected,{maxAttempts:1,delay:async()=>{}})).rejects.toThrow('Invalid bounded workflow creation history');
     expect(Math.max(...github.rest.actions.listWorkflowRuns.mock.calls.map(([args]:any[])=>args.page))).toBe(3);expect(github.rest.actions.listWorkflowRuns.mock.calls.length).toBeLessThanOrEqual(9);
   });
@@ -236,7 +236,7 @@ describe('pre-admission default-controller retry coordination',()=>{
     // Copying the marker, app slug and trusted-looking summary cannot transfer
     // artifact/job ownership from run 999 to the registered controller run 123.
     await expect(waitForDedicatedResult(github,expected,options)).rejects.toThrow('No verified');
-    expect(github.rest.actions.getWorkflowRun).not.toHaveBeenCalled();
+    expect(github.rest.actions.getWorkflowRun.mock.calls.every(([args])=>args.run_id===321)).toBe(true);
     expect(github.rest.actions.listWorkflowRunArtifacts).not.toHaveBeenCalled();
   });
   it('fails closed on workflow-run API denial rather than settling older evidence',async()=>{
@@ -263,6 +263,7 @@ it.each([false,true])('authenticates native cumulative source through final sett
  const github={...f.github,request:native.github.request};
  const scope={...expected,...native.snapshot};
  Object.assign(f.run,{head_sha:nativePins.head,head_branch:native.pull.head.ref,display_title:`dedicated-ci-v2 pr=2491 head=${nativePins.head} base=${nativePins.base} requested=true`});
+ Object.assign(f.ci,{head_sha:nativePins.head,head_branch:native.pull.head.ref,display_title:`CI coverage-v1 · ${nativePins.merge}`,pull_requests:[{number:2491,head:{sha:nativePins.head},base:{sha:nativePins.base,ref:native.pull.base.ref}}]});
  f.check.head_sha=nativePins.head;
  f.check.output.summary=JSON.stringify({...JSON.parse(f.check.output.summary),...native.snapshot});pinArtifactFixture(f.github,f.check,f.run);
  if(normalized)f.check.details_url=`https://github.com/HamedMP/matrix-os/runs/${f.check.id}`;

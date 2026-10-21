@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockBrowserTimeZone } from "../helpers/browser-timezone.js";
 
@@ -212,19 +212,24 @@ describe("BillingGate", () => {
 
     const fetchMock = vi.spyOn(globalThis, "fetch");
     const { BillingGate } = await loadBillingGate();
-    render(
-      <BillingGate>
-        <div>Matrix workspace</div>
-      </BillingGate>,
-    );
+    // Flush billing's real asynchronous effects inside React's act boundary.
+    await act(async () => {
+      render(
+        <BillingGate>
+          <div>Matrix workspace</div>
+        </BillingGate>,
+      );
+    });
 
     await screen.findByRole("button", { name: "Continue to pay" });
     expect(fetchMock).toHaveBeenCalledWith(
-      "/billing/status?runtimeSlot=studio",
+      "/billing/status?runtimeSlot=studio&trialOfferVersion=2",
       expect.objectContaining({ method: "GET" }),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Continue to pay" }));
+    });
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -260,7 +265,7 @@ describe("BillingGate", () => {
     expect(await screen.findByText("Matrix workspace")).toBeTruthy();
     expect(screen.queryByText("Opening Matrix OS sign in")).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith(
-      "/billing/status",
+      "/billing/status?trialOfferVersion=2",
       expect.objectContaining({
         credentials: "include",
         method: "GET",
@@ -611,7 +616,7 @@ describe("BillingGate", () => {
     clerkState.activePlan = null;
     clerkState.getToken.mockResolvedValue("clerk-token");
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (input === "/billing/status") {
+      if (input === "/billing/status?trialOfferVersion=2") {
         return new Response(JSON.stringify({ access: { runtimeProxyAllowed: true } }), {
           status: 200,
           headers: { "content-type": "application/json" },

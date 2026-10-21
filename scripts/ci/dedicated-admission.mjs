@@ -4,6 +4,7 @@ import {readCurrentBranchSha} from './dedicated-branch.mjs';
 import {verifyMainSource} from './dedicated-main.mjs';
 import {resolveDedicatedMergeParents} from './dedicated-merge.mjs';
 import {admitRefreshController} from './dedicated-refresh.mjs';
+import {verifiedSourceController,isolatedTrigger} from './dedicated-isolated.mjs';
 import {verifyMainPrSnapshot,resolveMainPrSnapshot} from './dedicated-main-pr.mjs';
 const shaPattern = /^[a-f0-9]{40}$/;
 const request = {timeout: 10_000};
@@ -42,6 +43,11 @@ function eventRequested(payload) {
 
 export async function admitDedicatedSource(github, input) {
   const {repo, controller, eventName, payload, inputSha} = input;
+  if(eventName==='workflow_dispatch'&&payload.inputs?.controller_mode){
+    await verifiedSourceController(github,repo,controller,input.executionContext);
+    if(payload.inputs.controller_mode!=='qualification')throw new Error('Maintenance cannot execute a qualification lease');
+    return admitRefreshController(github,repo,await isolatedTrigger(github,repo,payload.inputs,'qualification'));
+  }
   assertDefaultController(repo, controller);
   if(eventName==='workflow_run')return admitRefreshController(github,repo,payload);
   if (eventName === 'workflow_dispatch') {

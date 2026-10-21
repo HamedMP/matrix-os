@@ -5,6 +5,8 @@
 | Route | Mutation | Authentication / verification | Public | Prebilling behavior |
 |---|---:|---|---:|---|
 | `POST /billing/checkout` | Yes | Valid Clerk application session; owner derived from verified identity | No | Existing checkout mutation also creates/resumes eligible preparation |
+| `POST /billing/checkout/abandon` | Yes | Valid Clerk application session; owner and active checkout derived from verified identity | No | Expires the owner-scoped provider checkout, then atomically releases the attempt, trial reservation, and unauthorized preparation |
+| `GET /billing/status` | No | Valid Clerk application session; owner derived from verified identity | No | Returns a bounded active-checkout selection projection for recovery |
 | `POST /billing/webhooks/stripe` | Yes | Stripe signature over bounded raw body using timing-safe library verification | Internet-reachable webhook only | Signed events update checkout/subscription state and may authorize or fence cleanup |
 | `GET /api/journey` | No | Existing Clerk or signed sync-session authentication | No | Adds coarse preparation/resume state |
 | `POST /api/auth/provision-runtime` | Yes | Existing authenticated session plus effective exact-slot entitlement | No | Contract remains entitlement-only; used for legacy/fallback recovery |
@@ -67,6 +69,57 @@ Preparation is an optimization, not a prerequisite for selling an authorized sub
 | `503` | Checkout is temporarily unavailable |
 
 Responses contain allowlisted short messages only. Stripe/provider/database/path/network details are logged server-side with correlation IDs and bounded fields.
+
+## `POST /billing/checkout/abandon`
+
+### Request
+
+```json
+{
+  "runtimeSlot": "primary"
+}
+```
+
+The strict, body-limited request contains only the validated runtime slot. The server derives the owner and active checkout; clients cannot submit attempt, session, preparation, machine, or provider identifiers.
+
+The route first asks Stripe to expire the active session. Only an authoritative `expired` result permits one database transaction to resolve the checkout, release its trial reservation, and clean or enqueue deletion of an unauthorized prepared computer. A provider-complete session returns `409 checkout_pending`; a creating attempt, timeout, ambiguous provider response, or concurrent authorization remains locked and returns a generic retryable response. Repeating the request after successful cleanup is idempotent.
+
+### Success
+
+```json
+{
+  "abandoned": true
+}
+```
+
+No active checkout also succeeds with `{"abandoned": false}`.
+
+### Errors
+
+| Status | Stable client meaning |
+|---:|---|
+| `400` | Invalid runtime selection |
+| `401` | Authentication required |
+| `409` | Checkout is creating, complete, or already settling and cannot be abandoned |
+| `503` | Expiry could not be authoritatively confirmed; the checkout remains reserved |
+
+## `GET /billing/status`
+
+When an active modern checkout exists, the existing status response additionally includes:
+
+```json
+{
+  "activeCheckout": {
+    "status": "open",
+    "planSlug": "matrix_builder",
+    "interval": "monthly",
+    "regionSlug": "region_fsn1",
+    "developerTools": ["codex", "pi"]
+  }
+}
+```
+
+The field is `null` when no recoverable checkout exists. It contains no Stripe URL or internal identifier. Clients use this projection to lock selection controls to server truth, resume through `POST /billing/checkout`, or abandon through the endpoint above.
 
 ## `GET /api/journey`
 

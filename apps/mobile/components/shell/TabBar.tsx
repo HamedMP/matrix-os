@@ -1,4 +1,6 @@
-import { Pressable, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Text, View, type LayoutChangeEvent } from "react-native";
+import Animated, { useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
@@ -8,11 +10,14 @@ import {
   ChatsTabIcon,
   CountBadge,
   Icon,
+  PressableScale,
   SettingsTabIcon,
   TerminalTabIcon,
   type IconData,
 } from "@/components/ui";
-import { PRESSED_OPACITY } from "@/components/ui/pressable-state";
+import { selectHaptic } from "@/lib/haptics";
+import { motion } from "@/lib/theme-v2";
+import { useReduceMotion } from "@/lib/use-reduce-motion";
 
 /** The tabs in the order they are drawn. `route` is the tab's route under `app/(drawer)/(tabs)/`. */
 export const TABS = [
@@ -26,6 +31,57 @@ export const TABS = [
 export type TabRoute = (typeof TABS)[number]["route"];
 
 const BADGED_TAB: TabRoute = "agents";
+
+/** Where a tab sits in the bar. */
+interface TabBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+function sameBox(a: TabBox | undefined, b: TabBox) {
+  return a !== undefined && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+/**
+ * The fill behind the active tab. It slides from tab to tab instead of
+ * jumping, unless the person has asked for reduced motion.
+ */
+function TabHighlight({ box }: { box: TabBox }) {
+  const reduceMotion = useReduceMotion();
+  // Starts where it belongs: it is only drawn once its tab has been measured.
+  const x = useSharedValue(box.x);
+  const width = useSharedValue(box.width);
+  const placed = useRef(false);
+
+  useEffect(() => {
+    if (!placed.current) {
+      placed.current = true;
+      return;
+    }
+    if (reduceMotion) {
+      x.set(box.x);
+      width.set(box.width);
+      return;
+    }
+    x.set(withSpring(box.x, motion.spring.gentle));
+    width.set(withSpring(box.width, motion.spring.gentle));
+  }, [box, reduceMotion, width, x]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    width: width.get(),
+    transform: [{ translateX: x.get() }],
+  }));
+
+  return (
+    <Animated.View
+      testID="tab-highlight"
+      pointerEvents="none"
+      style={[styles.highlight, { top: box.y, height: box.height }, animatedStyle]}
+    />
+  );
+}
 
 export interface TabBarProps {
   /** Route of the tab on screen. */
@@ -47,6 +103,15 @@ export function TabBar({
 }: TabBarProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
+  // Five entries at most, one per tab.
+  const [boxes, setBoxes] = useState<Partial<Record<TabRoute, TabBox>>>({});
+  const activeBox = boxes[activeRoute as TabRoute];
+
+  const measure = (route: TabRoute) => (event: LayoutChangeEvent) => {
+    const { x, y, width, height } = event.nativeEvent.layout;
+    const box = { x, y, width, height };
+    setBoxes((current) => (sameBox(current[route], box) ? current : { ...current, [route]: box }));
+  };
 
   return (
     <View
@@ -54,18 +119,24 @@ export function TabBar({
       accessibilityRole="tablist"
       style={[styles.bar, { paddingBottom: insets.bottom }]}
     >
+      {activeBox ? <TabHighlight box={activeBox} /> : null}
       {TABS.map((tab) => {
         const active = tab.route === activeRoute;
         const badgeCount = tab.route === BADGED_TAB ? agentsBadgeCount : 0;
         return (
-          <Pressable
+          <PressableScale
             key={tab.route}
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
             accessibilityLabel={badgeCount > 0 ? `${tab.label}, ${badgeCount} waiting` : tab.label}
-            onPress={() => onTabPress(tab.route)}
+            onLayout={measure(tab.route)}
+            onPress={() => {
+              if (!active) selectHaptic();
+              onTabPress(tab.route);
+            }}
             onLongPress={onTabLongPress ? () => onTabLongPress(tab.route) : undefined}
-            style={({ pressed }) => [styles.tab, active && styles.tabActive, pressed && styles.pressed]}
+            // Until the highlight can be placed, the active tab carries the fill itself.
+            style={[styles.tab, active && !activeBox && styles.tabActive]}
           >
             <View style={styles.iconBox}>
               <Icon
@@ -82,7 +153,7 @@ export function TabBar({
             <Text numberOfLines={1} style={[styles.label, active && styles.labelActive]}>
               {tab.label}
             </Text>
-          </Pressable>
+          </PressableScale>
         );
       })}
     </View>
@@ -112,6 +183,12 @@ const styles = StyleSheet.create((theme) => ({
   tabActive: {
     backgroundColor: theme.v2.colors.card,
   },
+  highlight: {
+    position: "absolute",
+    left: 0,
+    borderRadius: theme.v2.radius.badge,
+    backgroundColor: theme.v2.colors.card,
+  },
   iconBox: {
     paddingHorizontal: theme.v2.space[14],
     paddingVertical: theme.v2.space[2],
@@ -130,8 +207,5 @@ const styles = StyleSheet.create((theme) => ({
   labelActive: {
     ...theme.v2.text.microSemiBold,
     color: theme.v2.colors.textDefault,
-  },
-  pressed: {
-    opacity: PRESSED_OPACITY,
   },
 }));

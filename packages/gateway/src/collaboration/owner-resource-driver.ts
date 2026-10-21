@@ -1,11 +1,12 @@
 /** Filesystem driver for owner-home collaboration resources. Catalog IDs, never paths, reach this boundary. */
 import { createHash, randomUUID } from "node:crypto";
-import { constants, createReadStream, type BigIntStats } from "node:fs";
+import { constants, createReadStream } from "node:fs";
 import { lstat, mkdir, open, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { isSafeCollaborationRelativePath } from "@matrix-os/contracts";
 import { ResourceCatalogError } from "./resource-catalog.js";
+import { filesystemIncarnation } from "./filesystem-incarnation.js";
 import type { CollaborationResourceDriver } from "./resource-actions.js";
 
 const MAX_STREAM_BYTES = 256 * 1024 * 1024;
@@ -25,35 +26,6 @@ function forbiddenHomePath(path: string): boolean {
 }
 function missing(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-}
-/**
- * Identity of the physical thing behind a share, used to refuse a path whose bytes were swapped
- * underneath it.
- *
- * `dev:ino:birthtimeNs` is what catches that: deleting and recreating a file or folder at the same
- * path yields a new inode or a new birth time, so the stored incarnation stops matching.
- *
- * `ctimeNs` is deliberately excluded when the filesystem reports a usable birth time. It changes on
- * any metadata write, and for a *folder* it also changes whenever an entry is added or removed — so
- * including it made an ordinary "collaborator adds a file to the shared folder" rotate the
- * incarnation and 404 the share until the owner re-shared it. Measured: adding a file to a folder
- * leaves dev, ino and birthtimeNs untouched while moving ctimeNs, and delete-and-recreate moves ino
- * or birthtimeNs on both files and folders. So dropping it costs no defence and stops the share
- * breaking under normal use.
- *
- * It is kept as a fallback where birth time is unavailable — some filesystems report 0 or simply
- * mirror ctime — because there inode reuse could otherwise let a recreated path keep its identity.
- */
-function physicalIncarnation(info: BigIntStats): string {
-  // Whether the platform reports a birth time at all — not whether it currently differs from
-  // ctime. A freshly created object has them equal, so comparing the two made the branch flip on
-  // the first metadata write and rehash the same object under a different scheme, which is the
-  // very failure this function exists to avoid.
-  const birthtimeUsable = info.birthtimeNs > 0n;
-  const identity = birthtimeUsable
-    ? `${info.dev}:${info.ino}:${info.birthtimeNs}`
-    : `${info.dev}:${info.ino}:${info.birthtimeNs}:${info.ctimeNs}`;
-  return createHash("sha256").update(identity).digest("hex");
 }
 
 function contentType(path: string): string {
@@ -175,10 +147,10 @@ export function createOwnerResourceDriver(options: {
     const path = await target(input, false);
     let handle;
     try {
-      handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+      handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       const info = await handle.stat({ bigint: true });
       if (!info.isFile() || info.size > BigInt(MAX_STREAM_BYTES)) throw new ResourceCatalogError("unavailable");
-      if (physicalIncarnation(info) !== input.expectedIncarnation) throw new ResourceCatalogError("not_found");
+      if (filesystemIncarnation(handle.fd) !== input.expectedIncarnation) throw new ResourceCatalogError("not_found");
       const size = Number(info.size);
       const stream = Readable.toWeb(handle.createReadStream({ autoClose: true })) as ReadableStream<Uint8Array>;
       return { stream, size, contentType: contentType(path) };
@@ -200,14 +172,17 @@ export function createOwnerResourceDriver(options: {
     let written = false;
     try {
       const file = await open(temp, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+      let incarnation: string;
       try {
         await file.writeFile(input.content);
         await file.sync();
+        incarnation = filesystemIncarnation(file.fd);
       } finally {
         await file.close();
       }
       await rename(temp, destination);
       written = true;
+      return incarnation;
     } catch (error: unknown) {
       if (error instanceof ResourceCatalogError) throw error;
       if (missing(error)) throw new ResourceCatalogError("not_found");
@@ -235,6 +210,7 @@ export function createOwnerResourceDriver(options: {
     let written = false;
     try {
       const file = await open(temp, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+      let incarnation: string;
       try {
         const digest = createHash("sha256");
         let received = 0;
@@ -252,11 +228,13 @@ export function createOwnerResourceDriver(options: {
         if (received !== input.size) throw new ResourceCatalogError("invalid");
         if (digest.digest("hex") !== input.sha256) throw new ResourceCatalogError("conflict");
         await file.sync();
+        incarnation = filesystemIncarnation(file.fd);
       } finally {
         await file.close();
       }
       await rename(temp, destination);
       written = true;
+      return incarnation;
     } catch (error: unknown) {
       if (error instanceof ResourceCatalogError) throw error;
       if (missing(error)) throw new ResourceCatalogError("not_found");
@@ -358,24 +336,28 @@ export function createOwnerResourceDriver(options: {
         return { incarnation };
       }
       const inspectedPath = await target(input, false);
+      let handle;
       try {
-        const info = await lstat(inspectedPath, { bigint: true });
+        handle = await open(inspectedPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        const info = await handle.stat({ bigint: true });
         if (info.isSymbolicLink()
           || (input.kind === "file" && !info.isFile())
           || (input.kind !== "file" && !info.isDirectory())) throw new ResourceCatalogError("not_found");
-        return { incarnation: physicalIncarnation(info) };
+        return { incarnation: filesystemIncarnation(handle.fd) };
       } catch (error: unknown) {
         if (error instanceof ResourceCatalogError) throw error;
         if (missing(error)) throw new ResourceCatalogError("not_found");
         throw new ResourceCatalogError("unavailable");
+      } finally {
+        await handle?.close();
       }
     },
     async fingerprint(input) {
       const path = await target(input, false);
       let handle;
       try {
-        handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-        return physicalIncarnation(await handle.stat({ bigint: true }));
+        handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        return filesystemIncarnation(handle.fd);
       } catch (error: unknown) {
         if (error instanceof ResourceCatalogError) throw error;
         if (missing(error)) throw new ResourceCatalogError("not_found");

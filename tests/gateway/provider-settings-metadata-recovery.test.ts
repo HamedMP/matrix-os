@@ -119,6 +119,29 @@ describe('metadata recovery boundaries', () => {
     const server = await readFile(new URL('../../packages/gateway/src/server.ts', import.meta.url), 'utf8');
     expect(server).toMatch(/providerSettingsStore = createRuntimeProviderSettings\(\{\s*codexExecutable,/);
     expect(server).toMatch(/observeCodexLocalCredential\(\{\s*executable: codexExecutable,\s*runtimeHome: homePath,\s*codexHome: process\.env\.CODEX_HOME,/);
+    expect(server).toMatch(/createNativeCodexRuntime\(\{[\s\S]*?environment: \(\) => codexNativeEnvironment\(homePath, buildSettingsAccountEnvironment\(homePath\), process\.env\.CODEX_HOME\)/);
+
+  });
+  it.each([false, true])('preserves the guarded native reader through runtime composition (canonical phase: %s)', async canonicalPhase => {
+    const homePath = await mkdtemp(join(tmpdir(), 'metadata-composition-')); homes.push(homePath);
+    const native = vi.fn(async () => bindNativeAccountMetadata({ ...metadata }, async () => true));
+    const fallback = vi.fn(async () => null);
+    const factory = vi.spyOn(codexMetadata, 'createCodexNativeAccountMetadataReader').mockReturnValue(fallback);
+    try {
+      const store = createRuntimeProviderSettings({ homePath, now: () => now, codexExecutable: '/fixture/bin/codex',
+        observationScope: () => canonicalPhase ? 'canonical_matrix' : undefined,
+        providerSnapshotReader: { getSnapshot: async () => codexFixture() }, codexNativeAccountMetadataReader: native });
+      expect(factory).not.toHaveBeenCalled();
+      const snapshot = await store.getSnapshot({ includeNativeAccountMetadata: true });
+      if (canonicalPhase) {
+        expect(native).not.toHaveBeenCalled();
+        expect(snapshot.accounts.some(account => account.displayName === metadata.accountLabel)).toBe(false);
+      } else {
+        expect(native).toHaveBeenCalled();
+        expect(snapshot.accounts.find(account => account.id === 'owner_openai')?.displayName).toBe(metadata.accountLabel);
+      }
+      expect(fallback).not.toHaveBeenCalled();
+    } finally { factory.mockRestore(); }
   });
   it('reconciles only exact native API-key presentation without changing canonical authority', async () => {
     const canonical = codexFixture();
@@ -268,7 +291,7 @@ describe('metadata recovery boundaries', () => {
     const store = new ProviderSettingsStore({ homePath, now: () => now, providerSnapshotReader: { getSnapshot: async () => codexFixture() }, codexNativeAccountMetadataReader: async () => observed });
     const snapshot = await store.getSnapshot({ includeNativeAccountMetadata: true });
     expect(snapshot.accounts.find(a => a.id === 'owner_openai')).toMatchObject({ displayName: metadata.accountLabel, connectionDetails: { planName: 'ChatGPT Plus' } });
-    expect(snapshot.accessSources.find(source => source.id === 'owner_openai_profile')).toMatchObject({ readiness: { state: 'unknown' }, usage: { kind: 'subscription_allowance', usedBasisPoints: 2500 } });
+    expect(snapshot.accessSources.find(source => source.id === 'owner_openai_profile')).toMatchObject({ readiness: { state: 'auth_required' }, usage: { kind: 'subscription_allowance', usedBasisPoints: 2500 } });
     expect(JSON.stringify(snapshot)).not.toContain('verifyCurrent');
   });
 

@@ -20,6 +20,7 @@ import {
   CollaborationTerminalSchema,
 } from "@matrix-os/contracts/collaboration";
 import { defineCommand } from "citty";
+import { createResourceReauthorizationCommands } from "./collaboration-resource-reauthorization.js";
 import { z } from "zod/v4";
 import { requireCliAuthToken } from "../auth-state.js";
 import { cliError, formatCliError, formatCliSuccess } from "../output.js";
@@ -325,6 +326,7 @@ const controlArgs = {
 export const collaborationCommand = defineCommand({
   meta: { name: "collaboration", description: "Access Chats, terminals, and projects shared with your account" },
   subCommands: {
+    ...createResourceReauthorizationCommands({ commonArgs, run, transport: cliTransport }),
     inbox: defineCommand({
       meta: { name: "inbox", description: "List pending collaboration invitations" },
       args: discoveryArgs,

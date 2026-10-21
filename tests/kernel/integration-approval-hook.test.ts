@@ -91,6 +91,18 @@ describe("integration native approval hook", () => {
     );
   });
 
+  it("requires native consent for every published write and honors denial", async () => {
+    const request = vi.fn(async () => false);
+    const hook = createIntegrationApprovalHook("/tmp/missing", request);
+    const writes = listServices().flatMap(service => Object.entries(service.actions)
+      .filter(([, action]) => action.risk === "write").map(([action]) => ({ service: service.id, action })));
+    for (const tool_input of writes) {
+      const result = await hook({ hook_event_name: "PreToolUse", tool_name: "mcp__matrix-os-ipc__call_service", tool_input, session_id: "s" });
+      expect(result.hookSpecificOutput?.permissionDecision, `${tool_input.service}/${tool_input.action}`).toBe("deny");
+    }
+    expect(request).toHaveBeenCalledTimes(writes.length);
+  });
+
   it("keeps the approval map aligned with registry risk metadata", () => {
     const writes = listServices().flatMap((service) => Object.entries(service.actions)
       .filter(([, action]) => action.risk === "write")

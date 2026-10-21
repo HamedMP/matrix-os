@@ -1,3 +1,4 @@
+import { createNativeCodexExecutionProof, assertNativeCodexThreadProvider, verifyNativeCodexHumanControl } from "./native-codex-execution-proof.mjs";
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
 import { CodexExecutionTimeout, codexExecutionFailureReason, codexTerminalFailureReason } from "./codex-terminal-failure.mjs";
 import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
@@ -88,6 +89,12 @@ const ProviderModelReferenceSchema = z.string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/)
   .refine((value) => !value.includes(".."));
 const RunnerConfigSchema = z.object({
+  nativeSubscription: z.literal(true).optional(),
+  expectedNativePrincipal: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  expectedNativeConsent: z.object({ revision: z.number().int().nonnegative(),
+    harnessInstanceId: z.string().min(1).max(128), accountId: z.string().min(1).max(128),
+    configurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().optional(),
   prompt: z.string().trim().min(1).max(64 * 1024),
   providerThreadId: NativeReferenceSchema.optional(),
   approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
@@ -1091,6 +1098,7 @@ async function steerActiveTurn(control) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) return false;
     try {
+      await verifyNativeSubscription?.(request);
       await request("turn/steer", {
         threadId: expectedThreadId,
         expectedTurnId,
@@ -1124,6 +1132,7 @@ async function applyControl(control) {
     const same = replay.fingerprint === digest([control]);
     return same ? { ok: true, replayed: true } : { ok: false };
   }
+  await verifyNativeCodexHumanControl(control, verifyNativeSubscription, request);
   if (control.type === "turn") {
     if (!enqueuePendingTurn(control)) return { ok: false };
   } else if (control.type === "steer") {
@@ -1382,6 +1391,7 @@ async function runTurn(threadId, turn) {
   activeTurnTokenUsage = undefined;
   activeTurnFailureReason = undefined;
   try {
+    await verifyNativeSubscription?.(request);
     const started = await request("turn/start", turnStartParams(threadId, turn));
     activeNativeTurnId = z.object({
       turn: z.object({ id: NativeReferenceSchema }).passthrough(),
@@ -1425,7 +1435,9 @@ process.once("SIGTERM", () => { userStopped = true; stop(); });
 process.once("SIGINT", () => { userStopped = true; stop(); });
 
 let exitCode = 0;
+let verifyNativeSubscription;
 try {
+  if (config.nativeSubscription) verifyNativeSubscription = await createNativeCodexExecutionProof(config.expectedNativePrincipal, process.env, config.expectedNativeConsent);
   const initialized = await initializeCodexProvider({ command, args: commandArgs,
     cwd: process.cwd(), env: process.env, signal: startupController.signal,
     onRetry: async ({ label }) => {
@@ -1466,11 +1478,13 @@ try {
   }
   startupController.signal.throwIfAborted();
   sendProvider({ method: "initialized", params: {} });
+  await verifyNativeSubscription?.(request);
   const threadMethod = config.providerThreadId ? "thread/resume" : "thread/start";
   const started = await request(threadMethod, {
     // Matrix only needs the identity; Codex retains the complete model context.
     ...(config.providerThreadId ? { threadId: config.providerThreadId, excludeTurns: true } : {}),
     model: config.model,
+    ...(config.nativeSubscription ? { modelProvider: "openai" } : {}),
     developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS,
     serviceTier: config.serviceTier,
     cwd: process.cwd(),
@@ -1479,6 +1493,7 @@ try {
     runtimeWorkspaceRoots: config.writableRoots,
     experimentalRawEvents: false,
   });
+  if (config.nativeSubscription) assertNativeCodexThreadProvider(started);
   nativeThreadId = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() })
     .passthrough().parse(started).thread.id;
   if (config.providerThreadId && nativeThreadId !== config.providerThreadId) {

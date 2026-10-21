@@ -180,7 +180,7 @@ async function startDetachedSession() {
       created = true;
       break;
     }
-    if (exit) {
+    if (exit && exit.exitCode !== 0) {
       hostReplies.dispose();
       throw new Error(`detached Zellij startup exited with ${exit.signal ?? exit.exitCode}`);
     }

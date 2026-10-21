@@ -1,5 +1,6 @@
 import type { PlatformDB } from '../db.js';
 import { hashAccountDeletionOwner, lockAccountDeletionOwner } from './repository.js';
+import { lockBillingOwner } from '../billing/owner-lock.js';
 
 export interface AccountDeletionAdmission {
   status: 'none' | 'scheduled' | 'processing' | 'completed' | 'cancelled';
@@ -51,6 +52,7 @@ export async function withAccountDeletionOwnerLock<T>(
   const secret = configuredSecret(env);
   return db.transaction(async (trx) => {
     if (secret !== undefined) await lockAccountDeletionOwner(trx.executor, hashAccountDeletionOwner(clerkUserId, secret));
+    await lockBillingOwner(trx, clerkUserId);
     return work(trx, await getAccountDeletionAdmission(trx, clerkUserId, env));
   });
 }

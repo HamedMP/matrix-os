@@ -1,9 +1,34 @@
 import { defineConfig, externalizeDepsPlugin, type UserConfig } from "electron-vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
+import { searchForWorkspaceRoot } from "vite";
 import { DESKTOP_DEV_RENDERER_HOST } from "./src/main/renderer-url";
 import { readBuildSource } from "../scripts/release/build-source.mjs";
+
+// pnpm's global virtual store links packages from outside the checkout, and
+// the dev server refuses to serve files there. Allow only the renderer's font
+// packages so dev renders Geist/Inter instead of silently falling back.
+const RENDERER_FONT_PACKAGES = [
+  "@expo-google-fonts/geist",
+  "@expo-google-fonts/bricolage-grotesque",
+  "@fontsource/inter",
+  "@fontsource/jetbrains-mono",
+  "@fontsource/instrument-sans",
+  "@fontsource/instrument-serif",
+];
+
+function rendererFontPackageDirs(): string[] {
+  return RENDERER_FONT_PACKAGES.flatMap((name) => {
+    try {
+      return [realpathSync(resolve(__dirname, "node_modules", name))];
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  });
+}
 
 const desktopUpdateChannel =
   process.env.MATRIX_DESKTOP_UPDATE_CHANNEL || process.env.OPERATOR_UPDATE_CHANNEL || "";
@@ -59,6 +84,7 @@ export default defineConfig((): UserConfig => ({
       port: 5173,
       strictPort: true,
       allowedHosts: [DESKTOP_DEV_RENDERER_HOST],
+      fs: { allow: [searchForWorkspaceRoot(__dirname), ...rendererFontPackageDirs()] },
     },
     resolve: {
       // Workspace UI peers may resolve another React patch version. Hooks must
