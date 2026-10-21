@@ -84,8 +84,9 @@ export async function createNativeProviderWorkflowAdapters(options: {
     if (exact?.harness !== "claude" || provider !== "anthropic") return enableConnectedHarness(id, key);
     const source = current.accessSources.find(row => row.id === "owner_anthropic_key" && row.providerId === provider);
     if (!source || current.access.mode !== "writable" || !source.eligibleModelIds.includes(exact.route.modelId)) throw new ProviderWorkflowError("unavailable");
-    await options.store.mutate({ type: "select_access_source", harnessInstanceId: id, accessSourceId: source.id,
-      enableHarness: true, expectedRevision: current.revision, idempotencyKey: key });
+    // Fixed Claude refuses public access-source writes; only this verified key path may select the key.
+    if (!options.store.completeClaudeKeyConnection) throw new ProviderWorkflowError("unavailable");
+    await options.store.completeClaudeKeyConnection({ harnessInstanceId: id, expectedRevision: current.revision, idempotencyKey: key });
   };
   const snapshot = await options.store.getSnapshot();
   const hostControl = options.hostControl ?? await nativeHostControl();

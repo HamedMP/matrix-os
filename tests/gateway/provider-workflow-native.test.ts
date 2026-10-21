@@ -500,3 +500,22 @@ it('preserves Main read-only suppression of Claude workflow adapters', async () 
   expect(adapters).toEqual([]);
   expect(claudeBrowserLogin).not.toHaveBeenCalled();
 });
+
+it.each(['trusted', 'unsupported'] as const)('connects a verified Claude key only through trusted key completion: %s', async mode => {
+  const row = { id: 'harness_claude_code', harness: 'claude', displayName: 'Claude', installState: 'installed', authState: 'unknown', loginMethods: [], selectedAccountId: null,
+    route: { kind: 'fixed', providerId: 'anthropic', modelId: 'claude-sonnet-5' } };
+  const snapshot = { revision: 3, access: { mode: 'writable' }, harnesses: [row], harnessCatalog: [],
+    accessSources: [{ id: 'owner_anthropic_key', providerId: 'anthropic', eligibleModelIds: ['claude-sonnet-5'] }] };
+  const completeClaudeKeyConnection = vi.fn(async () => ({ kind: 'snapshot', snapshot }));
+  const store = { getSnapshot: vi.fn(async () => snapshot), mutate: vi.fn(), ...(mode === 'trusted' ? { completeClaudeKeyConnection } : {}) } as unknown as ProviderSettingsStoreWriter;
+  const save = vi.fn(async () => {});
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store, terminal: nativeFixture('claude').terminal, verifyKeys: { claude: save } });
+  const connect = adapter!.verifyKey!({ harnessInstanceId: row.id, providerId: 'anthropic', apiKey: 'sk-ant-api03-synthetic' });
+  if (mode === 'unsupported') await expect(connect).rejects.toMatchObject({ code: 'unavailable' });
+  else {
+    await connect;
+    expect(completeClaudeKeyConnection).toHaveBeenCalledWith(expect.objectContaining({ harnessInstanceId: row.id, expectedRevision: 3 }));
+  }
+  expect(save).toHaveBeenCalledOnce();
+  expect(store.mutate).not.toHaveBeenCalled();
+});

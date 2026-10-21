@@ -235,6 +235,24 @@ describe("provider Terminal login handoff", () => {
     const facade = handoff({ getSnapshot: vi.fn(), mutate: vi.fn() }, vi.fn());
     expect(facade.completeClaudeNativeLogin).toBeUndefined();
     expect(Object.hasOwn(facade, "completeClaudeNativeLogin")).toBe(false);
+    expect(Object.hasOwn(facade, "completeClaudeKeyConnection")).toBe(false);
+  });
+
+  it("forwards trusted Claude key completion with its receiver and never through the public mutation", async () => {
+    const result = { kind: "snapshot" as const, snapshot: disconnectedSnapshot() };
+    class KeyStore {
+      readonly #result = result;
+      getSnapshot = vi.fn(async () => result.snapshot);
+      mutate = vi.fn(async () => result);
+      async completeClaudeKeyConnection(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }) {
+        expect(input).toEqual({ harnessInstanceId: "harness_claude_code", expectedRevision: 0, idempotencyKey: "key-completion" });
+        return this.#result;
+      }
+    }
+    const store = new KeyStore(), resolve = vi.fn(async () => REF);
+    const facade = handoff(store, resolve);
+    await expect(facade.completeClaudeKeyConnection!({ harnessInstanceId: "harness_claude_code", expectedRevision: 0, idempotencyKey: "key-completion" })).resolves.toBe(result);
+    expect(resolve).not.toHaveBeenCalled(); expect(store.mutate).not.toHaveBeenCalled();
   });
 
   it("preserves the quiet credit reader receiver and cancellation without involving Terminal", async () => {
