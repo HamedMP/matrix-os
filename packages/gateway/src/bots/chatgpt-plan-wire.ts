@@ -14,8 +14,11 @@ export function chatGptPlanWire(raw: unknown, modelId: string): string {
     const input = body.input.map(item => 'role' in item && item.role === 'system' ? { ...item, role: 'developer' } : item);
     // additional_tools keeps broker tool names unchanged (namespace wrapping changes
     // names on some SDK versions). No hosted tools, MCP/connectors or tool_search.
-    if (body.tools?.length)
-        input.unshift({ type: 'additional_tools', role: 'developer', tools: body.tools });
+    // Responses may normalize omitted strict into a required-only schema. Keep the
+    // SDK's optional tool arguments optional while preserving explicit strictness.
+    const tools = body.tools?.map(tool => ({ ...tool, strict: tool.strict ?? false }));
+    if (tools?.length)
+        input.unshift({ type: 'additional_tools', role: 'developer', tools });
     const result = { model: modelId, input, store: false, stream: true,
         ...(body.instructions !== undefined ? { instructions: body.instructions } : {}),
         ...(body.reasoning !== undefined ? { reasoning: body.reasoning } : {}),
