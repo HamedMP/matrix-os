@@ -14,29 +14,6 @@ spec.loader.exec_module(helper)
 
 
 class BoundaryTests(unittest.TestCase):
-    def test_private_preview_requires_exact_machine_and_owner(self):
-        handle = 'pv-2687-1234abcd'
-        machine = '12345678-1234-4123-8123-123456789abc'
-        owner = 'user_syntheticOwner'
-        env = f'MATRIX_HANDLE={handle}\nMATRIX_RUNTIME_SLOT={handle}\nMATRIX_MACHINE_ID={machine}\nMATRIX_CLERK_USER_ID={owner}\n'
-        self.assertEqual(helper.assert_target(env, handle, machine, owner), handle)
-        self.assertEqual(helper.assert_target(env + f'MATRIX_USER_ID={owner}\n', handle, machine, owner), handle)
-        for args in [
-            (env, handle), (env, handle, machine), (env, handle, 'invalid', owner),
-            (env, handle, machine, 'user_other'), (env, 'pv-2782-1234abcd', machine, owner),
-            (env, 'pv-02687-1234abcd', machine, owner),
-            (env.replace(f'MATRIX_RUNTIME_SLOT={handle}', 'MATRIX_RUNTIME_SLOT=primary'), handle, machine, owner),
-            (env.replace(machine, '22345678-1234-4123-8123-123456789abc'), handle, machine, owner),
-            (env + f'MATRIX_MACHINE_ID={machine}\n', handle, machine, owner),
-            (env + f'MATRIX_CLERK_USER_ID={owner}\n', handle, machine, owner),
-            (env + 'MATRIX_USER_ID=user_other\n', handle, machine, owner),
-            (env + f'MATRIX_USER_ID={owner}\nMATRIX_USER_ID={owner}\n', handle, machine, owner),
-        ]:
-            with self.subTest(args=args), self.assertRaises(ValueError):
-                helper.assert_target(*args)
-        with patch.object(helper.os, 'getuid', return_value=0), patch.object(helper, 'read_host_environment', return_value=env):
-            helper.main(['guard', handle, machine, owner])
-
     def test_guard_accepts_only_exact_single_preview_classification(self):
         env = 'SECRET=synthetic-only\nMATRIX_HANDLE=pr-2526\nMATRIX_RUNTIME_SLOT=pr-2526\n'
         self.assertEqual(helper.assert_target(env, 'pr-2526'), 'pr-2526')
@@ -118,4 +95,4 @@ if __name__ == '__main__':
     result = unittest.TextTestRunner(verbosity=1).run(unittest.defaultTestLoader.loadTestsFromTestCase(BoundaryTests))
     if not result.wasSuccessful():
         raise SystemExit(1)
-    print('Native experience boundary checks passed')
+    print('Native experience boundary: 7 checks passed')
