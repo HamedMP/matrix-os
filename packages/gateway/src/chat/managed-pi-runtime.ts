@@ -1,5 +1,5 @@
 import type { BotInputHistoryReader } from "../bots/historical-input.js";
-import { BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
+import { BOT_ATTACHMENT_UNAVAILABLE_MESSAGE, BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
 import { prepareBotInputs, type PreparedBotInputs } from "../bots/admitted-input.js";
 import { BotRunSpecSchema, BotRunOutcomeSchema, type BotEvent, type BotRunSpec } from "@matrix-os/contracts";
 import { z } from "zod/v4";
@@ -172,7 +172,7 @@ export function createManagedPiRuntime(deps: {
       }
       return { type: "run.completed", outcome: "failed", error: {
         code: stage === "input" ? "resource_unavailable" : error instanceof BotRouteError ? "model_unavailable" : "run_failed",
-        safeMessage: stage === "input" ? "The attachments could not be read. Attach the files again, using PNG, JPEG or WebP images up to 2 MiB, or files up to 1 MiB." : error instanceof BotRouteError ? "The selected Matrix AI model is unavailable. Check Agents & providers." : "Matrix AI could not finish this request. Try again.",
+        safeMessage: stage === "input" ? BOT_ATTACHMENT_UNAVAILABLE_MESSAGE : error instanceof BotRouteError ? "The selected Matrix AI model is unavailable. Check Agents & providers." : "Matrix AI could not finish this request. Try again.",
         retryable: true, recoveryActions: ["retry"],
       } };
     } finally {

@@ -16,6 +16,8 @@ import {
 /** The longest side a photo is sent with. A larger photo is scaled down to it. */
 export const MAX_PHOTO_EDGE = 2_048;
 const PHOTO_QUALITY = 0.8;
+/** Preserve photo preparation independently of the larger ordinary-file transport. */
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 // The image types sent as they are. Any other, such as the HEIC an iPhone
 // camera saves, is converted to JPEG, which every model that reads photos reads.
 const SENDABLE_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
@@ -33,7 +35,7 @@ type Prepared = ComposerAttachment | AttachmentRejection;
 function attachment(uri: string, name: string, mimeType: string, sizeBytes: number): Prepared {
   // Nothing is as good as unreadable: there would be nothing to send.
   if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return "unreadable";
-  if (sizeBytes > MAX_ATTACHMENT_BYTES) return "too_large";
+  if (sizeBytes > (attachmentKindForMimeType(mimeType) === "image" ? MAX_PHOTO_BYTES : MAX_ATTACHMENT_BYTES)) return "too_large";
   // From the system's own random source: the id is part of where the upload is kept.
   const id = attachmentIdFrom(getRandomValues(new Uint8Array(16)));
   return {
@@ -85,7 +87,7 @@ async function preparePhoto(asset: ImagePicker.ImagePickerAsset, index: number):
     const name = asset.fileName?.trim() || `photo-${index + 1}.jpg`;
     const sizeBytes = asset.fileSize ?? new File(asset.uri).size;
     const sendable = SENDABLE_IMAGE_TYPES.includes(mimeType);
-    if (sendable && Math.max(asset.width, asset.height) <= MAX_PHOTO_EDGE && sizeBytes <= MAX_ATTACHMENT_BYTES) {
+    if (sendable && Math.max(asset.width, asset.height) <= MAX_PHOTO_EDGE && sizeBytes <= MAX_PHOTO_BYTES) {
       return attachment(asset.uri, name, mimeType, sizeBytes);
     }
     // Scaling an animation down would leave a still of its first frame.

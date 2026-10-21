@@ -3,8 +3,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { BOT_ARTIFACT_BINARY_MAX_BYTES, BOT_IMAGE_CHUNK_CHARS, BotImageChunkRequestSchema,
-  BOT_INPUT_IMAGE_MAX_BYTES, BOT_INPUT_TOTAL_MAX_BYTES, botAttachmentInputError, botNativeImageMime,
+import { BOT_INPUT_FILE_MAX_BYTES, BOT_IMAGE_CHUNK_CHARS, BotImageChunkRequestSchema,
+  BOT_INPUT_IMAGE_MAX_BYTES, BOT_INPUT_IMAGE_TOTAL_MAX_BYTES, BOT_INPUT_TOTAL_MAX_BYTES, botAttachmentInputError, botNativeImageMime,
   type BotImageChunkRequest, type BotModelRoute, type BotToolRequest, type CanonicalChatMessagePart } from "@matrix-os/contracts";
 import { BotBrokerActionError } from "./broker-actions.js";
 import type { PiRuntimeBinding } from "./runtime-registry.js";
@@ -34,7 +34,7 @@ async function captureUpload(homePath: string, part: Attachment, signal: AbortSi
   const file = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const info = await file.stat();
-    const maximum = part.kind === "image" ? IMAGE_BYTES : BOT_ARTIFACT_BINARY_MAX_BYTES;
+    const maximum = part.kind === "image" ? IMAGE_BYTES : BOT_INPUT_FILE_MAX_BYTES;
     if (!info.isFile() || info.nlink !== 1 || info.uid !== identities[0]!.uid || info.size > maximum
       || (part.sizeBytes !== undefined && part.sizeBytes !== info.size)) throw invalid();
     const bytes = Buffer.alloc(info.size + 1);
@@ -117,7 +117,7 @@ export async function prepareBotInputs(input: {
       try {
         await assertCurrent?.(); assertLive();
         const mimeType = part.kind === "image" ? botNativeImageMime(bytes) : undefined;
-        if (total + bytes.length > TOTAL_BYTES || (part.kind === "image" && (imageBytes + bytes.length > (input.imageTotalMaximum ?? TOTAL_BYTES) || !mimeType || mimeType !== part.mimeType))) {
+        if (total + bytes.length > TOTAL_BYTES || (part.kind === "image" && (imageBytes + bytes.length > (input.imageTotalMaximum ?? BOT_INPUT_IMAGE_TOTAL_MAX_BYTES) || !mimeType || mimeType !== part.mimeType))) {
           if (historical) { unavailable(); continue; } throw invalid();
         }
         selected.push({ ...part, sizeBytes: bytes.length }); total += bytes.length;
@@ -189,7 +189,7 @@ export async function prepareBotInputs(input: {
         try { new TextDecoder("utf-8", { fatal: true }).decode(file.bytes); }
         catch (error: unknown) { if (error instanceof TypeError) throw invalid(); throw error; }
       }
-      const result = readBotArtifactBytes(file.bytes, args);
+      const result = readBotArtifactBytes(file.bytes, args, BOT_INPUT_FILE_MAX_BYTES);
       await assertCurrent?.(); assertBinding(binding);
       return result;
     },

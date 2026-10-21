@@ -9,7 +9,7 @@ describe("Native Mobile managed attachment preflight", () => {
 
   it.each([
     ["GIF", [attachment({ mimeType: "image/gif", name: "photo.gif" })], "Use PNG, JPEG or WebP images for this model."],
-    ["large file", [attachment({ kind: "file", mimeType: "application/pdf", sizeBytes: MiB + 1 })], "Files must be 1 MiB or smaller for this model."],
+    ["large file", [attachment({ kind: "file", mimeType: "application/pdf", sizeBytes: 10 * MiB + 1 })], "Files must be 10 MiB or smaller for this model."],
     ["large image", [attachment({ sizeBytes: 2 * MiB + 1 })], "Images must be 2 MiB or smaller for this model."],
     ["five images", Array.from({ length: 5 }, () => attachment()), "Attach up to four images per message."],
     ["funded image total", [attachment({ sizeBytes: MiB / 2 }), attachment({ sizeBytes: MiB / 2 + 1 })], "Images for this Matrix AI source must total 1 MiB or less."],
@@ -29,8 +29,8 @@ describe("Native Mobile managed attachment preflight", () => {
     expect(errorFor([attachment({ mimeType, sizeBytes: MiB })])).toBeNull();
   });
 
-  it("allows files at 1 MiB, text-only sends, and existing coding-agent file policy", () => {
-    expect(errorFor([attachment({ kind: "file", sizeBytes: MiB })])).toBeNull();
+  it("allows files at 10 MiB, text-only sends, and existing coding-agent file policy", () => {
+    expect(errorFor([attachment({ kind: "file", sizeBytes: 10 * MiB })])).toBeNull();
     expect(chatAttachmentSubmissionError(null, null, [])).toBeNull();
     expect(errorFor([attachment({ kind: "file", sizeBytes: 5 * MiB })], { instanceId: "codex_default", model: "vision" })).toBeNull();
   });
@@ -43,12 +43,15 @@ describe("Native Mobile managed attachment preflight", () => {
     expect(chatAttachmentSubmissionError(catalog, { ...selection, options: [{ id: "source", value: "own" }] }, parts)).toBeNull();
   });
 
-  it("keeps the existing aggregate budget on an own-source selection", () => {
+  it("allows 20 MiB of files while preserving the independent image budget", () => {
     const selection = { instanceId: "matrix_pi_own", model: "vision" };
     const images = Array.from({ length: 4 }, () => attachment({ sizeBytes: 2 * MiB }));
     expect(errorFor(images, selection)).toBeNull();
-    expect(errorFor([...images, attachment({ kind: "file", sizeBytes: 1 })], selection))
-      .toBe("Attachments must total 8 MiB or less.");
+    expect(errorFor([...images, attachment({ kind: "file", sizeBytes: 10 * MiB })], selection)).toBeNull();
+    const files = [attachment({ kind: "file", sizeBytes: 10 * MiB }), attachment({ kind: "file", sizeBytes: 10 * MiB })];
+    expect(errorFor(files, selection)).toBeNull();
+    expect(errorFor([...files, attachment({ kind: "file", sizeBytes: 1 })], selection))
+      .toBe("Attachments must total 20 MiB or less.");
   });
 
   it("applies the Web recipe automatic policy without treating auto as a catalog vision model", () => {

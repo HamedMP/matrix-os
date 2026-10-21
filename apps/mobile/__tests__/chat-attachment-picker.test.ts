@@ -236,6 +236,12 @@ describe("choosing attachments", () => {
   });
 
   describe("files", () => {
+    it("accepts an ordinary file at exactly 10 MiB and rejects one byte more", async () => {
+      mockPickFile.mockResolvedValue({ canceled: false, result: [file("exact.bin", "application/octet-stream", 10 * MB), file("extra.bin", "application/octet-stream", 10 * MB + 1)] });
+      const picked = await pickFiles(8, ["file"]);
+      expect(picked?.attachments).toMatchObject([{ name: "exact.bin", sizeBytes: 10 * MB }]);
+      expect(picked?.rejections).toEqual(["too_large"]);
+    });
     it("attaches the files chosen in the system's browser", async () => {
       mockPickFile.mockResolvedValue({
         canceled: false,
@@ -288,7 +294,7 @@ describe("choosing attachments", () => {
       mockPickFile.mockResolvedValue({
         canceled: false,
         result: [
-          file("big.zip", "application/zip", 6 * MB),
+          file("big.zip", "application/zip", 10 * MB + 1),
           file("empty.txt", "text/plain", 0),
           file("kept.pdf", "application/pdf", 40_000),
           file("extra.pdf", "application/pdf", 40_000),

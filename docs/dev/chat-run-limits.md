@@ -21,7 +21,7 @@ Setup steps remain independently bounded at 60 seconds. Long bot.run IPC follows
 
 ## Human waiting, Stop and retry
 
-Human waiting is an explicit state, with a separate response lifetime. It does not run a session-idle clock during a busy turn and cannot extend an approval’s authority. Claude questions expire after 30 minutes by default. Managed integration approvals retain their 10-minute response lifetime. Other adapters retain their own human-control policies; these numbers are not universal provider limits.
+Human waiting is an explicit state, with a separate response lifetime. It does not run a session-idle clock during a busy turn and cannot extend an approval’s authority. Claude questions expire after 30 minutes by default. Recipe Bot questions retain a 24-hour response lifetime and end the current worker turn; answering starts a subsequent attempt. Managed integration approvals retain their 10-minute response lifetime. Other adapters retain their own human-control policies; these numbers are not universal provider limits.
 
 Submission rechecks expiry after asynchronous ownership and authority checks. An expired, cancelled or closed request cannot execute a prepared mutation, accept a late answer or be replayed. Pending controls and timers are cleaned on terminal paths.
 
@@ -51,7 +51,9 @@ Large durable results should be explicit artifacts with their own owner access, 
 
 Native Mobile applies the shared managed-input policy using the current selected instance, model and options before upload or optimistic draft clearing. Retry applies the current selection policy again. The same server admission and actual-file validation remain authoritative across Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile.
 
-Managed Matrix AI input is capped at eight attachments, four images, 2 MiB per image, 1 MiB per ordinary file and 8 MiB total. Images require model vision support and PNG, JPEG or WebP. Default Matrix-funded images additionally share a 1 MiB total budget. Other upload endpoints and picker limits have separate purposes and do not authorize larger Agent input.
+Managed Matrix AI input is capped at eight attachments, four images, 2 MiB per image, 10 MiB per ordinary file and 20 MiB total. Images require model vision support and PNG, JPEG or WebP, with a separate 8 MiB image total. Default Matrix-funded images additionally share a 1 MiB total budget. Other upload endpoints and picker limits have separate purposes and do not authorize larger Agent input.
+
+Submitted ordinary files use an immutable, hash-bound capture and bounded 32 KiB reads. Accepting a 10 MiB file does not insert its full contents into model context. Workspace and integration binary artifacts retain their separate 1 MiB limit; whole-text artifact reads retain their 192 KiB limit. Retry checks the current selection before sending again.
 
 Invalid attachments remain available for removal or editing with a safe error. PDF/Office extraction, durable drafts and attachment retention are separate work; upload is not document parsing.
 

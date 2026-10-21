@@ -25,7 +25,8 @@ beforeEach(() => jest.clearAllMocks());
 
 it.each([
   ["GIF", [attachment({ mimeType: "image/gif" })], "Use PNG, JPEG or WebP"],
-  ["large file", [attachment({ kind: "file", sizeBytes: MiB + 1 })], "Files must be 1 MiB"],
+  ["large file", [attachment({ kind: "file", sizeBytes: 10 * MiB + 1 })], "Files must be 10 MiB"],
+  ["combined file total", [attachment({ kind: "file", sizeBytes: 10 * MiB }), attachment({ id: "att_second", kind: "file", sizeBytes: 10 * MiB }), attachment({ id: "att_extra", kind: "file", sizeBytes: 1 })], "total 20 MiB"],
   ["large image", [attachment({ sizeBytes: 2 * MiB + 1 })], "Images must be 2 MiB"],
   ["five images", Array.from({ length: 5 }, (_, index) => attachment({ id: `att_${index}` })), "up to four images"],
   ["funded total", [attachment({ sizeBytes: MiB + 1 })], "total 1 MiB"],
@@ -108,7 +109,7 @@ it("preflights a project's first send and failed retry without clearing its edit
     attachmentKinds: ["file"], onChatStarted: jest.fn(),
   } as Parameters<typeof useProjectComposer>[0];
   const { result, rerender } = renderHook((props) => useProjectComposer(props), { initialProps });
-  const file = attachment({ kind: "file", mimeType: "application/pdf", sizeBytes: MiB + 1 });
+  const file = attachment({ kind: "file", mimeType: "application/pdf", sizeBytes: 10 * MiB + 1 });
   act(() => { result.current.setDraft("  Project draft "); result.current.addAttachments([file]); });
   act(() => result.current.send());
   expect(mockMutate).toHaveBeenCalledTimes(1);
@@ -116,7 +117,7 @@ it("preflights a project's first send and failed retry without clearing its edit
 
   rerender({ ...initialProps, selection: managedSelection });
   expect(result.current.canSend).toBe(false);
-  expect(result.current.attachmentNotice).toContain("Files must be 1 MiB");
+  expect(result.current.attachmentNotice).toContain("Files must be 10 MiB");
   act(() => result.current.send());
   expect(mockMutate).toHaveBeenCalledTimes(1);
   expect(result.current.draft).toBe("  Project draft ");

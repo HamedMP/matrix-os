@@ -207,7 +207,6 @@ it('admits image/file parts for a vision model and rejects images for text-only 
 it.each([
   { kind: "image" as const, mimeType: "image/gif", sizeBytes: 10, reason: "PNG, JPEG or WebP" },
   { kind: "image" as const, mimeType: "image/png", sizeBytes: 2 * 1024 * 1024 + 1, reason: "2 MiB" },
-  { kind: "file" as const, mimeType: "text/plain", sizeBytes: 1024 * 1024 + 1, reason: "1 MiB" },
 ])("rejects managed $reason metadata before storing or starting a turn", async part => {
   const snapshot = makeAiProviderSnapshot(); snapshot.models[0]!.capabilities = ["tools", "vision"];
   savedSelection = { instanceId: "matrix_pi_default", model: snapshot.models[0]!.id };
@@ -215,6 +214,16 @@ it.each([
   const request = { clientRequestId: "req_input_limit", baseRevision: 0, parts: [{ type: "attachment_reference" as const, attachmentId: "att_bounded", label: "upload", kind: part.kind, mimeType: part.mimeType, sizeBytes: part.sizeBytes, ownerReference: "temporary/desktop-chat/input" }],
     selection: savedSelection, interactionMode: "default", permissionMode: "default" };
   await expect(orchestrator.admitTurn(principal, owner, BOT_CHAT, request)).rejects.toMatchObject({ status: 400, safeError: { safeMessage: expect.stringContaining(part.reason) } });
+  expect(started).toEqual([]); expect((await repository.get(owner, BOT_CHAT))?.chat.messageCount).toBe(0);
+});
+it("rejects 20 MiB plus one byte of managed file metadata before storing or starting a turn", async () => {
+  const snapshot = makeAiProviderSnapshot();
+  savedSelection = { instanceId: "matrix_pi_default", model: snapshot.models[0]!.id };
+  getCatalog.mockImplementation(async () => ({ revision: "file_total", drivers: [], instances: managedPiChatInstances(snapshot).map(instance => ({ ...instance, catalogRevision: "file_total" })) }));
+  const parts = [10 * 1024 * 1024, 10 * 1024 * 1024, 1].map((sizeBytes, index) => ({ type: "attachment_reference" as const,
+    attachmentId: `att_total_${index}`, label: `upload-${index}`, kind: "file" as const, mimeType: "application/octet-stream", sizeBytes, ownerReference: `temporary/desktop-chat/input-${index}` }));
+  await expect(orchestrator.admitTurn(principal, owner, BOT_CHAT, { clientRequestId: "req_file_total", baseRevision: 0, parts,
+    selection: savedSelection, interactionMode: "default", permissionMode: "default" })).rejects.toMatchObject({ status: 400, safeError: { safeMessage: expect.stringContaining("20 MiB") } });
   expect(started).toEqual([]); expect((await repository.get(owner, BOT_CHAT))?.chat.messageCount).toBe(0);
 });
 it("rechecks model image suitability on retry and queue without storing rejected metadata", async () => {

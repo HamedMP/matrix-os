@@ -19,6 +19,7 @@ Cross-provider busy/idle semantics, managed Pi and Recipe Bot renewable executio
 - Credentials, per-inference credit/budget checks, context/token/tool budgets, approval TTLs and upload policy remain authoritative. Matrix AI routing is not a coding CLI. Do not generalize one adapter’s numeric bounds to other providers.
 - Bounded display truncation must continue state/control/terminal consumption. Preserve complete credentials only within retained output, parser/per-frame limits and permission delivery integrity. Never replace a bounded buffer with unbounded accumulation or claim full raw logs from display storage.
 - Native preflight uses current catalog/model/options before upload or optimistic clearing, including retry. Client validation is advisory; server actual-file/ownership checks remain authoritative.
+- Submitted ordinary-file capacity is 10 MiB each and 20 MiB total, at most eight attachments. Keep image limits separate: four images, 2 MiB each, 8 MiB image total and 1 MiB funded image total. Hash-bound 32 KiB reads may address the complete submitted capture without raising the 1 MiB workspace/integration artifact or 192 KiB whole-text limits. Do not inject a whole uploaded file into model context merely because upload succeeded.
 
 ## Required regression checks
 

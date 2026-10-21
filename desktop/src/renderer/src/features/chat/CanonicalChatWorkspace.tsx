@@ -265,7 +265,6 @@ function CanonicalChatWorkspaceContent({
   const reportedChatId = useRef<string | null>(initialChatId ?? null);
   const submissionSequence = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const attachments = useConversationAttachments(controller.activeChatId, api ?? null);
   useChatAgentDraftRequest({ request: draftRequest, eligible: active && !initialChatId && initialView !== "conversation" && !explicitSharedRoute,
     prepare: prepareNewChatDraft, showDraft: () => setGlobalView("draft"),
     focus: () => setLocalComposerFocusRequestId((requestId) => requestId + 1), onConsumed: onDraftConsumed });
@@ -300,6 +299,7 @@ function CanonicalChatWorkspaceContent({
   const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error" || botExecution.loading || Boolean(botExecution.error);
   const botPresentation = botExecution.presentation;
   const attachmentPolicy = chatAttachmentComposerPolicy(providerCatalog, directBotId ? botExecution.agent?.selection : providerSelection, botPresentation?.kind === "recipe");
+  const attachments = useConversationAttachments(controller.activeChatId, api ?? null, attachmentPolicy.error);
   const selection = botIdentityUnknown ? null : directBotId ? botPresentation ? { ...botPresentation.selection, options: botPresentation.selection.options ?? [], interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.permissionMode } : null : providerSelection;
   const botRouteAvailable = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : canonicalComposerSelectionIsAvailable(providerCatalog, selection));
   const permissionResources = directBotId ? botExecution.consentResources : mentionResources;
