@@ -42,7 +42,7 @@ export function createGooglePlatformPolicyRoutes(deps: GooglePlatformPolicyDepen
       if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
       const input = parsed.data;
       if (!await deps.ownsGmailAccount(auth.data.ownerId, input.googleAccountId)) return c.json({ error: 'unavailable' }, 403);
-      const resolved = await resolveGooglePolicyProfile(deps.repository, auth.data.ownerId, input.binding, input.identity);
+      const resolved = await resolveGooglePolicyProfile(deps.repository, auth.data.ownerId, input.binding, input.identity, input.purposeId);
       const request = { ownerId: auth.data.ownerId, googleAccountId: input.googleAccountId, purposeId: input.purposeId,
         profileId: resolved.profileId, dataKinds: input.dataKinds, resolvedRoute: resolved.route };
       const finish = async (payload: Record<string, unknown>, status: 200 | 428 = 200) => {

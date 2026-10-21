@@ -10,9 +10,9 @@ const generation = '523e4567-e89b-42d3-a456-426614174000';
 const identity = (overrides: Partial<GoogleInferenceIdentity> = {}): GoogleInferenceIdentity => ({ endpoint: 'https://api.example.invalid/v1/messages?beta=true', api: 'anthropic-messages', modelId: 'model-a', harnessVersion: 'reviewed-build-1', credential: { kind: 'api_key', fingerprint: 'a'.repeat(64), generation }, ...overrides });
 const binding = () => ({ runId: 'run_policy', runtimeHandle: `runtime_${'a'.repeat(32)}`, executionGeneration: '1', accessSourceId: 'owner_anthropic_key' });
 const input = () => ({ binding: binding(), googleAccountId: accountId, purposeId: 'mail-assistance', dataKinds: ['gmail-content'], identity: identity() });
-async function reviewed() {
+async function reviewed(purposeId = 'mail-assistance') {
   const value = profileInput({ endpoint: identity().endpoint, credentialKind: 'byo', credentialGeneration: generation, harnessId: GOOGLE_POLICY_HARNESS_ID['anthropic-messages'], harnessRevision: identity().harnessVersion });
-  value.binding.recipientChain[0]!.endpoint = identity().endpoint;
+  value.binding.recipientChain[0]!.endpoint = identity().endpoint; value.purposeId = purposeId;
   return db.repository.reviewProfile(value, 0);
 }
 function setup(overrides: Record<string, unknown> = {}) {
@@ -35,6 +35,14 @@ describe('central Google processing policy', () => {
     const result = await response.json(); expect(result.resolvedRoute.endpoint).toBe(identity().endpoint);
     expect(result.stamp).toMatchObject({ ownerId: 'owner-one', profileId: profile.id });
     const check = await post('revalidate', { ...input(), stamp: result.stamp }); expect(check.status).toBe(200);
+  });
+  it('selects within the requested purpose while retaining same-purpose ambiguity denial', async () => {
+    const profile = await reviewed(); await reviewed('email-archiving');
+    await db.repository.recordConsent(consentInput(profile.id), 0); const { post } = setup();
+    expect((await post('authorize', input())).status).toBe(200);
+    expect((await post('authorize', { ...input(), purposeId: 'email-archiving' })).status).toBe(428);
+    expect((await post('authorize', { ...input(), purposeId: 'unknown' })).status).toBe(503);
+    await reviewed(); expect((await post('authorize', input())).status).toBe(503);
   });
   it('never accepts caller owner/approval/profile fields or forged owner headers as authority', async () => {
     const { post } = setup();
@@ -60,8 +68,8 @@ describe('central Google processing policy', () => {
   });
   it('matches literal beta query only and never broadens or strips actual endpoint identity', async () => {
     await reviewed();
-    expect((await resolveGooglePolicyProfile(db.repository, 'owner-one', binding(), identity())).route.endpoint).toBe(identity().endpoint);
-    for (const endpoint of ['https://api.example.invalid/v1/messages?beta=false', 'https://api.example.invalid/v1/messages?beta=true&extra=1', 'https://api.example.invalid/v1/messages?%62eta=true']) await expect(resolveGooglePolicyProfile(db.repository, 'owner-one', binding(), identity({ endpoint }))).rejects.toMatchObject({ code: 'unavailable' });
+    expect((await resolveGooglePolicyProfile(db.repository, 'owner-one', binding(), identity(), 'mail-assistance')).route.endpoint).toBe(identity().endpoint);
+    for (const endpoint of ['https://api.example.invalid/v1/messages?beta=false', 'https://api.example.invalid/v1/messages?beta=true&extra=1', 'https://api.example.invalid/v1/messages?%62eta=true']) await expect(resolveGooglePolicyProfile(db.repository, 'owner-one', binding(), identity({ endpoint }), 'mail-assistance')).rejects.toMatchObject({ code: 'unavailable' });
   });
   it('does not turn database failure into a consent prompt', async () => {
     await reviewed(); const { post } = setup(); vi.spyOn(db.repository, 'snapshot').mockRejectedValueOnce(new Error('synthetic private database error'));
@@ -114,7 +122,7 @@ describe('central Google processing policy', () => {
     const endpoint = 'http://127.0.0.1:8080/v1/messages';
     const value = profileInput({ endpoint, credentialKind: 'byo', credentialGeneration: generation, harnessId: GOOGLE_POLICY_HARNESS_ID['anthropic-messages'], harnessRevision: identity().harnessVersion });
     value.binding.recipientChain[0]!.endpoint = endpoint; await db.repository.reviewProfile(value, 0);
-    await expect(resolveGooglePolicyProfile(db.repository, 'owner-one', binding(), identity({ endpoint }))).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(resolveGooglePolicyProfile(db.repository, 'owner-one', binding(), identity({ endpoint }), 'mail-assistance')).rejects.toMatchObject({ code: 'unavailable' });
   });
 
 });

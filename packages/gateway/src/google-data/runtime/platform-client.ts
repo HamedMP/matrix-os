@@ -1,3 +1,4 @@
+import { discardGooglePolicyResponse } from './response-cleanup.js';
 import type { BotIntegrationTransport } from '../../bots/integration-client.js';
 import { GooglePolicyAuthorizeSchema, GooglePolicyConsentRequiredSchema, GooglePolicyGrantedSchema, GooglePolicyRevalidateSchema, matchesGoogleObservedRoute } from './profile-resolution.js';
 import { routeDigest } from '../profiles.js';
@@ -11,7 +12,7 @@ async function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T
   try { return await Promise.race([promise, aborted]); } finally { signal.removeEventListener('abort', rejectAbort); }
 }
 async function readJson(response: Response, signal: AbortSignal): Promise<unknown> {
-  if (!response.headers.get('content-type')?.toLowerCase().startsWith('application/json') || !response.body) throw new GooglePlatformPolicyError();
+  if (!response.headers.get('content-type')?.toLowerCase().startsWith('application/json') || !response.body) { discardGooglePolicyResponse(response); throw new GooglePlatformPolicyError(); }
   const reader = response.body.getReader(); const bytes = new Uint8Array(MAX_RESPONSE); let size = 0;
   try {
     while (true) {
@@ -36,8 +37,10 @@ export function createGooglePlatformPolicyClient(transport: BotIntegrationTransp
       if (!parsed.success || !/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(ownerId)) throw new GooglePlatformPolicyError();
       const bounded = AbortSignal.any([AbortSignal.timeout(10000), ...(signal ? [signal] : [])]);
       if (bounded.aborted) throw new GooglePlatformPolicyError();
-      const response = await abortable(transport(ownerId, { method: 'POST', path: `/gmail/processing/${action}`, body: parsed.data, signal: bounded }), bounded);
-      if (response.status !== 200 && !(action === 'authorize' && response.status === 428)) throw new GooglePlatformPolicyError();
+      const pending = transport(ownerId, { method: 'POST', path: `/gmail/processing/${action}`, body: parsed.data, signal: bounded });
+      void pending.then(response => { if (bounded.aborted) discardGooglePolicyResponse(response); }, () => undefined);
+      const response = await abortable(pending, bounded);
+      if (response.status !== 200 && !(action === 'authorize' && response.status === 428)) { discardGooglePolicyResponse(response); throw new GooglePlatformPolicyError(); }
       const body = await readJson(response, bounded);
       if (response.status === 428) {
         const required = GooglePolicyConsentRequiredSchema.parse(body);
