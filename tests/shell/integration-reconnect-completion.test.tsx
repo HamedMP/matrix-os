@@ -68,3 +68,34 @@ it.each(['pending', 'succeeded', 'expired', 'unavailable'])('uses exact receipt 
   expect((screen.getByRole('button', { name: 'Add another Gmail account' }) as HTMLButtonElement).disabled).toBe(receiptState === 'pending');
   if (receiptState === 'expired' || receiptState === 'unavailable') expect(screen.getByText('Could not confirm connection. Try connecting again.')).toBeTruthy();
 });
+it('keeps terminal receipt failure when an older tick finishes inventory later', async () => {
+  const attemptId = '123e4567-e89b-42d3-a456-426614174000';
+  const current = { ...account, id: attemptId };
+  let poll!: () => Promise<void>; let finishInventory!: (response: unknown) => void;
+  const inventory = new Promise(resolve => { finishInventory = resolve; });
+  let receipts = 0; let reads = 0;
+  const interval = globalThis.setInterval;
+  vi.spyOn(globalThis, 'setInterval').mockImplementation((callback, delay, ...args) => {
+    if (delay === 2_000) poll = callback as () => Promise<void>;
+    return interval(callback, delay, ...args);
+  });
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith('/api/integrations') && ++reads > 1) return inventory;
+    const body = url.endsWith('/available') ? [{ id: 'gmail', name: 'Gmail', category: 'google', authType: 'oauth' }]
+      : url.endsWith('/connection-options') ? { methods: ['pipedream'], defaultMethod: 'pipedream' }
+      : url.endsWith('/connect') ? { url: 'https://pipedream.com/connect', service: 'gmail', attemptId }
+      : url.includes('/attempts/') ? ++receipts === 1 ? { status: 'succeeded', accountId: attemptId } : { status: 'failed' } : [current];
+    return { ok: true, json: async () => body };
+  }));
+  vi.spyOn(window, 'open').mockReturnValue({ location: { href: 'about:blank' }, close: vi.fn() } as unknown as Window);
+  render(<IntegrationsSection />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Add another Gmail account' }));
+  await waitFor(() => expect(poll).toBeTypeOf('function'));
+  const earlier = poll();
+  await waitFor(() => expect(reads).toBe(2));
+  await act(async () => poll());
+  expect(screen.getByText('Could not confirm connection. Try connecting again.')).toBeTruthy();
+  await act(async () => { finishInventory({ ok: true, json: async () => [{ ...current, account_label: 'Stale receipt inventory', account_email: 'stale-receipt@example.invalid' }] }); await earlier; });
+  expect(screen.queryByText('stale-receipt@example.invalid')).toBeNull();
+});

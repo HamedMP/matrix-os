@@ -183,6 +183,18 @@ export function IntegrationsSection() {
     connectInFlight.current = true;
     const generation = ++connectGeneration.current;
     const isCurrent = () => connectGeneration.current === generation;
+    const settleConnect = (message?: string, list?: ConnectedService[]) => {
+      if (!isCurrent()) return;
+      connectGeneration.current += 1;
+      connectInFlight.current = false;
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+      pollRef.current = null;
+      pollTimeoutRef.current = null;
+      if (list) setConnected(list);
+      if (message) setError(message);
+      setConnecting(null);
+    };
     const previousConnections = connected.map(connection => ({ ...connection }));
     let popup: Window | null = null;
     setConnecting(serviceId);
@@ -201,16 +213,14 @@ export function IntegrationsSection() {
       });
       if (!isCurrent()) { popup?.close(); return; }
       if (!res.ok) {
-        setError("Could not start connection. Try again.");
-        setConnecting(null);
+        settleConnect("Could not start connection. Try again.");
         popup?.close();
-        connectInFlight.current = false;
         return;
       }
       const started = parseIntegrationConnectResponse(await res.json());
       if (!isCurrent()) { popup?.close(); return; }
       if (!started) {
-        popup?.close(); setError("Could not start connection. Try again."); setConnecting(null); return;
+        popup?.close(); settleConnect("Could not start connection. Try again."); return;
       }
       const { url, attemptId } = started;
       const consentUrl = new URL(url);
@@ -237,12 +247,7 @@ export function IntegrationsSection() {
             const receipt = receiptResponse.ok ? parseIntegrationAttemptStatus(await receiptResponse.json()) : null;
             if (!isCurrent()) return;
             if (!receipt || receipt.status === "failed" || receipt.status === "expired") {
-              setError("Could not confirm connection. Try connecting again.");
-              setConnecting(null);
-              if (pollRef.current) clearInterval(pollRef.current);
-              pollRef.current = null;
-              if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
-              pollTimeoutRef.current = null;
+              settleConnect("Could not confirm connection. Try connecting again.");
               return;
             }
             if (receipt.status === "pending") return;
@@ -252,11 +257,7 @@ export function IntegrationsSection() {
             if (!isCurrent()) return;
             const list: ConnectedService[] = data.connections ?? data;
             if (!isCompletedIntegrationAttempt(receipt, serviceId, list.map(item => ({ id: item.id, service: item.service, status: item.status, connectedAt: item.connected_at })))) return;
-            setConnected(list); setConnecting(null);
-            if (pollRef.current) clearInterval(pollRef.current);
-            pollRef.current = null;
-            if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
-            pollTimeoutRef.current = null;
+            settleConnect(undefined, list);
             return;
           }
           const syncRes = await fetch(`${GATEWAY}/api/integrations/sync`, {
@@ -268,18 +269,7 @@ export function IntegrationsSection() {
             if (!isCurrent()) return;
             const list: ConnectedService[] = data.services ?? [];
             const completed = hasCompletedConnectionForService(previousConnections, serviceId, list);
-            if (completed) {
-              setConnected(list);
-              setConnecting(null);
-              if (pollRef.current) {
-                clearInterval(pollRef.current);
-                pollRef.current = null;
-              }
-              if (pollTimeoutRef.current) {
-                clearTimeout(pollTimeoutRef.current);
-                pollTimeoutRef.current = null;
-              }
-            }
+            if (completed) settleConnect(undefined, list);
           }
         } catch (err) {
           if (shouldLogIntegrationWarning(err)) {
@@ -293,15 +283,7 @@ export function IntegrationsSection() {
 
       // Stop polling after 2 minutes
       pollTimeoutRef.current = setTimeout(() => {
-        if (!isCurrent()) return;
-        connectGeneration.current += 1;
-        if (attemptId) setError("Could not confirm connection. Try connecting again.");
-        if (pollRef.current) {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
-          setConnecting(null);
-        }
-        pollTimeoutRef.current = null;
+        settleConnect(attemptId ? "Could not confirm connection. Try connecting again." : undefined);
       }, 120_000);
     } catch (err) {
       if (shouldLogIntegrationWarning(err)) {
@@ -312,8 +294,7 @@ export function IntegrationsSection() {
       }
       popup?.close();
       if (!isCurrent()) return;
-      setError("Could not open sign-in. Allow popups and try again.");
-      setConnecting(null);
+      settleConnect("Could not open sign-in. Allow popups and try again.");
     } finally {
       if (isCurrent()) connectInFlight.current = false;
     }

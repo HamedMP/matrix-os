@@ -8,6 +8,9 @@ describe('owner Gmail receipt tools', () => {
     const fetcher = vi.fn(async () => reply({ url: 'https://pipedream.com/connect', service: 'gmail', attemptId }));
     const output = text(await connectServiceHandler({ service: 'gmail', connectionMethod: 'pipedream' }, fetcher));
     expect(output).toContain(attemptId); expect(output).toContain('get_connection_attempt'); expect(output).not.toContain('appear automatically');
+    expect(output).toContain('This chat cannot confirm this attempt');
+    expect(output).toContain('start a new tracked connection from Connect Apps');
+    expect(output).not.toContain('Otherwise confirm it in Connect Apps');
   });
   it('returns only coarse owner receipt metadata and bounds the request', async () => {
     const fetcher = vi.fn(async () => reply({ status: 'succeeded', accountId: attemptId, token: 'private' }));

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { IntegrationsSettingsSection, useIntegrations } from "../../desktop/src/renderer/src/features/integrations";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
@@ -65,4 +65,25 @@ it('completes the exact receipt account even when its active metadata is unchang
   fireEvent.click(await screen.findByTestId('integration-connect-gmail'));
   await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledOnce());
   await waitFor(() => expect(screen.queryByRole('button', { name: /I've connected/i })).toBeNull());
+});
+it('keeps a terminal poll success when an older manual check fails later', async () => {
+  const attemptId = '123e4567-e89b-42d3-a456-426614174000';
+  let failManual!: (error: Error) => void;
+  const manual = new Promise<unknown>((_resolve, reject) => { failManual = reject; });
+  let receipts = 0;
+  const api = {
+    get: vi.fn(async (path: string) => path.endsWith('/available') ? [{ id: 'gmail', name: 'Gmail', category: 'google' }]
+      : path.endsWith('/connection-options') ? { methods: ['pipedream'], defaultMethod: 'pipedream' }
+      : path.includes('/attempts/') ? ++receipts === 1 ? manual : { status: 'succeeded', accountId: account.id } : [account]),
+    post: vi.fn(async () => ({ url: 'https://pipedream.com/connect', service: 'gmail', attemptId })),
+  } as unknown as ApiClient;
+  useConnection.setState({ status: 'signed-in', handle: 'operator', api: api as never });
+  render(<IntegrationsSettingsSection pollIntervals={[100]} />);
+  fireEvent.click(await screen.findByTestId('integration-connect-gmail'));
+  await waitFor(() => expect(window.operator.invoke).toHaveBeenCalledOnce());
+  fireEvent.click(screen.getByRole('button', { name: /I've connected/i }));
+  await waitFor(() => expect(receipts).toBe(2));
+  await waitFor(() => expect(screen.queryByRole('button', { name: /I've connected/i })).toBeNull());
+  await act(async () => failManual(new Error('Delayed manual failure')));
+  expect(useIntegrations.getState().errorMessage).toBeNull();
 });
