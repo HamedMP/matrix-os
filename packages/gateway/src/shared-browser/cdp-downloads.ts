@@ -116,7 +116,7 @@ export async function collectChromeDownload(options: {
   const captures = new Map<string, { receivedBytes: number; terminal: boolean; cancelRequested: boolean }>();
   const overflowCancellations = new Set<Promise<void>>();
   let overflowCleanupFailed = false;
-  let recoveryReason: 'another_chrome_tab' | 'multiple_chrome_downloads' | 'original_store_failed' | 'completed_cancelled' | undefined;
+  let recoveryReason: 'another_chrome_tab' | 'multiple_chrome_downloads' | 'original_store_failed' | 'completed_cancelled' | 'source_validation_failed' | undefined;
   let recoveryDeny: Promise<unknown> | undefined;
   let unsubscribe: (() => unknown) | undefined, timer: ReturnType<typeof setTimeout> | undefined;
   let finish!: () => void, fail!: (error: Error) => void;
@@ -166,7 +166,12 @@ export async function collectChromeDownload(options: {
     if (typeof params.url !== 'string') { fail(unavailable()); return; }
     guid = params.guid;
     try { sourceUrl = (await validateBrowserUrl(params.url, options.resolveHost)).sourceUrl; validated = true; if (complete) finish(); }
-    catch (error) { if (!(error instanceof SharedBrowserError)) report(error); fail(unavailable()); }
+    catch (error) {
+      if (!(error instanceof SharedBrowserError)) report(error);
+      // Completion can race validation and cancellation. Keep unverified bytes
+      // for owner review rather than deleting the only completed original.
+      recover('source_validation_failed');
+    }
   };
   try {
     directory = await openBrowserArtifactDirectory(options.homePath); await capacity(directory);
