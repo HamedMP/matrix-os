@@ -51,6 +51,7 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
     headers = {
       authorization: `Bearer ${config.workersAiToken}`,
       "cf-aig-gateway-id": target.gatewayId,
+      "cf-aig-skip-cache": "true",
       "cf-aig-collect-log-payload": "false",
       "content-type": "application/json",
     };
@@ -62,6 +63,8 @@ export async function probeFundedModel(config: FundedRelayConfig, modelId: strin
     url = `${config.gatewayBaseUrl}/v1/messages`;
     headers = {
       "cf-aig-authorization": `Bearer ${config.gatewayToken}`,
+      "cf-aig-skip-cache": "true",
+      "cf-aig-collect-log-payload": "false",
       "anthropic-version": "2023-06-01",
       "content-type": "application/json",
     };

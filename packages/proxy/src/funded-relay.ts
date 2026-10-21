@@ -224,6 +224,7 @@ function cloudflareHeaders(input: {
     "content-type": "application/json",
     "anthropic-version": "2023-06-01",
     "cf-aig-authorization": `Bearer ${input.gatewayToken}`,
+    "cf-aig-skip-cache": "true",
     "cf-aig-collect-log-payload": "false",
     "cf-aig-zdr": "true",
     "cf-aig-metadata": JSON.stringify(input.metadata),
@@ -736,6 +737,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         headers: {
           authorization: `Bearer ${config.workersAiToken}`,
           "cf-aig-gateway-id": target.gatewayId,
+          "cf-aig-skip-cache": "true",
           "cf-aig-collect-log-payload": "false",
           "content-type": "application/json",
         },
