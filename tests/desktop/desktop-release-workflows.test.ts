@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import YAML from "yaml";
 import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
@@ -14,7 +15,7 @@ describe("desktop release workflows", () => {
 
     expect(build).toMatch(/build_windows:\s+description:.*\s+required: false\s+type: boolean\s+default: true/);
     const windows = build.slice(build.indexOf("  windows:\n"));
-    expect(windows).toMatch(/name: Windows x64\s+if: \$\{\{ inputs\.build_windows \}\}/);
+    expect(YAML.parse(build).jobs.windows.if).toBe("${{ inputs.build_windows }}");
     expect(windows).toContain("environment: desktop-release");
     expect(release).toContain("build_windows: ${{ inputs.mode != 'dry-run' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}");
     expect(release).toMatch(/name: Prepare channel pointer manifests\s+if: \$\{\{ needs\.prepare\.outputs\.mode != 'dry-run' \|\| github\.ref == 'refs\/heads\/main' \|\| startsWith\(github\.ref, 'refs\/tags\/'\) \}\}/);
@@ -110,9 +111,11 @@ describe("desktop release workflows", () => {
   it("gives the macOS renderer build enough heap for the release bundle", () => {
     const workflow = readFileSync(join(root, ".github/workflows/desktop-build.yml"), "utf8");
 
-    expect(workflow).toMatch(
-      /- name: Build desktop app\n\s+env:\n\s+NODE_OPTIONS: --max-old-space-size=4096\n\s+run: pnpm --filter desktop build/,
-    );
+    const steps = YAML.parse(workflow).jobs.mac.steps;
+    const build = steps.find((s: any) => s.name === "Build desktop app");
+    expect(build.env.NODE_OPTIONS).toBe("--max-old-space-size=4096");
+    expect(build.env.MATRIX_DESKTOP_BUILD_SOURCE_SHA).toBe("${{ needs.source.outputs.source_sha }}");
+    expect(build.run).toContain("['--cwd', 'desktop', 'run', 'build']");
   });
 
   it("builds shared brand assets before clean Desktop bundles", () => {

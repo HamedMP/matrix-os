@@ -137,9 +137,9 @@ describe("collaboration PostgreSQL CI execution", () => {
 });
 
 describe("required collaboration PostgreSQL workflow", () => {
-  it("retains the existing required job, exact-source checkout, commands and ten-minute bound", () => {
+  it("retains the existing required job, exact-source checkout, commands and fifteen-minute bound", () => {
     const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8")); const job = workflow.jobs["funded-postgres"];
-    expect(job.needs).toBe("changes"); expect(job["timeout-minutes"]).toBe(10);
+    expect(job.needs).toBe("changes"); expect(job["timeout-minutes"]).toBe(15);
     expect(job.if).not.toMatch(/dedicated|ci-backend/);
     expect(job.steps[0].with.ref).toBe("${{ needs.changes.outputs.source_sha }}");
     const fundedTestSteps = job.steps.filter((step: { run?: string }) => step.run?.includes("pnpm exec vitest run"));

@@ -3,6 +3,11 @@ name: Desktop Build
 on:
   workflow_call:
     inputs:
+      source_ref:
+        description: Optional immutable source commit; empty preserves the caller event commit.
+        required: false
+        type: string
+        default: ""
       channel:
         description: Desktop update channel.
         required: true
@@ -36,8 +41,48 @@ permissions:
   contents: read
 
 jobs:
+  source:
+    name: Resolve desktop source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+    steps:
+      - name: Resolve immutable desktop source
+        id: source
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        with:
+          retries: 0
+          script: |
+            const ref = process.env.SOURCE_REF || context.sha;
+            if (!/^[a-f0-9]{40}$/.test(ref)) throw new Error('Desktop source must be an immutable commit');
+            const { data: commit } = await github.rest.repos.getCommit({ ...context.repo, ref, request: { timeout: 10000 } });
+            if (commit.sha !== ref) throw new Error('Desktop source identity mismatch');
+            core.setOutput('source_sha', ref);
+
+      - name: Write desktop source metadata
+        env:
+          DESKTOP_SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          DESKTOP_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          DESKTOP_CALLER_SHA: ${{ github.sha }}
+          DESKTOP_RUN_ID: ${{ github.run_id }}
+          DESKTOP_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          node --input-type=module -e "import { writeFileSync } from 'node:fs'; const e = process.env; writeFileSync('desktop-source.json', JSON.stringify({ schema: 'matrix-desktop-source-v1', sourceSha: e.DESKTOP_SOURCE_SHA, workflowSha: e.DESKTOP_WORKFLOW_SHA, callerSha: e.DESKTOP_CALLER_SHA, runId: e.DESKTOP_RUN_ID, runAttempt: e.DESKTOP_RUN_ATTEMPT }) + '\n');"
+
+      - name: Upload desktop source metadata
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ inputs.artifact_prefix }}-source
+          path: desktop-source.json
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention_days }}
+
   mac:
     name: macOS ${{ matrix.arch }}
+    needs: source
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -69,7 +114,16 @@ jobs:
 
       - uses: actions/checkout@v6
         with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          persist-credentials: false
           fetch-depth: 257
+
+      - name: Verify desktop source checkout
+        shell: bash
+        env:
+          DESKTOP_SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+        run: |
+          node --input-type=module -e "import { execFileSync } from 'node:child_process'; const actual = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); if (actual !== process.env.DESKTOP_SOURCE_SHA) throw new Error('Desktop checkout source mismatch');"
 
       - uses: pnpm/action-setup@v6
 
@@ -130,8 +184,12 @@ jobs:
 
       - name: Build desktop app
         env:
+          MATRIX_DESKTOP_BUILD_SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
           NODE_OPTIONS: --max-old-space-size=4096
-        run: pnpm --filter desktop build
+        # Legacy PR configs read GITHUB_SHA directly. Bind it only inside the
+        # bundler child; Actions/source attestations retain the controller SHA.
+        run: |
+          node --input-type=module -e "import { spawnSync } from 'node:child_process'; const result = spawnSync('bun', ['--cwd', 'desktop', 'run', 'build'], { stdio: 'inherit', env: { ...process.env, GITHUB_SHA: process.env.MATRIX_DESKTOP_BUILD_SOURCE_SHA } }); if (result.error) throw result.error; process.exit(result.status ?? 1);"
 
       - name: Package desktop app
         working-directory: desktop
@@ -475,6 +533,7 @@ jobs:
 
   linux:
     name: Linux x64
+    needs: source
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -494,7 +553,16 @@ jobs:
 
       - uses: actions/checkout@v6
         with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          persist-credentials: false
           fetch-depth: 257
+
+      - name: Verify desktop source checkout
+        shell: bash
+        env:
+          DESKTOP_SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+        run: |
+          node --input-type=module -e "import { execFileSync } from 'node:child_process'; const actual = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); if (actual !== process.env.DESKTOP_SOURCE_SHA) throw new Error('Desktop checkout source mismatch');"
 
       - uses: pnpm/action-setup@v6
 
@@ -517,7 +585,11 @@ jobs:
           node --input-type=module -e "import { readFile, writeFile } from 'node:fs/promises'; const p='desktop/package.json'; const j=JSON.parse(await readFile(p,'utf8')); const exact=process.env.RELEASE_VERSION || ''; const suffix=process.env.VERSION_SUFFIX || ''; j.version = exact || (j.version.replace(/-.*/, '') + '-' + suffix); await writeFile(p, JSON.stringify(j, null, 2) + '\n');"
 
       - name: Build desktop app
-        run: pnpm --filter desktop build
+        env:
+          MATRIX_DESKTOP_BUILD_SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+        # The source-only override is confined to this bundler subprocess.
+        run: |
+          node --input-type=module -e "import { spawnSync } from 'node:child_process'; const result = spawnSync('bun', ['--cwd', 'desktop', 'run', 'build'], { stdio: 'inherit', env: { ...process.env, GITHUB_SHA: process.env.MATRIX_DESKTOP_BUILD_SOURCE_SHA } }); if (result.error) throw result.error; process.exit(result.status ?? 1);"
 
       - name: Package desktop app
         working-directory: desktop
@@ -559,6 +631,7 @@ jobs:
 
   windows:
     name: Windows x64
+    needs: source
     if: ${{ inputs.build_windows }}
     runs-on: windows-latest
     environment: desktop-release
@@ -589,6 +662,16 @@ jobs:
           fi
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Verify desktop source checkout
+        shell: bash
+        env:
+          DESKTOP_SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
+        run: |
+          node --input-type=module -e "import { execFileSync } from 'node:child_process'; const actual = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); if (actual !== process.env.DESKTOP_SOURCE_SHA) throw new Error('Desktop checkout source mismatch');"
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
@@ -639,8 +722,11 @@ jobs:
       - name: Build desktop app
         shell: pwsh
         env:
+          MATRIX_DESKTOP_BUILD_SOURCE_SHA: ${{ needs.source.outputs.source_sha }}
           NODE_OPTIONS: --max-old-space-size=4096
-        run: pnpm --filter desktop build
+        # Windows keeps the workflow identity too; only the child sees source SHA.
+        run: |
+          node --input-type=module -e "import { spawnSync } from 'node:child_process'; const result = spawnSync('bun', ['--cwd', 'desktop', 'run', 'build'], { stdio: 'inherit', env: { ...process.env, GITHUB_SHA: process.env.MATRIX_DESKTOP_BUILD_SOURCE_SHA } }); if (result.error) throw result.error; process.exit(result.status ?? 1);"
 
       - name: Package signed Windows app
         working-directory: desktop
