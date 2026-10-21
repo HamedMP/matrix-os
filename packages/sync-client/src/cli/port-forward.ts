@@ -113,7 +113,9 @@ export function parseForwardSpec(spec: string): ForwardSpec {
 }
 
 export function createForwardWebSocketUrl(gatewayUrl: string): string {
-  const url = new URL("/ws/forward", gatewayUrl.replace(/\/+$/, ""));
+  let end = gatewayUrl.length;
+  while (end > 0 && gatewayUrl[end - 1] === "/") end -= 1;
+  const url = new URL("/ws/forward", gatewayUrl.slice(0, end));
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
 }

@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, screen, within } from "@testing-library/react-native";
+import * as Haptics from "expo-haptics";
 
 import { Icon } from "../components/ui/Icon";
 import { CheckIcon } from "../components/ui/icons";
@@ -127,6 +128,16 @@ describe("model sheet", () => {
     fireEvent.press(row(/^Claude Sonnet 5/));
     expect(onSelectModel).toHaveBeenLastCalledWith("m::sonnet");
     expect(pressedStyle({ accessibilityLabel: "GLM, Matrix AI" }).opacity).toBe(0.65);
+  });
+
+  it("plays the selection tick for a model that is picked, and none for one that cannot run", () => {
+    jest.mocked(Haptics.selectionAsync).mockClear();
+    renderSheet();
+
+    fireEvent.press(row("GF1, Matrix AI · Model unavailable"));
+    expect(Haptics.selectionAsync).not.toHaveBeenCalled();
+    fireEvent.press(row(/^GLM/));
+    expect(Haptics.selectionAsync).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a model that cannot run in view, dimmed, saying why, and ignores a tap on it", () => {

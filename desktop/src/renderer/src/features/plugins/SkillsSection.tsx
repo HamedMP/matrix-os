@@ -128,7 +128,7 @@ export function SkillsSection() {
           >
             <span
               className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
-              style={{ color: "var(--accent)", background: "var(--accent-muted)" }}
+              style={{ color: "var(--accent-text)", background: "var(--accent-muted)" }}
             >
               <Sparkles size={15} />
             </span>

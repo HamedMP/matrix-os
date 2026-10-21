@@ -29,7 +29,7 @@ function validate(overrides: Record<string, string>) {
   return spawnSync('bash', ['-c', step('Validate deployment configuration')], {
     encoding: 'utf8', env: { PATH: process.env.PATH, ...baseEnv,
       DEPLOY_ENVIRONMENT: 'staging', GOLDEN_SNAPSHOT_BUILDS_ENABLED: 'false',
-      MATRIX_CARD_TRIALS_ENABLED: 'true', MATRIX_CARD_TRIAL_DAYS: '3',
+      MATRIX_CARD_TRIALS_ENABLED: 'true', MATRIX_CARD_TRIAL_DAYS: '3', MATRIX_STARTER_TRIAL_DAYS: '14',
       MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: '4', CUSTOM_MCP_ENABLED: 'false', MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION: '1', ...overrides },
   });
 }
@@ -41,6 +41,7 @@ function deploy(enabled: boolean) {
     encoding: 'utf8', env: { PATH: process.env.PATH, ...Object.fromEntries(
       Object.keys(workflow.jobs.deploy.env).map((key) => [key, 'fixture'])),
       DEPLOY_ENVIRONMENT: 'staging', IMAGE_DIGEST: 'image@sha256:fixture',
+      MATRIX_CARD_TRIAL_DAYS: '3', MATRIX_STARTER_TRIAL_DAYS: '14',
       GOOGLE_TAG_MANAGER_ID: 'GTM-TEST123', GOOGLE_ANALYTICS_MEASUREMENT_ID: '',
       GOOGLE_ANALYTICS_API_SECRET_VERSION: '1',
       WHATSAPP_ENABLED: 'false', WHATSAPP_ENCRYPTION_KEY_VERSION: '1',
@@ -65,6 +66,8 @@ describe('Custom MCP Cloud Run deployment', () => {
     const secrets = args[args.indexOf('--set-secrets') + 1];
     expect(env.startsWith('^|^')).toBe(true);
     expect(env.slice(3).split('|')).toContain('CUSTOM_MCP_ENABLED=true');
+    expect(env.slice(3).split('|')).toContain('MATRIX_CARD_TRIAL_DAYS=3');
+    expect(env.slice(3).split('|')).toContain('MATRIX_STARTER_TRIAL_DAYS=14');
     expect(env).not.toContain('MCP_CREDENTIAL_ENCRYPTION_KEY=');
     expect(secrets.split(',')).toContain('MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key:1');
     expect(result.stdout).toContain('MCP_OAUTH_CALLBACK_URL=https://app.example.com/api/mcp-servers/oauth/callback');

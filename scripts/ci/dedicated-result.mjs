@@ -1,11 +1,12 @@
+import {isolatedRunPin,verifyRunExecution} from './dedicated-isolated.mjs';
 // Read-only GitHub API evidence verification. Never execute controller artifacts.
 import {downloadControllerReceipt} from './dedicated-artifact.mjs';
 import {verifyControllerArtifact} from './dedicated-artifact-proof.mjs';
 import {validInfrastructureProof} from './dedicated-outcome.mjs';
 import {verifyCurrentDedicatedSource} from './dedicated-admission.mjs';
-import {authenticatedControllerRun} from './dedicated-refresh.mjs';
+import {authenticatedControllerRun,verifiedRequestingRun} from './dedicated-refresh.mjs';
 import {createConditionalGithub} from './dedicated-api.mjs';
-import {newestWorkflowRun} from './dedicated-history.mjs';
+import {newestWorkflowRun,requesterHistoryFloor} from './dedicated-history.mjs';
 import {mainPrRequest} from './dedicated-main-pr.mjs';
 const workflowPath = '.github/workflows/ci-dedicated.yml';
 const trustedRunPath = value => [workflowPath, `${workflowPath}@main`, `${workflowPath}@refs/heads/main`].includes(value);
@@ -43,7 +44,7 @@ function parseEvidence(check, expected, latest) {
   }
   if (evidence?.controllerRunId !== undefined &&
       (!positiveId(evidence.controllerRunId) || evidence.controllerRunId !== runId)) return null;
-  if (!evidence || evidence.schemaVersion !== 3 || evidence.suite !== 'qualification' ||
+  if (!evidence || ![3,4].includes(evidence.schemaVersion) || evidence.suite !== 'qualification' ||
       evidence.sourceSha !== expected.sourceSha || evidence.headSha !== expected.headSha ||
       evidence.baseSha !== expected.baseSha || evidence.baseRef !== expected.baseRef ||
       evidence.sourceKind !== expected.sourceKind || (expected.sourceKind==='main'&&JSON.stringify(evidence.mergeParents)!==JSON.stringify(expected.mergeParents)) || evidence.prNumber !== expected.prNumber || !positiveId(evidence.controllerAttempt) ||
@@ -65,7 +66,15 @@ function trustedController(run, expected, workflow) {
 }
 
 async function newestRequest(github,repo,expected,workflow,beforeId){
- return newestWorkflowRun(github,repo,workflow,run=>trustedController(run,expected,workflow)&&(!beforeId||run.id<beforeId),{kind:'controller',sourceKind:expected.sourceKind,headSha:expected.headSha,headRef:expected.headRef});
+ return newestWorkflowRun(github,repo,workflow,async run=>{
+  if(!trustedController(run,expected,workflow)||beforeId&&run.id>=beforeId)return false;
+  const pin=isolatedRunPin(run);
+  if(pin){
+   if(!expected.controllerHistoryPins?.includes(pin))return false;
+   await verifyRunExecution(github,repo,run,workflowPath,pin);
+  }
+  return true;
+ },{kind:'controller',sourceKind:expected.sourceKind,headSha:expected.headSha,headRef:expected.headRef,controllerShas:expected.controllerHistoryPins,notBefore:expected.controllerHistoryNotBefore});
 }
 
 async function newestController(github, repo, expected, workflow, latest) {
@@ -90,6 +99,10 @@ async function newestController(github, repo, expected, workflow, latest) {
   const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:latest.id,request});
   if(!trustedController(run,expected,workflow) || run.id!==latest.id ||
       run.run_attempt!==selected.evidence.controllerAttempt)return undefined;
+  const origin=await verifyRunExecution(github,repo,run,workflowPath,selected.evidence.controllerSha);
+  if(selected.evidence.schemaVersion===4){
+   if(!origin||JSON.stringify(origin)!==JSON.stringify(selected.evidence.executionOrigin))throw new Error('Isolated controller execution proof mismatch');
+  }else if(origin)throw new Error('Isolated execution cannot use legacy controller evidence');
   return {...selected,run};
 }
 
@@ -128,18 +141,48 @@ async function waitWithinDeadline(github, expected, options={}) {
   const repo={owner:expected.owner,repo:expected.repo};
   const {data:workflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci-dedicated.yml',request});
   if(workflow.path!==workflowPath)throw new Error('Unexpected dedicated controller workflow');
+  if(expected.controllerSha&&expected.isolated!==false&&expected.sourceKind!=='main'){
+    const pins=[expected.controllerSha];
+    const {data:history}=await github.rest.checks.listForRef({...repo,ref:expected.headSha,check_name:'Dedicated CI Results',filter:'all',per_page:100,page:1,request});
+    if(!Array.isArray(history.check_runs)||history.check_runs.length>100)throw new Error('Invalid bounded controller origin history');
+    for(const check of history.check_runs){
+      if(check.app?.slug!=='github-actions'||check.head_sha!==expected.headSha||typeof check.output?.summary!=='string'||check.output.summary.length>4096)continue;
+      let evidence;try{evidence=JSON.parse(check.output.summary);}catch(error){if(error instanceof SyntaxError)continue;throw error;}
+      if(evidence.schemaVersion===4&&evidence.sourceSha===expected.sourceSha&&evidence.headSha===expected.headSha&&evidence.baseSha===expected.baseSha&&evidence.prNumber===expected.prNumber&&evidence.requestingRunId===expected.requestingRunId&&evidence.requestingRunAttempt===expected.requestingRunAttempt&&shaPattern.test(evidence.controllerSha||'')&&!pins.includes(evidence.controllerSha))pins.push(evidence.controllerSha);
+    }
+    if(pins.length>4)throw new Error('Controller execution history exceeds bounded pin coverage');
+    expected={...expected,controllerHistoryPins:pins};
+  }
   let ciWorkflow;
+  const verifyRequester=async()=>{
+    if(!ciWorkflow){
+      ({data:ciWorkflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request}));
+      if(!positiveId(ciWorkflow.id)||ciWorkflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected requesting CI definition');
+    }
+    const {data:run}=await github.rest.actions.getWorkflowRun({...repo,run_id:expected.requestingRunId,request});
+    if(run.id!==expected.requestingRunId||run.run_attempt!==expected.requestingRunAttempt||
+        (run.event==='pull_request'&&run.head_branch!==expected.headRef)||
+        !['queued','requested','waiting','pending','in_progress','completed'].includes(run.status)||
+        (run.status==='completed'&&run.conclusion!=='success')||
+        !await verifiedRequestingRun(github,repo,run,expected,ciWorkflow))throw new Error('No verified current requesting CI identity');
+    return requesterHistoryFloor(run.created_at);
+  };
+  let requesterNotBefore;
   const verifyMainRequester=async source=>{
     if(expected.baseRef!=='main'||expected.sourceKind!==undefined)return;
     if(!ciWorkflow){
       ({data:ciWorkflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request}));
       if(!positiveId(ciWorkflow.id)||ciWorkflow.path!=='.github/workflows/ci.yml')throw new Error('Unexpected requesting CI definition');
     }
-    const newest=await newestWorkflowRun(github,repo,ciWorkflow,run=>Boolean(mainPrRequest(run,repo,expected,ciWorkflow)),{kind:'requester',headSha:expected.headSha,headRef:expected.headRef});
+    const newest=await newestWorkflowRun(github,repo,ciWorkflow,async run=>{if(!mainPrRequest(run,repo,expected,ciWorkflow))return false;await verifyRunExecution(github,repo,run,'.github/workflows/ci.yml');return true;},{kind:'requester',headSha:expected.headSha,headRef:expected.headRef,controllerShas:expected.controllerHistoryPins});
     if(!newest||newest.id!==expected.requestingRunId||newest.run_attempt!==expected.requestingRunAttempt||(newest.status==='completed'&&newest.conclusion!=='success'))throw new Error('A newer or failed requesting CI attempt superseded coverage');
   };
   for(let attempt=0;attempt<maxAttempts;attempt++) {
     const currentSource=await verifyCurrentDedicatedSource(github,repo,expected);
+    if(requesterNotBefore===undefined){
+      requesterNotBefore=await verifyRequester();
+      expected={...expected,controllerHistoryNotBefore:requesterNotBefore};
+    }
     await verifyMainRequester(currentSource);
     const {latest,selected}=await newestResultController(github,repo,expected,workflow);
     if(latest?.status==='completed' && latest.conclusion!=='success') {
@@ -170,6 +213,7 @@ async function waitWithinDeadline(github, expected, options={}) {
             // A retry may have been queued while artifacts/jobs were fetched.
             if(currentSelected?.run.id===run.id && current?.id===run.id && current.run_attempt===run.run_attempt &&
                 current.head_sha===run.head_sha && current.status==='completed' && current.conclusion==='success') {
+              if(await verifyRequester()!==requesterNotBefore)throw new Error('Requesting CI creation time changed');
               await verifyMainRequester(await verifyCurrentDedicatedSource(github,repo,expected));
               options.metrics?.(api.metrics());
               if(infrastructure){if(options.allowInfrastructureFallback!==true)throw new Error('Linux infrastructure unavailable; hosted coverage required');return {runId:evidence.runId,sourceSha:expected.sourceSha,infrastructure};}

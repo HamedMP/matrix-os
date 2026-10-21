@@ -1,7 +1,8 @@
-import { FlatList, Text, View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { Text, View } from "react-native";
+import Animated from "react-native-reanimated";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import { ListRowSkeletonStack } from "@/components/shell/Controls";
+import { ItemContextMenu, type ItemMenuAction } from "@/components/ItemContextMenu";
 import { TabScreen } from "@/components/shell/TabScreen";
 import {
   AddIcon,
@@ -10,8 +11,13 @@ import {
   Button,
   EmptyState,
   ItemRow,
+  ItemRowSkeletons,
+  SettleIn,
   StatusDot,
+  listItemExit,
+  listItemLayout,
 } from "@/components/ui";
+import { withRefreshTap } from "@/lib/haptics";
 
 import type { AgentListRow } from "./agent-rows";
 
@@ -24,6 +30,8 @@ export interface AgentsListScreenProps {
   onRetry: () => void;
   onNewAgent: () => void;
   onOpenAgent: (agentId: string) => void;
+  /** Archive from a long press on the agent's row. */
+  onArchiveAgent?: (agentId: string) => void;
 }
 
 /** The Agents tab's first screen: every agent with what it is doing. */
@@ -35,7 +43,13 @@ export function AgentsListScreen({
   onRetry,
   onNewAgent,
   onOpenAgent,
+  onArchiveAgent,
 }: AgentsListScreenProps) {
+  const { theme } = useUnistyles();
+  // What the agent's details offer, from a long press on its row.
+  const rowActions = (agentId: string): ItemMenuAction[] => (onArchiveAgent
+    ? [{ id: "item", key: "archive", label: "Archive", systemImage: "archivebox", destructive: true, onSelect: () => onArchiveAgent(agentId) }]
+    : []);
   return (
     <TabScreen testID="agents-screen">
       <View testID="agents-header" style={styles.header}>
@@ -44,7 +58,7 @@ export function AgentsListScreen({
       </View>
       {state === "loading" ? (
         <View testID="agents-loading" style={styles.inset}>
-          <ListRowSkeletonStack testID="agents-skeleton-row" />
+          <ItemRowSkeletons testID="agents-skeleton-row" leadingSize={36} leadingShape="round" />
         </View>
       ) : state === "unavailable" ? (
         <View testID="agents-unavailable" style={[styles.inset, styles.notice]}>
@@ -52,32 +66,44 @@ export function AgentsListScreen({
           <Button variant="outline" label="Try again" onPress={onRetry} />
         </View>
       ) : (
-        <FlatList
-          testID="agents-list"
-          data={rows}
-          keyExtractor={(row) => row.id}
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          contentContainerStyle={styles.list}
-          renderItem={({ item: row }) => (
-            <ItemRow
-              testID={`agent-row-${row.id}`}
-              accessibilityLabel={[row.name, row.subtitle, row.time].filter(Boolean).join(", ")}
-              leading={<AgentMascot id={row.id} name={row.name} category={row.category} />}
-              title={row.name}
-              titleAccessory={row.tone ? <StatusDot testID={`agent-dot-${row.id}`} tone={row.tone} /> : undefined}
-              subtitle={row.subtitle}
-              meta={row.time || undefined}
-              onPress={() => onOpenAgent(row.id)}
-            />
-          )}
-          ListEmptyComponent={(
-            <View testID="agents-empty" style={styles.empty}>
-              <EmptyState icon={AgentsTabIcon} message="No agents yet" />
-              <Button fullWidth icon={AddIcon} label="New agent" onPress={onNewAgent} />
-            </View>
-          )}
-        />
+        <SettleIn style={styles.fill}>
+          <Animated.FlatList
+            testID="agents-list"
+            data={rows}
+            keyExtractor={(row) => row.id}
+            refreshing={refreshing}
+            onRefresh={withRefreshTap(onRefresh)}
+            contentContainerStyle={styles.list}
+            itemLayoutAnimation={listItemLayout}
+            renderItem={({ item: row }) => (
+              <Animated.View exiting={listItemExit}>
+                <ItemContextMenu
+                  title={row.name}
+                  actions={rowActions(row.id)}
+                  backgroundColor={theme.v2.colors.background}
+                  cornerRadius={theme.v2.radius.card}
+                >
+                  <ItemRow
+                    testID={`agent-row-${row.id}`}
+                    accessibilityLabel={[row.name, row.subtitle, row.time].filter(Boolean).join(", ")}
+                    leading={<AgentMascot id={row.id} name={row.name} category={row.category} />}
+                    title={row.name}
+                    titleAccessory={row.tone ? <StatusDot testID={`agent-dot-${row.id}`} tone={row.tone} /> : undefined}
+                    subtitle={row.subtitle}
+                    meta={row.time || undefined}
+                    onPress={() => onOpenAgent(row.id)}
+                  />
+                </ItemContextMenu>
+              </Animated.View>
+            )}
+            ListEmptyComponent={(
+              <View testID="agents-empty" style={styles.empty}>
+                <EmptyState icon={AgentsTabIcon} message="No agents yet" />
+                <Button fullWidth icon={AddIcon} label="New agent" onPress={onNewAgent} />
+              </View>
+            )}
+          />
+        </SettleIn>
       )}
     </TabScreen>
   );
@@ -98,6 +124,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   inset: {
     paddingHorizontal: theme.v2.space[20],
+  },
+  fill: {
+    flex: 1,
   },
   notice: {
     alignItems: "center",

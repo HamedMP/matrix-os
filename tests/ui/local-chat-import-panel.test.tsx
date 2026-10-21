@@ -1,22 +1,46 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, cleanup } from "@testing-library/react";
+import { act, fireEvent, render, screen, cleanup, waitFor } from "@testing-library/react";
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatImportPanel } from "../../packages/ui/src/chat-import/ChatImportPanel";
+import type { NativeChatImportAdapter } from "../../packages/ui/src/chat-import/import-state";
 const sourceId = "019eb0ae-9a30-7541-bdb8-db4d17e65146";
 const preview = { harness: "claude" as const, sourceId, sourceHash: "a".repeat(64), rawBytes: 800, title: "Synthetic conversation", firstVisibleText: "Synthetic prompt", parserVersion: 1 as const, counts: { humanInputs: 1, assistantResponses: 1, agentInputs: 0, toolCalls: 1, toolResults: 2, attachments: 1, externalReferences: 1, thinkingRecords: 1, contextRecords: 2, unknownRecords: 0, sourceIssues: 1 } };
 afterEach(cleanup);
 describe("full Chat import Settings", () => {
+    it("shows indeterminate finishing for explicitly selected transcripts until apply succeeds",async()=>{
+        let emit!:Parameters<NativeChatImportAdapter["apply"]>[3];
+        let finish!:(value:{chatId:string;jobId:string;messageCount:number})=>void;
+        const apply=vi.fn<NativeChatImportAdapter["apply"]>((_id,_title,_signal,onProgress)=>{emit=onProgress;return new Promise(resolve=>{finish=resolve;});});
+        render(<ChatImportPanel native={{select:async()=>({selectionId:sourceId,preview}),apply,pause:vi.fn()}}/>);
+        fireEvent.click(screen.getByRole("button",{name:"Choose transcript"}));await screen.findByText("Synthetic prompt");
+        fireEvent.click(screen.getByRole("button",{name:"Import private Chat"}));
+        await waitFor(()=>expect(apply).toHaveBeenCalledTimes(1));
+        act(()=>emit({phase:"uploading",uploadedBytes:400,totalBytes:800,jobId:sourceId}));
+        expect(screen.getByRole("progressbar").getAttribute("value")).toBe("50");
+        act(()=>emit({phase:"verifying",uploadedBytes:800,totalBytes:800,jobId:sourceId}));
+        await screen.findByText("Checking and saving your chat");
+        expect(screen.getByText(/Finishing import/)).toBeTruthy();
+        const progress=screen.getByRole("progressbar");
+        expect(progress.hasAttribute("value")).toBe(false);expect(progress.hasAttribute("aria-valuenow")).toBe(false);
+        expect(progress.getAttribute("aria-label")).toBeTruthy();
+        expect(screen.queryByRole("button",{name:"Open Chat"})).toBeNull();
+        expect((screen.getByRole("button",{name:"Stop waiting"}) as HTMLButtonElement).disabled).toBe(false);
+        await act(async()=>{finish({chatId:"chat_synthetic",jobId:sourceId,messageCount:2});});
+        await screen.findByText("Imported 2 history entries into Matrix Chat.");
+        expect(screen.queryByText("Checking and saving your chat")).toBeNull();
+    });
     it("lets the owner preview Claude before explicitly uploading originals and readable history", async () => {
         const select = vi.fn(async () => ({ selectionId: sourceId, preview }));
         const apply = vi.fn(async () => ({ chatId: "chat_synthetic", jobId: sourceId, messageCount: 2 }));
         const open = vi.fn();
         render(<ChatImportPanel native={{ select, apply, pause: vi.fn() }} onOpenChat={open}/>);
-        fireEvent.change(screen.getByLabelText("Chat tool"), { target: { value: "claude" } });
+        fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
         fireEvent.click(screen.getByRole("button", { name: "Choose transcript" }));
         expect(await screen.findByText("Synthetic prompt")).toBeTruthy();
         expect(select).toHaveBeenCalledWith("claude", expect.any(AbortSignal));
         expect(apply).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByText("History and source details"));
         expect(screen.getByText(/1 tool call/)).toBeTruthy();
         expect(screen.getByText(/1 external reference/)).toBeTruthy();
         fireEvent.click(screen.getByRole("button", { name: "Import private Chat" }));

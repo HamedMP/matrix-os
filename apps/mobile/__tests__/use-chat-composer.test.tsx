@@ -104,6 +104,19 @@ describe("chat composer send lifecycle", () => {
     jest.clearAllMocks();
   });
 
+  it("plays a light tap as a message leaves, and none for an empty draft", async () => {
+    mockAdmitChatTurn.mockResolvedValue(admissionFor("chat_new", "msg_new"));
+    const composer = renderComposer();
+
+    act(() => { composer.result.current.send(); });
+    expect(Haptics.impactAsync).not.toHaveBeenCalled();
+
+    sendText(composer, "Ship it");
+    expect(Haptics.impactAsync).toHaveBeenCalledTimes(1);
+    expect(Haptics.impactAsync).toHaveBeenCalledWith(Haptics.ImpactFeedbackStyle.Light);
+    await waitFor(() => expect(composer.result.current.isSending).toBe(false));
+  });
+
   it("carries the message from a draft into its new chat and hands over to the admitted message", async () => {
     let admit: (admission: unknown) => void = () => {};
     mockAdmitChatTurn.mockReturnValue(new Promise((resolve) => { admit = resolve; }));

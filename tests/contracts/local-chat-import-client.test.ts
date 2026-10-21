@@ -23,6 +23,37 @@ function fixture(options: { published?: boolean; changed?: boolean; badUrl?: boo
   return { request, put, source, payload };
 }
 describe("shared original-byte Chat upload client", () => {
+  it("reports finishing while completion is pending, before the server responds", async () => {
+    const x = fixture(); const original = x.request.getMockImplementation()!;
+    let complete!: () => void;
+    const held = new Promise<void>(resolve => { complete = resolve; });
+    const progress = vi.fn();
+    x.request.mockImplementation(async (path, input) => {
+      if (path.endsWith("/complete")) await held;
+      return original(path, input);
+    });
+    const pending = uploadLocalChatArchive(x.payload, x.source, x, { onProgress: progress });
+    await vi.waitFor(() => expect(x.request.mock.calls.some(([path]) => path.endsWith("/complete"))).toBe(true));
+    const duringCompletion = progress.mock.calls.at(-1)?.[0];
+    complete(); await pending;
+    expect(duringCompletion).toMatchObject({ phase: "verifying", uploadedBytes: raw.length, totalBytes: raw.length, jobId });
+  });
+  it("keeps finishing active until an already-published chat passes canonical read-back", async () => {
+    const x = fixture({ published: true }); const original = x.request.getMockImplementation()!;
+    let readBack!: () => void;
+    const held = new Promise<void>(resolve => { readBack = resolve; });
+    const progress = vi.fn(); let settled = false;
+    x.request.mockImplementation(async (path, input) => {
+      if (path.startsWith("/api/chats/chat_")) await held;
+      return original(path, input);
+    });
+    const pending = uploadLocalChatArchive(x.payload, x.source, x, { onProgress: progress }).then(result => { settled = true; return result; });
+    await vi.waitFor(() => expect(x.request.mock.calls.some(([path]) => path.startsWith("/api/chats/chat_"))).toBe(true));
+    const duringReadBack = progress.mock.calls.at(-1)?.[0]; const prematurelySettled = settled;
+    readBack(); await pending;
+    expect(duringReadBack).toMatchObject({ phase: "verifying", jobId });
+    expect(prematurelySettled).toBe(false); expect(x.source.read).not.toHaveBeenCalled();
+  });
   it("uploads original bytes, acknowledges the exact receipt, waits for publication, and verifies canonical read-back", async () => {
     const x = fixture(); const result = await uploadLocalChatArchive(x.payload, x.source, { request: x.request, put: x.put });
     expect(result).toEqual({ chatId: "chat_synthetic_import", messageCount: 2, jobId });

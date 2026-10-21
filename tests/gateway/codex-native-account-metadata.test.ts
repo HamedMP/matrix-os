@@ -6,6 +6,8 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { createCodexNativeAccountMetadataReader, normalizeCodexNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/codex-native-account-metadata.js";
+import { createDefaultProviderCliAccountLifecycleCoordinator } from "../../packages/gateway/src/ai-providers/provider-cli-account-lifecycle.js";
+import { createNativeProviderProfileGuard } from "../../packages/gateway/src/ai-providers/native-provider-profile-guard.js";
 const now = new Date("2026-10-02T08:00:00Z");
 const account = { account: { type: "chatgpt", email: "owner@example.test", planType: "plus", secret: "never-return" } };
 const limits = { rateLimits: { primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1790931600 } } };
@@ -58,6 +60,18 @@ describe("native Codex account metadata", () => {
     const spawnProcess = vi.fn(() => child as never);
     return { child, methods, spawnProcess };
   }
+  it.each(["file", "keyring", "auto", undefined])("requires credential-specific API-key proof for destructive lifecycle with %s backend", async backend => {
+    const f = fixture(false, false, { account: { type: "apiKey" } }, undefined, undefined, undefined, backend);
+    const read = createCodexNativeAccountMetadataReader({ executable: "codex", cwd: "/runtime/home", environment: { HOME: "/runtime/home" }, spawnProcess: f.spawnProcess, readCredentialFileProof: async () => "synthetic-specific-key-proof" });
+    const metadata = await read();
+    expect(metadata?.authMethod).toBe("api_key"); // Type remains useful for display.
+    const run = vi.fn(async () => ({ stdout: "", stderr: "" }));
+    const guard = createNativeProviderProfileGuard({ homePath: "/runtime/home", registry: { listProfileSessions: async () => [], get: async () => { throw new Error("no session"); }, observeAgentLiveness: async () => "stopped" } });
+    const lifecycle = createDefaultProviderCliAccountLifecycleCoordinator({ homePath: "/runtime/home", enabledHarnesses: ["codex"], profileGuard: guard, run });
+    const actions = lifecycle.supportedActions({ id: "owner_codex", providerId: "openai", authMethod: "api_key", accessSourceId: "owner_openai_profile", driverId: "codex", harness: "codex", installState: "installed", authenticated: true, driverAccountCount: 1, nativeCodexAccount: metadata! });
+    expect(actions.includes("logout_account")).toBe(backend === "file");
+    expect(run).not.toHaveBeenCalled();
+  });
   it("projects the official missing-id reply using the actual bounded file proof", async () => {
     const home = await mkdtemp(join(tmpdir(), "codex-reader-file-"));
     try {

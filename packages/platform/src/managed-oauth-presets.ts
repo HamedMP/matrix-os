@@ -1,6 +1,6 @@
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
-import { MANAGED_INTEGRATIONS, type ManagedAction } from "@matrix-os/contracts/managed-integrations";
+import { MANAGED_INTEGRATIONS, canUseManagedAction, type ManagedAction, type ManagedWriteAuthorization } from "@matrix-os/contracts/managed-integrations";
 export { MANAGED_INTEGRATIONS };
 export interface ManagedDiscoveredTool { name: string; inputSchema?: unknown; enabled?: boolean }
 
@@ -55,12 +55,18 @@ function argumentsFor(serviceId: string, action: ManagedAction, input: Record<st
     if (!propertyAccepts(context, key, value)) throw new Error("Integration tool schema unavailable");
     args[key] = value;
   }
+  const body: Record<string, unknown> = {};
   for (const [field, value] of Object.entries(input)) {
     if (value === undefined) continue;
+    if (action.bodyFields?.includes(field)) { body[field] = value; continue; }
     const mapped = mappedValue(serviceId, field, value);
     const key = aliases(serviceId, action, field).find(key => propertyAccepts(context, key, mapped));
     if (!key || Object.hasOwn(args, key)) throw new Error("Integration tool parameters unavailable");
     args[key] = mapped;
+  }
+  if (action.bodyFields) {
+    if (!propertyAccepts(context, "body", body) || Object.hasOwn(args, "body")) throw new Error("Integration tool parameters unavailable");
+    args.body = body;
   }
   if (!context.validate(args).valid) throw new Error("Integration tool parameters unavailable");
   return args;
@@ -68,7 +74,9 @@ function argumentsFor(serviceId: string, action: ManagedAction, input: Record<st
 function witness(serviceId: string, action: ManagedAction, context: ToolSchema): Record<string, unknown> {
   const input: Record<string, unknown> = Object.fromEntries(Object.entries(action.params).map(([field, param]) => [field,
     param.type === "number" ? 1 : field === "email" ? "matrix-read@example.test" : "campaign1"]));
+  Object.assign(input, action.witness);
   for (const [field, param] of Object.entries(action.params)) {
+    if (action.bodyFields?.includes(field)) continue;
     const keys = aliases(serviceId, action, field);
     if (!keys.some(key => Object.hasOwn(context.props, key))) {
       if (param.required) throw new Error("Integration tool parameters unavailable");
@@ -93,7 +101,8 @@ function witness(serviceId: string, action: ManagedAction, context: ToolSchema):
   }
   return action.schema.parse(input);
 }
-function select(serviceId: string, action: ManagedAction, tools: ManagedDiscoveredTool[], input?: Record<string, unknown>, contexts?: Record<string, ToolSchema | null>): { context: ToolSchema; arguments: Record<string, unknown> } | undefined {
+function select(serviceId: string, action: ManagedAction, tools: ManagedDiscoveredTool[], input?: Record<string, unknown>, contexts?: Record<string, ToolSchema | null>, authorization?: ManagedWriteAuthorization): { context: ToolSchema; arguments: Record<string, unknown> } | undefined {
+  if (!canUseManagedAction(action, authorization)) return undefined;
   for (const name of action.tools) {
     const tool = tools.find(tool => tool.name === name && tool.enabled !== false);
     if (!tool) continue;
@@ -111,31 +120,31 @@ function select(serviceId: string, action: ManagedAction, tools: ManagedDiscover
   return undefined;
 }
 /** One bounded request-local snapshot; no schema cache survives account changes. */
-export function managedActionCapabilities(serviceId: string, tools: ManagedDiscoveredTool[]): Record<string, string[]> {
+export function managedActionCapabilities(serviceId: string, tools: ManagedDiscoveredTool[], authorization?: ManagedWriteAuthorization): Record<string, string[]> {
   const contexts: Record<string, ToolSchema | null> = Object.create(null);
   const capabilities: Record<string, string[]> = {};
   const actions = Object.entries(MANAGED_INTEGRATIONS[serviceId]?.actions ?? {}).slice(0, 64);
   for (const [id, action] of actions) {
-    const selected = select(serviceId, action, tools, undefined, contexts);
+    const selected = select(serviceId, action, tools, undefined, contexts, authorization);
     if (selected) capabilities[id] = Object.keys(witness(serviceId, action, selected.context));
   }
   return capabilities;
 }
-export function availableManagedActions(serviceId: string, tools: ManagedDiscoveredTool[]): string[] {
-  return Object.entries(MANAGED_INTEGRATIONS[serviceId]?.actions ?? {}).filter(([, action]) => select(serviceId, action, tools)).map(([id]) => id);
+export function availableManagedActions(serviceId: string, tools: ManagedDiscoveredTool[], authorization?: ManagedWriteAuthorization): string[] {
+  return Object.entries(MANAGED_INTEGRATIONS[serviceId]?.actions ?? {}).filter(([, action]) => select(serviceId, action, tools, undefined, undefined, authorization)).map(([id]) => id);
 }
-export function supportedManagedActionParams(serviceId: string, actionId: string, tools: ManagedDiscoveredTool[]): string[] {
+export function supportedManagedActionParams(serviceId: string, actionId: string, tools: ManagedDiscoveredTool[], authorization?: ManagedWriteAuthorization): string[] {
   const action = MANAGED_INTEGRATIONS[serviceId]?.actions[actionId];
   if (!action) return [];
-  const selected = select(serviceId, action, tools);
+  const selected = select(serviceId, action, tools, undefined, undefined, authorization);
   if (!selected) return [];
   return Object.keys(witness(serviceId, action, selected.context));
 }
-export function planManagedOAuthAction(serviceId: string, actionId: string, params: Record<string, unknown> | undefined, tools: ManagedDiscoveredTool[]) {
+export function planManagedOAuthAction(serviceId: string, actionId: string, params: Record<string, unknown> | undefined, tools: ManagedDiscoveredTool[], authorization?: ManagedWriteAuthorization) {
   const action = MANAGED_INTEGRATIONS[serviceId]?.actions[actionId];
   if (!action) throw new Error("Integration action unavailable");
   const input = action.schema.parse(params ?? {});
-  const selected = select(serviceId, action, tools, input);
+  const selected = select(serviceId, action, tools, input, undefined, authorization);
   if (!selected) throw new Error("Integration tool parameters unavailable");
   return { toolName: selected.context.tool.name, arguments: selected.arguments };
 }

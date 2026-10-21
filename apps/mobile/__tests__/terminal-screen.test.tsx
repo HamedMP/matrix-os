@@ -28,6 +28,8 @@ jest.mock("@/lib/queries/use-computer-terminals", () => ({
   useComputerTerminals: () => mockUseComputerTerminals(),
 }));
 
+jest.mock("@expo/ui/swift-ui", () => jest.requireActual("./context-menu-test-utils").swiftUiContextMenuModule());
+
 jest.mock("@expo/ui", () => {
   const React = jest.requireActual("react") as typeof import("react");
   const { View } = jest.requireActual("react-native") as typeof import("react-native");
@@ -40,11 +42,15 @@ jest.mock("@expo/ui", () => {
 });
 
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react-native";
+import { act, fireEvent, render, screen } from "@testing-library/react-native";
 import { RefreshControl, StyleSheet as NativeStyleSheet } from "react-native";
 
 import TerminalScreen from "../app/(drawer)/(tabs)/terminal";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { ToastHost } from "../components/ui/Toast";
 import { palette } from "@/lib/theme-v2";
+
+import { menuAround, menuItem, menuItemLabels } from "./context-menu-test-utils";
 
 const WORKSPACE = "tws_00000000000000000000000000000001";
 
@@ -250,6 +256,39 @@ describe("drawer terminal screen", () => {
 
     expect(mockRenameSession).toHaveBeenLastCalledWith(reloaded, "renamed-session");
     expect(screen.queryByLabelText("Terminal session name")).toBeNull();
+  });
+
+  it("offers the swipe's Rename and Delete from a long press on a terminal, Delete in red", () => {
+    mockDeleteSession.mockResolvedValue(undefined);
+    render(<TerminalScreen />);
+
+    const row = screen.getByLabelText("Open main terminal");
+    expect(menuItemLabels(menuAround(row))).toEqual(["Rename", "Delete"]);
+    expect(menuItem(row, "Delete").props.menuRole).toBe("destructive");
+
+    fireEvent.press(menuItem(row, "Delete"));
+    expect(screen.getByText("Delete terminal session?")).toBeTruthy();
+    fireEvent.press(menuItem(row, "Rename"));
+    expect(screen.getByLabelText("Terminal session name").props.value).toBe("main");
+  });
+
+  it("says so with a toast once a terminal is renamed or deleted", async () => {
+    mockRenameSession.mockResolvedValue(undefined);
+    mockDeleteSession.mockResolvedValue(undefined);
+    render(<><TerminalScreen /><ToastHost /></>);
+
+    fireEvent.press(screen.getByLabelText("Rename main terminal"));
+    fireEvent.changeText(screen.getByLabelText("Terminal session name"), "renamed-session");
+    await act(async () => fireEvent.press(screen.getByLabelText("Save terminal name")));
+    expect(screen.getByText("Terminal renamed")).toBeTruthy();
+
+    fireEvent.press(screen.getByLabelText("Delete notes terminal"));
+    await act(async () => fireEvent.press(screen.getByLabelText("Confirm delete terminal")));
+    expect(screen.getByText("Terminal deleted")).toBeTruthy();
+    // The dialog fades away still naming the terminal it asked about.
+    const dialog = screen.UNSAFE_getByType(ConfirmDialog);
+    expect(dialog.props.visible).toBe(false);
+    expect(dialog.props.message).toContain("“notes”");
   });
 
   it("requires popup confirmation before deleting a swiped terminal", () => {

@@ -34,6 +34,7 @@ import { VocalPanel } from "./VocalPanel";
 import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
+import { DesktopOnboardingWidget } from "./onboarding-widget/DesktopOnboardingWidget";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { versionedIconUrl } from "@/lib/icon-url";
@@ -1364,6 +1365,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
         </div>
       </div>
 
+      <DesktopOnboardingWidget accountId={cacheScope?.userId ?? null} chat={chat} openApp={openAppOrFocus} onOpenSettings={openWebSettings} />
       <Settings
         open={settingsOpen}
         onOpenChange={setSettingsOpen}

@@ -1,3 +1,4 @@
+import { observePostgresPoolErrors } from "@matrix-os/observability/postgres";
 import { PostgresDialect } from "kysely";
 import pg from "pg";
 import { JevEvaluationRepository } from "./repository.js";
@@ -24,8 +25,8 @@ export function createOwnedJevMaintenance(options: {
     query_timeout: QUERY_TIMEOUT_MS,
     statement_timeout: QUERY_TIMEOUT_MS,
   });
-  pool.on("error", (error: Error) => {
-    console.error("[jev] Idle maintenance pool error:", error instanceof Error ? error.name : "UnknownError");
+  observePostgresPoolErrors(pool, (error) => {
+    console.error("[jev] Maintenance Postgres connection error:", error instanceof Error ? error.name : "UnknownError");
   });
   let active: { client: pg.PoolClient; released: boolean } | null = null;
   let closing = false;
