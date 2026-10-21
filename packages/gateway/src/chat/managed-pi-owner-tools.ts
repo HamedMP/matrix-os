@@ -55,6 +55,7 @@ export function createManagedPiOwnerTools(deps: {
   approvals?: CustomMcpApprovalClient;
   sharedBrowser?: SharedBrowserBroker;
   githubDeveloper?: boolean;
+  authorizeExternalEgress?(binding: ManagedPiRuntimeBinding, signal: AbortSignal): Promise<void>;
   googleCollection?: { prepare(binding: ManagedPiRuntimeBinding, accountId: string, signal: AbortSignal,
     requestConsent: GoogleCollectionClientDependencies['requestConsent']): Promise<GoogleProcessingClaim> };
 }) {
@@ -158,6 +159,8 @@ export function createManagedPiOwnerTools(deps: {
       if (action.risk !== "read") await askOwner(run, "Allow this connected service action?", `Account ${prepared.account.label} (${prepared.account.connectionId})\n${JSON.stringify(request.args)}`, signal);
     } else if (request.capability === "mcp.call") {
       if (permissionMode !== "full_access" || !deps.approvals) throw new BotBrokerActionError("denied");
+      // Approval preparation itself forwards tool arguments to the control plane.
+      await deps.authorizeExternalEgress?.(binding, signal);
       const control = await initializeMcp(run);
       prepared.receipt = await new Promise<string | undefined>((resolve, reject) => {
         const abort = () => { signal.removeEventListener("abort", abort); control.onToolPermissionCancel(request.toolCallId); reject(new BotBrokerActionError("denied")); };
@@ -228,7 +231,7 @@ export function createManagedPiOwnerTools(deps: {
       if (request.capability === "browser.action") {
         if (permissionMode !== run.browserPermissionMode || !run.browserRegistered || !deps.sharedBrowser) throw new BotBrokerActionError("not_granted");
         const sharedBinding = browserBinding(binding);
-        try { return text(await deps.sharedBrowser.execute(sharedBinding, request.args, signal)); }
+        try { await deps.authorizeExternalEgress?.(binding, signal); return text(await deps.sharedBrowser.execute(sharedBinding, request.args, signal)); }
         catch (error: unknown) {
           const failure = sharedBrowserFailureResult(error, sharedBinding, deps.sharedBrowser, { includeUnavailable: true });
           if (failure) {
@@ -282,6 +285,7 @@ export function createManagedPiOwnerTools(deps: {
           const finalAuthority = await live(binding, signal);
           if (action.risk !== "read" && finalAuthority.permissionMode !== "full_access") throw new BotBrokerActionError("denied");
         }
+        if (selected.service !== "gmail") await deps.authorizeExternalEgress?.(binding, signal);
         return text(await deps.integrations!.call(binding.ownerId, { service: request.args.service, action: request.args.action,
           label: selected.label, connectionId: selected.connectionId, params: request.args.params, read: action.risk === "read",
           ...(processingClaim ? { processingClaim } : {}) }, signal));
@@ -302,6 +306,7 @@ export function createManagedPiOwnerTools(deps: {
           for (const event of mapBotEvent({ type: "tool_progress", toolCallId: request.toolCallId, capability: request.capability,
             phase: "updated", display: { ...evidence.display, ...output } }, { toolOutputKey: deps.toolOutputKey })) run.emit(event);
         } : undefined;
+        await deps.authorizeExternalEgress?.(binding, signal);
         return text(await deps.mcp!.call(binding.ownerId, { ...request.args, runId: binding.runId,
           ...(prepared.receipt ? { approvalReceipt: prepared.receipt } : {}) }, signal, ...(onProgress ? [onProgress] as const : [] as const)));
       }

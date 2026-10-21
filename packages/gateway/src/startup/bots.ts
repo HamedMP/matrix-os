@@ -399,7 +399,7 @@ export async function startBots(options: {
   const managedAdmission = createManagedPiAdmission({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, homePath: options.homePath, host, registry, roots: options.executionRoots,
     supervisedBrowser: identity => typeof options.sharedBrowser?.authorizeAction === "function" && options.sharedBrowser.allowsSupervisedRun(identity),
     toolCapabilities: managedCapabilities });
-  const ownerTools = createManagedPiOwnerTools({ googleCollection: { prepare: googleData.prepareCollection }, githubDeveloper: true, toolOutputKey: options.toolOutputKey, authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
+  const ownerTools = createManagedPiOwnerTools({ authorizeExternalEgress: googleData.assertToolEgressAllowed, googleCollection: { prepare: googleData.prepareCollection }, githubDeveloper: true, toolOutputKey: options.toolOutputKey, authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
     ...(options.sharedBrowser ? { sharedBrowser: options.sharedBrowser } : {}),
     ...(integrationClient ? { integrations: integrationClient } : {}),
     ...(options.managedMcp ? { mcp: options.managedMcp.client, approvals: options.managedMcp.approvals } : {}) });
