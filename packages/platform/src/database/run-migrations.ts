@@ -10,6 +10,9 @@ import { FUNDED_PROBE_CACHE_REVISION } from "./funded-probe-cache-revision.js";
 import { migrateWhatsApp } from './migrations/whatsapp.js';
 import { WHATSAPP_SCHEMA_REVISION } from './whatsapp-migration-revision.js';
 
+import { migrateAppStore } from '../app-store/migration.js';
+import { APP_STORE_SCHEMA_REVISION } from '../app-store/migration-revision.js';
+
 export async function runPlatformStartupMigrations(db: Kysely<PlatformDatabase>): Promise<void> {
   await runPlatformMigration(db, migratePlatformSchema, {
     revision: PLATFORM_SCHEMA_REVISION, deadlockAttempts: 12,
@@ -20,6 +23,7 @@ export async function runPlatformStartupMigrations(db: Kysely<PlatformDatabase>)
   await runPlatformMigration(db, migrateGooglePurchases, { scope: 'billing-google-purchases', revision: GOOGLE_TRACKING_REVISION, deadlockAttempts: 12 });
   // A preview may have recorded a newer core generation without this channel.
   // Keep its core marker intact while independently ensuring our channel schema.
+  await runPlatformMigration(db, migrateAppStore, { scope: 'app-store', revision: APP_STORE_SCHEMA_REVISION, deadlockAttempts: 12 });
   await runPlatformMigration(db, migrateWhatsApp, {
     scope: 'whatsapp', revision: WHATSAPP_SCHEMA_REVISION, deadlockAttempts: 12,
   });
