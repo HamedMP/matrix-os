@@ -1,4 +1,6 @@
 import { AppAiInputSchema, AppCapabilityInputSchema, AppIdentitySchema, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, appRuntimeSlugFromIdentity, appCapabilityReplyBytes } from "@matrix-os/contracts";
+import { isAppGalleryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
+import { mobileGalleryRequest, mobileGalleryTimeout, mobileGalleryOpenInput } from "./app-gallery-bridge";
 import { appRuntimeNavigation } from "./app-runtime-navigation";
 
 const MAX_BYTES = MAX_APP_DATABASE_REQUEST_BYTES + MAX_APP_CAPABILITY_BYTES;
@@ -26,13 +28,14 @@ function requestFor(app: string, kind: unknown, input: unknown): { path: string;
 
 /** A broker is scoped to one launch; navigation/unmount destroys every pending request. */
 export function createMobileAppCapabilityBroker(options: {
-  app: string; runtimeUrl: string; runtimeSlug?: string; launchId: string; request: MobileAppBridgeRequest; reply: (script: string) => void;
+  app: string; runtimeUrl: string; runtimeSlug?: string; distribution?: "owner" | "community"; launchId: string; request: MobileAppBridgeRequest; reply: (script: string) => void; openApp?: (name: string, path: string, signal?: AbortSignal) => Promise<void>;
 }) {
   AppIdentitySchema.parse(options.app);
   const routeApp = new URL(options.runtimeUrl).pathname.match(/\/apps\/([a-z0-9][a-z0-9_-]{0,63})(?:\/|$)/)?.[1];
   // Explicit aliases come only from the authenticated native catalog/session flow.
   const runtimeSlug = options.runtimeSlug ?? appRuntimeSlugFromIdentity(options.app);
   if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(runtimeSlug) || routeApp !== runtimeSlug || appRuntimeNavigation(options.runtimeUrl, options.runtimeUrl) !== "internal") throw new Error("App launch unavailable");
+  const privilegedGallery = options.distribution !== "community" && isAppGalleryIdentity(options.app, runtimeSlug);
   const pending = new Map<number, AbortController>();
   let active = true;
   let documentId: string | null = null;
@@ -76,16 +79,25 @@ export function createMobileAppCapabilityBroker(options: {
     if (pending.size >= 32) { send({ ok: false }); return; }
     const controller = new AbortController();
     pending.set(id, controller);
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const timeout = frame.kind === "gateway" && privilegedGallery ? mobileGalleryTimeout((frame.input as { url?: unknown } | null)?.url) : TIMEOUT_MS;
+    const timer = setTimeout(() => controller.abort(), timeout);
     try {
-      const { path, init } = requestFor(options.app, frame.kind, frame.input);
-      if (path === "/api/bridge/query" && (typeof init.body !== "string" || bytes(init.body) > MAX_APP_DATABASE_REQUEST_BYTES)) throw new Error("Invalid app request");
       const aborted = new Promise<never>((_resolve, reject) => {
         controller.signal.addEventListener("abort", () => reject(new Error("App request unavailable")), { once: true });
       });
+      if (frame.kind === "openApp") {
+        if (!privilegedGallery || !options.openApp) throw new Error("Invalid app action");
+        const input = mobileGalleryOpenInput(frame.input);
+        await Promise.race([options.openApp(input.name, input.path, controller.signal), aborted]);
+        if (!controller.signal.aborted) send({ ok: true, body: null });
+        return;
+      }
+      if (frame.kind === "gateway" && !privilegedGallery) throw new Error("Invalid app request");
+      const { path, init } = frame.kind === "gateway" ? mobileGalleryRequest(options.app, runtimeSlug, frame.input) : requestFor(options.app, frame.kind, frame.input);
+      if (path === "/api/bridge/query" && (typeof init.body !== "string" || bytes(init.body) > MAX_APP_DATABASE_REQUEST_BYTES)) throw new Error("Invalid app request");
       const response = await Promise.race([options.request(path, { ...init, headers: { "content-type": "application/json" }, signal: controller.signal, redirect: "error" }), aborted]);
-      if (!response.ok) throw new Error("App request unavailable");
-      const maxReply = frame.kind === "db" ? MAX_APP_DATABASE_REPLY_BYTES : frame.kind === "capability" ? appCapabilityReplyBytes(AppCapabilityInputSchema.parse(frame.input)) : MAX_APP_BRIDGE_REPLY_BYTES;
+      if (!response.ok && frame.kind !== "gateway") throw new Error("App request unavailable");
+      const maxReply = frame.kind === "gateway" ? 2 * 1024 * 1024 : frame.kind === "db" ? MAX_APP_DATABASE_REPLY_BYTES : frame.kind === "capability" ? appCapabilityReplyBytes(AppCapabilityInputSchema.parse(frame.input)) : MAX_APP_BRIDGE_REPLY_BYTES;
       if (Number(response.headers.get("content-length")) > maxReply) { await response.body?.cancel(); throw new Error("App response unavailable"); }
       if (!response.body?.getReader) throw new Error("App response unavailable");
       const reader = response.body.getReader();
@@ -103,7 +115,9 @@ export function createMobileAppCapabilityBroker(options: {
         }
         text+=decoder.decode();
       } finally { controller.signal.removeEventListener("abort",cancel); reader.releaseLock(); }
-      if (!controller.signal.aborted) send({ ok: true, body: JSON.parse(text) });
+      const body = JSON.parse(text);
+      if (!response.ok && (!body || typeof body !== "object" || Object.keys(body).length !== 1 || !["invalid", "unauthorized", "forbidden", "not_found", "conflict", "limit", "unavailable"].includes(body.error))) throw new Error("App request unavailable");
+      if (!controller.signal.aborted) send({ ok: true, body });
     } catch (error) {
       console.warn("[mobile-app-bridge] request unavailable", error instanceof Error ? error.name : "UnknownError");
       send({ ok: false });
@@ -116,7 +130,8 @@ export function createMobileAppCapabilityBroker(options: {
 }
 
 /** Installed before app scripts; only request metadata enters the page. */
-export function buildMobileAppBridgeScript(app: string, launchId: string): string {
+export function buildMobileAppBridgeScript(app: string, launchId: string, distribution?: "owner" | "community"): string {
+  const gallery = distribution !== "community" && isAppGalleryIdentity(app) ? `gatewayFetch:function(url,init){init=init||{};if(Object.keys(init).some(function(key){return ["method","headers","body"].indexOf(key)<0;})||init.headers&&Object.keys(init.headers).some(function(key){return key.toLowerCase()!=="content-type"||init.headers[key]!=="application/json";}))return Promise.reject(new Error("App request unavailable"));return call("gateway",{url:url,method:init.method||"GET",body:init.body});},openApp:function(name,path){return call("openApp",{name:name,path:path});},` : "";
   return `(function(){
     if(window.top && window.top!==window)return;
     var app=${JSON.stringify(app)}, launch=${JSON.stringify(launchId)}, documentId=Math.random().toString(36).slice(2)+Date.now().toString(36), pending={}, count=0, seq=0, subscriptions=[];
@@ -127,14 +142,14 @@ export function buildMobileAppBridgeScript(app: string, launchId: string): strin
       var id=++seq, text=JSON.stringify({type:"matrix:app-request",launchId:launch,documentId:documentId,id:id,kind:kind,input:input});
       var maximum=kind==="db"?${MAX_APP_DATABASE_REQUEST_BYTES + MAX_APP_CAPABILITY_BYTES}:${MAX_APP_CAPABILITY_BYTES};
       if(count>=32||utf8Bytes(text)>maximum||(kind==="db"&&utf8Bytes(JSON.stringify(Object.assign({},input,{app:app})))>${MAX_APP_DATABASE_REQUEST_BYTES})){reject(new Error("App request unavailable"));return;}
-      var timer=setTimeout(function(){delete pending[id];count--;reject(new Error("App request unavailable"));},35000);
+      var timer=setTimeout(function(){delete pending[id];count--;reject(new Error("App request unavailable"));},kind==="gateway"?120000:35000);
       pending[id]={resolve:resolve,reject:reject,timer:timer};count++;
       window.ReactNativeWebView.postMessage(text);
     });}
     window.__matrixAppReply=function(reply){if(!reply||reply.launchId!==launch)return;var item=pending[reply.id];if(!item)return;clearTimeout(item.timer);delete pending[reply.id];count--;if(reply.ok)item.resolve(reply.body);else item.reject(new Error("App request unavailable"));};
     window.addEventListener("pagehide",function(){Object.keys(pending).forEach(function(id){var item=pending[id];clearTimeout(item.timer);item.reject(new Error("App request unavailable"));});pending={};count=0;subscriptions=[];});
     window.ReactNativeWebView.postMessage(JSON.stringify({type:"matrix:app-ready",launchId:launch,documentId:documentId}));
-    window.MatrixOS={app:{name:${JSON.stringify(app)}},
+    window.MatrixOS={${gallery}app:{name:${JSON.stringify(app)}},
       capabilities:function(){return call("capability",{kind:"capabilities"});},
       integrations:function(){return call("capability",{kind:"integrations.list"}).then(function(d){return d.services||[];});},
       describeService:function(service){return call("capability",{kind:"integrations.describe",service:service});},

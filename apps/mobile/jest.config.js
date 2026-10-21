@@ -22,6 +22,7 @@ module.exports = {
   setupFilesAfterEnv: ["./jest.after-env.js"],
   testMatch: ["**/__tests__/**/*.test.[jt]s?(x)"],
   moduleNameMapper: {
+    "^\\./os-view\\.js$": "<rootDir>/../../packages/contracts/src/os-view.ts",
     "^\\./canonical-chat-api\\.js$": "<rootDir>/../../packages/contracts/src/canonical-chat-api.ts",
     "^\\./canonical-chat-inputs\\.js$": "<rootDir>/../../packages/contracts/src/canonical-chat-inputs.ts",
     "^react$": "<rootDir>/node_modules/react",
