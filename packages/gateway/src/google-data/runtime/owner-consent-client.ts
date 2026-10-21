@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { discardGooglePolicyResponse } from './response-cleanup.js';
 import type { BotIntegrationTransport } from '../../bots/integration-client.js';
 import { GoogleDataConsentInputSchema } from '../profiles.js';
 import { GooglePolicyDisclosureSchema } from './profile-resolution.js';
@@ -22,7 +23,7 @@ async function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T
   try { return await Promise.race([promise, aborted]); } finally { signal.removeEventListener('abort', stop); }
 }
 async function json(response: Response, signal: AbortSignal): Promise<unknown> {
-  if (response.status !== 200 || !response.headers.get('content-type')?.toLowerCase().startsWith('application/json') || !response.body) throw new GoogleOwnerConsentError();
+  if (response.status !== 200 || !response.headers.get('content-type')?.toLowerCase().startsWith('application/json') || !response.body) { discardGooglePolicyResponse(response); throw new GoogleOwnerConsentError(); }
   const reader = response.body.getReader(); const bytes = new Uint8Array(MAX_RESPONSE); let size = 0;
   try {
     for (;;) {
@@ -44,7 +45,9 @@ export function createGoogleOwnerConsentClient(transport: BotIntegrationTranspor
     if (!GoogleDataConsentInputSchema.shape.ownerId.safeParse(ownerId).success) throw new GoogleOwnerConsentError();
     const bounded = AbortSignal.any([AbortSignal.timeout(10000), ...(signal ? [signal] : [])]);
     if (bounded.aborted) throw new GoogleOwnerConsentError();
-    const response = await abortable(transport(ownerId, { method, path, ...(body ? { body } : {}), signal: bounded }), bounded);
+    const pending = transport(ownerId, { method, path, ...(body ? { body } : {}), signal: bounded });
+    void pending.then(response => { if (bounded.aborted) discardGooglePolicyResponse(response); }, () => undefined);
+    const response = await abortable(pending, bounded);
     return json(response, bounded);
   }
   return {
