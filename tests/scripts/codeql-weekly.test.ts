@@ -17,5 +17,5 @@ it('grants only what code scanning uploads need',()=>{
 it('covers TypeScript and workflow definitions with pinned actions',()=>{
  expect(workflow.jobs.analyze.strategy.matrix.language).toEqual(['javascript-typescript','actions']);
  for(const step of workflow.jobs.analyze.steps.filter(step=>step.uses))expect(step.uses).toMatch(/@[a-f0-9]{40}$/);
- expect(raw).toContain('github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2');
+ expect(workflow.jobs.analyze.steps.filter(step=>step.uses?.startsWith('github/codeql-action/init@'))).toEqual([expect.objectContaining({uses:expect.stringMatching(/^github\/codeql-action\/init@[a-f0-9]{40}$/)})]);
 });

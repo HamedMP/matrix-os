@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   executeIntegrationAction,
-  IntegrationActionNotImplementedError,
+
 } from "../../packages/gateway/src/integrations/routes.js";
+import { BoundedManagedActionError } from "../../packages/gateway/src/integrations/bounded-managed-action.js";
 import { getAction, getService } from "../../packages/gateway/src/integrations/registry.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 
@@ -119,7 +120,7 @@ describe("executeIntegrationAction", () => {
     expect(pipedream.proxyPost).not.toHaveBeenCalled();
   });
 
-  it("throws a not-implemented error instead of calling a fabricated fallback URL", async () => {
+  it("fails closed when the bounded upload transport is unavailable", async () => {
     const pipedream = mockPipedream();
     const service = getService("google_drive")!;
     const action = getAction("google_drive", "upload_file")!;
@@ -135,7 +136,7 @@ describe("executeIntegrationAction", () => {
         actionId: "upload_file",
         params: { name: "notes.txt", content: "hello" },
       }),
-    ).rejects.toBeInstanceOf(IntegrationActionNotImplementedError);
+    ).rejects.toBeInstanceOf(BoundedManagedActionError);
 
     expect(pipedream.callAction).not.toHaveBeenCalled();
   });

@@ -1,3 +1,4 @@
+import { assertCodingAgentProviderEnabled } from "./codex-harness-admission.js";
 import { deleteProjectThreadState } from "./project-thread-deletion.js";
 import { applyBackgroundThreadStop, withBackgroundResumeState, BackgroundThreadStopSchema, type BackgroundThreadStop } from "./background-thread-stop.js";
 import { randomUUID } from "node:crypto";
@@ -1140,9 +1141,8 @@ export function createCodingAgentThreadStore(
 
       if (relationValidator) await relationValidator.validateCreate(principal, request);
       const provider = providerFor(request.providerId);
-      if (options.providerAdmission && !await options.providerAdmission.isProviderEnabled(request.providerId)) {
-        throw new CodingAgentThreadError("provider_unavailable", "Provider unavailable");
-      }
+      await assertCodingAgentProviderEnabled(options.providerAdmission, request.providerId,
+        () => new CodingAgentThreadError("provider_unavailable", "Provider unavailable"));
 
       const createdAt = now().toISOString();
       let thread: StoredThread = {
@@ -1343,9 +1343,8 @@ export function createCodingAgentThreadStore(
             await relationValidator(principal, { projectId: thread.projectId, taskId: thread.taskId });
           }
           const provider = providerFor(thread.providerId);
-          if (options.providerAdmission && !await options.providerAdmission.isProviderEnabled(thread.providerId)) {
-            throw new CodingAgentTurnError("turn_unavailable");
-          }
+          await assertCodingAgentProviderEnabled(options.providerAdmission, thread.providerId,
+            () => new CodingAgentTurnError("turn_unavailable"));
           if (!provider.resumeTurn || !thread.providerResumeState) {
             throw new CodingAgentTurnError("thread_not_resumable");
           }
@@ -1447,6 +1446,10 @@ export function createCodingAgentThreadStore(
         throw new CodingAgentTurnError("thread_busy");
       }
       const provider = providerFor(thread.providerId);
+      if (thread.providerId === "codex") {
+        await assertCodingAgentProviderEnabled(options.providerAdmission, thread.providerId,
+          () => new CodingAgentTurnError("turn_unavailable"));
+      }
       if (!provider.steerTurn) throw new CodingAgentTurnError("turn_unavailable");
       await provider.steerTurn({
         principal,
@@ -1654,6 +1657,7 @@ export function createCodingAgentThreadStore(
         if (provider?.submitApproval) {
           try {
             approvalEvents = parseProviderEvents(await provider.submitApproval({
+              resumeState: thread.providerResumeState,
               principal,
               thread: stripOwner(thread),
               approvalId: parsedApprovalId,
@@ -1711,6 +1715,7 @@ export function createCodingAgentThreadStore(
         if (provider?.submitInput) {
           try {
             inputEvents = parseInputProviderEvents(await provider.submitInput({
+              resumeState: thread.providerResumeState,
               principal,
               thread: stripOwner(thread),
               inputRequestId: parsedInputRequestId,

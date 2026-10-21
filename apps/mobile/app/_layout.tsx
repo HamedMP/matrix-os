@@ -3,7 +3,7 @@ import "@/lib/unistyles";
 import { use, useEffect, useMemo, useState, createContext, useCallback, useRef } from "react";
 import { Stack, useRouter, usePathname } from "expo-router";
 import { PostHogProvider } from "posthog-react-native";
-import { Text, ActivityIndicator } from "react-native";
+import { Text } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import * as SplashScreen from "expo-splash-screen";
 import * as SecureStore from "expo-secure-store";
@@ -36,13 +36,15 @@ import { GatewayClient } from "@/lib/gateway-client";
 import { CanonicalChatSessionProvider } from "@/lib/canonical-chat-session-context";
 import { mobileQueryClient } from "@/lib/query-client";
 import { mobileQueryPersistence } from "@/lib/query-cache-persistence";
+import { ROOT_SCREEN_OPTIONS } from "@/lib/root-screens";
 import { forgetJourneyConnectable } from "@/lib/journey-cache";
 import { getSelectedGatewayConnection, isHostedGatewayUrl, type GatewayConnection } from "@/lib/storage";
 import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
 import { AppStatusBar } from "@/components/AppStatusBar";
-import { StartupScreen } from "@/components/StartupScreen";
+import { StartupLoading, StartupScreen } from "@/components/StartupScreen";
 import { startMobileThemeController } from "@/lib/theme-preference";
+import { motion } from "@/lib/theme-v2";
 import { useStartupColors } from "@/lib/use-startup-colors";
 import { OtaUpdatePrompt } from "@/components/OtaUpdatePrompt";
 import { ToastHost } from "@/components/ui/Toast";
@@ -63,6 +65,14 @@ const nativeSplashRegistration = SplashScreen.preventAutoHideAsync()
     console.warn("[mobile] Native splash screen was not registered:", err);
     return false;
   });
+
+// The splash fades out into the startup screen, which draws the same rabbit in
+// the same place, instead of cutting away. iOS only; Android keeps its own.
+try {
+  SplashScreen.setOptions({ fade: true, duration: motion.duration.slow });
+} catch (err: unknown) {
+  console.warn("[mobile] Native splash fade unavailable:", err instanceof Error ? err.name : "unknown");
+}
 
 const clerkPublishableKey =
   process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ??
@@ -179,7 +189,6 @@ function RootContent({ fontsLoaded }: { fontsLoaded: boolean }) {
 // nothing to protect before the user has signed in, so the sign-in screen
 // itself never prompts for biometrics.
 function BiometricGate({ children }: { children: React.ReactNode }) {
-  const startupColors = useStartupColors();
   const { isLoaded, isSignedIn } = useAuth();
   const [authenticated, setAuthenticated] = useState<boolean | undefined>(undefined);
 
@@ -199,22 +208,8 @@ function BiometricGate({ children }: { children: React.ReactNode }) {
     };
   }, [isLoaded, isSignedIn]);
 
-  if (!isLoaded || authenticated === undefined) {
-    return (
-      <StartupScreen>
-        <ActivityIndicator size="large" color={startupColors.textSubtle} style={styles.loadingSpinner} />
-      </StartupScreen>
-    );
-  }
-
-  if (!authenticated) {
-    return (
-      <StartupScreen>
-        <Text style={[styles.loadingSubtitle, { color: startupColors.textSubtle }]}>Authenticating…</Text>
-        <ActivityIndicator size="large" color={startupColors.textSubtle} style={styles.loadingSpinner} />
-      </StartupScreen>
-    );
-  }
+  if (!isLoaded || authenticated === undefined) return <StartupLoading />;
+  if (!authenticated) return <StartupLoading message="Authenticating…" />;
 
   return <>{children}</>;
 }
@@ -383,21 +378,16 @@ function GatewayShell() {
               contentStyle: { backgroundColor: theme.colors.background },
             }}
           >
-            <Stack.Screen name="index" options={{ headerShown: false }} />
-            <Stack.Screen name="(drawer)" options={{ headerShown: false }} />
-            <Stack.Screen name="file-browser" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-            <Stack.Screen name="terminal-session" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-            <Stack.Screen name="app-preview" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-            <Stack.Screen name="integrations-installed" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-            <Stack.Screen name="integration-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-            <Stack.Screen name="settings-detail" options={{ headerShown: false, presentation: "fullScreenModal" }} />
-            <Stack.Screen
-              name="sign-in"
-              options={{
-                headerShown: false,
-                presentation: "modal",
-              }}
-            />
+            {/* How each one comes and goes is in lib/root-screens. */}
+            <Stack.Screen name="index" options={ROOT_SCREEN_OPTIONS.index} />
+            <Stack.Screen name="(drawer)" options={ROOT_SCREEN_OPTIONS["(drawer)"]} />
+            <Stack.Screen name="file-browser" options={ROOT_SCREEN_OPTIONS["file-browser"]} />
+            <Stack.Screen name="terminal-session" options={ROOT_SCREEN_OPTIONS["terminal-session"]} />
+            <Stack.Screen name="app-preview" options={ROOT_SCREEN_OPTIONS["app-preview"]} />
+            <Stack.Screen name="integrations-installed" options={ROOT_SCREEN_OPTIONS["integrations-installed"]} />
+            <Stack.Screen name="integration-detail" options={ROOT_SCREEN_OPTIONS["integration-detail"]} />
+            <Stack.Screen name="settings-detail" options={ROOT_SCREEN_OPTIONS["settings-detail"]} />
+            <Stack.Screen name="sign-in" options={ROOT_SCREEN_OPTIONS["sign-in"]} />
             <Stack.Screen
               name="sign-in-computer"
               options={{
@@ -439,14 +429,6 @@ function NotificationRouter() {
 const styles = StyleSheet.create((theme) => ({
   flex: {
     flex: 1,
-  },
-  loadingSubtitle: {
-    fontFamily: theme.fonts.sansMedium,
-    fontSize: 14,
-    marginTop: 8,
-  },
-  loadingSpinner: {
-    marginTop: 24,
   },
   configTitle: {
     fontFamily: theme.fonts.sansSemiBold,

@@ -291,7 +291,7 @@ it("wires Change account inside the authenticated shared account card", async ()
   const { fireEvent } = await import("@testing-library/react");
   const snapshot = {
     harnesses: [
-      harness("codex", {
+      harness("claude", {
         authState: "authenticated",
         accountIds: ["owner"],
         selectedAccountId: "owner",
@@ -309,6 +309,7 @@ it("wires Change account inside the authenticated shared account card", async ()
     accessSources: [
       {
         id: "profile",
+        kind: "provider_account", providerId: "anthropic", fundingKind: "owner_api_key",
         readiness: { state: "ready" },
         usage: { kind: "unavailable", reason: "unknown" },
       },
@@ -323,12 +324,12 @@ it("wires Change account inside the authenticated shared account card", async ()
   const workflowClient = {
     capabilities: vi.fn().mockResolvedValue([
       {
-        harnessInstanceId: "codex",
-        harness: "codex",
-        displayName: "Codex",
+        harnessInstanceId: "claude",
+        harness: "claude",
+        displayName: "Claude",
         installState: "installed",
         loginMethods: [],
-        apiKeyProviders: ["openai"],
+        apiKeyProviders: ["anthropic"],
         install: false,
         uninstall: false,
         logs: false,
@@ -343,7 +344,7 @@ it("wires Change account inside the authenticated shared account card", async ()
   render(
     <AgentsProvidersView
       snapshot={snapshot}
-      selectedHarnessId="codex"
+      selectedHarnessId="claude"
       onSelectHarness={vi.fn()}
       onMutate={vi.fn()}
       onRefresh={vi.fn()}
@@ -356,7 +357,7 @@ it("wires Change account inside the authenticated shared account card", async ()
   await import("@testing-library/react").then(({ waitFor }) =>
     waitFor(() => expect(workflowClient.capabilities).toHaveBeenCalled()),
   );
-  fireEvent.click(screen.getByRole("button", { name: /^codex/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^claude/ }));
   const action = await screen.findByRole("button", { name: "Change account" });
   expect(action.closest(".matrix-ap-account")).toBeVisible();
   expect(screen.queryByTestId("account-owner")).not.toBeInTheDocument();

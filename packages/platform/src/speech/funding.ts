@@ -399,7 +399,10 @@ export function createAiFundedSpeechFundingPort(options: {
       }).where("machine_id", "=", row.machine_id)
         .where("owner_id", "=", row.owner_id)
         .where("runtime_slot", "=", row.runtime_slot)
-        .where(sql<boolean>`period_start <> ${row.period_start} OR period_reserved_microusd >= ${reserved}`)
+        .where((eb) => eb.or([
+          eb("period_start", "<>", row.period_start),
+          eb("period_reserved_microusd", ">=", reserved),
+        ]))
         .returning("machine_id").executeTakeFirst();
       if (!allowance) throw new SpeechFundingError("unavailable");
     }
@@ -441,7 +444,10 @@ export function createAiFundedSpeechFundingPort(options: {
       }).where("machine_id", "=", row.machine_id)
         .where("owner_id", "=", row.owner_id)
         .where("runtime_slot", "=", row.runtime_slot)
-        .where(sql<boolean>`period_start <> ${row.period_start} OR period_reserved_microusd >= ${reserved}`)
+        .where((eb) => eb.or([
+          eb("period_start", "<>", row.period_start),
+          eb("period_reserved_microusd", ">=", reserved),
+        ]))
         .returning("machine_id").executeTakeFirst();
       if (!allowance) throw new SpeechFundingError("unavailable");
     }

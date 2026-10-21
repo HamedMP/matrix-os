@@ -1,3 +1,4 @@
+import type { ExecutionAdmissionFence } from "./execution-admission-fence.js";
 import {
   spawnKernel,
   createDB,
@@ -38,6 +39,7 @@ import type { RequestApprovalFn } from "@matrix-os/kernel";
 export type SpawnFn = typeof spawnKernel;
 
 export interface DispatchOptions {
+  executionAdmissionFence?: ExecutionAdmissionFence;
   homePath: string;
   model?: string;
   maxTurns?: number;
@@ -517,6 +519,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
     },
 
     dispatch(message, sessionId, onEvent, context, abortController, kernelOverrides) {
+      if (opts.executionAdmissionFence?.blocked) return Promise.reject(new Error("Execution is temporarily unavailable"));
       if (queue.length >= MAX_QUEUE_SIZE) {
         return Promise.reject(new Error("Dispatch queue full — try again later"));
       }
@@ -537,6 +540,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
     },
 
     dispatchBatch(entries) {
+      if (opts.executionAdmissionFence?.blocked) return Promise.reject(new Error("Execution is temporarily unavailable"));
       if (entries.length === 0) {
         return Promise.resolve([]);
       }

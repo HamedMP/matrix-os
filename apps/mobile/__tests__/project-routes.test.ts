@@ -64,6 +64,13 @@ describe("project routes", () => {
     expect(project.params).toMatchObject({ projectId: "proj_0f8fad5b" });
   });
 
+  it("opens a project's chat at /projects/<id>/chats/<chat id>, above the project in the Chats stack", () => {
+    const chat = resolve("/projects/proj_0f8fad5b/chats/chat_7c9e6679");
+
+    expect(chat.path).toEqual([...CHATS_STACK, "projects/[projectId]/chats/[chatId]"]);
+    expect(chat.params).toMatchObject({ projectId: "proj_0f8fad5b", chatId: "chat_7c9e6679" });
+  });
+
   it("is where the side panel's Projects row goes", () => {
     const [, , tabs, chats, screen] = resolve("/projects").path;
 
@@ -71,8 +78,8 @@ describe("project routes", () => {
     expect(projectsScreenParams()).toEqual({ screen: chats, params: { screen } });
   });
 
-  it("keeps the tab bar on both screens", () => {
-    for (const url of ["/projects", "/projects/proj_0f8fad5b"]) {
+  it("keeps the tab bar on every Projects screen", () => {
+    for (const url of ["/projects", "/projects/proj_0f8fad5b", "/projects/proj_0f8fad5b/chats/chat_7c9e6679"]) {
       const [, , , tab, screen] = resolve(url).path;
       expect(isTabBarHidden(tab, screen, TAB_BAR_HIDDEN_ROUTES)).toBe(false);
     }

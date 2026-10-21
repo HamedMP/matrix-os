@@ -21,7 +21,7 @@ export function createRuntimeProviderSettings(options: ConstructorParameters<typ
   return new ProviderSettingsStore({ ...storeOptions,
     claudeNativeAccountMetadataReader: createClaudeNativeAccountMetadataReader({ executable: "claude", cwd: homePath, environment: buildAgentRuntimeEnvironment(homePath) }),
     hermesNativeAccountMetadataReader: createHermesNativeAccountMetadataReader({ homePath }),
-    ...(codexExecutable ? { codexNativeAccountMetadataReader: createCodexNativeAccountMetadataReader({ executable: codexExecutable, cwd: homePath,
+    ...(codexExecutable && !storeOptions.codexNativeAccountMetadataReader ? { codexNativeAccountMetadataReader: createCodexNativeAccountMetadataReader({ executable: codexExecutable, cwd: homePath,
       environment: { ...buildAgentRuntimeEnvironment(homePath), ...(process.env.CODEX_HOME ? { CODEX_HOME: process.env.CODEX_HOME } : {}) } }) } : {}),
   });
 }

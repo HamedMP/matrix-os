@@ -103,7 +103,7 @@ function AppsStatus({ status, belowTiles }: { status: LauncherStatus; belowTiles
     <>
       {belowTiles ? <Spacer size="md" /> : null}
       {status === "loading"
-        ? <GridTileSkeletonGrid testID="app-tile-skeleton" />
+        ? <GridTileSkeletonGrid testID="app-tile-skeleton" variant="icon" />
         : <Text style={styles.statusText}>{STATUS_TEXT[status]}</Text>}
     </>
   );
