@@ -1599,6 +1599,7 @@ export async function createGateway(config: GatewayConfig) {
     await chatAgents.bootstrap();
     botServices = await startBots({
       googlePilot, googleCopies: ownerDatabaseServices?.googleCopies, qualifiedFundedConfig: fundedAiRuntimeConfig,
+      executionAdmissionFence, pendingExecutionCount: () => canonicalChatOrchestrator?.pendingCount ?? 0,
       toolOutputKey, homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}),
       runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,

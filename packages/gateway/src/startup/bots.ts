@@ -1,3 +1,5 @@
+import { createGooglePilotCopyLifecycle, type GooglePilotPurgeCommand, type GooglePilotPurgeReceipt } from './google-pilot-copy-lifecycle.js';
+import type { ExecutionAdmissionFence } from '../execution-admission-fence.js';
 import { createGooglePilotArtifactWriteFence } from '../google-data/runtime/pilot-artifact-writes.js';
 import { createGoogleContextAdmission } from './google-context-admission.js';
 import type { GooglePilotStorage } from './google-pilot-storage.js';
@@ -125,6 +127,7 @@ export async function runConnectionReconciliationPass(
 }
 
 export interface BotServices {
+  purgeGoogleAccount?(command: GooglePilotPurgeCommand, signal?: AbortSignal): Promise<GooglePilotPurgeReceipt>;
   providerConnections?: BotProviderConnectionsService;
   chatgptPlanPeers?: ChatGptPlanPeers;
   cancelAnthropicInference?(): void;
@@ -152,12 +155,14 @@ export async function startBots(options: {
   runtimeOwnerId?: string | null;
   googlePilot?: GoogleDataPilotConfig;
   googleCopies?: GooglePilotStorage;
+  executionAdmissionFence?: ExecutionAdmissionFence;
+  pendingExecutionCount?: () => number;
   qualifiedFundedConfig?: FundedAiRuntimeConfig;
   computerId?: string | null;
   nativeProfileGuard?: NativeProviderProfileGuard;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   homePath: string;
-  repository: Pick<ChatRepository, "kysely" | "withTransaction" | "withContextTransaction" | "get" | "getTurnRunContext" | "getDetailPage">;
+  repository: Pick<ChatRepository, "kysely" | "withTransaction" | "withContextTransaction" | "publishCommittedExternalOutbox" | "get" | "getTurnRunContext" | "getDetailPage">;
   agents: ChatAgentStore;
   executionRoots: Pick<ChatExecutionRootResolver, "resolve">;
   providers: { getSnapshot(): Promise<AiProviderSnapshotV3> };
@@ -174,7 +179,7 @@ export async function startBots(options: {
   checkpointReconcile?: { passes?: number; intervalMs?: number };
 }): Promise<BotServices | undefined> {
   const pilot = options.googlePilot ?? { enabled: false as const };
-  if (pilot.enabled && (pilot.ownerId !== options.runtimeOwnerId || !options.googleCopies || !options.host?.available)) throw new Error('Google pilot unavailable');
+  if (pilot.enabled && (pilot.ownerId !== options.runtimeOwnerId || !options.googleCopies || !options.host?.available || !options.executionAdmissionFence || !options.pendingExecutionCount)) throw new Error('Google pilot unavailable');
   const now = () => options.now?.() ?? new Date();
   const lifetime = new AbortController();
   const db = ownerBotExecutor(options.repository.kysely);
@@ -343,6 +348,9 @@ export async function startBots(options: {
     ...(options.googleCopies ? { admitContext: createGoogleContextAdmission({ registry, repository: options.repository, adapter: options.googleCopies.context }) } : {}),
     ...(options.matrixAnthropic ? { credentials: options.matrixAnthropic } : {}),
     ...(options.integrations ? { transport: options.integrations } : {}) }).catch(async (error: unknown) => { await qualifiedCredentials?.close(); throw error; });
+  const copyLifecycle = pilot.enabled ? await createGooglePilotCopyLifecycle({ database: options.repository.kysely,
+    ownerId: pilot.ownerId, storage: options.googleCopies!, repository: options.repository, registry,
+    fence: options.executionAdmissionFence!, pendingCount: options.pendingExecutionCount! }) : undefined;
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
   const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
     registry, profileGuard: options.nativeProfileGuard, lifetime: lifetime.signal, callTool: (binding, request, signal) => brokerTool(binding, request, signal) }) : undefined;
@@ -399,8 +407,9 @@ export async function startBots(options: {
       forgetRun(runId);
     },
   });
-  const managed = createManagedPiRuntime({ toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+  const managed = createManagedPiRuntime({ ...(copyLifecycle ? { quiescence: { onStopped: copyLifecycle.onStopped } } : {}), toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
+  copyLifecycle?.bindManaged(managed);
   const tools = createBotToolDispatcher({
     ...(pilot.enabled ? { artifactWrites: createGooglePilotArtifactWriteFence(registry) } : {}),
     homePath: options.homePath, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
@@ -458,11 +467,13 @@ export async function startBots(options: {
   forgetRun = (runId) => actions.forgetRun(runId);
   const unregister = registerBotBroker(host, actions);
   googleData.start();
+  copyLifecycle?.start();
   const adapter = createMatrixBotChatProviderAdapter({
     orchestrator,
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
   });
   return {
+    ...(copyLifecycle ? { purgeGoogleAccount: copyLifecycle.purgeAccount } : {}),
     recipes,
     instantiation,
     interactions,
@@ -478,6 +489,7 @@ export async function startBots(options: {
     managedAdapter: managed.adapter,
     cancelAnthropicInference: () => registry.cancelAnthropicInference(),
     async close() {
+      await copyLifecycle?.close();
       chatgptPlanPeers?.close();
       lifetime.abort();
       unregister();

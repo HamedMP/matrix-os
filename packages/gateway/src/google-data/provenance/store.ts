@@ -194,7 +194,7 @@ export function createGoogleProvenanceStore<DB>(db: Kysely<DB>, options: Partial
       if (!admitted || admitted !== completed) unavailable();
       return completed!;
     },
-    claimPurge: (workerId: string, input?: { leaseMs?: number }) => claimPurgeJob(db, cap, workerId, input),
+    claimPurge: (workerId: string, input?: { leaseMs?: number; ownerId?: string; copyIds?: readonly string[] }) => claimPurgeJob(db, cap, workerId, input),
     executeClaim: (claim: PurgeClaim, handlers: PurgeHandlers) => executePurgeClaim(db, cap, claim, handlers),
   };
 }
