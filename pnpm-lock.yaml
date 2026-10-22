@@ -67,6 +67,14 @@ overrides:
   '@clerk/shared@>=3.0.0 <3.47.7': 3.47.7
   protobufjs@>=7.0.0 <7.6.6: 7.6.6
   tar@>=7.0.0 <7.5.22: 7.5.22
+  kysely@>=0.28.0 <0.28.17: 0.28.17
+  '@clerk/clerk-expo@>=2.0.0 <2.19.36': 2.19.36
+  http-cache-semantics@>=4.0.0 <4.3.0: 4.3.0
+  '@tiptap/core@>=3.0.0 <3.30.5': 3.32.0
+  '@tiptap/pm@>=3.0.0 <3.30.5': 3.32.0
+  electron@>=41.0.0 <41.10.6: 41.10.6
+  '@tiptap/react>@tiptap/extension-bubble-menu': 3.32.0
+  '@tiptap/react>@tiptap/extension-floating-menu': 3.32.0
 
 packageExtensionsChecksum: sha256-HsRBt3laTD7/HrwosMZGIeQ6TLlrtiwjGO87+LVwfw0=
 
@@ -139,12 +147,12 @@ importers:
         version: ajv@6.15.0
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@cloudflare/workers-types@4.20260530.1)(@electric-sql/pglite@0.4.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@12.10.0)(kysely@0.28.18)(pg@8.21.0)
+        version: 0.45.2(@cloudflare/workers-types@4.20260530.1)(@electric-sql/pglite@0.4.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@12.10.0)(pg@8.21.0)
       fflate:
         specifier: 0.8.3
         version: 0.8.3
       hono:
-        specifier: ^4.12.25
+        specifier: ^4.13.11
         version: 4.13.13
       lexical:
         specifier: 0.41.0
@@ -672,10 +680,10 @@ importers:
     dependencies:
       '@earendil-works/pi-agent-core':
         specifier: 1.0.0
-        version: 1.0.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.0(zod@4.6.7))(@smithy/signature-v4@5.7.3)(bufferutil@4.1.0)(undici@6.29.1)(utf-8-validate@6.0.6)(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@4.6.7)
+        version: 1.0.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.0(zod@4.6.7))(@smithy/signature-v4@5.7.3)(bufferutil@4.1.0)(undici@6.29.1)(utf-8-validate@6.0.6)(ws@8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@4.6.7)
       '@earendil-works/pi-ai':
         specifier: 1.0.0
-        version: 1.0.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.0(zod@4.6.7))(@smithy/signature-v4@5.7.3)(bufferutil@4.1.0)(undici@6.29.1)(utf-8-validate@6.0.6)(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@4.6.7)
+        version: 1.0.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.0(zod@4.6.7))(@smithy/signature-v4@5.7.3)(bufferutil@4.1.0)(undici@6.29.1)(utf-8-validate@6.0.6)(ws@8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@4.6.7)
       '@matrix-os/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -803,7 +811,7 @@ importers:
         specifier: ^13.0.6
         version: 13.0.6
       hono:
-        specifier: ^4.12.25
+        specifier: ^4.13.11
         version: 4.13.13
       jose:
         specifier: ^6.2.3
@@ -845,8 +853,8 @@ importers:
         specifier: 7.30.1
         version: 7.30.1
       ws:
-        specifier: ^8.19.0
-        version: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+        specifier: ^8.22.0
+        version: 8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       yaml:
         specifier: 2.8.3
         version: 2.8.3
@@ -982,7 +990,7 @@ importers:
         version: 5.0.0
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@cloudflare/workers-types@4.20260530.1)(@electric-sql/pglite@0.4.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@12.10.0)(kysely@0.28.18)(pg@8.21.0)
+        version: 0.45.2(@cloudflare/workers-types@4.20260530.1)(@electric-sql/pglite@0.4.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@12.10.0)(pg@8.21.0)
       linkedom:
         specifier: ^0.18.12
         version: 0.18.12
@@ -1056,7 +1064,7 @@ importers:
   packages/observability:
     dependencies:
       hono:
-        specifier: ^4.12.25
+        specifier: ^4.13.11
         version: 4.13.13
       posthog-js:
         specifier: ^1.409.6
@@ -1123,7 +1131,7 @@ importers:
         specifier: 0.8.3
         version: 0.8.3
       hono:
-        specifier: ^4.12.25
+        specifier: ^4.13.11
         version: 4.13.13
       jose:
         specifier: ^6.2.3
@@ -1156,8 +1164,8 @@ importers:
         specifier: 7.30.1
         version: 7.30.1
       ws:
-        specifier: ^8.19.0
-        version: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+        specifier: ^8.22.0
+        version: 8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       zod:
         specifier: ^4.6.6
         version: 4.6.7
@@ -1218,7 +1226,7 @@ importers:
         specifier: ^12.10.0
         version: 12.10.0
       hono:
-        specifier: ^4.12.25
+        specifier: ^4.13.11
         version: 4.13.13
       prom-client:
         specifier: ^15.1.3
@@ -1298,8 +1306,8 @@ importers:
         specifier: ^4.21.0
         version: 4.21.0
       ws:
-        specifier: ^8.19.0
-        version: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+        specifier: ^8.22.0
+        version: 8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       zod:
         specifier: ^4.6.6
         version: 4.6.7
@@ -10011,7 +10019,7 @@ packages:
       expo-sqlite: '>=14.0.0'
       gel: '>=2'
       knex: '*'
-      kysely: '*'
+      kysely: 0.28.17
       mysql2: '>=2'
       pg: '>=8'
       postgres: '>=3'
@@ -10137,6 +10145,11 @@ packages:
   electron-winstaller@5.4.0:
     resolution: {integrity: sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==}
     engines: {node: '>=8.0.0'}
+
+  electron@41.10.6:
+    resolution: {integrity: sha512-NEB7QnVpT2p8S9U5jOCPAtCyhl1WjRT/ODvJP6ec1/dZRUmf/EjYVOBb/dthCmJh4bISqpAroGJ/xRRxX7VwJw==}
+    engines: {node: '>= 22.12.0'}
+    hasBin: true
 
   electron@41.10.7:
     resolution: {integrity: sha512-AqIiefddlf5i+HYCGatr8VlBuEbWJpad4/yloBFYcMB2r57j7xhW1ogiJ+BfA5kxQyfmSs5yjwy54Me+wJn1jw==}
@@ -11484,8 +11497,8 @@ packages:
   htmlparser2@10.1.0:
     resolution: {integrity: sha512-VTZkM9GWRAtEpveh7MSF6SjjrpNVNNVJfFup7xTY3UpFtm67foy9HDVXneLtFVt4pMz5kZtgNcvCniNFb1hlEQ==}
 
-  http-cache-semantics@4.2.0:
-    resolution: {integrity: sha512-dTxcvPXqPvXBQpq5dUr6mEMJX4oIEFv6bwom3FDwKRDsuIjjJGANqhBuoAn9c1RQJIdAKav33ED65E2ys+87QQ==}
+  http-cache-semantics@4.3.0:
+    resolution: {integrity: sha512-M5t5LlJpS1UHMjvwRQVdFHvPISGeLAxNcrWuJkeGh0KxsqCHZ1O3NXZU/8x7cD0BDcGW8kapxMKTvwlqrNkHkA==}
 
   http-errors@2.0.1:
     resolution: {integrity: sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==}
@@ -12364,7 +12377,7 @@ packages:
     hasBin: true
     peerDependencies:
       '@electric-sql/pglite': '*'
-      kysely: '*'
+      kysely: 0.28.17
 
   kysely@0.28.18:
     resolution: {integrity: sha512-lf6nEHwPlaWbUDw5rycPSkEVGVC7sF7hzY7kH0OryleqK8Ym0zZ+RjI8o+RpHHlxpbKVC1d+UoQSW8GFxGQf4Q==}
@@ -16190,6 +16203,18 @@ packages:
       utf-8-validate:
         optional: true
 
+  ws@8.23.0:
+    resolution: {integrity: sha512-wCkmX8QMOrKjgO8HW2WyDbTSGeqkocxgDzS9iR79rEAexty6/2qzilx3Ag8Tqf9ykop3irLKle0MtVn5qjVnoQ==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   wsl-utils@0.3.1:
     resolution: {integrity: sha512-g/eziiSUNBSsdDJtCLB8bdYEUMj4jR7AGeUo96p/3dTafgjHhpF4RiCFPiRILwjQoDXx5MqkBr4fwWtR3Ky4Wg==}
     engines: {node: '>=20'}
@@ -18390,9 +18415,9 @@ snapshots:
 
   '@drizzle-team/brocli@0.10.2': {}
 
-  '@earendil-works/pi-agent-core@1.0.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.0(zod@4.6.7))(@smithy/signature-v4@5.7.3)(bufferutil@4.1.0)(undici@6.29.1)(utf-8-validate@6.0.6)(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@4.6.7)':
+  '@earendil-works/pi-agent-core@1.0.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.0(zod@4.6.7))(@smithy/signature-v4@5.7.3)(bufferutil@4.1.0)(undici@6.29.1)(utf-8-validate@6.0.6)(ws@8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@4.6.7)':
     dependencies:
-      '@earendil-works/pi-ai': 1.0.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.0(zod@4.6.7))(@smithy/signature-v4@5.7.3)(bufferutil@4.1.0)(undici@6.29.1)(utf-8-validate@6.0.6)(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@4.6.7)
+      '@earendil-works/pi-ai': 1.0.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.0(zod@4.6.7))(@smithy/signature-v4@5.7.3)(bufferutil@4.1.0)(undici@6.29.1)(utf-8-validate@6.0.6)(ws@8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@4.6.7)
       typebox: 1.3.27
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
@@ -18407,7 +18432,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@1.0.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.0(zod@4.6.7))(@smithy/signature-v4@5.7.3)(bufferutil@4.1.0)(undici@6.29.1)(utf-8-validate@6.0.6)(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@4.6.7)':
+  '@earendil-works/pi-ai@1.0.0(@aws-sdk/credential-provider-node@3.972.83)(@modelcontextprotocol/sdk@1.32.0(zod@4.6.7))(@smithy/signature-v4@5.7.3)(bufferutil@4.1.0)(undici@6.29.1)(utf-8-validate@6.0.6)(ws@8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@4.6.7)':
     dependencies:
       '@anthropic-ai/sdk': 0.124.0(zod@4.6.7)
       '@aws-sdk/client-bedrock-runtime': 3.1127.0
@@ -18416,7 +18441,7 @@ snapshots:
       '@smithy/node-http-handler': 4.12.1
       http-proxy-agent: 9.1.0
       https-proxy-agent: 9.1.0
-      openai: 7.19.0(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@6.29.1)(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@4.6.7)
+      openai: 7.19.0(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@6.29.1)(ws@8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@4.6.7)
       partial-json: 0.1.7
       typebox: 1.3.27
     transitivePeerDependencies:
@@ -19087,7 +19112,7 @@ snapshots:
       '@expo/router-server': 58.0.21(@expo/metro-runtime@58.0.17)(expo-constants@58.0.15)(expo-font@58.0.11(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.6)(utf-8-validate@6.0.6))(react@19.2.6))(expo-router@58.0.30)(expo-server@58.0.6)(expo@58.0.23)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@expo/schema-utils': 58.0.3
       '@expo/spawn-async': 1.8.0
-      '@expo/ws-tunnel': 2.0.1(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      '@expo/ws-tunnel': 2.0.1(ws@8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
       '@expo/xcpretty': 4.4.7
       '@react-native/asset-utils': 0.88.1
       '@react-native/dev-middleware': 0.88.1(bufferutil@4.1.0)(utf-8-validate@6.0.6)
@@ -19126,7 +19151,7 @@ snapshots:
       terminal-link: 2.1.1
       toqr: 0.1.1
       wrap-ansi: 7.0.0
-      ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      ws: 8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     optionalDependencies:
       expo-router: 58.0.30(b303dfe07c86e02e016b597de853437a)
       react-native: 0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.14)(bufferutil@4.1.0)(react@19.2.6)(utf-8-validate@6.0.6)
@@ -19169,7 +19194,7 @@ snapshots:
       '@expo/router-server': 58.0.21(@expo/metro-runtime@58.0.17)(expo-constants@58.0.15)(expo-font@58.0.11(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6))(react@19.3.0))(expo-router@58.0.30)(expo-server@58.0.6)(expo@58.0.23)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@expo/schema-utils': 58.0.3
       '@expo/spawn-async': 1.8.0
-      '@expo/ws-tunnel': 2.0.1(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
+      '@expo/ws-tunnel': 2.0.1(ws@8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))
       '@expo/xcpretty': 4.4.7
       '@react-native/asset-utils': 0.88.1
       '@react-native/dev-middleware': 0.88.1(bufferutil@4.1.0)(utf-8-validate@6.0.6)
@@ -19208,7 +19233,7 @@ snapshots:
       terminal-link: 2.1.1
       toqr: 0.1.1
       wrap-ansi: 7.0.0
-      ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      ws: 8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     optionalDependencies:
       expo-router: 58.0.30(730963dd0f1ddf3cf4562c2f0a9499dd)
       react-native: 0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6)
@@ -19812,9 +19837,9 @@ snapshots:
       react: 19.3.0
       react-native: 0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6)
 
-  '@expo/ws-tunnel@2.0.1(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))':
+  '@expo/ws-tunnel@2.0.1(ws@8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))':
     dependencies:
-      ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      ws: 8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
 
   '@expo/xcpretty@4.4.7':
     dependencies:
@@ -19906,7 +19931,7 @@ snapshots:
       google-auth-library: 10.9.1
       p-retry: 4.6.2
       protobufjs: 7.6.6
-      ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      ws: 8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     optionalDependencies:
       '@modelcontextprotocol/sdk': 1.32.0(zod@4.6.7)
     transitivePeerDependencies:
@@ -19941,7 +19966,7 @@ snapshots:
     dependencies:
       '@hono/node-server': 1.19.17(hono@4.13.13)
       hono: 4.13.13
-      ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      ws: 8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -25620,7 +25645,7 @@ snapshots:
     dependencies:
       clone-response: 1.0.3
       get-stream: 5.2.0
-      http-cache-semantics: 4.2.0
+      http-cache-semantics: 4.3.0
       keyv: 4.5.4
       lowercase-keys: 2.0.0
       normalize-url: 6.1.0
@@ -26469,7 +26494,7 @@ snapshots:
       esbuild: 0.25.12
       tsx: 4.21.0
 
-  drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260530.1)(@electric-sql/pglite@0.4.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@12.10.0)(kysely@0.28.18)(pg@8.21.0):
+  drizzle-orm@0.45.2(@cloudflare/workers-types@4.20260530.1)(@electric-sql/pglite@0.4.1)(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(better-sqlite3@12.10.0)(pg@8.21.0):
     optionalDependencies:
       '@cloudflare/workers-types': 4.20260530.1
       '@electric-sql/pglite': 0.4.1
@@ -26477,7 +26502,6 @@ snapshots:
       '@types/better-sqlite3': 7.6.13
       '@types/pg': 8.20.0
       better-sqlite3: 12.10.0
-      kysely: 0.28.18
       pg: 8.21.0
 
   dunder-proto@1.0.1:
@@ -26573,7 +26597,7 @@ snapshots:
       '@babel/core': 7.29.0
       '@babel/plugin-transform-arrow-functions': 7.27.1(@babel/core@7.29.0)
       cac: 6.7.14
-      electron: 41.10.7
+      electron: 41.10.6
       esbuild: 0.25.12
       magic-string: 0.30.21
       picocolors: 1.1.1
@@ -26590,6 +26614,14 @@ snapshots:
       temp: 0.9.4
     optionalDependencies:
       '@electron/windows-sign': 1.2.2
+    transitivePeerDependencies:
+      - supports-color
+
+  electron@41.10.6:
+    dependencies:
+      '@electron-internal/extract-zip': 1.0.5
+      '@electron/get': 5.1.0
+      '@types/node': 24.13.1
     transitivePeerDependencies:
       - supports-color
 
@@ -28628,7 +28660,7 @@ snapshots:
       domutils: 3.2.2
       entities: 7.0.1
 
-  http-cache-semantics@4.2.0: {}
+  http-cache-semantics@4.3.0: {}
 
   http-errors@2.0.1:
     dependencies:
@@ -31046,7 +31078,7 @@ snapshots:
   node-edge-tts@1.2.10(bufferutil@4.1.0)(utf-8-validate@6.0.6):
     dependencies:
       https-proxy-agent: 7.0.6
-      ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      ws: 8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       yargs: 17.7.2
     transitivePeerDependencies:
       - bufferutil
@@ -31272,12 +31304,12 @@ snapshots:
       is-docker: 2.2.1
       is-wsl: 2.2.0
 
-  openai@7.19.0(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@6.29.1)(ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@4.6.7):
+  openai@7.19.0(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@6.29.1)(ws@8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@4.6.7):
     optionalDependencies:
       '@aws-sdk/credential-provider-node': 3.972.83
       '@smithy/signature-v4': 5.7.3
       undici: 6.29.1
-      ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      ws: 8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
       zod: 4.6.7
 
   optionator@0.9.4:
@@ -32913,7 +32945,7 @@ snapshots:
       buffer: 6.0.3
       eventemitter3: 5.0.4
       uuid: 14.0.0
-      ws: 8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      ws: 8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
     optionalDependencies:
       bufferutil: 4.1.0
       utf-8-validate: 6.0.6
@@ -34643,6 +34675,11 @@ snapshots:
       utf-8-validate: 6.0.6
 
   ws@8.21.0(bufferutil@4.1.0)(utf-8-validate@6.0.6):
+    optionalDependencies:
+      bufferutil: 4.1.0
+      utf-8-validate: 6.0.6
+
+  ws@8.23.0(bufferutil@4.1.0)(utf-8-validate@6.0.6):
     optionalDependencies:
       bufferutil: 4.1.0
       utf-8-validate: 6.0.6

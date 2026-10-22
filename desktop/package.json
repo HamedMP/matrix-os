@@ -2,7 +2,7 @@
   "name": "desktop",
   "version": "0.1.24",
   "private": true,
-  "description": "Matrix OS Operator \u2014 Electron desktop shell",
+  "description": "Matrix OS Operator — Electron desktop shell",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
