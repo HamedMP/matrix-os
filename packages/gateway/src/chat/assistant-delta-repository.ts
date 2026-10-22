@@ -13,11 +13,14 @@ export type AssistantDeltaExecutor = Kysely<ChatDatabase> | Transaction<ChatData
 import type { ChatCommitReleaseCheck } from "./outbox-delivery.js";
 export type AssistantDeltaTransact = <T>(work: (tx: AssistantDeltaExecutor) => Promise<T>, beforeRelease?: ChatCommitReleaseCheck) => Promise<T>;
 export interface AssistantDeltaWriteKey { owner: ChatOwner; chatId: string; runId: string; messageId: string }
+export interface AssistantRunWriteKey { owner: ChatOwner; chatId: string; runId: string; outputMessageId?: string }
 export interface AssistantDeltaWriteHook {
+  writeRun<T>(key: AssistantRunWriteKey, transact: AssistantDeltaTransact,
+    content: (tx: AssistantDeltaExecutor) => Promise<T>, signal?: AbortSignal): Promise<T>;
   write<T>(key: AssistantDeltaWriteKey, transact: AssistantDeltaTransact,
     content: (tx: AssistantDeltaExecutor) => Promise<T>, signal?: AbortSignal): Promise<T>;
 }
-interface AssistantDeltaDependencies {
+export interface AssistantDeltaDependencies {
   hook?: AssistantDeltaWriteHook;
   transact: AssistantDeltaTransact;
   selectOwnedChat(tx: AssistantDeltaExecutor, owner: ChatOwner, chatId: string, lock?: boolean, runId?: string): Promise<Selectable<ChatsTable> | undefined>;

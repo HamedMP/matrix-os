@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { CanonicalChatIdSchema, CanonicalChatMessageIdSchema, CanonicalChatRunIdSchema, CanonicalOwnerScopeSchema } from '@matrix-os/contracts';
 import { sql } from 'kysely';
 import type { ChatDatabase } from '../../chat/database.js';
-import type { AssistantDeltaExecutor, AssistantDeltaTransact, AssistantDeltaWriteHook, AssistantDeltaWriteKey } from '../../chat/assistant-delta-repository.js';
+import type { AssistantDeltaExecutor, AssistantDeltaTransact, AssistantDeltaWriteHook, AssistantDeltaWriteKey, AssistantRunWriteKey } from '../../chat/assistant-delta-repository.js';
 import { createGoogleModelHistoryStore, type GoogleModelHistory } from '../runtime/model-history.js';
 import { GoogleProvenanceUnavailable, originKey, type GoogleCopy, type GoogleOrigin } from './contracts.js';
 import { createGoogleProvenanceStore } from './store.js';
@@ -50,75 +50,103 @@ function match(copy: GoogleCopy, context: AvailableHistory, hash: string | null,
     || copy.origins.some(origin => !allowed.some(candidate => originKey(origin) === originKey(candidate)))) deny();
 }
 
-/** Optional delta/snapshot writer foundation only. No startup install, redaction, or replay-delivery qualification. */
+/** Optional canonical message writer. Provider dispatch and non-message copies remain separate. */
 export function createGoogleCanonicalMessageWriteHook(options: { now?: () => Date } = {}): AssistantDeltaWriteHook {
   const now = options.now ?? (() => new Date());
-  return {
-    async write<T>(key: AssistantDeltaWriteKey, transact: AssistantDeltaTransact, content: (tx: AssistantDeltaExecutor) => Promise<T>, signal?: AbortSignal): Promise<T> {
-      key = Object.freeze({ owner: Object.freeze(CanonicalOwnerScopeSchema.parse(key.owner)), chatId: CanonicalChatIdSchema.parse(key.chatId),
-        runId: CanonicalChatRunIdSchema.parse(key.runId), messageId: CanonicalChatMessageIdSchema.parse(key.messageId) });
-      if (key.owner.type !== 'personal') deny();
-      const entityRef = canonicalMessageEntityRef(key.messageId);
-      let deadline: number | undefined;
-      const capture = (value: string) => { const parsed = Date.parse(value); if (!Number.isFinite(parsed)) deny(); deadline = Math.min(deadline ?? parsed, parsed); };
-      const live = () => { check(signal); const clock = now().getTime(); if (!Number.isFinite(clock) || (deadline !== undefined && deadline <= clock)) deny(); check(signal); };
-      live();
-      const result = await transact(tx => boundedProvenanceTransaction<ChatDatabase, T>(tx, async current => {
-        const history = createGoogleModelHistoryStore<ChatDatabase>(current, { now });
-        const inspect = async () => {
-          check(signal);
-          const context = available(await history.inspect(key.owner, key.chatId));
-          if (context.classification === 'google') {
-            capture(context.googleContext.retentionDeadline);
-            for (const source of context.googleContext.sources) capture(source.expiresAt);
-          }
-          live();
-          return context;
-        };
-        await inspect(); // Context/birth fence precedes all provenance and content row locks.
-        await sql`SELECT pg_advisory_xact_lock(551035503)`.execute(current);
-        await sql`SELECT id FROM google_copy_registry WHERE owner_id=${key.owner.ownerId} AND kind='derived' AND entity_ref=${entityRef} FOR UPDATE`.execute(current);
-        const store = createGoogleProvenanceStore<ChatDatabase>(current);
-        const copy = await store.inspect(key.owner.ownerId, 'derived', entityRef);
-        if (copy) capture(copy.retentionDeadline);
-        const chat = await current.selectFrom('chats').select('id').where('id', '=', key.chatId).where('owner_type', '=', 'personal')
-          .where('owner_id', '=', key.owner.ownerId).where('collaboration', 'is', null).forUpdate().executeTakeFirst();
-        if (!chat) deny();
-        const shared = await sql`SELECT id FROM collaboration_scopes WHERE owner_type='personal' AND owner_id=${key.owner.ownerId}
-          AND kind='chat' AND resource_id=${key.chatId} AND lifecycle NOT IN ('private','preparing') LIMIT 1`.execute(current);
-        if (shared.rows.length) deny();
-        const run = await current.selectFrom('chat_runs').select('id').where('id', '=', key.runId).where('chat_id', '=', key.chatId).forUpdate().executeTakeFirst();
-        if (!run) deny();
-        const before = await canonicalMessagePayloadHash(current, key);
-        const context = await inspect();
+  const writeMessages = async <T>(key: AssistantRunWriteKey, requested: readonly string[], discoverRun: boolean,
+    transact: AssistantDeltaTransact, content: (tx: AssistantDeltaExecutor) => Promise<T>, signal?: AbortSignal): Promise<T> => {
+    key = Object.freeze({ owner: Object.freeze(CanonicalOwnerScopeSchema.parse(key.owner)), chatId: CanonicalChatIdSchema.parse(key.chatId),
+      runId: CanonicalChatRunIdSchema.parse(key.runId) });
+    const requestedIds = requested.map(id => CanonicalChatMessageIdSchema.parse(id));
+    if (key.owner.type !== 'personal') deny();
+    let deadline: number | undefined;
+    const capture = (value: string) => { const parsed = Date.parse(value); if (!Number.isFinite(parsed)) deny(); deadline = Math.min(deadline ?? parsed, parsed); };
+    const live = () => { check(signal); const clock = now().getTime(); if (!Number.isFinite(clock) || (deadline !== undefined && deadline <= clock)) deny(); check(signal); };
+    live();
+    const result = await transact(tx => boundedProvenanceTransaction<ChatDatabase, T>(tx, async current => {
+      const history = createGoogleModelHistoryStore<ChatDatabase>(current, { now });
+      const inspect = async () => {
+        check(signal);
+        const context = available(await history.inspect(key.owner, key.chatId));
+        if (context.classification === 'google') {
+          capture(context.googleContext.retentionDeadline);
+          for (const source of context.googleContext.sources) capture(source.expiresAt);
+        }
+        live();
+        return context;
+      };
+      await inspect(); // Context/birth fence precedes provenance and all content row locks.
+      await sql`SELECT pg_advisory_xact_lock(551035503)`.execute(current);
+      const discover = async () => {
+        const rows = await current.selectFrom('chat_messages').select('id').where('chat_id', '=', key.chatId)
+          .where('run_id', '=', key.runId).where('role', '=', 'assistant').orderBy('id').limit(65).execute();
+        if (rows.length > 64) deny();
+        live();
+        return rows.map(row => row.id);
+      };
+      // Discovery takes no content locks. Every candidate registry row is locked first in stable order.
+      const observed = discoverRun ? await discover() : [];
+      const ids = [...new Set([...observed, ...requestedIds])].sort();
+      if (ids.length > 64) deny();
+      const refs = ids.map(canonicalMessageEntityRef);
+      if (refs.length) await sql`SELECT id FROM google_copy_registry WHERE owner_id=${key.owner.ownerId}
+        AND kind='derived' AND entity_ref = ANY(${refs}::text[]) ORDER BY entity_ref FOR UPDATE`.execute(current);
+      const store = createGoogleProvenanceStore<ChatDatabase>(current);
+      const copies = new Map<string, GoogleCopy>(); // At most 64 entries, disposed with this transaction.
+      for (const id of ids) {
+        const copy = await store.inspect(key.owner.ownerId, 'derived', canonicalMessageEntityRef(id));
+        if (copy) { copies.set(id, copy); capture(copy.retentionDeadline); }
+        live();
+      }
+      const chat = await current.selectFrom('chats').select('id').where('id', '=', key.chatId).where('owner_type', '=', 'personal')
+        .where('owner_id', '=', key.owner.ownerId).where('collaboration', 'is', null).forUpdate().executeTakeFirst();
+      if (!chat) deny();
+      const shared = await sql`SELECT id FROM collaboration_scopes WHERE owner_type='personal' AND owner_id=${key.owner.ownerId}
+        AND kind='chat' AND resource_id=${key.chatId} AND lifecycle NOT IN ('private','preparing') LIMIT 1`.execute(current);
+      if (shared.rows.length) deny();
+      const run = await current.selectFrom('chat_runs').select('id').where('id', '=', key.runId).where('chat_id', '=', key.chatId).forUpdate().executeTakeFirst();
+      if (!run) deny();
+      // A legacy/unqualified concurrent writer cannot introduce an unregistered candidate while locks waited.
+      if (discoverRun && JSON.stringify(await discover()) !== JSON.stringify(observed)) deny();
+      const context = await inspect();
+      for (const id of ids) {
+        const before = await canonicalMessagePayloadHash(current, { ...key, messageId: id });
+        live();
+        const copy = copies.get(id);
         if (copy) match(copy, context, before, now().getTime());
         else if (context.classification === 'google' && before) deny();
-        const result = await content(current);
-        const fresh = await inspect();
-        if (fresh.classification === 'google') {
-          const hash = await canonicalMessagePayloadHash(current, key);
+      }
+      const result = await content(current);
+      const fresh = await inspect();
+      if (fresh.classification === 'google') {
+        for (const id of ids) {
+          const hash = await canonicalMessagePayloadHash(current, { ...key, messageId: id });
           if (!hash) deny();
           const after = await inspect();
           if (after.classification !== 'google' || deadline === undefined) deny();
+          const copy = copies.get(id);
           const approved = origins(after);
           const same = copy && hash === copy.contentHash && copy.origins.length === approved.length
             && approved.every(origin => copy.origins.some(previous => originKey(previous) === originKey(origin)))
             && Date.parse(copy.retentionDeadline) <= deadline;
           if (!same) {
             const decisions = after.googleContext.sources.map(source => [source.originId, source.consentId]).sort((a, b) => a[0]! < b[0]! ? -1 : a[0]! > b[0]! ? 1 : 0);
-            const registered = await store.record({ ownerId: key.owner.ownerId, kind: 'derived', entityRef, contentHash: hash, origins: approved,
+            const registered = await store.record({ ownerId: key.owner.ownerId, kind: 'derived', entityRef: canonicalMessageEntityRef(id), contentHash: hash, origins: approved,
               retention: { choice: 'until', deadline: new Date(deadline).toISOString(),
                 decisionId: `cm_${createHash('sha256').update(JSON.stringify([decisions, deadline])).digest('hex')}` }, ...(copy ? { baseRevision: copy.revision } : {}) });
             capture(registered.retentionDeadline);
           }
           await inspect();
         }
-        live();
-        return result;
-      }), () => { live(); return true; });
-      // Also fence the returned acknowledgement; nested writes register at the actual outer transaction.
+      }
       live();
       return result;
-    },
+    }), () => { live(); return true; });
+    live();
+    return result;
+  };
+  return {
+    write: (key, transact, content, signal) => writeMessages(key, [key.messageId], false, transact, content, signal),
+    writeRun: (key, transact, content, signal) => writeMessages(key, key.outputMessageId ? [key.outputMessageId] : [], true, transact, content, signal),
   };
 }
