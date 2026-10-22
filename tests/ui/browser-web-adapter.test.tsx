@@ -228,3 +228,24 @@ describe("rendered Browser toolbar launch", () => {
     } finally { unsubscribe(); }
   });
 });
+
+describe("Web Browser setup recovery without reopening", () => {
+  it("rechecks the selected Computer on Reconnect and exposes setup Retry in the same view", async () => {
+    surface.real = true;
+    let healthy = true;
+    const fetcher = vi.fn(async (url: string) => {
+      if (String(url).endsWith("/api/browser/setup")) return Response.json({ status: healthy ? "ready" : "failed", retryAvailable: !healthy });
+      if (String(url).endsWith("/browser-status")) return Response.json({ available: true, chrome: { present: true, minimized: false }, humanControlAvailable: true });
+      if (String(url).endsWith("/browser-session")) return Response.json({ ticket: "a".repeat(48), expiresAt: Date.now() + 60_000 });
+      return Response.json({});
+    }); vi.stubGlobal("fetch", fetcher);
+    render(<RemoteBrowserView surface="browser"/>);
+    const frame = await screen.findByTitle("Chrome on your Matrix computer") as HTMLIFrameElement;
+    act(() => { for (const connected of [true, false]) window.dispatchEvent(new MessageEvent("message", { data: { type: "matrix-browser-viewer", connected }, origin: "https://app.matrix-os.com", source: frame.contentWindow })); });
+    healthy = false;
+    fireEvent.click(await screen.findByRole("button", { name: "Reconnect" }));
+    expect(await screen.findByRole("button", { name: "Retry setup" })).toBeTruthy();
+    expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith("/api/browser/setup"))).toHaveLength(2);
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith("/setup/retry"))).toBe(false);
+  });
+});

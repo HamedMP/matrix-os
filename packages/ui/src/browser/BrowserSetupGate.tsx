@@ -4,18 +4,23 @@ import { z } from "zod/v4";
 import type { BrowserSetupTransport } from "./types.js";
 const Setup = z.strictObject({ status: z.enum(["pending", "installing", "ready", "failed", "exhausted", "disabled"]), retryAvailable: z.boolean() });
 type Status = z.infer<typeof Setup>;
-export function BrowserSetupGate({ setup, active, scope, children }: { setup: BrowserSetupTransport; active: boolean; scope: string; children: ReactNode }) {
+export function BrowserSetupGate({ setup, active, scope, children }: { setup: BrowserSetupTransport; active: boolean; scope: string; children: (recheck: () => Promise<boolean>) => ReactNode }) {
   const [state, setState] = useState<{ scope: string; status: Status | null; error: boolean; busy: boolean }>({ scope, status: null, error: false, busy: false });
   const [revision, setRevision] = useState(0);
-  const lifetime = useRef<AbortController | null>(null);
   const retrying = useRef(false);
   const requestVersion = useRef(0);
+  const rechecking = useRef<AbortController | null>(null);
+  const retryRequest = useRef<AbortController | null>(null);
+  // A failed manual check already supplied current state; avoid an immediate
+  // duplicate when the ordinary setup poll resumes.
+  const deferPoll = useRef(false);
+  useEffect(() => () => { rechecking.current?.abort(); rechecking.current = null; retryRequest.current?.abort(); retryRequest.current = null; }, [setup, active, scope]);
   const current = state.scope === scope ? state : { scope, status: null, error: false, busy: false };
   const ready = current.status?.status === "ready";
   const upgradeRequired = setup.requiresDesktopUpdate === true;
   useEffect(() => {
     if (!active || ready || upgradeRequired) return;
-    const controller = new AbortController(); lifetime.current = controller;
+    const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
       const version = requestVersion.current;
@@ -28,12 +33,13 @@ export function BrowserSetupGate({ setup, active, scope, children }: { setup: Br
         if (!controller.signal.aborted && version === requestVersion.current) setState({ scope, status: null, error: true, busy: false });
       } finally { if (!controller.signal.aborted) timer = setTimeout(() => { void poll(); }, 4000); }
     };
-    void poll();
-    return () => { controller.abort(); if (timer) clearTimeout(timer); if (lifetime.current === controller) lifetime.current = null; };
+    if (deferPoll.current) { deferPoll.current = false; timer = setTimeout(() => { void poll(); }, 4000); }
+    else void poll();
+    return () => { controller.abort(); if (timer) clearTimeout(timer); };
   }, [setup, active, scope, revision, ready, upgradeRequired]);
   const retry = async () => {
-    const controller = lifetime.current;
-    if (!active || !controller || controller.signal.aborted || retrying.current || !current.status?.retryAvailable) return;
+    if (!active || retrying.current || !current.status?.retryAvailable) return;
+    const controller = new AbortController(); retryRequest.current = controller;
     requestVersion.current++;
     retrying.current = true; setState(previous => ({ ...previous, busy: true }));
     try {
@@ -42,9 +48,25 @@ export function BrowserSetupGate({ setup, active, scope, children }: { setup: Br
     } catch (error) {
       console.warn("[browser-setup] Retry unavailable", error instanceof Error ? error.name : "unknown");
       if (!controller.signal.aborted) setState({ scope, status: null, error: true, busy: false });
-    } finally { retrying.current = false; }
+    } finally { retrying.current = false; if (retryRequest.current === controller) retryRequest.current = null; }
   };
-  if (ready && !upgradeRequired) return children;
+  const recheck = async (): Promise<boolean> => {
+    if (!active || upgradeRequired || rechecking.current) return false;
+    const controller = new AbortController(); rechecking.current = controller;
+    requestVersion.current++;
+    try {
+      const status = Setup.parse(await setup.status(controller.signal));
+      if (controller.signal.aborted) return false;
+      deferPoll.current = status.status !== "ready";
+      setState({ scope, status, error: false, busy: false });
+      return status.status === "ready";
+    } catch (error) {
+      console.warn("[browser-setup] Reconnect check unavailable", error instanceof Error ? error.name : "unknown");
+      if (!controller.signal.aborted) { deferPoll.current = true; setState({ scope, status: null, error: true, busy: false }); }
+      return false;
+    } finally { if (rechecking.current === controller) rechecking.current = null; }
+  };
+  if (ready && !upgradeRequired) return children(recheck);
   const disabled = current.status?.status === "disabled";
   const failed = current.status && ["failed", "exhausted"].includes(current.status.status);
   const heading = upgradeRequired ? "Update Matrix OS Desktop to use Browser" : current.error ? "Browser setup is unavailable" : disabled ? "Browser is disabled on this Computer"
