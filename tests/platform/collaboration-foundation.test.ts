@@ -84,6 +84,7 @@ describe('platform schema registration (S01 foundation)', () => {
       'checkout',
       'onboarding',
       'billing',
+      'subscription-ai-credit',
       'host-bundles',
       'golden-snapshots',
       'provider-deletion',

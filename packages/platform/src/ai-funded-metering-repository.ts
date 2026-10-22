@@ -1,5 +1,6 @@
 import { readFundedRecoveryAudit } from "./ai-funded-recovery-audit.js";
 import { alignCreditBackedBudget } from './funded-credit-budget.js';
+import { issueConfiguredSubscriptionAiCredit } from './subscription-ai-credit-policy.js';
 import { reconcileFundedTerminalAfterSettlement } from "./ai-funded-terminal-reconciliation.js";
 import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import { settleWaivedUsage } from './ai-funded-usage-waiver-settlement.js';
@@ -94,6 +95,7 @@ const MAX_PROMOTIONAL_GRANTS_PER_RUNTIME = 64;
 export const JEV_MANUAL_REVIEW_GRACE_MS = 10 * 60_000;
 
 export interface AiFundedMeteringRepositoryOptions {
+  subscriptionCreditEnv?: NodeJS.ProcessEnv;
   db: PlatformDB;
   credentialHashSecret: string;
   now: () => Date;
@@ -123,6 +125,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     projection: { includeChatAvailability?: true } = {},
   ) {
     const identity = IdentitySchema.parse(identityInput);
+    await issueConfiguredSubscriptionAiCredit({ db: options.db, repository: { grantCreditInTransaction }, identity,
+      env: options.subscriptionCreditEnv ?? process.env, now: options.now() });
     const checked = options.now();
     const checkedAt = checked.toISOString();
     const currentPeriod = utcMonthStart(checked);

@@ -811,6 +811,9 @@ export interface AccountDeletionJobsTable {
 import type { GooglePurchaseTable, GoogleCheckoutAttributionTable } from './billing/google-tracking-migration.js';
 
 export interface PlatformDatabase {
+  ai_subscription_credit_terms: import('./subscription-ai-credit-types.js').SubscriptionCreditTermsTable;
+  ai_subscription_credit_payments: import('./subscription-ai-credit-types.js').SubscriptionCreditPaymentsTable;
+  ai_subscription_credit_cycles: import('./subscription-ai-credit-types.js').SubscriptionCreditCyclesTable;
   billing_google_purchases: GooglePurchaseTable;
   billing_google_checkout_attribution: GoogleCheckoutAttributionTable;
   preview_drive_grants: PreviewDriveGrantsTable;

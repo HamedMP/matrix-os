@@ -21,6 +21,7 @@ import { createFundedTerminalOutcome } from "./ai-funded-terminal-outcome.js";
 import { createFundedExecutionBatch } from "./ai-funded-execution-batch.js";
 import { createFundedExecutionRecovery } from "./ai-funded-execution-recovery.js";
 import { alignCreditBackedBudget } from './funded-credit-budget.js';
+import { issueConfiguredSubscriptionAiCredit } from './subscription-ai-credit-policy.js';
 
 export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
 
@@ -49,6 +50,7 @@ const RuntimePolicyUpdateSchema = z.object({
 const TOKEN_PATTERN = /^sk-matrix-funded-([A-Za-z0-9][A-Za-z0-9_.:-]{0,79})\.([A-Za-z0-9_-]{43})$/;
 
 export interface AiFundedPolicyRepositoryOptions {
+  subscriptionCreditEnv?: NodeJS.ProcessEnv;
   db: PlatformDB;
   credentialHashSecret: string;
   now?: () => Date;
@@ -265,6 +267,8 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     const cooldownColumn = requestClass === "background" ? "next_background_issue_at" : "next_issue_at";
     const identity = IdentitySchema.parse(identityInput);
     await options.db.ready;
+    if (!probe) await issueConfiguredSubscriptionAiCredit({ db: options.db, repository: metering, identity,
+      env: options.subscriptionCreditEnv ?? process.env, now: now() });
     const checked = now();
     const checkedAt = checked.toISOString();
     const nextIssueAt = new Date(checked.getTime() + issueCooldownMs).toISOString();
@@ -390,6 +394,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
   }
 
   const metering = createAiFundedMeteringRepository({
+    subscriptionCreditEnv: options.subscriptionCreditEnv,
     db: options.db,
     credentialHashSecret: options.credentialHashSecret,
     now,

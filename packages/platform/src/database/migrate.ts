@@ -9,6 +9,7 @@ import { migrateProvisioningJobs } from './migrations/provisioning-jobs.js';
 import { migrateCheckout } from './migrations/checkout.js';
 import { migrateOnboarding } from './migrations/onboarding.js';
 import { migrateBilling } from './migrations/billing.js';
+import { migrateSubscriptionAiCredit } from './migrations/subscription-ai-credit.js';
 import { migrateHostBundles } from './migrations/host-bundles.js';
 import { migrateGoldenSnapshots } from './migrations/golden-snapshots.js';
 import { migrateProviderDeletion } from './migrations/provider-deletion.js';
@@ -36,6 +37,7 @@ export const PLATFORM_MIGRATION_STEPS: readonly PlatformMigrationStep[] = [
   { name: 'checkout', run: migrateCheckout },
   { name: 'onboarding', run: migrateOnboarding },
   { name: 'billing', run: migrateBilling },
+  { name: 'subscription-ai-credit', run: migrateSubscriptionAiCredit },
   { name: 'host-bundles', run: migrateHostBundles },
   { name: 'golden-snapshots', run: migrateGoldenSnapshots },
   { name: 'provider-deletion', run: migrateProviderDeletion },

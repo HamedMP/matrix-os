@@ -5,6 +5,7 @@ import type { PlatformDB } from './db.js';
 import { AccountDeletionAdmissionError, withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import { createAiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { parseModels } from './ai-funded-metering-helpers.js';
+import { issueConfiguredSubscriptionAiCredit, loadSubscriptionAiCreditPolicy } from './subscription-ai-credit-policy.js';
 
 const ORDINARY_MODELS = ['anthropic/claude-sonnet-5', ...MANAGED_WORKERS_AI_MODEL_IDS];
 const STARTER_MICROUSD = 5_000_000;
@@ -82,6 +83,13 @@ export async function initializeCustomerFundedStarterPolicy(
       .select(['owner_id', 'runtime_slot']).where('machine_id', '=', machineId).executeTakeFirstOrThrow();
     if (balance.owner_id !== machine.clerk_user_id || balance.runtime_slot !== 'primary') {
       throw new Error('Funded starter balance identity mismatch');
+    }
+    if (loadSubscriptionAiCreditPolicy(env).enabled) {
+      const repo = createAiFundedPolicyRepository({ db: trx,
+        credentialHashSecret: env.AI_FUNDED_CREDENTIAL_HASH_SECRET ?? '', now: () => new Date(at), subscriptionCreditEnv: env });
+      await issueConfiguredSubscriptionAiCredit({ db: trx, repository: repo,
+        identity: { ownerId: machine.clerk_user_id, machineId, runtimeSlot: 'primary' }, env, now: new Date(at) });
+      return Boolean(inserted);
     }
     const entryId = `starter-lifetime:${createHash('sha256').update(machine.clerk_user_id).digest('hex')}`;
     const prior = await trx.executor.selectFrom('ai_funded_credit_ledger')
