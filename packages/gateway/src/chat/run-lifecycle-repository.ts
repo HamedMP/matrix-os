@@ -1,6 +1,6 @@
 import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineRun } from "./private-routine-authority.js";
-import { appendAssistantDelta, type AssistantDeltaInput, type AssistantDeltaWriteHook } from "./assistant-delta-repository.js";
+import { appendAssistantDelta, type AssistantDeltaInput, type AssistantDeltaWriteHook, type AssistantDeltaTransact } from "./assistant-delta-repository.js";
 import { isProjectSetupInterview } from "./project-setup-interview-context.js";
 import { assertInputClaim, getChatInputState, pendingInputTransition } from "./input-submission.js";
 import {
@@ -40,7 +40,7 @@ import {
 } from "./records.js";
 
 type Executor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
-type Transact = <T>(fn: (trx: Executor) => Promise<T>) => Promise<T>;
+type Transact = AssistantDeltaTransact;
 type AppendOutbox = (
   executor: Executor,
   owner: ChatOwner,

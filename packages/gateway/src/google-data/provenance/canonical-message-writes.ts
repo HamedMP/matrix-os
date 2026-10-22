@@ -22,7 +22,7 @@ const origins = (context: AvailableHistory): GoogleOrigin[] => context.classific
 }));
 
 /** Caller already holds provenance copy -> chat -> run. Lock only the owned assistant and its bounded sidecars. */
-async function payloadHash(tx: AssistantDeltaExecutor, key: AssistantDeltaWriteKey): Promise<string | null> {
+export async function canonicalMessagePayloadHash(tx: AssistantDeltaExecutor, key: AssistantDeltaWriteKey): Promise<string | null> {
   const row = (await tx.selectFrom('chat_messages').select(['id', 'run_id', 'role'])
     .where('id', '=', key.messageId).where('chat_id', '=', key.chatId).forUpdate().executeTakeFirst());
   if (!row) return null;
@@ -89,14 +89,14 @@ export function createGoogleCanonicalMessageWriteHook(options: { now?: () => Dat
         if (shared.rows.length) deny();
         const run = await current.selectFrom('chat_runs').select('id').where('id', '=', key.runId).where('chat_id', '=', key.chatId).forUpdate().executeTakeFirst();
         if (!run) deny();
-        const before = await payloadHash(current, key);
+        const before = await canonicalMessagePayloadHash(current, key);
         const context = await inspect();
         if (copy) match(copy, context, before, now().getTime());
         else if (context.classification === 'google' && before) deny();
         const result = await content(current);
         const fresh = await inspect();
         if (fresh.classification === 'google') {
-          const hash = await payloadHash(current, key);
+          const hash = await canonicalMessagePayloadHash(current, key);
           if (!hash) deny();
           const after = await inspect();
           if (after.classification !== 'google' || deadline === undefined) deny();
@@ -115,8 +115,8 @@ export function createGoogleCanonicalMessageWriteHook(options: { now?: () => Dat
         }
         live();
         return result;
-      }));
-      // This fences returned-message release only. Existing live outbox flush is an explicit installation blocker.
+      }), () => { live(); return true; });
+      // Also fence the returned acknowledgement; nested writes register at the actual outer transaction.
       live();
       return result;
     },

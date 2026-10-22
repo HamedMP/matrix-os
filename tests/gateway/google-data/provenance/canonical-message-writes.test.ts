@@ -260,11 +260,16 @@ function deferred() {
   return { promise, resolve };
 }
 describe('canonical delta returned-message release', () => {
-  it.each(['abort', 'source-expiry', 'invalid-clock'] as const)('withholds acknowledgement after %s during real COMMIT-return', async change => {
-    await mark({ expiresAt: future(60_000) });
+  it.each(['abort', 'source-expiry', 'context-expiry', 'copy-expiry', 'invalid-clock'] as const)('withholds acknowledgement after %s during real COMMIT-return', async change => {
+    await mark({ expiresAt: future(change === 'source-expiry' ? 60_000 : 240_000), retentionDeadline: future(change === 'context-expiry' ? 60_000 : 240_000) });
+    if (change === 'copy-expiry') {
+      await repository.appendAssistantDelta(owner, delta('initial'));
+      await repository.kysely.updateTable('google_copy_registry').set({ retention_deadline: new Date(Date.now() + 60_000) }).execute();
+    }
     let clock = new Date();
     const repo = new ChatRepository(repository.kysely, false, undefined, { ...options,
       assistantDeltaWrites: createGoogleCanonicalMessageWriteHook({ now: () => clock }) });
+    const delivered = vi.fn(); repo.registerOutboxSink(delivered);
     const committed = deferred(); const release = deferred();
     const transact = repo.kysely.transaction.bind(repo.kysely);
     let transactions = 0;
@@ -285,6 +290,71 @@ describe('canonical delta returned-message release', () => {
     } finally { release.resolve(); transactionSpy.mockRestore(); }
     expect(await outcome).toEqual({ error: expect.any(Error) });
     expect(transactions).toBe(1);
+    expect(delivered).not.toHaveBeenCalled();
     expect(await copy()).not.toBeNull(); // The write already committed; only acknowledgement is withheld.
+  });
+});
+
+describe('canonical delta outer transaction release', () => {
+  it('holds all nested events until outer COMMIT and withholds the entire mixed batch on cancellation', async () => {
+    await mark();
+    const delivered = vi.fn(); repository.registerOutboxSink(delivered);
+    const controller = new AbortController();
+    await expect(repository.withTransaction(async outer => {
+      await outer.appendOutboxEvent(owner, key.chatId, 1, 'chat.updated');
+      await outer.withTransaction(async inner => {
+        await inner.appendAssistantDelta(owner, delta(), controller.signal);
+        expect(delivered).not.toHaveBeenCalled();
+      });
+      controller.abort();
+    })).rejects.toThrow();
+    expect(delivered).not.toHaveBeenCalled();
+    expect(await copy()).not.toBeNull();
+  });
+  it('rejects guarded scoped repositories without an actual owning transaction ledger', async () => {
+    await mark();
+    await expect(repository.kysely.transaction().execute(async tx => {
+      const detached = new ChatRepository(tx, true, undefined, options);
+      await detached.appendAssistantDelta(owner, delta());
+    })).rejects.toThrow();
+    expect(await copy()).toBeNull();
+  });
+});
+
+describe('nested canonical write transaction settlement', () => {
+  it.each(['valid', 'expired', 'rollback'] as const)('shares the actual outer COMMIT release boundary: %s', async mode => {
+    await mark({ expiresAt: future(60_000) });
+    let clock = new Date();
+    const checked = vi.fn(() => clock);
+    const repo = new ChatRepository(repository.kysely, false, undefined, { ...options,
+      assistantDeltaWrites: createGoogleCanonicalMessageWriteHook({ now: checked }) });
+    const sink = vi.fn(); repo.registerOutboxSink(sink);
+    const committed = deferred(); const release = deferred();
+    const transaction = repo.kysely.transaction.bind(repo.kysely);
+    const spy = vi.spyOn(repo.kysely, 'transaction').mockImplementation(() => {
+      const builder = transaction(); const execute = builder.execute.bind(builder);
+      vi.spyOn(builder, 'execute').mockImplementation(async work => {
+        const result = await execute(work); committed.resolve(); await release.promise; return result;
+      }); return builder;
+    });
+    const pending = repo.withTransaction(async outer => {
+      await outer.appendOutboxEvent(owner, key.chatId, 1, 'chat.updated');
+      await outer.withTransaction(inner => inner.appendAssistantDelta(owner, delta()));
+      expect(sink).not.toHaveBeenCalled();
+      if (mode === 'rollback') { checked.mockClear(); throw new Error('rollback'); }
+    }).then(() => 'released', () => 'withheld');
+    if (mode === 'rollback') {
+      expect(await pending).toBe('withheld'); expect(sink).not.toHaveBeenCalled(); expect(checked).not.toHaveBeenCalled();
+      spy.mockRestore(); expect(await copy()).toBeNull(); return;
+    }
+    try {
+      await committed.promise; expect(sink).not.toHaveBeenCalled();
+      checked.mockClear();
+      if (mode === 'expired') clock = new Date(clock.getTime() + 120_000);
+    } finally { release.resolve(); spy.mockRestore(); }
+    expect(await pending).toBe(mode === 'valid' ? 'released' : 'withheld');
+    expect(checked).toHaveBeenCalledOnce();
+    expect(sink).toHaveBeenCalledTimes(mode === 'valid' ? 2 : 0);
+    expect(await copy()).not.toBeNull();
   });
 });
