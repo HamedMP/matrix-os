@@ -22,7 +22,7 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
       previous_upstream TEXT NOT NULL CHECK (previous_upstream IN ('cloudflare', 'aws_bedrock')),
       selected_upstream TEXT NOT NULL CHECK (selected_upstream IN ('cloudflare', 'aws_bedrock')),
       previous_revision INTEGER NOT NULL CHECK (previous_revision >= 0),
-      revision INTEGER NOT NULL CHECK (revision > previous_revision),
+      revision INTEGER NOT NULL CONSTRAINT ai_funded_upstream_preference_audit_revision_check CHECK (revision > previous_revision),
       created_at TEXT NOT NULL
     )
   `.execute(db);

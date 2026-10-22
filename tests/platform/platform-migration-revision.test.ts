@@ -5,6 +5,12 @@ import { FUNDED_PROBE_CACHE_REVISION } from "../../packages/platform/src/databas
 import { PLATFORM_SCHEMA_REVISION } from "../../packages/platform/src/database/migration-revision.js";
 
 describe("platform schema revision", () => {
+  it("names the upstream preference audit revision constraint explicitly", async () => {
+    const source = await readFile("packages/platform/src/database/migrations/ai-funded.ts", "utf8");
+    expect(source).toContain(
+      "CONSTRAINT ai_funded_upstream_preference_audit_revision_check CHECK (revision > previous_revision)",
+    );
+  });
   it("binds the independent shared probe cache schema to its own revision", async () => {
     const source = await readFile("packages/platform/src/database/funded-probe-cache-migration.ts");
     expect(FUNDED_PROBE_CACHE_REVISION.fingerprint).toBe(createHash("sha256").update(source).digest("hex"));
