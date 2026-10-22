@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { validateBotImageInferenceBody } from "@matrix-os/contracts";
 /**
  * Model calls from bot workloads (spec 536, contracts/bot-broker-protocol.md).
@@ -195,7 +196,11 @@ export async function forwardBotInference(
 
   try {
     if (isolated && (await deps.isolatedChat!.validate?.(binding) === false || lifecycle.aborted || !stillAuthorized())) return failure(request.requestId, "action_denied");
-    const launch = binding.anthropicApi ? { env: { ANTHROPIC_API_KEY: await deps.matrixAnthropic!.credential(binding, lifecycle) } } : await resolveInferenceCredentials(
+    const managed = accessSourceId === 'matrix_included' && deps.googleData?.managed
+      && await deps.googleData.managed.required(binding, lifecycle) ? deps.googleData.managed : undefined;
+    const managedInitial = managed ? await managed.acquire(binding, lifecycle) : undefined;
+    if (lifecycle.aborted || !stillAuthorized()) return failure(request.requestId, 'action_denied');
+    const launch = managedInitial ? { env: { ANTHROPIC_AUTH_TOKEN: managedInitial.lease.token, ANTHROPIC_BASE_URL: managedInitial.lease.relayBaseUrl } } : binding.anthropicApi ? { env: { ANTHROPIC_API_KEY: await deps.matrixAnthropic!.credential(binding, lifecycle) } } : await resolveInferenceCredentials(
       accessSourceId,
       { requestClass: binding.requestClass, claimKey: request.runtimeHandle },
       lifecycle,
@@ -207,8 +212,9 @@ export async function forwardBotInference(
     const authToken = env?.ANTHROPIC_AUTH_TOKEN;
     if ((!apiKey && !authToken) || (apiKey && authToken)) return failure(request.requestId, "provider_unavailable");
     const baseUrl = env?.ANTHROPIC_BASE_URL?.replace(/\/$/, "") ?? "https://api.anthropic.com";
-    let identity: GoogleInferenceIdentity | null = null;
-    if (deps.googleData) {
+    if (managedInitial && managedInitial.identity.endpoint !== `${baseUrl}${request.path}`) return failure(request.requestId, 'action_denied');
+    let identity: GoogleInferenceIdentity | null = managedInitial?.identity ?? null;
+    if (deps.googleData && !managedInitial) {
       try { identity = googleInferenceIdentity(binding, `${baseUrl}${request.path}`, { kind: apiKey ? "api_key" : "auth_token", value: (apiKey ?? authToken)! }); }
       catch (error: unknown) { if (!(error instanceof GoogleInferencePolicyError) && !(error instanceof TypeError)) throw error; }
     }
@@ -229,6 +235,11 @@ export async function forwardBotInference(
     let googleOrigin = false;
     // Returns "denied" instead of sending when the run lost its authorization.
     const send = async (): Promise<Response | "denied"> => {
+      if (managed) {
+        const fresh = await managed.acquire(binding, lifecycle);
+        if (!isDeepStrictEqual(fresh.identity, identity) || fresh.lease.relayBaseUrl !== baseUrl || lifecycle.aborted || !stillAuthorized()) return 'denied';
+        headers.set('authorization', `Bearer ${fresh.lease.token}`);
+      }
       if (binding.anthropicApi && !await deps.matrixAnthropic!.revalidate(binding, lifecycle)) return "denied";
       if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return "denied";
       if (lifecycle.aborted) return "denied";
