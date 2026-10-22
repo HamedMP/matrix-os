@@ -6,6 +6,12 @@ import { createRoutineDirectChatContexts } from "../bots/routine-direct-chat-con
 import {createBotRoutineApprovals} from "../bots/routine-approval.js";
 import {createBotRoutineExecution,type BotRoutineExecution} from "../bots/routine-execution.js";
 import {BotStateError} from "../bots/repositories/shared.js";
+import { createGooglePilotArtifactWriteFence } from '../google-data/runtime/pilot-artifact-writes.js';
+import { createGoogleContextAdmission } from './google-context-admission.js';
+import type { GooglePilotStorage } from './google-pilot-storage.js';
+import type { GoogleDataPilotConfig } from '../google-data/runtime/pilot-config.js';
+import { createGoogleQualifiedCredentialManager } from '../google-data/managed/credential-manager.js';
+import type { FundedAiRuntimeConfig } from '../funded-ai-credential-manager.js';
 import { createBotInputHistoryReader } from "../bots/historical-input.js";
 import { createSharedAttachmentSource } from "../bots/shared-integration-attachment.js";
 import { createGoogleBrokerRuntime } from './google-data.js';
@@ -168,11 +174,14 @@ export async function startBots(options: {
   runtimeOwnerId?: string | null;
   /** Fixed trusted runtime config only; preserve each actual principal's existing owner data. */
   configuredOwnerIds?: readonly string[];
+  googlePilot?: GoogleDataPilotConfig;
+  googleCopies?: GooglePilotStorage;
+  qualifiedFundedConfig?: FundedAiRuntimeConfig;
   computerId?: string | null;
   nativeProfileGuard?: NativeProviderProfileGuard;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   homePath: string;
-  repository: Pick<ChatRepository, "kysely" | "withTransaction" | "get" | "getTurnRunContext" | "getDetailPage" | "findTurnAdmission" | "findQueuedAdmission" | "appendRoutineReceipt">;
+  repository: Pick<ChatRepository, "kysely" | "withTransaction" | "withContextTransaction" | "get" | "getTurnRunContext" | "getDetailPage" | "findTurnAdmission" | "findQueuedAdmission" | "appendRoutineReceipt">;
   agents: ChatAgentStore;
   executionRoots: Pick<ChatExecutionRootResolver, "resolve">;
   providers: { getSnapshot(): Promise<AiProviderSnapshotV3> };
@@ -189,6 +198,8 @@ export async function startBots(options: {
   /** Test hook for startup checkpoint passes; bounded to the defaults. */
   checkpointReconcile?: { passes?: number; intervalMs?: number };
 }): Promise<BotServices | undefined> {
+  const pilot = options.googlePilot ?? { enabled: false as const };
+  if (pilot.enabled && (pilot.ownerId !== options.runtimeOwnerId || !options.googleCopies || !options.host?.available)) throw new Error('Google pilot unavailable');
   const now = () => options.now?.() ?? new Date();
   const lifetime = new AbortController();
   const db = ownerBotExecutor(options.repository.kysely);
@@ -377,9 +388,14 @@ export async function startBots(options: {
         ensureWorkspace: botId => ensureBotWorkspace(options.homePath, botId), now: options.now }),
       platform: options.routineActionPlatform, now: options.now }) : undefined;
   recoveryRegistry = registry;
-  const googleData = await createGoogleBrokerRuntime({ database: options.repository.kysely, registry,
+  const qualifiedCredentials = pilot.enabled && options.qualifiedFundedConfig
+    ? createGoogleQualifiedCredentialManager(options.qualifiedFundedConfig) : undefined;
+  if (qualifiedCredentials && pilot.enabled && qualifiedCredentials.identity.ownerId !== pilot.ownerId) { await qualifiedCredentials.close(); throw new Error('Google pilot unavailable'); }
+  const googleData = await createGoogleBrokerRuntime({ database: options.repository.kysely, registry, pilotAdmission: pilot,
+    ...(qualifiedCredentials ? { qualifiedCredentials } : {}),
+    ...(options.googleCopies ? { admitContext: createGoogleContextAdmission({ registry, repository: options.repository, adapter: options.googleCopies.context }) } : {}),
     ...(options.matrixAnthropic ? { credentials: options.matrixAnthropic } : {}),
-    ...(options.integrations ? { transport: options.integrations } : {}) });
+    ...(options.integrations ? { transport: options.integrations } : {}) }).catch(async (error: unknown) => { await qualifiedCredentials?.close(); throw error; });
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
   const jevTools = options.jev ? createBotJevTools({ agents: options.agents, recipes, workflow: options.jev,
     signalFor: binding => registry.inferenceSignal(binding) ?? undefined,
@@ -455,6 +471,7 @@ export async function startBots(options: {
   const managed = createManagedPiRuntime({ routineCli: managedRoutineCli, routineSignal: binding => registry.inferenceSignal(binding), toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
+    ...(pilot.enabled ? { artifactWrites: createGooglePilotArtifactWriteFence(registry) } : {}),
     homePath: options.homePath, githubDeveloper, managedRoutine: { execute: managed.executeRoutine }, routines, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
     assertSource: revalidateSource,
     submittedArtifact: (binding, args) => isManagedPiBinding(binding) ? managed.readSubmittedArtifact(binding, args) : orchestrator.readSubmittedArtifact(binding, args),
@@ -480,7 +497,7 @@ export async function startBots(options: {
     db,
     registry,
     sessions: createBotSessionsRepository(db),
-    managedSessions: createManagedPiSessionsRepository(db),
+    managedSessions: createManagedPiSessionsRepository(db, pilot.enabled ? options.googleCopies?.sessions : undefined),
     managedCheckpoints,
     checkpoints,
     runs: {
@@ -556,6 +573,7 @@ export async function startBots(options: {
       await nativeTasks?.close();
       await managed.close();
       await googleData.close();
+      await qualifiedCredentials?.close();
     },
   };
 }

@@ -69,3 +69,25 @@ Central managed authorization requires an injected fixed authenticated control r
 `createGoogleManagedBrokerTransport` reads durable context presence under the exact live registry binding. Presence requires qualified handling; absence alone never proves that unknown saved history is ordinary. Actual snapshot adoption/classification remains required before assembly/send. Managed Google dispatch acquires a distinct exact lease, constructs identity from stable reviewed downstream proof, then reacquires after every queue wait/retry and checks owner policy AFTER token waits. A changed route or failed acquisition never selects legacy credentials. Ordinary requests preserve their existing credential path.
 
 The operator-only `MATRIX_GOOGLE_DATA_PILOT_ENABLED=true` requires the exact existing server runtime owner (`MATRIX_USER_ID ?? MATRIX_CLERK_USER_ID`). It activates strict host controls, not Google eligibility, processor approval or owner consent. Explicit disabled admission preserves ordinary inference while denying collection/classified Google processing. Enabled admission rejects other owners and limits the pilot to live managed Pi bindings. BYO processing remains independently evidence/consent gated. Runtime collection resolves fresh managed control proof without reading or hashing a temporary legacy lease. Owner database operations used by collection/inference/pins are tracked through actual settlement before shutdown. Startup flag installation, filesystem fence and lifecycle/purge adapters follow in a separate composition unit.
+
+### Explicit owner-host pilot startup
+
+`MATRIX_GOOGLE_DATA_PILOT_ENABLED=true` activates stricter host controls only for the exact
+server owner (`MATRIX_USER_ID ?? MATRIX_CLERK_USER_ID`). Missing owner, owner-database copy
+adapters or managed scope host refuses pilot startup. The flag grants neither platform
+eligibility, reviewed provider access nor owner consent. Default-off startup explicitly
+refuses Google collection/classified transfers while preserving ordinary inference.
+
+Pilot repository construction installs canonical, activity and context write hooks and
+metadata-only outbox projections before exposure; managed transcript access uses the
+session hooks. Before collection, route classification, model send and response release,
+the exact live run snapshot is adopted/verified through the owning repository transaction
+and its actual commit-release ledger. Unknown historical content and modified receipts
+refuse admission. All pilot managed artifact writes are unavailable, including ordinary
+runs before first Gmail collection. The qualified credential manager is distinct from the
+legacy cache, closes after broker drain and uses the actual funded runtime identity.
+
+This startup unit does not yet install durable stop receipts, queue/source purge admission
+or a recurring copy-deletion driver. Those lifecycle integrations and the platform fixed
+managed-route resolver remain separate required units; these source checks alone do not
+qualify a deployed pilot or implicit Cloudflare Anthropic routing.
