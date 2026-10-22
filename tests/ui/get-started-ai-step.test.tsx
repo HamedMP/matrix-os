@@ -63,8 +63,35 @@ describe("Make your AI yours", () => {
   it("accepts a typed name", async () => {
     const { port: gatePort } = port();
     render(<GetStartedGate port={gatePort} zIndex={1} />);
-    fireEvent.change(await screen.findByLabelText("Or type a name"), { target: { value: "Juno" } });
+    fireEvent.change(await screen.findByLabelText("AI name"), { target: { value: "Juno" } });
     fireEvent.click(screen.getByRole("button", { name: "Finish" }));
     expect(await screen.findByText(/^Juno · /)).toBeInTheDocument();
+  });
+
+  it("keeps a typed name that starts with a suggestion", async () => {
+    const { port: gatePort } = port();
+    render(<GetStartedGate port={gatePort} zIndex={1} />);
+    const input = await screen.findByLabelText("AI name");
+    fireEvent.change(input, { target: { value: "Atlas" } });
+    expect(input).toHaveValue("Atlas");
+    fireEvent.change(input, { target: { value: "AtlasPrime" } });
+    expect(input).toHaveValue("AtlasPrime");
+  });
+
+  it("blocks names the Matrix Bot cannot use, with a reason", async () => {
+    const { port: gatePort } = port();
+    render(<GetStartedGate port={gatePort} zIndex={1} />);
+    fireEvent.change(await screen.findByLabelText("AI name"), { target: { value: "Task-master" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("That name can't be used. Try another.");
+    expect(screen.getByRole("button", { name: "Finish" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("AI name"), { target: { value: "Taskmaster" } });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Finish" })).toBeEnabled();
+  });
+
+  it("says which choices the sample reply reflects", async () => {
+    const { port: gatePort } = port();
+    render(<GetStartedGate port={gatePort} zIndex={1} />);
+    expect(await screen.findByText(/Language, tone and humour apply in real chats\./)).toBeInTheDocument();
   });
 });

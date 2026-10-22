@@ -45,9 +45,9 @@ export function GetStartedAiStep({ bot, answers, dispatch }: {
       </ChoiceRow>
       <input
         className="mxo-gs__input"
-        aria-label="Or type a name"
+        aria-label="AI name"
         placeholder="Or type a name"
-        value={GET_STARTED_BOT_NAMES.includes(bot.name as (typeof GET_STARTED_BOT_NAMES)[number]) ? "" : bot.name}
+        value={bot.name}
         onChange={(event) => set({ name: event.target.value })}
       />
       <ChoiceRow title="Personality">
@@ -56,6 +56,7 @@ export function GetStartedAiStep({ bot, answers, dispatch }: {
         ))}
       </ChoiceRow>
 
+      {preview ? null : <p className="mxo-failed-line" role="alert">That name can't be used. Try another.</p>}
       <div className="mxo-card mxo-app" aria-live="polite">
         <RabbitAvatar size={28} />
         <span className="mxo-app__name">
@@ -63,6 +64,7 @@ export function GetStartedAiStep({ bot, answers, dispatch }: {
           <span className="mxo-muted mxo-gs__why">{preview ? getStartedBotPreview(preview) : ""}</span>
         </span>
       </div>
+      <p className="mxo-muted">Sample reply for the personality, length and emoji you picked. Language, tone and humour apply in real chats.</p>
 
       <button type="button" className="mxo-link" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}>
         {moreOpen ? "Fewer options" : "More options"}

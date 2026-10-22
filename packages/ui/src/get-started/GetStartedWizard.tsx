@@ -2,6 +2,7 @@ import {
   GET_STARTED_GOALS,
   GET_STARTED_PERSONALITIES,
   getStartedAnswersFromWizard,
+  getStartedBotFromWizard,
   getStartedQuestionProgress,
   getStartedToolGroupsForGoals,
   type GetStartedChoiceGroup,
@@ -133,6 +134,8 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
   const endBlocked = submitting || Boolean(connect?.connectingService);
   const pickedGoals = new Set(wizard.goals);
   const answers = useMemo(() => getStartedAnswersFromWizard(wizard), [wizard]);
+  // A name bot creation would reject cannot be confirmed; the AI step explains why.
+  const botNameInvalid = wizard.step === "ai" && getStartedBotFromWizard(wizard.bot) === null;
 
   // Each step change moves focus to its field, or its heading, for keyboard and screen reader users.
   useEffect(() => {
@@ -222,7 +225,7 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
           ) : (
             <>
               <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => dispatch({ type: "skip" })}>Skip</button>
-              <button type="button" className="mxo-btn mxo-btn--dark" onClick={() => dispatch({ type: "next" })}>
+              <button type="button" className="mxo-btn mxo-btn--dark" disabled={botNameInvalid} onClick={() => dispatch({ type: "next" })}>
                 {wizard.step === "ai" ? "Finish" : "Next"}
               </button>
             </>

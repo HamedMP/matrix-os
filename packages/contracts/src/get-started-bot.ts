@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { InstantiateBotRequestSchema } from "#bots/bot";
 import type { GetStartedAnswers, GetStartedGoalId } from "#get-started";
 
 // Spec 635, Section 7: "Make your AI yours". The owner's choices become one
@@ -54,8 +55,12 @@ const SafeText = (max: number) => z.string().trim().min(1).max(max)
   .regex(/^[^\p{Cc}]*$/u)
   .refine((value) => !value.includes("<!--") && !value.includes("-->"));
 
+/** The bot's name also names the Matrix Bot, so it must pass bot creation's own label rule too. */
+const BotName = SafeText(GET_STARTED_BOT_NAME_MAX_CHARS)
+  .refine((value) => InstantiateBotRequestSchema.shape.name.safeParse(value).success);
+
 export const GetStartedBotSchema = z.object({
-  name: SafeText(GET_STARTED_BOT_NAME_MAX_CHARS),
+  name: BotName,
   personality: z.enum(ids(GET_STARTED_PERSONALITIES)),
   length: z.enum(ids(GET_STARTED_BOT_STYLE.length.options)),
   tone: z.enum(ids(GET_STARTED_BOT_STYLE.tone.options)),

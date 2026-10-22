@@ -39,6 +39,8 @@ describe("GetStartedBotSchema", () => {
     ["long rules", { rules: "a".repeat(GET_STARTED_BOT_RULES_MAX_CHARS + 1) }],
     ["an unknown personality", { personality: "sarcastic" }],
     ["an unknown language", { language: "klingon" }],
+    ["a name bot creation rejects (secret-looking)", { name: "Task-master" }],
+    ["a name bot creation rejects (path)", { name: "/home/atlas" }],
   ])("rejects %s", (_label, patch) => {
     expect(GetStartedBotSchema.safeParse({ ...DEFAULT_GET_STARTED_BOT, ...patch }).success).toBe(false);
   });
