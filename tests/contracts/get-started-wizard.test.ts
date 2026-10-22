@@ -1,0 +1,128 @@
+import { describe, expect, it } from "vitest";
+import {
+  GET_STARTED_NAME_MAX_CHARS,
+  GET_STARTED_WIZARD_STEPS,
+  GetStartedAnswersSchema,
+  GetStartedDraftSchema,
+  getStartedAnswersFromWizard,
+  getStartedDraftFromWizard,
+  getStartedQuestionProgress,
+  initialGetStartedWizard,
+  reduceGetStartedWizard,
+  type GetStartedWizardEvent,
+  type GetStartedWizardState,
+} from "../../packages/contracts/src/index.js";
+
+function run(state: GetStartedWizardState, ...events: GetStartedWizardEvent[]) {
+  return events.reduce(reduceGetStartedWizard, state);
+}
+
+describe("get started wizard", () => {
+  it("starts on the name question with nothing chosen", () => {
+    const state = initialGetStartedWizard();
+    expect(state.step).toBe("name");
+    expect(getStartedAnswersFromWizard(state)).toEqual({ goals: [], tools: [] });
+    expect(GET_STARTED_WIZARD_STEPS).toEqual(["name", "goals", "tools", "summary"]);
+  });
+
+  it("walks forward and back through every step without passing the ends", () => {
+    let state = initialGetStartedWizard();
+    state = run(state, { type: "back" });
+    expect(state.step).toBe("name");
+    state = run(state, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" });
+    expect(state.step).toBe("summary");
+    state = run(state, { type: "back" });
+    expect(state.step).toBe("tools");
+  });
+
+  it("caps the name while typing and trims it in the answers", () => {
+    const state = run(initialGetStartedWizard(), { type: "name", value: `  ${"a".repeat(60)}` });
+    expect(state.name).toHaveLength(GET_STARTED_NAME_MAX_CHARS);
+    expect(getStartedAnswersFromWizard(run(initialGetStartedWizard(), { type: "name", value: "  Sam  " })).name).toBe("Sam");
+  });
+
+  it("drops a blank name and strips control characters from the answers", () => {
+    expect(getStartedAnswersFromWizard(run(initialGetStartedWizard(), { type: "name", value: "   " })).name).toBeUndefined();
+    expect(getStartedAnswersFromWizard(run(initialGetStartedWizard(), { type: "name", value: "Sa\u0007m" })).name).toBe("Sam");
+  });
+
+  it("toggles goals and tools in the order they were picked", () => {
+    const state = run(
+      initialGetStartedWizard(),
+      { type: "toggle-goal", goal: "build" },
+      { type: "toggle-goal", goal: "code" },
+      { type: "toggle-tool", tool: "github" },
+      { type: "toggle-tool", tool: "linear" },
+      { type: "toggle-tool", tool: "github" },
+    );
+    expect(state.goals).toEqual(["build", "code"]);
+    expect(state.tools).toEqual(["linear"]);
+  });
+
+  it("only keeps answers that belong to the goals still chosen", () => {
+    const state = run(
+      initialGetStartedWizard(),
+      { type: "toggle-goal", goal: "code" },
+      { type: "toggle-goal", goal: "build" },
+      { type: "toggle-tool", tool: "github" },
+      { type: "pick-app-idea", id: "habit-tracker" },
+      { type: "pick-starter", id: "ask-anything" },
+      { type: "toggle-goal", goal: "build" },
+    );
+    expect(getStartedAnswersFromWizard(state)).toEqual({ goals: ["code"], tools: ["github"] });
+  });
+
+  it("keeps a starter only when exploring is on screen", () => {
+    const state = run(initialGetStartedWizard(), { type: "pick-starter", id: "play-a-game" });
+    expect(getStartedAnswersFromWizard(state).starter).toBe("play-a-game");
+    expect(getStartedAnswersFromWizard(run(state, { type: "toggle-goal", goal: "code" })).starter).toBeUndefined();
+  });
+
+  it("toggles the single app idea", () => {
+    let state = run(initialGetStartedWizard(), { type: "toggle-goal", goal: "build" }, { type: "pick-app-idea", id: "client-crm" });
+    expect(state.appIdea).toBe("client-crm");
+    state = run(state, { type: "pick-app-idea", id: "client-crm" });
+    expect(state.appIdea).toBeUndefined();
+  });
+
+  it("skip clears the current question's answer and moves on", () => {
+    let state = run(initialGetStartedWizard(), { type: "name", value: "Sam" }, { type: "skip" });
+    expect(state).toMatchObject({ step: "goals", name: "" });
+    state = run(state, { type: "toggle-goal", goal: "code" }, { type: "skip" });
+    expect(state).toMatchObject({ step: "tools", goals: [] });
+    state = run(state, { type: "pick-starter", id: "ask-anything" }, { type: "skip" });
+    expect(state.step).toBe("summary");
+    expect(getStartedAnswersFromWizard(state)).toEqual({ goals: [], tools: [] });
+  });
+
+  it("produces answers and drafts that pass the server schemas", () => {
+    const state = run(
+      initialGetStartedWizard(),
+      { type: "name", value: "Sam" },
+      { type: "next" },
+      { type: "toggle-goal", goal: "code" },
+      { type: "next" },
+      { type: "toggle-tool", tool: "claude-code" },
+    );
+    expect(GetStartedAnswersSchema.parse(getStartedAnswersFromWizard(state))).toEqual({
+      name: "Sam", goals: ["code"], tools: ["claude-code"],
+    });
+    expect(GetStartedDraftSchema.parse(getStartedDraftFromWizard(state))).toEqual({
+      step: 2, name: "Sam", goals: ["code"], tools: ["claude-code"],
+    });
+  });
+
+  it("resumes from a saved draft", () => {
+    const state = initialGetStartedWizard({ step: 2, name: "Sam", goals: ["build"], tools: [], appIdea: "recipe-box" });
+    expect(state).toMatchObject({ step: "tools", name: "Sam", goals: ["build"], appIdea: "recipe-box" });
+  });
+
+  it("resumes an unknown or missing step at the start", () => {
+    expect(initialGetStartedWizard({ goals: ["code"], tools: [] }).step).toBe("name");
+  });
+
+  it("reports progress across the questions only", () => {
+    expect(getStartedQuestionProgress(initialGetStartedWizard())).toEqual({ current: 0, total: 3 });
+    expect(getStartedQuestionProgress(initialGetStartedWizard({ step: 3, goals: [], tools: [] }))).toEqual({ current: 3, total: 3 });
+  });
+});

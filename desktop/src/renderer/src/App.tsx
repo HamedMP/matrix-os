@@ -9,6 +9,7 @@ import { Toaster } from "sonner";
 import SignIn from "./features/signin/SignIn";
 import MissionControl from "./features/mission-control/MissionControl";
 import DesktopUpdateExperience from "./features/updates/DesktopUpdateExperience";
+import GetStartedHost from "./features/get-started/GetStartedHost";
 import OnboardingWidgetHost from "./features/onboarding-widget/OnboardingWidgetHost";
 import DesktopSupportWidget from "./features/support/DesktopSupportWidget";
 import { DesktopDefaultOrganization } from "./features/collaboration/DesktopDefaultOrganization";
@@ -50,7 +51,9 @@ export default function App() {
         )}
       </div>
       <NativeChatBadge />
-      <OnboardingWidgetHost />
+      <GetStartedHost>
+        <OnboardingWidgetHost />
+      </GetStartedHost>
       <DesktopSupportWidget />
       <DesktopUpdateExperience />
       <Toaster

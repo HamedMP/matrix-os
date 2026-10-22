@@ -1,0 +1,106 @@
+import {
+  GET_STARTED_NAME_MAX_CHARS,
+  getStartedToolGroupsForGoals,
+  type GetStartedAnswers,
+  type GetStartedAppIdeaId,
+  type GetStartedDraft,
+  type GetStartedGoalId,
+  type GetStartedStarterId,
+  type GetStartedToolId,
+} from "./get-started.js";
+
+// Spec 635, Section 3: the wizard's client state machine. It is shared by
+// every desktop surface so they cannot drift; hosts only load and save.
+
+export const GET_STARTED_WIZARD_STEPS = ["name", "goals", "tools", "summary"] as const;
+export type GetStartedWizardStep = (typeof GET_STARTED_WIZARD_STEPS)[number];
+
+export interface GetStartedWizardState {
+  step: GetStartedWizardStep;
+  /** Raw text while typing; trimmed and validated only when it becomes an answer. */
+  name: string;
+  goals: GetStartedGoalId[];
+  tools: GetStartedToolId[];
+  appIdea?: GetStartedAppIdeaId;
+  starter?: GetStartedStarterId;
+}
+
+export type GetStartedWizardEvent =
+  | { type: "next" }
+  | { type: "back" }
+  | { type: "skip" }
+  | { type: "name"; value: string }
+  | { type: "toggle-goal"; goal: GetStartedGoalId }
+  | { type: "toggle-tool"; tool: GetStartedToolId }
+  | { type: "pick-app-idea"; id: GetStartedAppIdeaId }
+  | { type: "pick-starter"; id: GetStartedStarterId };
+
+const QUESTION_COUNT = GET_STARTED_WIZARD_STEPS.indexOf("summary");
+
+function toggle<T>(list: readonly T[], item: T): T[] {
+  return list.includes(item) ? list.filter((value) => value !== item) : [...list, item];
+}
+
+function move(state: GetStartedWizardState, delta: 1 | -1): GetStartedWizardState {
+  const index = GET_STARTED_WIZARD_STEPS.indexOf(state.step) + delta;
+  const step = GET_STARTED_WIZARD_STEPS[Math.max(0, Math.min(GET_STARTED_WIZARD_STEPS.length - 1, index))] ?? state.step;
+  return step === state.step ? state : { ...state, step };
+}
+
+function clearStep(state: GetStartedWizardState): GetStartedWizardState {
+  switch (state.step) {
+    case "name": return { ...state, name: "" };
+    case "goals": return { ...state, goals: [] };
+    case "tools": return { ...state, tools: [], appIdea: undefined, starter: undefined };
+    case "summary": return state;
+  }
+}
+
+export function initialGetStartedWizard(draft?: GetStartedDraft): GetStartedWizardState {
+  const step = draft?.step === undefined ? undefined : GET_STARTED_WIZARD_STEPS[draft.step];
+  return {
+    step: step ?? "name",
+    name: draft?.name ?? "",
+    goals: [...(draft?.goals ?? [])],
+    tools: [...(draft?.tools ?? [])],
+    ...(draft?.appIdea ? { appIdea: draft.appIdea } : {}),
+    ...(draft?.starter ? { starter: draft.starter } : {}),
+  };
+}
+
+export function reduceGetStartedWizard(state: GetStartedWizardState, event: GetStartedWizardEvent): GetStartedWizardState {
+  switch (event.type) {
+    case "next": return move(state, 1);
+    case "back": return move(state, -1);
+    case "skip": return move(clearStep(state), 1);
+    case "name": return { ...state, name: event.value.slice(0, GET_STARTED_NAME_MAX_CHARS) };
+    case "toggle-goal": return { ...state, goals: toggle(state.goals, event.goal) };
+    case "toggle-tool": return { ...state, tools: toggle(state.tools, event.tool) };
+    case "pick-app-idea": return { ...state, appIdea: state.appIdea === event.id ? undefined : event.id };
+    case "pick-starter": return { ...state, starter: state.starter === event.id ? undefined : event.id };
+  }
+}
+
+/** Answers limited to what is still on screen for the chosen goals, in the server's shape. */
+export function getStartedAnswersFromWizard(state: GetStartedWizardState): GetStartedAnswers {
+  const groups = getStartedToolGroupsForGoals(state.goals);
+  const visibleTools = new Set(groups.flatMap((group) => (group.kind === "tools" ? group.tools.map((tool) => tool.id) : [])));
+  const name = state.name.replace(/\p{Cc}/gu, "").trim();
+  const answers: GetStartedAnswers = {
+    goals: [...state.goals],
+    tools: state.tools.filter((tool) => visibleTools.has(tool)),
+  };
+  if (name) answers.name = name;
+  if (state.appIdea && groups.some((group) => group.kind === "app-idea")) answers.appIdea = state.appIdea;
+  if (state.starter && groups.some((group) => group.kind === "starter")) answers.starter = state.starter;
+  return answers;
+}
+
+export function getStartedDraftFromWizard(state: GetStartedWizardState): GetStartedDraft {
+  return { step: GET_STARTED_WIZARD_STEPS.indexOf(state.step), ...getStartedAnswersFromWizard(state) };
+}
+
+/** Progress bars cover the questions; the summary shows them all done. */
+export function getStartedQuestionProgress(state: GetStartedWizardState): { current: number; total: number } {
+  return { current: GET_STARTED_WIZARD_STEPS.indexOf(state.step), total: QUESTION_COUNT };
+}

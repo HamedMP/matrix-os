@@ -88,6 +88,7 @@ export * from "#funded-ai";
 export * from "#jev";
 export * from "#jev-inbox";
 export * from "#get-started";
+export * from "#get-started-wizard";
 export * from "#getting-started";
 export * from "#integration-connections";
 export * from "#onboarding-widget";
