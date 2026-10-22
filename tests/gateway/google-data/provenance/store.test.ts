@@ -144,6 +144,16 @@ suite("durable Google provenance and conservative purge", () => {
     expect(await store.executeClaim(old, { chat: async () => ({ status: "deleted" }) })).toBe("stale");
     expect(await store.executeClaim(next, { chat: async () => ({ status: "missing" }) })).toBe("deleted");
   });
+  it("classifies non-error handler failures as unavailable without persisting their payload", async () => {
+    await store.record(copy());
+    const request = await store.requestPurge(owner, connection, "request_untyped");
+    const claim = (await store.claimPurge("worker"))!;
+    expect(await store.executeClaim(claim, { chat: async () => { throw { privatePayload: "synthetic secret" }; } })).toBe("unresolved");
+    expect(await store.status(owner, request.id)).toMatchObject({ unresolved: 1, complete: false });
+    const job = await sql<{ reason: string }>`SELECT reason FROM google_copy_purge_jobs WHERE id=${claim.jobId}`.execute(db);
+    expect(job.rows).toEqual([{ reason: "unavailable" }]);
+    expect(JSON.stringify(job.rows)).not.toContain("synthetic secret");
+  });
   it("mixed origin purge removes the whole managed entity and associates all requesting accounts", async () => {
     await store.record(copy({ origins: [{ connectionId: connection, ...binding }, { connectionId: "gmail_two", ...binding }] }));
     const a = await store.requestPurge(owner, connection, "request_one");
