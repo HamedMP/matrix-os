@@ -43,6 +43,22 @@ describe.skipIf(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL)('qualified re
     const legacy = createAiFundedMeteringRepository({ db, credentialHashSecret: hashSecret, now: () => at, policyFreshnessMs: 1000, reservationTtlMs: 30000, inFlightTtlMs: 60000 });
     await expect(legacy.authorize({ credential: input.credential, requestId: 'legacy_one', modelId: model, maxCostMicrousd: 100, billingMode: 'usage' })).rejects.toThrow();
   });
+  it('commits a waiting interactive claim before rejection so background cannot jump the queue', async () => {
+    const interactive = await issued();
+    const active = await service.authorize({ ...authorization(interactive.lease.credential.token), requestId: 'active_request' }, signal());
+    await expect(service.authorize({ ...authorization(interactive.lease.credential.token), requestId: 'waiting_request', claimKey: 'waiting_turn' }, signal())).rejects.toThrow();
+    const claims = await db.executor.selectFrom('ai_funded_priority_claims').selectAll().execute();
+    expect(claims).toEqual([expect.objectContaining({ owner_id: identity.ownerId, machine_id: identity.machineId, claim_key: 'waiting_turn', billing_mode: 'usage' })]);
+    const metering = createAiFundedMeteringRepository({ db, credentialHashSecret: hashSecret, now: () => at, policyFreshnessMs: 1000, reservationTtlMs: 30000, inFlightTtlMs: 60000 });
+    await metering.releaseReservation({ reservationId: active.authorization.reservation.reservationId, tokenId: interactive.lease.credential.tokenId, reason: 'pre_upstream_failure' });
+    const background = await service.issue(auth(), { ...selector(), requestClass: 'background' }, signal());
+    await expect(service.authorize({ ...authorization(background.lease.credential.token), requestId: 'background_request' }, signal())).rejects.toThrow();
+    expect((await rows()).filter(row => row.status === 'reserved')).toHaveLength(0);
+    expect(await db.executor.selectFrom('ai_funded_priority_claims').selectAll().execute()).toEqual(claims);
+    const resumed = await service.authorize({ ...authorization(interactive.lease.credential.token), requestId: 'resumed_request', claimKey: 'waiting_turn' }, signal());
+    expect(resumed.authorization.reservation.requestId).toBe('resumed_request');
+    expect(await db.executor.selectFrom('ai_funded_priority_claims').selectAll().execute()).toHaveLength(0);
+  });
   it('dispatch check derives class, requires no control resolution and detects current revocation', async () => {
     const lease = await issued(); resolveRoute.mockClear(); resolveRoute.mockRejectedValue(new Error('must not resolve'));
     const input = { ...selector(), credential: lease.lease.credential.token };
@@ -62,6 +78,16 @@ describe.skipIf(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL)('qualified re
     });
     await expect(service.authorize(authorization(lease.lease.credential.token), controller.signal)).rejects.toThrow('Qualified AI unavailable'); expect(await rows()).toHaveLength(0);
     expect((await db.executor.selectFrom('ai_funded_runtime_balances').select('reserved_microusd').executeTakeFirstOrThrow()).reserved_microusd).toBe(0);
+  });
+  it('does not log provider-controlled exception names during control failure', async () => {
+    const lease = await issued(); const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    resolveRoute.mockRejectedValue(Object.assign(new Error('private provider detail'), { name: 'private-credential-shaped-name' }));
+    try {
+      await expect(service.authorize(authorization(lease.lease.credential.token), signal())).rejects.toThrow('Qualified AI unavailable');
+      expect(warning).toHaveBeenCalledWith('[qualified-funded] Operation unavailable');
+      expect(JSON.stringify(warning.mock.calls)).not.toContain('private-credential');
+      expect(await rows()).toHaveLength(0);
+    } finally { warning.mockRestore(); }
   });
   it('rolls back balance hold when reservation persistence fails', async () => {
     const lease = await issued(); await sql`alter table ai_funded_usage_reservations add constraint synthetic_failure check(false) not valid`.execute(db.executor);
