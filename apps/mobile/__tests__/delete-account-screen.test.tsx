@@ -12,7 +12,7 @@ jest.mock("@/lib/queries/use-account-deletion", () => ({
 }));
 
 jest.mock("@/lib/account-records-file", () => ({
-  saveAccountRecords: (json: string) => mockSaveAccountRecords(json),
+  saveAccountRecords: (json: string, page?: number) => mockSaveAccountRecords(json, page),
 }));
 
 import React from "react";
@@ -63,6 +63,11 @@ function exportState(overrides: Record<string, unknown> = {}) {
     loadMoreFiles: mockLoadMoreFiles,
     isLoadingFiles: false,
     fetchRecords: mockFetchRecords,
+    fetchMoreRecords: mockFetchRecords,
+    confirmRecordsSaved: jest.fn(),
+    recordsPage: 0,
+    hasMoreRecords: false,
+    recordsComplete: false,
     isFetchingRecords: false,
     ...overrides,
   };
@@ -362,7 +367,7 @@ describe("native mobile delete account screen", () => {
 
       fireEvent.press(screen.getByLabelText("Save account records"));
 
-      await waitFor(() => expect(mockSaveAccountRecords).toHaveBeenCalledWith('{"version":1}'));
+      await waitFor(() => expect(mockSaveAccountRecords).toHaveBeenCalledWith('{"version":1}', 1));
     });
 
     it("reports a failed records export without saving anything", async () => {

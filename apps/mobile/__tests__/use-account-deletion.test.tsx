@@ -333,6 +333,42 @@ describe("useAccountExport", () => {
     expect(result.current.hasMoreFiles).toBe(true);
   });
 
+  it("does not expose signed file links after the active account changes", async () => {
+    mockFetchExportFiles.mockResolvedValueOnce(firstPage);
+    const { result, rerender } = renderHook(() => useAccountExport(), { wrapper });
+
+    await act(async () => {
+      await result.current.loadFiles();
+    });
+    expect(result.current.files).toEqual(firstPage.files);
+
+    mockSession = { isSignedIn: true, userId: "user_b", token: "other-session-token" };
+    rerender(undefined);
+
+    expect(result.current.files).toBeNull();
+    expect(result.current.instructions).toEqual([]);
+    expect(result.current.hasMoreFiles).toBe(false);
+  });
+
+  it("discards a signed file response that settles after an account change", async () => {
+    let resolvePage!: (page: typeof firstPage) => void;
+    mockFetchExportFiles.mockReturnValueOnce(new Promise((resolve) => { resolvePage = resolve; }));
+    const { result, rerender } = renderHook(() => useAccountExport(), { wrapper });
+
+    let request!: Promise<unknown>;
+    act(() => { request = result.current.loadFiles(); });
+    await waitFor(() => expect(result.current.isLoadingFiles).toBe(true));
+
+    mockSession = { isSignedIn: true, userId: "user_b", token: "other-session-token" };
+    rerender(undefined);
+    await act(async () => {
+      resolvePage(firstPage);
+      await expect(request).rejects.toMatchObject({ reason: "unavailable" });
+    });
+
+    expect(result.current.files).toBeNull();
+  });
+
   it("fetches the account records with the session token", async () => {
     mockFetchRecords.mockResolvedValue('{"version":1}');
     const { result } = renderHook(() => useAccountExport(), { wrapper });
@@ -345,4 +381,21 @@ describe("useAccountExport", () => {
     expect(records).toBe('{"version":1}');
     expect(mockFetchRecords).toHaveBeenCalledWith("session-token");
   });
+  it("advances record continuation only after a page is saved and retries failures", async () => {
+    const first = JSON.stringify({ version: 2, posts: [{ id: "one" }], nextCursor: "records-next", complete: false });
+    const last = JSON.stringify({ version: 2, posts: [{ id: "two" }], nextCursor: null, complete: true });
+    mockFetchRecords.mockResolvedValueOnce(first).mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(last);
+    const { result } = renderHook(() => useAccountExport(), { wrapper });
+    await act(async () => { await result.current.fetchRecords(); });
+    expect(result.current.recordsPage).toBe(0);
+    act(() => result.current.confirmRecordsSaved(first));
+    expect(result.current.recordsPage).toBe(1); expect(result.current.hasMoreRecords).toBe(true);
+    await act(async () => { await expect(result.current.fetchMoreRecords()).rejects.toThrow("offline"); });
+    expect(result.current.recordsPage).toBe(1);
+    await act(async () => { await result.current.fetchMoreRecords(); });
+    expect(mockFetchRecords.mock.calls.slice(1)).toEqual([["session-token", "records-next"], ["session-token", "records-next"]]);
+    act(() => result.current.confirmRecordsSaved(last));
+    expect(result.current.recordsPage).toBe(2); expect(result.current.recordsComplete).toBe(true);
+  });
+
 });

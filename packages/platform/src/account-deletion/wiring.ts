@@ -16,7 +16,7 @@ import type { AccountDeletionExport } from './routes.js';
 export interface AccountDeletionRuntime {
  service:AccountDeletionService;
  exportData(owner:string,cursor?:string):Promise<AccountDeletionExport>;
- exportPlatformData(owner:string):Promise<unknown>;
+ exportPlatformData(owner:string,cursor?:string):Promise<unknown>;
  registerAppleAuthorization(owner:string,code:string):Promise<void>;
  stop():void;
  drain():Promise<void>;
@@ -53,10 +53,16 @@ export async function createConfiguredAccountDeletionRuntime(input:{
  const service=createAccountDeletionService({db:input.db.kysely,adapters,secret});
  const worker=input.backgroundWorkersEnabled===false?undefined:startAccountDeletionWorker({service});
  return {service,
- async exportData(owner,cursor){const result=await listAccountExportFiles(store,owner,root,cursor);return {
- downloads:result.files.map(file=>({name:file.path,url:file.downloadUrl})),migrationUrl:'/runtime',
- instructions:[result.migrationInstructions],nextCursor:result.nextCursor};},
- exportPlatformData:owner=>exportOwnerPlatformData(input.db,owner),
+ async exportData(owner,cursor){
+ const machine=await input.db.executor.selectFrom('user_machines').select('machine_id').where('clerk_user_id','=',owner).limit(1).executeTakeFirst();
+ const result=await listAccountExportFiles(store,owner,root,cursor,{secret,hasComputer:Boolean(machine)});
+ const inventoryNote=result.inventoryStatus==='no_computer'?'No computer is recorded for this account. Account records can still be downloaded.'
+   :result.inventoryStatus==='missing_backups'?'No backed-up files were found for your computers. Open your computer to export unsynced data; retry if backups are expected.'
+   :result.inventoryStatus==='scanning'?'Inventory is not complete. Load more files before deciding that backups are missing.':'';
+ return {
+ downloads:result.files.map(file=>({name:file.path,url:file.downloadUrl,lastModified:file.lastModified,sizeBytes:file.sizeBytes,kind:file.kind,expiresIn:file.expiresIn,expiresAt:file.expiresAt})),migrationUrl:'/runtime',inventoryStatus:result.inventoryStatus,
+ instructions:[result.migrationInstructions,...(inventoryNote?[inventoryNote]:[])],nextCursor:result.nextCursor};},
+ exportPlatformData:(owner,cursor)=>exportOwnerPlatformData(input.db,owner,{cursor,secret}),
  async registerAppleAuthorization(owner,code){
    if(!appleValues.every(Boolean))throw Error('Apple authorization unavailable');
    await withAccountDeletionAdmission(input.db,owner,async()=>registerNativeAppleAuthorization({clerkSecretKey,credentialSecret:secret,

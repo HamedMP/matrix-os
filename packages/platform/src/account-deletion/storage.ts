@@ -5,7 +5,7 @@ import { z } from 'zod/v4';
 import type { R2ClientConfig } from '../r2-client.js';
 
 export interface AccountDeletionObjectStore {
-  listObjects(prefix: string, cursor?: string): Promise<{ keys: string[]; nextCursor: string | null }>;
+  listObjects(prefix: string, cursor?: string): Promise<{ keys: string[]; objects?: Array<{ key: string; lastModified: string | null; sizeBytes: number | null }>; nextCursor: string | null }>;
   deleteObject(key: string): Promise<void>;
   abortOwnerMultipartUploads(prefix: string): Promise<void>;
   getPresignedGetUrl?(key: string, expiresIn?: number): Promise<string>;
@@ -48,7 +48,10 @@ export function createAccountDeletionObjectStore(config: R2ClientConfig): Accoun
         MaxKeys: 1000, ContinuationToken: cursor }), { abortSignal: AbortSignal.timeout(10_000) });
       const keys = (result.Contents ?? []).map((entry) => entry.Key);
       if (keys.some((key) => !key) || (result.IsTruncated && !result.NextContinuationToken)) throw new Error('Storage inventory incomplete');
-      return { keys: keys as string[], nextCursor: result.IsTruncated ? result.NextContinuationToken! : null };
+      const objects = (result.Contents ?? []).map(entry => ({ key: entry.Key!,
+        lastModified: entry.LastModified ? entry.LastModified.toISOString() : null,
+        sizeBytes: entry.Size ?? null }));
+      return { keys: keys as string[], objects, nextCursor: result.IsTruncated ? result.NextContinuationToken! : null };
     },
     async deleteObject(key) {
       await s3.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key }), { abortSignal: AbortSignal.timeout(30_000) });
