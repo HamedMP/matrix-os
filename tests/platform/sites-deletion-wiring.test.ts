@@ -19,7 +19,7 @@ const configured = vi.hoisted(() => vi.fn((config: {
 vi.mock('../../packages/platform/src/account-deletion/storage.js', async (original) => ({ ...await original<object>(), createAccountDeletionObjectStore: configured }));
 vi.mock('../../packages/platform/src/customer-vps-hetzner.js', () => ({ createHetznerClient: () => ({ async listServersByLabel() { return []; }, async getServer() { return null; } }) }));
 let db: PlatformDB;
-const env = { ACCOUNT_DELETION_ENABLED: 'true', ACCOUNT_DELETION_SECRET: 'sites-deletion-wiring-secret-123456', CLERK_SECRET_KEY: 'test', R2_ACCESS_KEY_ID: 'sync-key', R2_SECRET_ACCESS_KEY: 'sync-secret',
+const env = { ACCOUNT_DELETION_CONFIGURED: 'true', ACCOUNT_DELETION_SECRET: 'sites-deletion-wiring-secret-123456', CLERK_SECRET_KEY: 'test', R2_ACCESS_KEY_ID: 'sync-key', R2_SECRET_ACCESS_KEY: 'sync-secret',
     R2_SITES_BUCKET: 'private-sites', R2_SITES_ACCESS_KEY_ID: 'sites-key', R2_SITES_SECRET_ACCESS_KEY: 'sites-secret', R2_SITES_SESSION_TOKEN: 'sites-session', R2_SITES_ENDPOINT: 'https://private-sites.example.test' };
 beforeAll(async () => { db = (await createTestPlatformDb()).db;
     await insertUserMachine(db, { machineId: 'test-machine', clerkUserId: 'user_sites_delete_wiring', handle: 'deletion-wiring', status: 'running', provisionedAt: new Date().toISOString() });
