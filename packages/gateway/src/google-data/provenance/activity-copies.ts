@@ -9,7 +9,7 @@ import { createGoogleModelHistoryStore, type GoogleModelHistory } from '../runti
 import { boundedProvenanceTransaction } from './transaction.js';
 import { createGoogleProvenanceStore } from './store.js';
 import { GoogleProvenanceUnavailable, originKey, type GoogleCopy, type PurgeHandlers } from './contracts.js';
-import { matchingOrdinaryCopyReceipt, recordOrdinaryCopyReceipt, retireOrdinaryCopyReceipt } from './ordinary-copy-receipts.js';
+import { matchingOrdinaryCopyReceipt, recordOrdinaryCopyReceipts, retireOrdinaryCopyReceipt } from './ordinary-copy-receipts.js';
 
 const activityId = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 export const googleActivityEntityRef = (id: string) => `gae_${activityId.parse(id)}`;
@@ -121,9 +121,9 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
         await inspect();
         await retireOrdinaryCopyReceipt(current, { ownerId: key.owner.ownerId, chatId: key.chatId, kind: 'derived', entityRef: googleActivityEntityRef(row.id) });
       }
-      else if (fresh.classification === 'ordinary') for (const row of after) {
-        await recordOrdinaryCopyReceipt(current, { ownerId: key.owner.ownerId, chatId: key.chatId, kind: 'derived', entityRef: googleActivityEntityRef(row.id) }, row.hash);
-      }
+      else if (fresh.classification === 'ordinary') await recordOrdinaryCopyReceipts(current, after.map(row => ({
+        key: { ownerId: key.owner.ownerId, chatId: key.chatId, kind: 'derived', entityRef: googleActivityEntityRef(row.id) }, hash: row.hash,
+      })));
       live(); return result;
     }), () => { live(); return true; });
     live(); return result;

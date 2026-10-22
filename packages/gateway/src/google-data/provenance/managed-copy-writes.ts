@@ -71,6 +71,12 @@ export function createGoogleManagedPiCopyHooks(options: { now?: () => Date } = {
       if (!Number.isFinite(deadline)) deny();
       releaseDeadline = Math.min(releaseDeadline ?? deadline, deadline);
     };
+    const live = () => {
+      check(signal); const clock = now().getTime();
+      if (!Number.isFinite(clock) || (releaseDeadline !== undefined && releaseDeadline <= clock)) deny();
+      check(signal);
+    };
+    live();
     const result = await boundedProvenanceTransaction<OwnerBotDatabase, T>(executor, async tx => {
       const history = createGoogleModelHistoryStore<OwnerBotDatabase>(tx, { now });
       const inspect = async () => {
@@ -80,7 +86,7 @@ export function createGoogleManagedPiCopyHooks(options: { now?: () => Date } = {
           captureDeadline(context.googleContext.retentionDeadline);
           for (const source of context.googleContext.sources) captureDeadline(source.expiresAt);
         }
-        check(signal);
+        live();
         return context;
       };
       await inspect();
@@ -96,8 +102,9 @@ export function createGoogleManagedPiCopyHooks(options: { now?: () => Date } = {
       else if (previous) {
         const proof = await matchingOrdinaryCopyReceipt(tx, receiptKey, hash(previous));
         if (!proof) deny();
-        captureDeadline(proof);
+        captureDeadline(proof); live();
       }
+      live();
       // Old opaque caches remain denied. Only an exact receipt issued by this
       // writer while the same born history was ordinary supports first taint.
       const result = await content(tx);
@@ -124,7 +131,7 @@ export function createGoogleManagedPiCopyHooks(options: { now?: () => Date } = {
         await recordOrdinaryCopyReceipt(tx, receiptKey, hash(saved));
       }
       if (copy && new Date(copy.retentionDeadline) <= now()) deny();
-      check(signal);
+      live();
       return result;
     });
     // COMMIT can wait after the final SQL check. Reuse the captured strict lease, never open a

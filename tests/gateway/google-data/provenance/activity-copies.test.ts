@@ -68,6 +68,16 @@ const activity = (id = 'activity_one', summary = 'synthetic mail summary') => ({
 const activityCopy = (id = 'activity_one') => provenance.inspect(owner.ownerId, 'derived', googleActivityEntityRef(id));
 
 describe('registered activity copies', () => {
+  it('runs one bounded receipt cleanup for a full ordinary activity batch', async () => {
+    for (let batch=0;batch<5;batch++) await repository.appendRunActivities(owner, key.chatId, key.runId,
+      Array.from({ length:100 }, (_,i) => activity(`activity_${batch*100+i}`)));
+    await sql`INSERT INTO google_ordinary_copy_receipts(owner_id,chat_id,kind,entity_ref,content_hash,expires_at)
+      SELECT ${owner.ownerId},${key.chatId},'derived','expired_'||n,repeat('a',64),clock_timestamp()-interval '1 day'
+      FROM generate_series(1,250) n`.execute(repository.kysely);
+    await repository.appendRunActivities(owner, key.chatId, key.runId, [{ ...activity('activity_0'), status:'completed' }]);
+    expect((await sql`SELECT count(*)::int AS n FROM google_ordinary_copy_receipts WHERE entity_ref LIKE 'expired_%'`.execute(repository.kysely)).rows)
+      .toEqual([{ n:150 }]);
+  }, 30000);
   it('continues an exact verified ordinary activity after first Gmail collection', async () => {
     const input = activity('activity_first', 'Waiting for Gmail consent');
     await repository.appendRunActivities(owner, key.chatId, key.runId, [input]);
