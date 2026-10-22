@@ -137,3 +137,9 @@ other-origin registered content remains; no whole-context erasure is attested in
 Local dedup metadata is non-expiring and capped 4096 rather than evicting replay protection.
 Platform remote revocation delivery/ACK still requires the separate authenticated poller;
 local expiry cannot substitute for delivery of a disconnect or owner deletion command.
+
+Pilot owner-database construction explicitly sets the actual shared PostgreSQL pool's
+connection/acquisition timeout to 2000 ms; ordinary callers retain their previous defaults.
+This bounds stalled handshakes and queued borrowing, not every SQL operation or process
+stop. Operation cancellation checks and actual transaction/handler settlement drain remain
+separate requirements; the driver never destroys the shared pool to simulate cancellation.
