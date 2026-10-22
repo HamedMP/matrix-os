@@ -37,6 +37,7 @@ import { OsViewStateRepository } from "../os-view-state/repository.js";
 import type { createProjectManager } from "../project-manager.js";
 import type { createWorktreeManager } from "../worktree-manager.js";
 import { constructOwnerCollaboration } from "./collaboration.js";
+import { createOwnerChatHistoryRepository } from "./chat-history.js";
 
 export interface OwnerDatabaseBootstrapOptions {
   databaseUrl?: string;
@@ -144,9 +145,10 @@ export async function initializeOwnerDatabaseServices(
       const osViewStateRepository = new OsViewStateRepository(kysely as Kysely<any>);
       services.osViewStateRepository = osViewStateRepository;
       await osViewStateRepository.bootstrap();
-      const chatRepository = new ChatRepository(kysely as Kysely<any>);
+      const chatHistory = createOwnerChatHistoryRepository(kysely as Kysely<any>);
+      const chatRepository = chatHistory.repository;
       services.chatRepository = chatRepository;
-      await chatRepository.bootstrap();
+      await chatHistory.bootstrap();
       const ownerChatExecutionRoots = createChatExecutionRootResolver({
         homePath: options.homePath,
         projects: options.codingAgentProjectManager,

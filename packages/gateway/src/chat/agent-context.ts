@@ -18,6 +18,7 @@ import { recipeSkillPrompt } from "./recipe-skill-context.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 import { MATRIX_BOT_INSTANCE_ID, MATRIX_BOT_SELECTION } from "../bots/selection.js";
+import type { GoogleModelHistoryReader } from "../google-data/runtime/model-history-reader.js";
 
 /** Finds the recipe bot whose live direct chat this is, if any. */
 export interface BotChatLookup {
@@ -71,18 +72,28 @@ export class ChatAgentContext {
     enabled: () => boolean;
     drives?: { authorize(owner: ChatOwner, chatId: string, references: OrganizationDriveContextReference[]): Promise<void> };
     assertChatReferenceAllowed?: (owner: ChatOwner, chatId: string) => Promise<void>;
+    modelHistory?: GoogleModelHistoryReader;
     admitJevWorkflow?: (owner: ChatOwner, agent: ChatAgent) => Promise<void>;
     botChats?: BotChatLookup;
   }) {}
 
-  private async snapshot(owner: ChatOwner, chatId: string, limit: number): Promise<ChatContextSnapshot> {
+  private async snapshot(owner: ChatOwner, chatId: string, limit: number, targetChatId?: string): Promise<ChatContextSnapshot> {
+    // Keep non-database authorization outside the transaction-scoped read callback.
+    await this.options.assertChatReferenceAllowed?.(owner, chatId);
+    if (targetChatId && this.options.modelHistory) {
+      return this.options.modelHistory.read({ owner, chatId, targetChatId,
+        read: repository => this.readSnapshot(repository, owner, chatId, limit) });
+    }
+    return this.readSnapshot(this.options.repository, owner, chatId, limit);
+  }
+
+  private async readSnapshot(repository: Pick<ChatRepository, "getDetailPage">, owner: ChatOwner, chatId: string, limit: number): Promise<ChatContextSnapshot> {
     const parsedId = CanonicalChatIdSchema.safeParse(chatId);
     if (!parsedId.success) throw new ChatAgentContextError("context_unavailable");
-    const detail = await this.options.repository.getDetailPage(owner, parsedId.data, { limit: 40 });
+    const detail = await repository.getDetailPage(owner, parsedId.data, { limit: 40 });
     if (!detail || detail.record.chat.lifecycle !== "active" || detail.record.chat.collaboration) {
       throw new ChatAgentContextError("context_unavailable");
     }
-    await this.options.assertChatReferenceAllowed?.(owner, chatId);
     const text = transcript(detail.messages, limit);
     return {
       chatId, title: detail.record.chat.title,
@@ -114,6 +125,7 @@ export class ChatAgentContext {
   }
 
   async prepare(owner: ChatOwner, chatId: string, inputValue: CanonicalCreateChatTurnRequest) {
+    owner = structuredClone(owner);
     const input = CanonicalCreateChatTurnRequestSchema.parse(inputValue);
     const references = input.parts.flatMap((part) => part.type === "resource_reference" ? [part.resource] : []);
     // A recipe bot's direct chat always runs that bot, whatever the client selected. Its
@@ -175,7 +187,7 @@ export class ChatAgentContext {
     const needsHistory = Boolean(agent || current.runs.at(-1)?.context?.agent || current.runs.at(-1)?.context?.history);
     const historyText = needsHistory ? transcript(current.messages, 12_000) : undefined;
     const chats: ChatContextSnapshot[] = [];
-    for (const reference of chatReferences) chats.push(await this.snapshot(owner, reference.id, 8_000));
+    for (const reference of chatReferences) chats.push(await this.snapshot(owner, reference.id, 8_000, chatId));
     const context: ChatRunContext | undefined = agent || chats.length || needsHistory || driveReferences.length
       ? ChatRunContextSchema.parse({
           version: 1, requestHash: chatContextRequestHash(input),
@@ -220,6 +232,8 @@ export class ChatAgentContext {
 
   async revalidate(owner: ChatOwner, chatId: string, context?: ChatRunContext): Promise<void> {
     if (!context) return;
+    owner = structuredClone(owner);
+    context = ChatRunContextSchema.parse(context);
     if ((context.agent || context.chats.length || context.drives?.length) && !this.options.enabled()) throw new ChatAgentContextError("feature_disabled");
     if (context.agent) {
       const currentAgent = await this.agent(owner, context.agent.id);
@@ -255,7 +269,10 @@ export class ChatAgentContext {
     for (const source of context.chats) {
       await this.options.assertChatReferenceAllowed?.(owner, source.chatId);
       if (source.chatId === chatId) throw new ChatAgentContextError("context_unavailable");
-      const current = await this.options.repository.get(owner, source.chatId);
+      const current = this.options.modelHistory
+        ? await this.options.modelHistory.read({ owner, chatId: source.chatId, targetChatId: chatId,
+          read: repository => repository.get(owner, source.chatId) })
+        : await this.options.repository.get(owner, source.chatId);
       if (!current || current.chat.lifecycle !== "active" || current.chat.collaboration) {
         throw new ChatAgentContextError("context_unavailable");
       }

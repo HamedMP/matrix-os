@@ -34,13 +34,29 @@ type Run = {
  * late answers enter the same native conversation at its next safe turn boundary.
  * Registries are capped; each question expires and every Run drains on cancellation.
  */
-export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options: { questionTimeoutMs?: number } = {}): CanonicalChatProviderAdapter {
+export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options: { questionTimeoutMs?: number;
+  beforeNativeDispatch?(input: Pick<CanonicalProviderRunInput, 'owner' | 'chatId' | 'runId' | 'signal'>,
+    registeredAdapter: CanonicalChatProviderAdapter): Promise<void>;
+} = {}): CanonicalChatProviderAdapter {
   if (!native.deferInput || !native.resume) return native;
   const runs = new Map<string, Run>();
   const timeout = Math.max(1, Math.min(options.questionTimeoutMs ?? 60 * 60_000, 60 * 60_000));
   const digest = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 32);
 
-  async function* execute(input: CanonicalProviderRunInput): AsyncIterable<CanonicalProviderRunEvent> {
+  async function beforeNative(run: Run): Promise<void> {
+    const { chatId, runId, signal } = run.input;
+    const owner = structuredClone(run.input.owner);
+    const check = () => {
+      if (signal.aborted || runs.get(runId) !== run || run.input.signal !== signal || run.input.chatId !== chatId
+        || run.input.runId !== runId || run.input.owner.type !== owner.type || run.input.owner.ownerId !== owner.ownerId) throw new ChatInputNotDeliveredError();
+    };
+    check();
+    await options.beforeNativeDispatch?.({ owner, chatId, runId, signal }, wrapped);
+    check();
+  }
+
+  async function* execute(inputValue: CanonicalProviderRunInput): AsyncIterable<CanonicalProviderRunEvent> {
+    const input = { ...inputValue, owner: structuredClone(inputValue.owner) };
     if (runs.has(input.runId) || runs.size >= 128) throw new Error("Async question Run unavailable");
     const run: Run = { input, pending: new Map(), deferred: new Set(), nativeOnly: new Set(), continuations: [], deliveries: new Set(), nativeActive: true, resumable: false, expired: [] };
     runs.set(input.runId, run);
@@ -58,8 +74,9 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
           `[Matrix: answers to your earlier asynchronous questions]\n${JSON.stringify(phaseAnswers.map(answer => ({ requestId: answer.request.requestId, questions: answer.request.questions?.map(question => ({ questionId: question.questionId, question: question.question })), answers: answer.input.structuredAnswers ?? answer.input.answer })))}\nApply these user answers to the pending work. Do not ask the same questions again.${ASYNC_PROMPT}`;
         const parts = continuation?.kind === "steer" ? continuation.input.parts : phase === 0 ? input.parts : [{ type: "text" as const, text: prompt }];
         run.nativeActive = true;
-        const next = { ...input, prompt, parts, ...(state === undefined ? {} : { resumeState: state }),
+        const next = { ...input, owner: structuredClone(input.owner), prompt, parts, ...(state === undefined ? {} : { resumeState: state }),
           ...(phase ? { continuationId: `run_async_${digest(`${input.runId}:${phase}`)}` } : {}) };
+        await beforeNative(run);
         const source = state === undefined ? native.start(next) : native.resume!({ ...next, resumeState: state });
         let terminal: typeof lastTerminal | undefined;
         let answersConfirmed = phaseAnswers.length === 0;
@@ -99,7 +116,8 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
             // The consumer persists the visible question before the native tool is released.
             yield request;
             try {
-              await native.deferInput!({ owner: input.owner, chatId: input.chatId, runId: input.runId, requestId: request.requestId });
+              await beforeNative(run);
+              await native.deferInput!({ owner: structuredClone(input.owner), chatId: input.chatId, runId: input.runId, requestId: request.requestId });
               release(true);
             } catch (error: unknown) { release(false); throw error; }
             finally { run.releaseDeferred = undefined; }
@@ -154,9 +172,10 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
       input.signal.removeEventListener("abort", wake); wake(); runs.delete(input.runId);
     }
   }
-  return {
+  const wrapped: CanonicalChatProviderAdapter = {
     ...native, start: execute, resume: execute,
-    ...(native.steer ? { async steer(input: Steer) {
+    ...(native.steer ? { async steer(inputValue: Steer) {
+      const input = { ...inputValue, owner: structuredClone(inputValue.owner), parts: structuredClone(inputValue.parts) };
       const run = runs.get(input.runId);
       if (!run || run.input.signal.aborted || run.input.chatId !== input.chatId || run.input.turnId !== input.turnId
         || run.input.owner.type !== input.owner.type || run.input.owner.ownerId !== input.owner.ownerId) {
@@ -165,7 +184,10 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
       // Never replay an uncertain native delivery. Only a completed native phase
       // can accept a correction as a continuation of the canonical Run.
       if (run.nativeActive && !run.continuations.length) {
-        try { return await native.steer!(input); } catch (error: unknown) {
+        try {
+          await beforeNative(run);
+          return await native.steer!(input);
+        } catch (error: unknown) {
           // A released registry is a definite non-delivery, unlike an RPC timeout.
           if (!(error instanceof ChatSteerNotDeliveredError)) throw error;
         }
@@ -177,11 +199,18 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
         run.wake?.(); run.wake = undefined;
       });
     } } : {}),
-    async submitInput(input) {
+    async submitInput(inputValue) {
+      const input = { ...inputValue, owner: structuredClone(inputValue.owner),
+        ...(inputValue.structuredAnswers ? { structuredAnswers: structuredClone(inputValue.structuredAnswers) } : {}) };
       const run = runs.get(input.runId);
       if (!run || run.input.signal.aborted || run.input.chatId !== input.chatId || run.input.owner.type !== input.owner.type || run.input.owner.ownerId !== input.owner.ownerId) throw new ChatInputNotDeliveredError();
       if (run.nativeOnly.has(input.requestId)) {
         if (!native.submitInput) throw new Error("Native question unavailable");
+        try { await beforeNative(run); }
+        catch (error: unknown) {
+          console.warn('[chat/input] Native answer admission refused:', error instanceof Error ? error.name : 'UnknownError');
+          throw new ChatInputNotDeliveredError();
+        }
         run.nativeOnly.delete(input.requestId);
         return native.submitInput(input);
       }
@@ -208,9 +237,14 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
           if (error instanceof ChatInputNotDeliveredError || error instanceof ChatSteerNotDeliveredError) return;
           const errorClass = error instanceof TypeError ? "TypeError" : error instanceof RangeError ? "RangeError" : error instanceof Error ? "Error" : "UnknownError";
           console.warn("[chat/input] Previous live answer delivery failed:", errorClass);
-        }).then(() => pending.released).then(released => {
+        }).then(() => pending.released).then(async released => {
           if (run.input.signal.aborted || runs.get(input.runId) !== run) throw new ChatInputNotDeliveredError();
           if (!released) throw new ChatSteerNotDeliveredError();
+          try { await beforeNative(run); }
+          catch (error: unknown) {
+            console.warn('[chat/input] Native continuation admission refused:', error instanceof Error ? error.name : 'UnknownError');
+            throw new ChatInputNotDeliveredError();
+          }
           return deliverLive({
             owner: input.owner, chatId: input.chatId, runId: input.runId, turnId: run.input.turnId,
             clientRequestId: input.clientRequestId, prompt, parts: [{ type: "text", text: prompt }],
@@ -245,4 +279,5 @@ export function withAsyncChatInput(native: CanonicalChatProviderAdapter, options
       return "queued";
     },
   };
+  return wrapped;
 }

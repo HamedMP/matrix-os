@@ -1,6 +1,7 @@
 import type { CanonicalChatProviderAdapter } from "./provider-adapter.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
+import type { GoogleModelHistoryReader } from "../google-data/runtime/model-history-reader.js";
 
 /** Shared policy for immediate follow-ups, durable queued turns, and Retry. */
 export async function loadChatResumeState(input: {
@@ -11,7 +12,15 @@ export async function loadChatResumeState(input: {
   adapter: CanonicalChatProviderAdapter;
   executionRootFingerprint: string | null;
   mode: "follow_up" | "retry";
+  modelHistory?: GoogleModelHistoryReader;
+  signal?: AbortSignal;
 }): Promise<unknown> {
+  if (input.modelHistory) {
+    const { modelHistory, ...rest } = input;
+    const admitted = { ...rest, owner: structuredClone(input.owner) };
+    return modelHistory.read({ owner: admitted.owner, chatId: admitted.chatId, adapter: admitted.adapter, signal: admitted.signal,
+      read: repository => loadChatResumeState({ ...admitted, repository }) });
+  }
   if (!input.adapter.resume) return undefined;
   const previous = await input.repository.getLatestAdapterStateForChat(input.owner, {
     chatId: input.chatId,
