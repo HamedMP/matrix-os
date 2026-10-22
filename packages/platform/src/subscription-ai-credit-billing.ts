@@ -6,6 +6,7 @@ import type { StripePriceCatalog, StripeSubscriptionProjection } from './billing
 import type { AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import { readInvoiceProjection } from './billing/stripe-webhook-projection.js';
+import { initializeCustomerFundedStarterPolicy } from './customer-funded-starter-policy.js';
 import { subscriptionCreditCycle } from './subscription-ai-credit-cycle.js';
 import { subscriptionCreditAmount } from './subscription-ai-credit-types.js';
 import { issueConfiguredSubscriptionAiCredit, loadSubscriptionAiCreditPolicy, shortenSubscriptionCreditCycle } from './subscription-ai-credit-policy.js';
@@ -20,11 +21,16 @@ export async function issueSubscriptionRuntimeCredit(input: Context, subscriptio
   if (!input.repository) throw new Error('Subscription credit ledger is unavailable');
   const sub = await input.db.executor.selectFrom('billing_subscriptions').select(['clerk_user_id', 'runtime_slot'])
     .where('stripe_subscription_id', '=', subscriptionId).executeTakeFirst();
-  if (!sub || sub.runtime_slot !== 'primary') return;
+  if (!sub) return;
   const machines = await input.db.executor.selectFrom('user_machines').select('machine_id')
     .where('clerk_user_id', '=', sub.clerk_user_id).where('runtime_slot', '=', sub.runtime_slot)
     .where('deleted_at', 'is', null).where('status', '=', 'running').limit(2).execute();
   if (machines.length !== 1) return;
+  const machineId = machines[0]!.machine_id;
+  const policy = await input.db.executor.selectFrom('ai_funded_runtime_policies').select('machine_id')
+    .where('machine_id', '=', machineId).executeTakeFirst();
+  if (!policy) await initializeCustomerFundedStarterPolicy(input.db, machineId,
+    { now: input.now.toISOString(), env: input.env, repository: input.repository });
   await issueConfiguredSubscriptionAiCredit({ db: input.db, repository: input.repository, env: input.env, now: input.now,
     identity: { ownerId: sub.clerk_user_id, machineId: machines[0]!.machine_id, runtimeSlot: sub.runtime_slot } });
 }
@@ -47,7 +53,7 @@ export async function recordSubscriptionCreditTerms(input: Context & { changeAt:
       for (const cycle of cycles) await shortenSubscriptionCreditCycle(trx, cycle, sub.current_period_end, at);
     }
     const amount = subscriptionCreditAmount(sub.plan_slug);
-    if (!amount || sub.runtime_slot !== 'primary') return;
+    if (!amount) return;
     const previous = await trx.executor.selectFrom('ai_subscription_credit_terms').selectAll()
       .where('subscription_id', '=', projection.stripeSubscriptionId).forUpdate().executeTakeFirst();
     const raw = z.object({ billing_cycle_anchor: second.optional(), start_date: second.optional() }).passthrough().parse(value);

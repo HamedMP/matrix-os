@@ -49,7 +49,6 @@ export async function issueConfiguredSubscriptionAiCredit(input: {
   if (!loadSubscriptionAiCreditPolicy(input.env).enabled) return 'disabled';
   const identity = FundedAiIdentitySchema.parse(input.identity);
   const at = IsoTimestampSchema.parse(input.now.toISOString());
-  if (identity.runtimeSlot !== 'primary') return 'ineligible';
   await input.db.ready;
   return withAccountDeletionOwnerLock(input.db, identity.ownerId, async (trx, admission) => {
     if (!admission.newWorkAllowed) return 'ineligible';
@@ -106,7 +105,8 @@ export async function issueConfiguredSubscriptionAiCredit(input: {
       const prior = await trx.executor.selectFrom('ai_subscription_credit_cycles').select('cycle_start')
         .where('owner_id', '=', identity.ownerId).where('runtime_slot', '=', identity.runtimeSlot).limit(1).executeTakeFirst();
       let legacyOffset = 0;
-      if (!prior) {
+      // The historical owner-wide grant belonged to the primary computer only.
+      if (!prior && identity.runtimeSlot === 'primary') {
         const legacy = await trx.executor.selectFrom('ai_funded_credit_ledger').selectAll().where('owner_id', '=', identity.ownerId)
           .where('source_reference', 'in', ['matrix-ai-lifetime-starter', 'user-authorized-main-chat-20261008-permanent-5usd']).limit(2).execute();
         if (legacy.length > 1) throw new Error('Ambiguous starter credit entitlement');

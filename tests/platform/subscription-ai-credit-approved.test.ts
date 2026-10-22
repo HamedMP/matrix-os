@@ -183,7 +183,7 @@ describe('approved subscription-month allowances', () => {
   ] as const)('fails closed without granting for %s', async (_name, prepare) => {
     await prepare(); expect(await issue()).toBe('ineligible'); expect(await entries()).toEqual([]);
   });
-  it('does not grant when disabled, for a secondary slot or during account deletion', async () => {
+  it('does not grant when disabled, for a mismatched slot or during account deletion', async () => {
     expect(await issueConfiguredSubscriptionAiCredit({ db, repository: repo, identity, env: {}, now: clock })).toBe('disabled');
     expect(await issueConfiguredSubscriptionAiCredit({ db, repository: repo, identity: { ...identity, runtimeSlot: 'secondary' }, env, now: clock })).toBe('ineligible');
     const secret = 'd'.repeat(32), at = clock.toISOString();

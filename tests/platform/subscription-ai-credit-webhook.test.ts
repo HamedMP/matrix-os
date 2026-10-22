@@ -132,7 +132,7 @@ describe('signed subscription billing to allowance ledger', () => {
     await issueSubscriptionRuntimeCredit(context(), 'sub_missing');
     expect(await grants()).toEqual([]);
   });
-  it('waits for a running primary computer and refuses a projected identity mismatch', async () => {
+  it('waits for a running matching computer and refuses a projected identity mismatch', async () => {
     await deliver('customer.subscription.created', subscription());
     await db.executor.updateTable('user_machines').set({ status: 'stopped' }).execute();
     await issueSubscriptionRuntimeCredit(context(), 'sub_subscription');
