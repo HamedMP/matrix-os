@@ -56,8 +56,9 @@ single point of failure.
 - The GitHub App private key stays on the host as a root-only file. Containers
   receive only a single-use JIT configuration, which GitHub invalidates after
   one job.
-- App permissions: repository Administration (write) to mint JIT runners and
-  Variables (write) for the heartbeat. Nothing else.
+- App: the existing Matrix CI gate app, extended with repository
+  Administration (write) to mint JIT runners and Variables (write) for the
+  heartbeat.
 
 ## Acceptance
 
@@ -76,7 +77,8 @@ single point of failure.
 2. Runner image, pool service and installer under `scripts/ci/runner-pool/`.
 3. Routing in `ci.yml` behind the heartbeat (no effect until the host runs).
 4. Retire fast-ci.
-5. Operator: create/extend the GitHub App, install the pool on the host, watch
+5. Operator: add Administration and Variables write to the existing CI gate
+   app, install the pool on the host, watch
    one PR and one `main` run, then remove the old lease service from the host.
 
 ## Risks
