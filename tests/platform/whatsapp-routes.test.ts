@@ -40,7 +40,7 @@ describe('WhatsApp route authority and failures', () => {
       headers: { authorization: 'Bearer owner-token', origin, 'content-type': 'application/json' } });
       expect(response.status).toBe(413);
       expect(await response.json()).toEqual({ error: 'Request too large' });
-      expect(authenticate).toHaveBeenCalledWith('owner-token');
+      expect(authenticate).not.toHaveBeenCalled();
       expect(repository.claim).not.toHaveBeenCalled();
       expect(repository.confirm).not.toHaveBeenCalled();
       expect(log).not.toHaveBeenCalled();
@@ -50,7 +50,7 @@ describe('WhatsApp route authority and failures', () => {
     for (const headers of [{}, { 'content-length': '262145' }]) {
       const response = await routes.request('/whatsapp/webhook', { method: 'POST', body: 'x'.repeat(262145), headers });
       expect(response.status).toBe(413);
-      expect(await response.text()).not.toContain('Delivery unavailable');
+      expect(await response.json()).toEqual({ error: 'Request too large' });
     }
     expect(service.ingest).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalled();
