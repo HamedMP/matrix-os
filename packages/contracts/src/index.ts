@@ -90,6 +90,7 @@ export * from "#jev-inbox";
 export * from "#get-started";
 export * from "#get-started-arrival";
 export * from "#get-started-bot";
+export * from "#get-started-recipe-bots";
 export * from "#get-started-connect";
 export * from "#get-started-wizard";
 export * from "#getting-started";

@@ -14,6 +14,7 @@ import { useEffect, useId, useMemo, useRef, type KeyboardEvent, type ReactNode }
 import { ButtonRow, RabbitAvatar, ToggleChip } from "../onboarding-widget/parts.js";
 import { GetStartedAiStep } from "./ai-step.js";
 import { GetStartedConnectList, type GetStartedConnect } from "./connect.js";
+import { GetStartedRecipeBots } from "./recipe-bots.js";
 
 export interface GetStartedWizardProps {
   wizard: GetStartedWizardState;
@@ -213,6 +214,7 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
 
         {isSummary ? <Summary wizard={wizard} /> : null}
         {isSummary && connect ? <GetStartedConnectList answers={answers} connect={connect} /> : null}
+        {isSummary ? <GetStartedRecipeBots wizard={wizard} connectedServices={connect?.connectedServices} dispatch={dispatch} /> : null}
 
         {error ? <p className="mxo-failed-line" role="alert">{error}</p> : null}
         <SignInPending connect={connect} step={wizard.step} />

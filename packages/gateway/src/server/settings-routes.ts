@@ -1,6 +1,6 @@
 /** Register the owner's settings, Get started (spec 635) and OS-view state routes. */
 import type { Context, Hono } from "hono";
-import { createGetStartedMatrixBot } from "../get-started/matrix-bot.js";
+import { createGetStartedBots } from "../get-started/bots.js";
 import { createOsViewStateRoutes } from "../os-view-state/routes.js";
 import { createGetStartedRoutes } from "../routes/get-started.js";
 
@@ -11,7 +11,7 @@ export interface SettingsRouteOptions {
   /** Off unless the deployment opts in (MATRIX_GET_STARTED_ENABLED). */
   getStartedEnabled: boolean;
   getOwnerId(c: Context): string | null;
-  botServices: Parameters<typeof createGetStartedMatrixBot>[0] | null | undefined;
+  botServices: Parameters<typeof createGetStartedBots>[0] | null | undefined;
   /** Null when the owner database is not configured. */
   osViewState: Parameters<typeof createOsViewStateRoutes>[0] | null;
 }
@@ -22,7 +22,7 @@ export function registerSettingsRoutes({ app, homePath, settingsRoutes, getStart
     homePath,
     enabled: getStartedEnabled,
     getOwnerId,
-    ...(botServices ? { ensureMatrixBot: createGetStartedMatrixBot(botServices) } : {}),
+    ...(botServices ? { ensureBot: createGetStartedBots(botServices) } : {}),
   }));
   app.route("/api/settings", settingsRoutes);
   if (osViewState) {

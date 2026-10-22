@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { Hono } from "hono";
 import { DEFAULT_GET_STARTED_BOT, GET_STARTED_SOUL_START } from "../../packages/contracts/src/index.js";
 import { createGetStartedRoutes } from "../../packages/gateway/src/routes/get-started.js";
-import { GET_STARTED_MATRIX_BOT_REQUEST_ID, createGetStartedMatrixBot } from "../../packages/gateway/src/get-started/matrix-bot.js";
+import { GET_STARTED_MATRIX_BOT_REQUEST_ID, createGetStartedBots } from "../../packages/gateway/src/get-started/bots.js";
 import { setProfileFields } from "../../packages/gateway/src/get-started/personality.js";
 
 const TEMPLATE_SOUL = "# Soul\n\nBe genuinely helpful.\n";
@@ -15,7 +15,7 @@ const ATLAS = { ...DEFAULT_GET_STARTED_BOT, name: "Atlas", personality: "straigh
 
 describe("get started personality", () => {
   let homePath: string;
-  let ensureMatrixBot: ReturnType<typeof vi.fn>;
+  let ensureBot: ReturnType<typeof vi.fn>;
   let app: Hono;
 
   function mount(options: { owner?: string | null } = {}) {
@@ -24,15 +24,15 @@ describe("get started personality", () => {
       homePath,
       enabled: true,
       getOwnerId: () => (options.owner === undefined ? "user_owner" : options.owner),
-      ensureMatrixBot,
+      ensureBot,
     }));
   }
 
-  function complete(bot: unknown | null = ATLAS) {
+  function complete(bot: unknown | null = ATLAS, bots?: string[]) {
     return app.request("/api/settings/get-started", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ type: "complete", answers: { name: "Sam", goals: ["code"], tools: [], ...(bot === null ? {} : { bot }) } }),
+      body: JSON.stringify({ type: "complete", answers: { name: "Sam", goals: ["code"], tools: [], ...(bot === null ? {} : { bot }), ...(bots ? { bots } : {}) } }),
     });
   }
 
@@ -45,7 +45,7 @@ describe("get started personality", () => {
     await writeFile(join(homePath, "system", "soul.md"), TEMPLATE_SOUL);
     await writeFile(join(homePath, "system", "identity.md"), IDENTITY);
     await writeFile(join(homePath, "system", "user.md"), USER);
-    ensureMatrixBot = vi.fn(async () => undefined);
+    ensureBot = vi.fn(async () => undefined);
     mount();
   });
 
@@ -70,12 +70,12 @@ describe("get started personality", () => {
 
   it("creates the owner's Matrix Bot with the chosen name", async () => {
     await complete();
-    expect(ensureMatrixBot).toHaveBeenCalledExactlyOnceWith("user_owner", "Atlas");
+    expect(ensureBot).toHaveBeenCalledExactlyOnceWith("user_owner", "matrix-bot", "Atlas");
   });
 
   it("finishes setup even when the bot cannot be created", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    ensureMatrixBot.mockRejectedValueOnce(new Error("db down"));
+    ensureBot.mockRejectedValueOnce(new Error("db down"));
     const res = await complete();
     expect(res.status).toBe(200);
     expect((await res.json()).status).toBe("completed");
@@ -130,20 +130,43 @@ describe("get started personality", () => {
     await complete();
     const soul = await read("soul.md");
     expect(soul.split(GET_STARTED_SOUL_START)).toHaveLength(2);
-    expect(ensureMatrixBot).toHaveBeenCalledTimes(2);
+    expect(ensureBot).toHaveBeenCalledTimes(2);
   });
 
   it("leaves SOUL, profiles and bots alone without bot choices", async () => {
     await complete(null);
     expect(await read("soul.md")).toBe(TEMPLATE_SOUL);
     expect(await read("identity.md")).toBe(IDENTITY);
-    expect(ensureMatrixBot).not.toHaveBeenCalled();
+    expect(ensureBot).not.toHaveBeenCalled();
+  });
+
+  it("creates the named Matrix Bot first, then each ready-made bot that was added", async () => {
+    await complete(ATLAS, ["writing-bot", "echo"]);
+    expect(ensureBot.mock.calls).toEqual([
+      ["user_owner", "matrix-bot", "Atlas"],
+      ["user_owner", "writing-bot", undefined],
+      ["user_owner", "echo", undefined],
+    ]);
+  });
+
+  it("keeps creating the other bots when one fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    ensureBot.mockRejectedValueOnce(new Error("db down"));
+    const res = await complete(null, ["writing-bot", "echo"]);
+    expect(res.status).toBe(200);
+    expect(ensureBot.mock.calls.map((call) => call[1])).toEqual(["writing-bot", "echo"]);
+  });
+
+  it("rejects bots that are not ready-made recipes", async () => {
+    const res = await complete(null, ["matrix-bot"]);
+    expect(res.status).toBe(400);
+    expect(ensureBot).not.toHaveBeenCalled();
   });
 
   it("does not create a bot without an authenticated owner", async () => {
     mount({ owner: null });
     await complete();
-    expect(ensureMatrixBot).not.toHaveBeenCalled();
+    expect(ensureBot).not.toHaveBeenCalled();
   });
 
   it("never reads or writes a profile through a symlink", async () => {
@@ -167,7 +190,7 @@ describe("get started personality", () => {
     expect(await readFile(outside, "utf-8")).toBe("untouched\n");
     // Setup stays unfinished so the wizard retries instead of closing without the owner's AI.
     expect(JSON.parse(await read("get-started.json")).status).toBe("in_progress");
-    expect(ensureMatrixBot).not.toHaveBeenCalled();
+    expect(ensureBot).not.toHaveBeenCalled();
   });
 });
 
@@ -178,14 +201,15 @@ describe("setProfileFields", () => {
   });
 });
 
-describe("createGetStartedMatrixBot", () => {
+describe("createGetStartedBots", () => {
   it("instantiates the current matrix-bot recipe with a fixed request id", async () => {
     const instantiate = vi.fn(async () => ({}));
-    const ensure = createGetStartedMatrixBot({
+    const ensure = createGetStartedBots({
       recipes: { list: () => [{ recipeId: "matrix-bot", version: "2026-10-10.1" }] as never },
       instantiation: { instantiate } as never,
     });
-    await ensure("user_owner", "Atlas");
+    await ensure("user_owner", "matrix-bot", "Atlas");
+    expect(GET_STARTED_MATRIX_BOT_REQUEST_ID).toBe("req_get-started-matrix-bot");
     expect(instantiate).toHaveBeenCalledWith("user_owner", {
       clientRequestId: GET_STARTED_MATRIX_BOT_REQUEST_ID,
       recipe: { recipeId: "matrix-bot", version: "2026-10-10.1" },
@@ -193,8 +217,21 @@ describe("createGetStartedMatrixBot", () => {
     });
   });
 
+  it("creates ready-made bots under their catalog name with their own fixed request id", async () => {
+    const instantiate = vi.fn(async () => ({}));
+    const ensure = createGetStartedBots({
+      recipes: { list: () => [{ recipeId: "writing-bot", version: "2026-10-01.1" }] as never },
+      instantiation: { instantiate } as never,
+    });
+    await ensure("user_owner", "writing-bot");
+    expect(instantiate).toHaveBeenCalledWith("user_owner", {
+      clientRequestId: "req_get-started-writing-bot",
+      recipe: { recipeId: "writing-bot", version: "2026-10-01.1" },
+    });
+  });
+
   it("fails clearly when the recipe is gone", async () => {
-    const ensure = createGetStartedMatrixBot({ recipes: { list: () => [] }, instantiation: { instantiate: vi.fn() } as never });
-    await expect(ensure("user_owner", "Atlas")).rejects.toThrow("MatrixBotRecipeUnavailable");
+    const ensure = createGetStartedBots({ recipes: { list: () => [] }, instantiation: { instantiate: vi.fn() } as never });
+    await expect(ensure("user_owner", "matrix-bot", "Atlas")).rejects.toThrow("BotRecipeUnavailable");
   });
 });

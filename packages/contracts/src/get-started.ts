@@ -1,5 +1,6 @@
 import { z } from "zod/v4";
 import { GetStartedBotSchema } from "#get-started-bot";
+import { GET_STARTED_RECIPE_BOT_IDS, GET_STARTED_RECIPE_BOTS_MAX } from "#get-started-recipe-bots";
 
 // Spec 635: the Get started wizard. Answers are stable IDs from this catalog,
 // never display strings, so the gateway can validate them and later layers
@@ -153,6 +154,10 @@ const answerShape = {
   appIdea: z.enum(appIdeaIds).optional(),
   starter: z.enum(starterIds).optional(),
   bot: GetStartedBotSchema.optional(),
+  /** Ready-made bots to create on completion; never grants them app access. */
+  bots: z.array(z.enum(GET_STARTED_RECIPE_BOT_IDS)).max(GET_STARTED_RECIPE_BOTS_MAX).optional()
+    .transform((values) => (values && values.length > 0 ? [...new Set(values)] : undefined))
+    .optional(),
 };
 
 export const GetStartedAnswersSchema = z.object(answerShape).strict();

@@ -15,6 +15,7 @@ import {
   GetStartedBotSchema,
   type GetStartedBot,
 } from "#get-started-bot";
+import { getStartedRecipeBotIdsForGoals, type GetStartedRecipeBotId } from "#get-started-recipe-bots";
 
 // Spec 635, Section 3: the wizard's client state machine. It is shared by
 // every desktop surface so they cannot drift; hosts only load and save.
@@ -33,6 +34,8 @@ export interface GetStartedWizardState {
   /** The AI's name and style while editing; saved only once the owner confirms that step. */
   bot: GetStartedBot;
   botChosen: boolean;
+  /** Ready-made bots added on the last screen. */
+  bots: GetStartedRecipeBotId[];
 }
 
 export type GetStartedWizardEvent =
@@ -44,7 +47,8 @@ export type GetStartedWizardEvent =
   | { type: "toggle-tool"; tool: GetStartedToolId }
   | { type: "pick-app-idea"; id: GetStartedAppIdeaId }
   | { type: "pick-starter"; id: GetStartedStarterId }
-  | { type: "bot"; patch: Partial<GetStartedBot> };
+  | { type: "bot"; patch: Partial<GetStartedBot> }
+  | { type: "toggle-bot"; id: GetStartedRecipeBotId };
 
 const QUESTION_COUNT = GET_STARTED_WIZARD_STEPS.indexOf("summary");
 
@@ -79,6 +83,7 @@ export function initialGetStartedWizard(draft?: GetStartedDraft): GetStartedWiza
     ...(draft?.starter ? { starter: draft.starter } : {}),
     bot: draft?.bot ?? DEFAULT_GET_STARTED_BOT,
     botChosen: Boolean(draft?.bot),
+    bots: [...(draft?.bots ?? [])],
   };
 }
 
@@ -92,6 +97,7 @@ export function reduceGetStartedWizard(state: GetStartedWizardState, event: GetS
     case "toggle-tool": return { ...state, tools: toggle(state.tools, event.tool) };
     case "pick-app-idea": return { ...state, appIdea: state.appIdea === event.id ? undefined : event.id };
     case "pick-starter": return { ...state, starter: state.starter === event.id ? undefined : event.id };
+    case "toggle-bot": return { ...state, bots: toggle(state.bots, event.id) };
     case "bot": {
       const bot = { ...state.bot, ...event.patch };
       bot.name = bot.name.slice(0, GET_STARTED_BOT_NAME_MAX_CHARS);
@@ -113,6 +119,9 @@ export function getStartedAnswersFromWizard(state: GetStartedWizardState): GetSt
   if (name) answers.name = name;
   if (state.appIdea && groups.some((group) => group.kind === "app-idea")) answers.appIdea = state.appIdea;
   if (state.starter && groups.some((group) => group.kind === "starter")) answers.starter = state.starter;
+  const suggested = new Set(getStartedRecipeBotIdsForGoals(state.goals));
+  const bots = state.bots.filter((id) => suggested.has(id));
+  if (bots.length > 0) answers.bots = bots;
   if (state.botChosen) {
     const bot = getStartedBotFromWizard(state.bot);
     if (bot) answers.bot = bot;

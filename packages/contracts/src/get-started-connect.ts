@@ -68,6 +68,14 @@ export interface GetStartedConnectPlan {
   suggestions: GetStartedConnectRow[];
 }
 
+/** The display name for an integration service id, from the same catalog as the connect list. */
+export function getStartedServiceLabel(service: string): string {
+  for (const [tool, connect] of Object.entries(TOOL_CONNECT) as [GetStartedToolId, GetStartedToolConnect][]) {
+    if (connect.kind === "app" && connect.service === service) return TOOL_LABELS.get(tool) ?? service;
+  }
+  return service;
+}
+
 export function getStartedToolConnect(tool: GetStartedToolId): GetStartedToolConnect {
   return TOOL_CONNECT[tool];
 }

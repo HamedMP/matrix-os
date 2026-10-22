@@ -255,6 +255,11 @@ Each section is one layer, under the 3000-line limit, tests first.
    - Writes reuse `readOwnerSoul` / `writeOwnerSoulAtomic` (16 KiB limit, control characters, no-follow, atomic). `identity.md` / `user.md` only get existing `- **Field:**` lines filled.
    - The Matrix Bot is created on the gateway after the state write and outside the file lock, with a fixed request id (`req_get-started-matrix-bot`), so retries replay instead of duplicating. A failure is logged and never blocks entering the desktop.
    - Still needs Hamed/Yuhan sign-off (spec 551 deferred creating the bot at onboarding). Avatar colour is deferred.
+7b. **Bots for you (P2):** the last screen suggests up to three ready-made bots from the Matrix Bot recipe catalog for the owner's goals (e.g. Daily Brief, Jev Inbox Triage, Writing Bot). Bots needing an app that is not connected show "Needs Gmail" instead of Add.
+   - Only catalog recipe ids from a fixed map are accepted (max 3); `matrix-bot` is created only through the AI step.
+   - Created on completion through the same instantiation service as the Matrix Bot, one fixed request id per recipe (`req_get-started-<recipeId>`), outside the file lock, best effort.
+   - Creating a bot grants no app access; owners grant it per bot later. Needs the same Yuhan sign-off as Section 7.
+
 8. **Start during provisioning (optional, later):** platform-stored draft handed to the gateway on first boot.
 
 ## Not breaking anything
