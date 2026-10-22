@@ -78,7 +78,7 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
       const ids = [...new Set([...observed, ...requested])].sort(); // Bounded to 600 for this transaction only.
       const refs = ids.map(googleActivityEntityRef);
       const store = createGoogleProvenanceStore<ChatDatabase>(current);
-      const locked = await lockedActivityCopies(current, key.owner.ownerId, refs);
+      const locked = await lockedActivityCopies<ChatDatabase>(current, key.owner.ownerId, refs);
       const copies = new Map(locked.map(copy => [copy.entityRef, copy])); // <=600; disposed with transaction.
       for (const copy of locked) capture(copy.retentionDeadline);
       live();
@@ -91,7 +91,7 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
       const run = await current.selectFrom('chat_runs').select('id').where('id', '=', key.runId).where('chat_id', '=', key.chatId).forUpdate().executeTakeFirst();
       if (!run || JSON.stringify(await discover()) !== JSON.stringify(observed)) deny();
       const before = await payloads(current, key); const context = await inspect();
-      const proofs = await activityReceiptProofs(current, key.owner.ownerId, key.chatId, before
+      const proofs = await activityReceiptProofs<ChatDatabase>(current, key.owner.ownerId, key.chatId, before
         .filter(row => !copies.has(googleActivityEntityRef(row.id))).map(row => ({ ref: googleActivityEntityRef(row.id), hash: row.hash })));
       live();
       for (const row of before) {
@@ -125,7 +125,7 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
         }
         live();
       }
-      if (fresh.classification === 'google') await retireActivityReceipts(current, key.owner.ownerId, key.chatId, after.map(row => googleActivityEntityRef(row.id)));
+      if (fresh.classification === 'google') await retireActivityReceipts<ChatDatabase>(current, key.owner.ownerId, key.chatId, after.map(row => googleActivityEntityRef(row.id)));
       else if (fresh.classification === 'ordinary') await recordOrdinaryCopyReceipts(current, after.map(row => ({
         key: { ownerId: key.owner.ownerId, chatId: key.chatId, kind: 'derived', entityRef: googleActivityEntityRef(row.id) }, hash: row.hash,
       })));

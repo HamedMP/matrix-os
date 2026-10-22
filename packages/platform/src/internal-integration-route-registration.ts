@@ -31,6 +31,8 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
       internalContainerHandle: string;
       internalContainerClerkUserId: string;
       internalSignedOwnerDelegation: boolean;
+      internalContainerMachineId: string;
+      internalContainerPersonalOwner: string;
     };
   }>();
   const integrationGuard = createInternalIntegrationGuard();
@@ -69,6 +71,8 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
         c.res = c.json({ error: 'Unknown handle' }, 404);
         return;
       }
+      c.set('internalContainerMachineId',machine?.machineId ?? `legacy:${handle}`);
+      c.set('internalContainerPersonalOwner',record.clerkUserId);
       let actorId = record.clerkUserId;
       const delegatedId = c.req.header('x-platform-user-id');
       const delegatedProof = c.req.header('x-platform-verified');
@@ -100,7 +104,10 @@ export function registerInternalIntegrationRoutes(app: Hono<any>, options: {
     });
   });
   internalIntegrationApp.use('*', createAccountDeletionMutationGuard({ db,
-    resolveOwner: (c) => c.get('internalContainerClerkUserId') as string | undefined }));
+    resolveOwner: (c) => c.get('internalContainerClerkUserId') as string | undefined,
+    isCleanup: c => c.get('internalSignedOwnerDelegation') === true && c.req.method === 'POST'
+      && /^\/internal\/containers\/[^/]+\/integrations\/gmail\/processing\/(?:purge-commands|purge-ack)$/.test(c.req.path),
+  }));
   internalIntegrationApp.route('/', createIntegrationChatApprovalRoutes(platformSecret));
   internalIntegrationApp.route('/', options.internalIntegrationRoutes);
   app.route('/internal/containers/:handle/integrations', internalIntegrationApp);

@@ -1,4 +1,5 @@
 import type { Kysely } from 'kysely';
+import { createGooglePurgeDeliveryStore } from './purge-delivery/store.js';
 import { createGoogleDataAuthority, type GoogleDataAuthority } from './authority.js';
 import { createGoogleDataRepository, type GoogleDataRepository } from './repository.js';
 import { createGoogleRequestLedger, type GoogleRequestLedger } from './runtime/request-ledger.js';
@@ -7,6 +8,7 @@ export interface GooglePlatformServices {
   repository: GoogleDataRepository;
   authority: GoogleDataAuthority;
   requestLedger: GoogleRequestLedger;
+  purgeDelivery: ReturnType<typeof createGooglePurgeDeliveryStore>;
   migrate(): Promise<void>;
   close(): Promise<void>;
 }
@@ -16,7 +18,8 @@ export function createGooglePlatformServices<DB>(db: Kysely<DB>): GooglePlatform
   const repository = createGoogleDataRepository(db);
   const authority = createGoogleDataAuthority(repository);
   const requestLedger = createGoogleRequestLedger(db);
-  return { repository, authority, requestLedger,
+  const purgeDelivery=createGooglePurgeDeliveryStore(db);
+  return { repository, authority, requestLedger, purgeDelivery,
     async migrate() {
       await repository.migrate();
       await requestLedger.migrate();

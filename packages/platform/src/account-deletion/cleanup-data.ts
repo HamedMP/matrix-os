@@ -69,6 +69,11 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
     const pending = await trx.executor.selectFrom('provider_deletion_queue').select('id')
       .where('machine_id','in',machineIds).where('completed_at','is',null).limit(1).execute();
     if (pending.length) throw new Error('runtime_cleanup_pending');
+    // Host deletion and pending provider cleanup have been verified above. Erase private Google
+    // authority/transport metadata too; pending commands cannot be delivered to a destroyed host.
+    for(const table of ['google_processing_requests','google_data_profiles','google_data_purge_commands','google_data_purge_runtime_pins']) {
+      if(await hasTable(trx,table)) await sql`DELETE FROM ${sql.table(table)} WHERE owner_id=${owner}`.execute(trx.executor);
+    }
     await trx.executor.deleteFrom('billing_runtime_actions').where('machine_id','in',machineIds).execute();
     await trx.executor.deleteFrom('provisioning_jobs').where('machine_id','in',machineIds).execute();
     await trx.executor.deleteFrom('provider_deletion_queue').where('machine_id','in',machineIds).execute();
