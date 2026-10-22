@@ -18,7 +18,7 @@ install -m 0644 "$source_dir/matrix-ci-pool-slot@.service" "$source_dir/matrix-c
 install -d -m 0700 /etc/matrix-ci-pool
 if [ ! -f "$config" ]; then
   install -m 0600 "$source_dir/pool.env.example" "$config"
-  echo "Created $config. Fill in APP_ID, INSTALLATION_ID and the key file, then rerun." >&2
+  echo "Created $config with the CI gate app IDs. Review slot sizing, place the app key at APP_KEY_FILE, then rerun." >&2
   exit 1
 fi
 # shellcheck source=/dev/null

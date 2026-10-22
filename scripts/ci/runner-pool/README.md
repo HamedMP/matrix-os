@@ -8,18 +8,20 @@ GitHub-hosted runners.
 
 ## One-time setup
 
-1. **GitHub App.** Create an app (or extend an existing one) with repository
-   permissions **Administration: Read and write** (to mint just-in-time
-   runners) and **Variables: Read and write** (for the heartbeat). Install it on
-   `HamedMP/matrix-os` only. Note the App ID and installation ID, and download
-   a private key.
+1. **GitHub App.** Reuse the existing Matrix CI gate app (App ID `5271502`,
+   installation `170192752`, the `MATRIX_CI_GATE_APP_*` values). In the app's
+   settings, add repository permissions **Administration: Read and write** (to
+   mint just-in-time runners) and **Variables: Read and write** (for the
+   heartbeat), then accept the updated permissions on the `HamedMP/matrix-os`
+   installation. The host needs a copy of the app's private key (the same key
+   stored as the `matrix-ci` environment's `MATRIX_CI_GATE_APP_PRIVATE_KEY`).
 2. **Host.** Ubuntu 24.04 x86-64 with Docker, `jq`, `openssl` and `curl`.
    Copy the key to `/etc/matrix-ci-pool/app.pem` (root only).
 3. **Install.** From a checkout of `main` on the host:
 
    ```sh
    sudo bash scripts/ci/runner-pool/install.sh   # first run creates /etc/matrix-ci-pool/pool.env
-   sudoedit /etc/matrix-ci-pool/pool.env         # APP_ID, INSTALLATION_ID, slot sizing
+   sudoedit /etc/matrix-ci-pool/pool.env         # app IDs are prefilled; check slot sizing
    sudo bash scripts/ci/runner-pool/install.sh   # builds the image and starts the slots
    ```
 
