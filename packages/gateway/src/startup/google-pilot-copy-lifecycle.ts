@@ -246,7 +246,7 @@ export async function createGooglePilotCopyLifecycle(options: {
         SELECT DISTINCT chat_id FROM (
           SELECT substring(entity_ref FROM 5) AS chat_id FROM copies WHERE kind='session' AND entity_ref LIKE 'mpi_chat_%'
           UNION ALL SELECT m.chat_id FROM copies c JOIN chat_messages m ON c.entity_ref='cm_'||m.id WHERE c.kind='derived'
-          UNION ALL SELECT e.chat_id FROM copies c JOIN chat_run_events e ON c.entity_ref='gae_'||e.id WHERE c.kind='derived'
+          UNION ALL SELECT e.chat_id FROM copies c JOIN chat_run_events e ON (c.entity_ref=e.google_activity_entity_ref OR c.entity_ref='gae_'||e.id) WHERE c.kind='derived'
           UNION ALL SELECT r.chat_id FROM copies c JOIN chat_runs r ON c.entity_ref='grc_'||r.id WHERE c.kind='derived'
           UNION ALL SELECT q.chat_id FROM copies c JOIN chat_queued_turns q ON c.entity_ref='gqc_'||q.id WHERE c.kind='derived') chats LIMIT 501`.execute(tx)) : { rows: [] };
             admitted();

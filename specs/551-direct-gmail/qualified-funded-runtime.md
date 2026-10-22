@@ -143,3 +143,11 @@ connection/acquisition timeout to 2000 ms; ordinary callers retain their previou
 This bounds stalled handshakes and queued borrowing, not every SQL operation or process
 stop. Operation cancellation checks and actual transaction/handler settlement drain remain
 separate requirements; the driver never destroys the shared pool to simulate cancellation.
+
+The enabled pilot now also requires its integrations transport and successful bot-state
+bootstrap. Startup installs the fixed-path purge poller for the exact host owner, and
+shutdown cancels active inference, drains the actual poll transport, then closes the local
+copy driver before runtime/registry/database teardown. Missing operator runtime pin or
+current machine admission remains a central denial; startup never creates that pin.
+Hashed activity references resolve through their persisted exact mapping before whole-chat
+run admission, including unknown/nonmanaged terminal runs that cannot supply stop proof.
