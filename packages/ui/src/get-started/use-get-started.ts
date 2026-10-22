@@ -113,7 +113,10 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
     setWizard(next);
     setError(null);
     // Drafts are best effort: progress is never blocked on them.
-    if (next.step !== current.step) void enqueue({ type: "draft", draft: getStartedDraftFromWizard(next) });
+    // Bots are added on the last screen, so adding or removing one saves too.
+    if (next.step !== current.step || event.type === "toggle-bot") {
+      void enqueue({ type: "draft", draft: getStartedDraftFromWizard(next) });
+    }
   }, [enqueue]);
 
   /** Another window may have finished or skipped setup (the save then fails with 409); the saved state decides. */

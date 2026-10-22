@@ -214,7 +214,7 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
 
         {isSummary ? <Summary wizard={wizard} /> : null}
         {isSummary && connect ? <GetStartedConnectList answers={answers} connect={connect} /> : null}
-        {isSummary ? <GetStartedRecipeBots wizard={wizard} connectedServices={connect?.connectedServices} dispatch={dispatch} /> : null}
+        {isSummary ? <GetStartedRecipeBots wizard={wizard} connect={connect} dispatch={dispatch} /> : null}
 
         {error ? <p className="mxo-failed-line" role="alert">{error}</p> : null}
         <SignInPending connect={connect} step={wizard.step} />

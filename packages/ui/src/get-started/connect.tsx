@@ -76,27 +76,36 @@ export function useGetStartedConnect({ failures, available, connections, connect
 
 function ConnectAction({ row, connect }: { row: GetStartedConnectRow; connect: GetStartedConnect }) {
   if (row.kind !== "app" || !row.service) return <span className="mxo-muted">Later</span>;
-  const service = row.service;
+  return <ServiceConnectAction service={row.service} label={row.label} connect={connect} />;
+}
+
+/** Connect, waiting, connected and retry states for one app; shared by the tool list and suggested bots. */
+export function ServiceConnectAction({ service, label, connect, text = "Connect" }: {
+  service: string;
+  label: string;
+  connect: GetStartedConnect;
+  text?: string;
+}) {
   if (connect.connectedServices.has(service)) {
     return <span className="mxo-connected"><span className="mxo-dot mxo-dot--working" aria-hidden />Connected</span>;
   }
   if (connect.connectingService === service) {
-    return <span className="mxo-muted"><Icon icon={Loading03Icon} size={14} className="mxo-spin" /> Waiting for {row.label} sign-in…</span>;
+    return <span className="mxo-muted"><Icon icon={Loading03Icon} size={14} className="mxo-spin" /> Waiting for {label} sign-in…</span>;
   }
   const busy = connect.connectingService !== null;
   if (connect.failedServices.has(service)) {
     return (
       <ButtonRow>
         <span className="mxo-failed-line">Sign-in didn't finish</span>
-        <button type="button" className="mxo-btn mxo-btn--outline" disabled={busy} aria-label={`Try connecting ${row.label} again`} onClick={() => connect.connect(service)}>
+        <button type="button" className="mxo-btn mxo-btn--outline" disabled={busy} aria-label={`Try connecting ${label} again`} onClick={() => connect.connect(service)}>
           Try again
         </button>
       </ButtonRow>
     );
   }
   return (
-    <button type="button" className="mxo-btn mxo-btn--outline" disabled={busy} aria-label={`Connect ${row.label}`} onClick={() => connect.connect(service)}>
-      Connect
+    <button type="button" className="mxo-btn mxo-btn--outline" disabled={busy} aria-label={`Connect ${label}`} onClick={() => connect.connect(service)}>
+      {text}
     </button>
   );
 }

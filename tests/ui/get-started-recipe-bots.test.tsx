@@ -8,23 +8,26 @@ import { GetStartedGate, type GetStartedConnect, type GetStartedPort } from "../
 
 const AT = "2026-10-25T10:12:00.000Z";
 
-function setup(connected: string[] = []) {
+function setup(connected: string[] = [], options: { available?: string[]; draft?: Record<string, unknown> } = {}) {
   const saves: GetStartedUpdate[] = [];
   const port: GetStartedPort = {
-    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 4, name: "Sam", goals: ["business"], tools: [] } })),
+    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 4, name: "Sam", goals: ["business"], tools: [], ...options.draft } })),
     save: vi.fn(async (update: GetStartedUpdate) => {
       saves.push(update);
-      return update.type === "complete" ? { status: "completed", completedAt: AT, answers: update.answers } : { status: "skipped", skippedAt: AT };
+      if (update.type === "complete") return { status: "completed", completedAt: AT, answers: update.answers };
+      if (update.type === "draft") return { status: "in_progress", updatedAt: AT, draft: update.draft };
+      return { status: "skipped", skippedAt: AT };
     }),
   };
+  const connect = vi.fn();
   function Connector({ children }: { children: (connect: GetStartedConnect) => ReactNode }) {
     return <>{children({
-      availableServices: new Set(), connectedServices: new Set(connected), failedServices: new Set(),
-      logoUrls: new Map(), connectingService: null, unavailable: false, connect: vi.fn(),
+      availableServices: new Set(options.available ?? []), connectedServices: new Set(connected), failedServices: new Set(),
+      logoUrls: new Map(), connectingService: null, unavailable: false, connect,
     })}</>;
   }
   render(<GetStartedGate port={port} zIndex={1} connector={Connector}><div data-testid="widget" /></GetStartedGate>);
-  return { saves };
+  return { saves, connect };
 }
 
 afterEach(() => cleanup());
@@ -47,5 +50,21 @@ describe("Bots for you", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Enter your computer" }));
     await waitFor(() => expect(saves.at(-1)?.type).toBe("complete"));
     expect(saves.at(-1)).not.toHaveProperty("answers.bots");
+  });
+
+  it("offers the missing app's sign-in right in the bot row", async () => {
+    const { connect } = setup(["gmail"], { available: ["google_calendar", "gmail"] });
+    const bots = await screen.findByRole("list", { name: "Bots for you" });
+    fireEvent.click(within(bots).getByRole("button", { name: "Connect Google Calendar" }));
+    expect(connect).toHaveBeenCalledWith("google_calendar");
+  });
+
+  it("saves added bots right away, so a reload keeps them", async () => {
+    const { saves } = setup(["gmail"]);
+    fireEvent.click(await screen.findByRole("button", { name: "Add Jev Inbox Triage" }));
+    await waitFor(() => expect(saves.at(-1)).toMatchObject({ type: "draft", draft: { step: 4, bots: ["jev-inbox-triage"] } }));
+    cleanup();
+    setup(["gmail"], { draft: { bots: ["jev-inbox-triage"] } });
+    expect(await screen.findByRole("button", { name: "Remove Jev Inbox Triage" })).toHaveAttribute("aria-pressed", "true");
   });
 });

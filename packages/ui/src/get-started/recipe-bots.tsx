@@ -6,17 +6,27 @@ import {
 } from "@matrix-os/contracts";
 import { useId } from "react";
 import { RabbitAvatar } from "../onboarding-widget/parts.js";
+import { ServiceConnectAction, type GetStartedConnect } from "./connect.js";
 
 const NONE: ReadonlySet<string> = new Set();
 
+/** Offers the first missing app's own sign-in right in the row; once connected, the bot can be added. */
+function MissingApp({ service, all, connect }: { service: string; all: readonly string[]; connect: GetStartedConnect | null }) {
+  const label = getStartedServiceLabel(service);
+  if (connect && !connect.unavailable && connect.availableServices.has(service)) {
+    return <ServiceConnectAction service={service} label={label} connect={connect} text={`Connect ${label}`} />;
+  }
+  return <span className="mxo-muted">Needs {all.map(getStartedServiceLabel).join(" and ")}</span>;
+}
+
 /** Spec 635, Section 7b: ready-made bots for the owner's goals. Adding one never grants app access. */
-export function GetStartedRecipeBots({ wizard, connectedServices = NONE, dispatch }: {
+export function GetStartedRecipeBots({ wizard, connect, dispatch }: {
   wizard: GetStartedWizardState;
-  connectedServices?: ReadonlySet<string>;
+  connect: GetStartedConnect | null;
   dispatch(event: GetStartedWizardEvent): void;
 }) {
   const titleId = useId();
-  const suggestions = getStartedRecipeBotSuggestions(wizard.goals, connectedServices);
+  const suggestions = getStartedRecipeBotSuggestions(wizard.goals, connect?.connectedServices ?? NONE);
   if (suggestions.length === 0) return null;
   const added = new Set(wizard.bots);
   return (
@@ -33,7 +43,7 @@ export function GetStartedRecipeBots({ wizard, connectedServices = NONE, dispatc
                 <span className="mxo-muted mxo-gs__why">{bot.why}</span>
               </span>
               {missing.length > 0 && !isAdded ? (
-                <span className="mxo-muted">Needs {missing.map(getStartedServiceLabel).join(" and ")}</span>
+                <MissingApp service={missing[0]!} all={missing} connect={connect} />
               ) : (
                 <button
                   type="button"
