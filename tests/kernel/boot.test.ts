@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, mkdtempSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, mkdtempSync, symlinkSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ensureHome } from "../../packages/kernel/src/boot.js";
@@ -77,5 +77,45 @@ describe("ensureHome", () => {
     ensureHome(homePath);
 
     expect(existsSync(join(homePath, "apps"))).toBe(true);
+  });
+
+  it("adds missing bundled icons to an existing home without replacing owner artwork", () => {
+    const homePath = join(tmpDir, "home");
+    mkdirSync(join(homePath, "system", "icons"), { recursive: true });
+    writeFileSync(join(homePath, "system", "icons", "v3-notes.png"), "owner artwork");
+
+    const result = ensureHome(homePath);
+
+    expect(readFileSync(join(homePath, "system", "icons", "v3-launcher.svg")))
+      .toEqual(readFileSync(join(process.cwd(), "home", "system", "icons", "v3-launcher.svg")));
+    expect(readFileSync(join(homePath, "system", "icons", "v3-notes.png"), "utf-8"))
+      .toBe("owner artwork");
+    expect(result.added).toContain("system/icons/v3-launcher.svg");
+    expect(result.skipped).toContain("system/icons/v3-notes.png");
+  });
+
+  it("does not follow an icon symlink in an existing home", () => {
+    const homePath = join(tmpDir, "home");
+    const outside = join(tmpDir, "outside.svg");
+    mkdirSync(join(homePath, "system", "icons"), { recursive: true });
+    writeFileSync(outside, "outside artwork");
+    symlinkSync(outside, join(homePath, "system", "icons", "v3-launcher.svg"));
+
+    const result = ensureHome(homePath);
+
+    expect(lstatSync(join(homePath, "system", "icons", "v3-launcher.svg")).isSymbolicLink()).toBe(true);
+    expect(readFileSync(outside, "utf-8")).toBe("outside artwork");
+    expect(result.skipped).toContain("system/icons/v3-launcher.svg");
+  });
+
+  it("rejects a symlinked icon directory before copying bundled icons", () => {
+    const homePath = join(tmpDir, "home");
+    const outside = join(tmpDir, "outside-icons");
+    mkdirSync(join(homePath, "system"), { recursive: true });
+    mkdirSync(outside);
+    symlinkSync(outside, join(homePath, "system", "icons"));
+
+    expect(() => ensureHome(homePath)).toThrow(/symlink/i);
+    expect(existsSync(join(outside, "v3-launcher.svg"))).toBe(false);
   });
 });
