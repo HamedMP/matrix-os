@@ -90,6 +90,7 @@
     "#jev": "./src/jev.ts",
     "#jev-inbox": "./src/jev-inbox.ts",
     "#jev-hermes-route": "./src/jev-hermes-route.ts",
+    "#app-gallery": "./src/app-gallery.ts",
     "#get-started": "./src/get-started.ts",
     "#get-started-arrival": "./src/get-started-arrival.ts",
     "#get-started-connect": "./src/get-started-connect.ts",

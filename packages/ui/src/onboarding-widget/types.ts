@@ -52,6 +52,10 @@ export interface OnboardingWidgetProps {
   userName?: string;
   /** Starter tasks to lead with, from the owner's Get started goals (spec 635). */
   taskOrder?: readonly OnboardingStarterTaskId[];
+  /** Replaces the first-visit introduction with one for the owner's first goal (spec 635). */
+  intro?: string;
+  /** A first app to build from the owner's Get started idea (spec 635). */
+  buildSuggestion?: { title: string; prompt: string };
   apps: readonly OnboardingWidgetApp[];
   /** This computer has no app connection service, so Connect can never finish. */
   appsUnavailable?: boolean;

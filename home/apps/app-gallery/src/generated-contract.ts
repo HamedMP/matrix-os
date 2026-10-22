@@ -38,7 +38,7 @@ export function deriveGalleryReadiness(app: Pick<GalleryApp, "services">, connec
   const services = app.services.map(service => ({ id: service.id, name: service.name, accounts: (connections ?? []).filter(account => account.service === service.id && account.status === "active") }));
   if (services.length === 0) return { status: "ready", services };
   if (connections === null) return { status: "unknown", services };
-  if (services.some((service, index) => !app.services[index].optional && service.accounts.length === 0)
+  if (services.some((service, index) => !app.services[index]?.optional && service.accounts.length === 0)
     || services.every(service => service.accounts.length === 0)) return { status: "needs_connection", services };
   return { status: services.some(service => service.accounts.length > 1) ? "choose_accounts" : "ready", services };
 }
@@ -48,4 +48,13 @@ export function filterGalleryApps<T extends GalleryApp>(apps: readonly T[], filt
   return apps.filter(app => (!filter.collection || app.collection === filter.collection)
     && (!filter.category || app.category === filter.category)
     && (!query || [app.name, app.description, app.category, ...app.services.map(s => s.name)].join(" ").toLocaleLowerCase().includes(query)));
+}
+
+export const APP_GALLERY_BUILD_MAX_CHARS = 2000;
+
+/** The one build request App Gallery and the onboarding widget send; null when empty or too long. */
+export function appGalleryBuildPrompt(input: string): string | null {
+  const request = input.trim();
+  if (!request || request.length > APP_GALLERY_BUILD_MAX_CHARS) return null;
+  return `[BUILD] Build an app for my Matrix computer: ${request}. Use my connected tools only after I choose the accounts and approve imports. Make it work in Web Desktop, Web Canvas, Electron Desktop, Web Mobile and Native Mobile.`;
 }

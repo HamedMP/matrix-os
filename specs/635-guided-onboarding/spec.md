@@ -239,6 +239,10 @@ Each section is one layer, under the 3000-line limit, tests first.
    - The gate publishes the saved answers through `GetStartedAnswersProvider` (mounted next to `GettingStartedVisibilityProvider`), so the popovers and the widget read them without another request.
    - v1 reorders only; opening the widget straight into "Work on my code" and its repo question moves to Section 6.
 6. **First task and app building (P1):** "Work on my code" first with a "fix on a branch" follow-up; "Build an app for this" through the existing `[BUILD]` handoff.
+   - The first code run clones and runs tests without changing anything. "Fix the top issue on a branch" and "Add a feature" carry fixed rules: new branch, tests, a pull request for review, never push to the default branch or merge, ask before touching anything outside the repo (such as issues).
+   - The widget's first line speaks to the first goal and asks; it never starts work by itself.
+   - A "Build a <idea>" starter sends App Gallery's own build request. `appGalleryBuildPrompt` now lives in the canonical gallery contract, so the gallery and the widget share one bounded prompt.
+   - Deferred: opening App Gallery pre-filled, and chaining the clone result straight into the fix offer with the repo's real top issue.
 7. **Make your AI yours (P2):** server-rendered managed SOUL section, `identity.md`, `user.md`; idempotent `matrix-bot` creation.
 8. **Start during provisioning (optional, later):** platform-stored draft handed to the gateway on first boot.
 

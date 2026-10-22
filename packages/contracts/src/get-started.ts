@@ -90,10 +90,10 @@ export const GET_STARTED_TOOL_GROUPS: readonly GetStartedToolGroup[] = [
 ];
 
 export const GET_STARTED_APP_IDEAS = [
-  { id: "habit-tracker", label: "Habit tracker" },
-  { id: "client-crm", label: "Client CRM" },
-  { id: "budget-planner", label: "Budget planner" },
-  { id: "recipe-box", label: "Recipe box" },
+  { id: "habit-tracker", label: "Habit tracker", request: "Track my habits and show my streaks" },
+  { id: "client-crm", label: "Client CRM", request: "Keep track of my clients, deals and follow-ups" },
+  { id: "budget-planner", label: "Budget planner", request: "Plan my monthly budget and track my spending" },
+  { id: "recipe-box", label: "Recipe box", request: "Save my recipes and plan my meals" },
 ] as const;
 
 export type GetStartedAppIdeaId = (typeof GET_STARTED_APP_IDEAS)[number]["id"];

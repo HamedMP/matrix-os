@@ -1,4 +1,5 @@
-import type { GetStartedAnswers, GetStartedGoalId, GetStartedToolId } from "#get-started";
+import { appGalleryBuildPrompt } from "#app-gallery";
+import { GET_STARTED_APP_IDEAS, type GetStartedAnswers, type GetStartedGoalId, type GetStartedToolId } from "#get-started";
 import { GETTING_STARTED_STEP_IDS, type GettingStartedStep, type GettingStartedStepId } from "#getting-started";
 import { ONBOARDING_TASK_IDS, type OnboardingStarterTaskId } from "#onboarding-widget-catalog";
 
@@ -70,4 +71,29 @@ export function orderByIds<T extends { id: string }>(items: readonly T[], order:
     .map((item, index) => ({ item, index, rank: rank.get(item.id) ?? order.length + index }))
     .sort((left, right) => left.rank - right.rank)
     .map(({ item }) => item);
+}
+
+const WIDGET_INTROS: Partial<Record<GetStartedGoalId, string>> = {
+  code: "Want me to open one of your repos and run its tests? Nothing changes until you say so.",
+  build: "Want me to build your first app? I'll show you what I'm doing as I go.",
+  business: "Want me to plan your week or look something up for you?",
+  assistant: "Want me to plan your week? I'll ask before I touch your calendar.",
+};
+
+/** The widget's first line for the owner's first goal; null keeps today's introduction. */
+export function getStartedWidgetIntro(goals: readonly GetStartedGoalId[]): string | null {
+  const first = goals[0];
+  return (first && WIDGET_INTROS[first]) ?? null;
+}
+
+export interface GetStartedBuildSuggestion {
+  title: string;
+  prompt: string;
+}
+
+/** The first app idea from Get started, as App Gallery's own build request. */
+export function getStartedBuildSuggestion(answers: GetStartedAnswers): GetStartedBuildSuggestion | null {
+  const idea = GET_STARTED_APP_IDEAS.find((candidate) => candidate.id === answers.appIdea);
+  const prompt = idea ? appGalleryBuildPrompt(idea.request) : null;
+  return idea && prompt ? { title: idea.label, prompt } : null;
 }

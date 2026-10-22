@@ -35,7 +35,7 @@ const TASK_ICONS: Record<OnboardingTaskDefinition["tone"], IconSvgElement> = {
   code: GithubIcon,
 };
 
-export function TasksScreen({ state, apps, appsUnavailable = false, userName, taskOrder, actions }: Pick<OnboardingWidgetProps, "state" | "apps" | "appsUnavailable" | "userName" | "taskOrder" | "actions">) {
+export function TasksScreen({ state, apps, appsUnavailable = false, userName, taskOrder, intro, buildSuggestion, actions }: Pick<OnboardingWidgetProps, "state" | "apps" | "appsUnavailable" | "userName" | "taskOrder" | "intro" | "buildSuggestion" | "actions">) {
   const connected = connectedServices(apps);
   const tasks = useMemo(() => (taskOrder ? orderByIds(ONBOARDING_TASKS, taskOrder) : ONBOARDING_TASKS), [taskOrder]);
   const connectedSet = new Set(connected);
@@ -45,12 +45,24 @@ export function TasksScreen({ state, apps, appsUnavailable = false, userName, ta
       {firstVisit ? (
         <>
           <p className="mxo-greeting">{userName ? `Hey ${userName} 👋` : "Hey 👋"}</p>
-          <p className="mxo-text">I'm Matrix. I work in your apps, even while you're away.<br />What should I start on?</p>
+          {intro ? <p className="mxo-text">{intro}</p> : <p className="mxo-text">I'm Matrix. I work in your apps, even while you're away.<br />What should I start on?</p>}
         </>
       ) : (
         <p className="mxo-text">What should I start on?</p>
       )}
       <ul className="mxo-card mxo-tasks" aria-label="Tasks">
+        {buildSuggestion ? (
+          <li>
+            <button
+              type="button"
+              className="mxo-task"
+              onClick={() => actions.dispatch({ type: "build.requested", title: buildSuggestion.title, prompt: buildSuggestion.prompt })}
+            >
+              <span className="mxo-tile mxo-tile--website"><Icon icon={TASK_ICONS.website} size={16} /></span>
+              <span className="mxo-task__label">Build a {buildSuggestion.title.toLowerCase()}</span>
+            </button>
+          </li>
+        ) : null}
         {tasks.map((task) => {
           const needsTag = task.needs && !connectedSet.has(task.needs.service) ? task.needs.tag : null;
           return (

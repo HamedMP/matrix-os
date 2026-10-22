@@ -140,4 +140,21 @@ describe("onboarding widget tasks", () => {
     expect(labels).toHaveLength(4);
     expect(screen.getByText("Hey Sam 👋")).toBeInTheDocument();
   });
+
+  it("show the goal intro and a first app to build, which asks before running", () => {
+    const dispatch = vi.fn();
+    render(
+      <TasksScreen
+        state={state}
+        apps={[]}
+        actions={{ dispatch } as unknown as OnboardingWidgetActions}
+        intro="Want me to build your first app?"
+        buildSuggestion={{ title: "Habit tracker", prompt: "[BUILD] Build an app for my Matrix computer: Track my habits." }}
+      />,
+    );
+    expect(screen.getByText("Want me to build your first app?")).toBeInTheDocument();
+    expect(dispatch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Build a habit tracker" }));
+    expect(dispatch).toHaveBeenCalledWith({ type: "build.requested", title: "Habit tracker", prompt: "[BUILD] Build an app for my Matrix computer: Track my habits." });
+  });
 });

@@ -7,7 +7,9 @@ import {
   type ConnectedIntegration,
   type OnboardingWidgetEvent,
   type OnboardingWidgetState,
+  getStartedBuildSuggestion,
   getStartedTaskOrder,
+  getStartedWidgetIntro,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { OnboardingWidgetActions, OnboardingWidgetPrefs, OnboardingWidgetProps, OnboardingWidgetRepo } from "../types.js";
@@ -138,11 +140,15 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
   const getStartedAnswers = useGetStartedAnswers();
   const userName = onboardingFirstName(getStartedAnswers?.name ?? input.displayName);
   const taskOrder = useMemo(() => (getStartedAnswers ? getStartedTaskOrder(getStartedAnswers.goals) : undefined), [getStartedAnswers]);
+  const intro = getStartedAnswers ? getStartedWidgetIntro(getStartedAnswers.goals) : null;
+  const buildSuggestion = useMemo(() => (getStartedAnswers ? getStartedBuildSuggestion(getStartedAnswers) : null), [getStartedAnswers]);
   return {
     state,
     actions,
     ...(userName ? { userName } : {}),
     ...(taskOrder ? { taskOrder } : {}),
+    ...(intro ? { intro } : {}),
+    ...(buildSuggestion ? { buildSuggestion } : {}),
     apps,
     appsUnavailable: appConnect.appsUnavailable,
     repos,
