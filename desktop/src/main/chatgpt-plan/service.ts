@@ -246,8 +246,9 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             const next = {
                 deviceId: record.deviceId, accountId: account.id, grantRevision: permission.revision, enabled: permission.enabled, background: false, models
             };
+            const catalogSignature = JSON.stringify(models);
             const qualified = () => authorized() && current(value) && epoch === generation && active()?.id === account.id
-                && models === next.models && catalogAt > 0 && grant(value.computerId).revision === permission.revision;
+                && JSON.stringify(models) === catalogSignature && catalogAt > 0 && grant(value.computerId).revision === permission.revision;
             const signature = JSON.stringify(next);
             if (bridgeConnected && peerSignature === signature)
                 return;

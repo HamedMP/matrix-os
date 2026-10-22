@@ -91,6 +91,9 @@ Host retains original infer/Cancel commands until a cumulative receipt ACK.
 Native acknowledges handled commands rather than completed inference, keeps
 infer execution deduplicated, and applies same-batch Cancel before dispatch.
 This is ephemeral session-local delivery, not durable exactly-once execution.
+A successful catalog renewal with identical model content preserves the current
+peer and active calls. Catalog object identity is not continuing authority; real
+model, grant, account or runtime changes still invalidate the captured source.
 The ledger holds at most 32 commands, four unACKed infer bodies, and four slots
 reserved for Cancel. Published receipts expire after 30 seconds without renewal;
 unsent Cancels use enqueue time. The existing encoded poll cap remains
