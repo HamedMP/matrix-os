@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { useGettingStartedAutoOpenSuppression, useGettingStartedBlocker } from "../getting-started-visibility.js";
 import { usePublishGetStartedAnswers } from "./answers-context.js";
 import type { GetStartedConnect, GetStartedConnector } from "./connect.js";
@@ -13,6 +13,8 @@ export interface GetStartedGateProps {
   children?: ReactNode;
   /** Supplies app connections for the last screen from the surface's own integration hooks. */
   connector?: GetStartedConnector;
+  /** Rendered only while the wizard is open; e.g. Electron's renderer overlay lease above native views. */
+  whileActive?: ComponentType;
 }
 
 /**
@@ -20,7 +22,7 @@ export interface GetStartedGateProps {
  * It cannot be closed or minimized; it ends only when the owner finishes or skips it.
  * Any load failure falls back to today's desktop.
  */
-export function GetStartedGate({ port, zIndex, children, connector: Connector }: GetStartedGateProps) {
+export function GetStartedGate({ port, zIndex, children, connector: Connector, whileActive: WhileActive }: GetStartedGateProps) {
   const getStarted = useGetStarted(port);
   const active = getStarted.phase === "active";
   useGettingStartedBlocker(active);
@@ -43,6 +45,7 @@ export function GetStartedGate({ port, zIndex, children, connector: Connector }:
   );
   return (
     <div className="mxo-root mxo-gs ph-no-capture" style={{ zIndex }}>
+      {WhileActive ? <WhileActive /> : null}
       <div className="mxo-gs__scrim" aria-hidden />
       {Connector ? <Connector>{renderWizard}</Connector> : renderWizard(null)}
     </div>

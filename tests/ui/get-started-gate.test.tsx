@@ -31,6 +31,14 @@ function renderGate(port: GetStartedPort) {
   );
 }
 
+function renderGateWith(port: GetStartedPort, whileActive: React.ComponentType) {
+  return render(
+    <GetStartedGate port={port} zIndex={690} whileActive={whileActive}>
+      <div data-testid="desktop-widget">widget</div>
+    </GetStartedGate>,
+  );
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -148,5 +156,48 @@ describe("GetStartedGate", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Next" }));
     expect(await screen.findByRole("dialog", { name: "What will you use Matrix for?" })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("mounts whileActive only while the wizard is open", async () => {
+    const events: string[] = [];
+    function Lease() {
+      React.useEffect(() => {
+        events.push("acquire");
+        return () => { events.push("release"); };
+      }, []);
+      return null;
+    }
+    renderGateWith(makePort({ status: "pending" }).port, Lease);
+    await screen.findByRole("dialog");
+    expect(events).toEqual(["acquire"]);
+    fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+    await screen.findByTestId("desktop-widget");
+    expect(events).toEqual(["acquire", "release"]);
+  });
+
+  it("keeps focus inside when Shift+Tab is pressed from the step heading", async () => {
+    renderGate(makePort({ status: "pending" }).port);
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    const heading = await screen.findByRole("heading", { name: "What will you use Matrix for?" });
+    await waitFor(() => expect(heading).toHaveFocus());
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Tab", shiftKey: true });
+    expect(screen.getByRole("button", { name: "Next" })).toHaveFocus();
+  });
+
+  it("does not start queued saves after the wizard is gone", async () => {
+    let release!: () => void;
+    const { port, saves } = makePort({ status: "pending" });
+    const save = port.save;
+    port.save = vi.fn(async (update: GetStartedUpdate) => {
+      if (saves.length === 0) await new Promise<void>((done) => { release = done; });
+      return save(update);
+    });
+    const view = renderGate(port);
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    view.unmount();
+    await act(async () => release());
+    await new Promise((done) => setTimeout(done, 0));
+    expect(port.save).toHaveBeenCalledTimes(1);
   });
 });

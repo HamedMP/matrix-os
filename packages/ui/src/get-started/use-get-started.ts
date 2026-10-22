@@ -48,6 +48,12 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
   const wizardRef = useRef<GetStartedWizardState | null>(null);
   // Saves run one at a time so a slow draft can never land after completion.
   const saveChain = useRef<Promise<SaveResult> | null>(null);
+  // A queued save must not start after the wizard is gone, e.g. once the owner switches computers.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -81,8 +87,11 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
   /** Never rejects: failures are logged once here and reported as `ok: false`. */
   const enqueue = useCallback((update: GetStartedUpdate): Promise<SaveResult> => {
     const previous = saveChain.current ?? Promise.resolve<SaveResult>({ ok: true, value: null });
-    const next = previous.then(() => port.save(update)).then(
-      (value): SaveResult => ({ ok: true, value }),
+    const next = previous.then(async (): Promise<SaveResult> => {
+      if (!mounted.current) return { ok: false };
+      return { ok: true, value: await port.save(update) };
+    }).then(
+      (result) => result,
       (saveError: unknown): SaveResult => {
         console.warn(`[get-started] ${update.type} save failed:`, errorName(saveError));
         return { ok: false };

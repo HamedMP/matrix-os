@@ -101,10 +101,12 @@ function trapKeys(event: KeyboardEvent<HTMLDivElement>) {
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
   if (!first || !last) return;
-  if (event.shiftKey && document.activeElement === first) {
+  // The step heading takes focus but is not tabbable, so it counts as "before the first control".
+  const index = focusable.indexOf(document.activeElement as HTMLElement);
+  if (event.shiftKey && index <= 0) {
     event.preventDefault();
     last.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
+  } else if (!event.shiftKey && index === focusable.length - 1) {
     event.preventDefault();
     first.focus();
   }
