@@ -1,3 +1,4 @@
+import { createConfiguredPlatformGmail, initializeOwnedIntegrationDb, requiresPlatformGmailRuntime } from './native-gmail-startup.js';
 import { parseIsolatedChatEnvelope } from "@matrix-os/contracts";
 import { z } from 'zod/v4';
 import { createAccountDeletionMutationGuard } from './account-deletion/integration-admission.js';
@@ -193,6 +194,9 @@ interface GatewayIntegrationRoutesModule {
   createIntegrationRoutes(opts: {
     db: GatewayPlatformDb;
     pipedream: unknown;
+    nativeGmail?: unknown;
+    nativeGmailCleanup?: unknown;
+    nativeGmailEligible?: (userId: string) => Promise<boolean>;
     webhookSecret: string;
     resolveUserId: (c: Context) => Promise<string | null>;
     authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
@@ -227,6 +231,7 @@ type CreatePlatformApp = (deps: {
   clerkAuth?: ClerkAuth;
   matrixProvisioner?: MatrixProvisioner;
   integrationRoutes?: Hono<any>;
+  gmailLaunchRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
   previewDriveIntegration?: PreviewDriveIntegration;
   customMcpRoutes?: Hono<any>;
@@ -480,8 +485,11 @@ async function startPlatformServerWithCleanup(
   }
 
   let deletionPipedream: AccountDeletionAdapterOptions['pipedream'];
+  let deletionNativeGmail: AccountDeletionAdapterOptions['nativeGmail'];
   let deletionCustomMcp: AccountDeletionAdapterOptions['customMcp'];
   let integrationRoutes: Hono | undefined;
+  let gmailLaunchRoutes: Hono | undefined;
+  let integrationShutdown: (() => Promise<void>) | undefined;
   let internalIntegrationRoutes: Hono | undefined;
   let previewDriveIntegration: PreviewDriveIntegration | undefined;
   let previewDriveSweepInterval: NodeJS.Timeout | undefined;
@@ -508,6 +516,7 @@ async function startPlatformServerWithCleanup(
     disconnect: (userId: string, connectionId: string) => managedMcpPresetBroker?.disconnect(userId, connectionId) ?? Promise.resolve(false),
   };
   const integrationConfig = resolvePlatformIntegrationConfig(process.env, runtimeConfig.platformDatabaseUrl);
+  if (requiresPlatformGmailRuntime(process.env) && !integrationConfig) throw new Error('Gmail integration runtime unavailable');
   if (integrationConfig) {
     const [
       { createIntegrationRoutes, executeIntegrationAction, authorizeInternalJevLabels },
@@ -521,15 +530,22 @@ async function startPlatformServerWithCleanup(
       importRuntimeModule<GatewayIntegrationRegistryModule>('../../gateway/dist/integrations/registry.js'),
     ]);
 
-    const trustedPlatformDb = createGatewayPlatformDb(integrationConfig.platformDatabaseUrl);
-    await trustedPlatformDb.migrate();
-    const pipedream = await createPipedreamClient({
+    const trustedPlatformDb = await initializeOwnedIntegrationDb({
+      create: () => createGatewayPlatformDb(integrationConfig.platformDatabaseUrl),
+      registerClose: close => { integrationShutdown = close; registerCustomMcpStartupCleanup(close); },
+    });
+    const legacyPipedream = await createPipedreamClient({
       clientId: integrationConfig.pipedreamClientId,
       clientSecret: integrationConfig.pipedreamClientSecret,
       projectId: integrationConfig.pipedreamProjectId,
       environment: integrationConfig.pipedreamEnvironment,
     });
-    deletionPipedream = pipedream;
+    const gmail = await createConfiguredPlatformGmail({ db, integrationDb: trustedPlatformDb, legacy: legacyPipedream, env: process.env,
+      resolveUserId: async c => resolveIntegrationUserId(c.get('platformUserId') as string | undefined, c.get('platformHandle') as string | undefined) });
+    gmailLaunchRoutes = gmail.launchRoutes;
+    const pipedream = gmail.client;
+    deletionPipedream = legacyPipedream;
+    deletionNativeGmail = gmail.cleanup;
     const verifiedConnectedWebhook=process.env.ACCOUNT_DELETION_SECRET===undefined?undefined:
       createAccountDeletionIntegrationWebhookAdmission({db,pipedream,env:process.env});
     const webhookSecret = integrationConfig.pipedreamWebhookSecret;
@@ -559,6 +575,9 @@ async function startPlatformServerWithCleanup(
     integrationRoutes = createIntegrationRoutes({
       db: trustedPlatformDb,
       pipedream,
+      nativeGmail: gmail.oauth,
+      nativeGmailCleanup: gmail.cleanup,
+      nativeGmailEligible: gmail.isEligible,
       webhookSecret,
       verifiedConnectedWebhook,
       resolveUserId: async (c) => {
@@ -571,6 +590,9 @@ async function startPlatformServerWithCleanup(
     internalIntegrationRoutes = createIntegrationRoutes({
       db: trustedPlatformDb,
       pipedream,
+      nativeGmail: gmail.oauth,
+      nativeGmailCleanup: gmail.cleanup,
+      nativeGmailEligible: gmail.isEligible,
       webhookSecret,
       verifiedConnectedWebhook,
       authorizeJevLabelCall: authorizeInternalJevLabels,
@@ -1015,7 +1037,7 @@ async function startPlatformServerWithCleanup(
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
   const accountDeletion = await createConfiguredAccountDeletionRuntime({
-    db, env: appEnv, customerVpsService, backgroundWorkersEnabled, pipedream: deletionPipedream, customMcp: deletionCustomMcp,
+    db, env: appEnv, customerVpsService, backgroundWorkersEnabled, pipedream: deletionPipedream, nativeGmail: deletionNativeGmail, customMcp: deletionCustomMcp,
   });
   registerCustomMcpStartupCleanup(async () => {
     accountDeletion?.stop();
@@ -1033,6 +1055,7 @@ async function startPlatformServerWithCleanup(
     clerkAuth,
     matrixProvisioner,
     integrationRoutes,
+    gmailLaunchRoutes,
     internalIntegrationRoutes,
     previewDriveIntegration,
     customMcpRoutes,
@@ -1111,6 +1134,7 @@ async function startPlatformServerWithCleanup(
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
           customMcpShutdown?.(),
+          integrationShutdown?.(),
         ]);
         posthogProcessErrors.dispose();
         await shutdownPlatformApp(app);

@@ -1,3 +1,4 @@
+import { isGmailOAuthCallback } from './integration-public-path.js';
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 
@@ -7,7 +8,7 @@ export function createUnavailableIntegrationRoutes() {
   app.use('*', bodyLimit({ maxSize: 64 * 1024 }));
   app.all('*', (c) => {
     c.header('Cache-Control', 'no-store');
-    const publicPath = c.req.path === '/api/integrations/available'
+    const publicPath = isGmailOAuthCallback(c.req.method, c.req.path) || c.req.path === '/api/integrations/available'
       || c.req.path.startsWith('/api/integrations/webhook/');
     if (!publicPath && (!c.get('platformUserId') || !c.get('platformHandle'))) {
       return c.json({ error: 'Unauthorized' }, 401);
