@@ -228,7 +228,7 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 2
+      # Each scenario runs on its own runner, so all five run at once instead of in three waves.
       matrix:
         # multi-user and resource-limits remain excluded because they need
         # dedicated profile/resource setup outside this parallel smoke matrix.
