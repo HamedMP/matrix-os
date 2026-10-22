@@ -315,6 +315,16 @@ describe("Pipedream Connect SDK Wrapper", () => {
     );
   });
 
+  it('forwards an explicit server-selected receipt scope without changing legacy defaults', async () => {
+    mockTokensCreate.mockResolvedValue({ token: 'ctok_synthetic', expiresAt: '2026-10-21T12:10:00Z', connectLinkUrl: 'https://pipedream.com/connect/synthetic' });
+    const client = await createPipedreamClient(TEST_CONFIG);
+    await client.createConnectToken('owner', { scope: 'connect:accounts:read connect:accounts:write', expiresIn: 600 });
+    expect(mockTokensCreate).toHaveBeenCalledWith({ externalUserId: 'owner', scope: 'connect:accounts:read connect:accounts:write', expiresIn: 600 }, expect.anything());
+    mockTokensCreate.mockClear();
+    await client.createConnectToken('owner');
+    expect(mockTokensCreate.mock.calls[0]![0]).toEqual({ externalUserId: 'owner' });
+  });
+
   it("propagates SDK errors from createConnectToken", async () => {
     mockTokensCreate.mockRejectedValueOnce(new Error("SDK auth failed"));
 

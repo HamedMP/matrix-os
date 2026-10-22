@@ -1,3 +1,4 @@
+import { createPipedreamAttemptStore, type PipedreamAttemptStore } from "./integrations/pipedream-attempts/store.js";
 import { createNativeGmailStore } from "./integrations/native-gmail/store.js";
 import type { NativeGmailStore } from "./integrations/native-gmail/types.js";
 import { observePostgresPoolErrors } from "@matrix-os/observability/postgres";
@@ -184,6 +185,7 @@ export type CustomMcpServerBrokerRow = CustomMcpServersTable;
 
 export interface PlatformDb extends CustomMcpApprovalStore {
   nativeGmailStore?: NativeGmailStore;
+  pipedreamGmailAttempts?: PipedreamAttemptStore;
   migrate(): Promise<void>;
 
   createUser(input: CreateUserInput): Promise<UsersTable>;
@@ -300,8 +302,10 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
   }
 
   const nativeGmailStore = createNativeGmailStore(kysely);
+  const pipedreamGmailAttempts = createPipedreamAttemptStore(kysely);
   const db: PlatformDb = {
     nativeGmailStore,
+    pipedreamGmailAttempts,
     ...createCustomMcpApprovalStore(kysely, typeof opts === "string" ? undefined : opts.now),
     async migrate(): Promise<void> {
       await sql`
@@ -471,6 +475,7 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
       await sql`CREATE INDEX IF NOT EXISTS idx_custom_mcp_tool_approvals_expiry ON custom_mcp_tool_approvals(expires_at)`.execute(kysely);
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_mcp_tool_approvals_receipt ON custom_mcp_tool_approvals(receipt_hash) WHERE receipt_hash IS NOT NULL`.execute(kysely);
       await nativeGmailStore.migrate();
+      await pipedreamGmailAttempts.migrate();
     },
 
     async createUser(input: CreateUserInput): Promise<UsersTable> {
@@ -905,6 +910,7 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
     },
 
     async destroy(): Promise<void> {
+      await pipedreamGmailAttempts.shutdown();
       await kysely.destroy();
       if (pool) {
         await pool.end();

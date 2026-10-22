@@ -46,6 +46,20 @@ describe('unconfigured managed integrations', () => {
     expect((await app().request('/api/integrations/available', { headers: { host: 'app.matrix-os.com' } })).status).toBe(503);
   });
 
+  it('admits only the exact receipt callback POST through routing and deletion guards', async () => {
+    const callback = '/api/integrations/gmail/pipedream/callback';
+    const routes = new Hono().post('/gmail/pipedream/callback', c => c.json({ handler: true }));
+    const configured = createApp({ db, env: { ACCOUNT_DELETION_SECRET: 's'.repeat(32) },
+      orchestrator: stubOrchestrator(), platformSecret: 'platform-secret', integrationRoutes: routes });
+    const request = (server: ReturnType<typeof app>, path: string, method: string) => server.request(path, { method, headers: { host: 'app.matrix-os.com' } });
+    expect((await request(configured, callback, 'POST')).status).toBe(200);
+    expect((await request(app(), callback, 'POST')).status).toBe(503);
+    for (const path of [callback, callback + '/', callback + '/nested', '/api/integrations/gmail/pipedream/attempts/00000000-0000-4000-8000-000000000000']) {
+      expect((await request(configured, path, 'GET')).status).toBe(401);
+      if (path !== callback) expect((await request(configured, path, 'POST')).status).toBe(401);
+    }
+  });
+
   it('preserves configured routes', async () => {
     const routes = new Hono().get('/', c => c.json([{ id: 'existing' }]));
     const response = await app(routes).request('/api/integrations', { headers: headers() });
