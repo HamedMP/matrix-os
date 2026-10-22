@@ -30,6 +30,7 @@ export async function createCanonicalChatRuntime(options: Omit<ConstructorParame
     admitJevWorkflow: options.admitJevWorkflow,
     drives: options.drives,
     assertChatReferenceAllowed: options.assertChatReferenceAllowed,
+    modelHistory: options.modelHistory,
     ...(options.botChats ? { botChats: options.botChats } : {}),
   });
   return { agents, recipes, context, orchestrator: new CanonicalChatOrchestrator({ ...options, agentContext: context }) };

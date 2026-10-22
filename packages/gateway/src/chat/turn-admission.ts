@@ -19,6 +19,7 @@ import type { ChatExecutionRootResolver, ResolvedChatExecutionRoot } from "./exe
 import { CanonicalChatOrchestrationError, mapRepositoryError, safeError, requirementsFor } from "./orchestration-input.js";
 import { loadChatResumeState } from "./resume-checkpoint.js";
 import { unsupportedAgentPermissionMode } from "./agent-permission.js";
+import type { GoogleModelHistoryReader } from "../google-data/runtime/model-history-reader.js";
 
 export interface TurnAdmissionOptions {
   repository: Pick<ChatRepository, "get" | "getDetailPage" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun">;
@@ -26,6 +27,7 @@ export interface TurnAdmissionOptions {
   adapters: CanonicalChatProviderRegistry;
   executionRoots?: ChatExecutionRootResolver;
   agentContext?: ChatAgentContext;
+  modelHistory?: GoogleModelHistoryReader;
   now?: () => Date;
   assertOpen(): void;
   assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
@@ -131,8 +133,10 @@ export async function admitCanonicalTurn(
         );
       }
     }
+    await deps.modelHistory?.assertRun({ owner, chatId, adapter });
     const resumeState = prepared?.context?.agent ? undefined : await loadChatResumeState({
       repository: deps.repository, owner, chatId, adapter,
+      modelHistory: deps.modelHistory,
       instanceId: validated.instance.id,
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "follow_up",
@@ -141,6 +145,7 @@ export async function admitCanonicalTurn(
     try {
       sessionContext = await prepareChatSessionContext({
         repository: deps.repository, owner, chatId, throughSeq: record.chat.messageCount,
+        modelHistory: deps.modelHistory, adapter,
         requestHash, instanceId: validated.instance.id, resumeState, context: prepared?.context,
       });
     } catch (error: unknown) { return mapRepositoryError(error); }

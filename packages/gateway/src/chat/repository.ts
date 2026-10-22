@@ -1,3 +1,4 @@
+import { createChat, type ChatCreationOptions } from "./creation-repository.js";
 import { readChatImportSource } from "./import-source.js";
 import { listChats, updateChat, renameChat } from "./metadata-repository.js";
 import type { CanonicalUpdateChatTitleRequest } from "@matrix-os/contracts";
@@ -503,6 +504,7 @@ export class ChatRepository {
     dialectOrKysely: Dialect | Kysely<ChatDatabase>,
     transactionScoped = false,
     outboxDelivery?: ChatOutboxDelivery,
+    private readonly creationOptions: ChatCreationOptions = {},
   ) {
     this.kysely = dialectOrKysely instanceof Kysely
       ? dialectOrKysely
@@ -590,7 +592,7 @@ export class ChatRepository {
   }
 
   async withTransaction<T>(fn: (repository: ChatRepository) => Promise<T>): Promise<T> {
-    return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery)));
+    return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery, this.creationOptions)));
   }
 
   async appendOutboxEvent(
@@ -694,94 +696,11 @@ export class ChatRepository {
   }
 
   async create(ownerInput: ChatOwner, input: CreateChatInput): Promise<ChatRecord> {
-    const owner = validateOwner(ownerInput);
-    CanonicalChatIdSchema.parse(input.id);
-    CanonicalChatRequestIdSchema.parse(input.clientRequestId);
-    if (input.projectId !== undefined) requireSafeRef(input.projectId);
-    if (input.currentSelection !== undefined) CanonicalChatModelSelectionSchema.parse(input.currentSelection);
-    const timestamp = new Date().toISOString();
-
-    return this.transact(async (trx) => {
-      const candidate = toChatRecord({
-        id: input.id,
-        owner_type: owner.type,
-        owner_id: owner.ownerId,
-        create_request_id: input.clientRequestId,
-        project_id: input.projectId ?? null,
-        title: input.title,
-        title_version: 0,
-        title_manual: false,
-        activity_at: timestamp,
-        lifecycle: "active",
-        attention: "none",
-        revision: 0,
-        message_count: 0,
-        collaboration: null,
-        user_state: null,
-        shell_state: null,
-        fork_provenance: null,
-        last_message_preview: null,
-        current_selection: input.currentSelection ?? null,
-        bound_driver_kind: null,
-        bound_instance_id: null,
-        bound_at_turn_id: null,
-        created_at: timestamp,
-        updated_at: timestamp,
-      });
-      const inserted = await trx.insertInto("chats").values({
-        id: candidate.chat.id,
-        owner_type: owner.type,
-        owner_id: owner.ownerId,
-        create_request_id: input.clientRequestId,
-        project_id: input.projectId ?? null,
-        title: candidate.chat.title,
-        title_manual: false,
-        lifecycle: candidate.chat.lifecycle,
-        attention: candidate.chat.attention,
-        revision: 0,
-        message_count: 0,
-        collaboration: null,
-        user_state: null,
-        shell_state: null,
-        fork_provenance: null,
-        last_message_preview: null,
-        current_selection: input.currentSelection ? jsonb(input.currentSelection) : null,
-        bound_driver_kind: null,
-        bound_instance_id: null,
-        bound_at_turn_id: null,
-      }).onConflict((oc) => oc.columns(["owner_type", "owner_id", "create_request_id"]).doNothing())
-        .returningAll().executeTakeFirst();
-
-      if (!inserted) {
-        const existing = await trx.selectFrom("chats").selectAll()
-          .where("owner_type", "=", owner.type)
-          .where("owner_id", "=", owner.ownerId)
-          .where("create_request_id", "=", input.clientRequestId)
-          .executeTakeFirst();
-        if (!existing) throw new ChatConflictError(input.id, 0);
-        const record = await hydrateRecord(trx, owner, existing.id);
-        if (!record) throw new ChatNotFoundError(existing.id);
-        return record;
-      }
-
-      await trx.insertInto("chat_members").values({
-        chat_id: inserted.id,
-        principal_type: owner.type === "organization" ? "organization" : "user",
-        principal_id: owner.ownerId,
-        role: "owner",
-      }).execute();
-      await trx.insertInto("chat_user_state").values({
-        chat_id: inserted.id,
-        principal_id: owner.ownerId,
-        read_through_seq: 0,
-        pinned: false,
-        muted: false,
-        attention_acknowledged_at: null,
-        last_opened_at: null,
-      }).execute();
-      await this.appendOutbox(trx, owner, inserted.id, 0, "chat.created");
-      return toPrincipalRecord(trx, owner, inserted);
-    });
+    return createChat({
+      transact: (fn) => this.transact(fn), hydrateRecord, toPrincipalRecord,
+      appendOutbox: (tx, owner, chatId, revision, event) => this.appendOutbox(tx, owner, chatId, revision, event),
+      ...this.creationOptions,
+    }, ownerInput, input);
   }
 
   async get(ownerInput: ChatOwner, chatId: string): Promise<ChatRecord | null> {

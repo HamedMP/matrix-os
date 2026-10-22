@@ -14,8 +14,10 @@ function unavailable() {
 export async function submitCanonicalInput(options: {
   repository: Pick<ChatRepository, "getInputState" | "getAdapterState" | "appendRunActivities" | "reopenInputSubmission">;
   active?: Active; owner: ChatOwner; chatId: string; runId: string; requestId: string; input: CanonicalSubmitChatInputRequest;
+  beforeDispatch?(): Promise<void>;
 }): Promise<CanonicalChatInputSubmissionResponse> {
-  const { repository, active, owner, chatId, runId, requestId } = options;
+  const { repository, active, chatId, runId, requestId } = options;
+  const owner = structuredClone(options.owner);
   const input = CanonicalSubmitChatInputRequestSchema.parse(options.input);
   const existing = await repository.getInputState(owner, { chatId, runId, requestId });
   if (existing.submitted) {
@@ -50,6 +52,11 @@ export async function submitCanonicalInput(options: {
   }
   let queued = false;
   try {
+    try { await options.beforeDispatch?.(); }
+    catch (error: unknown) {
+      console.warn('[chat/input] Continuation admission refused:', error instanceof Error ? error.name : 'UnknownError');
+      throw new ChatInputNotDeliveredError();
+    }
     if (active.controller.signal.aborted) throw new ChatInputNotDeliveredError();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {

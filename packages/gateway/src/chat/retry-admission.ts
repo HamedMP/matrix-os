@@ -83,8 +83,10 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
         );
       }
     }
+    await deps.modelHistory?.assertRun({ owner, chatId, adapter });
     const resumeState = context.latestRun.context?.agent ? undefined : await loadChatResumeState({
       repository: deps.repository, owner, chatId, adapter,
+      modelHistory: deps.modelHistory,
       instanceId: context.latestRun.instanceId,
       executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
       mode: "retry",
@@ -93,6 +95,7 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
     try {
       sessionContext = await prepareChatSessionContext({
         repository: deps.repository, owner, chatId, throughSeq: context.turn.baseMessageSeq,
+        modelHistory: deps.modelHistory, adapter,
         requestHash: context.latestRun.context?.requestHash ?? chatContextRequestHash({
           parts: context.message.parts, selection: context.latestRun.selection,
           interactionMode: context.latestRun.interactionMode, permissionMode: context.latestRun.permissionMode,
