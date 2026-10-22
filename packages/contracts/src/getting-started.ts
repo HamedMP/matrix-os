@@ -23,6 +23,8 @@ export interface GettingStartedSnapshot {
   loaded: boolean;
   /** Signed-in coding agents ("codex", "claude"); null while unknown. */
   availableAgents: string[] | null;
+  /** Connected integration services; null while unknown. */
+  connectedServices: string[] | null;
 }
 
 export interface GettingStartedResults {
@@ -109,6 +111,7 @@ export function emptyGettingStartedSnapshot(): GettingStartedSnapshot {
     loaded: false,
     completedCount: 0,
     availableAgents: null,
+    connectedServices: null,
     steps: GETTING_STARTED_STEP_IDS.map((id) => ({
       id,
       label: STEP_LABELS[id],
@@ -162,5 +165,6 @@ export function deriveGettingStartedSnapshot(
     completedCount: steps.filter((step) => step.status === "complete").length,
     loaded: true,
     availableAgents: results.agents.status === "fulfilled" && statuses.agent !== "unavailable" ? availableAgents(results.agents.value) : null,
+    connectedServices: results.integrations.status === "fulfilled" ? [...connectedServices(results.integrations.value)] : null,
   };
 }

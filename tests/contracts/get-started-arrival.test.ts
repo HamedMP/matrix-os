@@ -7,6 +7,8 @@ import {
   orderByIds,
   personalizeGettingStartedSteps,
   deriveGettingStartedSnapshot,
+  emptyGettingStartedSnapshot,
+  gettingStartedRows,
 } from "../../packages/contracts/src/index.js";
 
 describe("personalised arrival order", () => {
@@ -75,5 +77,66 @@ describe("personalised Getting started steps", () => {
   it("keeps the labels that completion can't check", () => {
     // Only Codex and Claude count as a logged-in agent, so OpenCode never names the step.
     expect(personalizeGettingStartedSteps(steps, { goals: [], tools: ["opencode", "github", "gmail"] })).toEqual(steps);
+  });
+});
+
+describe("Getting started rows from the owner's choices", () => {
+  const fulfilled = (value: unknown): PromiseSettledResult<unknown> => ({ status: "fulfilled", value });
+  function snapshot(services: string[]) {
+    return deriveGettingStartedSnapshot({
+      github: fulfilled({ authenticated: false }),
+      integrations: fulfilled(services.map((service, index) => ({ id: `c${index}`, service, status: "active" }))),
+      agents: fulfilled({ agents: [] }),
+      projects: fulfilled({ projects: [] }),
+      chats: fulfilled({ items: [] }),
+      billing: fulfilled({ access: { runtimeProxyAllowed: true } }),
+    });
+  }
+
+  it("keeps the five steps without answers", () => {
+    const { rows, completedCount, total } = gettingStartedRows(snapshot(["linear"]), null);
+    expect(rows.map((row) => row.id)).toEqual([...GETTING_STARTED_STEP_IDS]);
+    expect(rows.every((row) => row.kind === "step")).toBe(true);
+    expect({ completedCount, total }).toEqual({ completedCount: 1, total: 5 });
+  });
+
+  it("adds a connect row for each picked tool the five steps don't already cover", () => {
+    const answers = { goals: ["code" as const], tools: ["github" as const, "linear" as const, "figma" as const, "codex" as const, "gmail" as const] };
+    const { rows, completedCount, total } = gettingStartedRows(snapshot(["linear"]), answers);
+    const tools = rows.filter((row) => row.kind === "tool");
+    expect(tools).toEqual([
+      { kind: "tool", id: "tool:linear", label: "Connect Linear", status: "complete", service: "linear" },
+      { kind: "tool", id: "tool:figma", label: "Connect Figma", status: "incomplete", service: "figma" },
+    ]);
+    expect(rows[0]).toMatchObject({ kind: "step", id: "agent", label: "Log in to Codex" });
+    expect({ completedCount, total }).toEqual({ completedCount: 2, total: 7 });
+  });
+
+  it("marks tool rows unavailable while connections are unknown", () => {
+    const { rows } = gettingStartedRows(emptyGettingStartedSnapshot(), { goals: [], tools: ["slack"] });
+    expect(rows.find((row) => row.id === "tool:slack")?.status).toBe("unavailable");
+  });
+
+  it("adds a chat row per added bot and drops bots the owner removed", () => {
+    const answers = { goals: ["business" as const], tools: [], bots: ["personal-daily-brief" as const, "jev-inbox-triage" as const, "event-request-desk" as const] };
+    const { rows, total } = gettingStartedRows(snapshot([]), answers, {
+      "personal-daily-brief": "complete",
+      "jev-inbox-triage": null,
+    });
+    expect(rows.filter((row) => row.kind === "bot")).toEqual([
+      { kind: "bot", id: "bot:personal-daily-brief", label: "Chat with Daily Brief", status: "complete", recipeId: "personal-daily-brief" },
+      { kind: "bot", id: "bot:event-request-desk", label: "Chat with Event Request Desk", status: "incomplete", recipeId: "event-request-desk" },
+    ]);
+    expect(total).toBe(7);
+  });
+});
+
+describe("widget tasks from the owner's choices", () => {
+  it("leads with the tasks their picked tools and starter unlock, then their goals", () => {
+    expect(getStartedTaskOrder(["business"], { tools: ["github"] })[0]).toBe("work-on-code");
+    expect(getStartedTaskOrder([], { tools: ["google-calendar"] })[0]).toBe("plan-week");
+    expect(getStartedTaskOrder(["explore"], { starter: "ask-anything" })[0]).toBe("research");
+    expect(getStartedTaskOrder(["explore"], { starter: "build-something-small" })[0]).toBe("build-website");
+    expect(getStartedTaskOrder(["code"], { tools: ["google-calendar"] }).slice(0, 2)).toEqual(["plan-week", "work-on-code"]);
   });
 });

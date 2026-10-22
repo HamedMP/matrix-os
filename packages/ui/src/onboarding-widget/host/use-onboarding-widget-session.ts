@@ -139,7 +139,9 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
   // Spec 635: the name and goals from Get started win over the account's display name.
   const getStartedAnswers = useGetStartedAnswers();
   const userName = onboardingFirstName(getStartedAnswers?.name ?? input.displayName);
-  const taskOrder = useMemo(() => (getStartedAnswers ? getStartedTaskOrder(getStartedAnswers.goals) : undefined), [getStartedAnswers]);
+  const taskOrder = useMemo(() => (getStartedAnswers
+    ? getStartedTaskOrder(getStartedAnswers.goals, { tools: getStartedAnswers.tools, ...(getStartedAnswers.starter ? { starter: getStartedAnswers.starter } : {}) })
+    : undefined), [getStartedAnswers]);
   const intro = getStartedAnswers ? getStartedWidgetIntro(getStartedAnswers.goals) : null;
   const buildSuggestion = useMemo(() => (getStartedAnswers ? getStartedBuildSuggestion(getStartedAnswers) : null), [getStartedAnswers]);
   return {

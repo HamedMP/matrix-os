@@ -1,6 +1,14 @@
 import { appGalleryBuildPrompt } from "#app-gallery";
-import { GET_STARTED_APP_IDEAS, type GetStartedAnswers, type GetStartedGoalId, type GetStartedToolId } from "#get-started";
-import { GETTING_STARTED_STEP_IDS, type GettingStartedStep, type GettingStartedStepId } from "#getting-started";
+import { GET_STARTED_APP_IDEAS, type GetStartedAnswers, type GetStartedGoalId, type GetStartedStarterId, type GetStartedToolId } from "#get-started";
+import { getStartedServiceLabel, getStartedToolConnect } from "#get-started-connect";
+import { GET_STARTED_RECIPE_BOTS, type GetStartedRecipeBotId } from "#get-started-recipe-bots";
+import {
+  GETTING_STARTED_STEP_IDS,
+  type GettingStartedSnapshot,
+  type GettingStartedStep,
+  type GettingStartedStepId,
+  type GettingStartedStepStatus,
+} from "#getting-started";
 import { ONBOARDING_TASK_IDS, type OnboardingStarterTaskId } from "#onboarding-widget-catalog";
 
 // Spec 635, Section 5: the desktop a new owner lands on leads with what fits
@@ -34,8 +42,26 @@ export function getStartedStepOrder(goals: readonly GetStartedGoalId[]): Getting
   return merge(goals, STEP_PRIORITY, GETTING_STARTED_STEP_IDS);
 }
 
-export function getStartedTaskOrder(goals: readonly GetStartedGoalId[]): OnboardingStarterTaskId[] {
-  return merge(goals, TASK_PRIORITY, ONBOARDING_TASK_IDS);
+// Tasks a picked tool or starter unlocks lead, ahead of the goal order.
+const TOOL_TASKS: Partial<Record<GetStartedToolId, OnboardingStarterTaskId>> = {
+  "google-calendar": "plan-week",
+  github: "work-on-code",
+};
+
+const STARTER_TASKS: Partial<Record<GetStartedStarterId, OnboardingStarterTaskId>> = {
+  "ask-anything": "research",
+  "build-something-small": "build-website",
+};
+
+export function getStartedTaskOrder(
+  goals: readonly GetStartedGoalId[],
+  choices: { tools?: readonly GetStartedToolId[]; starter?: GetStartedStarterId } = {},
+): OnboardingStarterTaskId[] {
+  const chosen = [
+    ...(choices.tools ?? []).map((tool) => TOOL_TASKS[tool]),
+    choices.starter ? STARTER_TASKS[choices.starter] : undefined,
+  ].filter((task): task is OnboardingStarterTaskId => task !== undefined);
+  return [...new Set([...chosen, ...merge(goals, TASK_PRIORITY, ONBOARDING_TASK_IDS)])];
 }
 
 // The agent step completes for Codex or Claude only (deriveGettingStartedSnapshot).
@@ -64,6 +90,44 @@ export function personalizeGettingStartedSteps(
   return orderByIds(labelled, getStartedStepOrder(answers.goals));
 }
 
+// Services the five steps already check, so they never get a second row.
+const STEP_SERVICES = new Set(["github", "gmail", "google_calendar"]);
+
+export type GettingStartedRow =
+  | ({ kind: "step" } & GettingStartedStep)
+  | { kind: "tool"; id: `tool:${string}`; label: string; status: GettingStartedStepStatus; service: string }
+  | { kind: "bot"; id: `bot:${string}`; label: string; status: GettingStartedStepStatus; recipeId: GetStartedRecipeBotId };
+
+/** Each added bot's chat status; null when the owner has removed that bot. Missing means not loaded yet. */
+export type GettingStartedBotStatuses = Partial<Record<GetStartedRecipeBotId, GettingStartedStepStatus | null>>;
+
+/**
+ * Getting started for this owner: the five steps (personalised by their answers), then a
+ * connect row per picked tool the steps don't cover, then a chat row per bot they added.
+ */
+export function gettingStartedRows(
+  snapshot: GettingStartedSnapshot,
+  answers: Pick<GetStartedAnswers, "goals" | "tools" | "bots"> | null,
+  bots: GettingStartedBotStatuses = {},
+): { rows: GettingStartedRow[]; completedCount: number; total: number } {
+  const steps = answers ? personalizeGettingStartedSteps(snapshot.steps, answers, snapshot.availableAgents) : snapshot.steps;
+  const rows: GettingStartedRow[] = steps.map((step) => ({ kind: "step", ...step }));
+  const connected = snapshot.connectedServices ? new Set(snapshot.connectedServices) : null;
+  for (const tool of answers?.tools ?? []) {
+    const connect = getStartedToolConnect(tool);
+    if (connect.kind !== "app" || STEP_SERVICES.has(connect.service)) continue;
+    const status = connected ? (connected.has(connect.service) ? "complete" : "incomplete") : "unavailable";
+    rows.push({ kind: "tool", id: `tool:${connect.service}`, label: `Connect ${getStartedServiceLabel(connect.service)}`, status, service: connect.service });
+  }
+  for (const recipeId of answers?.bots ?? []) {
+    const status = bots[recipeId];
+    const bot = GET_STARTED_RECIPE_BOTS.find((candidate) => candidate.recipeId === recipeId);
+    if (status === null || !bot) continue;
+    rows.push({ kind: "bot", id: `bot:${recipeId}`, label: `Chat with ${bot.label}`, status: status ?? "incomplete", recipeId });
+  }
+  return { rows, completedCount: rows.filter((row) => row.status === "complete").length, total: rows.length };
+}
+
 /** Stable reorder: listed ids first in that order, everything else after in its original order. */
 export function orderByIds<T extends { id: string }>(items: readonly T[], order: readonly string[]): T[] {
   const rank = new Map(order.map((id, index) => [id, index]));
@@ -84,6 +148,12 @@ const WIDGET_INTROS: Partial<Record<GetStartedGoalId, string>> = {
 export function getStartedWidgetIntro(goals: readonly GetStartedGoalId[]): string | null {
   const first = goals[0];
   return (first && WIDGET_INTROS[first]) ?? null;
+}
+
+/** Getting started's App Gallery link: the owner's picked app idea, or their first app. */
+export function getStartedAppGalleryLabel(answers: Pick<GetStartedAnswers, "appIdea"> | null): string {
+  const idea = GET_STARTED_APP_IDEAS.find((candidate) => candidate.id === answers?.appIdea);
+  return idea ? `Build your ${idea.label.toLowerCase()}` : "Build your first app";
 }
 
 export interface GetStartedBuildSuggestion {

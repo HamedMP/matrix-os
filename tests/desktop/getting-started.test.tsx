@@ -193,16 +193,42 @@ describe("GettingStartedPopover", () => {
       expect(await screen.findByRole("dialog", { name: "Getting started" })).not.toBeNull();
     });
 
+    it("opens an added bot's own chat and App Gallery from the checklist", async () => {
+      const api = makeApi({
+        "/api/integrations": [],
+        "/api/workspace/projects": { projects: [] },
+        "/api/chats?limit=1": { items: [] },
+        "/api/chat-agents": {
+          enabled: true,
+          agents: [{ id: "bot_write001", archived: false, createdAt: "2026-10-22T10:00:00.000Z", recipeRef: { recipeId: "writing-bot", version: 1 } }],
+        },
+        "/api/chat-agents/bot_write001/direct-chat": { chatId: null },
+      });
+      api.post.mockResolvedValue({ chatId: "chat_writer0001" });
+      useConnection.setState({ api: api as never });
+      renderAfter({ status: "completed", completedAt: "2026-10-22T10:00:00.000Z", answers: { goals: [], tools: ["linear"], bots: ["writing-bot"] } });
+      const dialog = await screen.findByRole("dialog", { name: "Getting started" });
+      expect(await within(dialog).findByRole("button", { name: "Connect Linear" })).not.toBeNull();
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Chat with Writing Bot" }));
+      await waitFor(() => expect(useTabs.getState().tabs).toContainEqual(
+        expect.objectContaining({ kind: "work", workRoute: "chat", chatId: "chat_writer0001" }),
+      ));
+      expect(api.post).toHaveBeenCalledWith("/api/chat-agents/bot_write001/direct-chat", {});
+      fireEvent.click(within(dialog).getByTestId("getting-started-app-gallery"));
+      expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({ kind: "app", slug: "app-gallery" }));
+    });
+
     it("leads with the owner's answers and shows an icon on every step", async () => {
       renderAfter({ status: "completed", completedAt: "2026-10-22T10:00:00.000Z", answers: { goals: ["code"], tools: ["codex"] } });
       const dialog = await screen.findByRole("dialog", { name: "Getting started" });
       const rows = await waitFor(() => {
-        const buttons = within(dialog).getAllByRole("button");
+        const buttons = within(dialog).getAllByRole("button").filter((button) => button.dataset.testid !== "getting-started-app-gallery");
         expect(buttons[0].textContent).toContain("Log in to Codex");
         return buttons;
       });
       expect(rows).toHaveLength(5);
       for (const row of rows) expect(row.querySelector("svg")).not.toBeNull();
+      expect(within(dialog).getByTestId("getting-started-app-gallery").textContent).toContain("Build your first app in App Gallery");
     });
   });
 

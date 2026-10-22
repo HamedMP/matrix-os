@@ -252,16 +252,53 @@ describe("web getting started status", () => {
       expect(await screen.findByRole("dialog", { name: "Getting started" })).toBeTruthy();
     });
 
+    it("adds rows for picked tools and added bots, and opens the right place", async () => {
+      vi.restoreAllMocks();
+      const BOT_CHAT = "chat_writer0001";
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input);
+        const body = url.endsWith("/api/chat-agents") ? {
+          enabled: true,
+          agents: [{ id: "bot_write001", archived: false, createdAt: "2026-10-22T10:00:00.000Z", recipeRef: { recipeId: "writing-bot", version: 1 } }],
+        }
+          : url.endsWith("/api/chat-agents/bot_write001/direct-chat") ? { chatId: init?.method === "POST" ? BOT_CHAT : null }
+            : url.endsWith("/api/integrations") ? []
+              : url.endsWith("/api/agents/credentials/status") ? { agents: [] }
+                : url.endsWith("/api/workspace/projects") ? { projects: [] }
+                  : url.endsWith("/api/chats?limit=1") ? { items: [] }
+                    : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
+                      : { authenticated: false };
+        return new Response(JSON.stringify(body), { status: 200 });
+      });
+      const onOpenSettings = vi.fn();
+      const onOpenFirstWork = vi.fn();
+      render(
+        <GetStartedAnswersProvider scope="test">
+          <GetStartedGate port={ended({ status: "completed", completedAt: "2026-10-22T10:00:00.000Z", answers: { goals: ["code"], tools: ["codex", "linear"], bots: ["writing-bot"] } })} zIndex={1} />
+          <GettingStartedPopover onOpenSettings={onOpenSettings} onOpenFirstWork={onOpenFirstWork} />
+        </GetStartedAnswersProvider>,
+      );
+      const dialog = await screen.findByRole("dialog", { name: "Getting started" });
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Connect Linear" }));
+      expect(onOpenSettings).toHaveBeenCalledWith("integrations");
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Chat with Writing Bot" }));
+      await waitFor(() => expect(onOpenFirstWork).toHaveBeenCalledWith({ kind: "chat", chatId: BOT_CHAT }));
+      expect(within(dialog).getByTestId("getting-started-counter").textContent).toBe("0 of 7");
+      fireEvent.click(within(dialog).getByTestId("getting-started-app-gallery"));
+      expect(onOpenFirstWork).toHaveBeenLastCalledWith({ kind: "app-gallery" });
+    });
+
     it("leads with the owner's answers and shows an icon on every step", async () => {
       renderAfter({ status: "completed", completedAt: "2026-10-22T10:00:00.000Z", answers: { goals: ["code"], tools: ["codex"] } });
       const dialog = await screen.findByRole("dialog", { name: "Getting started" });
       const rows = await waitFor(() => {
-        const buttons = within(dialog).getAllByRole("button");
+        const buttons = within(dialog).getAllByRole("button").filter((button) => button.dataset.testid !== "getting-started-app-gallery");
         expect(buttons[0].textContent).toContain("Log in to Codex");
         return buttons;
       });
       expect(rows).toHaveLength(5);
       for (const row of rows) expect(row.querySelector("svg")).not.toBeNull();
+      expect(within(dialog).getByTestId("getting-started-app-gallery").textContent).toContain("Build your first app in App Gallery");
     });
   });
 
