@@ -98,6 +98,10 @@ describe("CI wiring for PR test planning", () => {
   it("runs selected files only after a successful selection and uses every hosted vCPU", () => {
     const select = unitSteps.find((step) => step.id === "select");
     expect(select?.if).toContain("needs.changes.outputs.unit_scope == 'affected'");
+    // The import graph resolves workspace packages through their built dist output.
+    expect(select?.run).toMatch(/^bun run test:prepare && node scripts\/ci\/unit-test-selection\.mjs /u);
+    const controllerUpload = unitSteps.find((step) => step.name === "Upload controller regression evidence");
+    expect(controllerUpload?.if).toContain("needs.changes.outputs.unit_scope != 'affected'");
     const test = unitSteps.find((step) => step.run?.startsWith('GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test --'));
     expect(test?.env?.UNIT_SELECTION).toBe("${{ steps.select.outputs.list }}");
     expect(test?.env?.MATRIX_TEST_WORKERS).toBe("4");
