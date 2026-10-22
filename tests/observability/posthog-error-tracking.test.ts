@@ -892,11 +892,12 @@ describe("PostHog error tracking", () => {
     expect(platformShutdown).toContain("await app.shutdownPostHog()");
     expect(platformMain).toContain("await Promise.allSettled(posthogShutdowns.map((shutdownPostHog) => shutdownPostHog()))");
     expect(platformMain).not.toContain("for (let i = posthogShutdowns.length - 1");
-    expect(proxyMain).toContain("await posthogErrorTracker.shutdown()");
+    expect(proxyMain).toContain("await waitForRelayWork(posthogErrorTracker.shutdown(), deadline)");
     const proxyCloseIndex = proxyMain.indexOf("server.close();");
-    const proxyForcedExitIndex = proxyMain.indexOf("const forceExit = setTimeout(() => process.exit(1), 6_000)");
-    const proxyTelemetryDrainIndex = proxyMain.indexOf("await posthogErrorTracker.shutdown()");
+    const proxyForcedExitIndex = proxyMain.indexOf("const forceExit = setTimeout(() => process.exit(1), RELAY_SHUTDOWN_FORCE_EXIT_MS)");
+    const proxyTelemetryDrainIndex = proxyMain.indexOf("await waitForRelayWork(posthogErrorTracker.shutdown(), deadline)");
     expect(proxyCloseIndex).toBeGreaterThanOrEqual(0);
+    expect(proxyForcedExitIndex).toBeGreaterThanOrEqual(0);
     expect(proxyCloseIndex).toBeLessThan(proxyTelemetryDrainIndex);
     expect(proxyForcedExitIndex).toBeLessThan(proxyTelemetryDrainIndex);
     expect(proxyMain).not.toContain(".unref()");
