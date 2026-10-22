@@ -135,9 +135,21 @@ export async function stopSystemdRuntime(input: {
     };
     const show = async () => {
       current();
-      const result = await input.runCommand('/usr/bin/systemctl', ['show', unit, '--all', `--property=${KEYS.join(',')}`]);
-      current();
-      return snapshot(result.stdout, unit);
+      try {
+        const result = await input.runCommand('/usr/bin/systemctl', ['show', unit, '--all', `--property=${KEYS.join(',')}`]);
+        current();
+        return snapshot(result.stdout, unit);
+      } catch (error: unknown) {
+        current();
+        // execFile rejects nonzero exits but retains stdout. Only a complete,
+        // exact missing-unit snapshot may survive that known systemctl result.
+        if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'number' || ![1, 4].includes(error.code)
+          || ('killed' in error && error.killed === true) || ('signal' in error && error.signal != null)
+          || !('stdout' in error) || typeof error.stdout !== 'string') throw new StopUnavailable();
+        const state = snapshot(error.stdout, unit);
+        if (state.LoadState !== 'not-found' || state.ControlGroup !== '' || !terminal(state)) throw new StopUnavailable();
+        return state;
+      }
     };
     await show();
     await assertIdentity();
@@ -160,9 +172,23 @@ export async function stopSystemdRuntime(input: {
         await emptyCgroup(root, unit);
         await assertIdentity();
         // Recheck systemd after filesystem awaits: no activation job may have appeared.
-        if (!terminal(await show()))
-          throw new StopUnavailable();
+        const settled = await show();
+        if (!terminal(settled)) throw new StopUnavailable();
         await assertIdentity();
+        if (settled.ActiveState === 'failed') {
+          // Clear retained transient failures only AFTER process absence is proven.
+          // Reset is cleanup, never the evidence that execution stopped.
+          let resetFailed = false;
+          try { await input.runCommand('/usr/bin/systemctl', ['reset-failed', unit]); }
+          catch (error: unknown) { if (!(error instanceof Error)) throw new StopUnavailable(); resetFailed = true; }
+          current();
+          const reset = await show();
+          if (!terminal(reset) || reset.ActiveState === 'failed' || (resetFailed && reset.LoadState !== 'not-found')) throw new StopUnavailable();
+          await emptyCgroup(root, unit);
+          await assertIdentity();
+          if (!terminal(await show())) throw new StopUnavailable();
+          await assertIdentity();
+        }
         return;
       }
       await new Promise(resolve => setTimeout(resolve, Math.min(poll, Math.max(1, deadline - performance.now()))));
