@@ -1,3 +1,4 @@
+import type { AssistantDeltaInput, AssistantDeltaWriteHook, AssistantDeltaTransact } from "./assistant-delta-repository.js";
 import { createChat, type ChatCreationOptions } from "./creation-repository.js";
 import { readChatImportSource } from "./import-source.js";
 import { listChats, updateChat, renameChat } from "./metadata-repository.js";
@@ -68,7 +69,6 @@ import {
   type ChatRecord,
 } from "./records.js";
 import { ChatRunLifecycleRepository } from "./run-lifecycle-repository.js";
-import type { SealedAssistantCredential } from "./assistant-credential-crypto.js";
 import {
   reconcileProviderBindings,
   type ProviderBindingReconciliationResult,
@@ -486,6 +486,8 @@ async function hydrateAdmission(
   };
 }
 
+export interface ChatRepositoryOptions extends ChatCreationOptions { assistantDeltaWrites?: AssistantDeltaWriteHook }
+
 export class ChatRepository {
   readonly kysely: Kysely<ChatDatabase>;
   private readonly transactionScoped: boolean;
@@ -504,7 +506,7 @@ export class ChatRepository {
     dialectOrKysely: Dialect | Kysely<ChatDatabase>,
     transactionScoped = false,
     outboxDelivery?: ChatOutboxDelivery,
-    private readonly creationOptions: ChatCreationOptions = {},
+    private readonly repositoryOptions: ChatRepositoryOptions = {},
   ) {
     this.kysely = dialectOrKysely instanceof Kysely
       ? dialectOrKysely
@@ -514,7 +516,7 @@ export class ChatRepository {
     this.detail = new ChatDetailRepository(this.kysely, hydrateRecord.bind(null, this.kysely));
     this.runLifecycle = new ChatRunLifecycleRepository(
       this.kysely,
-      (fn) => this.transact(fn),
+      (fn, check) => this.transact(fn, check),
       (executor, owner, chatId, revision, eventType, payload) => this.appendOutbox(
         executor,
         owner,
@@ -523,6 +525,7 @@ export class ChatRepository {
         eventType,
         payload,
       ),
+      this.repositoryOptions.assistantDeltaWrites,
     );
     this.queue = new ChatQueueRepository(
       this.kysely,
@@ -592,7 +595,7 @@ export class ChatRepository {
   }
 
   async withTransaction<T>(fn: (repository: ChatRepository) => Promise<T>): Promise<T> {
-    return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery, this.creationOptions)));
+    return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery, this.repositoryOptions)));
   }
 
   async appendOutboxEvent(
@@ -617,18 +620,26 @@ export class ChatRepository {
     ));
   }
 
-  private async transact<T>(fn: (trx: Executor) => Promise<T>): Promise<T> {
-    if (this.transactionScoped) return fn(this.kysely);
-    const result = await this.kysely.transaction().execute(async (trx) => {
-      const pending = this.outboxDelivery.begin(trx);
-      try {
-        return { value: await fn(trx), pending };
-      } finally {
-        this.outboxDelivery.end(trx);
-      }
-    });
-    this.outboxDelivery.flush(result.pending);
-    return result.value;
+  private async transact<T>(fn: (trx: Executor) => Promise<T>, beforeRelease?: Parameters<AssistantDeltaTransact>[1]): Promise<T> {
+    if (this.transactionScoped) {
+      if (beforeRelease) this.outboxDelivery.beforeRelease(this.kysely, beforeRelease);
+      return fn(this.kysely);
+    }
+    let executor: Executor | undefined;
+    try {
+      const result = await this.kysely.transaction().execute(async (trx) => {
+        executor = trx;
+        const batch = this.outboxDelivery.begin(trx);
+        if (beforeRelease) this.outboxDelivery.beforeRelease(trx, beforeRelease);
+        const value = await fn(trx);
+        this.outboxDelivery.seal(trx);
+        return { value, batch };
+      });
+      this.outboxDelivery.commit(result.batch);
+      return result.value;
+    } finally {
+      if (executor) this.outboxDelivery.end(executor);
+    }
   }
 
   private async appendOutbox(
@@ -699,7 +710,7 @@ export class ChatRepository {
     return createChat({
       transact: (fn) => this.transact(fn), hydrateRecord, toPrincipalRecord,
       appendOutbox: (tx, owner, chatId, revision, event) => this.appendOutbox(tx, owner, chatId, revision, event),
-      ...this.creationOptions,
+      ...this.repositoryOptions,
     }, ownerInput, input);
   }
 
@@ -1454,23 +1465,16 @@ export class ChatRepository {
     return this.runLifecycle.appendRunActivities(ownerInput, chatId, runId, input);
   }
 
-  async appendAssistantDelta(ownerInput: ChatOwner, input: {
-    chatId: string;
-    runId: string;
-    messageId: string;
-    delta: string;
-    createdAt: string;
-    snapshot?: boolean;
-    credentials?: readonly SealedAssistantCredential[];
-  }): Promise<CanonicalChatMessage> {
-    return this.runLifecycle.appendAssistantDelta(ownerInput, input);
+  async appendAssistantDelta(ownerInput: ChatOwner, input: AssistantDeltaInput, signal?: AbortSignal): Promise<CanonicalChatMessage> {
+    return this.runLifecycle.appendAssistantDelta(ownerInput, input, signal);
   }
 
   async appendAssistantAttachment(
     ownerInput: ChatOwner,
     input: Parameters<ChatRunLifecycleRepository["appendAssistantAttachment"]>[1],
+    signal?: AbortSignal,
   ) {
-    return this.runLifecycle.appendAssistantAttachment(ownerInput, input);
+    return this.runLifecycle.appendAssistantAttachment(ownerInput, input, signal);
   }
 
   async finishRun(ownerInput: ChatOwner, input: {
@@ -1481,8 +1485,8 @@ export class ChatRepository {
     completedAt: string;
     diagnostic?: ChatRunFailureDiagnostic;
     output?: CanonicalChatMessage;
-  }): Promise<{ run: CanonicalChatRun; transitioned: boolean }> {
-    return this.runLifecycle.finishRun(ownerInput, input);
+  }, signal?: AbortSignal): Promise<{ run: CanonicalChatRun; transitioned: boolean }> {
+    return this.runLifecycle.finishRun(ownerInput, input, signal);
   }
 
   async replayOutbox(ownerInput: ChatOwner, input: {
@@ -1513,10 +1517,15 @@ export class ChatRepository {
         .executeTakeFirst();
       if (!cursorExists) return { events: [], gap: true };
     }
-    const events = await this.replayOutbox(owner, {
-      afterCursor: afterCursor ?? 0,
-      limit: Math.max(1, Math.min(100, Math.trunc(input.limit))),
-    });
+    // SSE replay is notification-only: never materialize persisted copied content into this delayed path.
+    // The explicit owner inspection replayOutbox API retains its separate full-payload behavior.
+    const rows = await this.kysely.selectFrom("chat_outbox")
+      .select(["cursor", "owner_type", "owner_id", "chat_id", "revision", "event_type", "created_at",
+        sql<Record<string, never>>`'{}'::jsonb`.as("payload")])
+      .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
+      .where("cursor", ">", afterCursor ?? 0).orderBy("cursor")
+      .limit(Math.max(1, Math.min(100, Math.trunc(input.limit)))).execute();
+    const events = rows.map(toOutbox);
     const nextCursor = events.at(-1)?.cursor;
     if (events.length >= Math.max(1, Math.min(100, Math.trunc(input.limit)))) {
       const latest = await this.kysely.selectFrom("chat_outbox").select("cursor")
