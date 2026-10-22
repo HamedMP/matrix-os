@@ -31,7 +31,7 @@ const ROUTE = resolveBedrockRouteConfig({ MATRIX_FUNDED_BEDROCK_ROUTE: JSON.stri
     cacheWrite5mRateHundredths: 125, cacheWrite1hRateHundredths: 200 },
 }) })!;
 
-function config() {
+function config(overrides: NodeJS.ProcessEnv = {}) {
   return resolveFundedRelayConfig({
     MATRIX_FUNDED_AI_ENABLED: "true", MATRIX_FUNDED_AI_RESERVATION_MODE: "usage",
     MATRIX_FUNDED_GLM_PRICING_REVIEW_VERSION: FUNDED_PRICING_VERSIONS[FUNDED_GLM_FLASH],
@@ -44,6 +44,7 @@ function config() {
     PLATFORM_INTERNAL_URL: "https://platform.example.com",
     AI_RELAY_CONTROL_TOKEN: "relay-control-token-1234567890123456789",
     AI_RELAY_METADATA_SECRET: "metadata-secret-12345678901234567890123",
+    ...overrides,
   })!;
 }
 
@@ -381,6 +382,35 @@ describe("funded Bedrock relay", () => {
       expect.any(AbortSignal));
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(bedrockUpstream.dispatch).not.toHaveBeenCalled();
+    await relay.close();
+  });
+
+  it("rejects a stale Bedrock Sonnet route before reserving funds for an unsupported Workers fallback", async () => {
+    const control = platform();
+    control.check.mockResolvedValue({
+      identity: IDENTITY,
+      upstreamSelectionVersion: 1 as const,
+      upstreamSelection: { ...SELECTION, upstream: "cloudflare" as const },
+    });
+    const route = { ...ROUTE, clientModelId: "bedrock-sonnet", canonicalModelId: "anthropic/claude-sonnet-5" };
+    const bedrockUpstream: FundedGenerationUpstream = { dispatch: vi.fn(), close: vi.fn() };
+    const fetchMock = vi.fn();
+    const relay = createFundedRelay({ ...config({
+      MATRIX_FUNDED_SONNET_PRICING_REVIEW_VERSION:
+        FUNDED_PRICING_VERSIONS["anthropic/claude-sonnet-5"],
+      MATRIX_FUNDED_SONNET_PRICING_REVIEWED_AT: "2026-10-01T00:00:00.000Z",
+      MATRIX_FUNDED_SONNET_PRICING_VALID_THROUGH: "2026-10-31T00:00:00.000Z",
+    }), bedrockRoute: route, fetch: fetchMock, now: () => NOW,
+      platformClient: control as unknown as FundedPlatformClient, bedrockUpstream });
+    const app = new Hono(); relay.register(app);
+
+    const result = await app.fetch(request("claude-sonnet-5"));
+
+    expect(result.status).toBe(503);
+    expect(control.authorize).not.toHaveBeenCalled();
+    expect(control.start).not.toHaveBeenCalled();
+    expect(bedrockUpstream.dispatch).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
     await relay.close();
   });
 

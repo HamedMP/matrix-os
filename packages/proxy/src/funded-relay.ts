@@ -431,6 +431,13 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (!cloudflareModel || cloudflareModel.canonicalModelId !== model.canonicalModelId) {
         return errorResponse(c, 403, "permission_error", "This model is not enabled");
       }
+      // The OpenAI-compatible endpoint can fall back only to models served by
+      // Workers AI. Anthropic models require the Messages endpoint, so fail
+      // closed before reserving funds when a stale Bedrock selection resolves
+      // to Cloudflare between catalog discovery and dispatch.
+      if (!isManagedWorkersAiModel(cloudflareModel.nativeModelId)) {
+        return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
+      }
       model = cloudflareModel;
     }
     if (isBedrock) {
