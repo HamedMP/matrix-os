@@ -145,6 +145,45 @@ function SignInPending({ connect, step }: { connect: GetStartedConnect | null; s
   return <p className="mxo-muted" role="status">Waiting for your app sign-in to finish.</p>;
 }
 
+/** The questions after the name: one body per step, under the shared heading. */
+function StepContent({ wizard, answers, connect, dispatch, titleId }: {
+  wizard: GetStartedWizardState;
+  answers: GetStartedAnswers;
+  connect: GetStartedConnect | null;
+  dispatch(event: GetStartedWizardEvent): void;
+  titleId: string;
+}) {
+  switch (wizard.step) {
+    case "name": return null;
+    case "goals": {
+      const pickedGoals = new Set(wizard.goals);
+      return (
+        <div className="mxo-chips" role="group" aria-labelledby={titleId}>
+          {GET_STARTED_GOALS.map((goal) => (
+            <ToggleChip key={goal.id} label={goal.label} pressed={pickedGoals.has(goal.id)} onToggle={() => dispatch({ type: "toggle-goal", goal: goal.id })} />
+          ))}
+        </div>
+      );
+    }
+    case "tools": return (
+      <div className="mxo-gs__groups">
+        {getStartedToolGroupsForGoals(wizard.goals).map((group) => (
+          <ChoiceGroup key={group.goal} group={group} wizard={wizard} dispatch={dispatch} />
+        ))}
+      </div>
+    );
+    case "ai": return <GetStartedAiStep bot={wizard.bot} answers={answers} dispatch={dispatch} />;
+    case "gallery": return <GetStartedAppGalleryStep wizard={wizard} dispatch={dispatch} labelledBy={titleId} />;
+    case "bots": return <GetStartedRecipeBots wizard={wizard} connect={connect} dispatch={dispatch} />;
+    case "summary": return (
+      <>
+        <Summary wizard={wizard} answers={answers} />
+        {connect ? <GetStartedConnectList answers={answers} connect={connect} /> : null}
+      </>
+    );
+  }
+}
+
 export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish, onSkipAll, connect = null }: GetStartedWizardProps) {
   const titleId = useId();
   const hintId = useId();
@@ -153,7 +192,6 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
   const isSummary = wizard.step === "summary";
   // Ending the wizard unmounts its connector, which would drop an app sign-in still under way.
   const endBlocked = submitting || Boolean(connect?.connectingService);
-  const pickedGoals = new Set(wizard.goals);
   const answers = useMemo(() => getStartedAnswersFromWizard(wizard), [wizard]);
   // A name bot creation would reject cannot be confirmed; the AI step explains why.
   const botNameInvalid = wizard.step === "ai" && getStartedBotFromWizard(wizard.bot) === null;
@@ -207,30 +245,7 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
           />
         ) : null}
 
-        {wizard.step === "goals" ? (
-          <div className="mxo-chips" role="group" aria-labelledby={titleId}>
-            {GET_STARTED_GOALS.map((goal) => (
-              <ToggleChip key={goal.id} label={goal.label} pressed={pickedGoals.has(goal.id)} onToggle={() => dispatch({ type: "toggle-goal", goal: goal.id })} />
-            ))}
-          </div>
-        ) : null}
-
-        {wizard.step === "tools" ? (
-          <div className="mxo-gs__groups">
-            {getStartedToolGroupsForGoals(wizard.goals).map((group) => (
-              <ChoiceGroup key={group.goal} group={group} wizard={wizard} dispatch={dispatch} />
-            ))}
-          </div>
-        ) : null}
-
-        {wizard.step === "ai" ? <GetStartedAiStep bot={wizard.bot} answers={answers} dispatch={dispatch} /> : null}
-
-        {wizard.step === "gallery" ? <GetStartedAppGalleryStep wizard={wizard} dispatch={dispatch} labelledBy={titleId} /> : null}
-
-        {wizard.step === "bots" ? <GetStartedRecipeBots wizard={wizard} connect={connect} dispatch={dispatch} /> : null}
-
-        {isSummary ? <Summary wizard={wizard} answers={answers} /> : null}
-        {isSummary && connect ? <GetStartedConnectList answers={answers} connect={connect} /> : null}
+        <StepContent wizard={wizard} answers={answers} connect={connect} dispatch={dispatch} titleId={titleId} />
 
         {error ? <p className="mxo-failed-line" role="alert">{error}</p> : null}
         <SignInPending connect={connect} step={wizard.step} />
