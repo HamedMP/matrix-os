@@ -1,4 +1,5 @@
 import { createPipedreamAttemptStore, type PipedreamAttemptStore } from "./integrations/pipedream-attempts/store.js";
+import { createGooglePlatformServices, type GooglePlatformServices } from "./google-data/platform-services.js";
 import { createNativeGmailStore } from "./integrations/native-gmail/store.js";
 import type { NativeGmailStore } from "./integrations/native-gmail/types.js";
 import { observePostgresPoolErrors } from "@matrix-os/observability/postgres";
@@ -184,6 +185,7 @@ export type CustomMcpServerBrokerRow = CustomMcpServersTable;
 // ---------------------------------------------------------------------------
 
 export interface PlatformDb extends CustomMcpApprovalStore {
+  googleData?: GooglePlatformServices;
   nativeGmailStore?: NativeGmailStore;
   pipedreamGmailAttempts?: PipedreamAttemptStore;
   migrate(): Promise<void>;
@@ -303,7 +305,9 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
 
   const nativeGmailStore = createNativeGmailStore(kysely);
   const pipedreamGmailAttempts = createPipedreamAttemptStore(kysely);
+  const googleData = createGooglePlatformServices(kysely);
   const db: PlatformDb = {
+    googleData,
     nativeGmailStore,
     pipedreamGmailAttempts,
     ...createCustomMcpApprovalStore(kysely, typeof opts === "string" ? undefined : opts.now),
@@ -476,6 +480,7 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_mcp_tool_approvals_receipt ON custom_mcp_tool_approvals(receipt_hash) WHERE receipt_hash IS NOT NULL`.execute(kysely);
       await nativeGmailStore.migrate();
       await pipedreamGmailAttempts.migrate();
+      await googleData.migrate();
     },
 
     async createUser(input: CreateUserInput): Promise<UsersTable> {
@@ -910,6 +915,7 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
     },
 
     async destroy(): Promise<void> {
+      await googleData.close();
       await pipedreamGmailAttempts.shutdown();
       await kysely.destroy();
       if (pool) {
