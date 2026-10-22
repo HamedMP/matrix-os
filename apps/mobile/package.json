@@ -19,7 +19,7 @@
     "bundle:xterm": "node scripts/bundle-xterm.mjs"
   },
   "dependencies": {
-    "@clerk/clerk-expo": "^2.10.0",
+    "@clerk/clerk-expo": "^2.19.36",
     "@expo-google-fonts/bricolage-grotesque": "^0.4.1",
     "@expo-google-fonts/geist": "^0.4.2",
     "@expo-google-fonts/inter": "^0.2.3",
