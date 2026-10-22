@@ -97,6 +97,20 @@ describe('exact qualified lease manager', () => {
     await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2)); caller.abort(); expect(await first).toBeInstanceOf(Error); expect(cancel).toHaveBeenCalledOnce();
     await manager.close(); expect(await second).toBeInstanceOf(Error); expect(cancel).toHaveBeenCalledTimes(2);
   });
+  it.each(['body', 'late'] as const)('logs only a fixed error class when %s body cleanup fails', async mode => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const caller = new AbortController(); let resolveFetch!: (response: Response) => void;
+    const response = () => new Response(new ReadableStream<Uint8Array>({ start(controller) { if (mode === 'body') controller.enqueue(new Uint8Array(65537)); }, cancel() { throw new Error('private provider credential and response text'); } }));
+    const fetch = vi.fn<typeof globalThis.fetch>(async () => mode === 'body' ? response() : new Promise<Response>(resolve => { resolveFetch = resolve; }));
+    const manager = createGoogleQualifiedCredentialManager(config(), { fetchFn: fetch, now: () => at.getTime() });
+    try {
+      const result = manager.resolveRoute(request(), caller.signal); const rejected = expect(result).rejects.toThrow('Qualified AI unavailable');
+      if (mode === 'late') { await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce()); caller.abort(); await rejected; resolveFetch(response()); }
+      else await rejected;
+      await vi.waitFor(() => expect(warning).toHaveBeenCalledWith(mode === 'body' ? '[qualified-credentials] Body cleanup failed' : '[qualified-credentials] Late body cleanup failed', { errorClass: 'Error' }));
+      expect(JSON.stringify(warning.mock.calls)).not.toContain('private provider');
+    } finally { await manager.close(); warning.mockRestore(); }
+  });
   it('never shares cancellation ownership and drains active HTTP readers on shutdown', async () => {
     const cancel = vi.fn(); const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('{')); }, cancel })));
     const manager = createGoogleQualifiedCredentialManager(config(), { fetchFn: fetch, now: () => at.getTime() });

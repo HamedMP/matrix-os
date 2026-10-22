@@ -69,7 +69,7 @@ export async function createGoogleBrokerRuntime<DB>(options: {
     if (signal.aborted || live(binding) !== runSignal) deny();
   }
   const managedDispatch = { ...managed, async required(binding: PiRuntimeBinding, signal: AbortSignal) {
-    if (options.pilotAdmission?.enabled) await admitContext(binding, signal);
+    if (options.pilotAdmission?.enabled && isManagedPiBinding(binding)) { if (!pilotOwner(binding)) deny(); await admitContext(binding, signal); }
     return managed.required(binding, signal);
   } };
   const toolEgress = createGoogleToolEgressGuard({ registry: options.registry, contexts: collectionContexts });
@@ -117,9 +117,9 @@ export async function createGoogleBrokerRuntime<DB>(options: {
       if (closed) return { allowed: false };
       const binding = structuredClone(input.binding);
       const candidate = input.identity === null ? null : structuredClone(input.identity);
-      if (options.pilotAdmission?.enabled && !pilotOwner(binding)) return { allowed: false };
+      if (options.pilotAdmission?.enabled && isManagedPiBinding(binding) && !pilotOwner(binding)) return { allowed: false };
       if (options.pilotAdmission && !pilotOwner(binding) && await managed.required(binding, input.signal)) return { allowed: false };
-      if (options.pilotAdmission?.enabled) {
+      if (options.pilotAdmission?.enabled && isManagedPiBinding(binding)) {
         try { await admitContext(binding, input.signal); }
         catch (error) { console.warn('[google-data] Context admission unavailable'); return { allowed: false }; }
       }

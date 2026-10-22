@@ -59,7 +59,7 @@ export function createGoogleQualifiedCredentialManager(input: FundedAiRuntimeCon
     try {
       const pending = fetchFn(url.toString(), { method: 'POST', body, redirect: 'error', signal,
         headers: { authorization: `Bearer ${config.runtimeAuthToken}`, 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)) } }).then(response => {
-          if (signal.aborted || closed) { void response.body?.cancel().catch(() => console.warn('[qualified-credentials] Late body cleanup failed')); return deny(); } return response;
+          if (signal.aborted || closed) { void response.body?.cancel().catch((error: unknown) => console.warn('[qualified-credentials] Late body cleanup failed', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' })); return deny(); } return response;
         });
       const response = await Promise.race([pending, stopped]);
       reader = response.body?.getReader(); live();
@@ -70,7 +70,7 @@ export function createGoogleQualifiedCredentialManager(input: FundedAiRuntimeCon
         if (++chunks > 256 || size + part.value.length > bytes.length) deny(); bytes.set(part.value, size); size += part.value.length; }
       return schema.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size))));
     } catch (error) {
-      if (reader) await reader.cancel().catch(() => console.warn('[qualified-credentials] Body cleanup failed'));
+      if (reader) await reader.cancel().catch((error: unknown) => console.warn('[qualified-credentials] Body cleanup failed', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' }));
       if (!(error instanceof GoogleQualifiedCredentialError) && !(error instanceof z.ZodError) && !(error instanceof SyntaxError)
         && !(error instanceof TypeError)) console.warn('[qualified-credentials] Unexpected response failure', { errorClass: error instanceof Error ? 'Error' : 'UnknownError' });
       throw new GoogleQualifiedCredentialError();

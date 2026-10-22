@@ -1,3 +1,4 @@
+import { createGooglePilotArtifactAdmission } from '../../packages/gateway/src/startup/google-pilot-artifact-admission.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAuthorityFixture } from './google-data/fixture-db.js';
 import { BotRuntimeRegistry, type ManagedPiRuntimeBinding } from '../../packages/gateway/src/bots/runtime-registry.js';
@@ -48,6 +49,26 @@ describe('explicit pilot host broker controls', () => {
     const ui = vi.fn(async () => true);
     await expect(runtime.prepareCollection(binding, '123e4567-e89b-42d3-a456-426614174000', request.signal, ui)).rejects.toThrow('Google data processing unavailable');
     expect(ui).not.toHaveBeenCalled(); expect(admitContext).toHaveBeenCalledTimes(4);
+  });
+  it('preserves ordinary recipe bindings outside the managed pilot while denying their Google collection and tainted sends', async () => {
+    ({ db } = await createAuthorityFixture()); const registry = new BotRuntimeRegistry(); registries.push(registry);
+    const { kind: _kind, workspace: _workspace, ...base } = binding;
+    const recipe = { ...base, botId: 'bot_0123456789abcdef', taskId: 'task_one' }; registry.bind(recipe);
+    const admitContext = vi.fn(async () => undefined);
+    runtime = await createGoogleBrokerRuntime({ database: db.sql, registry, pilotAdmission: { enabled: true, ownerId: binding.ownerId }, admitContext });
+    const request = { phase: 'dispatch' as const, binding: recipe, identity: null, signal: new AbortController().signal };
+    const artifactAdmission = createGooglePilotArtifactAdmission(registry);
+    await expect(artifactAdmission.assertAllowed(recipe, request.signal)).resolves.toBeUndefined();
+    registry.bind(binding);
+    await expect(artifactAdmission.assertAllowed(binding, request.signal)).rejects.toThrow();
+    registry.bind(recipe);
+    expect(await runtime.inference.managed!.required(recipe, request.signal)).toBe(false);
+    expect(await runtime.inference.authorize(request)).toEqual({ allowed: true, googleOrigin: false });
+    expect(admitContext).not.toHaveBeenCalled();
+    await expect(runtime.prepareCollection(recipe, '123e4567-e89b-42d3-a456-426614174000', request.signal, async () => true)).rejects.toThrow('Google data processing unavailable');
+    const expiresAt = new Date(Date.now()+60000).toISOString();
+    await runtime.contexts.mark({ ownerId: recipe.ownerId, chatId: recipe.chatId, googleAccountId: '123e4567-e89b-42d3-a456-426614174000', purposeId: 'mail-assistance', consentId: 'source_one', profileId: 'source_one', profileRevision: 1, expiresAt, retentionDeadline: expiresAt });
+    expect(await runtime.inference.authorize(request)).toEqual({ allowed: false }); expect(admitContext).not.toHaveBeenCalled();
   });
   it('uses fresh authenticated managed control identity for collection instead of observing a temporary legacy token', async () => {
     ({ db } = await createAuthorityFixture()); const registry = new BotRuntimeRegistry(); registry.bind(binding); registries.push(registry);

@@ -161,7 +161,10 @@ describe("owner-bound integration read-call authority", () => {
       expect(body).not.toContain("private database detail");
       expect(proxyGet).toHaveBeenCalledTimes(1);
       expect(touch).toHaveBeenCalledTimes(1);
-      expect(log).toHaveBeenCalledWith(expect.stringContaining("usage"), expect.any(Error));
+      expect(log).toHaveBeenCalledWith("[integrations] operation failed", {
+        classification: "failure", operation: "usage_update",
+      });
+      expect(JSON.stringify(log.mock.calls)).not.toContain("private database detail");
     } finally {
       touch.mockRestore();
       log.mockRestore();
