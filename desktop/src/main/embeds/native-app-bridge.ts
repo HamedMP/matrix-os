@@ -187,9 +187,9 @@ export function createNativeAppGatewayRequester(
     if (origin.protocol !== "https:" && origin.protocol !== "http:") {
       throw new Error("invalid gateway origin");
     }
-    if (nativeBrowserProduct(slug, routeSlug)) {
-      const isCurrent = () => options.getToken() === token && new URL(options.getGatewayOrigin()).toString() === origin.toString()
-        && options.getAuthGeneration?.() === generation;
+    const isCurrent = () => options.getToken() === token && new URL(options.getGatewayOrigin()).toString() === origin.toString()
+      && options.getAuthGeneration?.() === generation;
+    if (nativeBrowserProduct(slug, routeSlug) && request.url === "/api/apps/browser-lab/session") {
       if (!options.installBrowserSessionCookie) throw new Error("browser session unavailable");
       return renewBrowserProductSession({ origin: origin.toString(), token, isCurrent, fetchFn,
         install: options.installBrowserSessionCookie });
@@ -197,12 +197,14 @@ export function createNativeAppGatewayRequester(
     const response = await fetchFn(new URL(request.url, origin).toString(), {
       method: request.init?.method ?? "GET",
       redirect: "error",
-      headers: { authorization: `Bearer ${token}`, ...(request.init?.method === "POST" ? { "content-type": "application/json" } : {}) },
+      headers: { authorization: `Bearer ${token}`, ...(request.init?.method === "POST" ? { "content-type": "application/json" } : {}),
+        ...(nativeBrowserProduct(slug, routeSlug) && request.url === "/api/browser/setup/retry" ? { origin: origin.origin } : {}) },
       ...(request.init?.body !== undefined ? { body: request.init.body } : {}),
       signal: AbortSignal.timeout(nativeAppGatewayTimeout(request)),
     });
     if (!response.ok) throw new Error(`gateway request failed (${response.status})`);
     const value = await readBoundedJson(response);
+    if (nativeBrowserProduct(slug, routeSlug) && !isCurrent()) throw new Error("Browser authentication changed");
     return value;
   };
 }

@@ -25,6 +25,15 @@ describe("web Browser surface adapter", () => {
     }));
     controller.abort(); expect(vi.mocked(fetch).mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
   });
+  it("wires setup polling and explicit retry to the same selected runtime before viewer admission", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "failed", retryAvailable: true })));
+    render(<RemoteBrowserView surface="browser"/>);
+    await props.setup!.status(new AbortController().signal);
+    await props.setup!.retry(new AbortController().signal);
+    expect(fetch).toHaveBeenCalledWith("https://app.matrix-os.com/vm/pr-2526/api/browser/setup", expect.objectContaining({ method: "GET", credentials: "include" }));
+    expect(fetch).toHaveBeenCalledWith("https://app.matrix-os.com/vm/pr-2526/api/browser/setup/retry", expect.objectContaining({ method: "POST", body: "{}" }));
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/session"))).toBe(false);
+  });
   it("does not expose a failed session response to the surface", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("private provider detail", { status: 503 })));
     render(<RemoteBrowserView surface="desktop" active={false}/>);
@@ -161,6 +170,7 @@ describe("rendered Browser toolbar launch", () => {
     useDesktopMode.setState({ mode: "desktop" });
     useWindowManager.setState({ windows: [], nextZ: 1, closedPaths: new Set(), closedLayouts: new Map(), focusedWindowId: null, fullscreenWindowId: null });
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).endsWith("/api/browser/setup")) return Response.json({ status: "ready", retryAvailable: false });
       if (String(url).endsWith("/browser-status")) return Response.json({ available: true, chrome: { present: true, minimized: false }, humanControlAvailable: true });
       if (String(url).endsWith("/browser-session")) return Response.json({ ticket: "a".repeat(48), expiresAt: Date.now() + 60_000 });
       return Response.json({});
