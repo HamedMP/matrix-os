@@ -45,6 +45,23 @@ beforeEach(async () => {
 });
 
 describe('atomic Google-derived managed Pi copies', () => {
+  it('adopts only an exact cache saved while its trusted history was ordinary', async () => {
+    await sessions.save({ ...request(), messages: [{ role: 'user', content: 'Please read my mail' }] });
+    expect(await inspectCopy()).toBeNull();
+    await mark();
+    expect((await sessions.load(key)).messages).toEqual([{ role: 'user', content: 'Please read my mail' }]);
+    expect((await inspectCopy())?.state).toBe('active');
+    await sessions.save(request(1));
+    expect((await inspectCopy())?.revision).toBe(2);
+  });
+  it('refuses an ordinary cache modified outside the receipt-bearing writer before collection', async () => {
+    await sessions.save({ ...request(), messages: [{ role: 'user', content: 'Ordinary' }] });
+    await sql`UPDATE managed_pi_sessions SET messages='[{"role":"user","content":"unproven modification"}]'::jsonb WHERE chat_id=${key.chatId}`.execute(db);
+    await mark();
+    await expect(sessions.load(key)).rejects.toThrow();
+    await expect(sessions.save(request(1))).rejects.toThrow();
+    expect(await inspectCopy()).toBeNull();
+  });
   it('registers first content and every later CAS revision with durable exact lineage', async () => {
     const context = await mark();
     expect(await sessions.save(request())).toEqual({ revision: 1 });

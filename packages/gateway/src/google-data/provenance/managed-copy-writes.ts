@@ -9,6 +9,7 @@ import { createGoogleModelHistoryStore, type GoogleModelHistory } from '../runti
 import { originKey, validateOpaque, GoogleProvenanceUnavailable, type GoogleCopy, type GoogleOrigin, type PurgeHandlers } from './contracts.js';
 import { createGoogleProvenanceStore } from './store.js';
 import { boundedProvenanceTransaction } from './transaction.js';
+import { matchingOrdinaryCopyReceipt, recordOrdinaryCopyReceipt, retireOrdinaryCopyReceipt } from './ordinary-copy-receipts.js';
 
 const MAX_HASH_BYTES = BOT_SESSION_MAX_BYTES * 2 + 32_768;
 const encoder = new TextEncoder();
@@ -62,6 +63,7 @@ export function createGoogleManagedPiCopyHooks(options: { now?: () => Date } = {
     key = Object.freeze({ ownerId: key.ownerId, chatId: key.chatId });
     const owner = subject(key);
     const entityRef = managedPiSessionEntityRef(key.chatId);
+    const receiptKey = { ...key, kind: 'session' as const, entityRef };
     check(signal);
     let releaseDeadline: number | undefined;
     const captureDeadline = (value: string) => {
@@ -91,12 +93,17 @@ export function createGoogleManagedPiCopyHooks(options: { now?: () => Date } = {
       const previous = await lockedSession<OwnerBotDatabase>(tx, key);
       const context = await inspect();
       if (copy) match(copy, context, previous, now());
-      else if (context.classification === 'google' && previous) deny();
-      // Never retrospectively certify an existing opaque cache. A fresh Google cache may be registered.
+      else if (previous) {
+        const proof = await matchingOrdinaryCopyReceipt(tx, receiptKey, hash(previous));
+        if (!proof) deny();
+        captureDeadline(proof);
+      }
+      // Old opaque caches remain denied. Only an exact receipt issued by this
+      // writer while the same born history was ordinary supports first taint.
       const result = await content(tx);
       check(signal);
       const current = await inspect();
-      if (mode === 'save' && current.classification === 'google') {
+      if ((mode === 'save' || (!copy && previous)) && current.classification === 'google') {
         const saved = await lockedSession<OwnerBotDatabase>(tx, key);
         check(signal);
         if (!saved) deny();
@@ -108,8 +115,13 @@ export function createGoogleManagedPiCopyHooks(options: { now?: () => Date } = {
         const registered = await store.record({ ownerId: key.ownerId, kind: 'session', entityRef, contentHash, origins: origins(fresh),
           retention: { choice: 'until', deadline: fresh.googleContext.retentionDeadline, decisionId }, ...(copy ? { baseRevision: copy.revision } : {}) });
         captureDeadline(registered.retentionDeadline);
+        await retireOrdinaryCopyReceipt(tx, receiptKey);
         check(signal);
         await inspect();
+      } else if (mode === 'save' && current.classification === 'ordinary') {
+        const saved = await lockedSession<OwnerBotDatabase>(tx, key);
+        if (!saved) deny();
+        await recordOrdinaryCopyReceipt(tx, receiptKey, hash(saved));
       }
       if (copy && new Date(copy.retentionDeadline) <= now()) deny();
       check(signal);
