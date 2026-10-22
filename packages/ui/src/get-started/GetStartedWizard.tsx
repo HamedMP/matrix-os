@@ -1,5 +1,6 @@
 import {
   GET_STARTED_GOALS,
+  GET_STARTED_PERSONALITIES,
   getStartedAnswersFromWizard,
   getStartedQuestionProgress,
   getStartedToolGroupsForGoals,
@@ -10,6 +11,7 @@ import {
 } from "@matrix-os/contracts";
 import { useEffect, useId, useMemo, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { ButtonRow, RabbitAvatar, ToggleChip } from "../onboarding-widget/parts.js";
+import { GetStartedAiStep } from "./ai-step.js";
 import { GetStartedConnectList, type GetStartedConnect } from "./connect.js";
 
 export interface GetStartedWizardProps {
@@ -23,7 +25,7 @@ export interface GetStartedWizardProps {
   connect?: GetStartedConnect | null;
 }
 
-const FOCUSABLE = "button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])";
+const FOCUSABLE = "button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
 
 function ChoiceGroup({ group, wizard, dispatch }: {
   group: GetStartedChoiceGroup;
@@ -65,7 +67,7 @@ function Summary({ wizard }: { wizard: GetStartedWizardState }) {
       </div>
       <div>
         <dt>Your AI</dt>
-        <dd>Matrix</dd>
+        <dd>{wizard.botChosen ? `${wizard.bot.name} · ${GET_STARTED_PERSONALITIES.find((personality) => personality.id === wizard.bot.personality)?.label ?? ""}` : "Matrix"}</dd>
       </div>
     </dl>
   );
@@ -77,6 +79,7 @@ function stepTitle(wizard: GetStartedWizardState): string {
     case "name": return "What should we call you?";
     case "goals": return "What will you use Matrix for?";
     case "tools": return "Which tools do you use?";
+    case "ai": return "Give your AI a name";
     case "summary": return name ? `All set, ${name}.` : "All set.";
   }
 }
@@ -86,6 +89,7 @@ function stepHint(wizard: GetStartedWizardState): string {
     case "name": return "Your AI will use this.";
     case "goals": return "Pick any. We'll set up those first.";
     case "tools": return "Nothing connects yet. This tells us what to set up first.";
+    case "ai": return "It uses this name and style everywhere you talk to Matrix.";
     case "summary": return "You can change any of this later.";
   }
 }
@@ -195,6 +199,8 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
           </div>
         ) : null}
 
+        {wizard.step === "ai" ? <GetStartedAiStep bot={wizard.bot} answers={answers} dispatch={dispatch} /> : null}
+
         {isSummary ? <Summary wizard={wizard} /> : null}
         {isSummary && connect ? <GetStartedConnectList answers={answers} connect={connect} /> : null}
 
@@ -217,7 +223,7 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
             <>
               <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => dispatch({ type: "skip" })}>Skip</button>
               <button type="button" className="mxo-btn mxo-btn--dark" onClick={() => dispatch({ type: "next" })}>
-                {wizard.step === "tools" ? "Finish" : "Next"}
+                {wizard.step === "ai" ? "Finish" : "Next"}
               </button>
             </>
           )}

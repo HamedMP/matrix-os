@@ -93,6 +93,7 @@
     "#app-gallery": "./src/app-gallery.ts",
     "#get-started": "./src/get-started.ts",
     "#get-started-arrival": "./src/get-started-arrival.ts",
+    "#get-started-bot": "./src/get-started-bot.ts",
     "#get-started-connect": "./src/get-started-connect.ts",
     "#get-started-wizard": "./src/get-started-wizard.ts",
     "#getting-started": "./src/getting-started.ts",

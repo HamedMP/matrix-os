@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import {
   GetStartedStateSchema,
@@ -9,6 +9,7 @@ import {
 } from "@matrix-os/contracts";
 import { withPinnedSystemDir, type PinnedSystemDir } from "../get-started/owner-system-dir.js";
 import { OwnerFileMutationBusyError, withOwnerFileMutation } from "../owner-file-mutations.js";
+import { applyGetStartedPersonality } from "../get-started/personality.js";
 
 // Spec 635, Section 1. The state file is only ever created for new homes
 // (Section 2), so a missing file means "not eligible", never "pending". Both files
@@ -26,6 +27,10 @@ export interface GetStartedRoutesOptions {
   /** Kill switch (`MATRIX_GET_STARTED_ENABLED`). When false every home reads as not eligible. */
   enabled: boolean;
   now?: () => Date;
+  /** The authenticated owner, for creating their Matrix Bot. */
+  getOwnerId?: (c: Context) => string | null;
+  /** Creates (or replays) the owner's personal Matrix Bot. Best effort: setup never fails on it. */
+  ensureMatrixBot?: (ownerId: string, name: string) => Promise<void>;
 }
 
 class GetStartedStateCorruptError extends Error {
@@ -131,6 +136,11 @@ export function createGetStartedRoutes(opts: GetStartedRoutesOptions) {
           const transition = transitionGetStarted(current, update, now());
           if (transition.kind === "write") await dir.writeAtomic(STATE_FILE, `${JSON.stringify(transition.state, null, 2)}\n`, 0o644);
           if (transition.kind !== "conflict" && isTerminal(transition.state)) {
+            // Idempotent, so a retried completion finishes whatever an earlier attempt could not.
+            const finished = transition.state;
+            if (finished.status === "completed" && finished.answers.bot) {
+              await applyGetStartedPersonality(homePath, { ...finished.answers, bot: finished.answers.bot });
+            }
             await ensureOnboardingMarker(dir, now().toISOString());
           }
           return transition;
@@ -139,6 +149,13 @@ export function createGetStartedRoutes(opts: GetStartedRoutesOptions) {
       });
       if (result.kind === "not_eligible") return c.json({ error: "Get started is not available" }, 404);
       if (result.kind === "conflict") return c.json({ error: "Your setup is already finished" }, 409);
+      // Outside the file lock: bot creation touches the database and has its own idempotency.
+      const bot = result.state.status === "completed" ? result.state.answers.bot : undefined;
+      const ownerId = bot && opts.ensureMatrixBot ? opts.getOwnerId?.(c) ?? null : null;
+      if (bot && ownerId && opts.ensureMatrixBot) {
+        try { await opts.ensureMatrixBot(ownerId, bot.name); }
+        catch (botError: unknown) { console.warn("[get-started] Matrix Bot unavailable:", errorName(botError)); }
+      }
       return c.json(toResponse(result.state));
     } catch (err) {
       if (err instanceof OwnerFileMutationBusyError) return c.json({ error: SAVE_ERROR }, 503);

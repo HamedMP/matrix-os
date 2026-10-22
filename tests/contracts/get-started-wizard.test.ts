@@ -22,17 +22,17 @@ describe("get started wizard", () => {
     const state = initialGetStartedWizard();
     expect(state.step).toBe("name");
     expect(getStartedAnswersFromWizard(state)).toEqual({ goals: [], tools: [] });
-    expect(GET_STARTED_WIZARD_STEPS).toEqual(["name", "goals", "tools", "summary"]);
+    expect(GET_STARTED_WIZARD_STEPS).toEqual(["name", "goals", "tools", "ai", "summary"]);
   });
 
   it("walks forward and back through every step without passing the ends", () => {
     let state = initialGetStartedWizard();
     state = run(state, { type: "back" });
     expect(state.step).toBe("name");
-    state = run(state, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" });
+    state = run(state, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" });
     expect(state.step).toBe("summary");
     state = run(state, { type: "back" });
-    expect(state.step).toBe("tools");
+    expect(state.step).toBe("ai");
   });
 
   it("caps the name while typing and trims it in the answers", () => {
@@ -91,7 +91,9 @@ describe("get started wizard", () => {
     state = run(state, { type: "toggle-goal", goal: "code" }, { type: "skip" });
     expect(state).toMatchObject({ step: "tools", goals: [] });
     state = run(state, { type: "pick-starter", id: "ask-anything" }, { type: "skip" });
-    expect(state.step).toBe("summary");
+    expect(state.step).toBe("ai");
+    state = run(state, { type: "bot", patch: { name: "Atlas" } }, { type: "skip" });
+    expect(state).toMatchObject({ step: "summary", botChosen: false, bot: { name: "Matrix" } });
     expect(getStartedAnswersFromWizard(state)).toEqual({ goals: [], tools: [] });
   });
 
@@ -122,7 +124,7 @@ describe("get started wizard", () => {
   });
 
   it("reports progress across the questions only", () => {
-    expect(getStartedQuestionProgress(initialGetStartedWizard())).toEqual({ current: 0, total: 3 });
-    expect(getStartedQuestionProgress(initialGetStartedWizard({ step: 3, goals: [], tools: [] }))).toEqual({ current: 3, total: 3 });
+    expect(getStartedQuestionProgress(initialGetStartedWizard())).toEqual({ current: 0, total: 4 });
+    expect(getStartedQuestionProgress(initialGetStartedWizard({ step: 4, goals: [], tools: [] }))).toEqual({ current: 4, total: 4 });
   });
 });

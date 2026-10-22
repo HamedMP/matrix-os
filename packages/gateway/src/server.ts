@@ -243,6 +243,7 @@ import {
 import { createHermesRoutes } from "./routes/hermes.js";
 import { createSettingsRoutes } from "./routes/settings.js";
 import { createGetStartedRoutes } from "./routes/get-started.js";
+import { createGetStartedMatrixBot } from "./get-started/matrix-bot.js";
 import { bootstrapSocialSchema, createSocialRoutes, type SocialRoutes } from "./social.js";
 import { createGatewayHomeMirrorLifecycle } from "./sync/home-mirror-lifecycle.js";
 import { initializeSyncInfrastructure } from "./sync/infrastructure.js";
@@ -1812,6 +1813,8 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/api/settings/get-started", createGetStartedRoutes({
     homePath,
     enabled: process.env.MATRIX_GET_STARTED_ENABLED === "true",
+    getOwnerId: (c) => getOptionalRequestPrincipal(c)?.userId ?? null,
+    ...(botServices ? { ensureMatrixBot: createGetStartedMatrixBot(botServices) } : {}),
   }));
   app.route("/api/settings", settingsRoutes);
   if (osViewStateRepository) {

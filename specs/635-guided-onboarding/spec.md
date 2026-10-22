@@ -244,6 +244,11 @@ Each section is one layer, under the 3000-line limit, tests first.
    - A "Build a <idea>" starter sends App Gallery's own build request. `appGalleryBuildPrompt` now lives in the canonical gallery contract, so the gallery and the widget share one bounded prompt.
    - Deferred: opening App Gallery pre-filled, and chaining the clone result straight into the fix offer with the repo's real top issue.
 7. **Make your AI yours (P2):** server-rendered managed SOUL section, `identity.md`, `user.md`; idempotent `matrix-bot` creation.
+   - There is one SOUL: `system/soul.md`. The kernel, Matrix Bot (`identitySource: owner_soul`), managed chats and Settings all use it. The wizard owns only the marked section.
+   - The section goes **first** in `soul.md`: the kernel reads only the first 2,000 characters (`MAX_SOUL_CHARS`), while bots read the whole file. The largest possible section stays under that limit (tested).
+   - Writes reuse `readOwnerSoul` / `writeOwnerSoulAtomic` (16 KiB limit, control characters, no-follow, atomic). `identity.md` / `user.md` only get existing `- **Field:**` lines filled.
+   - The Matrix Bot is created on the gateway after the state write and outside the file lock, with a fixed request id (`req_get-started-matrix-bot`), so retries replay instead of duplicating. A failure is logged and never blocks entering the desktop.
+   - Still needs Hamed/Yuhan sign-off (spec 551 deferred creating the bot at onboarding). Avatar colour is deferred.
 8. **Start during provisioning (optional, later):** platform-stored draft handed to the gateway on first boot.
 
 ## Not breaking anything

@@ -16,7 +16,7 @@ const AT = "2026-10-25T10:12:00.000Z";
 
 function port(draft: Record<string, unknown>): GetStartedPort {
   return {
-    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 3, ...draft } })),
+    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 4, ...draft } })),
     save: vi.fn(async () => ({ status: "completed", completedAt: AT, answers: { goals: [], tools: [] } })),
   };
 }

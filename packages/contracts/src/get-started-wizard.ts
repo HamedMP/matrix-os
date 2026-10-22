@@ -8,11 +8,18 @@ import {
   type GetStartedStarterId,
   type GetStartedToolId,
 } from "#get-started";
+import {
+  DEFAULT_GET_STARTED_BOT,
+  GET_STARTED_BOT_NAME_MAX_CHARS,
+  GET_STARTED_BOT_RULES_MAX_CHARS,
+  GetStartedBotSchema,
+  type GetStartedBot,
+} from "#get-started-bot";
 
 // Spec 635, Section 3: the wizard's client state machine. It is shared by
 // every desktop surface so they cannot drift; hosts only load and save.
 
-export const GET_STARTED_WIZARD_STEPS = ["name", "goals", "tools", "summary"] as const;
+export const GET_STARTED_WIZARD_STEPS = ["name", "goals", "tools", "ai", "summary"] as const;
 export type GetStartedWizardStep = (typeof GET_STARTED_WIZARD_STEPS)[number];
 
 export interface GetStartedWizardState {
@@ -23,6 +30,9 @@ export interface GetStartedWizardState {
   tools: GetStartedToolId[];
   appIdea?: GetStartedAppIdeaId;
   starter?: GetStartedStarterId;
+  /** The AI's name and style while editing; saved only once the owner confirms that step. */
+  bot: GetStartedBot;
+  botChosen: boolean;
 }
 
 export type GetStartedWizardEvent =
@@ -33,7 +43,8 @@ export type GetStartedWizardEvent =
   | { type: "toggle-goal"; goal: GetStartedGoalId }
   | { type: "toggle-tool"; tool: GetStartedToolId }
   | { type: "pick-app-idea"; id: GetStartedAppIdeaId }
-  | { type: "pick-starter"; id: GetStartedStarterId };
+  | { type: "pick-starter"; id: GetStartedStarterId }
+  | { type: "bot"; patch: Partial<GetStartedBot> };
 
 const QUESTION_COUNT = GET_STARTED_WIZARD_STEPS.indexOf("summary");
 
@@ -52,6 +63,7 @@ function clearStep(state: GetStartedWizardState): GetStartedWizardState {
     case "name": return { ...state, name: "" };
     case "goals": return { ...state, goals: [] };
     case "tools": return { ...state, tools: [], appIdea: undefined, starter: undefined };
+    case "ai": return { ...state, bot: DEFAULT_GET_STARTED_BOT, botChosen: false };
     case "summary": return state;
   }
 }
@@ -65,12 +77,14 @@ export function initialGetStartedWizard(draft?: GetStartedDraft): GetStartedWiza
     tools: [...(draft?.tools ?? [])],
     ...(draft?.appIdea ? { appIdea: draft.appIdea } : {}),
     ...(draft?.starter ? { starter: draft.starter } : {}),
+    bot: draft?.bot ?? DEFAULT_GET_STARTED_BOT,
+    botChosen: Boolean(draft?.bot),
   };
 }
 
 export function reduceGetStartedWizard(state: GetStartedWizardState, event: GetStartedWizardEvent): GetStartedWizardState {
   switch (event.type) {
-    case "next": return move(state, 1);
+    case "next": return move(state.step === "ai" ? { ...state, botChosen: true } : state, 1);
     case "back": return move(state, -1);
     case "skip": return move(clearStep(state), 1);
     case "name": return { ...state, name: event.value.slice(0, GET_STARTED_NAME_MAX_CHARS) };
@@ -78,6 +92,12 @@ export function reduceGetStartedWizard(state: GetStartedWizardState, event: GetS
     case "toggle-tool": return { ...state, tools: toggle(state.tools, event.tool) };
     case "pick-app-idea": return { ...state, appIdea: state.appIdea === event.id ? undefined : event.id };
     case "pick-starter": return { ...state, starter: state.starter === event.id ? undefined : event.id };
+    case "bot": {
+      const bot = { ...state.bot, ...event.patch };
+      bot.name = bot.name.slice(0, GET_STARTED_BOT_NAME_MAX_CHARS);
+      if (bot.rules !== undefined) bot.rules = bot.rules.slice(0, GET_STARTED_BOT_RULES_MAX_CHARS);
+      return { ...state, bot };
+    }
   }
 }
 
@@ -93,7 +113,21 @@ export function getStartedAnswersFromWizard(state: GetStartedWizardState): GetSt
   if (name) answers.name = name;
   if (state.appIdea && groups.some((group) => group.kind === "app-idea")) answers.appIdea = state.appIdea;
   if (state.starter && groups.some((group) => group.kind === "starter")) answers.starter = state.starter;
+  if (state.botChosen) {
+    const bot = getStartedBotFromWizard(state.bot);
+    if (bot) answers.bot = bot;
+  }
   return answers;
+}
+
+/** The bot as the server accepts it: blank name falls back to Matrix, blank rules are dropped, markers removed. */
+export function getStartedBotFromWizard(bot: GetStartedBot): GetStartedBot | null {
+  const clean = (text: string) => text.replace(/\p{Cc}/gu, " ").replaceAll("<!--", "").replaceAll("-->", "").trim();
+  const name = clean(bot.name) || DEFAULT_GET_STARTED_BOT.name;
+  const rules = bot.rules === undefined ? "" : clean(bot.rules);
+  const { rules: _rules, ...rest } = bot;
+  const parsed = GetStartedBotSchema.safeParse({ ...rest, name, ...(rules ? { rules } : {}) });
+  return parsed.success ? parsed.data : null;
 }
 
 export function getStartedDraftFromWizard(state: GetStartedWizardState): GetStartedDraft {

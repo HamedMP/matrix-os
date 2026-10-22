@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { GetStartedBotSchema } from "#get-started-bot";
 
 // Spec 635: the Get started wizard. Answers are stable IDs from this catalog,
 // never display strings, so the gateway can validate them and later layers
@@ -6,8 +7,8 @@ import { z } from "zod/v4";
 
 export const GET_STARTED_NAME_MAX_CHARS = 40;
 export const GET_STARTED_DRAFT_MAX_BYTES = 4 * 1024;
-/** Name, goals, tools and (P2) the AI's name: the last step index is this minus one. */
-export const GET_STARTED_STEP_COUNT = 4;
+/** Name, goals, tools, the AI's name and style, and the summary: the last step index is this minus one. */
+export const GET_STARTED_STEP_COUNT = 5;
 
 export const GET_STARTED_GOALS = [
   { id: "code", label: "Write code with agents" },
@@ -149,6 +150,7 @@ const answerShape = {
   tools: uniqueList(z.enum(GET_STARTED_TOOL_IDS), GET_STARTED_TOOL_IDS.length),
   appIdea: z.enum(appIdeaIds).optional(),
   starter: z.enum(starterIds).optional(),
+  bot: GetStartedBotSchema.optional(),
 };
 
 export const GetStartedAnswersSchema = z.object(answerShape).strict();
