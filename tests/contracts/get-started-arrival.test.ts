@@ -1,0 +1,38 @@
+import { describe, expect, it } from "vitest";
+import {
+  GETTING_STARTED_STEP_IDS,
+  ONBOARDING_TASK_IDS,
+  getStartedStepOrder,
+  getStartedTaskOrder,
+  orderByIds,
+} from "../../packages/contracts/src/index.js";
+
+describe("personalised arrival order", () => {
+  it("keeps today's order without goals", () => {
+    expect(getStartedStepOrder([])).toEqual([...GETTING_STARTED_STEP_IDS]);
+    expect(getStartedTaskOrder([])).toEqual([...ONBOARDING_TASK_IDS]);
+    expect(getStartedStepOrder(["explore"])).toEqual([...GETTING_STARTED_STEP_IDS]);
+  });
+
+  it("puts coding steps and the code task first for a coding goal", () => {
+    expect(getStartedStepOrder(["code"])).toEqual(["agent", "github", "first-work", "email-calendar", "billing"]);
+    expect(getStartedTaskOrder(["code"])[0]).toBe("work-on-code");
+  });
+
+  it("merges goals in the order they were picked", () => {
+    expect(getStartedStepOrder(["business", "code"]).slice(0, 3)).toEqual(["email-calendar", "first-work", "agent"]);
+    expect(getStartedTaskOrder(["build", "assistant"]).slice(0, 2)).toEqual(["build-website", "plan-week"]);
+  });
+
+  it("always returns every id exactly once", () => {
+    for (const goals of [["code"], ["business"], ["assistant"], ["build"], ["code", "build", "business"]] as const) {
+      expect([...getStartedStepOrder(goals)].sort()).toEqual([...GETTING_STARTED_STEP_IDS].sort());
+      expect([...getStartedTaskOrder(goals)].sort()).toEqual([...ONBOARDING_TASK_IDS].sort());
+    }
+  });
+
+  it("orders items by id and keeps unknown ids at the end", () => {
+    const items = [{ id: "a" }, { id: "b" }, { id: "c" }];
+    expect(orderByIds(items, ["c", "a"]).map((item) => item.id)).toEqual(["c", "a", "b"]);
+  });
+});

@@ -1,6 +1,7 @@
 import {
   ONBOARDING_REPO_QUESTION,
   ONBOARDING_TASKS,
+  orderByIds,
   onboardingFollowUpPrompt,
   onboardingRunTitle,
   onboardingWorkingLine,
@@ -34,8 +35,10 @@ const TASK_ICONS: Record<OnboardingTaskDefinition["tone"], IconSvgElement> = {
   code: GithubIcon,
 };
 
-export function TasksScreen({ state, apps, appsUnavailable = false, userName, actions }: Pick<OnboardingWidgetProps, "state" | "apps" | "appsUnavailable" | "userName" | "actions">) {
+export function TasksScreen({ state, apps, appsUnavailable = false, userName, taskOrder, actions }: Pick<OnboardingWidgetProps, "state" | "apps" | "appsUnavailable" | "userName" | "taskOrder" | "actions">) {
   const connected = connectedServices(apps);
+  const tasks = useMemo(() => (taskOrder ? orderByIds(ONBOARDING_TASKS, taskOrder) : ONBOARDING_TASKS), [taskOrder]);
+  const connectedSet = new Set(connected);
   const firstVisit = !state.started && !state.echo && !state.notice;
   return (
     <>
@@ -48,8 +51,8 @@ export function TasksScreen({ state, apps, appsUnavailable = false, userName, ac
         <p className="mxo-text">What should I start on?</p>
       )}
       <ul className="mxo-card mxo-tasks" aria-label="Tasks">
-        {ONBOARDING_TASKS.map((task) => {
-          const needsTag = task.needs && !connected.includes(task.needs.service) ? task.needs.tag : null;
+        {tasks.map((task) => {
+          const needsTag = task.needs && !connectedSet.has(task.needs.service) ? task.needs.tag : null;
           return (
             <li key={task.id}>
               <button

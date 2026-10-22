@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useGettingStartedAutoOpenSuppression, useGettingStartedBlocker } from "../getting-started-visibility.js";
+import { usePublishGetStartedAnswers } from "./answers-context.js";
 import type { GetStartedConnect, GetStartedConnector } from "./connect.js";
 import { GetStartedWizard } from "./GetStartedWizard.js";
 import { useGetStarted, type GetStartedPort } from "./use-get-started.js";
@@ -24,6 +25,7 @@ export function GetStartedGate({ port, zIndex, children, connector: Connector }:
   const active = getStarted.phase === "active";
   useGettingStartedBlocker(active);
   useGettingStartedAutoOpenSuppression(getStarted.phase !== "done");
+  usePublishGetStartedAnswers(getStarted.answers);
 
   if (getStarted.phase === "loading") return null;
   if (getStarted.phase === "done" || !getStarted.wizard) return <>{children}</>;

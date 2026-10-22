@@ -1,4 +1,5 @@
-import { useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu } from "@matrix-os/ui";
+import { getStartedStepOrder, orderByIds } from "@matrix-os/contracts";
+import { useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers } from "@matrix-os/ui";
 import * as Popover from "@radix-ui/react-popover";
 import { onboardingChecklist } from "@matrix-os/brand";
 import { Github } from "lucide-react";
@@ -83,6 +84,12 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
   const helpTriggerRef = useRef<HTMLButtonElement>(null);
   const [refreshRequest, setRefreshRequest] = useState(0);
   const [snapshot, setSnapshot] = useState(emptyGettingStartedSnapshot);
+  // Spec 635: lead with the steps that fit the owner's Get started goals.
+  const getStartedAnswers = useGetStartedAnswers();
+  const steps = useMemo(
+    () => (getStartedAnswers ? orderByIds(snapshot.steps, getStartedStepOrder(getStartedAnswers.goals)) : snapshot.steps),
+    [getStartedAnswers, snapshot.steps],
+  );
 
   useEffect(() => {
     setSnapshot(emptyGettingStartedSnapshot());
@@ -243,7 +250,7 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
             </div>
           </div>
           <div className="pb-1">
-            {snapshot.steps.map((step) => {
+            {steps.map((step) => {
               const complete = step.status === "complete";
               return (
                 <button

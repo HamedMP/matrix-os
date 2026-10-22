@@ -3,7 +3,7 @@ import {
   type GetStartedAnswers,
   type GetStartedGoalId,
   type GetStartedToolId,
-} from "./get-started.js";
+} from "#get-started";
 
 // Spec 635, Section 4: what the wizard's last screen offers to connect. Only
 // apps from the computer's own integration catalog get a Connect button; agent

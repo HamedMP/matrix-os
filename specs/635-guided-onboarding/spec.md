@@ -236,6 +236,8 @@ Each section is one layer, under the 3000-line limit, tests first.
    - Only apps in the computer's own integration catalog get a Connect button; service ids come from a fixed map in contracts.
    - v1 scope cut: agent sign-ins (Claude Code, Codex, OpenCode) and messaging channels (Telegram, WhatsApp, Email) show as "Later" and stay in Getting started / Settings. Inline agent sign-in through the provider workflow client is a follow-up.
 5. **Personalised arrival (P0):** Getting started and widget order by goal; greet by name. No new writes.
+   - The gate publishes the saved answers through `GetStartedAnswersProvider` (mounted next to `GettingStartedVisibilityProvider`), so the popovers and the widget read them without another request.
+   - v1 reorders only; opening the widget straight into "Work on my code" and its repo question moves to Section 6.
 6. **First task and app building (P1):** "Work on my code" first with a "fix on a branch" follow-up; "Build an app for this" through the existing `[BUILD]` handoff.
 7. **Make your AI yours (P2):** server-rendered managed SOUL section, `identity.md`, `user.md`; idempotent `matrix-bot` creation.
 8. **Start during provisioning (optional, later):** platform-stored draft handed to the gateway on first boot.

@@ -7,7 +7,7 @@ import {
   type GetStartedGoalId,
   type GetStartedStarterId,
   type GetStartedToolId,
-} from "./get-started.js";
+} from "#get-started";
 
 // Spec 635, Section 3: the wizard's client state machine. It is shared by
 // every desktop surface so they cannot drift; hosts only load and save.

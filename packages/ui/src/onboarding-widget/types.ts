@@ -2,6 +2,7 @@ import type {
   OnboardingAiChoice,
   OnboardingAiProvider,
   OnboardingRunView,
+  OnboardingStarterTaskId,
   OnboardingWidgetEvent,
   OnboardingWidgetState,
 } from "@matrix-os/contracts";
@@ -49,6 +50,8 @@ export interface OnboardingWidgetProps {
   state: OnboardingWidgetState;
   actions: OnboardingWidgetActions;
   userName?: string;
+  /** Starter tasks to lead with, from the owner's Get started goals (spec 635). */
+  taskOrder?: readonly OnboardingStarterTaskId[];
   apps: readonly OnboardingWidgetApp[];
   /** This computer has no app connection service, so Connect can never finish. */
   appsUnavailable?: boolean;

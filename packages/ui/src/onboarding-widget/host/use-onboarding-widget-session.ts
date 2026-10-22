@@ -7,6 +7,7 @@ import {
   type ConnectedIntegration,
   type OnboardingWidgetEvent,
   type OnboardingWidgetState,
+  getStartedTaskOrder,
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import type { OnboardingWidgetActions, OnboardingWidgetPrefs, OnboardingWidgetProps, OnboardingWidgetRepo } from "../types.js";
@@ -17,6 +18,7 @@ import { loadOnboardingRepos, type OnboardingRepoSource } from "./repos.js";
 import { useOnboardingAiConnect, type OnboardingAiConnectPort } from "./use-onboarding-ai-connect.js";
 import { useOnboardingChatHandoff } from "./use-onboarding-chat-handoff.js";
 import { useOnboardingRun } from "./use-onboarding-run.js";
+import { useGetStartedAnswers } from "../../get-started/answers-context.js";
 
 export interface OnboardingAppConnect {
   connectingService: string | null;
@@ -132,11 +134,15 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
     changePrefs: setPrefs,
   }), [ai.cancelSignIn, ai.reopenSignIn, ai.startSignIn, ai.submitCode, ai.submitKey, appConnect.connectApp, dispatch, openNamedChat, openSettings, setPrefs, showChat]);
 
-  const userName = onboardingFirstName(input.displayName);
+  // Spec 635: the name and goals from Get started win over the account's display name.
+  const getStartedAnswers = useGetStartedAnswers();
+  const userName = onboardingFirstName(getStartedAnswers?.name ?? input.displayName);
+  const taskOrder = useMemo(() => (getStartedAnswers ? getStartedTaskOrder(getStartedAnswers.goals) : undefined), [getStartedAnswers]);
   return {
     state,
     actions,
     ...(userName ? { userName } : {}),
+    ...(taskOrder ? { taskOrder } : {}),
     apps,
     appsUnavailable: appConnect.appsUnavailable,
     repos,

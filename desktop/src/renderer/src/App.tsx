@@ -2,7 +2,7 @@ import { startDesktopProviderCatalogCoordinator } from "./features/chat/provider
 import { NativeChatBadge } from "./features/chat/NativeChatBadge";
 import RuntimeCompatibilityGate from "./features/updates/RuntimeCompatibilityGate";
 import { MatrixBootScreen } from "@matrix-os/brand";
-import { GettingStartedVisibilityProvider } from "@matrix-os/ui";
+import { GetStartedAnswersProvider, GettingStartedVisibilityProvider } from "@matrix-os/ui";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { useEffect } from "react";
 import { Toaster } from "sonner";
@@ -36,6 +36,7 @@ export default function App() {
 
   return (
     <GettingStartedVisibilityProvider scope={scope}>
+    <GetStartedAnswersProvider scope={scope}>
     <Tooltip.Provider delayDuration={400} skipDelayDuration={200}>
       <div className="flex h-full flex-col" style={{ background: "var(--bg-app)" }}>
         {status === "loading" ? (
@@ -67,6 +68,7 @@ export default function App() {
         }}
       />
     </Tooltip.Provider>
+    </GetStartedAnswersProvider>
     </GettingStartedVisibilityProvider>
   );
 }

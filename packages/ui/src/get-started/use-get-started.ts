@@ -1,5 +1,6 @@
 import {
   GetStartedResponseSchema,
+  type GetStartedAnswers,
   getStartedAnswersFromWizard,
   getStartedDraftFromWizard,
   initialGetStartedWizard,
@@ -31,6 +32,8 @@ export interface GetStartedController {
   wizard: GetStartedWizardState | null;
   submitting: boolean;
   error: string | null;
+  /** The finished wizard's answers: loaded when already completed, or saved just now. */
+  answers: GetStartedAnswers | null;
   dispatch(event: GetStartedWizardEvent): void;
   finish(): void;
   skipAll(): void;
@@ -41,6 +44,7 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
   const [wizard, setWizard] = useState<GetStartedWizardState | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [answers, setAnswers] = useState<GetStartedAnswers | null>(null);
   const wizardRef = useRef<GetStartedWizardState | null>(null);
   // Saves run one at a time so a slow draft can never land after completion.
   const saveChain = useRef<Promise<SaveResult> | null>(null);
@@ -57,6 +61,7 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
       }
       const state = parsed.data;
       if (state.status !== "pending" && state.status !== "in_progress") {
+        if (state.status === "completed") setAnswers(state.answers);
         setPhase("done");
         return;
       }
@@ -104,6 +109,7 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
     void enqueue(update).then((result) => {
       const parsed = result.ok ? GetStartedResponseSchema.safeParse(result.value) : null;
       if (parsed?.success && parsed.data.status === expected) {
+        if (parsed.data.status === "completed") setAnswers(parsed.data.answers);
         setPhase("done");
       } else {
         if (result.ok) console.warn("[get-started] unexpected save response");
@@ -120,5 +126,5 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
 
   const skipAll = useCallback(() => settle({ type: "skip" }, "skipped"), [settle]);
 
-  return { phase, wizard, submitting, error, dispatch, finish, skipAll };
+  return { phase, wizard, submitting, error, answers, dispatch, finish, skipAll };
 }

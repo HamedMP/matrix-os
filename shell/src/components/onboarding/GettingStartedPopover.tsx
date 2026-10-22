@@ -1,16 +1,18 @@
 "use client";
 
-import { useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu } from "@matrix-os/ui";
+import { useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers } from "@matrix-os/ui";
 import { onboardingChecklist } from "@matrix-os/brand";
 import {
   deriveGettingStartedSnapshot,
   emptyGettingStartedSnapshot,
+  getStartedStepOrder,
+  orderByIds,
   GETTING_STARTED_STEP_IDS,
   type GettingStartedSnapshot,
   type GettingStartedStep,
   type GettingStartedStepId,
 } from "@matrix-os/contracts";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { CheckIcon, ClipboardCheck, DownloadIcon, Github } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
@@ -190,6 +192,12 @@ function GettingStartedPopoverContent({
   const helpTriggerRef = useRef<HTMLButtonElement>(null);
   const [refreshRequest, setRefreshRequest] = useState(0);
   const [snapshot, setSnapshot] = useState(emptyGettingStartedSnapshot);
+  // Spec 635: lead with the steps that fit the owner's Get started goals.
+  const getStartedAnswers = useGetStartedAnswers();
+  const steps = useMemo(
+    () => (getStartedAnswers ? orderByIds(snapshot.steps, getStartedStepOrder(getStartedAnswers.goals)) : snapshot.steps),
+    [getStartedAnswers, snapshot.steps],
+  );
   const [downloadSuggestion, setDownloadSuggestion] = useState<DesktopDownloadSuggestion>({
     href: DESKTOP_APP_DOWNLOAD_URL,
     label: "Choose desktop download",
@@ -394,7 +402,7 @@ function GettingStartedPopoverContent({
                 ) : null}
               </span>
             </a>
-            {snapshot.steps.map((step) => {
+            {steps.map((step) => {
               const complete = step.status === "complete";
               return (
                 <button
