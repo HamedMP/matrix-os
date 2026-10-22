@@ -3,6 +3,7 @@ import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { publicChatIdPredicate } from "./routine-direct-visibility.js";
 import { appendRoutineReceiptWithin, type AppendRoutineReceiptInput } from "./routine-receipt-repository.js";
+import type { ChatActivityWriteHook } from "./activity-write-hook.js";
 import { metadataOnlyOutboxEvent, type ChatContentProjectionMode } from "./outbox-projection.js";
 import type { AssistantDeltaInput, AssistantDeltaWriteHook, AssistantDeltaTransact } from "./assistant-delta-repository.js";
 import { createChat, type ChatCreationOptions } from "./creation-repository.js";
@@ -424,6 +425,7 @@ async function hydrateAdmission(
 
 export interface ChatRepositoryOptions extends ChatCreationOptions {
   assistantDeltaWrites?: AssistantDeltaWriteHook;
+  activityWrites?: ChatActivityWriteHook;
   /** Server-only pilot boundary: persist notifications without copied chat content. */
   contentProjectionMode?: ChatContentProjectionMode;
 }
@@ -472,6 +474,7 @@ export class ChatRepository {
         payload,
       ),
       this.repositoryOptions.assistantDeltaWrites,
+      this.repositoryOptions.activityWrites,
     );
     this.queue = new ChatQueueRepository(
       this.kysely,
@@ -762,7 +765,8 @@ export class ChatRepository {
     const runId = input.runId === undefined ? undefined : requireSafeRef(input.runId);
     const sessionId = TerminalSessionIdSchema.parse(input.sessionId);
     const sessionCreatedAt = z.iso.datetime().parse(input.sessionCreatedAt);
-    return this.transact(async (trx) => {
+    const activityId = runId ? `activity_${randomUUID()}` : undefined;
+    const content = async (trx: Executor) => {
       const chat = await selectOwnedChat(trx, owner, chatId, true);
       if (!chat) throw new ChatNotFoundError(chatId);
       if (runId) {
@@ -789,7 +793,7 @@ export class ChatRepository {
       if (!binding) return false;
       if (runId) {
         const activity = CanonicalChatRunActivitySchema.parse({
-          id: `activity_${randomUUID()}`,
+          id: activityId,
           chatId,
           runId,
           occurredAt,
@@ -825,7 +829,10 @@ export class ChatRepository {
         runId ? { runId } : { terminalSessionId: sessionId },
       );
       return true;
-    });
+    };
+    return this.repositoryOptions.activityWrites && runId && activityId
+      ? this.repositoryOptions.activityWrites.write({ owner, chatId, runId, activityIds: [activityId] }, (fn, check) => this.transact(fn, check), content)
+      : this.transact(content);
   }
 
   async listBoundTerminalSessionIds(
@@ -1498,8 +1505,9 @@ export class ChatRepository {
     chatId: string,
     runId: string,
     input: CanonicalChatRunActivity[],
+    signal?: AbortSignal,
   ): Promise<number> {
-    return this.runLifecycle.appendRunActivities(ownerInput, chatId, runId, input);
+    return this.runLifecycle.appendRunActivities(ownerInput, chatId, runId, input, undefined, signal);
   }
 
   async appendAssistantDelta(ownerInput: ChatOwner, input: AssistantDeltaInput, signal?: AbortSignal): Promise<CanonicalChatMessage> {
