@@ -73,7 +73,7 @@ export function createGoogleCollectionClient(deps: GoogleCollectionClientDepende
           if (!isDeepStrictEqual(current, identity)) deny();
         };
         const policyBinding = { runId: binding.runId, runtimeHandle: binding.runtimeHandle,
-          executionGeneration: binding.executionGeneration, accessSourceId: binding.accessSourceId };
+          executionGeneration: binding.executionGeneration, accessSourceId: binding.accessSourceId, requestClass: binding.requestClass };
         const request = (dataKinds: z.infer<typeof GoogleDataKindsSchema>) => ({ binding: policyBinding, googleAccountId, purposeId, dataKinds, identity });
         const identityDigest = googleRuntimeIdentityDigest({ binding, identity });
         const inspect = () => checked(() => deps.contexts.inspect(binding.ownerId, binding.chatId));

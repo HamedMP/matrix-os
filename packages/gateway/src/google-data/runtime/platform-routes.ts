@@ -4,7 +4,7 @@ import { z } from 'zod/v4';
 import { createGoogleDataAuthority } from '../authority.js';
 import { GoogleDataAuthorityError, routeDigest } from '../profiles.js';
 import type { GoogleDataRepository, RecordedGoogleConsent, ReviewedGoogleProfile } from '../repository.js';
-import { GooglePolicyAuthorizeSchema, GooglePolicyRevalidateSchema, resolveGooglePolicyProfile, type GooglePolicyAuthorizeInput } from './profile-resolution.js';
+import { GooglePolicyAuthorizeSchema, GooglePolicyRevalidateSchema, resolveGooglePolicyProfile, type GooglePolicyAuthorizeInput, type GoogleManagedRouteResolver } from './profile-resolution.js';
 
 export interface GooglePolicyRuntimePrincipal { ownerId: string; machineId: string }
 export interface GooglePlatformPolicyDependencies {
@@ -15,6 +15,8 @@ export interface GooglePlatformPolicyDependencies {
   resolveRuntime(c: Context): Promise<GooglePolicyRuntimePrincipal | null>;
   ownsGmailAccount(ownerId: string, googleAccountId: string): Promise<boolean>;
   now?: () => Date;
+  /** Trusted fixed platform/proxy control client; never an owner/machine-selected endpoint. */
+  resolveManagedRoute?: GoogleManagedRouteResolver;
 }
 function covers(recorded: RecordedGoogleConsent | null, profile: ReviewedGoogleProfile, request: GooglePolicyAuthorizeInput, at: number) {
   if (!recorded || recorded.status !== 'active') return false;
@@ -42,11 +44,13 @@ export function createGooglePlatformPolicyRoutes(deps: GooglePlatformPolicyDepen
       if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
       const input = parsed.data;
       if (!await deps.ownsGmailAccount(auth.data.ownerId, input.googleAccountId)) return c.json({ error: 'unavailable' }, 403);
-      const resolved = await resolveGooglePolicyProfile(deps.repository, auth.data.ownerId, input.binding, input.identity, input.purposeId);
+      const resolved = await resolveGooglePolicyProfile(deps.repository, auth.data.ownerId, input.binding, input.identity, input.purposeId,
+        { resolveManagedRoute: deps.resolveManagedRoute, signal: AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(10000)]), now });
       const request = { ownerId: auth.data.ownerId, googleAccountId: input.googleAccountId, purposeId: input.purposeId,
         profileId: resolved.profileId, dataKinds: input.dataKinds, resolvedRoute: resolved.route };
       const finish = async (payload: Record<string, unknown>, status: 200 | 428 = 200) => {
         if (!await deps.ownsGmailAccount(auth.data.ownerId, input.googleAccountId)) return c.json({ error: 'unavailable' }, 403);
+        await resolved.revalidateManaged?.();
         return c.json(payload, status);
       };
       if (action === 'revalidate') {

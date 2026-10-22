@@ -1,3 +1,4 @@
+import { MANAGED_WORKERS_AI_MODEL_IDS } from '@matrix-os/contracts';
 import { createHash } from 'node:crypto';
 import { z } from 'zod/v4';
 
@@ -26,7 +27,8 @@ const bindingShape = {
   harnessRevision: identifier,
   recipientChain: z.array(recipient).min(1).max(16).refine(values => new Set(values.map(item => item.recipientId)).size === values.length, 'Duplicate recipient'),
 };
-const model = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/);
+export const GoogleDataModelSchema = z.union([z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/), z.enum(MANAGED_WORKERS_AI_MODEL_IDS)]);
+const model = GoogleDataModelSchema;
 const binding = z.strictObject(bindingShape).refine(value => {
   const first = value.recipientChain[0];
   return Boolean(first) && first!.recipientId === value.providerId && first!.accountId === value.providerAccountId && first!.endpoint === value.endpoint;
