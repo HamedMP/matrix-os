@@ -82,7 +82,7 @@ it.each([{ mode: "Chat", revoke: false, steering: false }, { mode: "Bot", revoke
   ]);
   const registry = new BotRuntimeRegistry(); let serial = 0;
   let actions: ReturnType<typeof createBotBrokerActions>;
-  const stopRuntime = vi.fn(async () => undefined);
+  const stopRuntime = vi.fn(async (request: string | {runtimeHandle:string}) => ({runtimeHandle:typeof request === "string"?request:request.runtimeHandle,executionGeneration:"1",state:"stopped" as const}));
   const workers = new Map<string, ReturnType<typeof createBotWorker>>(); // one active fixture runtime, evicted in finally.
   const host = { available: true, client: {
     createRuntime: async () => ({ runtimeHandle: `runtime_${(++serial).toString(16).padStart(32, "0")}`, executionGeneration: "1" }), stopRuntime,

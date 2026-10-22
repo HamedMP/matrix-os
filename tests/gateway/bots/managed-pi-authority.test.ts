@@ -44,7 +44,7 @@ async function setup(permissionMode = "full_access", supervisedBrowser = false) 
   const createRuntime = vi.fn(async (): Promise<Awaited<ReturnType<ScopeRuntimeHost["client"]["createRuntime"]>>> => ({
     runtimeHandle: `runtime_${"c".repeat(32)}`, executionGeneration: "2", state: "running",
   }));
-  const stopRuntime = vi.fn(async () => undefined);
+  const stopRuntime = vi.fn(async ({ runtimeHandle }: { runtimeHandle: string }) => ({ runtimeHandle, executionGeneration: "2", state: "stopped" as const }));
   const renewRuntime = vi.fn(async () => undefined);
   const host = { available: true, client: { createRuntime, renewRuntime, stopRuntime } } as unknown as ScopeRuntimeHost;
   const roots = { resolve: vi.fn(async (): Promise<ResolvedChatExecutionRoot> => { throw new Error("Unexpected project" ); }) };
