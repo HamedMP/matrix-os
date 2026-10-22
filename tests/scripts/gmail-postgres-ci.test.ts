@@ -14,6 +14,7 @@ describe('Gmail PostgreSQL CI qualification', () => {
       'tests/gateway/google-runtime-authority.test.ts',
       'tests/gateway/google-runtime-authority-pins.test.ts',
       'tests/gateway/google-context-admission-startup.test.ts',
+      'tests/gateway/google-platform-policy-composition.test.ts',
       'tests/gateway/google-managed-profile-resolution.test.ts',
       'tests/gateway/google-pilot-copy-lifecycle.test.ts',
       'tests/gateway/google-pilot-owner-pool.test.ts',
