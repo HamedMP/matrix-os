@@ -3,6 +3,7 @@ import { useGettingStartedAutoOpenSuppression, useGettingStartedBlocker } from "
 import { usePublishGetStartedAnswers } from "./answers-context.js";
 import type { GetStartedConnect, GetStartedConnector } from "./connect.js";
 import { GetStartedWizard } from "./GetStartedWizard.js";
+import { useDesktopBackdrop, type GetStartedBackdropSource } from "./use-desktop-backdrop.js";
 import { useGetStarted, type GetStartedPort } from "./use-get-started.js";
 
 export interface GetStartedGateProps {
@@ -15,16 +16,20 @@ export interface GetStartedGateProps {
   connector?: GetStartedConnector;
   /** Rendered only while the wizard is open; e.g. Electron's renderer overlay lease above native views. */
   whileActive?: ComponentType;
+  /** The element that paints the desktop background; the wizard draws a blurred copy of it. */
+  backdropSource?: GetStartedBackdropSource;
 }
 
 /**
- * Spec 635: shows the Get started wizard once on a new computer, over the blurred desktop.
+ * Spec 635: shows the Get started wizard once on a new computer, over the blurred wallpaper.
+ * The backdrop is opaque, so icons, the dock and windows don't show through.
  * It cannot be closed or minimized; it ends only when the owner finishes or skips it.
  * Any load failure falls back to today's desktop.
  */
-export function GetStartedGate({ port, zIndex, children, connector: Connector, whileActive: WhileActive }: GetStartedGateProps) {
+export function GetStartedGate({ port, zIndex, children, connector: Connector, whileActive: WhileActive, backdropSource }: GetStartedGateProps) {
   const getStarted = useGetStarted(port);
   const active = getStarted.phase === "active";
+  const backdrop = useDesktopBackdrop(backdropSource, active);
   useGettingStartedBlocker(active);
   useGettingStartedAutoOpenSuppression(getStarted.phase !== "done");
   usePublishGetStartedAnswers(getStarted.answers);
@@ -46,6 +51,9 @@ export function GetStartedGate({ port, zIndex, children, connector: Connector, w
   return (
     <div className="mxo-root mxo-gs ph-no-capture" style={{ zIndex }}>
       {WhileActive ? <WhileActive /> : null}
+      <div className="mxo-gs__backdrop" aria-hidden="true">
+        <div className="mxo-gs__backdrop-image" style={backdrop ?? undefined} />
+      </div>
       <div className="mxo-gs__scrim" aria-hidden />
       {Connector ? <Connector>{renderWizard}</Connector> : renderWizard(null)}
     </div>

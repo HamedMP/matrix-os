@@ -9,18 +9,38 @@
   padding: 16px;
 }
 
-/* `place-items: center` on the parent also aligns absolutely positioned
-   children, which would shrink this empty layer to 0x0 and drop the blur.
-   Stretch it explicitly. Tint and blur match the Settings backdrop. */
+/* The wizard draws its own blurred copy of the wallpaper on an opaque layer,
+   so icons, the dock and windows never show through. `place-items: center`
+   on the parent also aligns absolutely positioned children, which would
+   shrink these empty layers to 0x0; stretch them explicitly. The fallback
+   colour (brand neutral 800) covers the desktop before the wallpaper loads. */
+.mxo-gs__backdrop {
+  position: absolute;
+  inset: 0;
+  place-self: stretch;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: #242323;
+}
+
+/* Extends past the edges so the blur doesn't fade to the fallback colour. */
+.mxo-gs__backdrop-image {
+  position: absolute;
+  inset: -120px;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  filter: blur(56px) saturate(1.1);
+}
+
 .mxo-gs__scrim {
   position: absolute;
   inset: 0;
   place-self: stretch;
   width: 100%;
   height: 100%;
-  background: color-mix(in srgb, var(--mxo-ink) 30%, transparent);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  background: color-mix(in srgb, var(--mxo-ink) 18%, transparent);
 }
 
 .mxo-gs__card {

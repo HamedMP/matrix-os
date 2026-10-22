@@ -13,10 +13,13 @@ function GetStartedOverlayLease() {
   return null;
 }
 
+/** Electron paints the wallpaper on the DesktopBackground layer. */
+const desktopBackdrop = () => document.querySelector<HTMLElement>('[data-testid="desktop-background"]');
+
 function DesktopGetStartedGate({ api, runtimeSlot, children }: { api: ApiClient; runtimeSlot: string; children: ReactNode }) {
   const port = useMemo(() => createDesktopGetStartedPort(api, runtimeSlot), [api, runtimeSlot]);
   return (
-    <GetStartedGate port={port} zIndex={DESKTOP_Z_INDEX.getStarted} connector={DesktopGetStartedConnector} whileActive={GetStartedOverlayLease}>
+    <GetStartedGate port={port} zIndex={DESKTOP_Z_INDEX.getStarted} connector={DesktopGetStartedConnector} whileActive={GetStartedOverlayLease} backdropSource={desktopBackdrop}>
       {children}
     </GetStartedGate>
   );

@@ -226,4 +226,83 @@ describe("GetStartedGate", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't save your setup. Try again.");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
+
+  describe("backdrop", () => {
+    function wallpaperSource(image: string) {
+      const source = document.createElement("div");
+      source.dataset.testWallpaper = "";
+      source.style.backgroundImage = image;
+      source.style.backgroundColor = "rgb(36, 80, 95)";
+      document.body.appendChild(source);
+      return source;
+    }
+
+    afterEach(() => {
+      document.querySelectorAll("[data-test-wallpaper]").forEach((node) => node.remove());
+    });
+
+    it("draws the desktop's own wallpaper behind the wizard instead of showing the desktop through", async () => {
+      // jsdom drops blob: URLs from CSS, so this uses the web shell's wallpaper URL; Electron's blob URL is copied the same way.
+      const url = 'url("https://app.matrix-os.com/api/files/blob?path=system%2Fwallpapers%2Fmatrix-dusk.webp")';
+      const source = wallpaperSource(url);
+      render(
+        <GetStartedGate port={makePort({ status: "pending" }).port} zIndex={690} backdropSource={() => source}>
+          <div data-testid="desktop-widget">widget</div>
+        </GetStartedGate>,
+      );
+      await screen.findByRole("dialog");
+      const backdrop = document.querySelector(".mxo-gs__backdrop");
+      expect(backdrop).not.toBeNull();
+      expect(backdrop).toHaveAttribute("aria-hidden", "true");
+      await waitFor(() => {
+        const image = document.querySelector<HTMLElement>(".mxo-gs__backdrop-image");
+        expect(image?.style.backgroundImage).toBe(url);
+        expect(image?.style.backgroundColor).toBe("rgb(36, 80, 95)");
+      });
+    });
+
+    it("follows a wallpaper that loads after the wizard opened", async () => {
+      const source = wallpaperSource("none");
+      render(
+        <GetStartedGate port={makePort({ status: "pending" }).port} zIndex={690} backdropSource={() => source}>
+          <div data-testid="desktop-widget">widget</div>
+        </GetStartedGate>,
+      );
+      await screen.findByRole("dialog");
+      const url = 'url("https://app.matrix-os.com/api/files/blob?path=system%2Fwallpapers%2Fmatrix-dusk.webp")';
+      await act(async () => {
+        source.style.backgroundImage = url;
+      });
+      await waitFor(() => {
+        expect(document.querySelector<HTMLElement>(".mxo-gs__backdrop-image")?.style.backgroundImage).toBe(url);
+      });
+    });
+
+    it("picks up the background layer when it mounts after the wizard (Electron)", async () => {
+      render(
+        <GetStartedGate
+          port={makePort({ status: "pending" }).port}
+          zIndex={60}
+          backdropSource={() => document.querySelector<HTMLElement>("[data-test-wallpaper]")}
+        >
+          <div data-testid="desktop-widget">widget</div>
+        </GetStartedGate>,
+      );
+      await screen.findByRole("dialog");
+      const url = 'url("https://app.matrix-os.com/api/files/blob?path=system%2Fwallpapers%2Fmatrix-dusk.webp")';
+      await act(async () => {
+        wallpaperSource(url);
+      });
+      await waitFor(() => {
+        expect(document.querySelector<HTMLElement>(".mxo-gs__backdrop-image")?.style.backgroundImage).toBe(url);
+      });
+    });
+
+    it("still covers the desktop with the fallback backdrop when no wallpaper is known", async () => {
+      renderGate(makePort({ status: "pending" }).port);
+      await screen.findByRole("dialog");
+      expect(document.querySelector(".mxo-gs__backdrop")).not.toBeNull();
+      expect(document.querySelector<HTMLElement>(".mxo-gs__backdrop-image")?.style.backgroundImage ?? "").toBe("");
+    });
+  });
 });
