@@ -1,4 +1,5 @@
 import importlib.util
+from contextlib import contextmanager
 import io
 import json
 import os
@@ -30,6 +31,142 @@ class BrowserRuntimeTest(unittest.TestCase):
         self.env.write_text('MATRIX_MACHINE_ID=12345678-1234-1234-1234-123456789abc\nMATRIX_HANDLE=owner-handle\nMATRIX_RUNTIME_SLOT=primary\nMATRIX_CLERK_USER_ID=user_owner\nUNCHANGED=value\n')
         self.env.chmod(0o640)
         (self.root / 'opt/matrix/app/BUNDLE_VERSION').write_text('v-test')
+
+    @contextmanager
+    def durability_events(self):
+        events = []
+        fsync, rename, replace, unlink, rmtree = os.fsync, Path.rename, os.replace, Path.unlink, module.shutil.rmtree
+        def observe_sync(descriptor):
+            observed = os.fstat(descriptor)
+            target = None
+            for candidate in [self.root, *self.root.rglob('*')]:
+                try:
+                    info = candidate.lstat()
+                except FileNotFoundError:
+                    continue
+                if (info.st_dev, info.st_ino) == (observed.st_dev, observed.st_ino):
+                    target = candidate
+                    break
+            events.append(('fsync', target, module.stat.S_ISDIR(observed.st_mode)))
+            return fsync(descriptor)
+        def observe_rename(source, destination):
+            events.append(('rename', source, destination))
+            return rename(source, destination)
+        def observe_replace(source, destination):
+            events.append(('replace', source, destination))
+            return replace(source, destination)
+        def observe_unlink(path, *args, **kwargs):
+            events.append(('unlink', path, None))
+            return unlink(path, *args, **kwargs)
+        def observe_rmtree(path, *args, **kwargs):
+            events.append(('rmtree', path, None))
+            return rmtree(path, *args, **kwargs)
+        with patch.object(module.os, 'fsync', side_effect=observe_sync), \
+             patch.object(Path, 'rename', observe_rename), patch.object(Path, 'unlink', observe_unlink), \
+             patch.object(module.os, 'replace', side_effect=observe_replace), \
+             patch.object(module.shutil, 'rmtree', side_effect=observe_rmtree):
+            yield events
+
+    def test_atomic_write_persists_real_parent_after_file_replacement(self):
+        self.runtime.prepare()
+        target = self.runtime.prefix / 'status.json'
+        with self.durability_events() as events:
+            self.runtime.write(target, 'durable state')
+        publication = next(index for index, event in enumerate(events) if event[0] == 'replace' and event[2] == target)
+        self.assertTrue(any(event[0] == 'fsync' and event[2] is False for event in events[:publication]))
+        self.assertIn(('fsync', target.parent, True), events[publication + 1:])
+
+    def test_activation_durability_orders_payload_journal_swaps_and_journal_retirement(self):
+        self.runtime.prepare()
+        self.runtime.write(self.env, self.env.read_text() + 'MATRIX_BROWSER_LAB_VIEWER_AUTH="Basic eDp5"\n', 0o640, self.runtime.gid)
+        app, previous, journal = self.runtime.prefix / 'app', self.runtime.prefix / '.previous', self.runtime.prefix / 'activation.json'
+        app.mkdir()
+        (app / 'old').write_text('old durable payload')
+        incoming = self.runtime.prefix / 'staged/app'
+        incoming.mkdir(parents=True)
+        (incoming / 'new').write_text('new payload bytes')
+        with self.durability_events() as events, patch.object(self.runtime, 'health'), patch.object(self.runtime, 'run', return_value=''):
+            self.runtime.activate(incoming, {})
+        published = next(index for index, event in enumerate(events) if event[0] == 'replace' and event[2] == journal)
+        swaps = [index for index, event in enumerate(events) if event[0] == 'rename']
+        retired = next(index for index, event in enumerate(events) if event[:2] == ('unlink', journal))
+        self.assertIn(('fsync', incoming / 'new', False), events[:published])
+        self.assertIn(('fsync', self.runtime.prefix, True), events[published + 1:swaps[0]])
+        self.assertIn(('fsync', self.runtime.prefix, True), events[swaps[0] + 1:swaps[1]])
+        for parent in (incoming.parent, self.runtime.prefix):
+            self.assertIn(('fsync', parent, True), events[swaps[1] + 1:retired])
+        cleanup = next(index for index, event in enumerate(events) if event[:2] == ('rmtree', previous))
+        self.assertIn(('fsync', journal.parent, True), events[retired + 1:cleanup])
+
+    def test_failed_journal_directory_sync_prevents_app_swap_and_service_actions(self):
+        self.runtime.prepare()
+        self.runtime.write(self.env, self.env.read_text() + 'MATRIX_BROWSER_LAB_VIEWER_AUTH="Basic eDp5"\n', 0o640, self.runtime.gid)
+        app = self.runtime.prefix / 'app'
+        app.mkdir()
+        (app / 'old').write_text('retained payload')
+        incoming = self.runtime.prefix / 'incoming'
+        incoming.mkdir()
+        (incoming / 'new').write_text('candidate')
+        fsync = os.fsync
+        def fail_journal_publication(descriptor):
+            info, expected = os.fstat(descriptor), self.runtime.prefix.stat()
+            if (info.st_dev, info.st_ino) == (expected.st_dev, expected.st_ino) and (self.runtime.prefix / 'activation.json').exists():
+                raise OSError('Injected journal directory sync failure')
+            return fsync(descriptor)
+        with patch.object(module.os, 'fsync', side_effect=fail_journal_publication), patch.object(self.runtime, 'health'), \
+             patch.object(self.runtime, 'run', return_value='') as run, self.assertRaises(OSError):
+            self.runtime.activate(incoming, {})
+        run.assert_not_called()
+        self.assertEqual((app / 'old').read_text(), 'retained payload')
+        self.assertTrue(incoming.exists())
+        self.assertFalse((self.runtime.prefix / '.previous').exists())
+
+    def test_failed_app_rename_directory_sync_recovers_before_candidate_start(self):
+        self.runtime.prepare()
+        app, previous = self.runtime.prefix / 'app', self.runtime.prefix / '.previous'
+        app.mkdir()
+        (app / 'old').write_text('retained payload')
+        incoming = self.runtime.prefix / 'incoming'
+        incoming.mkdir()
+        (incoming / 'new').write_text('candidate')
+        fsync, failed = os.fsync, []
+        def fail_after_previous_rename(descriptor):
+            info, expected = os.fstat(descriptor), self.runtime.prefix.stat()
+            if not failed and (info.st_dev, info.st_ino) == (expected.st_dev, expected.st_ino) and previous.exists() and not app.exists():
+                failed.append(True)
+                raise OSError('Injected namespace sync failure')
+            return fsync(descriptor)
+        with patch.object(module.os, 'fsync', side_effect=fail_after_previous_rename), \
+             patch.object(self.runtime, 'run', return_value='') as run, self.assertRaises(OSError):
+            self.runtime.activate(incoming, {})
+        self.assertEqual(failed, [True])
+        self.assertEqual((app / 'old').read_text(), 'retained payload')
+        self.assertTrue(incoming.exists())
+        self.assertFalse((self.runtime.prefix / 'activation.json').exists())
+        self.assertFalse(any('enable' in call.args[0] for call in run.call_args_list))
+
+    def test_recovery_and_credential_journal_retirement_sync_real_parent_directories(self):
+        self.runtime.prepare()
+        app, previous, journal = self.runtime.prefix / 'app', self.runtime.prefix / '.previous', self.runtime.prefix / 'activation.json'
+        previous.mkdir()
+        (previous / 'old').write_text('old')
+        app.mkdir()
+        self.runtime.write(journal, json.dumps({'hadApp': True, 'environment': module.base64.b64encode(self.env.read_bytes()).decode(), 'files': {}}), 0o600)
+        with self.durability_events() as events, patch.object(self.runtime, 'run', return_value=''):
+            self.runtime.recover_activation()
+        renamed = next(index for index, event in enumerate(events) if event[0] == 'rename')
+        retired = next(index for index, event in enumerate(events) if event[:2] == ('unlink', journal))
+        self.assertIn(('fsync', self.runtime.prefix, True), events[renamed + 1:retired])
+        self.assertIn(('fsync', journal.parent, True), events[retired + 1:])
+        def kasm(arguments, **kwargs):
+            Path(arguments[-1]).write_text('hashed credential')
+            return ''
+        with self.durability_events() as events, patch.object(self.runtime, 'run', side_effect=kasm), patch.object(module.os, 'chown'):
+            self.runtime.credentials()
+        pending = self.runtime.prefix / 'credential-pending.json'
+        retired = next(index for index, event in enumerate(events) if event[:2] == ('unlink', pending))
+        self.assertIn(('fsync', self.env.parent, True), events[:retired])
+        self.assertIn(('fsync', pending.parent, True), events[retired + 1:])
 
     def test_hardens_fresh_group_writable_matrix_root_without_changing_children(self):
         parent = self.root / 'opt/matrix'

@@ -70,6 +70,7 @@ class Runtime:
                 info = current.lstat()
             except FileNotFoundError:
                 current.mkdir(mode=0o755)
+                self.sync_directory(current.parent)
                 info = current.lstat()
             if not stat.S_ISDIR(info.st_mode) or info.st_uid != self.uid:
                 raise ValueError('Unsafe Browser directory')
@@ -82,6 +83,7 @@ class Runtime:
                         if os.fstat(descriptor).st_ino != info.st_ino:
                             raise ValueError('Browser directory changed')
                         os.fchmod(descriptor, 0o755)
+                        os.fsync(descriptor)
                     finally:
                         os.close(descriptor)
                 else:
@@ -103,6 +105,44 @@ class Runtime:
             raise ValueError('Browser source too large')
         return data
 
+    def sync_directory(self, path):
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != self.uid or info.st_mode & 0o022:
+                raise ValueError('Unsafe Browser durability directory')
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    def rename_durable(self, source, destination):
+        source.rename(destination)
+        self.sync_directory(source.parent)
+        if destination.parent != source.parent:
+            self.sync_directory(destination.parent)
+
+    def unlink_durable(self, path, missing_ok=False):
+        path.unlink(missing_ok=missing_ok)
+        self.sync_directory(path.parent)
+
+    def sync_payload(self, root):
+        # Extraction already bounds count/bytes. Persist new file data and the
+        # complete namespace before the journal can retire the rollback tree.
+        for current, directories, files in os.walk(root, topdown=False):
+            current = Path(current)
+            if any((current / name).is_symlink() for name in directories):
+                raise ValueError('Unsafe Browser durable payload')
+            for name in files:
+                descriptor = os.open(current / name, os.O_RDONLY | os.O_NOFOLLOW)
+                try:
+                    info = os.fstat(descriptor)
+                    if not stat.S_ISREG(info.st_mode) or info.st_uid != self.uid or info.st_mode & 0o022:
+                        raise ValueError('Unsafe Browser durable payload file')
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+            self.sync_directory(current)
+
     def write(self, path, value, mode=0o644, gid=0):
         self.directory(path.parent)
         temporary = path.with_name('.' + path.name + '.' + secrets.token_hex(12))
@@ -116,6 +156,7 @@ class Runtime:
                 target.flush()
                 os.fsync(target.fileno())
             os.replace(temporary, path)
+            self.sync_directory(path.parent)
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -198,7 +239,7 @@ class Runtime:
             self.write(password_file, password_data, 0o640, self.gid)
             lines = [line for line in text.splitlines() if not line.startswith('MATRIX_BROWSER_LAB_VIEWER_AUTH=')]
             self.write(self.env, '\n'.join(lines) + '\nMATRIX_BROWSER_LAB_VIEWER_AUTH="' + authorization + '"\n', 0o640, self.gid)
-            journal.unlink()
+            self.unlink_durable(journal)
             return
         configured = 'MATRIX_BROWSER_LAB_VIEWER_AUTH' in values
         exists = password_file.exists() or password_file.is_symlink()
@@ -337,9 +378,11 @@ class Runtime:
         if previous.exists():
             if app.exists():
                 shutil.rmtree(app)
-            previous.rename(app)
+                self.sync_directory(self.prefix)
+            self.rename_durable(previous, app)
         elif not state['hadApp'] and app.exists():
             shutil.rmtree(app)
+            self.sync_directory(self.prefix)
         current, values = self.environment()
         saved = base64.b64decode(state['environment'], validate=True).decode()
         # Activation owns only its Browser enablement. Gateway bootstrap owns
@@ -354,7 +397,7 @@ class Runtime:
         for name, value in state['files'].items():
             destination = self.destination(name)
             if value is None:
-                destination.unlink(missing_ok=True)
+                self.unlink_durable(destination, missing_ok=True)
             else:
                 self.write(destination, base64.b64decode(value, validate=True))
         if 'nginx' in state['files']:
@@ -364,7 +407,7 @@ class Runtime:
         if state['hadApp']:
             self.run(['/usr/bin/systemctl', 'restart', *self.service_names])
         self.run(['/usr/bin/systemctl', 'restart', 'matrix-gateway.service'])
-        journal.unlink()
+        self.unlink_durable(journal)
 
     def activate(self, incoming, files):
         app, previous = self.prefix / 'app', self.prefix / '.previous'
@@ -378,14 +421,15 @@ class Runtime:
             if old_files[destination] != content.encode():
                 changed.append(name)
         old_environment = self.read(self.env)
+        self.sync_payload(incoming)
         had_app = app.exists()
         self.write(self.prefix / 'activation.json', json.dumps({'hadApp': had_app,
             'environment': base64.b64encode(old_environment).decode(),
             'files': {name: (base64.b64encode(old_files[self.destination(name)]).decode() if old_files[self.destination(name)] is not None else None) for name in files}}), 0o600)
-        if had_app:
-            app.rename(previous)
-        incoming.rename(app)
         try:
+            if had_app:
+                self.rename_durable(app, previous)
+            self.rename_durable(incoming, app)
             for name, content in files.items():
                 self.write(self.destination(name), content)
             if 'nginx' in files:
@@ -415,9 +459,10 @@ class Runtime:
         except BaseException:
             self.recover_activation()
             raise
-        (self.prefix / 'activation.json').unlink()
+        self.unlink_durable(self.prefix / 'activation.json')
         if previous.exists():
             shutil.rmtree(previous)
+            self.sync_directory(self.prefix)
 
     def preflight(self):
         release = self.path('/etc/os-release').read_text()
