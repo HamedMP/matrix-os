@@ -145,8 +145,10 @@ export async function brokerStreamRequest(
       if (frame.stream === "start") {
         if (started) throw new Error("Duplicate broker inference start");
         started = true;
+        timeout.refresh();
         sse = new SseTerminalGate(write);
         response.writeHead(frame.status, { ...frame.headers, [STREAM_HEADER]: "1" });
+        response.flushHeaders();
         return;
       }
       if (!started || frame.sequence !== sequence) throw new Error("Out-of-order broker inference frame");
@@ -177,6 +179,9 @@ export async function brokerStreamRequest(
     socket.once("connect", () => socket.write(`${JSON.stringify(request)}\n`));
     for await (const chunk of socket) {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      // Before start this bounds setup; afterwards the same watchdog bounds
+      // each wait for broker bytes without capping a progressing stream.
+      if (started && bytes.length) timeout.refresh();
       let offset = 0;
       while (offset < bytes.length) {
         const newline = bytes.indexOf(0x0a, offset);

@@ -433,7 +433,7 @@ it("closes the broker socket when the Bot HTTP reader cancels a streamed body", 
   await vi.waitFor(() => expect(brokerClosed).toBe(true));
 });
 
-it("applies one absolute broker timeout to a stream that never sends its end frame", async () => {
+it("times out an inactive broker stream that never sends its end frame", async () => {
   let brokerClosed = false;
   const request = await fixture((socket, frame) => {
     socket.once("close", () => { brokerClosed = true; });
