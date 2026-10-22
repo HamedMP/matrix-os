@@ -1,3 +1,4 @@
+import { metadataOnlyOutboxEvent, type ChatContentProjectionMode } from "./outbox-projection.js";
 import type { AssistantDeltaInput, AssistantDeltaWriteHook, AssistantDeltaTransact } from "./assistant-delta-repository.js";
 import { createChat, type ChatCreationOptions } from "./creation-repository.js";
 import { readChatImportSource } from "./import-source.js";
@@ -486,7 +487,11 @@ async function hydrateAdmission(
   };
 }
 
-export interface ChatRepositoryOptions extends ChatCreationOptions { assistantDeltaWrites?: AssistantDeltaWriteHook }
+export interface ChatRepositoryOptions extends ChatCreationOptions {
+  assistantDeltaWrites?: AssistantDeltaWriteHook;
+  /** Server-only pilot boundary: persist notifications without copied chat content. */
+  contentProjectionMode?: ChatContentProjectionMode;
+}
 
 export class ChatRepository {
   readonly kysely: Kysely<ChatDatabase>;
@@ -512,6 +517,7 @@ export class ChatRepository {
       ? dialectOrKysely
       : new Kysely<ChatDatabase>({ dialect: dialectOrKysely });
     this.transactionScoped = transactionScoped;
+    this.repositoryOptions = Object.freeze({ ...repositoryOptions });
     this.outboxDelivery = outboxDelivery ?? new ChatOutboxDelivery();
     this.detail = new ChatDetailRepository(this.kysely, hydrateRecord.bind(null, this.kysely));
     this.runLifecycle = new ChatRunLifecycleRepository(
@@ -591,7 +597,8 @@ export class ChatRepository {
 
   /** Deliver an event written by another owner-database transaction after its commit. */
   publishCommittedExternalOutbox(owner: ChatOwner, event: ChatOutboxEvent): void {
-    this.outboxDelivery.flush([{ owner, event }]);
+    this.outboxDelivery.flush([{ owner, event: this.repositoryOptions.contentProjectionMode === "metadata-only"
+      ? metadataOnlyOutboxEvent(event) : event }]);
   }
 
   async withTransaction<T>(fn: (repository: ChatRepository) => Promise<T>): Promise<T> {
@@ -651,6 +658,7 @@ export class ChatRepository {
     payload: Record<string, unknown> = {},
     collaborationProjection?: CanonicalChatCollaboration,
   ): Promise<void> {
+    const metadataOnly = this.repositoryOptions.contentProjectionMode === "metadata-only";
     if (typeof payload.runId === "string") {
       const queuedRun = await executor.selectFrom("chat_queued_turns")
         .select("collaboration_scope_id")
@@ -672,7 +680,10 @@ export class ChatRepository {
             .select(({ fn }) => fn.max<number>("scope_seq").as("scope_seq"))
             .where("scope_id", "=", sharedRun.scope_id)
             .executeTakeFirst();
-          const { messageDelta: _delta, failureDiagnostic: _diagnostic, ...metadata } = payload;
+          const metadata = metadataOnly ? {} : (() => {
+            const { messageDelta: _delta, failureDiagnostic: _diagnostic, ...value } = payload;
+            return value;
+          })();
           await collaborationExecutor.insertInto("collaboration_events").values({
             scope_id: sharedRun.scope_id,
             scope_seq: Number(latest?.scope_seq ?? 0) + 1,
@@ -687,6 +698,11 @@ export class ChatRepository {
           return;
         }
       }
+    }
+    if (metadataOnly) {
+      const event = await insertOutbox(executor, owner, chatId, revision, eventType, {});
+      this.outboxDelivery.capture(executor, { owner, event });
+      return;
     }
     const captured = await captureChatContent(executor, owner, chatId, eventType, payload,
       (projectionOwner, projectionChatId) => hydrateRecord(
