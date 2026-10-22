@@ -3,6 +3,7 @@ import { lockRunCollaborationScope } from "./run-scope-lock.js";
 import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { publicChatIdPredicate } from "./routine-direct-visibility.js";
 import { appendRoutineReceiptWithin, type AppendRoutineReceiptInput } from "./routine-receipt-repository.js";
+import type { AssistantDeltaInput, AssistantDeltaWriteHook } from "./assistant-delta-repository.js";
 import { createChat, type ChatCreationOptions } from "./creation-repository.js";
 import { readChatImportSource } from "./import-source.js";
 import { archiveProjectChats, listChats, searchChats, updateChat, renameChat } from "./metadata-repository.js";
@@ -83,7 +84,6 @@ import {
   type ChatRecord,
 } from "./records.js";
 import { ChatRunLifecycleRepository } from "./run-lifecycle-repository.js";
-import type { SealedAssistantCredential } from "./assistant-credential-crypto.js";
 import {
   reconcileProviderBindings,
   type ProviderBindingReconciliationResult,
@@ -421,6 +421,8 @@ async function hydrateAdmission(
   };
 }
 
+export interface ChatRepositoryOptions extends ChatCreationOptions { assistantDeltaWrites?: AssistantDeltaWriteHook }
+
 export class ChatRepository {
   readonly kysely: Kysely<ChatDatabase>;
   private readonly transactionScoped: boolean;
@@ -444,7 +446,7 @@ export class ChatRepository {
     dialectOrKysely: Dialect | Kysely<ChatDatabase>,
     transactionScoped = false,
     outboxDelivery?: ChatOutboxDelivery,
-    private readonly creationOptions: ChatCreationOptions = {},
+    private readonly repositoryOptions: ChatRepositoryOptions = {},
   ) {
     this.kysely = dialectOrKysely instanceof Kysely
       ? dialectOrKysely
@@ -463,6 +465,7 @@ export class ChatRepository {
         eventType,
         payload,
       ),
+      this.repositoryOptions.assistantDeltaWrites,
     );
     this.queue = new ChatQueueRepository(
       this.kysely,
@@ -532,7 +535,7 @@ export class ChatRepository {
   }
 
   async withTransaction<T>(fn: (repository: ChatRepository) => Promise<T>): Promise<T> {
-    return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery, this.creationOptions)));
+    return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery, this.repositoryOptions)));
   }
 
   /** Known setup transitions append within the same owner-database transaction. */
@@ -657,7 +660,7 @@ export class ChatRepository {
     return createChat({
       transact: (fn) => this.transact(fn), hydrateRecord, toPrincipalRecord,
       appendOutbox: (tx, owner, chatId, revision, event) => this.appendOutbox(tx, owner, chatId, revision, event),
-      ...this.creationOptions,
+      ...this.repositoryOptions,
     }, ownerInput, input);
   }
 
@@ -1475,16 +1478,8 @@ export class ChatRepository {
     return this.runLifecycle.appendRunActivities(ownerInput, chatId, runId, input);
   }
 
-  async appendAssistantDelta(ownerInput: ChatOwner, input: {
-    chatId: string;
-    runId: string;
-    messageId: string;
-    delta: string;
-    createdAt: string;
-    snapshot?: boolean;
-    credentials?: readonly SealedAssistantCredential[];
-  }): Promise<CanonicalChatMessage> {
-    return this.runLifecycle.appendAssistantDelta(ownerInput, input);
+  async appendAssistantDelta(ownerInput: ChatOwner, input: AssistantDeltaInput, signal?: AbortSignal): Promise<CanonicalChatMessage> {
+    return this.runLifecycle.appendAssistantDelta(ownerInput, input, signal);
   }
 
   async appendAssistantAttachment(
