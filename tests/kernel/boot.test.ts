@@ -108,6 +108,31 @@ describe("ensureHome", () => {
     expect(result.skipped).toContain("system/icons/v3-launcher.svg");
   });
 
+  it("keeps a custom SVG visible when the same-stem bundled PNG is missing", () => {
+    const homePath = join(tmpDir, "home");
+    mkdirSync(join(homePath, "system", "icons"), { recursive: true });
+    writeFileSync(join(homePath, "system", "icons", "v3-profile.svg"), "owner SVG");
+
+    const result = ensureHome(homePath);
+
+    expect(existsSync(join(homePath, "system", "icons", "v3-profile.png"))).toBe(false);
+    expect(readFileSync(join(homePath, "system", "icons", "v3-profile.svg"), "utf-8"))
+      .toBe("owner SVG");
+    expect(result.skipped).toContain("system/icons/v3-profile.png");
+  });
+
+  it("adds a missing PNG when a same-stem SVG is unchanged bundled artwork", () => {
+    const homePath = join(tmpDir, "home");
+    mkdirSync(join(homePath, "system", "icons"), { recursive: true });
+    writeFileSync(join(homePath, "system", "icons", "profile.svg"),
+      readFileSync(join(process.cwd(), "home", "system", "icons", "profile.svg")));
+
+    const result = ensureHome(homePath);
+
+    expect(existsSync(join(homePath, "system", "icons", "profile.png"))).toBe(true);
+    expect(result.added).toContain("system/icons/profile.png");
+  });
+
   it("rejects a symlinked icon directory before copying bundled icons", () => {
     const homePath = join(tmpDir, "home");
     const outside = join(tmpDir, "outside-icons");
