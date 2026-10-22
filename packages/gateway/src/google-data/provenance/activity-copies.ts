@@ -9,6 +9,7 @@ import { createGoogleModelHistoryStore, type GoogleModelHistory } from '../runti
 import { boundedProvenanceTransaction } from './transaction.js';
 import { createGoogleProvenanceStore } from './store.js';
 import { GoogleProvenanceUnavailable, originKey, type GoogleCopy, type PurgeHandlers } from './contracts.js';
+import { matchingOrdinaryCopyReceipt, recordOrdinaryCopyReceipt, retireOrdinaryCopyReceipt } from './ordinary-copy-receipts.js';
 
 const activityId = z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 export const googleActivityEntityRef = (id: string) => `gae_${activityId.parse(id)}`;
@@ -55,8 +56,10 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
     const requested = z.array(activityId).max(100).parse(input.activityIds);
     if (key.owner.type !== 'personal') deny();
     let deadline: number | undefined;
+    let ordinaryProofDeadline: number | undefined;
     const capture = (value: string) => { const time = Date.parse(value); if (!Number.isFinite(time)) deny(); deadline = Math.min(deadline ?? time, time); };
-    const live = () => { check(signal); const time = now().getTime(); if (!Number.isFinite(time) || (deadline !== undefined && time >= deadline)) deny(); check(signal); };
+    const live = () => { check(signal); const time = now().getTime(); if (!Number.isFinite(time) || (deadline !== undefined && time >= deadline)
+      || (ordinaryProofDeadline !== undefined && time >= ordinaryProofDeadline)) deny(); check(signal); };
     live();
     const result = await transact(tx => boundedProvenanceTransaction<ChatDatabase, T>(tx, async current => {
       const history = createGoogleModelHistoryStore<ChatDatabase>(current, { now });
@@ -90,7 +93,13 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
       for (const row of before) {
         if (row.redacted_hash) deny();
         const copy = copies.get(row.id);
-        if (!copy) { if (context.classification === 'google') deny(); continue; }
+        if (!copy) {
+          const proof = await matchingOrdinaryCopyReceipt(current, { ownerId: key.owner.ownerId, chatId: key.chatId,
+            kind: 'derived', entityRef: googleActivityEntityRef(row.id) }, row.hash);
+          if (!proof || Date.parse(proof) <= now().getTime()) deny();
+          ordinaryProofDeadline = Math.min(ordinaryProofDeadline ?? Infinity, Date.parse(proof)); live();
+          continue;
+        }
         if (context.classification !== 'google' || copy.state !== 'active' || copy.contentHash !== row.hash
           || copy.origins.some(origin => !context.googleContext.sources.some(source => originKey(origin) === originKey({
             connectionId: source.originId, profileId: source.profileId, profileRevision: source.profileRevision, purpose: source.purposeId })))) deny();
@@ -110,6 +119,10 @@ export function createGoogleActivityCopyAdapter(db: Kysely<ChatDatabase>, option
             ...(copy ? { baseRevision: copy.revision } : {}) }); capture(saved.retentionDeadline);
         }
         await inspect();
+        await retireOrdinaryCopyReceipt(current, { ownerId: key.owner.ownerId, chatId: key.chatId, kind: 'derived', entityRef: googleActivityEntityRef(row.id) });
+      }
+      else if (fresh.classification === 'ordinary') for (const row of after) {
+        await recordOrdinaryCopyReceipt(current, { ownerId: key.owner.ownerId, chatId: key.chatId, kind: 'derived', entityRef: googleActivityEntityRef(row.id) }, row.hash);
       }
       live(); return result;
     }), () => { live(); return true; });

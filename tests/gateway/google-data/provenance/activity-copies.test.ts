@@ -68,6 +68,21 @@ const activity = (id = 'activity_one', summary = 'synthetic mail summary') => ({
 const activityCopy = (id = 'activity_one') => provenance.inspect(owner.ownerId, 'derived', googleActivityEntityRef(id));
 
 describe('registered activity copies', () => {
+  it('continues an exact verified ordinary activity after first Gmail collection', async () => {
+    const input = activity('activity_first', 'Waiting for Gmail consent');
+    await repository.appendRunActivities(owner, key.chatId, key.runId, [input]);
+    expect(await activityCopy(input.id)).toBeNull();
+    await mark();
+    await repository.appendRunActivities(owner, key.chatId, key.runId, [{ ...input, status: 'completed', summary: 'Synthetic Gmail result' }]);
+    expect((await activityCopy(input.id))?.state).toBe('active');
+  });
+  it('refuses an ordinary activity modified outside the receipt-bearing writer', async () => {
+    const input = activity(); await repository.appendRunActivities(owner, key.chatId, key.runId, [input]);
+    await sql`UPDATE chat_run_events SET event=jsonb_set(event,'{summary}','"unproven modification"') WHERE id=${input.id}`.execute(repository.kysely);
+    await mark();
+    await expect(repository.appendRunActivities(owner, key.chatId, key.runId, [{ ...input, status: 'completed' }])).rejects.toThrow();
+    expect(await activityCopy()).toBeNull();
+  });
   it('registers exact content and re-registers transitions while preserving stable row sequence', async () => {
     await mark(); const input = activity(); await repository.appendRunActivities(owner, key.chatId, key.runId, [input]);
     const before = await activityCopy(); expect(before).toMatchObject({ state: 'active', revision: 1 });

@@ -57,6 +57,84 @@ beforeEach(async () => {
 });
 
 describe('canonical assistant delta copy writer foundation', () => {
+  it('continues a verified ordinary assistant reply when the first Gmail collection marks its chat', async () => {
+    await repository.appendAssistantDelta(owner, delta('I will check your mail.'));
+    expect(await copy()).toBeNull();
+    await mark();
+    await repository.appendAssistantDelta(owner, delta(' Synthetic Gmail summary.'));
+    await repository.finishRun(owner, { chatId: key.chatId, runId: key.runId, outcome: 'completed', completedAt: new Date().toISOString() });
+    expect((await copy())?.state).toBe('active');
+    expect((await repository.kysely.selectFrom('chat_messages').select('parts').where('id', '=', key.messageId).executeTakeFirstOrThrow()).parts)
+      .toEqual([{ type: 'text', text: 'I will check your mail. Synthetic Gmail summary.' }]);
+  });
+  it.each(['modified', 'expired', 'missing', 'foreign-owner'] as const)('refuses %s ordinary proof at first Gmail collection', async mode => {
+    await repository.appendAssistantDelta(owner, delta('Ordinary before collection'));
+    if (mode === 'modified') await sql`UPDATE chat_messages SET search_text='changed' WHERE id=${key.messageId}`.execute(repository.kysely);
+    if (mode === 'expired') await sql`UPDATE google_ordinary_copy_receipts SET expires_at=clock_timestamp()-interval '1 second'`.execute(repository.kysely);
+    if (mode === 'missing') await sql`DELETE FROM google_ordinary_copy_receipts`.execute(repository.kysely);
+    if (mode === 'foreign-owner') await sql`UPDATE google_ordinary_copy_receipts SET owner_id='outsider'`.execute(repository.kysely);
+    await mark();
+    await expect(repository.appendAssistantDelta(owner, delta(' Must not append'))).rejects.toThrow();
+    expect(await copy()).toBeNull();
+  });
+  it('never certifies a preexisting ordinary copy written through an uninstalled path', async () => {
+    await new ChatRepository(repository.kysely).appendAssistantDelta(owner, delta('Unproven old content'));
+    await expect(repository.appendAssistantDelta(owner, delta(' Must not certify'))).rejects.toThrow();
+    expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([]);
+  });
+  it('rolls the ordinary proof back with its actual content transaction', async () => {
+    await expect(repository.withTransaction(async tx => {
+      await tx.appendAssistantDelta(owner, delta('Must roll back'));
+      throw new Error('synthetic rollback');
+    })).rejects.toThrow('synthetic rollback');
+    expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([]);
+    expect(await repository.kysely.selectFrom('chat_messages').select('id').where('id', '=', key.messageId).execute()).toEqual([]);
+  });
+  it('refuses a new receipt at the owner cap without evicting live proof or writing content', async () => {
+    await sql`INSERT INTO google_ordinary_copy_receipts(owner_id,chat_id,kind,entity_ref,content_hash,expires_at)
+      SELECT ${owner.ownerId},${key.chatId},'derived','synthetic_'||n,repeat('a',64),clock_timestamp()+interval '1 day'
+      FROM generate_series(1,10000) n`.execute(repository.kysely);
+    await expect(repository.appendAssistantDelta(owner, delta('Must not persist'))).rejects.toThrow();
+    expect((await sql`SELECT count(*)::int AS n FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([{ n: 10000 }]);
+    expect(await repository.kysely.selectFrom('chat_messages').select('id').where('id', '=', key.messageId).execute()).toEqual([]);
+  });
+  it('cleans at most 100 expired receipts during a trusted write', async () => {
+    await sql`INSERT INTO google_ordinary_copy_receipts(owner_id,chat_id,kind,entity_ref,content_hash,expires_at)
+      SELECT ${owner.ownerId},${key.chatId},'derived','synthetic_'||n,repeat('a',64),clock_timestamp()-interval '1 day'
+      FROM generate_series(1,150) n`.execute(repository.kysely);
+    await repository.appendAssistantDelta(owner, delta('Fresh ordinary content'));
+    expect((await sql`SELECT count(*)::int AS n FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([{ n: 51 }]);
+  });
+  it('removes receipt metadata when the actual chat birth is deleted', async () => {
+    await repository.appendAssistantDelta(owner, delta('Fresh ordinary content'));
+    await sql`DELETE FROM google_model_history_births WHERE chat_id=${key.chatId}`.execute(repository.kysely);
+    expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([]);
+    await expect(repository.appendAssistantDelta(owner, delta(' Must not revive'))).rejects.toThrow();
+  });
+  it('withholds acknowledgement when ordinary proof expires during actual COMMIT return', async () => {
+    await repository.appendAssistantDelta(owner, delta('Ordinary before collection'));
+    await sql`UPDATE google_ordinary_copy_receipts SET expires_at=clock_timestamp()+interval '60 seconds'`.execute(repository.kysely);
+    await mark();
+    let clock = new Date();
+    const repo = new ChatRepository(repository.kysely, false, undefined, { ...options,
+      assistantDeltaWrites: createGoogleCanonicalMessageWriteHook({ now: () => clock }) });
+    const delivered = vi.fn(); repo.registerOutboxSink(delivered);
+    const committed = deferred(); const release = deferred();
+    const transaction = repo.kysely.transaction.bind(repo.kysely);
+    const spy = vi.spyOn(repo.kysely, 'transaction').mockImplementation(() => {
+      const builder = transaction(); const execute = builder.execute.bind(builder);
+      vi.spyOn(builder, 'execute').mockImplementation(async work => {
+        const result = await execute(work); committed.resolve(); await release.promise; return result;
+      }); return builder;
+    });
+    const result = repo.appendAssistantDelta(owner, delta(' Synthetic Gmail content')).then(value => ({ value }), error => ({ error }));
+    try { await committed.promise; clock = new Date(clock.getTime()+120_000); }
+    finally { release.resolve(); spy.mockRestore(); }
+    expect(await result).toEqual({ error: expect.any(Error) });
+    expect(delivered).not.toHaveBeenCalled();
+    expect(await copy()).not.toBeNull();
+    expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([]);
+  });
   it('records payload and exact origin atomically without registering owner messages', async () => {
     const context = await mark();
     const message = await repository.appendAssistantDelta(owner, delta());
