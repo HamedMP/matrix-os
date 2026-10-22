@@ -1,6 +1,6 @@
 import { z } from 'zod/v4';
-import { MANAGED_WORKERS_AI_MODEL_IDS } from './funded-workers-models.js';
-import { ManagedGoogleRouteDescriptorSchema } from './managed-google-route.js';
+import { MANAGED_WORKERS_AI_MODEL_IDS } from '#funded-workers-models';
+import { ManagedGoogleRouteDescriptorSchema } from '#managed-google-route';
 
 export const MANAGED_GOOGLE_ROUTE_CONTROL_PATH = '/internal/google-managed-route/resolve';
 /** Private platform-to-proxy control only. A request cannot supply route, owner or approval facts. */
