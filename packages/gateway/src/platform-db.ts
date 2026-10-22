@@ -1,3 +1,4 @@
+import { revokeGoogleConnectedAccount } from './google-data/revoke-connected-account.js';
 import { createPipedreamAttemptStore, type PipedreamAttemptStore } from "./integrations/pipedream-attempts/store.js";
 import { createGooglePlatformServices, type GooglePlatformServices } from "./google-data/platform-services.js";
 import { createNativeGmailStore } from "./integrations/native-gmail/store.js";
@@ -605,19 +606,17 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
     },
 
     async disconnectService(id: string): Promise<void> {
-      await kysely
-        .updateTable("connected_services")
-        .set({ status: "revoked" })
-        .where("id", "=", id)
-        .execute();
+      await kysely.transaction().execute(async tx=>{
+        await revokeGoogleConnectedAccount(tx,id);
+        await tx.updateTable('connected_services').set({status:'revoked'}).where('id','=',id).execute();
+      });
     },
 
     async updateServiceStatus(id: string, status: ServiceStatus): Promise<void> {
-      await kysely
-        .updateTable("connected_services")
-        .set({ status })
-        .where("id", "=", id)
-        .execute();
+      await kysely.transaction().execute(async tx=>{
+        if(status!=='active')await revokeGoogleConnectedAccount(tx,id);
+        await tx.updateTable('connected_services').set({status}).where('id','=',id).execute();
+      });
     },
 
     async updateAccountEmail(id: string, email: string): Promise<void> {
