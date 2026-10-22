@@ -15,10 +15,10 @@ export function createQualifiedFundedPlatformClient(options: Pick<FundedRelayCon
     const stopped = new Promise<never>((_resolve, reject) => { abort = () => reject(new FundedControlPlaneError(503)); signal.addEventListener('abort', abort, { once: true }); if (signal.aborted) abort(); });
     try {
       signal.throwIfAborted();
-      const pending = options.fetch(`${origin}/internal/ai/funded/qualified/${action}`, { method: 'POST',
+      const pending = options.fetch(`${origin}/internal/ai/funded/qualified/${action}`, { method: 'POST', signal: signal,
         headers: { authorization: `Bearer ${options.relayControlToken}`, 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(encoded)) },
-        body: encoded, redirect: 'error', signal }).then(async response => {
-          if (signal.aborted) { await response.body?.cancel().catch(cleanup => console.warn('[qualified-relay] Late body cleanup:', cleanup instanceof Error ? cleanup.name : 'UnknownError')); throw new FundedControlPlaneError(503); }
+        body: encoded, redirect: 'error' }).then(async response => {
+          if (signal.aborted) { await response.body?.cancel().catch(cleanup => console.warn('[qualified-relay] Late body cleanup:', cleanup instanceof Error ? 'operation_failed' : 'untyped_failure')); throw new FundedControlPlaneError(503); }
           return response;
         });
       const response = await Promise.race([pending, stopped]);
@@ -30,7 +30,7 @@ export function createQualifiedFundedPlatformClient(options: Pick<FundedRelayCon
       signal.throwIfAborted(); if (!response.ok) throw new FundedControlPlaneError(response.status === 401 ? 401 : 503);
       return schema.parse(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size))));
     } catch (error) {
-      controller.abort(); if (reader) await reader.cancel().catch(cleanup => console.warn('[qualified-relay] Body cleanup:', cleanup instanceof Error ? cleanup.name : 'UnknownError'));
+      controller.abort(); if (reader) await reader.cancel().catch(cleanup => console.warn('[qualified-relay] Body cleanup:', cleanup instanceof Error ? 'operation_failed' : 'untyped_failure'));
       if (error instanceof FundedControlPlaneError) throw error; throw new FundedControlPlaneError(503);
     } finally { clearTimeout(timer); signal.removeEventListener('abort', abort); reader?.releaseLock(); }
   }
