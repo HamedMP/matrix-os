@@ -36,6 +36,8 @@ import { FUNDED_PROBE_MODELS, type FundedModelProbeService } from "./ai-funded-m
 import { observeFundedModelRoutes } from "./ai-funded-route-observations.js";
 
 import { fundedReadinessPhase } from "./ai-funded-readiness-phase.js";
+import { createQualifiedFundedRuntimeRoutes, createQualifiedFundedRelayRoutes } from './ai-funded-qualified-routes.js';
+import type { QualifiedFundedService } from './ai-funded-qualified-service.js';
 
 const RUNTIME_BODY_LIMIT = 1024;
 const RELAY_BODY_LIMIT = 4 * 1024;
@@ -217,6 +219,7 @@ export function createAiFundedRuntimeRoutes(options: {
   promotionalGrant?: AiFundedPromotionalGrantConfig;
   routeProbes?: FundedModelProbeService;
   isolatedChat?: IsolatedChatEnvelope;
+  qualified?: QualifiedFundedService;
   now?: () => Date;
 }) {
   if (!options.repository || !options.db) throw new Error("Funded AI runtime dependencies are missing");
@@ -224,6 +227,7 @@ export function createAiFundedRuntimeRoutes(options: {
   const now = options.now ?? (() => new Date());
   const isolatedChat = options.isolatedChat ? IsolatedChatEnvelopeSchema.parse(options.isolatedChat) : undefined;
   const app = new Hono();
+  if (options.qualified) app.route('/qualified', createQualifiedFundedRuntimeRoutes({ service: options.qualified }));
   app.use("*", async (c, next) => {
     noStore(c);
     const parsedHandle = HandleSchema.safeParse(c.req.param("handle"));
@@ -577,10 +581,12 @@ export function createAiFundedOperatorRoutes(options: {
 export function createAiFundedRelayRoutes(options: {
   relayControlToken: string;
   repository: AiFundedPolicyRepository;
+  qualified?: QualifiedFundedService;
 }) {
   if (!options.repository) throw new Error("Funded AI relay dependencies are missing");
   if (options.relayControlToken.length < 32) throw new Error("Funded AI relay authentication is misconfigured");
   const app = new Hono();
+  if (options.qualified) app.route('/qualified', createQualifiedFundedRelayRoutes({ service: options.qualified, controlToken: options.relayControlToken }));
   app.use("*", async (c, next) => {
     noStore(c);
     const authorization = c.req.header("authorization");
