@@ -102,6 +102,15 @@ describe("get started personality", () => {
     expect(ensureMatrixBot).not.toHaveBeenCalled();
   });
 
+  it("never reads or writes a profile through a symlink", async () => {
+    const outside = join(homePath, "outside-identity.md");
+    await writeFile(outside, IDENTITY);
+    await rm(join(homePath, "system", "identity.md"));
+    await symlink(outside, join(homePath, "system", "identity.md"));
+    expect((await complete()).status).toBe(200);
+    expect(await readFile(outside, "utf-8")).toBe(IDENTITY);
+  });
+
   it("refuses a symlinked SOUL with a retryable generic error", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const outside = join(homePath, "outside.md");

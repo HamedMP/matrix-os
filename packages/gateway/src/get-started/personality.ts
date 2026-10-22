@@ -1,4 +1,5 @@
-import { lstat, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open } from "node:fs/promises";
 import { join } from "node:path";
 import {
   GET_STARTED_PERSONALITIES,
@@ -27,19 +28,37 @@ export function setProfileFields(text: string, fields: Record<string, string>): 
   }).join("\n");
 }
 
+/** Missing, or a link the owner placed: either way the profile is left alone. */
+function isSkippable(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ELOOP");
+}
+
+/** Like the owner SOUL reader: refuses a symlinked system directory or file, and never reads through a link. */
 async function updateProfile(homePath: string, file: string, fields: Record<string, string>): Promise<void> {
-  const path = join(homePath, "system", file);
-  let stats;
-  try { stats = await lstat(path); }
+  const system = join(homePath, "system");
+  const parent = await lstat(system);
+  if (!parent.isDirectory() || parent.isSymbolicLink()) throw new Error("UnsafeProfileDirectory");
+  const path = join(system, file);
+  let handle;
+  try { handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
   catch (error: unknown) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+    if (isSkippable(error)) return;
     throw error;
   }
-  // Owner profile files are regular files; anything else is left alone.
-  if (!stats.isFile() || stats.size > MAX_PROFILE_BYTES) return;
-  const before = await readFile(path, "utf-8");
+  let before: string;
+  let mode: number;
+  try {
+    const stats = await handle.stat();
+    // Owner profile files are regular files of modest size; anything else is left alone.
+    if (!stats.isFile() || stats.size > MAX_PROFILE_BYTES) return;
+    mode = stats.mode & 0o777;
+    before = await handle.readFile("utf-8");
+  } finally {
+    await handle.close();
+  }
   const after = setProfileFields(before, fields);
-  if (after !== before) await writeUtf8FileAtomic(path, after, stats.mode & 0o777);
+  // The atomic rename replaces the path itself; it never writes through a link.
+  if (after !== before) await writeUtf8FileAtomic(path, after, mode);
 }
 
 export async function applyGetStartedPersonality(homePath: string, answers: GetStartedAnswers & { bot: GetStartedBot }): Promise<void> {

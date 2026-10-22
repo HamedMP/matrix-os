@@ -49,7 +49,7 @@ export const GET_STARTED_BOT_LANGUAGES = [
 type Ids<T extends readonly { id: string }[]> = T[number]["id"];
 const ids = <T extends readonly { id: string }[]>(list: T) => list.map((item) => item.id) as [Ids<T>, ...Ids<T>[]];
 
-/** No controls and no HTML comment markers, so free text can never break out of the managed section. */
+/** No controls and no HTML comment markers, so free text can never break out of the managed section (the owner's name is held to the same rule in `#get-started`). */
 const SafeText = (max: number) => z.string().trim().min(1).max(max)
   .regex(/^[^\p{Cc}]*$/u)
   .refine((value) => !value.includes("<!--") && !value.includes("-->"));

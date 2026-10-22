@@ -188,7 +188,9 @@ A dedicated endpoint instead of generic file writes: answers are validated again
 Neither path is on the public, webhook, collaboration, route-scoped bearer or WebSocket query-token allowlists, so scoped run tokens, collaborators and app iframes cannot reach it.
 
 - **Auth:** routes sit under `/api/settings`, behind the gateway's existing owner auth (request principal). No new public paths, no query-token WS.
-- **Input validation:** `bodyLimit` 8 KiB on PUT; strict Zod discriminated union; enums for goals, tools and app ideas; name ≤ 40 characters with control characters rejected; arrays capped; serialized draft ≤ 4 KiB.
+- **Input validation:** `bodyLimit` 8 KiB on PUT; strict Zod discriminated union; enums for goals, tools and app ideas; owner name ≤ 40 and bot name ≤ 24 characters, rules ≤ 500, all free text rejecting control characters and SOUL comment markers (`<!--`, `-->`); arrays capped; the largest valid draft stays ≤ 4 KiB (tested).
+- **Who can write:** only the owner. The route sits behind the gateway's global auth; scoped run tokens, Hermes capability tokens, collaborators and app iframes cannot reach it. Only the owner's own text reaches their SOUL.
+- **Profile files:** `identity.md` / `user.md` are read with `O_NOFOLLOW` under a non-symlinked `system/`; a linked profile is left untouched.
 - **Paths:** fixed `system/get-started.json` and `system/onboarding-complete.json` under the home; never derived from input.
 - **Writes:** temp file + `rename` for updates; `{ flag: "wx" }` for `onboarding-complete.json`; all mutations serialised per home with `withOwnerFileMutation`; no sync I/O.
 - **Errors:** clients get generic messages ("Unable to save your setup"); real errors are logged server-side without answer contents. A corrupt or unreadable state file is a 500 with a generic message, not `not_eligible` (misconfiguration is not not-found), and the shell fails closed to today's desktop.
@@ -256,7 +258,7 @@ Each section is one layer, under the 3000-line limit, tests first.
 - Existing users never see the wizard: eligibility needs the first-boot marker, and the flag is off by default.
 - Nothing changes without answers: Getting started, the widget and SOUL behave as today when `get-started.json` is missing.
 - Additive files only: new `system/get-started.json`; `onboarding-complete.json` written with `wx`; `soul.md` changed only inside its marked section (P2).
-- Kill switch: flag off hides the wizard immediately.
+- Kill switch: flag off hides the wizard immediately and the gate reports nothing eligible, so saved answers stop personalising Getting started and the widget too. Anything already written to SOUL stays, as the owner's own text.
 - Rollout: preview VPS (`preview-vps` label) → disposable test VM → flag on for new sign-ups.
 
 ## Acceptance checks

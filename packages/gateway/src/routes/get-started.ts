@@ -152,6 +152,7 @@ export function createGetStartedRoutes(opts: GetStartedRoutesOptions) {
       // Outside the file lock: bot creation touches the database and has its own idempotency.
       const bot = result.state.status === "completed" ? result.state.answers.bot : undefined;
       const ownerId = bot && opts.ensureMatrixBot ? opts.getOwnerId?.(c) ?? null : null;
+      if (bot && opts.ensureMatrixBot && !ownerId) console.warn("[get-started] Matrix Bot skipped: no request principal");
       if (bot && ownerId && opts.ensureMatrixBot) {
         try { await opts.ensureMatrixBot(ownerId, bot.name); }
         catch (botError: unknown) { console.warn("[get-started] Matrix Bot unavailable:", errorName(botError)); }

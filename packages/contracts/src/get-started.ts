@@ -137,12 +137,14 @@ function uniqueList<T extends string>(item: z.ZodType<T>, max: number) {
   return z.array(item).max(max).default([]).transform((values) => [...new Set(values)]);
 }
 
+/** The owner's name is rendered into SOUL, so it may not carry controls or HTML comment markers. */
 const NameSchema = z
   .string()
   .trim()
   .min(1)
   .max(GET_STARTED_NAME_MAX_CHARS)
-  .regex(/^[^\p{Cc}]*$/u);
+  .regex(/^[^\p{Cc}]*$/u)
+  .refine((value) => !value.includes("<!--") && !value.includes("-->"));
 
 const answerShape = {
   name: NameSchema.optional(),

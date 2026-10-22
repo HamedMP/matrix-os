@@ -41,6 +41,10 @@ describe("get started wizard", () => {
     expect(getStartedAnswersFromWizard(run(initialGetStartedWizard(), { type: "name", value: "  Sam  " })).name).toBe("Sam");
   });
 
+  it("strips SOUL markers from the name before it reaches the server", () => {
+    expect(getStartedAnswersFromWizard(run(initialGetStartedWizard(), { type: "name", value: "Sam<!-- -->" })).name).toBe("Sam");
+  });
+
   it("drops a blank name and strips control characters from the answers", () => {
     expect(getStartedAnswersFromWizard(run(initialGetStartedWizard(), { type: "name", value: "   " })).name).toBeUndefined();
     expect(getStartedAnswersFromWizard(run(initialGetStartedWizard(), { type: "name", value: "Sa\u0007m" })).name).toBe("Sam");

@@ -105,7 +105,7 @@ export function reduceGetStartedWizard(state: GetStartedWizardState, event: GetS
 export function getStartedAnswersFromWizard(state: GetStartedWizardState): GetStartedAnswers {
   const groups = getStartedToolGroupsForGoals(state.goals);
   const visibleTools = new Set(groups.flatMap((group) => (group.kind === "tools" ? group.tools.map((tool) => tool.id) : [])));
-  const name = state.name.replace(/\p{Cc}/gu, "").trim();
+  const name = state.name.replace(/\p{Cc}/gu, "").replaceAll("<!--", "").replaceAll("-->", "").trim();
   const answers: GetStartedAnswers = {
     goals: [...state.goals],
     tools: state.tools.filter((tool) => visibleTools.has(tool)),
