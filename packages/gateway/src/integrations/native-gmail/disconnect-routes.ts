@@ -5,6 +5,7 @@ import type { PlatformDb } from '../../platform-db.js';
 import type { IntegrationBroadcast } from '../routes.js';
 import type { NativeGmailLifecycle } from './routes.js';
 import { isNativeGmailAccount } from './request.js';
+import { logNativeGmailFailure } from './failure-log.js';
 
 /** Revocation stays available independently of consent and mailbox execution. */
 export function createNativeGmailDisconnectRoutes(options: {
@@ -26,12 +27,12 @@ export function createNativeGmailDisconnectRoutes(options: {
       if (row.service !== 'gmail' || !await options.cleanup.revoke({ userId, connectionId: id.data }))
         return c.json({ error: 'Connection unavailable' }, 502);
     } catch (error) {
-      console.warn('[native-gmail] Disconnect failed:', error);
+      logNativeGmailFailure('disconnect', error);
       return c.json({ error: 'Connection unavailable' }, 502);
     }
     // Revocation owns the durable deletion; there is no second local mutation or optimistic success.
     try { options.broadcast?.({ type: 'integration:disconnected', service: 'gmail', id: id.data }); }
-    catch (error) { console.warn('[native-gmail] Disconnect notification failed:', error); }
+    catch (error) { logNativeGmailFailure('disconnect_notification', error); }
     return c.json({ ok: true });
   });
   return app;
