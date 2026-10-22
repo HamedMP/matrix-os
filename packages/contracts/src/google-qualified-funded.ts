@@ -1,8 +1,8 @@
 import { z } from 'zod/v4';
 import { FundedAiPolicyCheckResponseSchema, FundedAiRequestClassSchema,
-  FundedAiRuntimeCredentialIssueResponseSchema } from './funded-ai.js';
-import { ManagedGoogleRouteDescriptorSchema } from './managed-google-route.js';
-import { ManagedGoogleRouteResolveRequestSchema } from './managed-google-route-control.js';
+  FundedAiRuntimeCredentialIssueResponseSchema } from '#funded-ai';
+import { ManagedGoogleRouteDescriptorSchema } from '#managed-google-route';
+import { ManagedGoogleRouteResolveRequestSchema } from '#managed-google-route-control';
 
 /** Separate protocol; existing strict funded v1 payloads remain unchanged. No approval is implied. */
 export const GOOGLE_QUALIFIED_FUNDED_PROTOCOL = 'matrix-google-qualified-funded-v1' as const;

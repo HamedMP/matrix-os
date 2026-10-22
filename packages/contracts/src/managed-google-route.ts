@@ -1,5 +1,5 @@
 import { z } from 'zod/v4';
-import { MANAGED_WORKERS_AI_MODEL_IDS } from './funded-workers-models.js';
+import { MANAGED_WORKERS_AI_MODEL_IDS } from '#funded-workers-models';
 
 /** Request-local cache/payload controls only; not provider/account retention or ZDR attestation. */
 export const MANAGED_GOOGLE_CONTROL_POLICY_VERSION = 'matrix-cf-workers-request-controls-v1' as const;

@@ -1,5 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react-native";
-import { Image } from "expo-image";
+import { Image, type ImageProps, type ImageStyle } from "expo-image";
 import { StyleSheet as NativeStyleSheet } from "react-native";
 
 import { ProviderLogo, type Provider } from "../components/ui/ProviderLogo";
@@ -14,9 +14,9 @@ const LOGOS: Record<Exclude<Provider, "matrix">, unknown> = {
   pi: require("../../../shell/public/agent-logos/pi-coding-agent.png"),
 };
 
-function imageProps() {
-  const { style, ...props } = screen.UNSAFE_getByType(Image).props;
-  return { ...props, style: NativeStyleSheet.flatten(style) as Record<string, number> };
+function imageProps(): Omit<ImageProps, "style"> & { style: ImageStyle } {
+  const { style, ...props }: ImageProps = screen.UNSAFE_getByType(Image).props;
+  return { ...props, style: NativeStyleSheet.flatten(style) ?? {} };
 }
 
 describe("ProviderLogo", () => {
