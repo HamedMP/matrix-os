@@ -106,10 +106,18 @@ slots_active() {
   docker info >/dev/null 2>&1 && systemctl list-units 'matrix-ci-pool-slot@*' --state=active --no-legend | grep -q .
 }
 
+idle_slots() {
+  gh_api GET "/repos/$REPOSITORY/actions/runners?per_page=100" \
+    | jq -r --arg prefix "matrix-ci-$(hostname -s)-" \
+      '[.runners[] | select((.name | startswith($prefix)) and .status == "online" and (.busy | not))] | length'
+}
+
+# The value is "<unix seconds> <idle slots>"; CI routes only when it is fresh and enough slots are idle.
 publish_heartbeat() {
-  local body
-  body=$(jq -nc --arg name "$HEARTBEAT_VARIABLE" --arg value "$(date +%s)" '{name: $name, value: $value}')
+  local body idle
   refresh_token || return 1
+  idle=$(idle_slots) || return 1
+  body=$(jq -nc --arg name "$HEARTBEAT_VARIABLE" --arg value "$(date +%s) $idle" '{name: $name, value: $value}')
   gh_api PATCH "/repos/$REPOSITORY/actions/variables/$HEARTBEAT_VARIABLE" --data "$body" >/dev/null \
     || gh_api POST "/repos/$REPOSITORY/actions/variables" --data "$body" >/dev/null
 }

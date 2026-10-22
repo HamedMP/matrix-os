@@ -38,6 +38,7 @@ jobs:
       # Ordinary PRs run only affected unit tests and skip unrelated E2E; main, manual and merge-queue runs stay full.
       unit_scope: ${{ steps.changed.outputs.unit_scope || 'full' }}
       e2e_tests: ${{ steps.changed.outputs.e2e_tests || 'true' }}
+      unit_runner: ${{ steps.runner.outputs.unit_runner || 'ubuntu-latest' }}
     steps:
       - name: Checkout with bounded retry
         env:
@@ -101,6 +102,14 @@ jobs:
           PR_ACTION: ${{ github.event.action || '' }}
           PR_DRAFT: ${{ github.event.pull_request.draft == true }}
         run: node scripts/ci/changes.mjs
+      - name: Select unit test runners
+        id: runner
+        env:
+          POOL_HEARTBEAT: ${{ vars.MATRIX_CI_POOL_HEARTBEAT }}
+          # Fork PR code never reaches the self-hosted pool.
+          SAME_REPOSITORY: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          UNIT_SCOPE: ${{ steps.changed.outputs.unit_scope || 'full' }}
+        run: node scripts/ci/select-runner.mjs
 
   typecheck:
     name: Type Check
@@ -410,7 +419,8 @@ jobs:
     name: Unit Tests (${{ matrix.shard }}/4)
     needs: changes
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
+    # The dedicated host's runner pool (specs/633-ci-runner-pool) or ubuntu-latest.
+    runs-on: ${{ needs.changes.outputs.unit_runner }}
     # Shard 4 has outgrown the previous ceilings: run 35911423904 hit 20 minutes,
     # and main run 37587908679 hit 30 minutes without a failing assertion. Keep a
     # bounded 40-minute window for runner variance and cleanup; split the shards if
@@ -471,8 +481,9 @@ jobs:
       - run: GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile.json=output/ci/unit-${{ matrix.shard }}.json ${UNIT_SELECTION:+--passWithNoTests $(cat "$UNIT_SELECTION")}
         env:
           UNIT_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
-          # Keep Vitest's default of 2 workers: 4 measured no faster on 4-vCPU runners (#2843) and
-          # starved the CPU-heavy gateway build in customer-vps-runtime-loader past its timeout.
+          # 2 workers on 4-vCPU hosted runners: 4 measured no faster (#2843) and starved the CPU-heavy
+          # gateway build in customer-vps-runtime-loader. Pool slots have 8 dedicated CPUs.
+          MATRIX_TEST_WORKERS: ${{ runner.environment == 'self-hosted' && '6' || '2' }}
           # Set only after a successful affected-test selection; empty runs the full suite.
           UNIT_SELECTION: ${{ steps.select.outputs.list }}
         if: needs.changes.outputs.should_run == 'true'

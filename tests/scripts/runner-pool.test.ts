@@ -103,7 +103,10 @@ describe("runner pool", () => {
   it("publishes the heartbeat variable CI routes on", () => {
     const { run, calls } = sandbox();
     expect(run("publish_heartbeat").status).toBe(0);
-    expect(calls()).toMatch(/PATCH .*\/actions\/variables\/MATRIX_CI_POOL_HEARTBEAT/);
+    // Only this host's online, idle runners count; the fixture has one online runner and no busy flag.
+    const patch = calls().split("\n").find((line) => line.includes("PATCH"));
+    expect(patch).toContain("/actions/variables/MATRIX_CI_POOL_HEARTBEAT");
+    expect(patch).toMatch(/"value":"[0-9]+ 1"/);
   });
 
   it("keeps job containers behind the egress firewall", () => {
