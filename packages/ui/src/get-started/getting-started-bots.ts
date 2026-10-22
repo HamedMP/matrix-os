@@ -26,7 +26,7 @@ const BotListSchema = z.looseObject({
     recipeRef: z.looseObject({ recipeId: z.string().max(128) }).optional(),
   })).max(100),
 });
-const ChatActivitySchema = z.looseObject({ record: z.looseObject({ messageCount: z.number().int().min(0) }) });
+const ChatActivitySchema = z.looseObject({ record: z.looseObject({ chat: z.looseObject({ messageCount: z.number().int().min(0) }) }) });
 
 const EMPTY: GettingStartedBots = { statuses: {}, agentIds: {} };
 
@@ -68,7 +68,7 @@ export async function loadGettingStartedBots(request: GettingStartedRequest, rec
         return;
       }
       const chat = ChatActivitySchema.parse(await request(`/api/chats/${encodeURIComponent(CanonicalChatIdSchema.parse(chatId))}?limit=1`, "GET"));
-      result.statuses[recipeId] = chat.record.messageCount > 0 ? "complete" : "incomplete";
+      result.statuses[recipeId] = chat.record.chat.messageCount > 0 ? "complete" : "incomplete";
     } catch (error: unknown) {
       console.warn("[getting-started] bot chat status unavailable:", errorName(error));
       result.statuses[recipeId] = "unavailable";

@@ -25,7 +25,7 @@ describe("Getting started bots", () => {
     const request = gateway({
       "/api/chat-agents": { enabled: true, agents: [agent("bot_brief001", "personal-daily-brief"), agent("bot_write001", "writing-bot")] },
       "/api/chat-agents/bot_brief001/direct-chat": { chatId: CHAT_ID },
-      [`/api/chats/${CHAT_ID}?limit=1`]: { record: { messageCount: 2 } },
+      [`/api/chats/${CHAT_ID}?limit=1`]: { record: { chat: { id: CHAT_ID, messageCount: 2 } }, messages: [] },
       "/api/chat-agents/bot_write001/direct-chat": { chatId: null },
     });
     const result = await loadGettingStartedBots(request, ["personal-daily-brief", "writing-bot"]);
