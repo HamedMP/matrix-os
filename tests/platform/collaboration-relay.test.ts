@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { CollaborationRelay, parseRelayRoute, parseRelaySocketPath, RELAY_RUNTIME_HEADER, type RelayMetadata } from "../../packages/platform/src/collaboration/relay.js";
 import { createPlatformCollaborationRoutes } from "../../packages/platform/src/collaboration/routes.js";
-import { COLLABORATION_CLIENT_REQUEST_ID_HEADER, COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER, COLLABORATION_EXPECTED_REVISION_HEADER } from "@matrix-os/contracts";
+import { COLLABORATION_CLIENT_REQUEST_ID_HEADER, COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER, COLLABORATION_EXPECTED_REVISION_HEADER, COLLABORATION_HTTP_BODY_LIMIT } from "@matrix-os/contracts";
 
 const scopeId = "10000000-0000-4000-8000-000000000001";
 const home = { runtimeId: "vps-11111111-1111-4111-8111-111111111111", origin: "https://203.0.113.10:443" };
@@ -28,13 +28,14 @@ function relay(overrides: Partial<ConstructorParameters<typeof CollaborationRela
 }
 
 /** A request body delivered in chunks with no declared length, as a chunked upload arrives. */
-function chunkedBody(totalBytes: number): ReadableStream<Uint8Array> {
+function chunkedBody(totalBytes: number, onChunk?: (bytes: number) => void): ReadableStream<Uint8Array> {
   let sent = 0;
   return new ReadableStream<Uint8Array>({
     pull(controller) {
       if (sent >= totalBytes) { controller.close(); return; }
       const chunk = new Uint8Array(Math.min(16 * 1024, totalBytes - sent)).fill(120);
       sent += chunk.byteLength;
+      onChunk?.(chunk.byteLength);
       controller.enqueue(chunk);
     },
   });
@@ -289,9 +290,10 @@ describe("CollaborationRelay", () => {
   });
 
   it("refuses a chunked over-limit upload through the mutating relay route before the home can read it all", async () => {
-    // End to end through the route that omits Content-Length: the branch must not hand the
-    // home an unbounded stream.
+    // Hono checks a chunked body before dispatching to the relay. Assert the
+    // public limit and bounded source reads, rather than requiring a home call.
     const { state, fetchImpl } = countingHome();
+    let sourceBytes = 0;
     const { instance } = relay({}, fetchImpl as never);
     const app = new Hono();
     app.route("/", createPlatformCollaborationRoutes({
@@ -308,14 +310,18 @@ describe("CollaborationRelay", () => {
       headers: {
         "x-test-actor": "user_member", origin: "https://app.matrix-os.com", "content-type": "application/json", [RELAY_RUNTIME_HEADER]: home.runtimeId,
       },
-      body: chunkedBody(4 * 1024 * 1024),
+      body: chunkedBody(4 * 1024 * 1024, (bytes) => { sourceBytes += bytes; }),
       duplex: "half",
     } as RequestInit & { duplex: "half" });
     const response = await app.request(request);
-    expect(response.ok).toBe(false);
-    expect(state.calls).toBe(1);
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: "Request too large" });
+    expect(state.calls).toBe(0);
     expect(state.completed).toBe(false);
-    expect(state.received).toBeLessThanOrEqual(96 * 1024);
+    expect(state.received).toBe(0);
+    expect(sourceBytes).toBeGreaterThan(COLLABORATION_HTTP_BODY_LIMIT);
+    // The rejecting chunk and one ReadableStream prefetch are each16KiB.
+    expect(sourceBytes).toBeLessThanOrEqual(COLLABORATION_HTTP_BODY_LIMIT + 32 * 1024);
   });
 
   it("answers an unauthenticated relay request with its own sign-in challenge and never contacts a home", async () => {
