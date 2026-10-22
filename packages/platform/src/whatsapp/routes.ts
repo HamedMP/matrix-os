@@ -22,7 +22,7 @@ export function createWhatsAppRoutes(deps: {
   const app = new Hono<{ Variables: { whatsappOwner: string } }>();
   const log = deps.logError ?? ((error) => console.error('[whatsapp] Request failed', error));
   app.use('/whatsapp/*', async (c, next) => { c.header('Cache-Control', 'no-store'); c.header('Referrer-Policy', 'no-referrer'); await next(); });
-  app.use('/api/whatsapp/*', bodyLimit({ maxSize: 4096 }));
+  app.use('/api/whatsapp/*', bodyLimit({ maxSize: 4096, onError: (c) => c.json({ error: 'Request too large' }, 413) }));
   app.use('/api/whatsapp/*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
     if (c.req.method !== 'GET' && c.req.header('Origin') !== deps.config.publicUrl) return c.json({ error: 'Request denied' }, 403);
@@ -43,7 +43,7 @@ export function createWhatsAppRoutes(deps: {
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return c.text('Request denied', 403);
     return c.text(parsed.data.challenge);
   });
-  app.post('/whatsapp/webhook', bodyLimit({ maxSize: 262144 }), async (c) => {
+  app.post('/whatsapp/webhook', bodyLimit({ maxSize: 262144, onError: (c) => c.json({ error: 'Request too large' }, 413) }), async (c) => {
     let messages;
     try {
       const raw = await c.req.text();

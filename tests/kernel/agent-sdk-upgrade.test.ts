@@ -38,7 +38,7 @@ describe("production Agent SDK upgrade", () => {
 
     expect(kernelPackage.dependencies["@anthropic-ai/claude-agent-sdk"]).toBe("0.3.240");
     expect(browserPackage.dependencies["@anthropic-ai/claude-agent-sdk"]).toBe("0.3.240");
-    expect(integrationsPackage.dependencies["@modelcontextprotocol/sdk"]).toBe("^1.29.0");
+    expect(integrationsPackage.dependencies["@modelcontextprotocol/sdk"]).toBe("^1.32.0");
   });
 
   it("uses the current first-party Claude catalog without rewriting legacy IDs", () => {
