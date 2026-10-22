@@ -83,6 +83,24 @@ async function admitContext() {
 const inspectRun = (id: string) => provenance.inspect(owner.ownerId, 'derived', runContextEntityRef(id));
 const inspectQueue = (id = 'qturn_one') => provenance.inspect(owner.ownerId, 'derived', queueContextEntityRef(id));
 describe('durable run and queue context snapshot copies', () => {
+  it('adopts a queue snapshot proven ordinary before first Gmail collection', async () => {
+    await enqueue(); expect(await inspectQueue()).toBeNull();
+    await mark(); await enqueue();
+    expect(await inspectQueue()).toMatchObject({ state:'active',revision:1 });
+    expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts WHERE entity_ref=${queueContextEntityRef('qturn_one')}`.execute(repository.kysely)).rows).toEqual([]);
+  });
+  it.each(['missing','modified','expired'] as const)('refuses %s ordinary queue proof before first Gmail collection', async mode => {
+    await enqueue();
+    if (mode==='missing') await sql`DELETE FROM google_ordinary_copy_receipts`.execute(repository.kysely);
+    if (mode==='expired') await sql`UPDATE google_ordinary_copy_receipts SET expires_at=clock_timestamp()-interval '1 second'`.execute(repository.kysely);
+    if (mode==='modified') await sql`UPDATE chat_queued_turns SET context_snapshot=jsonb_set(context_snapshot,'{chats,0,text}','"unproven"')`.execute(repository.kysely);
+    await mark(); await expect(enqueue()).rejects.toThrow(); expect(await inspectQueue()).toBeNull();
+  });
+  it('never certifies an ordinary snapshot persisted through an uninstalled writer', async () => {
+    await enqueue(new ChatRepository(repository.kysely));
+    await expect(enqueue()).rejects.toThrow();
+    expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(repository.kysely)).rows).toEqual([]);
+  });
   it('registers fresh admission and retry contexts with original source retention', async () => {
     const admitted = await admitContext(); expect(await inspectRun('run_two')).toMatchObject({ revision: 1, state: 'active' });
     await repository.kysely.updateTable('chat_runs').set({ status: 'failed' }).where('id', '=', 'run_two').execute();

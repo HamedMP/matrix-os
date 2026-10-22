@@ -11,6 +11,7 @@ import { createGoogleProvenanceStore } from './store.js';
 import { boundedProvenanceTransaction } from './transaction.js';
 import { GoogleProvenanceUnavailable, originKey, type GoogleCopy, type PurgeHandlers } from './contracts.js';
 import type { GoogleActivityQuiescenceAuthority } from './activity-copies.js';
+import { matchingOrdinaryCopyReceipt, recordOrdinaryCopyReceipts, retireOrdinaryCopyReceipt } from './ordinary-copy-receipts.js';
 
 export const runContextEntityRef = (id: string) => `grc_${CanonicalChatRunIdSchema.parse(id)}`;
 export const queueContextEntityRef = (id: string) => `gqc_${CanonicalChatQueuedTurnIdSchema.parse(id)}`;
@@ -72,9 +73,10 @@ export function createGoogleContextSnapshotAdapter(db: Kysely<ChatDatabase>, opt
     const owner = Object.freeze(CanonicalOwnerScopeSchema.parse(input.owner)); const chatId = CanonicalChatIdSchema.parse(input.chatId);
     const runIds = z.array(CanonicalChatRunIdSchema).max(2).parse(input.runIds ?? []); const queueIds = z.array(CanonicalChatQueuedTurnIdSchema).max(20).parse(input.queueIds ?? []);
     const discoverQueued = input.discoverQueued === true; const requestId = z.string().min(1).max(200).optional().parse(input.requestId);
-    if (owner.type !== 'personal') deny(); let deadline: number | undefined;
+    if (owner.type !== 'personal') deny(); let deadline: number | undefined; let ordinaryProofDeadline: number | undefined;
     const capture = (value: string) => { const time = Date.parse(value); if (!Number.isFinite(time)) deny(); deadline = Math.min(deadline ?? time, time); };
-    const live = () => { check(signal); const time = now().getTime(); if (!Number.isFinite(time) || (deadline !== undefined && time >= deadline)) deny(); check(signal); };
+    const live = () => { check(signal); const time = now().getTime(); if (!Number.isFinite(time) || (deadline !== undefined && time >= deadline)
+      || (ordinaryProofDeadline !== undefined && time >= ordinaryProofDeadline)) deny(); check(signal); };
     live();
     const result = await transact(tx => boundedProvenanceTransaction<ChatDatabase, T>(tx, async current => {
       const history = createGoogleModelHistoryStore<ChatDatabase>(current, { now });
@@ -107,22 +109,29 @@ export function createGoogleContextSnapshotAdapter(db: Kysely<ChatDatabase>, opt
         const row = await load(current, key); live(); const copy = copies.get(ref(key));
         if (row?.redacted_hash || row?.collaboration_scope_id) deny();
         if (copy && (context.classification !== 'google' || copy.state !== 'active' || copy.contentHash !== row?.hash)) deny();
-        if (!copy && row?.hash && context.classification === 'google') deny();
+        if (!copy && row?.hash) {
+          const proof = await matchingOrdinaryCopyReceipt(current, { ownerId: owner.ownerId, chatId, kind: 'derived', entityRef: ref(key) }, row.hash);
+          if (!proof) deny(); ordinaryProofDeadline = Math.min(ordinaryProofDeadline ?? Infinity, Date.parse(proof)); live();
+        }
         if (copy && context.classification === 'google' && copy.origins.some(origin => !context.googleContext.sources.some(source => originKey(origin) === originKey({ connectionId: source.originId,
           profileId: source.profileId, profileRevision: source.profileRevision, purpose: source.purposeId })))) deny();
       }
       const result = await content(current); const fresh = await inspect();
+      const receipts = [];
       for (const key of ordered) {
         const row = await load(current, key); live(); if (row?.redacted_hash || row?.collaboration_scope_id) deny();
         const copy = copies.get(ref(key)); if (copy && !row?.hash) deny();
-        if (!row?.hash || fresh.classification !== 'google') continue;
+        if (!row?.hash) continue;
+        const receiptKey = { ownerId: owner.ownerId, chatId, kind: 'derived' as const, entityRef: ref(key) };
+        if (fresh.classification === 'ordinary') { receipts.push({ key: receiptKey, hash: row.hash }); continue; }
         if (deadline === undefined) deny(); const origins = fresh.googleContext.sources.map(source => ({ connectionId: source.originId, profileId: source.profileId, profileRevision: source.profileRevision, purpose: source.purposeId }));
         const same = copy && copy.contentHash === row.hash && copy.origins.length === origins.length && origins.every(origin => copy.origins.some(previous => originKey(origin) === originKey(previous))) && Date.parse(copy.retentionDeadline) <= deadline;
         if (!same) { const decisions = fresh.googleContext.sources.map(source => [source.originId, source.consentId]).sort((a, b) => a[0]! < b[0]! ? -1 : a[0]! > b[0]! ? 1 : 0);
           const saved = await store.record({ ownerId: owner.ownerId, kind: 'derived', entityRef: ref(key), contentHash: row.hash, origins,
             retention: { choice: 'until', deadline: new Date(deadline).toISOString(), decisionId: `gctx_${createHash('sha256').update(JSON.stringify([decisions, deadline])).digest('hex')}` }, ...(copy ? { baseRevision: copy.revision } : {}) }); capture(saved.retentionDeadline); }
-        await inspect();
+        await inspect(); await retireOrdinaryCopyReceipt(current, receiptKey);
       }
+      if (receipts.length) await recordOrdinaryCopyReceipts(current, receipts);
       live(); return result;
     }), () => { live(); return true; });
     live(); return result;
