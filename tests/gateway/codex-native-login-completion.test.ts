@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AiProviderService } from "../../packages/gateway/src/ai-providers/service.js";
 import { ProviderSettingsStore } from "../../packages/gateway/src/ai-providers/provider-settings-store.js";
 import { createProviderGenericHarnessCoordinator } from "../../packages/gateway/src/ai-providers/provider-generic-harness-coordinator.js";
+import { normalizeClaudeNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/claude-native-account-metadata.js";
 import { normalizeCodexNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/codex-native-account-metadata.js";
 
 import { createNativeProviderWorkflowAdapters } from "../../packages/gateway/src/ai-providers/provider-workflow-native.js";
@@ -16,27 +17,28 @@ import { bindNativeAccountMetadata } from "../../packages/gateway/src/ai-provide
 
 const roots: string[] = [], services: AiProviderService[] = [];
 afterEach(async () => { services.splice(0).forEach(service => service.close()); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
-async function fixture(unboundProof = false) {
+async function fixture(unboundProof = false, withClaude = false) {
   const root = await mkdtemp(join(tmpdir(), "codex-completion-admission-")); roots.push(root);
   const home = join(root, "home"); await mkdir(home, { mode: 0o700 });
   let loggedIn = true, principal = "fixture@example.invalid", installed = true, metadataMode = "native";
   const runCommand = vi.fn(async () => ({ principal, loggedIn }));
-  const readMetadata = async () => {
+  const readMetadata = async (options?: { purpose: "native_completion" }) => {
     const observation = await runCommand();
     if (!observation.loggedIn) return null;
-    const metadata = normalizeCodexNativeAccountMetadata({ account: metadataMode === "key" ? { type: "apiKey" } : { type: "chatgpt", email: observation.principal } }, {}, new Date(metadataMode === "expired" ? 0 : Date.now()))!;
+    const metadata = normalizeCodexNativeAccountMetadata({ account: metadataMode === "key" ? { type: "apiKey" } : { type: "chatgpt", email: observation.principal } }, options ? {} : { rateLimits: { primary: { usedPercent: 37, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 } } }, new Date(metadataMode === "expired" ? 0 : Date.now()))!;
     return unboundProof ? metadata : bindNativeAccountMetadata(metadata, async () => loggedIn && principal === observation.principal, observation.principal);
   };
   const systemUpdate = vi.fn(async () => { throw new Error("fixed native completion cannot change system routing"); });
   const systemRead = vi.fn(async () => { throw new Error("fixed native completion cannot inspect system routing"); });
   const runtime = createProviderGenericHarnessCoordinator({ homePath: home, enabledCodingHarnesses: [], runtimeController: { update: systemUpdate }, runtimeSource: systemRead });
-  const service = new AiProviderService({ homePath: home, env: { OPENAI_API_KEY: "synthetic-existing-key" },
-    driverInventory: async () => [{ id: "codex", displayName: "Codex Code", installState: installed ? "installed" : "missing", kind: "cli", health: "ready", setupActions: [], capabilities: ["tools", "resume"] }] }); services.push(service);
+  const service = new AiProviderService({ homePath: home, env: { OPENAI_API_KEY: "synthetic-existing-key" }, exposeClaudeProfileAccount: withClaude,
+    driverInventory: async () => [{ id: "codex", displayName: "Codex Code", installState: installed ? "installed" : "missing", kind: "cli", health: "ready", setupActions: [], capabilities: ["tools", "resume"] }, ...(withClaude ? [{ id: "claude_code" as const, displayName: "Claude", installState: "installed" as const, kind: "cli" as const, health: "ready" as const, setupActions: [], capabilities: ["tools", "resume"] }] : [])] }); services.push(service);
   const releaseRevocation = vi.fn(async () => {});
   const prepareRevocation = vi.fn(async () => releaseRevocation);
   const store = new ProviderSettingsStore({ homePath: home, privateRootPath: join(root, "private"), providerSnapshotReader: service,
     loginCoordinator: { supportedMethods: () => ["terminal"], startLogin: async ({ mutation }) => ({ id: "attempt_fixture", harnessInstanceId: mutation.harnessInstanceId, accountId: mutation.accountId, method: "terminal", state: "pending", action: { kind: "open_terminal", terminalSessionId: "workspace:login" }, expiresAt: new Date(Date.now() + 60000).toISOString(), safeFailure: null }) },
-    runtimeCoordinator: runtime, codexNativeAccountMetadataReader: readMetadata, prepareNativeCodexRevocation: prepareRevocation });
+    runtimeCoordinator: runtime, codexNativeAccountMetadataReader: readMetadata, prepareNativeCodexRevocation: prepareRevocation,
+    ...(withClaude ? { claudeNativeAccountMetadataReader: async () => bindNativeAccountMetadata(normalizeClaudeNativeAccountMetadata({ loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', email: 'claude@example.invalid', subscriptionType: 'max', configDirectory: join(home, '.claude') }, home, new Date())!, async () => true, 'claude-fixture-principal') } : {}) });
   const initial = await store.getSnapshot(), harness = initial.harnesses.find(row => row.harness === "codex")!;
   await store.mutate({ type: "set_harness_enabled", harnessInstanceId: harness.id, enabled: false, expectedRevision: initial.revision, idempotencyKey: "fixture-off" });
   // Represent an existing owner API-key selection without enabling public route writes.
@@ -328,4 +330,35 @@ it('returns connected when another owner read repairs while its identity probe i
   expect(recovered.revision).toBe(before.revision + 1);
   expect(recovered.revision).toBe(immediate.revision);
   expect(recovered.harnesses.find(row => row.id === f.input.harnessInstanceId)?.enabled).toBe(true);
+});
+
+it('preserves requested Claude account details and Codex usage in the first recovered Settings response', async () => {
+  const f = await fixture(false, true); await saveLegacyNativeConnection(f);
+  const recovered = await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true });
+  expect(recovered.accounts.find(row => row.id === 'owner_claude_profile')).toMatchObject({ authState: 'authenticated', connectionDetails: { email: 'claude@example.invalid', planName: 'Claude Max' } });
+  expect(recovered.accessSources.find(row => row.id === 'owner_openai_profile')?.usage).toMatchObject({ kind: 'subscription_allowance', usedBasisPoints: 3700 });
+  expect(recovered.harnesses.find(row => row.id === f.input.harnessInstanceId)?.enabled).toBe(true);
+});
+
+it('returns the newer saved state when revocation follows repair before the enriched response', async () => {
+  const f = await fixture(); const before = await saveLegacyNativeConnection(f);
+  const complete = f.store.completeCodexNativeLogin.bind(f.store);
+  vi.spyOn(f.store, 'completeCodexNativeLogin').mockImplementationOnce(async input => {
+    const result = await complete(input);
+    await f.store.mutate({ type: 'set_harness_enabled', harnessInstanceId: f.input.harnessInstanceId, enabled: false,
+      expectedRevision: result.snapshot.revision, idempotencyKey: 'revocation-after-repair' });
+    return result;
+  });
+  const recovered = await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true });
+  expect(recovered.revision).toBe(before.revision + 2);
+  expect(recovered.harnesses.find(row => row.id === f.input.harnessInstanceId)?.configuredEnabled).toBe(false);
+});
+
+it('does not publish a connected response when native proof is revoked after repair', async () => {
+  const f = await fixture(); await saveLegacyNativeConnection(f);
+  const complete = f.store.completeCodexNativeLogin.bind(f.store);
+  vi.spyOn(f.store, 'completeCodexNativeLogin').mockImplementationOnce(async input => {
+    const result = await complete(input); f.setLoggedIn(false); return result;
+  });
+  await expect(f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true })).rejects.toMatchObject({ code: 'projection_unavailable' });
 });

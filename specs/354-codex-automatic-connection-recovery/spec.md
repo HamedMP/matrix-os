@@ -57,6 +57,8 @@ policy lives in a focused module rather than adding policy to the entrypoint.
 - Owner Settings and Chat reads persist one verified repair; Chat becomes selectable
   and ordinary native execution admission accepts the same principal.
 - Concurrent reads produce one settings revision; subsequent reads are idempotent.
+- The first repaired response preserves independently reverified native account
+  details and usage for other connected providers at the committed settings revision.
 - Collaborator/ordinary reads cannot repair, including forged query options.
 - Rejected/expired proof, different account, API-key route, concurrent revocation,
   and runtime failure cannot silently enable or replace credentials.
