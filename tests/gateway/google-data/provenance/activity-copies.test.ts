@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sql } from 'kysely';
 import { ChatRepository, type ChatRepositoryOptions } from '../../../../packages/gateway/src/chat/repository.js';
@@ -68,6 +69,68 @@ const activity = (id = 'activity_one', summary = 'synthetic mail summary') => ({
 const activityCopy = (id = 'activity_one') => provenance.inspect(owner.ownerId, 'derived', googleActivityEntityRef(id));
 
 describe('registered activity copies', () => {
+  it.each(['event:tool.finish-1', `a${':'.repeat(127)}`])('registers and exactly resolves punctuated activity %s', async id => {
+    await mark(); const input = { ...activity(id), activityId: 'tool_punctuation' };
+    await repository.appendRunActivities(owner, key.chatId, key.runId, [input]);
+    const copy = (await activityCopy(id))!;
+    expect(copy.entityRef).toMatch(/^[A-Za-z0-9_-]{1,160}$/);
+    const adapter = createGoogleActivityCopyAdapter(repository.kysely, { quiescence: { async withStoppedRun(target, work) {
+      expect(target).toMatchObject({ ownerId: owner.ownerId, chatId: key.chatId, runId: key.runId }); return work();
+    } } });
+    expect(await adapter.quiesceCopy(owner.ownerId, copy.entityRef)).toEqual({ quiesced: true, missing: false });
+    expect(await adapter.delete({ ownerId: 'outsider', entityRef: copy.entityRef, expectedHash: copy.contentHash, signal: new AbortController().signal })).toEqual({ status: 'unavailable' });
+    const args = { ownerId: owner.ownerId, entityRef: copy.entityRef, expectedHash: copy.contentHash, signal: new AbortController().signal };
+    expect(await adapter.delete(args)).toEqual({ status: 'deleted' }); expect(await adapter.delete(args)).toEqual({ status: 'deleted' });
+    expect((await repository.kysely.selectFrom('chat_run_events').select(['id', 'event']).executeTakeFirst())!).toMatchObject({ id, event: { id, type: 'run.status' } });
+  });
+  it('keeps legacy safe activity references and denies a missing unsafe reference mapping', async () => {
+    expect(googleActivityEntityRef('activity_safe-1')).toBe('gae_activity_safe-1');
+    await mark(); const id = 'activity:unsafe'; await repository.appendRunActivities(owner, key.chatId, key.runId, [{ ...activity(id), activityId: 'tool_unsafe' }]);
+    const copy = (await activityCopy(id))!;
+    await sql`UPDATE chat_run_events SET google_activity_entity_ref=NULL WHERE id=${id}`.execute(repository.kysely);
+    await repository.kysely.updateTable('chat_runs').set({ status: 'completed' }).where('id', '=', key.runId).execute();
+    expect(await activityAdapter.delete({ ownerId: owner.ownerId, entityRef: copy.entityRef, expectedHash: copy.contentHash, signal: new AbortController().signal })).toEqual({ status: 'unavailable' });
+  });
+  it('refuses forged lookup metadata without redacting or stopping an unrelated activity', async () => {
+    await mark(); const ids = ['activity:first', 'activity:second'];
+    await repository.appendRunActivities(owner, key.chatId, key.runId, ids.map(id => ({ ...activity(id), activityId: 'tool_map' })));
+    const first = (await activityCopy(ids[0]))!; const before = await repository.kysely.selectFrom('chat_run_events').select(['id', 'event']).orderBy('id').execute();
+    await sql`UPDATE chat_run_events SET google_activity_entity_ref=NULL WHERE id=${ids[0]}`.execute(repository.kysely);
+    await sql`UPDATE chat_run_events SET google_activity_entity_ref=${first.entityRef} WHERE id=${ids[1]}`.execute(repository.kysely);
+    const stopped = vi.fn(async (_target, work) => work());
+    const adapter = createGoogleActivityCopyAdapter(repository.kysely, { quiescence: { withStoppedRun: stopped } });
+    await expect(adapter.quiesceCopy(owner.ownerId, first.entityRef)).rejects.toThrow(); expect(stopped).not.toHaveBeenCalled();
+    await expect(adapter.delete({ ownerId: owner.ownerId, entityRef: first.entityRef, expectedHash: first.contentHash, signal: new AbortController().signal })).rejects.toThrow();
+    expect(await repository.kysely.selectFrom('chat_run_events').select(['id', 'event']).orderBy('id').execute()).toEqual(before);
+  });
+  it('never maps an unproven old punctuated activity', async () => {
+    const id = 'activity:old'; const input = { ...activity(id), activityId: 'tool_old' };
+    await new ChatRepository(repository.kysely).appendRunActivities(owner, key.chatId, key.runId, [input]);
+    await mark(); await expect(repository.appendRunActivities(owner, key.chatId, key.runId, [{ ...input, status: 'completed' }])).rejects.toThrow();
+    expect((await sql<{ ref: string | null }>`SELECT google_activity_entity_ref AS ref FROM chat_run_events WHERE id=${id}`.execute(repository.kysely)).rows).toEqual([{ ref: null }]);
+    expect(await activityCopy(id)).toBeNull();
+  });
+  it('uses a bounded SQL budget for 500 unchanged registered activities and lets the next owner proceed', async () => {
+    const context = await mark();
+    const events = Array.from({ length: 500 }, (_, index) => ({ ...activity(`activity_${index}`), sequence: index + 1 }));
+    await sql`INSERT INTO chat_run_events(id,chat_id,run_id,run_seq,event,occurred_at)
+      SELECT v->>'id',${key.chatId},${key.runId},(v->>'sequence')::int,v,(v->>'occurredAt')::timestamptz
+      FROM jsonb_array_elements(${JSON.stringify(events)}::jsonb) v`.execute(repository.kysely);
+    const canonical = (await sql<{ id: string; payload: string }>`SELECT id,jsonb_build_object('version',1,'ownerId',${owner.ownerId}::text,
+      'chatId',chat_id,'runId',run_id,'id',id,'sequence',run_seq,'occurredAt',occurred_at,'event',event)::text AS payload FROM chat_run_events`.execute(repository.kysely)).rows;
+    const origins = context.sources.map(source => ({ connectionId: source.originId, profileId: source.profileId, profileRevision: source.profileRevision, purpose: source.purposeId }));
+    const records = canonical.map(row => ({ ref: googleActivityEntityRef(row.id), hash: createHash('sha256').update('google-activity-jsonb-v1\0').update(row.payload).digest('hex') }));
+    await sql`INSERT INTO google_copy_registry(id,owner_id,kind,entity_ref,content_hash,origins,revision,retention_deadline,retention_decision_id,state)
+      SELECT gen_random_uuid(),${owner.ownerId},'derived',r.ref,r.hash,${JSON.stringify(origins)}::jsonb,1,${context.retentionDeadline}::timestamptz,'fixture','active'
+      FROM jsonb_to_recordset(${JSON.stringify(records)}::jsonb) r(ref text,hash text)`.execute(repository.kysely);
+    let queries = 0;
+    const db = repository.kysely.withPlugin({ transformQuery(args) { queries++; return args.node; }, async transformResult(args) { return args.result; } });
+    const repo = new ChatRepository(db, false, undefined, { ...options, activityWrites: createGoogleActivityCopyAdapter(db) });
+    await repo.appendRunActivities(owner, key.chatId, key.runId, [activity('activity_0')]);
+    expect(queries).toBeLessThanOrEqual(80);
+    await admit(repository, 'other', { type: 'personal', ownerId: 'owner_other' });
+    expect((await repository.get({ type: 'personal', ownerId: 'owner_other' }, 'chat_other'))?.chat.id).toBe('chat_other');
+  }, 30000);
   it('runs one bounded receipt cleanup for a full ordinary activity batch', async () => {
     for (let batch=0;batch<5;batch++) await repository.appendRunActivities(owner, key.chatId, key.runId,
       Array.from({ length:100 }, (_,i) => activity(`activity_${batch*100+i}`)));
