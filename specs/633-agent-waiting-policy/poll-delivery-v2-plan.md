@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript, Zod 4, Hono, existing PostgreSQL test helpers, Electron Native peer, Vitest; pnpm/bun only.
 
-**Spec:** [Reviewed protocol proposal](poll-delivery-v2-design.md). Source baseline `2ae9cfecef710ed59efe475435240c46cae5165d`, checked 2026-10-22. **Not an implementation completion claim.**
+**Spec:** [Reviewed protocol proposal](poll-delivery-v2-design.md). Source baseline `2ae9cfecef710ed59efe475435240c46cae5165d`, checked 2026-10-22. Implementation status and qualified exceptions are recorded below; this plan alone is not a runtime acceptance claim.
 
 ## Global Constraints
 
@@ -87,6 +87,15 @@ Review protocol negotiation, ACK mutation order, retained Cancel, bounded HTTP t
 - [ ] Create separate public documentation PR in `FinnaAI/matrix-os-site/content/docs/` for the final shipped behavior, compatibility, bounded retry and Stop. Public-safe only; no private runtime/incident data.
 - [ ] Final limitations/results table separates implemented, offline-tested, real Electron-tested and unknown across providers, attachments, output, approval and funding. No completed claim while the required long-run acceptance remains unpassed.
 
+## Implementation execution record — 2026-10-23 Asia/Shanghai
+
+- Tasks 1–4 are implemented locally starting at `7caa045ef830815c659517e8edad9687c70cea19`; final review and post-review verification are retained in the task evidence. The original detailed checkboxes remain the planned validation inventory, not a claim that every proposed experiment was executed.
+- Contract, authenticated actual-byte admission, retained delivery/Cancel, ACK validation, bounded emitters, Native negotiation/receipt/recovery, four actual-module synthetic paths and one real local HTTP response-loss path were exercised. Existing v1 controls remain passing.
+- Scope rulings: sequence exhaustion is guarded in production and reviewed statically rather than attempting trillions of messages. Shared bounded-reader exact/one-over tests use the 512-byte capability budget, plus a separate >2 MiB valid poll and 12-second wait; no 46.9 MiB stress test. Request loss and ACK-request loss are covered by admission/ledger controls, not claimed as additional actual-module end-to-end fault cases.
+- One fresh final source review found a P2: a queued `subarray` retained the entire frozen response encoding beyond emitter release. A real Hono response backing-buffer RED preceded the bounded chunk-copy fix. The separate pre-enqueue cancellation race was classified as minor baseline hardening; two REDs precede the post-revalidation abort check. Neither finding establishes the earlier real TLS failure cause.
+- No inference/reply replay, TLS exception, source/permission/funding policy change, dependency install, Preview update, GUI operation or real model request occurred in this increment.
+- Task 5 remains **unexecuted**: paired Host/Electron build and provenance, private acceptance, real continuously busy 10/30-minute workloads and full-screen Electron screenshots are release gates. The separate public-site documentation PR remains a release deliverable; an offline public-safe draft is prepared with the implementation evidence.
+
 ## Design-phase evidence already available
 
-Actual baseline production modules, no code edits: two expected RED assertion failures (exit 1, 3.944s) and four final GREEN safety controls (exit 0, 3.692s), each under a 20-second external timeout. An initial control fixture scheduling error and its unchanged-assertion correction are retained separately. None of tasks 1–5 has been implemented by this design document.
+Actual baseline production modules, no code edits: two expected RED assertion failures (exit 1, 3.944s) and four final GREEN safety controls (exit 0, 3.692s), each under a 20-second external timeout. An initial control fixture scheduling error and its unchanged-assertion correction are retained separately. Those design-phase results remain historical; see the later implementation execution record above. They do not qualify Task 5.

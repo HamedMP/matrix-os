@@ -44,7 +44,8 @@ export function emitPeerPoll(c: Context, emission: PeerPollEmission) {
       for (let offset = 0; offset < emission.encoded.byteLength; offset += 65536) {
         if (output.aborted || emission.signal.aborted || c.req.raw.signal.aborted) return;
         emission.verify();
-        await output.write(emission.encoded.subarray(offset, offset + 65536));
+        // A queued view would retain the entire encoding after this slot releases.
+        await output.write(emission.encoded.slice(offset, offset + 65536));
       }
     } catch (error: unknown) {
       if (!output.aborted) console.warn('[chatgpt-plan] Poll emission unavailable:', error instanceof Error ? error.name : 'UnknownError');

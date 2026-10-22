@@ -55,4 +55,15 @@ describe('session-bound Native command delivery routes', () => {
     now += 2000;
     expect((await f.peers.observe('owner')).availability).toBe('unavailable');
   });
+  it('does not let one queued response chunk pin its entire published encoding after slot release', async () => {
+    const f = await deliveryFixture(); fixtures.push(f);
+    await f.peers.inferStream(await f.binding(), JSON.stringify({ padding: 'x'.repeat(200000) }), new AbortController().signal);
+    const response = await f.app().request(`${peerRoot}/poll-v2`, postBody({ version: 2, sessionId: f.session.sessionId, ackThrough: 0 }));
+    const reader = response.body!.getReader();
+    try {
+      const first = await reader.read();
+      expect(first.value!.byteLength).toBeLessThanOrEqual(65536);
+      expect(first.value!.buffer.byteLength).toBeLessThanOrEqual(65536);
+    } finally { await reader.cancel(); }
+  });
 });

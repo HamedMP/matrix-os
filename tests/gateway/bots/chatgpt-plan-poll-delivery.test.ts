@@ -63,4 +63,17 @@ describe('retained Native command delivery through actual Host routes', () => {
     now += 2000;
     expect((await f.peers.observe('owner')).availability).toBe('unavailable');
   });
+  it.each(['infer', 'inferStream'] as const)('does not publish an orphan Cancel when %s is aborted across awaited admission', async method => {
+    let now = 100000;
+    const f = await deliveryFixture(() => now); fixtures.push(f);
+    const binding = await f.binding();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const pending = f.peers.pollV2('owner', { version: 2, sessionId: f.session.sessionId, ackThrough: 0 }, new AbortController().signal);
+    const stop = new AbortController(), inference = f.peers[method](binding, '{}', stop.signal);
+    stop.abort(); await expect(inference).rejects.toThrow('unavailable');
+    now += 10000; await vi.advanceTimersByTimeAsync(10000);
+    const emission = await pending;
+    try { expect(JSON.parse(new TextDecoder().decode(emission.encoded)).deliveries).toEqual([]); }
+    finally { emission.release(); }
+  });
 });

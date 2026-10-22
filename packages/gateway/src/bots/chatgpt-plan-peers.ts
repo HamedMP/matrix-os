@@ -301,7 +301,7 @@ export function createChatGptPlanPeers(deps: {
                     && (binding.requestClass === 'interactive' || s.background));
         },
         async infer(binding: PiRuntimeBinding, body: string, signal: AbortSignal): Promise<InferenceReply> {
-            if (!await service.revalidate(binding, signal))
+            if (!await service.revalidate(binding, signal) || signal.aborted)
                 throw new ChatGptPlanPeerError('unavailable');
             const p = current()!;
             if (p.pending.size >= 4 || p.requests.length >= 32 || p.sequence >= CHATGPT_PLAN_PEER_MAX_SEQUENCE)
@@ -330,7 +330,7 @@ export function createChatGptPlanPeers(deps: {
             });
         },
         async inferStream(binding: PiRuntimeBinding, body: string, signal: AbortSignal) {
-            if (!await service.revalidate(binding, signal))
+            if (!await service.revalidate(binding, signal) || signal.aborted)
                 throw new ChatGptPlanPeerError('unavailable');
             const p = current();
             if (!p || p.sessionId !== binding.subscription?.peerId)
