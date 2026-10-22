@@ -23,11 +23,13 @@ import {
   toLogicalRuntimeId,
   type CollaborationControlAck,
 } from "@matrix-os/contracts";
-import { z } from "zod/v4";
 import { type DirectSigningKey } from "./direct-auth.js";
 import type { DirectSessionService } from "./direct-sessions.js";
 import type { CollaborationCapabilityRepository } from "./capability-repository.js";
+import { registerControlRuntime, RegistrationRejectedError, type RegistrationResponse } from "./control-registration.js";
 import { requireSecureCollaborationPlatformBaseUrl } from "./platform-base-url.js";
+
+export { RegistrationRejectedError, parseRetryAfterMs, type RegistrationResponse } from "./control-registration.js";
 
 /** Fence a home reports before it has applied any denial: asserts nothing. */
 const NO_FENCE_AT = "1970-01-01T00:00:00.000Z";
@@ -41,16 +43,6 @@ export function isMembershipEvidenceEvictor(source: object): source is Membershi
   return typeof (source as Partial<MembershipEvidenceEvictor>).evict === "function";
 }
 
-const RegistrationResponseSchema = z.object({
-  protocolVersion: z.literal(COLLABORATION_DIRECT_PROTOCOL_VERSION),
-  runtime: z.object({ runtimeId: z.string(), authorityGeneration: z.number().int().positive(), registeredAt: z.string() }).strict(),
-  platformSigningKeys: z.array(z.object({ keyId: z.string().min(1).max(80), algorithm: z.literal("ed25519"), publicKey: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict()).max(8),
-  controlTicket: z.string().min(43).max(256).regex(/^[A-Za-z0-9_-]+$/),
-  relay: z.object({ origin: z.string().url() }).strict(),
-}).strict();
-
-export type RegistrationResponse = z.infer<typeof RegistrationResponseSchema>;
-
 export interface ControlSocketLike {
   send(value: string): void;
   close(code?: number, reason?: string): void;
@@ -61,7 +53,6 @@ export interface ControlStreamHandle {
   close(): void;
 }
 
-const REGISTRATION_TIMEOUT_MS = COLLABORATION_DIRECT_LIMITS.externalApiTimeoutMs;
 /**
  * Control frames awaiting ordered application on one stream. A deeper backlog means this home
  * cannot keep up with the platform, so the stream is torn down and re-registered rather than
@@ -88,31 +79,8 @@ const HEALTHY_RECONNECT_MAX_MS = 5_000;
  * exponentially instead of reconnecting every few seconds forever.
  */
 const HEALTHY_STREAM_MIN_MS = 30_000;
-/** Bounds for a registration Retry-After (delta-seconds) used as the next reconnect floor. */
-const MIN_RETRY_AFTER_MS = 1_000;
-const MAX_RETRY_AFTER_MS = 300_000;
 /** A Retry-After floor is spread over [floor, floor + min(floor x ratio, MAX_BACKOFF_MS)] so a throttled fleet does not return in lockstep. */
 const RETRY_AFTER_JITTER_RATIO = 0.2;
-
-/** Registration refused by the platform with a non-success status; carries only coarse retry hints. */
-export class RegistrationRejectedError extends Error {
-  override readonly name = "RegistrationRejectedError";
-  constructor(readonly status: number, readonly retryAfterMs?: number) {
-    super(`Registration rejected (${status})`);
-  }
-}
-
-/**
- * Parses a Retry-After header in its delta-seconds form, clamped to a sane range. The
- * HTTP-date form and anything malformed are ignored rather than trusted.
- */
-export function parseRetryAfterMs(value: string | null): number | undefined {
-  if (value === null) return undefined;
-  const trimmed = value.trim();
-  if (!/^\d{1,10}$/.test(trimmed)) return undefined;
-  const ms = Number(trimmed) * 1_000;
-  return Math.min(MAX_RETRY_AFTER_MS, Math.max(MIN_RETRY_AFTER_MS, ms));
-}
 
 export class CollaborationControlClient {
   static readonly MAX_PENDING_CONTROL_FRAMES = MAX_PENDING_CONTROL_FRAMES;
@@ -179,36 +147,25 @@ export class CollaborationControlClient {
 
   async register(): Promise<RegistrationResponse> {
     if (this.closed) throw new Error("Control client is shutting down");
-    const body = JSON.stringify({
-      protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
-      runtimeId: toLogicalRuntimeId(this.options.runtimeId),
+    const registration = await registerControlRuntime({
+      endpoint: this.endpoint,
+      runtimeId: this.options.runtimeId,
       ownerId: this.options.ownerId,
       relayHandle: this.options.relayHandle,
-      authorityGeneration: this.generation,
-      publicKeys: [{ keyId: this.options.identity.keyId, algorithm: "ed25519", publicKey: this.options.identity.publicKey }],
+      identity: this.options.identity,
+      headers: this.runtimeHeaders(),
+      generation: this.generation,
+      closed: () => this.closed,
+      fetchImpl: this.fetchImpl,
     });
-    const response = await this.fetchImpl(this.endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json", ...this.runtimeHeaders() },
-      body,
-      redirect: "error",
-      signal: AbortSignal.timeout(REGISTRATION_TIMEOUT_MS),
-    });
-    if (response.status === 426) throw new Error("upgrade_required");
-    if (!response.ok) {
-      const throttled = response.status === 429 || response.status === 503;
-      throw new RegistrationRejectedError(response.status, throttled ? parseRetryAfterMs(response.headers.get("retry-after")) : undefined);
-    }
-    const parsed = RegistrationResponseSchema.safeParse(await response.json());
-    if (!parsed.success || parsed.data.runtime.runtimeId !== toLogicalRuntimeId(this.options.runtimeId)) throw new Error("Registration response is invalid");
     // The fence can land while this request is in flight. A registration that comes back
     // afterwards must not commit: publishing platform keys or refreshing the control snapshot
     // would make a runtime that has stopped serving look registered and control-fresh.
     if (this.closed) throw new Error("Control client is shutting down");
-    this.keys = parsed.data.platformSigningKeys;
-    this.generation = Math.max(this.generation, parsed.data.runtime.authorityGeneration);
+    this.keys = registration.platformSigningKeys;
+    this.generation = Math.max(this.generation, registration.runtime.authorityGeneration);
     this.snapshotExpiresAt = this.now().getTime() + CONTROL_SNAPSHOT_TTL_MS;
-    return parsed.data;
+    return registration;
   }
 
   async connectControl(controlTicket: string): Promise<ControlStreamHandle> {
