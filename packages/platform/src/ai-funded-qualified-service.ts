@@ -1,11 +1,15 @@
+import { randomUUID } from 'node:crypto';
+import { createFundedAuthorize } from './ai-funded-authorization.js';
+import { admitQualifiedFundedRoute } from './ai-funded-qualified-admission.js';
 import { sql } from 'kysely';
 import { GoogleQualifiedFundedDiscoveryRequestSchema, GoogleQualifiedFundedDiscoveryResponseSchema, GoogleQualifiedFundedIssueRequestSchema,
   GoogleQualifiedFundedIssueResponseSchema, GoogleQualifiedFundedCheckRequestSchema, GoogleQualifiedFundedCheckResponseSchema,
+  GoogleQualifiedFundedAuthorizationRequestSchema, GoogleQualifiedFundedAuthorizationResponseSchema, GoogleQualifiedFundedDispatchCheckRequestSchema, GoogleQualifiedFundedDispatchCheckResponseSchema, parseGoogleQualifiedFundedCredential,
   GoogleQualifiedFundedRouteSchema, GOOGLE_QUALIFIED_FUNDED_PROTOCOL, type GoogleQualifiedFundedRoute, type ManagedGoogleRouteResolveRequest } from '@matrix-os/contracts';
 import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
-import { googleQualifiedRouteDigest, readAiFundedRouteBinding } from './ai-funded-route-binding.js';
-import { authenticateQualifiedMachine, sameQualifiedMachine, qualifiedPolicy, mintQualifiedToken, authenticatedQualifiedToken,
-  type QualifiedRuntimeAuth } from './ai-funded-qualified-state.js';
+import { googleQualifiedRouteDigest } from './ai-funded-route-binding.js';
+import { authenticateQualifiedMachine, sameQualifiedMachine, qualifiedPolicy, mintQualifiedToken,
+  qualifiedTokenHash, type QualifiedRuntimeAuth } from './ai-funded-qualified-state.js';
 import type { QualifiedFundedTransactionRunner } from './ai-funded-qualified-db.js';
 import { assertQualifiedLive, QualifiedFundedError } from './ai-funded-qualified-errors.js';
 
@@ -69,28 +73,48 @@ export function createQualifiedFundedService(options: { runner: QualifiedFundedT
       const request = GoogleQualifiedFundedCheckRequestSchema.parse(input);
       if (request.api !== 'openai-completions') throw new QualifiedFundedError();
       const api = request.api; const canonicalModelId = request.canonicalModelId;
-      async function snapshot() { return options.runner.run(signal, deadline, async tx => {
-        const token = await authenticatedQualifiedToken(tx, request.credential, options.credentialHashSecret);
-        return withAccountDeletionOwnerLock(tx, token.identity.ownerId, async (admitted, admission) => {
-          if (!admission.newWorkAllowed) throw new QualifiedFundedError();
-          const machine = await admitted.executor.selectFrom('user_machines').selectAll().where('machine_id', '=', token.identity.machineId).forUpdate().executeTakeFirst();
-          if (!machine || machine.runtime_token_epoch !== token.epoch) throw new QualifiedFundedError();
-          const fresh = await authenticatedQualifiedToken(admitted, request.credential, options.credentialHashSecret, true);
-          if (fresh.identity.ownerId !== token.identity.ownerId || fresh.identity.machineId !== token.identity.machineId
-            || fresh.identity.runtimeSlot !== token.identity.runtimeSlot || fresh.epoch !== machine.runtime_token_epoch) throw new QualifiedFundedError();
-          const binding = await readAiFundedRouteBinding(admitted.executor, { identity: fresh.identity, tokenId: fresh.row.token_id,
-            api, canonicalModelId, requestClass: request.requestClass, expectedDigest: request.expectedDigest }, now);
-          if (!binding) throw new QualifiedFundedError();
-          const { policy } = await qualifiedPolicy(admitted, fresh.identity, binding.canonicalModelId, now());
-          return { binding, authorization: { contractVersion: 1 as const, authorized: true as const,
-            identity: { ...fresh.identity, tokenId: fresh.row.token_id, audience: 'matrix-funded-relay' as const, scope: 'ai:invoke' as const, expiresAt: fresh.row.expires_at }, policy } };
-        }, options.env);
-      }); }
+      const selector = GoogleQualifiedFundedDispatchCheckRequestSchema.parse({ protocol: request.protocol, credential: request.credential, api,
+        canonicalModelId, expectedDigest: request.expectedDigest });
+      async function snapshot() { const result = await options.runner.run(signal, deadline, tx => admitQualifiedFundedRoute(tx, selector,
+        { hashSecret: options.credentialHashSecret, now, env: options.env }));
+        if (result.binding.requestClass !== request.requestClass) throw new QualifiedFundedError(); return result; }
       const first = await snapshot(); const actual = await resolve(request, signal, deadline);
       if (actual.digest !== first.binding.digest) throw new QualifiedFundedError();
       const current = await snapshot();
       if (JSON.stringify(current.binding) !== JSON.stringify(first.binding)) throw new QualifiedFundedError();
       return GoogleQualifiedFundedCheckResponseSchema.parse({ protocol: GOOGLE_QUALIFIED_FUNDED_PROTOCOL, ...current });
+    }); },
+    /** Only the service-control-authenticated proxy may assert its freshly recomputed dispatch digest.
+     * No recursive control lookup: the proxy checks its own immutable actual config before and after this await. */
+    dispatchCheck(input: unknown, parent: AbortSignal) { return bounded(parent, async (signal, deadline) => {
+      const request = GoogleQualifiedFundedDispatchCheckRequestSchema.parse(input);
+      const current = await options.runner.run(signal, deadline, tx => admitQualifiedFundedRoute(tx, request,
+        { hashSecret: options.credentialHashSecret, now, env: options.env }));
+      return GoogleQualifiedFundedDispatchCheckResponseSchema.parse({ protocol: GOOGLE_QUALIFIED_FUNDED_PROTOCOL, ...current });
+    }); },
+    authorize(input: unknown, parent: AbortSignal) { return bounded(parent, async (signal, deadline) => {
+      const request = GoogleQualifiedFundedAuthorizationRequestSchema.parse(input);
+      const selector = GoogleQualifiedFundedDispatchCheckRequestSchema.parse({ protocol: request.protocol, credential: request.credential,
+        api: request.api, canonicalModelId: request.canonicalModelId, expectedDigest: request.expectedDigest });
+      const initial = await options.runner.run(signal, deadline, tx => admitQualifiedFundedRoute(tx, selector,
+        { hashSecret: options.credentialHashSecret, now, env: options.env }));
+      const actual = await resolve(request, signal, deadline); if (actual.digest !== initial.binding.digest) throw new QualifiedFundedError();
+      return options.runner.run(signal, deadline, async tx => {
+        const current = await admitQualifiedFundedRoute(tx, selector, { hashSecret: options.credentialHashSecret, now, env: options.env });
+        if (JSON.stringify(initial.binding) !== JSON.stringify(current.binding)) throw new QualifiedFundedError();
+        const authorize = createFundedAuthorize({ db: tx, now, hashCredential: token => qualifiedTokenHash(token, options.credentialHashSecret),
+          reservationIdFactory: randomUUID, reservationTtlMs: 30000, policyFreshnessMs: 1000,
+          protocol: { decode() { const tokenId = parseGoogleQualifiedFundedCredential(request.credential)?.tokenId; if (!tokenId) throw new QualifiedFundedError();
+            return { tokenId, routeDigest: current.binding.digest, request: { credential: request.credential, requestId: request.requestId,
+              modelId: current.binding.canonicalModelId, maxCostMicrousd: request.maxCostMicrousd, billingMode: request.billingMode,
+              ...(request.claimKey ? { claimKey: request.claimKey } : {}) } }; } } });
+        const authorization = await authorize({ credential: request.credential, requestId: request.requestId,
+          modelId: request.canonicalModelId, maxCostMicrousd: request.maxCostMicrousd, billingMode: request.billingMode });
+        assertQualifiedLive(signal, deadline);
+        const final = await admitQualifiedFundedRoute(tx, selector, { hashSecret: options.credentialHashSecret, now, env: options.env });
+        if (JSON.stringify(final.binding) !== JSON.stringify(current.binding)) throw new QualifiedFundedError();
+        return GoogleQualifiedFundedAuthorizationResponseSchema.parse({ protocol: GOOGLE_QUALIFIED_FUNDED_PROTOCOL, authorization, binding: current.binding });
+      });
     }); },
     async close() { closed = true; for (const operation of active) operation.abort(); await drained; },
   };
