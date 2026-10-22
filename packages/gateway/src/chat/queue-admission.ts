@@ -20,6 +20,7 @@ import type { CanonicalChatProviderRegistry } from "./provider-adapter.js";
 import type { ChatOwner } from "./records.js";
 import type { ChatRepository } from "./repository.js";
 import { unsupportedAgentPermissionMode } from "./agent-permission.js";
+import type { GoogleModelHistoryReader } from "../google-data/runtime/model-history-reader.js";
 
 export class CanonicalQueueAdmissionError extends Error {
   constructor(readonly safeError: CanonicalChatSafeError, readonly status: 400 | 404 | 409 | 503) {
@@ -69,6 +70,7 @@ export async function enqueueCanonicalQueuedTurn(options: {
   agentContext?: ChatAgentContext;
   beforeRoutineCreationAdmission?: (input: import("./routine-creation-policy.js").RoutineCreationAdmission) => Promise<void>;
   provenance?: import("./turn-admission.js").CanonicalTurnProvenance;
+  modelHistory?: GoogleModelHistoryReader;
   now: () => Date;
 }): Promise<CanonicalChatQueueAdmissionResponse> {
   const input = CanonicalQueueChatTurnRequestSchema.parse(options.input);
@@ -115,12 +117,14 @@ export async function enqueueCanonicalQueuedTurn(options: {
       validated.error.code === "provider_instance_locked" ? 409 : 400,
     );
   }
-  if (!options.adapters.get(validated.instance.driverKind)) {
+  const adapter = options.adapters.get(validated.instance.driverKind);
+  if (!adapter) {
     throw new CanonicalQueueAdmissionError(
       safeError("provider_unavailable", "The selected Provider cannot run yet.", false, ["select_provider"]),
       503,
     );
   }
+  await options.modelHistory?.assertRun({ owner: options.owner, chatId: options.chatId, adapter });
   // Bot workspaces are assigned by bot admission on the server; a client never supplies one,
   // so no ordinary Chat can mount a bot's private files.
   if (input.executionRoot?.kind === "bot_workspace") {

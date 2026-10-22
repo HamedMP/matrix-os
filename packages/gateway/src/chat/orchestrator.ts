@@ -15,6 +15,8 @@ import { createOrderedRunControls } from "./ordered-run-controls.js";
 import { admitCanonicalTurn } from "./turn-admission.js";
 import { supportsProjectSetupInterviewProvider } from "./project-setup-interview-context.js";
 import { chatContextMessages, chatContextRequestHash, contextPrompt, type ChatAgentContext } from "./agent-context.js";
+import type { GoogleModelHistoryReader } from "../google-data/runtime/model-history-reader.js";
+import { assertChatContinuation, type ChatContinuationControl } from './continuation-admission.js';
 import { promptFor } from "./orchestration-input.js";
 import { submitCanonicalInput } from "./input-control.js";
 import { type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
@@ -31,6 +33,7 @@ import {
   CanonicalQueueChatTurnRequestSchema,
   CanonicalSteerChatRunRequestSchema,
   CanonicalSteerQueuedChatTurnRequestSchema,
+  CanonicalSubmitChatApprovalRequestSchema,
   type CanonicalChatMessage,
   type CanonicalChatRun,
   type CanonicalChatRunActivity,
@@ -213,6 +216,7 @@ export class CanonicalChatOrchestrator {
     beforeRoutineCreationAdmission?: import("./turn-admission.js").TurnAdmissionOptions["beforeRoutineCreationAdmission"];
     executionRoots?: ChatExecutionRootResolver;
     agentContext?: ChatAgentContext;
+    modelHistory?: GoogleModelHistoryReader;
     collaborationGuard?: {
       assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
     };
@@ -405,6 +409,7 @@ export class CanonicalChatOrchestrator {
         repository: this.options.repository,
         agentContext: this.options.agentContext,
         beforeRoutineCreationAdmission: this.options.beforeRoutineCreationAdmission, provenance,
+        modelHistory: this.options.modelHistory,
         catalog: this.options.catalog,
         adapters: this.options.adapters,
         ...(this.options.executionRoots ? { executionRoots: this.options.executionRoots } : {}),
@@ -546,6 +551,8 @@ export class CanonicalChatOrchestrator {
             resumeState = claimed.run.context?.agent ? undefined : await loadChatResumeState({
               ...claimed.run,
               repository: this.options.repository, owner, chatId, adapter,
+              modelHistory: this.options.modelHistory,
+              instanceId: claimed.run.instanceId,
               executionRootFingerprint: resolvedRoot?.fingerprint ?? null,
               mode: "follow_up",
             });
@@ -687,6 +694,7 @@ export class CanonicalChatOrchestrator {
       let responseCharacterCount = 0;
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
       failureStage = "provider";
+      if (!sharedScopeId) await this.options.modelHistory?.assertRun({ owner, chatId: run.chatId, adapter, signal: controller.signal });
       sendTiming?.adapterStart();
       const events = resumeState !== undefined && adapter.resume
         ? adapter.resume({ ...input, resumeState })
@@ -960,6 +968,7 @@ export class CanonicalChatOrchestrator {
     runId: string,
     inputValue: CanonicalSteerChatRunRequest,
   ): Promise<CanonicalChatRunSteeringResponse> {
+    owner = structuredClone(owner);
     await this.assertPersonalExecutionAllowed(owner, chatId);
     this.assertOpen();
     const input = CanonicalSteerChatRunRequestSchema.parse(inputValue);
@@ -1007,6 +1016,7 @@ export class CanonicalChatOrchestrator {
       instanceId: active.instanceId,
     });
     try {
+      await this.assertContinuation(owner, chatId, runId, active);
       await active.adapter.steer({
         owner,
         chatId,
@@ -1056,6 +1066,7 @@ export class CanonicalChatOrchestrator {
     queuedTurnId: string,
     inputValue: CanonicalSteerQueuedChatTurnRequest,
   ): Promise<CanonicalChatRunSteeringResponse> {
+    owner = structuredClone(owner);
     await this.assertPersonalExecutionAllowed(owner, chatId);
     this.assertOpen();
     const input = CanonicalSteerQueuedChatTurnRequestSchema.parse(inputValue);
@@ -1104,6 +1115,7 @@ export class CanonicalChatOrchestrator {
       instanceId: active.instanceId,
     });
     try {
+      await this.assertContinuation(owner, chatId, runId, active);
       await active.adapter.steer({
         owner,
         chatId,
@@ -1149,8 +1161,16 @@ export class CanonicalChatOrchestrator {
   }
 
   async submitInput(owner: ChatOwner, chatId: string, runId: string, requestId: string, input: CanonicalSubmitChatInputRequest): Promise<CanonicalChatInputSubmissionResponse> {
+    owner = structuredClone(owner);
     await this.assertPersonalExecutionAllowed(owner, chatId);
-    return submitCanonicalInput({ repository: this.options.repository, active: this.active.get(runId), owner, chatId, runId, requestId, input });
+    const active = this.active.get(runId);
+    return submitCanonicalInput({ repository: this.options.repository, active, owner, chatId, runId, requestId, input,
+      beforeDispatch: active ? () => this.assertContinuation(owner, chatId, runId, active) : undefined });
+  }
+
+  private assertContinuation(owner: ChatOwner, chatId: string, runId: string, active: ChatContinuationControl, recovered = false): Promise<void> {
+    return assertChatContinuation({ reader: this.options.modelHistory, adapters: this.options.adapters,
+      owner, chatId, active, current: () => this.active.get(runId), recovered });
   }
 
   async submitApproval(
@@ -1161,11 +1181,24 @@ export class CanonicalChatOrchestrator {
     inputValue: CanonicalSubmitChatApprovalRequest,
     provenance?: ApprovalProvenance,
   ): Promise<CanonicalChatApprovalSubmissionResponse> {
+    owner = structuredClone(owner);
+    const input = CanonicalSubmitChatApprovalRequestSchema.parse(inputValue);
     await this.assertPersonalExecutionAllowed(owner, chatId);
+    const running = this.active.get(runId);
+    const active = running ?? await recoverBackgroundRunControl({ owner, chatId, runId, repository: this.options.repository, adapters: this.options.adapters });
     return submitCanonicalApproval({ repository: this.options.repository,
-      active: this.active.get(runId) ?? await recoverBackgroundRunControl({ owner, chatId, runId, repository: this.options.repository, adapters: this.options.adapters }),
+      active,
       browserApprovals: this.options.browserApprovals, routineActions: this.options.routineActions,
-    }, owner, chatId, runId, approvalId, inputValue, provenance);
+      beforeDispatch: active ? async () => {
+        try { await this.assertContinuation(owner, chatId, runId, active, !running); }
+        catch (error: unknown) {
+          if (input.decision === 'decline' || input.decision === 'cancel') {
+            await this.cancelRun(owner, chatId, runId);
+          }
+          throw error;
+        }
+      } : undefined,
+    }, owner, chatId, runId, approvalId, input, provenance);
   }
 
   async reconcileActiveRuns(owner: ChatOwner): Promise<number> {

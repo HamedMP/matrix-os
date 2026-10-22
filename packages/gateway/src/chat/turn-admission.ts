@@ -24,6 +24,7 @@ import { unsupportedAgentPermissionMode } from "./agent-permission.js";
 import { supportsProjectSetupInterviewProvider } from "./project-setup-interview-context.js";
 import { performance } from "node:perf_hooks";
 import { chatSendTimingsEnabled, createChatSendTimer, type ChatSendTimer } from "./send-timing.js";
+import type { GoogleModelHistoryReader } from "../google-data/runtime/model-history-reader.js";
 
 export interface TurnAdmissionOptions {
   repository: Pick<ChatRepository, "get" | "getDetailPage" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun">;
@@ -31,6 +32,7 @@ export interface TurnAdmissionOptions {
   adapters: CanonicalChatProviderRegistry;
   executionRoots?: ChatExecutionRootResolver;
   agentContext?: ChatAgentContext;
+  modelHistory?: GoogleModelHistoryReader;
   now?: () => Date;
   assertOpen(): void;
   assertPersonalExecutionAllowed(owner: ChatOwner, chatId: string): Promise<void>;
@@ -207,8 +209,10 @@ async function admitTimedTurn(
         );
       }
     }
+    await deps.modelHistory?.assertRun({ owner, chatId, adapter });
     const resumeState = prepared?.context?.agent || setup ? undefined : await loadChatResumeState({
       repository: deps.repository, owner, chatId, adapter,
+      modelHistory: deps.modelHistory,
       instanceId: validated.instance.id,
       selection: validated.selection, interactionMode: effective.interactionMode, permissionMode: effective.permissionMode,
       context: prepared?.context,
@@ -219,6 +223,7 @@ async function admitTimedTurn(
     try {
       sessionContext = interview ? undefined : await prepareChatSessionContext({
         repository: deps.repository, owner, chatId, throughSeq: record.chat.messageCount,
+        modelHistory: deps.modelHistory, adapter,
         requestHash, instanceId: validated.instance.id, resumeState, context: routineCreationContext(input, prepared?.context),
       });
     } catch (error: unknown) { return mapRepositoryError(error); }
