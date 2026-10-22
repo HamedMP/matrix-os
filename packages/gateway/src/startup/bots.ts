@@ -1,6 +1,6 @@
 import { createGooglePilotCopyLifecycle, type GooglePilotPurgeCommand, type GooglePilotPurgeReceipt } from './google-pilot-copy-lifecycle.js';
 import type { ExecutionAdmissionFence } from '../execution-admission-fence.js';
-import { createGooglePilotArtifactWriteFence } from '../google-data/runtime/pilot-artifact-writes.js';
+import { createGooglePilotArtifactAdmission } from './google-pilot-artifact-admission.js';
 import { createGoogleContextAdmission } from './google-context-admission.js';
 import type { GooglePilotStorage } from './google-pilot-storage.js';
 import type { GoogleDataPilotConfig } from '../google-data/runtime/pilot-config.js';
@@ -411,7 +411,7 @@ export async function startBots(options: {
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   copyLifecycle?.bindManaged(managed);
   const tools = createBotToolDispatcher({
-    ...(pilot.enabled ? { artifactWrites: createGooglePilotArtifactWriteFence(registry) } : {}),
+    ...(pilot.enabled ? { artifactWrites: createGooglePilotArtifactAdmission(registry) } : {}),
     homePath: options.homePath, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
     assertSource: revalidateSource,
     submittedArtifact: (binding, args) => isManagedPiBinding(binding) ? managed.readSubmittedArtifact(binding, args) : orchestrator.readSubmittedArtifact(binding, args),
