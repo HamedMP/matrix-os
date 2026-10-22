@@ -14,6 +14,8 @@ export interface GooglePlatformPolicyDependencies {
    * Legacy owner headers, public sessions and model claims are insufficient. */
   resolveRuntime(c: Context): Promise<GooglePolicyRuntimePrincipal | null>;
   ownsGmailAccount(ownerId: string, googleAccountId: string): Promise<boolean>;
+  /** Production pilot must pin the exact personal runtime before any Gmail processing. */
+  admitRuntime?: (principal: GooglePolicyRuntimePrincipal) => Promise<boolean>;
   now?: () => Date;
   /** Trusted fixed platform/proxy control client; never an owner/machine-selected endpoint. */
   resolveManagedRoute?: GoogleManagedRouteResolver;
@@ -38,6 +40,7 @@ export function createGooglePlatformPolicyRoutes(deps: GooglePlatformPolicyDepen
       if (!principal) return c.json({ error: 'unauthorized' }, 401);
       const auth = z.strictObject({ ownerId: z.string().min(1).max(160), machineId: z.string().min(1).max(160) }).safeParse(principal);
       if (!auth.success) throw new GoogleDataAuthorityError();
+      if(deps.admitRuntime && !await deps.admitRuntime(auth.data)) return c.json({error:'unavailable'},403);
       let raw: unknown;
       try { raw = await c.req.json(); } catch (error) { if (error instanceof SyntaxError) return c.json({ error: 'invalid_request' }, 400); throw error; }
       const parsed = action === 'authorize' ? GooglePolicyAuthorizeSchema.safeParse(raw) : GooglePolicyRevalidateSchema.safeParse(raw);

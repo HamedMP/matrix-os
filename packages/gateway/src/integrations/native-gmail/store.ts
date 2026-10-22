@@ -1,3 +1,4 @@
+import { revokeGoogleConnectedAccount } from '../../google-data/revoke-connected-account.js';
 import { randomUUID } from "node:crypto";
 import { sql, type Kysely } from "kysely";
 import type { PlatformDatabase } from "../../platform-db.js";
@@ -177,12 +178,18 @@ export function createNativeGmailStore(db: Kysely<PlatformDatabase>): NativeGmai
         AND revision=${lease.revision} AND lease_id=${lease.leaseId}`.execute(db);
     },
     async remove(lease, now) {
-      const result = await sql`DELETE FROM connected_services c WHERE c.id=${lease.connectionId}
-        AND c.user_id=${lease.userId} AND c.service='gmail' AND EXISTS
-        (SELECT 1 FROM native_gmail_credentials n WHERE n.connection_id=c.id AND n.user_id=c.user_id
-          AND n.revision=${lease.revision} AND n.lease_id=${lease.leaseId} AND n.lease_operation='revoke' AND n.lease_expires_at > ${now})
-        RETURNING c.id`.execute(db);
-      return Boolean(result.rows.length);
+      return db.transaction().execute(async tx=>{
+        await sql`SET LOCAL statement_timeout='5s'`.execute(tx);await sql`SET LOCAL lock_timeout='2s'`.execute(tx);
+        await sql`SELECT pg_advisory_xact_lock(5510356)`.execute(tx);
+        const current=await sql`SELECT c.id FROM connected_services c JOIN native_gmail_credentials n ON n.connection_id=c.id AND n.user_id=c.user_id
+          WHERE c.id=${lease.connectionId} AND c.user_id=${lease.userId} AND c.service='gmail'
+          AND n.revision=${lease.revision} AND n.lease_id=${lease.leaseId} AND n.lease_operation='revoke' AND n.lease_expires_at>${now}
+          FOR UPDATE OF c,n`.execute(tx);
+        if(!current.rows.length)return false;
+        await revokeGoogleConnectedAccount(tx,lease.connectionId);
+        const result=await sql`DELETE FROM connected_services WHERE id=${lease.connectionId} AND user_id=${lease.userId} RETURNING id`.execute(tx);
+        if(!result.rows.length)throw new Error('Gmail cleanup unavailable');return true;
+      });
     },
     async assertCurrent(row, now) {
       const current = await this.lookup(row, now);

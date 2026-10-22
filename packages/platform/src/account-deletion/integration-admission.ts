@@ -8,6 +8,8 @@ export function createAccountDeletionMutationGuard(options: {
   resolveOwner: (context: Context) => string | null | undefined | Promise<string | null | undefined>;
   env?: NodeJS.ProcessEnv;
   isMutation?: (context: Context) => boolean;
+  /** Trusted server-only cleanup exception; never read a caller header/body to grant it. */
+  isCleanup?: (context: Context) => boolean;
 }): MiddlewareHandler {
   const env = options.env ?? process.env;
   return async (c, next) => {
@@ -25,7 +27,7 @@ export function createAccountDeletionMutationGuard(options: {
         return;
       }
       return await withAccountDeletionOwnerLock(options.db, owner, async (_trx, admission) => {
-        if (!admission.newWorkAllowed) return c.json({ error: 'Account deletion is pending' }, 409);
+        if (!admission.newWorkAllowed && options.isCleanup?.(c) !== true) return c.json({ error: 'Account deletion is pending' }, 409);
         await next();
         // Hono captures handler exceptions into c.error. Preserve transaction rollback.
         if (c.error) throw c.error;
