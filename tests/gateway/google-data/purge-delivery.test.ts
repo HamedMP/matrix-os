@@ -74,6 +74,31 @@ describe('durable consent purge delivery', () => {
     const [fresh]=await delivery.poll(owner,machine); expect(fresh.leaseToken).not.toBe(old.leaseToken);
     await delivery.ack(owner,machine,{commandId:fresh.commandId,revision:fresh.revision,leaseToken:fresh.leaseToken,receipt});
   });
+  it.each(['acked','pending'] as const)('recovers queue capacity and advances other owners when old commands are %s',async state=>{
+    const record=await consent();
+    await sql`INSERT INTO google_data_purge_commands(id,owner_id,google_account_id,consent_id,origin_id,revision,state,acked_at)
+      SELECT gen_random_uuid(),${owner},gen_random_uuid(),gen_random_uuid(),repeat('a',64),1,${state},'2026-10-01'::timestamptz
+      FROM generate_series(1,1000)`.execute(db.sql);
+    const otherProfile=await db.repository.reviewProfile({...profileInput(),ownerId:'owner-two'},0);
+    const otherConsent=await db.repository.recordConsent(consentInput(otherProfile.id,{ownerId:'owner-two'}),0);
+    await db.repository.cleanup(new Date('2026-11-02T00:00:00Z'));
+    const queued=(await sql<{consent_id:string}>`SELECT consent_id FROM google_data_purge_commands WHERE consent_id IN (${record.id}::uuid,${otherConsent.id}::uuid)`.execute(db.sql)).rows;
+    expect(queued.some(row=>row.consent_id===otherConsent.id)).toBe(true);
+    expect(queued.some(row=>row.consent_id===record.id)).toBe(state==='acked');
+    expect((await db.repository.snapshot(key(record))).consent).not.toBeNull();
+    expect((await sql`SELECT id FROM google_data_purge_commands WHERE owner_id=${owner} AND state='pending'`.execute(db.sql)).rows).toHaveLength(state==='pending'?1000:1);
+    await expect(createGoogleDataRepository(db.sql,{now:()=>new Date('2026-11-02T00:00:00Z')}).migrate()).resolves.toBeUndefined();
+  });
+  it('retains unqueued expired authority and starts safely at the global pending-command cap',async()=>{
+    const record=await consent();
+    await sql`INSERT INTO google_data_purge_commands(id,owner_id,google_account_id,consent_id,origin_id,revision,state)
+      SELECT gen_random_uuid(),'full-owner-'||((n-1)/1000)::text,gen_random_uuid(),gen_random_uuid(),repeat('a',64),1,'pending'
+      FROM generate_series(1,100000) AS n`.execute(db.sql);
+    const expired=createGoogleDataRepository(db.sql,{now:()=>new Date('2026-12-10T00:00:00Z')});
+    await expect(expired.migrate()).resolves.toBeUndefined();
+    expect((await expired.snapshot(key(record))).consent).not.toBeNull();
+    expect((await sql<{total:number}>`SELECT count(*)::int AS total FROM google_data_purge_commands`.execute(db.sql)).rows[0]!.total).toBe(100000);
+  });
   it('keeps profile-before-consent lock order during concurrent snapshot and cleanup',async()=>{
     const record=await consent();let entered!:()=>void;const profileRead=new Promise<void>(resolve=>{entered=resolve;});
     let resume!:()=>void;const resumed=new Promise<void>(resolve=>{resume=resolve;});let waiting!:()=>void;
