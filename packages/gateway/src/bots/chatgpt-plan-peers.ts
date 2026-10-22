@@ -1,14 +1,12 @@
 import { createHash, createPublicKey, randomBytes, randomUUID, timingSafeEqual, verify } from 'node:crypto';
-import { CHATGPT_PLAN_PEER_MAX_SEQUENCE, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS, chatGptPlanPeerRequestId, ChatGptPlanPeerConnectSchema, ChatGptPlanPeerReplySchema, ChatGptPlanPeerSessionSchema, chatGptPlanPeerProof, type ChatGptPlanPeerRequest, type ChatGptPlanPeerSnapshot, type BotProviderConnection, type CanonicalChatModelSelection } from '@matrix-os/contracts';
+import { CHATGPT_PLAN_PEER_MAX_SEQUENCE, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS, chatGptPlanPeerRequestId, ChatGptPlanPeerConnectSchema, ChatGptPlanPeerReplySchema, ChatGptPlanPeerSessionSchema, ChatGptPlanPeerPollV2RequestSchema, chatGptPlanPeerProof, type ChatGptPlanPeerRequest, type ChatGptPlanPeerSnapshot, type BotProviderConnection, type CanonicalChatModelSelection } from '@matrix-os/contracts';
 import type { BotExecutor } from './repositories/shared.js';
 import type { PiRuntimeBinding } from './runtime-registry.js';
 import { BotRouteError } from './route-resolver.js';
 import type { ChatGptPlanAuthority } from './chatgpt-plan.js';
-export class ChatGptPlanPeerError extends Error {
-    constructor(readonly code: 'forbidden' | 'invalid_request' | 'unavailable' | 'conflict') {
-        super(code);
-    }
-}
+import { createPeerPollDelivery } from './chatgpt-plan-poll-delivery.js';
+import { ChatGptPlanPeerError } from './chatgpt-plan-peer-error.js';
+export { ChatGptPlanPeerError } from './chatgpt-plan-peer-error.js';
 type InferenceReply = {
     status: number;
     headers: Record<string, string>;
@@ -33,6 +31,8 @@ type Peer = {
     pending: Map<string, Pending>;
     wake?: () => void;
     polling: boolean;
+    mode?: 1 | 2;
+    delivery?: ReturnType<typeof createPeerPollDelivery>;
 };
 /** Owner-authenticated local device, pinned public key, and one explicit source.
  * Holds no OAuth token and never contacts OpenAI from the managed gateway. */
@@ -61,6 +61,7 @@ export function createChatGptPlanPeers(deps: {
         if (!previous)
             return;
         previous.wake?.();
+        previous.delivery?.close();
         for (const p of previous.pending.values()) {
             clearTimeout(p.timer);
             p.signal.removeEventListener('abort', p.abort);
@@ -70,12 +71,12 @@ export function createChatGptPlanPeers(deps: {
         previous.requests.length = 0;
     };
     const current = () => {
-        if (peer && now() - peer.lastTouched > 30000) {
+        if (peer && (now() - peer.lastTouched > 30000 || peer.delivery?.expired())) {
             drop();
         }
         return peer;
     };
-    const session = (owner: string, input: unknown) => {
+    const session = (owner: string, input: unknown, touch = true) => {
         scope(owner);
         const parsed = ChatGptPlanPeerSessionSchema.safeParse(input);
         const selected = current();
@@ -83,12 +84,38 @@ export function createChatGptPlanPeers(deps: {
             throw new ChatGptPlanPeerError('invalid_request');
         if (!selected || !timingSafeEqual(Buffer.from(parsed.data.sessionId), Buffer.from(selected.sessionId)))
             throw new ChatGptPlanPeerError('unavailable');
-        selected.lastTouched = now();
+        if (touch) selected.lastTouched = now();
         return selected;
     };
     const timer = setInterval(current, 5000);
     timer.unref();
+    const enqueue = (p: Peer, request: ChatGptPlanPeerRequest) => {
+        if (p.delivery) p.delivery.enqueue(request);
+        else { p.requests.push(request); p.wake?.(); }
+    };
+    const cancel = (p: Peer, id: string) => {
+        if (p.delivery) p.delivery.cancel(id);
+        else {
+            p.requests = p.requests.filter(request => request.id !== id);
+            if (p.requests.length < 32) p.requests.push({ version: 1, action: 'cancel', id });
+            p.wake?.();
+        }
+    };
+    const command = (p: Peer, binding: PiRuntimeBinding, body: string, stream = false) => {
+        const sequence = p.sequence + 1;
+        const request: Extract<ChatGptPlanPeerRequest, { action: 'infer' }> = { version: 1, action: 'infer',
+            id: chatGptPlanPeerRequestId(p.sessionId, sequence), sequence, expiresAt: new Date(now() + CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS).toISOString(),
+            accountId: binding.subscription!.accountId, grantRevision: binding.subscription!.grantRevision, computerId: deps.computerId,
+            requestClass: binding.requestClass, runId: binding.runId, model: binding.route.modelId, body, ...(stream ? { responseMode: 'stream' } : {}) };
+        if (p.delivery && !p.delivery.canAdmit(request)) throw new ChatGptPlanPeerError('unavailable');
+        p.sequence = sequence;
+        return request;
+    };
     const service = {
+        capabilities(owner: string, input: unknown) {
+            const p = session(owner, input, false);
+            return { version: 1 as const, sessionId: p.sessionId, pollDeliveryVersion: 2 as const };
+        },
         challenge(owner: string) {
             scope(owner);
             for (const [id, at] of challenges)
@@ -165,9 +192,11 @@ export function createChatGptPlanPeers(deps: {
             } finally { connecting = false; }
         },
         async poll(owner: string, input: unknown) {
-            const p = session(owner, input);
-            if (p.polling)
+            const p = session(owner, input, false);
+            if (p.polling || p.mode === 2)
                 throw new ChatGptPlanPeerError('conflict');
+            p.lastTouched = now();
+            p.mode = 1;
             p.polling = true;
             try {
                 if (!p.requests.length)
@@ -191,6 +220,21 @@ export function createChatGptPlanPeers(deps: {
             finally {
                 p.polling = false;
             }
+        },
+        pollV2(owner: string, input: unknown, signal: AbortSignal) {
+            scope(owner);
+            const parsed = ChatGptPlanPeerPollV2RequestSchema.safeParse(input);
+            if (!parsed.success) throw new ChatGptPlanPeerError('invalid_request');
+            const p = session(owner, { version: 1, sessionId: parsed.data.sessionId }, false);
+            if (p.mode === 1) throw new ChatGptPlanPeerError('conflict');
+            const delivery = p.delivery ?? createPeerPollDelivery({ sessionId: p.sessionId, now,
+                current: () => current() === p, expire: () => { if (peer === p) drop(); } });
+            try {
+                if (!p.delivery) for (const request of p.requests) if (request.action === 'infer') delivery.enqueue(request);
+                const result = delivery.poll(parsed.data.ackThrough, signal);
+                p.delivery = delivery; p.mode = 2; p.requests = []; p.lastTouched = now();
+                return result.then(emission => { emission.verify(); p.lastTouched = now(); return emission; });
+            } catch (error: unknown) { if (!p.delivery) delivery.close(); throw error; }
         },
         reply(owner: string, input: unknown) {
             const parsed = ChatGptPlanPeerReplySchema.safeParse(input);
@@ -262,9 +306,8 @@ export function createChatGptPlanPeers(deps: {
             const p = current()!;
             if (p.pending.size >= 4 || p.requests.length >= 32 || p.sequence >= CHATGPT_PLAN_PEER_MAX_SEQUENCE)
                 throw new ChatGptPlanPeerError('unavailable');
-            const sequence = ++p.sequence;
-            const id = chatGptPlanPeerRequestId(p.sessionId, sequence);
-            const expiresAt = new Date(now() + CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS).toISOString();
+            const request = command(p, binding, body);
+            const { id } = request;
             return new Promise<InferenceReply>((resolve, reject) => {
                 const abort = () => {
                     const pending = p.pending.get(id);
@@ -273,10 +316,7 @@ export function createChatGptPlanPeers(deps: {
                     p.pending.delete(id);
                     clearTimeout(pending.timer);
                     signal.removeEventListener('abort', abort);
-                    p.requests = p.requests.filter(r => r.id !== id);
-                    if (p.requests.length < 32)
-                        p.requests.push({ version: 1, action: 'cancel', id });
-                    p.wake?.();
+                    cancel(p, id);
                     reject(new ChatGptPlanPeerError('unavailable'));
                 };
                 const timeout = setTimeout(abort, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS);
@@ -286,9 +326,7 @@ export function createChatGptPlanPeers(deps: {
                     abort();
                     return;
                 }
-                p.requests.push({ version: 1, action: 'infer', id, sequence, expiresAt, accountId: binding.subscription!.accountId, grantRevision: binding.subscription!.grantRevision,
-                    computerId: deps.computerId, requestClass: binding.requestClass, runId: binding.runId, model: binding.route.modelId, body });
-                p.wake?.();
+                enqueue(p, request);
             });
         },
         async inferStream(binding: PiRuntimeBinding, body: string, signal: AbortSignal) {
@@ -299,9 +337,8 @@ export function createChatGptPlanPeers(deps: {
                 throw new ChatGptPlanPeerError('unavailable');
             if (p.pending.size >= 4 || p.requests.length >= 32 || p.sequence >= CHATGPT_PLAN_PEER_MAX_SEQUENCE)
                 throw new ChatGptPlanPeerError('unavailable');
-            const sequence = ++p.sequence;
-            const id = chatGptPlanPeerRequestId(p.sessionId, sequence);
-            const expiresAt = new Date(now() + CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS).toISOString();
+            const request = command(p, binding, body, true);
+            const { id } = request;
             type Read = { resolve(value: IteratorResult<string>): void; reject(error: unknown): void };
             type Chunk = { value: string; acknowledge(): void; reject(error: unknown): void };
             let waiting: Read | undefined;
@@ -327,10 +364,7 @@ export function createChatGptPlanPeers(deps: {
             };
             const abort = () => {
                 if (!remove()) return;
-                p.requests = p.requests.filter(request => request.id !== id);
-                if (p.requests.length < 32)
-                    p.requests.push({ version: 1, action: 'cancel', id });
-                p.wake?.();
+                cancel(p, id);
                 fail(unavailable());
             };
             const resumeIdle = () => {
@@ -397,10 +431,7 @@ export function createChatGptPlanPeers(deps: {
                 throw unavailable();
             }
             else {
-                p.requests.push({ version: 1, action: 'infer', id, sequence, expiresAt, responseMode: 'stream', accountId: binding.subscription!.accountId,
-                    grantRevision: binding.subscription!.grantRevision, computerId: deps.computerId, requestClass: binding.requestClass,
-                    runId: binding.runId, model: binding.route.modelId, body });
-                p.wake?.();
+                enqueue(p, request);
             }
             return { status: 200, headers: { 'content-type': 'text/event-stream' }, body: iterator };
         },

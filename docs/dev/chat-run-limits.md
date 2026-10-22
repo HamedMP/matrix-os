@@ -77,6 +77,40 @@ Invalid attachments remain available for removal or editing with a safe error. P
 
 ## Qualification
 
+### Native receipt delivery
+
+New Electron service composition explicitly selects the session-bound v2 peer;
+the strict v1 adapter remains for older Native clients. Signed enrollment,
+device pin, runtime bearer and owner checks are unchanged. A positive capability
+response must match the current session before `/poll-v2`. An unrecognized old
+Host, including capability 404, cannot trigger automatic fallback. Deploy a
+matching Host before the new Electron client; a v2 session cannot downgrade
+during rollback or resume a previous model request after re-enrollment.
+
+Host retains original infer/Cancel commands until a cumulative receipt ACK.
+Native acknowledges handled commands rather than completed inference, keeps
+infer execution deduplicated, and applies same-batch Cancel before dispatch.
+This is ephemeral session-local delivery, not durable exactly-once execution.
+The ledger holds at most 32 commands, four unACKed infer bodies, and four slots
+reserved for Cancel. Published receipts expire after 30 seconds without renewal;
+unsent Cancels use enqueue time. The existing encoded poll cap remains
+46,918,320 bytes. Tiny capability/poll request bodies are limited to 512 actual
+bytes before parsing. At most two application-owned waits/emissions are held;
+coalesced same-ACK waiters share the original 10-second long-poll deadline.
+Each published response has a fixed 15-second
+emission deadline. Response cancellation frees its own slot, never the ledger.
+
+V2 permits one additional same-session poll for the existing preconnect codes
+or the generic Chromium SSL protocol error, with strict HTTPS verification.
+Certificate/trust/auth/source/abort and unknown causes fail closed before any
+positive match. Both poll versions retain 15-second response deadlines and the
+same byte cap. V1 keeps its narrow preconnect-only recovery. Model inference,
+reply/chunk POSTs, credentials and tool operations are never replayed. Poll/ACK
+does not count as progress or extend inference idle, approval or funded limits.
+Repeated control failure still ends the run; this does not diagnose or repair
+an external TLS fault. See the dedicated v2 design/plan under
+`specs/633-agent-waiting-policy/` for compatibility and rollback.
+
 Electron Desktop keeps failure-only subscription diagnostics in a dedicated, profile-isolated subdirectory of its application logs. The recorder accepts fixed error categories, stages, HTTP statuses, strict request/run/computer IDs and a generated UTC timestamp; it does not persist prompts, responses, credentials, account labels, raw errors or filesystem paths. Records are capped at 128 entries and 64 KiB, have a 24-hour TTL with recurring cleanup, and use a single asynchronous writer. Shutdown drains for at most one second; an atomic filesystem rename already in progress may still complete afterward. Storage failure does not fail inference or prevent exit, and diagnostics are never uploaded automatically.
 
 Transport failures retain their peer operation stage, a fixed Chromium/Node error code when available, and whether failure preceded headers, occurred during body reading or followed binding revalidation. Changed bindings use a separate stale-source category. These classifications help locate a subsequent failure; adding a recorder cannot retrospectively determine the cause of an earlier generic `run_failed`. Only the narrowly defined control-poll recovery above changes retry behavior; request deadlines and resource/funding protections remain.

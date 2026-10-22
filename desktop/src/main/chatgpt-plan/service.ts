@@ -334,6 +334,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         }
     }
     const peer = createPlanNativePeer({
+        deliveryVersion: 2,
         fetchFn, current: currentPeer, infer, inferStream, connected: value => {
             bridgeConnected = value;
             if (!value)

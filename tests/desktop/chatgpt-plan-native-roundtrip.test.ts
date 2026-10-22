@@ -70,12 +70,16 @@ async function fixture(runtimeSlot='primary') {
    }
    return json({version:1,sessionId:'00000000-0000-4000-8000-000000000001'});
   }
-  if(url.pathname==='/api/chatgpt-plan/device/poll'){
+  if(url.pathname==='/api/chatgpt-plan/device/capabilities')return json({version:1,sessionId:'00000000-0000-4000-8000-000000000001',pollDeliveryVersion:2});
+  if(url.pathname==='/api/chatgpt-plan/device/poll-v2'){
+   const receipt=JSON.parse(String(init?.body));
+   expect(receipt.version).toBe(2);expect(receipt.sessionId).toBe('00000000-0000-4000-8000-000000000001');
    polls++;
    await new Promise<void>((resolve,reject)=>{const abort=()=>{clearTimeout(timer);reject(new DOMException('cancelled','AbortError'));};const timer=setTimeout(()=>{init?.signal?.removeEventListener('abort',abort);resolve();},15);init?.signal?.addEventListener('abort',abort,{once:true});});
-   const requests=queued;queued=[];return json({version:1,requests});
+   const requests=queued;queued=[];return json({version:2,sessionId:receipt.sessionId,acknowledgedThrough:receipt.ackThrough,
+    deliveries:requests.map((request,i)=>({deliverySequence:receipt.ackThrough+i+1,request}))});
   }
-  if(url.pathname==='/api/chatgpt-plan/device/reply'){replies.push(JSON.parse(String(init?.body)));return json({ok:true});}
+  if(url.pathname==='/api/chatgpt-plan/device/reply'){replies.push(JSON.parse(String(init?.body)));return json({version:1,ok:true});}
   if(url.pathname==='/api/chatgpt-plan/device/disconnect'){const gate=disconnectGate;disconnectGate=null;if(gate)await gate;return json({ok:true});}
   throw new Error('unexpected fixture endpoint');
  });

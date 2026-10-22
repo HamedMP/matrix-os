@@ -97,3 +97,18 @@ Verify RED/GREEN through production parsers, authenticated peer registries and r
 7. Reuse Draft PR2794 and the existing authorized Private Preview. Record exact new source/bundle/worker/Electron provenance before testing. The previous 05d466 short live successes cannot qualify this runtime correction. Preserve the user’s ordering: implementation and private acceptance, user review, then formal Greptile/CI. No production/shared Platform deploy or merge.
 
 Applicable surfaces are Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile. Shared backend semantics do not establish live five-surface or Native device qualification. No source policy may depend on one renderer.
+
+## Session-local Native command receipts
+
+The paired ChatGPT subscription peer additionally uses explicit capability and
+v2 command-delivery DTOs. Retain infer/Cancel until handled receipt ACK, preserve
+same-session dispatch deduplication and Cancel priority, and keep queues,
+waiters, emitted buffers and original deadlines bounded. V1 remains strict for
+old Native clients; the new service selects v2 and fails closed on unrecognized
+old Hosts rather than guessing a safe downgrade. Model/reply POSTs, enrollment,
+grants and funds are not replayed or extended. Source/session/attempt identity
+and certificate refusals win over transient recovery. Full auth matrix, byte and
+time bounds, compatibility and Host-first rollback sequence are specified in
+[the protocol design](poll-delivery-v2-design.md) and
+[implementation plan](poll-delivery-v2-plan.md). Local synthetic inference and
+Node HTTP tests do not qualify real TLS or 10/30-minute Electron operation.

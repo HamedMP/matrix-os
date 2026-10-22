@@ -36,3 +36,10 @@ child tasks, tool-mediated model work, readiness probes and other independent
 inference paths do not consume it. Cost acceptance must separately qualify
 those paths, live pricing, output bounds and the exact number of authorized
 turns. A source/test result is not proof of installed runtime configuration.
+
+Native ChatGPT subscription control delivery has a separately negotiated receipt
+ledger (see `chat-run-limits.md`). A repeated poll re-delivers commands, not a new
+generation: Native keeps the original inference and consumes no extra model-call
+allowance for a duplicate. Cancel/ACK, source authorization and the original
+inference/funding guards remain independent. This transport correction does not
+raise tool, token, context, funding or per-worker-invocation budgets.

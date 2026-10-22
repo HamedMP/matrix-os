@@ -1,10 +1,12 @@
 import { CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT } from '@matrix-os/contracts';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod/v4';
 import type { RequestPrincipal } from '../request-principal.js';
 import { hasVerifiedRuntimeBearer, isRequestPrincipalError, mapRequestPrincipalError } from '../request-principal.js';
 import { ChatGptPlanPeerError, type ChatGptPlanPeers } from './chatgpt-plan-peers.js';
+import { emitPeerPoll, readPeerControlBody } from './chatgpt-plan-poll-route.js';
 
 const challengeBody = z.object({}).strict();
 const failureStatus = { forbidden: 403, invalid_request: 400, unavailable: 503, conflict: 409 } as const;
@@ -25,9 +27,13 @@ export function createChatGptPlanPeerRoutes(options: {
   }));
   routes.use(`${root}/*`, async (c, next) => {
     if (c.req.path === `${root}/reply`) return next();
-    return bodyLimit({ maxSize: 1100000, onError: c => c.json({ code: 'invalid_request', message: 'The request is too large.' }, 413) })(c, next);
+    const small = c.req.path === `${root}/capabilities` || c.req.path === `${root}/poll-v2`;
+    return bodyLimit({ maxSize: small ? 512 : 1100000, onError: c => c.json({ code: 'invalid_request', message: 'The request is too large.' }, 413) })(c, next);
   });
   routes.onError((error: unknown, c) => {
+    if (error instanceof HTTPException && error.status === 413) {
+      return c.json({ code: 'invalid_request', message: 'The request is too large.' }, 413);
+    }
     if (isRequestPrincipalError(error)) {
       const mapped = mapRequestPrincipalError(error);
       return c.json(mapped.body, mapped.status);
@@ -67,6 +73,15 @@ export function createChatGptPlanPeerRoutes(options: {
   routes.post(`${root}/poll`, async c => {
     const { ownerId, peers } = authorized(c);
     return c.json(await peers.poll(ownerId, await c.req.json()));
+  });
+  routes.post(`${root}/capabilities`, async c => {
+    const { ownerId, peers } = authorized(c);
+    return c.json(peers.capabilities(ownerId, await readPeerControlBody(c.req.raw)));
+  });
+  routes.post(`${root}/poll-v2`, async c => {
+    const { ownerId, peers } = authorized(c);
+    const emission = await peers.pollV2(ownerId, await readPeerControlBody(c.req.raw), c.req.raw.signal);
+    return emitPeerPoll(c, emission);
   });
   routes.post(`${root}/reply`, async c => {
     const { ownerId, peers } = authorized(c);

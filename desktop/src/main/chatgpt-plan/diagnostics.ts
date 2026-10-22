@@ -162,7 +162,7 @@ export function logPlanFailure(stage: string, error: unknown, context?: unknown)
 
 
 const PERSISTED_STAGES = new Set([
-    'responses', 'catalog', 'peer_challenge', 'peer_rebind-challenge', 'peer_connect', 'peer_poll', 'peer_reply',
+    'responses', 'catalog', 'peer_challenge', 'peer_rebind-challenge', 'peer_connect', 'peer_capabilities', 'peer_poll', 'peer_reply',
     'peer_disconnect', 'peer_rebind', 'peer_response_cleanup', 'peer_reply_cleanup', 'response_stream_cleanup',
     'source_refresh', 'source_restore', 'oauth_completion', 'oauth_revoke', 'oauth_error_body',
     'oauth_error_body_cleanup', 'oauth_identity', 'oauth_token', 'oauth_jwks', 'oauth_discovery', 'other',
