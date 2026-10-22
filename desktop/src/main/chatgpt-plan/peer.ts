@@ -93,6 +93,18 @@ export function createPlanNativePeer(deps: PeerDependencies) {
             if (!deps.current(binding))
                 throw new Error('peer changed');
             return text ? JSON.parse(text) as unknown : {};
+        } catch (error: unknown) {
+            // Retain the transport boundary without exposing fetch URLs or
+            // provider text. A reply timeout must not look like model timeout.
+            if (error instanceof PlanFailure) throw error;
+            const reason = deadline.aborted ? deadline.reason : error;
+            if (reason instanceof DOMException) {
+                throw new PlanFailure(`peer_${path}`, reason.name === 'TimeoutError' ? 'timeout'
+                    : reason.name === 'AbortError' ? 'cancelled' : 'transport_error');
+            }
+            if (error instanceof TypeError) throw new PlanFailure(`peer_${path}`, 'network_error');
+            if (error instanceof SyntaxError || error instanceof z.ZodError) throw new PlanFailure(`peer_${path}`, 'invalid_schema');
+            throw error;
         } finally {
             deadline.removeEventListener('abort', interrupted);
         }
@@ -175,8 +187,9 @@ export function createPlanNativePeer(deps: PeerDependencies) {
                                     const send = async (reply: unknown) => {
                                         const ack = await post(binding, 'reply', ChatGptPlanPeerReplySchema.parse(reply), signal);
                                         if (ack === POST_CONFLICT) return false;
-                                        z.object({ version: z.literal(1), ok: z.literal(true), sessionId: z.literal(session.sessionId),
-                                            id: z.literal(request.id), sequence: z.literal(sequence) }).strict().parse(ack);
+                                        const validated = z.object({ version: z.literal(1), ok: z.literal(true), sessionId: z.literal(session.sessionId),
+                                            id: z.literal(request.id), sequence: z.literal(sequence) }).strict().safeParse(ack);
+                                        if (!validated.success) throw new PlanFailure('peer_reply', 'invalid_schema');
                                         return true;
                                     };
                                     for await (const chunk of deps.inferStream(request, signal)) {

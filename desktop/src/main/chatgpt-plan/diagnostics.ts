@@ -80,4 +80,58 @@ export function logPlanFailure(stage: string, error: unknown, context?: unknown)
     const diagnostic = failure?.responseDiagnostic ? safePlanResponseDiagnostic(failure.responseDiagnostic) : null;
     const correlation = safeFailureCorrelation(context);
     console.warn(`[chatgpt-plan] ${failure?.stage ?? stage}: ${category}${failure?.httpStatus !== undefined ? ` (http ${failure.httpStatus})` : ''}${diagnostic ? ` ${JSON.stringify(diagnostic)}` : ''}${correlation ? ` ${JSON.stringify({ correlation })}` : ''}`);
+    if (failureSink) {
+        const row = safePlanFailureRecord({ observedAt: new Date().toISOString(), stage: failure?.stage ?? stage,
+            category, httpStatus: failure?.httpStatus, correlation: context });
+        if (row) {
+            try { failureSink(row); }
+            catch (error: unknown) { console.warn('[chatgpt-plan] diagnostic_record_failed'); }
+        }
+    }
+}
+
+
+const PERSISTED_STAGES = new Set([
+    'responses', 'catalog', 'peer_challenge', 'peer_rebind-challenge', 'peer_connect', 'peer_poll', 'peer_reply',
+    'peer_disconnect', 'peer_rebind', 'peer_response_cleanup', 'peer_reply_cleanup', 'response_stream_cleanup',
+    'source_refresh', 'source_restore', 'oauth_completion', 'oauth_revoke', 'oauth_error_body',
+    'oauth_error_body_cleanup', 'oauth_identity', 'oauth_token', 'oauth_jwks', 'oauth_discovery', 'other',
+]); // Fixed enum, never populated from errors.
+const PERSISTED_CATEGORIES = new Set([
+    ...Object.values(LOCAL_FAILURE_CATEGORIES), 'local_failure', 'cancelled', 'timeout', 'transport_error',
+    'network_error', 'invalid_schema', 'invalid_signed_identity', 'stale_source', 'background_denied',
+    'http_error', 'invalid_catalog', 'plan_scope_missing', 'credential_rejected', 'invalid_json',
+    'incomplete_stream', 'invalid_stream', 'response_too_large', 'invalid_content_type',
+]); // Fixed enum, never populated from errors.
+export interface PlanFailureRecord {
+    observedAt: string;
+    stage: string;
+    category: string;
+    httpStatus?: number;
+    correlation?: Partial<Record<'requestId' | 'runId' | 'computerId', string>>;
+}
+/** Disk records have a smaller contract than console diagnostics. No arbitrary strings. */
+export function safePlanFailureRecord(value: unknown): PlanFailureRecord | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const input = value as Record<string, unknown>;
+    if (typeof input.observedAt !== 'string' || input.observedAt.length !== 24
+        || !Number.isFinite(Date.parse(input.observedAt)) || new Date(input.observedAt).toISOString() !== input.observedAt) return null;
+    const row: PlanFailureRecord = { observedAt: input.observedAt,
+        stage: typeof input.stage === 'string' && PERSISTED_STAGES.has(input.stage) ? input.stage : 'other',
+        category: typeof input.category === 'string' && PERSISTED_CATEGORIES.has(input.category) ? input.category : 'local_failure' };
+    if (typeof input.httpStatus === 'number' && Number.isInteger(input.httpStatus) && input.httpStatus >= 100 && input.httpStatus <= 599) row.httpStatus = input.httpStatus;
+    const correlation = safeFailureCorrelation(input.correlation);
+    if (correlation) {
+        const ids: NonNullable<PlanFailureRecord['correlation']> = {};
+        for (const key of ['requestId', 'runId', 'computerId'] as const) if (correlation[key]) ids[key] = correlation[key];
+        if (Object.keys(ids).length) row.correlation = ids;
+    }
+    return row;
+}
+let failureSink: ((record: PlanFailureRecord) => void) | undefined;
+/** One explicit main-process owner; no global console interception or renderer IPC. */
+export function observePlanFailures(sink: (record: PlanFailureRecord) => void): () => void {
+    if (failureSink) throw new Error('Plan diagnostic owner already installed');
+    failureSink = sink;
+    return () => { if (failureSink === sink) failureSink = undefined; };
 }

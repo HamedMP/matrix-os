@@ -69,6 +69,10 @@ Invalid attachments remain available for removal or editing with a safe error. P
 
 ## Qualification
 
+Electron Desktop keeps failure-only subscription diagnostics in a dedicated, profile-isolated subdirectory of its application logs. The recorder accepts fixed error categories, stages, HTTP statuses, strict request/run/computer IDs and a generated UTC timestamp; it does not persist prompts, responses, credentials, account labels, raw errors or filesystem paths. Records are capped at 128 entries and 64 KiB, have a 24-hour TTL with recurring cleanup, and use a single asynchronous writer. Shutdown drains for at most one second; an atomic filesystem rename already in progress may still complete afterward. Storage failure does not fail inference or prevent exit, and diagnostics are never uploaded automatically.
+
+Transport failures retain their peer operation stage: an acknowledgement timeout is distinct from an upstream response timeout. These classifications help locate a subsequent failure; adding a recorder cannot retrospectively determine the cause of an earlier generic `run_failed`. This diagnostic change does not alter request deadlines, retry behavior or resource/funding protections.
+
 Regression tests must keep a silent busy turn active past each old aggregate deadline, then complete it or Stop it. They must separately prove lost renewal, stale generation, revoked authority, pending-control expiry and remaining funding/resource protections. Use fake clocks, small output fixtures and real local Unix sockets; do not substitute fake provider progress for elapsed time.
 
 Record source commit, backend bundle, worker profile and local client provenance before live acceptance. Earlier short Chat/Bot successes from another bundle do not qualify this behavior. Local tests do not prove a deployed runtime, upstream provider liveness or live systemd cleanup. User review precedes formal Greptile/CI and merge; public documentation in the separate site repository and the applicable live surface/device evidence remain release requirements.
