@@ -83,7 +83,8 @@ run_one_job() {
   remove_offline_runners "$slot" || true
   jit=$(jit_config "$slot") && [ -n "$jit" ] || return 1
   # Default capabilities keep in-container sudo for apt; no privileged mode, host mounts or Docker socket.
-  timeout --kill-after=60 "$JOB_TIMEOUT_SECONDS" docker run --rm --name "$name" \
+  # The matrix-ci-pool network's firewall allows only public egress (firewall.sh).
+  timeout --kill-after=60 "$JOB_TIMEOUT_SECONDS" docker run --rm --name "$name" --network matrix-ci-pool \
     --cpuset-cpus "$(cpuset_for "$slot")" --memory "$SLOT_MEMORY" --memory-swap "$SLOT_MEMORY" \
     --pids-limit 8192 --shm-size 2g --env "RUNNER_JIT=$jit" \
     "$IMAGE" bash -c 'exec ./run.sh --jitconfig "$RUNNER_JIT"' || status=$?

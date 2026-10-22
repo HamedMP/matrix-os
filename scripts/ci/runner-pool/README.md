@@ -13,9 +13,10 @@ GitHub-hosted runners.
    settings, add repository permissions **Administration: Read and write** (to
    mint just-in-time runners) and **Variables: Read and write** (for the
    heartbeat), then accept the updated permissions on the `HamedMP/matrix-os`
-   installation. The host needs a copy of the app's private key (the same key
-   stored as the `matrix-ci` environment's `MATRIX_CI_GATE_APP_PRIVATE_KEY`).
-2. **Host.** Ubuntu 24.04 x86-64 with Docker, `jq`, `openssl` and `curl`.
+   installation. The host needs one of the app's private keys. GitHub secrets
+   cannot be read back, so use a saved copy of the `.pem` or generate a new key
+   under the app's **Private keys** settings.
+2. **Host.** Ubuntu 24.04 x86-64 with Docker, `jq`, `openssl`, `curl` and `iptables`.
    Copy the key to `/etc/matrix-ci-pool/app.pem` (root only).
 3. **Install.** From a checkout of `main` on the host:
 
@@ -40,6 +41,9 @@ Rerun `install.sh` after changing the image or `pool.sh`; it restarts the slots.
 ## Isolation
 
 Containers get no Docker socket, host mounts or privileged mode, and receive
-only a single-use JIT runner configuration. The App key and `pool.env` stay
+only a single-use JIT runner configuration. They run on the `matrix-ci-pool`
+network, whose firewall (`firewall.sh`, `matrix-ci-pool-firewall.service`)
+rejects new connections to the host and to private, link-local and multicast
+addresses; slots refuse to start without it. The App key and `pool.env` stay
 root-only on the host. Fork PRs never route here, and fork workflows require
 maintainer approval for every external contributor.

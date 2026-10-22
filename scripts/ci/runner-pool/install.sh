@@ -7,13 +7,14 @@ set -euo pipefail
 source_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 config=/etc/matrix-ci-pool/pool.env
 
-for tool in docker jq openssl curl systemctl; do
+for tool in docker jq openssl curl systemctl iptables; do
   command -v "$tool" >/dev/null || { echo "Missing $tool." >&2; exit 1; }
 done
 
 install -d -m 0755 /opt/matrix-ci-pool
-install -m 0755 "$source_dir/pool.sh" /opt/matrix-ci-pool/pool.sh
-install -m 0644 "$source_dir/matrix-ci-pool-slot@.service" "$source_dir/matrix-ci-pool-heartbeat.service" /etc/systemd/system/
+install -m 0755 "$source_dir/pool.sh" "$source_dir/firewall.sh" /opt/matrix-ci-pool/
+install -m 0644 "$source_dir/matrix-ci-pool-slot@.service" "$source_dir/matrix-ci-pool-heartbeat.service" \
+  "$source_dir/matrix-ci-pool-firewall.service" /etc/systemd/system/
 
 install -d -m 0700 /etc/matrix-ci-pool
 if [ ! -f "$config" ]; then
@@ -36,7 +37,12 @@ fi
 
 docker build --pull -t "${IMAGE:-matrix-ci-runner:current}" "$source_dir"
 
+docker network inspect matrix-ci-pool >/dev/null 2>&1 || docker network create --driver bridge \
+  --subnet 172.30.81.0/24 --opt com.docker.network.bridge.name=matrix-ci-pool0 matrix-ci-pool
+
 systemctl daemon-reload
+systemctl enable matrix-ci-pool-firewall.service
+systemctl restart matrix-ci-pool-firewall.service
 # Stop slots beyond the configured count, then (re)start the configured ones.
 for unit in $(systemctl list-units 'matrix-ci-pool-slot@*' --all --no-legend --plain | awk '{print $1}'); do
   index=${unit#matrix-ci-pool-slot@}; index=${index%.service}

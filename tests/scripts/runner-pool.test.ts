@@ -88,7 +88,7 @@ describe("runner pool", () => {
     expect(log).toMatch(/actions\/runners\/5\b/);
     expect(log).not.toMatch(/actions\/runners\/[67]\b/);
     const dockerRun = log.split("\n").find((line) => line.startsWith("docker run"));
-    expect(dockerRun).toContain("--rm --name matrix-ci-slot-1 --cpuset-cpus 0-7 --memory 28g");
+    expect(dockerRun).toContain("--rm --name matrix-ci-slot-1 --network matrix-ci-pool --cpuset-cpus 0-7 --memory 28g");
     expect(dockerRun).toContain("RUNNER_JIT=jit-config matrix-ci-runner:current");
     for (const forbidden of ["--privileged", "docker.sock", "-v ", "--volume", "--network host"]) {
       expect(dockerRun).not.toContain(forbidden);
@@ -104,6 +104,17 @@ describe("runner pool", () => {
     const { run, calls } = sandbox();
     expect(run("publish_heartbeat").status).toBe(0);
     expect(calls()).toMatch(/PATCH .*\/actions\/variables\/MATRIX_CI_POOL_HEARTBEAT/);
+  });
+
+  it("keeps job containers behind the egress firewall", () => {
+    const dir = resolve(import.meta.dirname, "../../scripts/ci/runner-pool");
+    const firewall = readFileSync(join(dir, "firewall.sh"), "utf8");
+    for (const cidr of ["10.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8"]) {
+      expect(firewall).toContain(cidr);
+    }
+    expect(firewall).toContain('iptables -I INPUT 1 -i "$bridge" -j REJECT');
+    expect(readFileSync(join(dir, "matrix-ci-pool-slot@.service"), "utf8")).toMatch(/^Requires=.*matrix-ci-pool-firewall\.service$/m);
+    expect(readFileSync(join(dir, "install.sh"), "utf8")).toContain("com.docker.network.bridge.name=matrix-ci-pool0 matrix-ci-pool");
   });
 
   it("pins the runner base image by digest", () => {
