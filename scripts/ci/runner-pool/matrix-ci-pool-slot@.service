@@ -1,0 +1,14 @@
+[Unit]
+Description=Matrix CI ephemeral runner slot %i
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+ExecStart=/opt/matrix-ci-pool/pool.sh slot %i
+ExecStopPost=-/usr/bin/docker rm -f matrix-ci-slot-%i
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
