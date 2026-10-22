@@ -104,6 +104,33 @@ function ensureRegularDirectory(path: string): void {
   }
 }
 
+function readRegularIcon(path: string): Buffer | null {
+  const stat = lstatOrMissing(path);
+  if (!stat?.isFile() || stat.isSymbolicLink() || stat.size > 4 * 1024 * 1024) return null;
+  let fd: number;
+  try {
+    fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  } catch (err: unknown) {
+    if (["ENOENT", "ELOOP"].includes((err as NodeJS.ErrnoException).code ?? "")) return null;
+    throw err;
+  }
+  try {
+    const opened = fs.fstatSync(fd);
+    if (!opened.isFile() || opened.size > 4 * 1024 * 1024 || opened.ino !== stat.ino || opened.dev !== stat.dev) return null;
+    const bytes = Buffer.alloc(opened.size + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = fs.readSync(fd, bytes, length, bytes.length - length, length);
+      if (count === 0) break;
+      length += count;
+    }
+    if (length !== opened.size || fs.fstatSync(fd).size !== opened.size) return null;
+    return bytes.subarray(0, length);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function addMissingBundledIcon(
   homePath: string,
   templateDir: string,
@@ -120,22 +147,25 @@ function addMissingBundledIcon(
     return;
   }
 
-  const source = join(templateDir, relPath);
-  const sourceStat = fs.lstatSync(source);
-  if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || sourceStat.size > 4 * 1024 * 1024) {
-    throw new Error(`Invalid bundled icon source: ${relPath}`);
-  }
-  const sourceFd = fs.openSync(source, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  let bytes: Buffer;
-  try {
-    const opened = fs.fstatSync(sourceFd);
-    if (!opened.isFile() || opened.size > 4 * 1024 * 1024 || opened.ino !== sourceStat.ino || opened.dev !== sourceStat.dev) {
-      throw new Error(`Bundled icon source changed: ${relPath}`);
+  // Icon resolution prefers PNG over SVG. Keep a custom same-stem SVG visible
+  // instead of silently hiding it behind a newly added bundled PNG.
+  if (relPath.endsWith(".png")) {
+    const svgRelPath = relPath.slice(0, -4) + ".svg";
+    const selectedSvgPath = join(homePath, svgRelPath);
+    if (lstatOrMissing(selectedSvgPath)) {
+      const selectedSvg = readRegularIcon(selectedSvgPath);
+      const bundledSvg = readRegularIcon(join(templateDir, svgRelPath));
+      if (!selectedSvg || !bundledSvg || !selectedSvg.equals(bundledSvg)) {
+        report.skipped.push(relPath);
+        logLines.push(`[${now}] Skipped: ${relPath} (owner SVG selection)`);
+        return;
+      }
     }
-    bytes = fs.readFileSync(sourceFd);
-  } finally {
-    fs.closeSync(sourceFd);
   }
+
+  const source = join(templateDir, relPath);
+  const bytes = readRegularIcon(source);
+  if (!bytes) throw new Error(`Invalid bundled icon source: ${relPath}`);
   let destinationFd: number;
   try {
     destinationFd = fs.openSync(destination, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644);

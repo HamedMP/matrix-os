@@ -6,7 +6,7 @@ Remove the 26 retired system PNGs, their unused Gallery duplicate, and 12 histor
 
 Owner-selected artwork, owner homes and icon-style configuration stay authoritative. This change removes repository assets; it does not delete or overwrite customer files or rewrite Git history. No permissions, routes, persistence or app actions change.
 
-For existing local development homes, gateway startup adds bundled icon files only when absent. Existing icon files, including symlinks, remain untouched; symlinked icon directories are rejected. This makes the refreshed launcher and app artwork available after a local restart without replacing owner selections.
+For existing local development homes, gateway startup adds bundled icon files only when absent. Existing icon files, including symlinks, remain untouched; symlinked icon directories are rejected. A custom SVG also keeps priority over a missing same-name packaged PNG, while an unchanged bundled SVG may gain that PNG. This makes the refreshed launcher and app artwork available after a local restart without replacing owner selections.
 
 Validation: hash inventory prevents old artwork copies returning; every manifest icon resolves to a shipped asset; Gallery image-error recovery retains each app's identity; current icon contracts and template-upgrade ownership tests pass. Review the resulting first-party selections across the supported OS views before shipping a host bundle.
 
