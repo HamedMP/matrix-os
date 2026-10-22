@@ -102,7 +102,7 @@ describe("scoped integration read across Gateway and Platform", () => {
     const call = await request("/api/integrations/read-call", "POST",
       { service: "gmail", action: "list_labels", label: "Work", params: {} });
     expect(call.status).toBe(200);
-    expect(providerGet).toHaveBeenCalledWith(expect.objectContaining({ accountId: "pd_owner" }));
+    expect(providerGet).toHaveBeenCalledWith(expect.objectContaining({ accountId: "pd_owner" }), undefined, expect.any(AbortSignal));
     expect(providerGet).toHaveBeenCalledTimes(1);
     expect((await request("/api/integrations/call", "POST",
       { service: "gmail", action: "send_email", label: "Work", params: {} })).status).toBe(401);

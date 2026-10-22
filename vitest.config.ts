@@ -126,7 +126,14 @@ export default defineConfig({
     // tests/e2e is owned by vitest.e2e.config.ts (bun run test:e2e); the
     // desktop suites there launch Electron, which fails on headless unit
     // runners when the unit glob accidentally collects them.
-    exclude: ["tests/**/*.integration.ts", "tests/e2e/**", "node_modules", "dist", ".next"],
+    exclude: ["tests/**/*.integration.ts", "tests/e2e/**", "node_modules", "dist", ".next",
+      // These real-driver suites run in the mandatory disposable PostgreSQL lane.
+      // A WASM fallback cannot qualify row/advisory locks or transaction draining.
+      ...(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL ? [
+        "tests/gateway/google-data/provenance/**",
+        "tests/gateway/google-broker-collection-startup.test.ts",
+      ] : []),
+    ],
     coverage: {
       provider: "v8",
       include: [
