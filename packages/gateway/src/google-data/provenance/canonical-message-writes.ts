@@ -7,7 +7,7 @@ import { createGoogleModelHistoryStore, type GoogleModelHistory } from '../runti
 import { GoogleProvenanceUnavailable, originKey, type GoogleCopy, type GoogleOrigin } from './contracts.js';
 import { createGoogleProvenanceStore } from './store.js';
 import { boundedProvenanceTransaction } from './transaction.js';
-import { matchingOrdinaryCopyReceipt, recordOrdinaryCopyReceipt, retireOrdinaryCopyReceipt } from './ordinary-copy-receipts.js';
+import { matchingOrdinaryCopyReceipt, recordOrdinaryCopyReceipts, retireOrdinaryCopyReceipt } from './ordinary-copy-receipts.js';
 
 const MAX_HASH_BYTES = 512 * 1024;
 function deny(): never { throw new GoogleProvenanceUnavailable(); }
@@ -148,11 +148,13 @@ export function createGoogleCanonicalMessageWriteHook(options: { now?: () => Dat
           await retireOrdinaryCopyReceipt(current, { ownerId: key.owner.ownerId, chatId: key.chatId, kind: 'derived', entityRef: canonicalMessageEntityRef(id) });
         }
       } else if (fresh.classification === 'ordinary') {
+        const receipts = [];
         for (const id of ids) {
           const hash = await canonicalMessagePayloadHash(current, { ...key, messageId: id });
           if (!hash) deny();
-          await recordOrdinaryCopyReceipt(current, { ownerId: key.owner.ownerId, chatId: key.chatId, kind: 'derived', entityRef: canonicalMessageEntityRef(id) }, hash);
+          receipts.push({ key: { ownerId: key.owner.ownerId, chatId: key.chatId, kind: 'derived' as const, entityRef: canonicalMessageEntityRef(id) }, hash });
         }
+        await recordOrdinaryCopyReceipts(current, receipts);
       }
       live();
       return result;

@@ -25,26 +25,42 @@ export async function migrateOrdinaryCopyReceipts<DB>(tx: ReceiptExecutor<DB>): 
 /** Trusted writer only: context -> provenance -> content locks must ALREADY be
  * held before calling. Issuance is atomic with the actual ordinary content write;
  * neither null markers nor caller booleans can certify unknown/old content. */
+export interface OrdinaryCopyReceipt { key: OrdinaryCopyKey; hash: string }
 export async function recordOrdinaryCopyReceipt<DB>(tx: ReceiptExecutor<DB>, key: OrdinaryCopyKey, hash: string): Promise<void> {
-  validate(tx, key, hash);
+  return recordOrdinaryCopyReceipts(tx, [{ key, hash }]);
+}
+
+/** One bounded preflight/upsert per content mutation, including 500-row activity batches. */
+export async function recordOrdinaryCopyReceipts<DB>(tx: ReceiptExecutor<DB>, inputs: readonly OrdinaryCopyReceipt[]): Promise<void> {
+  if (!tx.isTransaction || inputs.length > 500) throw new GoogleProvenanceUnavailable();
+  if (!inputs.length) return;
+  const first = { ...inputs[0]!.key };
+  const records = inputs.map(({ key, hash }) => {
+    validate(tx, key, hash);
+    if (key.ownerId !== first.ownerId || key.chatId !== first.chatId) throw new GoogleProvenanceUnavailable();
+    return { kind: key.kind, entity_ref: key.entityRef, content_hash: hash };
+  });
+  if (new Set(records.map(row => `${row.kind}:${row.entity_ref}`)).size !== records.length) throw new GoogleProvenanceUnavailable();
   await lockGoogleContexts(tx);
   await sql`SELECT pg_advisory_xact_lock(551035503)`.execute(tx);
   const ordinary = await sql`SELECT b.chat_id FROM google_model_history_births b JOIN chats c ON c.id=b.chat_id
-    WHERE b.chat_id=${key.chatId} AND b.owner_type='personal' AND b.owner_id=${key.ownerId}
+    WHERE b.chat_id=${first.chatId} AND b.owner_type='personal' AND b.owner_id=${first.ownerId}
     AND c.owner_type=b.owner_type AND c.owner_id=b.owner_id
     AND NOT EXISTS(SELECT 1 FROM google_context_markers m WHERE m.owner_id=b.owner_id AND m.chat_id=b.chat_id)`.execute(tx);
   if (!ordinary.rows.length) throw new GoogleProvenanceUnavailable();
-  // Lazy bounded cleanup; never evict live proof or pretend expired proof matches.
   await sql`DELETE FROM google_ordinary_copy_receipts WHERE ctid IN
     (SELECT ctid FROM google_ordinary_copy_receipts WHERE expires_at<=clock_timestamp() ORDER BY expires_at LIMIT 100)`.execute(tx);
-  const saved = await sql`INSERT INTO google_ordinary_copy_receipts(owner_id,chat_id,kind,entity_ref,content_hash,expires_at)
-    SELECT ${key.ownerId},${key.chatId},${key.kind},${key.entityRef},${hash},clock_timestamp()+interval '30 days'
-    WHERE EXISTS(SELECT 1 FROM google_ordinary_copy_receipts WHERE owner_id=${key.ownerId} AND kind=${key.kind} AND entity_ref=${key.entityRef})
-      OR ((SELECT count(*) FROM google_ordinary_copy_receipts)<200000 AND
-          (SELECT count(*) FROM google_ordinary_copy_receipts WHERE owner_id=${key.ownerId})<10000)
+  const saved = await sql`WITH incoming AS (
+      SELECT * FROM jsonb_to_recordset(${JSON.stringify(records)}::jsonb) AS i(kind TEXT,entity_ref TEXT,content_hash TEXT)
+    ), capacity AS (SELECT count(*) AS total,count(*) FILTER(WHERE owner_id=${first.ownerId}) AS owned FROM google_ordinary_copy_receipts),
+    needed AS (SELECT count(*) AS n FROM incoming i WHERE NOT EXISTS(
+      SELECT 1 FROM google_ordinary_copy_receipts r WHERE r.owner_id=${first.ownerId} AND r.kind=i.kind AND r.entity_ref=i.entity_ref))
+    INSERT INTO google_ordinary_copy_receipts(owner_id,chat_id,kind,entity_ref,content_hash,expires_at)
+    SELECT ${first.ownerId},${first.chatId},i.kind,i.entity_ref,i.content_hash,clock_timestamp()+interval '30 days'
+    FROM incoming i CROSS JOIN capacity c CROSS JOIN needed n WHERE c.total+n.n<=200000 AND c.owned+n.n<=10000
     ON CONFLICT(owner_id,kind,entity_ref) DO UPDATE SET content_hash=EXCLUDED.content_hash,expires_at=EXCLUDED.expires_at
       WHERE google_ordinary_copy_receipts.chat_id=EXCLUDED.chat_id RETURNING entity_ref`.execute(tx);
-  if (!saved.rows.length) throw new GoogleProvenanceUnavailable();
+  if (saved.rows.length !== records.length) throw new GoogleProvenanceUnavailable();
 }
 
 /** Proof is historical classification only, never provider/consent authority.
