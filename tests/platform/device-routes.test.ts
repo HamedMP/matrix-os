@@ -12,6 +12,7 @@ import { createClerkAuth } from "../../packages/platform/src/clerk-auth.js";
 import { issueSyncJwt, verifySyncJwt } from "../../packages/platform/src/sync-jwt.js";
 import { desktopFonts, desktopPalette } from "@matrix-os/brand/tokens";
 import { createHmac } from "node:crypto";
+import { HonoRequest } from "hono/request";
 
 const JWT_SECRET = "test-secret-at-least-32-characters-long";
 
@@ -978,8 +979,8 @@ describe("device routes", () => {
 
     it("logs form parse failures before returning invalid_request", async () => {
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const formDataSpy = vi
-        .spyOn(Request.prototype, "formData")
+      const parseBodySpy = vi
+        .spyOn(HonoRequest.prototype, "parseBody")
         .mockRejectedValueOnce(new Error("form parse boom"));
       const code = await app
         .request("/api/auth/device/code", {
@@ -1013,7 +1014,7 @@ describe("device routes", () => {
       await expect(res.json()).resolves.toEqual({ error: "invalid_request" });
       expect(errorSpy).toHaveBeenCalledWith("[device-flow] Form parse failed:", "form parse boom");
 
-      formDataSpy.mockRestore();
+      parseBodySpy.mockRestore();
       errorSpy.mockRestore();
     });
   });
