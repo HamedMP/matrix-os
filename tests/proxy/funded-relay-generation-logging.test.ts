@@ -58,6 +58,8 @@ function fixture(reservationMode: "usage" | "cloudflare-count" = "usage") {
       headers: {
         "content-type": "application/json", "x-api-key": CREDENTIAL,
         "cf-aig-collect-log": "false", "cf-aig-collect-log-payload": "true", "cf-aig-zdr": "false",
+        "cf-aig-skip-cache": "false", "cf-skip-cache": "false", "cf-aig-cache-ttl": "3600",
+        "cf-cache-ttl": "3600", "cf-aig-cache-key": "private-caller-cache-key",
         "cf-aig-metadata": JSON.stringify({ raw_owner: "attacker", prompt: "private_prompt" }),
         "cf-aig-authorization": "Bearer caller_gateway_token", "cf-aig-gateway-id": "caller_gateway",
       },
@@ -85,6 +87,8 @@ function expectPrivateMetadata(headers: Headers, model: string) {
   }
   expect(headers.get("cf-aig-collect-log-payload")).toBe("false");
   expect(headers.get("cf-aig-zdr")).toBe("true");
+  expect(headers.get("cf-aig-skip-cache")).toBe("true");
+  for (const name of ["cf-skip-cache", "cf-aig-cache-ttl", "cf-cache-ttl", "cf-aig-cache-key"]) expect(headers.has(name)).toBe(false);
   expect(headers.has("x-api-key")).toBe(false);
 }
 
@@ -98,7 +102,10 @@ describe("funded generation metadata-only logging", () => {
     const response = await f.request(model);
     expect(response.status).toBe(200); await response.text(); await f.relay.close();
     expect(f.dispatches).toHaveLength(1);
-    const { headers } = f.dispatches[0]!;
+    const { headers, url } = f.dispatches[0]!;
+    expect(url).toBe(model === GLM
+      ? `https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/${GLM}`
+      : `${CONFIG.gatewayBaseUrl}/v1/messages`);
     expect(headers.get("cf-aig-collect-log")).toBe("true");
     expectPrivateMetadata(headers, model);
     expect(headers.get("authorization")).toBe(model === GLM ? `Bearer ${CONFIG.workersAiToken}` : null);

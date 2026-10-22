@@ -2,6 +2,7 @@ import { NativeGmailHistoryExpiredError } from "./native-gmail/request.js";
 import type { Context } from "hono";
 import type { PlatformDb } from "../platform-db.js";
 import { IntegrationActionNotImplementedError } from "./action-execution.js";
+import { GoogleCollectionRefusedError } from "./collection-hook.js";
 import { DriveContentError } from "./drive-content.js";
 
 export function isConnectionError(err: unknown): boolean {
@@ -49,6 +50,7 @@ export async function integrationActionSuccess(c: Context, input: {
   action: string;
   data: unknown;
   summary?: string;
+  beforeRelease?: () => Promise<void>;
 }): Promise<Response> {
   const { db, connectionId, service, action, data, summary } = input;
   try {
@@ -58,11 +60,14 @@ export async function integrationActionSuccess(c: Context, input: {
     // Losing that result would encourage the caller to repeat the action.
     console.error("[integrations] usage timestamp update failed:", err);
   }
+  // Authority refusal must propagate after best-effort usage accounting.
+  await input.beforeRelease?.();
   return c.json({ data, service, action, ...(summary ? { summary } : {}) });
 }
 
 /** Preserve general call's safe provider failure mapping for scoped reads. */
 export function integrationActionFailure(c: Context, err: unknown, service: string, action: string): Response {
+  if (err instanceof GoogleCollectionRefusedError) return c.json({ error: "Integration service unavailable" }, 503);
   if (err instanceof NativeGmailHistoryExpiredError) {
     return c.json({ error: "Mailbox history expired. Run a bounded resync before continuing.", code: err.code, resync_required: true }, 409);
   }

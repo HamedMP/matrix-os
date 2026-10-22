@@ -196,6 +196,8 @@ describe("funded relay Cloud Run service", () => {
       expect(fetchFn).toHaveBeenCalledWith(`${config.gatewayBaseUrl}/v1/messages`,
         expect.objectContaining({ method: "POST", body: expect.stringContaining('"max_tokens":1'), headers: {
           "cf-aig-authorization": `Bearer ${config.gatewayToken}`,
+          "cf-aig-collect-log-payload": "false",
+          "cf-aig-skip-cache": "true",
           "anthropic-version": "2023-06-01",
           "content-type": "application/json",
         } }));
