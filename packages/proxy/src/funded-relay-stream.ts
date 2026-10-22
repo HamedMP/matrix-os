@@ -85,7 +85,7 @@ export function boundedBody(
         controller.enqueue(result.value);
       } catch (error) {
         reportAmbiguous();
-        if (beforeRelease) { abortUpstream('response release denied'); await reader.cancel().catch(cleanup => console.warn('[qualified-relay] Stream cleanup:', cleanup instanceof Error ? cleanup.name : 'UnknownError')); }
+        if (beforeRelease) { abortUpstream('response release denied'); await reader.cancel().catch(cleanup => console.warn('[qualified-relay] Stream cleanup unavailable')); }
         settle();
         if (!lifetimeSignal.aborted) {
           const errorName = error instanceof Error ? error.name : "UnknownError";

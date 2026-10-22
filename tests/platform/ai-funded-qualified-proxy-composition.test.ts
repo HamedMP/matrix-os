@@ -25,7 +25,7 @@ describe.skipIf(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL)('real qualifi
     await insertUserMachine(db, { ...identity, clerkUserId: identity.ownerId, handle: 'qualified-one', status: 'running', activationState: 'authorized', imageVersion: 'fixture', provisionedAt: now.toISOString() });
   });
   afterEach(async () => { await relay?.close(); await control?.close(); await service?.close(); await runner?.close(); await destroyTestPlatformDb(db); });
-  it.each(['none', 'start', 'response', 'release'])('enforces real current authority at %s boundary with actual reservation accounting', async boundary => {
+  it.each(['none', 'start', 'response', 'release', 'partial', 'oversized', 'malformed'])('enforces real current authority at %s boundary with actual reservation accounting', async boundary => {
     const repo = createAiFundedPolicyRepository({ db, credentialHashSecret: hashSecret, now: () => now });
     await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [model] });
     await repo.setRuntimePolicy({ identity, expectedRevision: 0, enabled: true, allowedModelIds: [model], monthlyBudgetMicrousd: 1000, expiresAt: null });
@@ -49,29 +49,32 @@ describe.skipIf(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL)('real qualifi
     const platformApp = new Hono().route('/internal/ai/funded', createAiFundedRelayRoutes({ repository: repo, qualified: service, relayControlToken: controlSecret }));
     const revoke = async () => { await repo.revokeRuntimeCredential({ identity, tokenId: issued.lease.credential.tokenId }); };
     let checks = 0;
-    const provider = vi.fn(async () => { if (boundary === 'response') await revoke(); return Response.json({ success: true, result: { id: 'response_one', model,
-      choices: [{ index: 0, message: { role: 'assistant', content: 'synthetic private result' }, finish_reason: 'stop' }],
-      usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, prompt_tokens_details: { cached_tokens: 10 } } } }); });
+    const provider = vi.fn(async () => {
+      if (boundary === 'response') await revoke();
+      if (boundary === 'partial') return new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ id: 'partial_one', model, choices: [{ index: 0, delta: { content: 'synthetic private result' }, finish_reason: 'stop' }] })}\n\n`)); } }), { headers: { 'content-type': 'text/event-stream' } });
+      return Response.json({ success: true, result: { id: 'response_one', model,
+      choices: [{ index: 0, message: { role: 'assistant', content: boundary === 'oversized' ? 'x'.repeat(2048) : 'synthetic private result' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: boundary === 'malformed' ? 999 : 120, prompt_tokens_details: { cached_tokens: 10 } } } }); });
     const wire = vi.fn<typeof fetch>(async (input, init) => {
       if (String(input).startsWith(config.platformBaseUrl + '/internal/ai/funded/')) {
-        if (String(input).endsWith('/dispatch-check') && ++checks === 5 && boundary === 'release') await revoke();
+        if (String(input).endsWith('/dispatch-check') && ++checks === 5 && ['release', 'partial', 'malformed'].includes(boundary)) await revoke();
         const response = await platformApp.request(String(input), init);
         if (String(input).endsWith('/start') && boundary === 'start') await revoke(); return response;
       }
       expect(String(input)).toBe(route.descriptor.upstream.endpoint); expect(new Headers(init?.headers).get('cf-aig-collect-log')).toBe('true');
       expect(new Headers(init?.headers).get('cf-aig-skip-cache')).toBe('true'); return provider();
     });
-    relay = createFundedRelay({ ...config, managedRouteControl: settings, fetch: wire, now: () => now, requestIdFactory: () => 'composed_request' }); const app = new Hono(); relay.register(app);
+    relay = createFundedRelay({ ...config, ...(boundary === 'oversized' ? { maxResponseBytes: 1024 } : {}), managedRouteControl: settings, fetch: wire, now: () => now, requestIdFactory: () => 'composed_request' }); const app = new Hono(); relay.register(app);
     const response = await app.request('/v1/chat/completions', { method: 'POST', headers: { authorization: `Bearer ${issued.lease.credential.token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ model, messages: [{ role: 'user', content: 'synthetic Google text' }], max_tokens: 100 }) });
     expect(response.status).toBe(boundary === 'start' || boundary === 'response' ? 503 : 200);
-    if (boundary === 'release') await expect(response.text()).rejects.toThrow('AI response stream failed');
+    if (['release', 'partial', 'oversized', 'malformed'].includes(boundary)) await expect(response.text()).rejects.toThrow('AI response stream failed');
     else if (boundary === 'none') expect(await response.text()).toContain('synthetic private result');
     else expect(await response.text()).not.toContain('synthetic private result');
     await relay.close();
     const reservation = await db.executor.selectFrom('ai_funded_usage_reservations').selectAll().executeTakeFirstOrThrow();
     const balance = await db.executor.selectFrom('ai_funded_runtime_balances').selectAll().executeTakeFirstOrThrow();
-    if (boundary === 'none' || boundary === 'start') { expect(reservation.status).toBe('settled'); expect(reservation.actual_microusd).toBe(boundary === 'none' ? 24 : 0); expect(balance.reserved_microusd).toBe(0); }
+    if (boundary === 'none' || boundary === 'start' || boundary === 'release') { expect(reservation.status).toBe('settled'); expect(reservation.actual_microusd).toBe(boundary === 'start' ? 0 : 24); expect(balance.reserved_microusd).toBe(0); }
     else { expect(reservation.status).toBe('in_flight'); expect(reservation.actual_microusd).toBeNull(); expect(balance.reserved_microusd).toBeGreaterThan(0); }
     expect(provider).toHaveBeenCalledTimes(boundary === 'start' ? 0 : 1);
   });

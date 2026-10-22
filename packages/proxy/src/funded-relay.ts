@@ -554,7 +554,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       dispatched = true;
       const fetched = await fetchImpl(generationUrl, generationInit);
       try { await qualified?.validate(state.lifetimeSignal, generationUrl); }
-      catch (error) { await fetched.body?.cancel().catch(cleanup => console.warn('[qualified-relay] Result cleanup:', cleanup instanceof Error ? cleanup.name : 'UnknownError')); throw error; }
+      catch (error) { await fetched.body?.cancel().catch(cleanup => console.warn('[qualified-relay] Result cleanup unavailable')); throw error; }
       const upstream = isOpenAi && fetched.ok
         ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
       clearTimeout(firstResponseTimer);
@@ -583,8 +583,12 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         state.resourceLease = null;
         return new Response(null, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
       }
+      let completedSourceBytes: number | undefined;
+      const responseSource = qualified ? coalesceQualifiedResponse(upstream.body, {
+        onComplete: bytes => { completedSourceBytes = bytes; },
+      }) : upstream.body;
       const responseBody = boundedBody(
-        qualified ? coalesceQualifiedResponse(upstream.body) : upstream.body,
+        responseSource,
         config.maxResponseBytes,
         resourceLease,
         (reason) => state.controller.abort(reason),
@@ -597,10 +601,15 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
             pricingVersion: estimate.pricingVersion,
             maxCaptureBytes: config.maxResponseBytes,
           });
+          let trackedBytes = 0;
           return {
-            push: (chunk: Uint8Array) => tracker.push(chunk),
+            push: (chunk: Uint8Array) => { tracker.push(chunk); trackedBytes += chunk.byteLength; },
             complete: () => enqueueFinalization(tracker.complete()),
-            ambiguous: () => enqueueFinalization({ mode: "conservative" }),
+            // Output refusal does not erase known provider usage. Only actual
+            // source EOF plus every observed byte permits exact finalization;
+            // malformed usage still makes tracker.complete() conservative.
+            ambiguous: () => enqueueFinalization(qualified && completedSourceBytes !== undefined && trackedBytes === completedSourceBytes
+              ? tracker.complete() : { mode: "conservative" }),
           };
         })(),
         qualified ? () => qualified.validate(state.lifetimeSignal, generationUrl) : undefined,
