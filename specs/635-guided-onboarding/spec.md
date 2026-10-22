@@ -180,6 +180,13 @@ A dedicated endpoint instead of generic file writes: answers are validated again
 
 ## Security architecture
 
+| Route | Method | Auth | Public | Body limit | Validation |
+| -- | -- | -- | -- | -- | -- |
+| `/api/settings/get-started` | `GET` | Gateway global auth (owner runtime bearer or platform JWT) | No | n/a | none (no input) |
+| `/api/settings/get-started` | `PUT` | Gateway global auth (owner runtime bearer or platform JWT) | No | 8 KiB | strict Zod discriminated union |
+
+Neither path is on the public, webhook, collaboration, route-scoped bearer or WebSocket query-token allowlists, so scoped run tokens, collaborators and app iframes cannot reach it.
+
 - **Auth:** routes sit under `/api/settings`, behind the gateway's existing owner auth (request principal). No new public paths, no query-token WS.
 - **Input validation:** `bodyLimit` 8 KiB on PUT; strict Zod discriminated union; enums for goals, tools and app ideas; name ≤ 40 characters with control characters rejected; arrays capped; serialized draft ≤ 4 KiB.
 - **Paths:** fixed `system/get-started.json` and `system/onboarding-complete.json` under the home; never derived from input.
@@ -208,6 +215,11 @@ A dedicated endpoint instead of generic file writes: answers are validated again
 - No in-memory caches; state is one small file per home.
 - Request bodies capped at 8 KiB; persisted draft capped at 4 KiB.
 - Connect polling (Section 4) keeps the widget's existing hard deadline and clears on unmount.
+
+## Deliverables
+
+- Code and tests in this repository, shipped as the ENG-366 stack below.
+- **Public docs:** a separate PR in `FinnaAI/matrix-os-site` under `content/docs/` describing the Get started wizard (what it asks, that every question is skippable, that answers can be changed later, and what "Make your AI yours" writes to SOUL). Opened once the wizard ships behind the flag.
 
 ## Build sections (GitHub native stack on ENG-366)
 
