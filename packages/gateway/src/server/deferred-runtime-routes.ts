@@ -7,6 +7,7 @@ import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
 import { registerCustomMcpGatewayRoutes, type CustomMcpGatewayRegistration } from "../integrations/custom-mcp/gateway-routes.js";
 import { resolveCustomMcpRuntimeRouting } from "../integrations/custom-mcp/preview-routing.js";
 import { httpRequestDuration, httpRequestsTotal, metricsRegistry, normalizePath } from "../metrics.js";
+import { createBrowserSetupClient, registerBrowserSetupRoutes, resolveBrowserSetupOwner } from "../browser-lab/setup.js";
 import { registerAppRuntimeRoutes } from "./app-runtime-routes.js";
 import { authorizeChatIntegrationRequest } from "../integrations/chat-action-guard.js";
 import type { SharedBrowserBroker } from "../shared-browser/broker.js";
@@ -111,6 +112,9 @@ export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptio
       : {}),
   });
 
+  const setupOwnerId = resolveBrowserSetupOwner(process.env);
+  if (setupOwnerId) registerBrowserSetupRoutes(app, { ownerId: setupOwnerId, client: createBrowserSetupClient(),
+    isAllowedOrigin: options.isAllowedBrowserLabOrigin ?? (() => false) });
   let browserLab: { close(): void } = { close() {} };
   const processManager = registerAppRuntimeRoutes(app, {
     homePath,
@@ -118,6 +122,7 @@ export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptio
     devAppAuthBypass: APP_AUTH_DEV_BYPASS,
     browserLab: {
       enabled: process.env.MATRIX_BROWSER_LAB === "true",
+      setupOwnerId,
       viewerAuthorization: process.env.MATRIX_BROWSER_LAB_VIEWER_AUTH,
       upgradeWebSocket: options.upgradeWebSocket,
       isAllowedOrigin: options.isAllowedBrowserLabOrigin ?? (() => false),

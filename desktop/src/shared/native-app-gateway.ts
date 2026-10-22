@@ -18,6 +18,9 @@ const ActivityQuerySchema = z.strictObject({
   processLimit: z.string().regex(/^(?:[1-9][0-9]?|100)$/).optional(),
   includeSuggestions: z.enum(["true", "false"]).optional(),
 });
+function isBrowserSetup(url: string, method: string): boolean {
+  return url === "/api/browser/setup" && method === "GET" || url === "/api/browser/setup/retry" && method === "POST";
+}
 function isActivityRead(url: string, method: string): boolean {
   if (method !== "GET" || !/^\/api\/system\/activity(?:\?[^#]*)?$/.test(url)) return false;
   const params = new URLSearchParams(url.split("?")[1]);
@@ -45,20 +48,20 @@ export const NativeAppGatewayRequestSchema = z.strictObject({
 }).refine(({ url, init }) => {
   const method = init?.method ?? "GET";
   if (!isActivityRead(url, method) && !isAllowedAppGalleryBridgeRequest(url, method)
-    && !(url === "/api/apps/browser-lab/session" && method === "POST")) return false;
+    && !(url === "/api/apps/browser-lab/session" && method === "POST") && !isBrowserSetup(url, method)) return false;
   return method === "POST" ? init?.body !== undefined : init?.body === undefined && init?.headers === undefined;
 });
 export type NativeAppGatewayRequest = z.infer<typeof NativeAppGatewayRequestSchema>;
 
 export function isAllowedNativeAppGatewayRequest(appIdentity: string, routeSlug: string, request: NativeAppGatewayRequest): boolean {
   const method = request.init?.method ?? "GET";
-  if (nativeBrowserProduct(appIdentity, routeSlug)) return request.url === "/api/apps/browser-lab/session" && method === "POST";
+  if (nativeBrowserProduct(appIdentity, routeSlug)) return request.url === "/api/apps/browser-lab/session" && method === "POST" || isBrowserSetup(request.url, method);
   if (isNativeAppActivityIdentity(appIdentity, routeSlug)) return isActivityRead(request.url, method);
   if (isAppGalleryIdentity(appIdentity, routeSlug)) return isAllowedAppGalleryBridgeRequest(request.url, method);
   return isAppGalleryInventoryIdentity(appIdentity, routeSlug) && request.url === "/api/integrations" && method === "GET";
 }
 export function nativeAppGatewayTimeout(request: NativeAppGatewayRequest): number {
-  if (request.url === "/api/apps/browser-lab/session") return NATIVE_APP_GATEWAY_TIMEOUT_MS;
+  if (request.url === "/api/apps/browser-lab/session" || isBrowserSetup(request.url, request.init?.method ?? "GET")) return NATIVE_APP_GATEWAY_TIMEOUT_MS;
   return request.init?.method === "POST" ? NATIVE_APP_GALLERY_INSTALL_TIMEOUT_MS : NATIVE_APP_GATEWAY_TIMEOUT_MS;
 }
 export function createNativeAppGatewayFetch(invoke: (request: NativeAppGatewayRequest) => Promise<unknown>) {

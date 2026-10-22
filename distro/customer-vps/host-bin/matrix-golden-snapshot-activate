@@ -48,6 +48,8 @@ if [ "$mode" = validation ]; then
   required_clean_evidence=(
     /etc/matrix
     /opt/matrix/env
+    /opt/matrix-browser-lab
+    /etc/systemd/system/multi-user.target.wants/matrix-browser-runtime.service
     /opt/matrix/config
     /opt/matrix/secrets
     /opt/matrix/tls
@@ -168,6 +170,8 @@ EOF
   for forbidden in \
     /etc/matrix \
     /opt/matrix/env \
+    /opt/matrix-browser-lab \
+    /etc/systemd/system/multi-user.target.wants/matrix-browser-runtime.service \
     /opt/matrix/config \
     /opt/matrix/secrets \
     /opt/matrix/tls \

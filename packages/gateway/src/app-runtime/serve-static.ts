@@ -132,6 +132,7 @@ export async function serveStaticFileWithin(
   baseDir: string,
   requestPath: string,
   c: Context,
+  options: { spaFallback?: boolean } = {},
 ): Promise<Response> {
   let baseReal: string;
   try {
@@ -160,6 +161,7 @@ export async function serveStaticFileWithin(
   }
 
   if (entry.status === "missing") {
+    if (options.spaFallback === false) return c.text("Not found", 404);
     // SPA fallback: non-existing paths serve index.html
     const indexEntry = await resolveEntry(baseDir, baseReal, "index.html");
     if (indexEntry.status === "forbidden") {

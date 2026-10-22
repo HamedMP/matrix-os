@@ -1,6 +1,7 @@
 import { join } from "node:path";
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { getOptionalRequestPrincipal, hasVerifiedRuntimeBearer } from "../request-principal.js";
 import { registerBrowserLabRoutes, type BrowserLabOptions } from "../browser-lab/routes.js";
 import {
   createAppDispatcher,
@@ -47,6 +48,24 @@ export function registerAppRuntimeRoutes(app: Hono, deps: AppRuntimeRouteDeps): 
     maxEntries: 256,
   });
   const appSessionBodyLimit = bodyLimit({ maxSize: APP_SESSION_BODY_LIMIT_BYTES });
+
+  // Browser and Cloud desktop are OS surfaces, not installed owner apps. Only
+  // the enabled, owner-bound shared runtime may admit them without a manifest.
+  const browserOwnerId = deps.browserLab?.setupOwnerId ?? (deps.browserLab?.enabled ? deps.browserLab.sharedBrowser?.ownerId : undefined);
+  const isOsBrowser = (slug: string) => slug === "browser-lab" && Boolean(browserOwnerId);
+  async function authorizeOsBrowser(c: Context): Promise<Response | null> {
+    // Configured identity alone (including insecure dev mode) is not proof.
+    if (!hasVerifiedRuntimeBearer(c)) return c.json({ error: "Unauthorized" }, 401);
+    const principal = getOptionalRequestPrincipal(c, {
+      configuredUserId: browserOwnerId, isTrustedSingleUserGateway: true,
+    });
+    if (!principal) return c.json({ error: "Unauthorized" }, 401);
+    if (principal.userId !== browserOwnerId) return c.json({ error: "Forbidden" }, 403);
+    // Consume even an ignored body so bodyLimit enforces chunked requests before
+    // issuing a credential, not only requests with a Content-Length header.
+    await c.req.text();
+    return null;
+  }
 
   app.get("/api/apps/:slug/manifest", async (c) => {
     const slug = c.req.param("slug");
@@ -104,34 +123,39 @@ export function registerAppRuntimeRoutes(app: Hono, deps: AppRuntimeRouteDeps): 
     if (!SAFE_SLUG.test(slug)) {
       return c.json({ error: "invalid slug" }, 400);
     }
-    const appsDir = join(homePath, "apps");
-    const result = await loadManifest(appsDir, slug);
-    if (!result.ok) {
-      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
-      return c.json({ error: "internal" }, 500);
-    }
-    const manifest = result.manifest;
-    if (manifest.scope !== "personal") {
-      return c.json({ error: "scope_mismatch" }, 409);
-    }
-    const distributionStatus = computeDistributionStatus(
-      manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    if (distributionStatus === "blocked") {
-      return c.json({ error: "install_blocked_by_policy" }, 403);
-    }
-    if (distributionStatus === "gated") {
-      let body: { ack?: string } = {};
-      try {
-        body = await c.req.json();
-      } catch (err) {
-        if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
-          throw err;
-        }
+    if (isOsBrowser(slug)) {
+      const denied = await authorizeOsBrowser(c);
+      if (denied) return denied;
+    } else {
+      const appsDir = join(homePath, "apps");
+      const result = await loadManifest(appsDir, slug);
+      if (!result.ok) {
+        if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
+        return c.json({ error: "internal" }, 500);
       }
-      if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
-        return c.json({ error: "install_gated" }, 409);
+      const manifest = result.manifest;
+      if (manifest.scope !== "personal") {
+        return c.json({ error: "scope_mismatch" }, 409);
+      }
+      const distributionStatus = computeDistributionStatus(
+        manifest.listingTrust,
+        sandboxCapabilities(),
+      );
+      if (distributionStatus === "blocked") {
+        return c.json({ error: "install_blocked_by_policy" }, 403);
+      }
+      if (distributionStatus === "gated") {
+        let body: { ack?: string } = {};
+        try {
+          body = await c.req.json();
+        } catch (err) {
+          if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
+            throw err;
+          }
+        }
+        if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
+          return c.json({ error: "install_gated" }, 409);
+        }
       }
     }
     const key = deriveAppSessionKey(appSessionMasterSecret, slug);
@@ -160,34 +184,39 @@ export function registerAppRuntimeRoutes(app: Hono, deps: AppRuntimeRouteDeps): 
     if (!SAFE_SLUG.test(slug)) {
       return c.json({ error: "invalid slug" }, 400);
     }
-    const appsDir = join(homePath, "apps");
-    const result = await loadManifest(appsDir, slug);
-    if (!result.ok) {
-      if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
-      return c.json({ error: "internal" }, 500);
-    }
-    const manifest = result.manifest;
-    if (manifest.scope !== "personal") {
-      return c.json({ error: "scope_mismatch" }, 409);
-    }
-    const distributionStatus = computeDistributionStatus(
-      manifest.listingTrust,
-      sandboxCapabilities(),
-    );
-    if (distributionStatus === "blocked") {
-      return c.json({ error: "install_blocked_by_policy" }, 403);
-    }
-    if (distributionStatus === "gated") {
-      let body: { ack?: string } = {};
-      try {
-        body = await c.req.json();
-      } catch (err) {
-        if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
-          throw err;
-        }
+    if (isOsBrowser(slug)) {
+      const denied = await authorizeOsBrowser(c);
+      if (denied) return denied;
+    } else {
+      const appsDir = join(homePath, "apps");
+      const result = await loadManifest(appsDir, slug);
+      if (!result.ok) {
+        if (result.error.code === "not_found") return c.json({ error: "not found" }, 404);
+        return c.json({ error: "internal" }, 500);
       }
-      if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
-        return c.json({ error: "install_gated" }, 409);
+      const manifest = result.manifest;
+      if (manifest.scope !== "personal") {
+        return c.json({ error: "scope_mismatch" }, 409);
+      }
+      const distributionStatus = computeDistributionStatus(
+        manifest.listingTrust,
+        sandboxCapabilities(),
+      );
+      if (distributionStatus === "blocked") {
+        return c.json({ error: "install_blocked_by_policy" }, 403);
+      }
+      if (distributionStatus === "gated") {
+        let body: { ack?: string } = {};
+        try {
+          body = await c.req.json();
+        } catch (err) {
+          if (!(err instanceof SyntaxError) && (err as { name?: string }).name !== "BodyLimitError") {
+            throw err;
+          }
+        }
+        if (!body.ack || !ackStore.peekAck(slug, "gateway-owner", body.ack)) {
+          return c.json({ error: "install_gated" }, 409);
+        }
       }
     }
     const routingHandle = process.env.MATRIX_HANDLE;
@@ -249,6 +278,8 @@ export function registerAppRuntimeRoutes(app: Hono, deps: AppRuntimeRouteDeps): 
 
   const browserLab = registerBrowserLabRoutes(app, {
     enabled: deps.browserLab?.enabled ?? false,
+    productUiPath: deps.browserLab?.productUiPath,
+    setupOwnerId: deps.browserLab?.setupOwnerId,
     deriveKey: (slug) => deriveAppSessionKey(appSessionMasterSecret, slug),
     isAllowedOrigin: deps.browserLab?.isAllowedOrigin ?? (() => false),
     upgradeWebSocket: deps.browserLab?.upgradeWebSocket,
