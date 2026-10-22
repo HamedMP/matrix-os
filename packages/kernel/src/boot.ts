@@ -318,7 +318,12 @@ export function smartSyncTemplate(
       if (!/^system\/icons\/[a-z0-9][a-z0-9-]*\.(?:png|svg)$/.test(relPath)) {
         throw new Error(`Invalid bundled icon path: ${relPath}`);
       }
-      addMissingBundledIcon(homePath, templateDir, relPath, report, logLines, now);
+      try {
+        addMissingBundledIcon(homePath, templateDir, relPath, report, logLines, now);
+      } catch (err: unknown) {
+        report.skipped.push(relPath);
+        logLines.push(`[${now}] Error adding: ${relPath} (${err instanceof Error ? err.message : String(err)})`);
+      }
       continue;
     }
     const homeFilePath = join(homePath, relPath);
