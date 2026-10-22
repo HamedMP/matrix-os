@@ -59,7 +59,7 @@ describe('WhatsApp route authority and failures', () => {
     for (const headers of [{}, { 'content-length': '262145' }]) {
       const response = await routes.request('/whatsapp/webhook', { method: 'POST', body: 'x'.repeat(262145), headers });
       expect(response.status).toBe(413);
-      expect(await response.text()).not.toContain('Delivery unavailable');
+      expect(await response.json()).toEqual({ error: 'Request too large' });
     }
     expect(service.ingest).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalled();

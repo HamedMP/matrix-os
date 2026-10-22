@@ -17,3 +17,7 @@ All remaining families need explicit reachability/migration or upstream remediat
 ## Editor compatibility followup
 
 Exact-source remote Electron CI exposed missing ESM exports when React3.22.4 was paired with core3.30.5. A native ESM-import regression reproduces that linkage failure; the same-major desktop editor family is aligned to3.30.5 (published2026-08-26, eligible under the unchanged age gate). An installed-library regression opens nested checklist Markdown, edits the child text and checked state, saves JSON and Markdown, and reopens both formats without mocks. Desktop production bundling and types are checked separately; this does not replace live Electron qualification.
+
+## HTTP/SDK compatibility followup
+
+Full remote CI found stale assumptions after Hono's eager body-limit/parser change and the MCP patch. The chunked relay regression now proves generic413, zero downstream calls/bytes and bounded input reads; direct relay overflow coverage remains. WhatsApp middleware explicitly preserves genericJSON413 for declared and streamed oversized requests, without authentication/linking/ingestion or operational-error logs on early rejection. Device-flow parser failure injection targets HonoRequest.parseBody (the actual boundary) and still requires invalid_request400 with diagnostic logging. The MCP manifest contract tracks the eligible1.32.0 floor. No request-size limits are raised, auth is not bypassed and provider/device flow behavior is otherwise unchanged.
