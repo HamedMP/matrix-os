@@ -11,6 +11,9 @@ import {
 import { FUNDED_SONNET, probeFundedModel } from "./funded-relay-readiness.js";
 import { fundedModelPriceValidThrough, isFundedModelPriceCurrent } from "./funded-relay-model.js";
 import { RELAY_SHUTDOWN_TIMEOUT_MS, waitForRelayWork } from "./funded-relay-lifecycle.js";
+import { createManagedRouteControl } from './managed-route-control.js';
+import { parseManagedRouteControlConfig, readManagedRouteControlConfig, snapshotFundedRelayConfig,
+  type ManagedRouteControlConfig, type FundedRelayServiceConfig } from './managed-route-control-config.js';
 
 export interface FundedRelayService {
   app: Hono;
@@ -19,15 +22,19 @@ export interface FundedRelayService {
 
 export function requireFundedRelayServiceConfig(
   env: NodeJS.ProcessEnv = process.env,
-): FundedRelayConfig {
+): FundedRelayServiceConfig {
   const config = resolveFundedRelayConfig(env);
   if (!config) {
     throw new Error("MATRIX_FUNDED_AI_ENABLED must be true for the dedicated relay service");
   }
-  return config;
+  const managedRouteControl = readManagedRouteControlConfig(env);
+  return managedRouteControl ? { ...config, managedRouteControl } : config;
 }
 
-export function createFundedRelayService(config: FundedRelayConfig, options: { fetchFn?: typeof fetch; now?: () => Date } = {}): FundedRelayService {
+export function createFundedRelayService(input: FundedRelayServiceConfig, options: { fetchFn?: typeof fetch; now?: () => Date; managedRouteControl?: ManagedRouteControlConfig } = {}): FundedRelayService {
+  const settings = options.managedRouteControl ?? input.managedRouteControl;
+  const config: FundedRelayConfig = settings ? snapshotFundedRelayConfig(input) : input;
+  const control = settings ? createManagedRouteControl({ config, settings: parseManagedRouteControlConfig(settings), now: options.now }) : undefined;
   const app = new Hono();
   const errorTracker = installPostHogHonoErrorTracking(app, {
     service: "matrix-funded-ai-relay",
@@ -38,6 +45,7 @@ export function createFundedRelayService(config: FundedRelayConfig, options: { f
     ...(options.fetchFn ? { fetch: options.fetchFn } : {}),
     ...(options.now ? { now: options.now } : {}),
   });
+  control?.register(app);
 
   app.get("/health", (c) => c.json({ status: "ok" }));
   app.get("/ready", async (c) => {
@@ -75,10 +83,11 @@ export function createFundedRelayService(config: FundedRelayConfig, options: { f
       if (closing) return closing;
       const signal = shutdownSignal ?? AbortSignal.timeout(RELAY_SHUTDOWN_TIMEOUT_MS);
       closing = (async () => {
-        const drained = await relay.close(signal);
+        const [drained, controlDrained] = await Promise.all([relay.close(signal),
+          waitForRelayWork(control?.close() ?? Promise.resolve(), signal)]);
         if (signal.aborted) return false;
         const tracked = await waitForRelayWork(errorTracker.shutdown(), signal);
-        return drained && tracked && !signal.aborted;
+        return drained && controlDrained && tracked && !signal.aborted;
       })();
       return closing;
     },
