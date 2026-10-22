@@ -359,6 +359,17 @@ function projectHarness(input: {
     && ["ready", "unknown", "stale"].includes(source.readiness.state)
     && input.accounts.some(account => account.id === source.accountId && account.providerId === "anthropic"
       && account.authMethod === "api_key" && account.accessSourceId === source.id);
+  const codexNativeAccount = source?.kind === "provider_account" && source.accountId
+    ? input.accounts.find((account) => account.id === source.accountId)
+    : undefined;
+  const codexNativeOwnerRoute = input.stored.harness === "codex" && driverId === "codex"
+    && source?.id === "owner_openai_profile" && source.kind === "provider_account"
+    && source.fundingKind === "owner_account" && codexNativeAccount?.authMethod === "terminal";
+  // A discovered terminal login is not execution authority. Keep the route
+  // closed until the projected native identity matches the saved account and
+  // its explicit consent is current.
+  const codexNativeOwnerRouteRunnable = !codexNativeOwnerRoute
+    || (nativeCredentialAuthenticated && source.readiness.state === "ready");
   const visibleMethods = input.loginMethods === undefined
     ? defaultLoginMethods(input.stored.harness)
     : input.loginMethods(input.stored);
@@ -368,7 +379,7 @@ function projectHarness(input: {
     displayName: input.stored.displayName,
     accentColor: input.stored.accentColor,
     enabled: Boolean(executionRouteAvailable
-      && !(nativeCredentialAuthenticated && source?.readiness.state === "auth_required")
+      && codexNativeOwnerRouteRunnable
       && input.stored.enabled && driver?.installState === "installed"),
     configuredEnabled: generatedNative ? true : input.stored.enabled,
     configuredAccessSourceId: input.stored.accessSourceId,

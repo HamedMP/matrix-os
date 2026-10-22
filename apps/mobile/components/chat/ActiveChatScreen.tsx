@@ -4,6 +4,8 @@ import type { TextInput } from "react-native";
 
 import { ModelPicker } from "@/components/ModelPicker";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
+import { chatDraftKey } from "@/lib/chat-drafts";
+import { useComposerSpeech } from "@/lib/speech/use-composer-speech";
 import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
 import { useOpenSidePanel } from "@/lib/use-shell-navigation";
 
@@ -82,6 +84,13 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
     warmSessionToken();
   }, [setDraft, warmSessionToken]);
 
+  const speech = useComposerSpeech({
+    draftKey: chatDraftKey(activeChatId),
+    draft,
+    onChangeDraft: handleDraftChange,
+    enabled: isConnected,
+  });
+
   // Web and desktop put a starter in the composer rather than sending it.
   const handleSuggestionPress = useCallback((suggestion: string) => {
     setDraft(suggestion);
@@ -122,6 +131,7 @@ export function ActiveChatScreen({ onBack, onNewChat }: ActiveChatScreenProps) {
         onSend: send,
         running: busy,
         onStop,
+        speech,
         ...composerAddProps({
           catalog,
           selection,

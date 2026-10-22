@@ -530,6 +530,7 @@ export function createChatProviderCatalogService(options: {
     refreshAiProvider = false, selection?: CanonicalChatModelSelection): Promise<CanonicalProviderCatalog> {
     const observationScope = options.observationScope?.(principal);
     const scope = chatCatalogDiscoveryScope(selection, observationScope);
+    const nativeCodexIdentityRequired = scope.coding.includes("codex");
     // Coding CLI discovery can outlast the five-second native receipt. Finish
     // it before observing runtime/Settings authority; never retimestamp a
     // receipt or project it against an earlier clock to extend admission.
@@ -581,7 +582,13 @@ export function createChatProviderCatalogService(options: {
     const [runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
       scope.readRuntime ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs) : Promise.resolve(undefined),
       scope.readAi ? options.aiProviderSource?.getSnapshot({ ...scope.snapshotOptions, refresh: refreshAiProvider }) ?? Promise.resolve(undefined) : Promise.resolve(undefined),
-      options.harnessSettingsSource?.getSnapshot(selection || observationScope ? scope.snapshotOptions : undefined) ?? Promise.resolve(undefined),
+      options.harnessSettingsSource?.getSnapshot({
+        ...(selection || observationScope ? scope.snapshotOptions : {}),
+        ...(nativeCodexIdentityRequired ? {
+          includeNativeAccountMetadata: true,
+          includeNativeAccountUsage: false,
+        } : {}),
+      }) ?? Promise.resolve(undefined),
       systemRuntimeReads,
     ]);
     if (runtimeResult.status === "rejected") {

@@ -822,6 +822,7 @@ describe("canonical Chat Provider catalog", () => {
         aiProviderSource,
         harnessSettingsSource: harnessSettings([{
           ...configuredHarness("codex", true), accessSourceId: "owner_openai_profile",
+          selectedAccountId: "owner_anthropic",
         }]),
         executableDriverKinds: ["codex"],
       });
