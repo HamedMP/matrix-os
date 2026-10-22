@@ -57,10 +57,11 @@ export async function executePurgeClaim<DB>(db: Kysely<DB>, cap: ProvenanceLimit
         result = await Promise.race([handler({ ownerId: claim.ownerId, entityRef: entity.entity_ref, expectedHash: entity.content_hash, signal: controller.signal }), aborted]);
         if (!result || !["deleted", "missing", "modified", "unavailable"].includes(result.status)) reason = "unavailable";
         else if (result.status === "modified" || result.status === "unavailable") reason = result.status;
-      } catch {
+      } catch (error: unknown) {
         // Handler payloads/errors can contain content. Persist only this fixed code; never log them.
-        retry = job.attempts < cap.maxAttempts && !controller.signal.aborted;
-        reason = controller.signal.aborted ? "timeout" : retry ? null : "retry_exhausted";
+        const typedFailure = error instanceof Error;
+        retry = typedFailure && job.attempts < cap.maxAttempts && !controller.signal.aborted;
+        reason = controller.signal.aborted ? "timeout" : !typedFailure ? "unavailable" : retry ? null : "retry_exhausted";
       } finally { if (timer) clearTimeout(timer); controller.abort(); }
     }
     const deleted = result?.status === "deleted" || result?.status === "missing";

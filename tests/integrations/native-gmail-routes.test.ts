@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
+import { inspect } from 'node:util';
 import { createNativeGmailLaunchRoutes } from '../../packages/gateway/src/integrations/native-gmail/routes.js';
 import { Hono } from 'hono';
 import { createNativeGmailRoutes } from '../../packages/gateway/src/integrations/native-gmail/routes.js';
@@ -56,6 +57,27 @@ describe('native Gmail lifecycle routes', () => {
   it('keeps callback failures generic', async () => {
     const s = setup(); s.oauth.complete.mockRejectedValue(new Error('credential_secret'));
     const r = await s.app.request('/gmail/oauth/callback?state=opaque&code=code', { headers: { cookie } }); expect(r.status).toBe(502); expect(await r.text()).not.toContain('credential_secret');
+  });
+  it.each(['start', 'complete', 'authorization', 'refresh', 'revoke', 'broadcast'] as const)('keeps private %s failures out of application logs', async operation => {
+    const s = setup();
+    const failure = Object.assign(new Error('synthetic_private_message', { cause: 'synthetic_private_cause' }), {
+      name: 'synthetic_private_name', token: 'synthetic_private_token', request: { code: 'synthetic_private_code' },
+    });
+    if (operation === 'broadcast') s.broadcast.mockImplementation(() => { throw failure; });
+    else s.oauth[operation].mockRejectedValue(failure);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const request = operation === 'start' ? s.app.request('/connect', { method: 'POST', headers, body: JSON.stringify({ service: 'gmail' }) })
+        : operation === 'authorization' ? s.app.request('/auth/gmail?state=opaque', { headers })
+          : operation === 'refresh' ? s.app.request(`/${connection.id}/refresh`, { method: 'POST', headers })
+            : operation === 'revoke' ? s.app.request(`/${connection.id}`, { method: 'DELETE', headers })
+              : s.app.request('/gmail/oauth/callback?state=opaque&code=code', { headers: { cookie } });
+      const response = await request;
+      expect(response.status).toBe(operation === 'broadcast' ? 200 : operation === 'authorization' ? 403 : 502);
+      expect(await response.text()).not.toContain('synthetic_private_');
+      expect(warning).toHaveBeenCalled();
+      expect(inspect(warning.mock.calls, { depth: 10 })).not.toContain('synthetic_private_');
+    } finally { warning.mockRestore(); }
   });
   it('requires exact initiating browser consent binding', async () => {
     const s = setup();
