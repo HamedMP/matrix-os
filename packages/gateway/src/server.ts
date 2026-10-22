@@ -1519,6 +1519,7 @@ export async function createGateway(config: GatewayConfig) {
     botServices = await startBots({
       routineCliTransport,
       googlePilot, googleCopies: ownerDatabaseServices?.googleCopies, qualifiedFundedConfig: fundedAiRuntimeConfig,
+      executionAdmissionFence, pendingExecutionCount: () => canonicalChatOrchestrator?.pendingCount ?? 0,
       toolOutputKey, homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}),
       ...(internalPlatformUrl && internalPlatformToken && internalHandle && process.env.MATRIX_MACHINE_ID && process.env.MATRIX_RUNTIME_SLOT
