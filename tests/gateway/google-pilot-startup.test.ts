@@ -11,7 +11,7 @@ const binding: ManagedPiRuntimeBinding = { kind: 'managed_chat', runtimeHandle: 
   accessSourceId: 'matrix_included', capabilities: ['artifact.read'], requestClass: 'interactive' };
 async function setup(pilotAdmission: { enabled: false } | { enabled: true; ownerId: string }) {
   ({ db } = await createAuthorityFixture()); const registry = new BotRuntimeRegistry(); registry.bind(binding); registries.push(registry);
-  runtime = await createGoogleBrokerRuntime({ database: db.sql, registry, pilotAdmission }); return { registry, runtime };
+  runtime = await createGoogleBrokerRuntime({ database: db.sql, registry, pilotAdmission, admitContext: async () => undefined }); return { registry, runtime };
 }
 describe('explicit pilot host broker controls', () => {
   it('keeps ordinary inference working with pilot off but denies collection and classified Google work', async () => {
@@ -27,11 +27,33 @@ describe('explicit pilot host broker controls', () => {
     expect(await runtime.inference.authorize({ phase: 'dispatch', binding, identity: null, signal: new AbortController().signal })).toEqual({ allowed: false });
     await expect(runtime.prepareCollection(binding, '123e4567-e89b-42d3-a456-426614174000', new AbortController().signal, async () => true)).rejects.toThrow('Google data processing unavailable');
   });
+  it('fails closed on enabled pilot without the owning context adapter', async () => {
+    ({ db } = await createAuthorityFixture()); const registry = new BotRuntimeRegistry(); registry.bind(binding); registries.push(registry);
+    runtime = await createGoogleBrokerRuntime({ database: db.sql, registry, pilotAdmission: { enabled: true, ownerId: binding.ownerId } });
+    const request = { phase: 'dispatch' as const, binding, identity: null, signal: new AbortController().signal };
+    expect(await runtime.inference.authorize(request)).toEqual({ allowed: false });
+    await expect(runtime.inference.managed!.required(binding, request.signal)).rejects.toThrow('Google data processing unavailable');
+    await expect(runtime.prepareCollection(binding, '123e4567-e89b-42d3-a456-426614174000', request.signal, async () => true)).rejects.toThrow('Google data processing unavailable');
+  });
+  it('adopts before classification, dispatch, release and collection; rechecks live binding after adoption waits', async () => {
+    ({ db } = await createAuthorityFixture()); const registry = new BotRuntimeRegistry(); registry.bind(binding); registries.push(registry);
+    const admitContext = vi.fn(async () => undefined);
+    runtime = await createGoogleBrokerRuntime({ database: db.sql, registry, pilotAdmission: { enabled: true, ownerId: binding.ownerId }, admitContext });
+    const request = { phase: 'dispatch' as const, binding, identity: null, signal: new AbortController().signal };
+    expect(await runtime.inference.managed!.required(binding, request.signal)).toBe(false);
+    expect(await runtime.inference.authorize(request)).toEqual({ allowed: true, googleOrigin: false });
+    expect(await runtime.inference.authorize({ ...request, phase: 'release' })).toEqual({ allowed: true, googleOrigin: false });
+    expect(admitContext).toHaveBeenCalledTimes(3);
+    admitContext.mockImplementation(async () => { registry.cancelInference(binding); });
+    const ui = vi.fn(async () => true);
+    await expect(runtime.prepareCollection(binding, '123e4567-e89b-42d3-a456-426614174000', request.signal, ui)).rejects.toThrow('Google data processing unavailable');
+    expect(ui).not.toHaveBeenCalled(); expect(admitContext).toHaveBeenCalledTimes(4);
+  });
   it('uses fresh authenticated managed control identity for collection instead of observing a temporary legacy token', async () => {
     ({ db } = await createAuthorityFixture()); const registry = new BotRuntimeRegistry(); registry.bind(binding); registries.push(registry);
     const resolveRoute = vi.fn(async () => qualifiedRouteFixture()); const credentials = { identity: qualifiedIdentity, resolveRoute,
       getCredential: vi.fn(), invalidate: vi.fn(), close: vi.fn(async () => undefined) };
-    runtime = await createGoogleBrokerRuntime({ database: db.sql, registry, pilotAdmission: { enabled: true, ownerId: binding.ownerId }, qualifiedCredentials: credentials });
+    runtime = await createGoogleBrokerRuntime({ database: db.sql, registry, pilotAdmission: { enabled: true, ownerId: binding.ownerId }, qualifiedCredentials: credentials, admitContext: async () => undefined });
     expect(runtime.observedIdentity(binding)).toBeNull(); const ownerUI = vi.fn(async () => true);
     await expect(runtime.prepareCollection(binding, '123e4567-e89b-42d3-a456-426614174000', new AbortController().signal, ownerUI)).rejects.toThrow('Google data processing unavailable');
     expect(resolveRoute).toHaveBeenCalledOnce(); expect(credentials.getCredential).not.toHaveBeenCalled(); expect(ownerUI).not.toHaveBeenCalled();

@@ -1,3 +1,4 @@
+import type { GoogleManagedRouteResolver } from './runtime/profile-resolution.js';
 import type { Hono, Context } from 'hono';
 import type { PlatformDb } from '../platform-db.js';
 import { createGooglePlatformPolicyRoutes } from './runtime/platform-routes.js';
@@ -6,9 +7,10 @@ import { createGooglePlatformPolicyRoutes } from './runtime/platform-routes.js';
  * Public owner sessions and legacy unsigned owner delegation cannot use this
  * policy seam. A policy response still requires live gateway run admission. */
 export function registerGooglePlatformPolicyRoutes(app: Hono, db: PlatformDb,
-  resolveUserId: (c: Context) => Promise<string | null>) {
+  resolveUserId: (c: Context) => Promise<string | null>, options: { resolveManagedRoute?: GoogleManagedRouteResolver } = {}) {
   if (!db.googleData) return;
   app.route('/', createGooglePlatformPolicyRoutes({ repository: db.googleData.repository,
+    ...(options.resolveManagedRoute ? { resolveManagedRoute: options.resolveManagedRoute } : {}),
     resolveRuntime: async c => {
       const ownerId: unknown = c.get('internalContainerClerkUserId');
       const machineId: unknown = c.get('internalContainerHandle');

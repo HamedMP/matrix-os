@@ -1,3 +1,4 @@
+import { loadGoogleDataPilotConfig } from './google-data/runtime/pilot-config.js';
 import { createSupervisedBrowserRuntime } from "./startup/browser-approvals.js";
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
 import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
@@ -515,6 +516,7 @@ export async function createGateway(config: GatewayConfig) {
   // canonical when present; MATRIX_CLERK_USER_ID supports VPS-native hosts
   // provisioned before the canonical variable was added.
   const terminalRuntimeOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_CLERK_USER_ID;
+  const googlePilot = loadGoogleDataPilotConfig(process.env, terminalRuntimeOwnerId);
   const supervisedBrowserRuntime = createSupervisedBrowserRuntime({ env: process.env, ownerId: terminalRuntimeOwnerId, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
   const sharedBrowserRuntime = createSharedBrowserRuntime({ homePath, authorizeAction: supervisedBrowserRuntime?.control.authorizeAction,
     enabled: process.env.MATRIX_BROWSER_LAB === "true", ownerId: terminalRuntimeOwnerId,
@@ -851,6 +853,7 @@ export async function createGateway(config: GatewayConfig) {
     ? null
     : collaborationHealth.reason;
   const ownerDatabaseStartup = await initializeOwnerDatabaseServices({
+    googlePilot,
     databaseUrl,
     homePath,
     collaborationConfig,
@@ -880,6 +883,7 @@ export async function createGateway(config: GatewayConfig) {
   canvasSubscriptionHub = ownerDatabaseServices?.canvasSubscriptionHub ?? null;
   canvasCleanupTimer = ownerDatabaseServices?.canvasCleanupTimer ?? null;
   chatRepository = ownerDatabaseServices?.chatRepository ?? null;
+  if (googlePilot.enabled && (!chatRepository || !ownerDatabaseServices?.googleCopies)) throw new Error('Google pilot unavailable');
   canonicalChatEventStream = ownerDatabaseServices?.chatEventStream ?? null;
   canonicalChatExecutionRoots = ownerDatabaseServices?.chatExecutionRoots ?? null;
   canonicalChatCollaborationGuard = ownerDatabaseServices?.chatCollaborationGuard ?? null;
@@ -1594,6 +1598,7 @@ export async function createGateway(config: GatewayConfig) {
     const chatAgents = new ChatAgentStore({ homePath, db: chatRepository.kysely });
     await chatAgents.bootstrap();
     botServices = await startBots({
+      googlePilot, googleCopies: ownerDatabaseServices?.googleCopies, qualifiedFundedConfig: fundedAiRuntimeConfig,
       toolOutputKey, homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}),
       runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,

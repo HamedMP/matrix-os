@@ -606,6 +606,10 @@ export class ChatRepository {
       ? metadataOnlyOutboxEvent(event) : event }]);
   }
 
+  /** Server-only context admission uses the same owning transaction and commit release ledger as mutations. */
+  readonly withContextTransaction: import('./assistant-delta-repository.js').AssistantDeltaTransact =
+    (work, beforeRelease) => this.transact(work, beforeRelease);
+
   async withTransaction<T>(fn: (repository: ChatRepository) => Promise<T>): Promise<T> {
     return this.transact((trx) => fn(new ChatRepository(trx, true, this.outboxDelivery, this.repositoryOptions)));
   }

@@ -1,3 +1,5 @@
+import type { GoogleDataPilotConfig } from '../google-data/runtime/pilot-config.js';
+import type { GooglePilotStorage } from './google-pilot-storage.js';
 /**
  * Orchestrate owner Postgres startup as one transaction of process resources.
  * A partial bootstrap must release every acquired handle before the gateway
@@ -82,6 +84,7 @@ export interface OwnerDatabaseServices extends OwnerDatabaseFallbackServices {
   canvasSubscriptionHub: CanvasSubscriptionHub | null;
   canvasCleanupTimer: ReturnType<typeof setInterval> | null;
   chatRepository: ChatRepository | null;
+  googleCopies?: GooglePilotStorage;
   chatEventStream: ReturnType<typeof createGatewayChatEventStream> | null;
   chatExecutionRoots: ChatExecutionRootResolver | null;
   chatCollaborationGuard: ReturnType<typeof createDiscussionOnlyChatExecutionGuard> | null;
@@ -90,6 +93,7 @@ export interface OwnerDatabaseServices extends OwnerDatabaseFallbackServices {
 }
 
 export interface InitializeOwnerDatabaseOptions {
+  googlePilot?: GoogleDataPilotConfig;
   databaseUrl?: string;
   homePath: string;
   collaborationConfig: GatewayCollaborationConfig | null;
@@ -145,9 +149,10 @@ export async function initializeOwnerDatabaseServices(
       const osViewStateRepository = new OsViewStateRepository(kysely as Kysely<any>);
       services.osViewStateRepository = osViewStateRepository;
       await osViewStateRepository.bootstrap();
-      const chatHistory = createOwnerChatHistoryRepository(kysely as Kysely<any>);
+      const chatHistory = createOwnerChatHistoryRepository(kysely as Kysely<any>, { pilot: options.googlePilot });
       const chatRepository = chatHistory.repository;
       services.chatRepository = chatRepository;
+      services.googleCopies = chatHistory.googleCopies;
       await chatHistory.bootstrap();
       const ownerChatExecutionRoots = createChatExecutionRootResolver({
         homePath: options.homePath,
