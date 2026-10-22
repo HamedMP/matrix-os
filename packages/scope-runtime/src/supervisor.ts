@@ -130,7 +130,7 @@ export interface ScopeRuntimeLauncher {
     executionGeneration: string;
     command: ScopeRuntimeBotCommand;
   }): Promise<ScopeRuntimeBotWorkerReply>;
-  stop(runtimeHandle: string): Promise<void>;
+  stop(runtimeHandle: string, expectedGeneration?: string): Promise<void>;
 }
 
 function newRuntimeHandle(): string {
@@ -291,7 +291,7 @@ export async function createScopeRuntimeController(options: {
       await operation;
       if (closed) {
         try {
-          await options.launcher.stop(runtimeHandle);
+          await options.launcher.stop(runtimeHandle, options.executionGeneration);
         } catch (error: unknown) {
           console.warn("[scope-runtime] post-close runtime cleanup failed:",
             error instanceof Error ? error.name : "UnknownError");
@@ -326,7 +326,7 @@ export async function createScopeRuntimeController(options: {
       return runtimeFailure(request.requestId, "runtime_not_found");
     }
     try {
-      await options.launcher.stop(request.runtimeHandle);
+      await options.launcher.stop(request.runtimeHandle, executionGeneration);
       runtimes.delete(request.runtimeHandle);
       return ScopeRuntimeResponseSchema.parse({
         version: 1,
@@ -454,9 +454,9 @@ export async function createScopeRuntimeController(options: {
       if (closed) return;
       closed = true;
       await Promise.allSettled([...operations]);
-      const stops = [...runtimes.keys()].map(async (runtimeHandle) => {
+      const stops = [...runtimes.entries()].map(async ([runtimeHandle, runtime]) => {
         try {
-          await options.launcher.stop(runtimeHandle);
+          await options.launcher.stop(runtimeHandle, runtime.executionGeneration);
         } catch (error: unknown) {
           console.warn("[scope-runtime] shutdown stop failed:",
             error instanceof Error ? error.name : "UnknownError");

@@ -173,7 +173,7 @@ describe("scope runtime supervisor", () => {
       requestId: REQUEST_ID,
       runtimeHandle: RUNTIME_HANDLE,
     })).resolves.toMatchObject({ ok: true, state: "stopped" });
-    expect(native.stop).toHaveBeenCalledWith(RUNTIME_HANDLE);
+    expect(native.stop).toHaveBeenCalledWith(RUNTIME_HANDLE, "10");
   });
 
   it("preserves the attested launch generation for a reconciled runtime", async () => {
@@ -195,6 +195,7 @@ describe("scope runtime supervisor", () => {
       state: "stopped",
       executionGeneration: "7",
     });
+    expect(native.stop).toHaveBeenCalledWith(RUNTIME_HANDLE, "7");
   });
 
   it("fails closed for unproven profiles, harnesses, workloads, and launcher failures", async () => {
@@ -255,7 +256,7 @@ describe("scope runtime supervisor", () => {
     await expect(first).resolves.toMatchObject({ ok: true });
 
     await controller.close();
-    expect(native.stop).toHaveBeenCalledWith("runtime_00000000000000000000000000000001");
+    expect(native.stop).toHaveBeenCalledWith("runtime_00000000000000000000000000000001", "12");
     await expect(create("018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d3"))
       .resolves.toMatchObject({ ok: false, error: "runtime_unavailable" });
   });

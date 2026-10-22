@@ -177,6 +177,11 @@ describe("scope runtime systemd launcher", () => {
       if (args[0] === "list-units") {
         return { stdout: "matrix-scope-runtime-33333333333333333333333333333333.service loaded active running\n" };
       }
+      if (args[0] === "show") return { stdout: [
+        "Id=matrix-scope-runtime-22222222222222222222222222222222.service",
+        "LoadState=loaded", "ActiveState=inactive", "SubState=dead", "MainPID=0",
+        "ControlPID=0", "TasksCurrent=0", "ControlGroup=", "Job=",
+      ].join("\n") + "\n" };
       if (command === "/usr/bin/systemd-run") {
         await writeFile(join(
           paths.stateRoot,
@@ -185,7 +190,10 @@ describe("scope runtime systemd launcher", () => {
       }
       return { stdout: "active\n" };
     });
-    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand });
+    const cgroupRoot = join(paths.stateRoot, "cgroup");
+    await mkdir(cgroupRoot, { recursive: true });
+    await writeFile(join(cgroupRoot, "cgroup.controllers"), "cpu memory pids\n");
+    const launcher = createSystemdScopeRuntimeLauncher({ ...paths, runCommand, stopInspection: { cgroupRoot } });
 
     await expect(launcher.list()).resolves.toEqual([{
       runtimeHandle: "runtime_33333333333333333333333333333333",

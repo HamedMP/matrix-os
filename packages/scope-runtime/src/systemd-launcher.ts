@@ -58,6 +58,8 @@ import {
   validateSandboxMountSources,
 } from "./sandbox.js";
 
+import { stopSystemdRuntime, type SystemdStopInspection } from "./systemd-stop.js";
+
 const execFileAsync = promisify(execFile);
 const COMMAND_TIMEOUT_MS = 10_000;
 const COMMAND_MAX_BUFFER_BYTES = 64 * 1024;
@@ -620,7 +622,7 @@ async function cleanupOrphanedRuntimeRoots(
 }
 
 export function createSystemdScopeRuntimeLauncher(
-  input: LauncherPaths & { runCommand?: ScopeRuntimeCommandRunner },
+  input: LauncherPaths & { runCommand?: ScopeRuntimeCommandRunner; stopInspection?: SystemdStopInspection },
 ): ScopeRuntimeLauncher {
   const paths: ResolvedLauncherPaths = {
     stateRoot: assertTrustedAbsolutePath(input.stateRoot),
@@ -793,25 +795,19 @@ export function createSystemdScopeRuntimeLauncher(
       }
       return runWorkerBotCommand(commandSocketPath(input.runtimeHandle), input);
     },
-    async stop(runtimeHandle: string): Promise<void> {
+    async stop(runtimeHandle: string, expectedGeneration?: string): Promise<void> {
       const handle = RuntimeHandleSchema.parse(runtimeHandle);
-      const name = unitName(handle);
-      try {
-        await runCommand("/usr/bin/systemctl", ["is-active", "--quiet", name]);
-        await runCommand("/usr/bin/systemctl", ["stop", name]);
-      } catch (error: unknown) {
-        if (!inactiveUnitError(error)) throw error;
-      }
-      try {
-        await runCommand("/usr/bin/systemctl", ["reset-failed", name]);
-      } catch (error: unknown) {
-        if (!inactiveUnitError(error)) {
-          console.warn("[scope-runtime] failed-unit cleanup unavailable:",
-            error instanceof Error ? error.name : "UnknownError");
-        }
-      }
-      const suffix = handle.slice("runtime_".length);
-      await rm(join(paths.stateRoot, "runtimes", suffix), { recursive: true, force: true });
+      const runtimeRoot = join(paths.stateRoot, "runtimes", handle.slice("runtime_".length));
+      await stopSystemdRuntime({
+        runtimeHandle: handle, expectedGeneration, runCommand, inspection: input.stopInspection,
+        async readProvenance() {
+          await assertPrivateDirectory(paths.stateRoot);
+          await assertPrivateDirectory(join(paths.stateRoot, "runtimes"));
+          await assertPrivateDirectory(runtimeRoot);
+          return readRuntimeProvenance(runtimeRoot, handle);
+        },
+      });
+      await rm(runtimeRoot, { recursive: true, force: true });
     },
   };
 }
