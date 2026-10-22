@@ -165,6 +165,89 @@
 .mxo-gs__summary dt { color: var(--mxo-muted); }
 .mxo-gs__summary dd { margin: 0; text-align: right; color: var(--mxo-ink); }
 
+.mxo-gs__connect-section { margin-top: 20px; }
+.mxo-gs__suggestion-title { margin-top: 14px; }
+
+.mxo-gs__connect {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mxo-gs__connect-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--mxo-border);
+  border-radius: 12px;
+  background: var(--mxo-surface);
+}
+
+.mxo-gs__connect-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--mxo-soft);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mxo-ink);
+}
+
+.mxo-gs__connect-text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mxo-gs__connect-name { font-size: 13px; font-weight: 500; color: var(--mxo-ink); }
+.mxo-gs__connect-why { font-size: 12px; color: var(--mxo-muted); }
+
+.mxo-gs__later { font-size: 12px; color: var(--mxo-placeholder); }
+
+.mxo-gs__connected {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--mxo-green-soft);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mxo-green-ink);
+}
+
+.mxo-gs__waiting,
+.mxo-gs__retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--mxo-muted);
+  text-align: right;
+}
+
+.mxo-gs__spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--mxo-border);
+  border-top-color: var(--mxo-ink);
+  border-radius: 50%;
+  animation: mxo-gs-spin 800ms linear infinite;
+}
+
+.mxo-gs__note {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--mxo-muted);
+}
+
+@keyframes mxo-gs-spin { to { transform: rotate(360deg); } }
+
 .mxo-gs__error {
   margin: 16px 0 0;
   font-size: 13px;
@@ -240,5 +323,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mxo-gs__card { animation: none; }
+  .mxo-gs__card,
+  .mxo-gs__spinner { animation: none; }
 }

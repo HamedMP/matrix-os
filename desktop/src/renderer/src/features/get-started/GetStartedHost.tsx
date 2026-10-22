@@ -4,10 +4,11 @@ import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import { createDesktopGetStartedPort } from "./desktop-get-started-port";
+import { DesktopGetStartedConnector } from "./DesktopGetStartedConnector";
 
 function DesktopGetStartedGate({ api, children }: { api: ApiClient; children: ReactNode }) {
   const port = useMemo(() => createDesktopGetStartedPort(api), [api]);
-  return <GetStartedGate port={port} zIndex={DESKTOP_Z_INDEX.getStarted}>{children}</GetStartedGate>;
+  return <GetStartedGate port={port} zIndex={DESKTOP_Z_INDEX.getStarted} connector={DesktopGetStartedConnector}>{children}</GetStartedGate>;
 }
 
 /** Electron Desktop: the wizard runs first for a signed-in computer, then the onboarding widget it wraps. */

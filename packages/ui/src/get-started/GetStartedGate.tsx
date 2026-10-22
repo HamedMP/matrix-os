@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useGettingStartedAutoOpenSuppression, useGettingStartedBlocker } from "../getting-started-visibility.js";
+import type { GetStartedConnect, GetStartedConnector } from "./connect.js";
 import { GetStartedWizard } from "./GetStartedWizard.js";
 import { useGetStarted, type GetStartedPort } from "./use-get-started.js";
 
@@ -9,6 +10,8 @@ export interface GetStartedGateProps {
   zIndex: number;
   /** The onboarding widget: held back until the wizard is finished or not needed. */
   children?: ReactNode;
+  /** Supplies app connections for the last screen from the surface's own integration hooks. */
+  connector?: GetStartedConnector;
 }
 
 /**
@@ -16,7 +19,7 @@ export interface GetStartedGateProps {
  * It cannot be closed or minimized; it ends only when the owner finishes or skips it.
  * Any load failure falls back to today's desktop.
  */
-export function GetStartedGate({ port, zIndex, children }: GetStartedGateProps) {
+export function GetStartedGate({ port, zIndex, children, connector: Connector }: GetStartedGateProps) {
   const getStarted = useGetStarted(port);
   const active = getStarted.phase === "active";
   useGettingStartedBlocker(active);
@@ -24,17 +27,22 @@ export function GetStartedGate({ port, zIndex, children }: GetStartedGateProps) 
 
   if (getStarted.phase === "loading") return null;
   if (getStarted.phase === "done" || !getStarted.wizard) return <>{children}</>;
+  const wizard = getStarted.wizard;
+  const renderWizard = (connect: GetStartedConnect | null) => (
+    <GetStartedWizard
+      wizard={wizard}
+      submitting={getStarted.submitting}
+      error={getStarted.error}
+      dispatch={getStarted.dispatch}
+      onFinish={getStarted.finish}
+      onSkipAll={getStarted.skipAll}
+      connect={connect}
+    />
+  );
   return (
     <div className="mxo-root mxo-gs ph-no-capture" style={{ zIndex }}>
       <div className="mxo-gs__scrim" aria-hidden />
-      <GetStartedWizard
-        wizard={getStarted.wizard}
-        submitting={getStarted.submitting}
-        error={getStarted.error}
-        dispatch={getStarted.dispatch}
-        onFinish={getStarted.finish}
-        onSkipAll={getStarted.skipAll}
-      />
+      {Connector ? <Connector>{renderWizard}</Connector> : renderWizard(null)}
     </div>
   );
 }

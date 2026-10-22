@@ -233,6 +233,8 @@ Each section is one layer, under the 3000-line limit, tests first.
    - Local dev: no restore gate; write `system/get-started.json` with `{"version":1,"status":"pending"}` by hand and set `MATRIX_GET_STARTED_ENABLED=true`.
 3. **Wizard UI on all three desktop surfaces (P0):** shared reducer + `GetStartedWizard`; thin hosts in Web Desktop, Web Canvas, Electron Desktop; no close/minimize while running; draft saved each step; Getting started and widget auto-open suppressed while it runs.
 4. **Connect your tools (P0):** picked tools (max 4) plus 2 suggestions, reusing `startConnect`, the external opener and bounded polling.
+   - Only apps in the computer's own integration catalog get a Connect button; service ids come from a fixed map in contracts.
+   - v1 scope cut: agent sign-ins (Claude Code, Codex, OpenCode) and messaging channels (Telegram, WhatsApp, Email) show as "Later" and stay in Getting started / Settings. Inline agent sign-in through the provider workflow client is a follow-up.
 5. **Personalised arrival (P0):** Getting started and widget order by goal; greet by name. No new writes.
 6. **First task and app building (P1):** "Work on my code" first with a "fix on a branch" follow-up; "Build an app for this" through the existing `[BUILD]` handoff.
 7. **Make your AI yours (P2):** server-rendered managed SOUL section, `identity.md`, `user.md`; idempotent `matrix-bot` creation.

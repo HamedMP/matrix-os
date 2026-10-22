@@ -1,13 +1,15 @@
 import {
   GET_STARTED_GOALS,
+  getStartedAnswersFromWizard,
   getStartedQuestionProgress,
   getStartedToolGroupsForGoals,
   type GetStartedChoiceGroup,
   type GetStartedWizardEvent,
   type GetStartedWizardState,
 } from "@matrix-os/contracts";
-import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { RabbitAvatar } from "../onboarding-widget/parts.js";
+import { GetStartedConnectList, type GetStartedConnect } from "./connect.js";
 
 export interface GetStartedWizardProps {
   wizard: GetStartedWizardState;
@@ -16,6 +18,8 @@ export interface GetStartedWizardProps {
   dispatch(event: GetStartedWizardEvent): void;
   onFinish(): void;
   onSkipAll(): void;
+  /** App connections for the last screen; absent when the surface cannot connect apps. */
+  connect?: GetStartedConnect | null;
 }
 
 const FOCUSABLE = "button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])";
@@ -114,13 +118,14 @@ function trapKeys(event: KeyboardEvent<HTMLDivElement>) {
   }
 }
 
-export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish, onSkipAll }: GetStartedWizardProps) {
+export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish, onSkipAll, connect = null }: GetStartedWizardProps) {
   const titleId = useId();
   const hintId = useId();
   const focusTarget = useRef<HTMLElement | null>(null);
   const progress = getStartedQuestionProgress(wizard);
   const isSummary = wizard.step === "summary";
   const pickedGoals = new Set(wizard.goals);
+  const answers = useMemo(() => getStartedAnswersFromWizard(wizard), [wizard]);
 
   // Each step change moves focus to its field, or its heading, for keyboard and screen reader users.
   useEffect(() => {
@@ -188,6 +193,7 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
         ) : null}
 
         {isSummary ? <Summary wizard={wizard} /> : null}
+        {isSummary && connect ? <GetStartedConnectList answers={answers} connect={connect} /> : null}
 
         {error ? <p className="mxo-gs__error" role="alert">{error}</p> : null}
       </div>

@@ -91,6 +91,7 @@
     "#jev-inbox": "./src/jev-inbox.ts",
     "#jev-hermes-route": "./src/jev-hermes-route.ts",
     "#get-started": "./src/get-started.ts",
+    "#get-started-connect": "./src/get-started-connect.ts",
     "#get-started-wizard": "./src/get-started-wizard.ts",
     "#getting-started": "./src/getting-started.ts",
     "#integration-connections": "./src/integration-connections.ts",

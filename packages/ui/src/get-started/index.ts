@@ -1,3 +1,10 @@
+export {
+  GetStartedConnectList,
+  useGetStartedConnect,
+  useGetStartedConnectFailures,
+  type GetStartedConnect,
+  type GetStartedConnector,
+} from "./connect.js";
 export { GetStartedGate, type GetStartedGateProps } from "./GetStartedGate.js";
 export { GetStartedWizard, type GetStartedWizardProps } from "./GetStartedWizard.js";
 export {
