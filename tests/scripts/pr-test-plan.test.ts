@@ -88,11 +88,9 @@ describe("CI wiring for PR test planning", () => {
   const outputs = workflow.jobs.changes.outputs;
   const unitSteps = workflow.jobs.unit.steps as Array<{ id?: string; if?: string; run?: string; env?: Record<string, string> }>;
 
-  it("keeps full coverage for fast-ci admitted PRs and routed requests", () => {
-    expect(outputs.unit_scope).toContain("steps.route.outputs.required != 'true'");
-    expect(outputs.unit_scope).toMatch(/\|\| 'full' \}\}$/u);
-    expect(outputs.e2e_tests).toContain("steps.route.outputs.required == 'true') && 'true'");
-    expect(outputs.e2e_tests).toMatch(/\|\| 'true' \}\}$/u);
+  it("defaults to full coverage when the plan is missing", () => {
+    expect(outputs.unit_scope).toBe("${{ steps.changed.outputs.unit_scope || 'full' }}");
+    expect(outputs.e2e_tests).toBe("${{ steps.changed.outputs.e2e_tests || 'true' }}");
   });
 
   it("runs selected files only after a successful selection", () => {
@@ -100,8 +98,6 @@ describe("CI wiring for PR test planning", () => {
     expect(select?.if).toContain("needs.changes.outputs.unit_scope == 'affected'");
     // The import graph resolves workspace packages through their built dist output.
     expect(select?.run).toMatch(/^bun run test:prepare && node scripts\/ci\/unit-test-selection\.mjs /u);
-    const controllerUpload = unitSteps.find((step) => step.name === "Upload controller regression evidence");
-    expect(controllerUpload?.if).toContain("needs.changes.outputs.unit_scope != 'affected'");
     const test = unitSteps.find((step) => step.run?.startsWith('GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test --'));
     expect(test?.env?.UNIT_SELECTION).toBe("${{ steps.select.outputs.list }}");
     expect(test?.env?.MATRIX_TEST_WORKERS).toBeUndefined();

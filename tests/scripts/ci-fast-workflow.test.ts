@@ -34,21 +34,15 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(workflow.jobs.unit.strategy?.matrix?.shard).toEqual([1, 2, 3, 4]);
   });
 
-  it('starts independent hosted lanes after backend selection while sync starts after classification', () => {
-    expect(workflow.jobs['isolated-ci-backend'].needs).toBe('changes');
-    expect(workflow.jobs['ci-backend'].needs).toEqual(['changes', 'isolated-ci-backend']);
-    for (const id of ['unit', 'e2e', 'shell-production-build']) {
-      // Backend admission chooses Linux or hosted recovery; workload lanes still
-      // run in parallel rather than waiting for another workload's result.
-      expect(workflow.jobs[id].needs, id).toEqual(['changes', 'ci-backend']);
+  it('starts every lane right after classification so lanes run in parallel', () => {
+    for (const id of ['unit', 'e2e', 'shell-production-build', 'sync-client', 'typecheck']) {
+      expect(workflow.jobs[id].needs, id).toBe('changes');
     }
-    expect(workflow.jobs['sync-client'].needs).toBe('changes');
     const gate = workflow.jobs['ci-results'];
     for (const id of ['unit', 'e2e', 'sync-client', 'shell-production-build', 'funded-postgres', 'funded-host-root']) {
       expect(gate.needs).toContain(id);
     }
-    expect(workflow.concurrency.queue).toBe('max');
-    expect(workflow.concurrency['cancel-in-progress']).toBeUndefined();
+    expect(workflow.concurrency['cancel-in-progress']).toBe("${{ github.event_name == 'pull_request' }}");
   });
 
   it('builds prerequisites once in each funded and E2E job before direct test execution', () => {
@@ -99,20 +93,15 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(aptCache?.with?.key).toContain('steps.runner-image.outputs.version');
   });
 
-  it('never saves caches from exact-source refresh dispatches', () => {
-    // Refresh dispatches run in main's cache scope but check out a PR merge, so any cache they
-    // save would be restored by trusted main runs.
-    const outputs = (workflow.jobs.changes as Job & { outputs: Record<string, string> }).outputs;
-    expect(outputs.cache_write).toBe("${{ (github.event_name == 'workflow_dispatch' && inputs.pr_number != '') && 'false' || 'true' }}");
-    const gate = "needs.changes.outputs.cache_write == 'true'";
+  it('saves caches only after a cache miss, from the run that produced them', () => {
     const steps = Object.values(workflow.jobs).flatMap(job => job.steps);
     expect(steps.some(s => s.uses?.startsWith('actions/cache@'))).toBe(false);
     const saves = steps.filter(s => s.uses?.startsWith('actions/cache/save@'));
     expect(saves).toHaveLength(3);
-    for (const save of saves) expect(save.if).toContain(gate);
+    for (const save of saves) expect(save.if).toMatch(/cache-hit != 'true'/);
     const nodeCaches = steps.filter(s => s.uses?.startsWith('actions/setup-node@') && s.with?.cache !== undefined);
     expect(nodeCaches.length).toBeGreaterThan(0);
-    for (const step of nodeCaches) expect(step.with?.cache).toBe(`\${{ ${gate} && 'pnpm' || '' }}`);
+    for (const step of nodeCaches) expect(step.with?.cache).toBe('pnpm');
     for (const [id, job] of Object.entries(workflow.jobs)) {
       if (!job.steps.some(s => s.uses?.startsWith('actions/cache/save@') || s.with?.cache !== undefined)) continue;
       expect([job.needs].flat(), id).toContain('changes');

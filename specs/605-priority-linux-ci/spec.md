@@ -1,5 +1,7 @@
 # Priority Linux CI rollout
 
+> **Superseded** by [spec 633](../633-ci-runner-pool/spec.md): the lease/controller system was retired in favor of an ephemeral self-hosted runner pool.
+
 Ticket: [ENG-240](https://linear.app/matrix-os/issue/ENG-240/ship-opt-in-queued-linux-ci-and-native-typescript-checks)
 
 ## Goal
