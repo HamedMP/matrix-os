@@ -5,6 +5,7 @@ import { Composer, type ComposerProps } from "../components/chat/Composer";
 import { Icon } from "../components/ui/Icon";
 import { MicIcon, SendIcon, StopIcon } from "../components/ui/icons";
 import type { ComposerAttachment } from "../lib/chat-attachments";
+import type { ComposerSpeech } from "../lib/speech/composer-speech";
 
 import { flat } from "./ui-test-utils";
 
@@ -110,6 +111,40 @@ describe("Composer", () => {
       maxHeight: 14 + 6 * 22 + 10,
     });
     expect(input.props.scrollEnabled).not.toBe(false);
+  });
+
+  describe("text put in from outside the keyboard", () => {
+    // React Native sizes the input from the text of its previous layout, so
+    // the input is laid out once more when its text came from the app.
+    function minHeightAfter(change: (input: ReturnType<typeof screen.getByLabelText>) => void, draft: string) {
+      const props: ComposerProps = {
+        draft: "",
+        onChangeDraft: jest.fn(),
+        placeholder: "Ask anything",
+        canSend: false,
+        onSend: jest.fn(),
+        keyboardOpen: false,
+      };
+      render(<Composer {...props} />);
+      const input = () => screen.getByLabelText("Message Matrix");
+      const before = Number(flat(input()).minHeight);
+      change(input());
+      screen.rerender(<Composer {...props} draft={draft} />);
+      return { before, after: Number(flat(input()).minHeight) };
+    }
+
+    it("lays the input out again when the app puts text in it, too slightly to see", () => {
+      const { before, after } = minHeightAfter(() => undefined, "A dictated message long enough to need a second line in the input");
+
+      expect(after).not.toBe(before);
+      expect(Math.abs(after - before)).toBeLessThan(0.1);
+    });
+
+    it("does not when the person types the text", () => {
+      const { before, after } = minHeightAfter((input) => fireEvent.changeText(input, "Typed"), "Typed");
+
+      expect(after).toBe(before);
+    });
   });
 
   it("cannot be typed in while it is not editable", () => {
@@ -259,10 +294,139 @@ describe("Composer", () => {
     expect(screen.getByRole("button", { name: "Stop" }).props.accessibilityState).toMatchObject({ disabled: true });
   });
 
-  it("has no microphone button", () => {
-    renderComposer({ draft: "Ship it", canSend: true });
+  describe("dictation", () => {
+    function speechOf(overrides: Partial<ComposerSpeech> = {}): ComposerSpeech {
+      return {
+        phase: "idle",
+        elapsedMs: 0,
+        inputLevel: 0,
+        inputLevelSequence: 0,
+        error: null,
+        start: jest.fn(),
+        stop: jest.fn(),
+        cancel: jest.fn(),
+        ...overrides,
+      };
+    }
 
-    expect(screen.UNSAFE_queryAllByType(Icon).some((icon) => icon.props.icon === MicIcon)).toBe(false);
-    expect(screen.queryByLabelText(/voice|microphone|dictat/i)).toBeNull();
+    function trailingLabels() {
+      return within(screen.getByTestId("composer-toolbar-trailing"))
+        .getAllByRole("button")
+        .map((button) => button.props.accessibilityLabel);
+    }
+
+    it("has no microphone where a screen gives it no dictation", () => {
+      renderComposer({ draft: "Ship it", canSend: true });
+
+      expect(screen.UNSAFE_queryAllByType(Icon).some((icon) => icon.props.icon === MicIcon)).toBe(false);
+      expect(screen.queryByLabelText(/voice|microphone|dictat|recording/i)).toBeNull();
+    });
+
+    it("puts a round 44pt microphone in the card colour just before send, which starts dictation", () => {
+      const speech = speechOf();
+      renderComposer({ speech });
+
+      expect(trailingLabels()).toEqual(["Start voice input", "Send message"]);
+      const mic = screen.getByRole("button", { name: "Start voice input" });
+      expect(flat(mic)).toMatchObject({ width: 44, height: 44, borderRadius: 9999, backgroundColor: "#FAF9F7" });
+      expect(iconOf("Start voice input")).toMatchObject({ icon: MicIcon, size: 18, color: "#242323" });
+
+      fireEvent.press(mic);
+
+      expect(speech.start).toHaveBeenCalledTimes(1);
+    });
+
+    it("cannot be started while the composer cannot be used", () => {
+      const speech = speechOf();
+      renderComposer({ speech, editable: false });
+
+      fireEvent.press(screen.getByRole("button", { name: "Start voice input" }));
+
+      expect(speech.start).not.toHaveBeenCalled();
+    });
+
+    it("waits on a spinner, and holds the message, while the microphone is being allowed", () => {
+      const { onSend } = renderComposer({ draft: "Hi", canSend: true, speech: speechOf({ phase: "requesting_permission" }) });
+
+      const waiting = screen.getByRole("button", { name: "Waiting for microphone permission" });
+      expect(waiting.props.accessibilityState).toMatchObject({ busy: true, disabled: true });
+      fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+      expect(onSend).not.toHaveBeenCalled();
+      expect(screen.getByLabelText("Message Matrix").props.placeholder).toBe("Waiting for microphone permission...");
+    });
+
+    it("shows the recording in the toolbar, with a way to drop it and one to finish it", () => {
+      const speech = speechOf({ phase: "recording", elapsedMs: 67_400, inputLevel: 0.6, inputLevelSequence: 3 });
+      renderComposer({ speech, addControl: <Text>add</Text>, modelControl: <Text>model</Text> });
+
+      const leading = screen.getByTestId("composer-toolbar-leading");
+      // The add and model controls make way for the recording.
+      expect(within(leading).queryByText("add")).toBeNull();
+      expect(within(leading).queryByText("model")).toBeNull();
+      expect(within(leading).getAllByTestId("speech-waveform-bar")).toHaveLength(9);
+      expect(within(leading).getByText("1:07")).toBeTruthy();
+      expect(trailingLabels()).toEqual(["Cancel recording", "Stop recording"]);
+      expect(screen.getByLabelText("Message Matrix").props.placeholder).toBe("Recording — stop when you're done");
+
+      fireEvent.press(screen.getByRole("button", { name: "Stop recording" }));
+      expect(speech.stop).toHaveBeenCalledTimes(1);
+      fireEvent.press(screen.getByRole("button", { name: "Cancel recording" }));
+      expect(speech.cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it("finishes the recording from the button where send was, drawn as stop", () => {
+      renderComposer({ speech: speechOf({ phase: "recording" }), running: true, onStop: jest.fn() });
+
+      const finish = screen.getByRole("button", { name: "Stop recording" });
+      expect(flat(finish)).toMatchObject({ width: 44, height: 44, borderRadius: 9999, backgroundColor: "#242323" });
+      expect(iconOf("Stop recording")).toMatchObject({ icon: StopIcon, color: "#FFFEFC" });
+      // The run's own stop waits until the recording is done.
+      expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+    });
+
+    it("draws the waveform taller as the voice gets louder", () => {
+      renderComposer({ speech: speechOf({ phase: "recording", inputLevel: 0, inputLevelSequence: 1 }) });
+      const quiet = flat(screen.getAllByTestId("speech-waveform-bar").at(-1)!).height;
+
+      screen.rerender(
+        <Composer
+          draft=""
+          onChangeDraft={jest.fn()}
+          placeholder="Ask anything"
+          canSend={false}
+          onSend={jest.fn()}
+          keyboardOpen={false}
+          speech={speechOf({ phase: "recording", inputLevel: 1, inputLevelSequence: 2 })}
+        />,
+      );
+
+      expect(flat(screen.getAllByTestId("speech-waveform-bar").at(-1)!).height).toBeGreaterThan(Number(quiet));
+    });
+
+    it("says it is transcribing, offers to cancel, and holds the message until the words are in", () => {
+      const speech = speechOf({ phase: "transcribing" });
+      const { onSend } = renderComposer({ draft: "Hi", canSend: true, speech });
+
+      expect(within(screen.getByTestId("composer-toolbar-leading")).getByText("Transcribing…")).toBeTruthy();
+      expect(trailingLabels()).toEqual(["Cancel transcription", "Send message"]);
+      fireEvent.press(screen.getByRole("button", { name: "Send message" }));
+      expect(onSend).not.toHaveBeenCalled();
+
+      fireEvent.press(screen.getByRole("button", { name: "Cancel transcription" }));
+      expect(speech.cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it("says why dictation did not work, inside the card above the input, and can be tried again", () => {
+      const speech = speechOf({ phase: "error", error: "Speech allowance is unavailable" });
+      renderComposer({ speech });
+
+      const alert = screen.getByRole("alert");
+      expect(alert.props.children).toBe("Speech allowance is unavailable");
+      expect(flat(alert)).toMatchObject({ fontSize: 12, paddingHorizontal: 14, color: "#BA5236" });
+      expect(within(screen.getByTestId("composer-card")).getByTestId("composer-speech-error")).toBe(alert);
+
+      fireEvent.press(screen.getByRole("button", { name: "Start voice input" }));
+      expect(speech.start).toHaveBeenCalledTimes(1);
+    });
   });
 });

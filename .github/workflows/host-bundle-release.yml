@@ -10,7 +10,7 @@
 #   2. build — compile gateway, shell, kernel into host bundle tarball
 #   3. publish — upload immutable R2 artifacts and register metadata in platform DB
 #   4. (optional) deploy — explicit dispatches may trigger exact-version VPS deployment
-#   5. activate-speech — verify speech even when a requested deployment fails
+#   5. activate-speech — reconcile AI and speech even when a requested deployment fails
 
 name: Host Bundle Release
 
@@ -146,7 +146,24 @@ jobs:
                 continue
               fi
 
-              failed_job="$(printf '%s' "$run_jobs" | jq -r --arg shadow "${DEDICATED_SHADOW_ONLY:-false}" '.jobs | map(select(.conclusion != "success" and .conclusion != "skipped")) | map(select(($shadow == "true" and .name == "Verified Dedicated Linux Qualification") | not)) | .[0] | if . then "\(.name) (\(.conclusion // "unknown"))" else "" end')"
+              # Workflow completion can precede the jobs API catching up.
+              # Empty conclusions are pending evidence, including on jobs
+              # already marked completed. A neutral diagnostic is not a CI job
+              # inventory; never publish until actual workflow jobs are visible.
+              pending_jobs="$(printf '%s' "$run_jobs" | jq --arg shadow "${DEDICATED_SHADOW_ONLY:-false}" '.jobs | map(select(($shadow == "true" and .name == "Verified Dedicated Linux Qualification") | not)) | map(select((.name == "Dedicated CI Results" and .status == "completed" and .conclusion == "neutral") | not)) | if length == 0 then 1 else map(select(.status != "completed" or .conclusion == null or .conclusion == "")) | length end')"
+              if [ "$pending_jobs" -gt 0 ]; then
+                if [ "$SECONDS" -ge "$deadline" ]; then
+                  echo "Timed out waiting for complete CI job results for $TARGET_SHA" >&2
+                  exit 1
+                fi
+                echo "Waiting for complete CI job results for $TARGET_SHA..."
+                sleep 20
+                continue
+              fi
+
+              # Redundant authenticated controller work settles neutral without
+              # coverage credit. CI workflow success and every other job still gate release.
+              failed_job="$(printf '%s' "$run_jobs" | jq -r --arg shadow "${DEDICATED_SHADOW_ONLY:-false}" '.jobs | map(select(.conclusion != "success" and .conclusion != "skipped")) | map(select((.name == "Dedicated CI Results" and .status == "completed" and .conclusion == "neutral") | not)) | map(select(($shadow == "true" and .name == "Verified Dedicated Linux Qualification") | not)) | .[0] | if . then "\(.name) (\(.conclusion // "unknown"))" else "" end')"
               if [ -n "$failed_job" ]; then
                 echo "CI workflow run passed but a job was not successful for $TARGET_SHA: $failed_job" >&2
                 printf '%s\n' "$run_jobs" >&2
@@ -553,10 +570,10 @@ jobs:
   # A failed or timed-out deployment must not suppress speech activation.
   # Keep its failure visible while activation gets a separate runner and budget.
   activate-speech:
-    name: Activate and verify managed speech fleet
+    name: Activate and verify managed AI and speech
     needs: [deploy, targeted-deploy]
     if: >-
-      ${{ !cancelled() && vars.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED == 'true' &&
+      ${{ !cancelled() &&
           (needs.deploy.result != 'skipped' || needs['targeted-deploy'].result != 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
@@ -571,4 +588,4 @@ jobs:
         with:
           node-version: '24'
       - name: Activate and verify every eligible customer computer
-        run: node scripts/ci/targeted-fleet-maintenance.mjs activate-fleet
+        run: node scripts/ci/targeted-fleet-maintenance.mjs activate-managed-features

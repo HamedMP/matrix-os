@@ -192,7 +192,6 @@ function NameCreationScreen({
           iconSize={22}
           buttonSize={32}
           disabled={loading}
-          pressedOpacity={1}
           onPress={onBack}
         />
         <Text style={styles.nameTitle}>Name {noun}</Text>

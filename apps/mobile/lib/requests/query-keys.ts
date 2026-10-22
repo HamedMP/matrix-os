@@ -126,6 +126,14 @@ export const mobileQueryKeys = {
     computerKey,
     slug,
   ] as const,
+  /** What the computer's speech offers; read once per computer, not per chat. */
+  speechCapabilities: (userId: string, computerKey: string) => [
+    "mobile",
+    "speech",
+    "capabilities",
+    userId,
+    computerKey,
+  ] as const,
   systemInfo: (userId: string, computerKey: string) => [
     "mobile",
     "settings",

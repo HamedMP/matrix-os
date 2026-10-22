@@ -68,7 +68,7 @@ case "$*" in
 esac
 `);
   await chmod(join(directory, 'gh'), 0o755);
-  const result = spawnSync('bash', ['-c', step('gate', 'Decide action').run!], {
+  const result = spawnSync('bash', ['--noprofile', '--norc', '-c', step('gate', 'Decide action').run!], {
     encoding: 'utf8',
     env: {
       PATH: `${directory}:${process.env.PATH}`,
@@ -276,7 +276,7 @@ printf '%s\\n' $FAKE_CLOSED_PRS
 `);
     await chmod(join(directory, 'curl'), 0o755);
     await chmod(join(directory, 'gh'), 0o755);
-    const result = spawnSync('bash', ['-c', step('reaper', 'Delete Private Previews for closed PRs').run!], {
+    const result = spawnSync('bash', ['--noprofile', '--norc', '-c', step('reaper', 'Delete Private Previews for closed PRs').run!], {
       encoding: 'utf8',
       env: {
         PATH: `${directory}:${process.env.PATH}`,

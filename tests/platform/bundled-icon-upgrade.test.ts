@@ -238,7 +238,11 @@ fs.openSync = function(path, flags, ...args) {
     const custom = Buffer.alloc(4 * 1024 * 1024 + 1, 7);
     f.write(f.home, 'system/icons/game-center.png', custom);
     expectSelection(f, f.oldManifest);
-    expect(readFileSync(join(f.home, 'system/icons/game-center.png'))).toEqual(custom);
+    // Deep equality walks millions of Buffer entries and can exceed the CI
+    // deadline under parallel load. Compare every byte via a bounded digest.
+    const retained = readFileSync(join(f.home, 'system/icons/game-center.png'));
+    expect(retained.length).toBe(custom.length);
+    expect(hash(retained)).toBe(hash(custom));
   });
   it('still upgrades the manifest when its icon stem is unchanged', () => {
     const f = fixture({ nextStem: 'game-center' });

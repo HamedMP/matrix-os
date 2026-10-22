@@ -14,7 +14,7 @@ describe('Custom MCP isolated platform preview', () => {
       encoding: 'utf8', env: { PATH: process.env.PATH, GCP_PROJECT_ID: 'fixture', GCP_REGION: 'region',
         CLOUD_RUN_PREVIEW_SERVICE: 'preview', CLOUD_RUN_SERVICE_ACCOUNT: 'preview-sa', IMAGE: 'image',
         PR_NUMBER: '42', PREVIEW_PUBLIC_URL: 'https://preview.example.com', MATRIX_CARD_TRIALS_ENABLED: 'true',
-        MATRIX_CARD_TRIAL_DAYS: '3', CUSTOM_MCP_ENABLED: String(enabled),
+        MATRIX_CARD_TRIAL_DAYS: '3', MATRIX_STARTER_TRIAL_DAYS: '14', CUSTOM_MCP_ENABLED: String(enabled),
         MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: 'false', MATRIX_FUNDED_AI_RUNTIME_ENABLED: 'false',
         MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: 'collaboration-preview-v1' },
     });
@@ -23,6 +23,8 @@ describe('Custom MCP isolated platform preview', () => {
     const env = args[args.indexOf('--set-env-vars') + 1];
     const secrets = args[args.indexOf('--set-secrets') + 1];
     expect(env.slice(3).split('|')).toContain(`CUSTOM_MCP_ENABLED=${enabled}`);
+    expect(env.slice(3).split('|')).toContain('MATRIX_CARD_TRIAL_DAYS=3');
+    expect(env.slice(3).split('|')).toContain('MATRIX_STARTER_TRIAL_DAYS=14');
     expect(env.slice(3).split('|')).toContain('MCP_OAUTH_CALLBACK_URL=https://pr-42---preview.example.com/api/mcp-servers/oauth/callback');
     expect(env.startsWith('^|^')).toBe(true);
     expect(env.slice(3).split('|')).toContain('MATRIX_APP_DOMAIN_HOSTS=preview.example.com,pr-42---preview.example.com,preview-service.run.app');

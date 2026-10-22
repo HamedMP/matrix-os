@@ -138,7 +138,7 @@ function platformControl(afterAuthorize?: () => void) {
       afterAuthorize?.();
       return { identity, reservation: { reservationId: "reservation_1", requestId: input.requestId, modelId: input.modelId, reservedMicrousd: 1, billingMode: "usage" } };
     }),
-    start: vi.fn(async () => ({ reservationId: "reservation_1", requestId: "request_1", tokenId: identity.tokenId })),
+    start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId, reservationId: "reservation_1", requestId: "request_1", tokenId: identity.tokenId })),
     release: vi.fn(async () => ({})), finalize: vi.fn(async () => ({})),
   };
 }

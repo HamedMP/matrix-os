@@ -39,8 +39,8 @@ function fixture(delayMs: number | null, overrides: NodeJS.ProcessEnv = {}) {
       identity: IDENTITY, reservation: { reservationId: "reservation_1", requestId: input.requestId,
         modelId: input.modelId, reservedMicrousd: 1, billingMode: "usage" },
     })),
-    start: vi.fn(async () => ({ reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId })),
-    release: vi.fn(), finalize: vi.fn(async () => ({})),
+    start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId, contractVersion: 1, status: "in_flight", startedAt: NOW.toISOString(), expiresAt: "2026-09-10T12:10:00.000Z", reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId })),
+    release: vi.fn(), terminal: vi.fn(async () => ({})), finalize: vi.fn(async () => ({})),
   };
   let signal!: AbortSignal;
   const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
@@ -81,9 +81,10 @@ function fixture(delayMs: number | null, overrides: NodeJS.ProcessEnv = {}) {
   async function expectUnresolvedSettlement() {
     await relay.close();
     expectSingleDispatch();
-    expect(control.finalize).toHaveBeenCalledTimes(1);
-    expect(control.finalize).toHaveBeenCalledWith({ reservationId: "reservation_1", tokenId: IDENTITY.tokenId,
-      mode: "conservative" }, expect.any(AbortSignal));
+    expect(control.finalize).not.toHaveBeenCalled();
+    expect(control.terminal).toHaveBeenCalledTimes(1);
+    expect(control.terminal).toHaveBeenCalledWith(expect.objectContaining({ reservationId: "reservation_1", tokenId: IDENTITY.tokenId,
+      requestId: "request_1", outcome: "usage_unknown", terminalState: "failed" }), expect.any(AbortSignal));
   }
   return { request, relay, control, fetchFn, signal: () => signal, expectSingleDispatch, expectUnresolvedSettlement };
 }

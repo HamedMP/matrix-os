@@ -138,6 +138,9 @@ describe("S05 direct sessions on the home", () => {
   afterEach(async () => {
     await service.shutdown();
     await fixture.destroy();
+    // Mock contexts retain service options and their closed database engines.
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   it("exchanges a valid ticket once for a bounded identity session with fresh organization evidence", async () => {

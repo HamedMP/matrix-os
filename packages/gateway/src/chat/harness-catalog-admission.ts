@@ -7,6 +7,11 @@ type InstanceDraft = Omit<CanonicalProviderInstanceDescriptor, "catalogRevision"
 
 const GENERIC_DRIVERS = ["hermes", "openclaw", "pi", "opencode"] as const;
 type GenericDriverKind = typeof GENERIC_DRIVERS[number];
+const CODEX_SETTINGS_ACTION = {
+  id: "codex_settings",
+  kind: "open_settings",
+  label: "Agents & providers",
+} satisfies CanonicalProviderSetupAction;
 
 function genericHarnessKind(kind: CanonicalProviderDriverKind): GenericDriverKind | null {
   return GENERIC_DRIVERS.includes(kind as GenericDriverKind) ? kind as GenericDriverKind : null;
@@ -86,6 +91,34 @@ export function applyHarnessSettings(input: {
       const enabled = saved.filter((harness) => harness.configuredEnabled ?? harness.enabled);
       if (input.settingsAvailable && saved.length > 0 && enabled.length === 0) {
         return unavailableInstance(instance, "disabled_in_settings");
+      }
+      if (instance.driverKind === "codex" && input.settingsAvailable && enabled.length === 1) {
+        const source = input.settings?.accessSources.find((candidate) => candidate.id === enabled[0]!.accessSourceId);
+        const staleNativeBinding = source?.id === "owner_openai_profile"
+          && source.kind === "provider_account"
+          && (source.accountId === null || enabled[0]!.selectedAccountId !== source.accountId);
+        if (staleNativeBinding) {
+          return {
+            ...unavailableInstance(instance, "authentication_required"),
+            setupActions: [CODEX_SETTINGS_ACTION],
+          };
+        }
+      }
+      if (instance.driverKind === "codex" && input.settingsAvailable && enabled.length === 1
+        && enabled[0]!.enabled === false) {
+        const source = input.settings?.accessSources.find((candidate) => candidate.id === enabled[0]!.accessSourceId);
+        const authenticationRequired = source?.readiness.state === "auth_required"
+          || source?.readiness.state === "expired";
+        const unavailable = unavailableInstance(
+          instance,
+          authenticationRequired ? "authentication_required" : "runtime_unavailable",
+        );
+        return authenticationRequired
+          ? {
+              ...unavailable,
+              setupActions: [CODEX_SETTINGS_ACTION],
+            }
+          : unavailable;
       }
       if (instance.driverKind === "claude_code" && saved.length > 0
         && (enabled.length !== 1 || enabled[0]!.accessSourceId !== "owner_claude_profile"

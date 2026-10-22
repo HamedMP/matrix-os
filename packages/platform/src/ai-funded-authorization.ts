@@ -6,6 +6,7 @@ import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
  * hold with its funding sources, all in one transaction. Extracted from the
  * metering repository so that file stays under the large-file limit.
  */
+import { recoverTerminalOutcomes } from "./ai-funded-recovery-lifecycle.js";
 import { createHash } from "node:crypto";
 import {
   FUNDED_AI_AUDIENCE,
@@ -74,6 +75,11 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       // Serialize admission across every runtime/replica for this owner. The
       // namespaced transaction lock is acquired before runtime and balance locks.
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${credential.owner_id}`}, 0))`.execute(trx.executor);
+      // Recovery acquires machine rows; take those before any runtime/balance
+      // locks to match policy updates. Later validation rolls this back on refusal.
+      // A receipt can commit while admission waits for this owner lock; recovery
+      // must compare its chronology against the locked time, not the entry snapshot.
+      await recoverTerminalOutcomes(trx.executor, credential.owner_id, deps.now());
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .selectAll().where("machine_id", "=", credential.machine_id).forUpdate().executeTakeFirst();
       const machine = await trx.executor.selectFrom("user_machines").select([
@@ -114,11 +120,11 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       if (!reset) throw new AiFundedPolicyError("access_disabled");
 
       const existing = await trx.executor.selectFrom("ai_funded_usage_reservations")
-        .select(["payload_hash", "authorization_response", "execution_admission_release", "charge_waiver"])
+        .select(["payload_hash", "authorization_response", "terminal_outcome", "execution_admission_release", "charge_waiver"])
         .where("token_id", "=", credential.token_id).where("request_id", "=", request.requestId)
         .executeTakeFirst();
       if (existing) {
-        if (existing.execution_admission_release !== null || existing.charge_waiver !== null) throw new AiFundedPolicyError("reservation_closed");
+        if (existing.terminal_outcome !== null || existing.execution_admission_release !== null || existing.charge_waiver !== null) throw new AiFundedPolicyError("reservation_closed");
         if (existing.payload_hash !== payloadHash) throw new AiFundedPolicyError("idempotency_conflict");
         return { kind: "authorized", response: FundedAiAuthorizationResponseSchema.parse(JSON.parse(existing.authorization_response)) };
       }

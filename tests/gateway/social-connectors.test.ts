@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -314,6 +316,30 @@ describe('gateway/social-connectors', () => {
       expect(posts).toEqual([]);
     });
 
+    it('leaves no markup behind from split tag fragments', async () => {
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            id: '201',
+            content: '<p>Hi <scr<b></b>ipt>alert(1)</script></p>',
+            created_at: '2026-03-01T12:00:00Z',
+            url: 'https://mastodon.social/@alice/201',
+            account: { acct: 'alice' },
+          },
+        ],
+      });
+
+      const connector = createMastodonConnector({ fetch: fetchMock });
+      const posts = await connector.fetchPosts({
+        accessToken: 'tok',
+        metadata: { instanceUrl: 'https://mastodon.social' },
+      });
+
+      expect(posts[0].content).toContain('Hi');
+      expect(posts[0].content).not.toMatch(/<[^>]*>/);
+    });
+
     it('strips HTML tags from Mastodon content', async () => {
       const fetchMock = vi.fn().mockResolvedValueOnce({
         ok: true,
@@ -364,4 +390,19 @@ describe('gateway/social-connectors', () => {
       expect(posts[0].externalUrl).toBe('https://mastodon.social/@alice/101');
     });
   });
+});
+
+it("bounds Mastodon plain-text extraction for unterminated markup", async () => {
+  const moduleUrl = new URL("../../packages/gateway/src/social-connectors/index.ts", import.meta.url).href;
+  const script = `
+    import { createMastodonConnector } from ${JSON.stringify(moduleUrl)};
+    const content = "<".repeat(100_000) + "tail";
+    const connector = createMastodonConnector({ fetch: async () => ({ ok: true, json: async () => [{
+      id: "bounded", content, created_at: "2026-01-01T00:00:00Z", url: "https://example.com/status/1", account: { acct: "test" },
+    }] }) });
+    const posts = await connector.fetchPosts({ accessToken: "test", metadata: { instanceUrl: "https://example.com" } });
+    process.stdout.write(String(posts[0]?.content === content));
+  `;
+  const { stdout } = await promisify(execFile)(process.execPath, ["--input-type=module", "--eval", script], { timeout: 2_000, maxBuffer: 1024 });
+  expect(stdout).toBe("true");
 });

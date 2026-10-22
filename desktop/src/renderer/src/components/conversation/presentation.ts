@@ -1,3 +1,5 @@
+import type { BrowserPermissionClient } from "@matrix-os/ui";
+import type { BrowserPermissionChoice, CanonicalChatApprovalView } from "@matrix-os/contracts";
 import type { ChatSubagent, CanonicalChatApprovalDecision, ImportedChatAssetRef } from "@matrix-os/contracts";
 import type { ChatRunContext, CanonicalChatExecutionRootRef, CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 import type { ReactNode } from "react";
@@ -32,7 +34,7 @@ export interface ConversationMessagePresentation {
 
 export type ConversationActionPresentation =
   | { kind: "retry"; turnId: string; label: string }
-  | { kind: "approval"; requestId: string; decision: "approve" | "approve_for_session" | "decline" | "cancel"; label: string }
+  | { kind: "approval"; browserChoice?: BrowserPermissionChoice; requestId: string; decision: "approve" | "approve_for_session" | "decline" | "cancel"; label: string }
   | { kind: "input"; requestId: string; label: string };
 
 export type ConversationActivityKind =
@@ -86,6 +88,7 @@ export interface ConversationNoticePresentation {
 }
 
 export interface ConversationRequestPresentation {
+  browserApproval?: CanonicalChatApprovalView;
   kind: "request";
   id: string;
   phase: "commentary" | "final";
@@ -93,6 +96,7 @@ export interface ConversationRequestPresentation {
   requestKind: "approval" | "input";
   requestId: string;
   decision?: CanonicalChatApprovalDecision;
+  reason?: "expired";
   state: "waiting" | "resolved";
   label: string;
   detail?: string;
@@ -139,6 +143,9 @@ export interface ConversationTurnPresentation {
 }
 
 export interface ConversationPresentationCallbacks {
+  browserChatId?: string;
+  browserPermissions?: BrowserPermissionClient;
+  openPermissionMode?: () => void;
   renderCredentialMarker?: (message: ConversationMessagePresentation, offset: number, marker: string, number: number) => ReactNode;
   copyText: (text: string) => Promise<void>;
   loadImage?: (src: string) => Promise<Blob>;
@@ -148,6 +155,9 @@ export interface ConversationPresentationCallbacks {
   submitInput?: (runId: string, requestId: string, input: Omit<CanonicalSubmitChatInputRequest, "clientRequestId">) => Promise<boolean>;
   performAction?: (action: ConversationActionPresentation, input?: string) => Promise<void>;
   canPerformAction?: (action: ConversationActionPresentation) => boolean;
+  permissionMode?: string;
+  onPermissionMode?: (mode: "supervised" | "full_access") => void;
+  onTryAgain?: (prompt: string) => void;
   openFile?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => boolean;
   openImportedAsset?: (asset: ImportedChatAssetRef) => Promise<void>;
   openAttachment?: (path: string) => boolean;

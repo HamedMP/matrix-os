@@ -133,7 +133,7 @@ describe('actual isolated CI handoff workflow graph',()=>{
   try{
    const env:NodeJS.ProcessEnv={PATH:process.env.PATH,GITHUB_STEP_SUMMARY:join(directory,'summary.md'),CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'false',CHANGES_RESULT:'success',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'false',DEDICATED_MODE:'shadow',CI_HANDOFF_RESULT:'skipped',CI_REDIRECT_RESULT:'skipped'};
    env[kind==='handoff'?'CI_HANDOFF_RESULT':'CI_REDIRECT_RESULT']=result;
-   for(const name of ['CI_BACKEND','DEDICATED_LINUX','TYPECHECK','SHELL_PRODUCTION_BUILD','PATTERNS','REACT_DOCTOR','SYNC_CLIENT','AGENT_SDK_COMPATIBILITY','UNIT','FUNDED_POSTGRES','FUNDED_HOST_ROOT','DOCS_CONTRACT','OS_VIEW_PARITY','E2E'])env[`${name}_RESULT`]='skipped';
+   for(const name of ['CI_BACKEND','DEDICATED_LINUX','TYPECHECK','SHELL_PRODUCTION_BUILD','PATTERNS','REACT_DOCTOR','SYNC_CLIENT','AGENT_SDK_COMPATIBILITY','UNIT','FUNDED_POSTGRES','COLLABORATION_POSTGRES','FUNDED_HOST_ROOT','DOCS_CONTRACT','OS_VIEW_PARITY','E2E'])env[`${name}_RESULT`]='skipped';
    const execute=()=>execFileSync('bash',['-c',step.run],{env,timeout:5000,maxBuffer:65536,stdio:'pipe'});
    if(['failure','cancelled'].includes(result))expect(execute).toThrow();else expect(execute).not.toThrow();
   }finally{rmSync(directory,{recursive:true,force:true});}
@@ -211,7 +211,7 @@ it.each([
  const directory=mkdtempSync(join(tmpdir(),'matrix-current-handoff-'));
  try{
   const env:NodeJS.ProcessEnv={PATH:process.env.PATH,GITHUB_STEP_SUMMARY:join(directory,'summary.md'),CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:'false',CHANGES_RESULT:'success',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'false',DEDICATED_MODE:'shadow',CI_ISOLATED_REQUEST:'true',CI_REQUESTING_ATTEMPT:'2',CI_HANDOFF_ATTEMPT:attempt,CI_HANDOFF_RESULT:result,CI_REDIRECT_RESULT:'skipped'};
-  for(const name of ['CI_BACKEND','DEDICATED_LINUX','TYPECHECK','SHELL_PRODUCTION_BUILD','PATTERNS','REACT_DOCTOR','SYNC_CLIENT','AGENT_SDK_COMPATIBILITY','UNIT','FUNDED_POSTGRES','FUNDED_HOST_ROOT','DOCS_CONTRACT','OS_VIEW_PARITY','E2E'])env[`${name}_RESULT`]='skipped';
+  for(const name of ['CI_BACKEND','DEDICATED_LINUX','TYPECHECK','SHELL_PRODUCTION_BUILD','PATTERNS','REACT_DOCTOR','SYNC_CLIENT','AGENT_SDK_COMPATIBILITY','UNIT','FUNDED_POSTGRES','COLLABORATION_POSTGRES','FUNDED_HOST_ROOT','DOCS_CONTRACT','OS_VIEW_PARITY','E2E'])env[`${name}_RESULT`]='skipped';
   const run=()=>execFileSync('bash',['-c',step.run],{env,timeout:5000,maxBuffer:65536,stdio:'pipe'});
   if(accepted)expect(run).not.toThrow();else expect(run).toThrow();
  }finally{rmSync(directory,{recursive:true,force:true});}
@@ -228,7 +228,7 @@ it.each([
  const directory=mkdtempSync(join(tmpdir(),'matrix-hosted-backend-outcome-'));
  try{
   const env:NodeJS.ProcessEnv={PATH:process.env.PATH,GITHUB_STEP_SUMMARY:join(directory,'summary.md'),CI_TRIGGER_REQUESTED:'true',SHOULD_RUN:String(source),CHANGES_RESULT:'success',DEDICATED_ELIGIBLE:'false',DEDICATED_REQUIRED:'false',DEDICATED_MODE:'shadow',CI_BACKEND_PROVIDER:'hosted',INFRASTRUCTURE_FALLBACK:'false',CI_ISOLATED_REQUEST:String(source),CI_REQUESTING_ATTEMPT:'2',CI_HANDOFF_ATTEMPT:'2',CI_HANDOFF_RESULT:source?'success':'skipped',CI_REDIRECT_RESULT:'skipped'};
-  for(const name of ['DEDICATED_LINUX','TYPECHECK','SHELL_PRODUCTION_BUILD','PATTERNS','REACT_DOCTOR','SYNC_CLIENT','AGENT_SDK_COMPATIBILITY','UNIT','FUNDED_POSTGRES','FUNDED_HOST_ROOT','DOCS_CONTRACT','OS_VIEW_PARITY','E2E'])env[`${name}_RESULT`]=source?'success':'skipped';
+  for(const name of ['DEDICATED_LINUX','TYPECHECK','SHELL_PRODUCTION_BUILD','PATTERNS','REACT_DOCTOR','SYNC_CLIENT','AGENT_SDK_COMPATIBILITY','UNIT','FUNDED_POSTGRES','COLLABORATION_POSTGRES','FUNDED_HOST_ROOT','DOCS_CONTRACT','OS_VIEW_PARITY','E2E'])env[`${name}_RESULT`]=source?'success':'skipped';
   if(backend!==undefined)env.CI_BACKEND_RESULT=backend;
   const run=()=>execFileSync('bash',['-c',step.run],{env,timeout:5000,maxBuffer:65536,stdio:'pipe'});
   if(accepted)expect(run).not.toThrow();else expect(run).toThrow();

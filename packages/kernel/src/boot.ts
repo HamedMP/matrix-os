@@ -87,6 +87,80 @@ function isUserOwnedTemplatePath(relPath: string): boolean {
     || USER_OWNED_TEMPLATE_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
+function lstatOrMissing(path: string): fs.Stats | null {
+  try {
+    return fs.lstatSync(path);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+function ensureRegularDirectory(path: string): void {
+  if (!lstatOrMissing(path)) mkdirSync(path);
+  const stat = fs.lstatSync(path);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`Bundled icon directory is not a regular directory (symlink rejected): ${path}`);
+  }
+}
+
+function addMissingBundledIcon(
+  homePath: string,
+  templateDir: string,
+  relPath: string,
+  report: SyncReport,
+  logLines: string[],
+  now: string,
+): void {
+  const destination = join(homePath, relPath);
+  // Any existing file, including a dangling symlink, belongs to the owner.
+  if (lstatOrMissing(destination)) {
+    report.skipped.push(relPath);
+    logLines.push(`[${now}] Skipped: ${relPath} (existing owner icon)`);
+    return;
+  }
+
+  const source = join(templateDir, relPath);
+  const sourceStat = fs.lstatSync(source);
+  if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || sourceStat.size > 4 * 1024 * 1024) {
+    throw new Error(`Invalid bundled icon source: ${relPath}`);
+  }
+  const sourceFd = fs.openSync(source, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  let bytes: Buffer;
+  try {
+    const opened = fs.fstatSync(sourceFd);
+    if (!opened.isFile() || opened.size > 4 * 1024 * 1024 || opened.ino !== sourceStat.ino || opened.dev !== sourceStat.dev) {
+      throw new Error(`Bundled icon source changed: ${relPath}`);
+    }
+    bytes = fs.readFileSync(sourceFd);
+  } finally {
+    fs.closeSync(sourceFd);
+  }
+  let destinationFd: number;
+  try {
+    destinationFd = fs.openSync(destination, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+      report.skipped.push(relPath);
+      logLines.push(`[${now}] Skipped: ${relPath} (existing owner icon)`);
+      return;
+    }
+    throw err;
+  }
+  try {
+    fs.writeFileSync(destinationFd, bytes);
+  } catch (err: unknown) {
+    const created = fs.fstatSync(destinationFd);
+    const current = lstatOrMissing(destination);
+    if (current && current.ino === created.ino && current.dev === created.dev) fs.unlinkSync(destination);
+    throw err;
+  } finally {
+    fs.closeSync(destinationFd);
+  }
+  report.added.push(relPath);
+  logLines.push(`[${now}] Added: ${relPath}`);
+}
+
 export function generateTemplateManifest(templateDir: string): Record<string, string> {
   const manifest: Record<string, string> = {};
 
@@ -199,11 +273,24 @@ export function smartSyncTemplate(
     readFileSync(templateManifestPath, "utf-8"),
   );
 
+  // Existing homes keep every icon they already have, but receive missing
+  // bundled art when the local gateway starts directly through ensureHome.
+  ensureRegularDirectory(homePath);
+  ensureRegularDirectory(join(homePath, "system"));
+  ensureRegularDirectory(join(homePath, "system", "icons"));
+
   // Load installed manifest (what was last synced to user's home)
   const installedManifestPath = join(homePath, ".template-manifest.json");
   const installedManifest = readInstalledManifest(installedManifestPath, logLines, now);
 
   for (const [relPath, templateHash] of Object.entries(templateManifest)) {
+    if (relPath.startsWith("system/icons/")) {
+      if (!/^system\/icons\/[a-z0-9][a-z0-9-]*\.(?:png|svg)$/.test(relPath)) {
+        throw new Error(`Invalid bundled icon path: ${relPath}`);
+      }
+      addMissingBundledIcon(homePath, templateDir, relPath, report, logLines, now);
+      continue;
+    }
     const homeFilePath = join(homePath, relPath);
     const templateFilePath = join(templateDir, relPath);
 

@@ -476,6 +476,12 @@ certificates, preserved termination and exact immutable deployed worker evidence
 
 ## Audited support recovery of unresolved execution
 
+ENG-205 extends this legacy version1 single-row contract with approved bounded
+automatic execution recovery, durable Relay terminal outcomes and atomic mixed
+usage/speech operator recovery. See the [current funded recovery contract](../536-conversational-bots/contracts/funded-priority.md#eng-205-durable-terminal-outcomes-and-bounded-automatic-recovery)
+for generation 20, proof and deployment requirements. The version1 rules below
+remain supported for existing receipts and the single-row endpoint.
+
 `POST /api/operator/ai/funded/runtimes/:handle/policy-execution-release` is private
 operator support, authenticated solely with the Platform operator secret. It is
 not a Chat/runtime/Relay endpoint and accepts no query overrides. The strict body

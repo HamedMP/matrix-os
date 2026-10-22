@@ -1,6 +1,7 @@
 /** Mount integration/app runtime routes and metrics after gateway auth. */
 import { randomBytes } from "node:crypto";
 import type { Context, Hono } from "hono";
+import type { createNodeWebSocket } from "@hono/node-ws";
 import { bodyLimit } from "hono/body-limit";
 import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
 import { registerCustomMcpGatewayRoutes, type CustomMcpGatewayRegistration } from "../integrations/custom-mcp/gateway-routes.js";
@@ -8,12 +9,16 @@ import { resolveCustomMcpRuntimeRouting } from "../integrations/custom-mcp/previ
 import { httpRequestDuration, httpRequestsTotal, metricsRegistry, normalizePath } from "../metrics.js";
 import { registerAppRuntimeRoutes } from "./app-runtime-routes.js";
 import { authorizeChatIntegrationRequest } from "../integrations/chat-action-guard.js";
+import type { SharedBrowserBroker } from "../shared-browser/broker.js";
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
 
 export interface DeferredRuntimeRouteOptions {
   app: Hono;
   homePath: string;
+  upgradeWebSocket?: ReturnType<typeof createNodeWebSocket>["upgradeWebSocket"];
+  isAllowedBrowserLabOrigin?: (origin: string) => boolean;
+  sharedBrowser?: { broker: SharedBrowserBroker; ownerId: string };
   integrationRoutes: Hono | null;
   internalIntegrationBaseUrl: string | null;
   internalPlatformToken: string | undefined;
@@ -28,6 +33,7 @@ export interface DeferredRuntimeRouteOptions {
 export interface DeferredRuntimeRoutes {
   processManager: ReturnType<typeof registerAppRuntimeRoutes>;
   customMcp: CustomMcpGatewayRegistration;
+  browserLab: { close(): void };
 }
 
 export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptions): DeferredRuntimeRoutes {
@@ -105,10 +111,19 @@ export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptio
       : {}),
   });
 
+  let browserLab: { close(): void } = { close() {} };
   const processManager = registerAppRuntimeRoutes(app, {
     homePath,
     appSessionMasterSecret,
     devAppAuthBypass: APP_AUTH_DEV_BYPASS,
+    browserLab: {
+      enabled: process.env.MATRIX_BROWSER_LAB === "true",
+      viewerAuthorization: process.env.MATRIX_BROWSER_LAB_VIEWER_AUTH,
+      upgradeWebSocket: options.upgradeWebSocket,
+      isAllowedOrigin: options.isAllowedBrowserLabOrigin ?? (() => false),
+      onRegistered: (lab) => { browserLab = lab; },
+      ...(options.sharedBrowser ? { sharedBrowser: options.sharedBrowser } : {}),
+    },
     publicHost: process.env.PUBLIC_HOST ?? "localhost",
     onAppError: ({ errorKind, appSlug }) => {
       void posthogErrorTracker.captureEvent("gateway_app_runtime", {
@@ -141,5 +156,5 @@ export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptio
     });
   });
 
-  return { processManager, customMcp };
+  return { processManager, customMcp, browserLab };
 }

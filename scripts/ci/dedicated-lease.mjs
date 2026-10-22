@@ -48,8 +48,12 @@ export async function verifyDedicatedLeaseGrant(github,repo,controller,value){
  const {data:ciWorkflow}=await github.rest.actions.getWorkflow({...repo,workflow_id:'ci.yml',request});
  if(!id(ciWorkflow.id)||ciWorkflow.path!==workflowPath('ci.yml'))throw new Error('Unexpected requesting CI definition');
  const {data:ciRun}=await github.rest.actions.getWorkflowRun({...repo,run_id:value.requestingRunId,request});
- if(!await verifiedRequestingRun(github,repo,ciRun,value,ciWorkflow,controller.sha)||ciRun.id!==value.requestingRunId||ciRun.run_attempt!==value.requestingRunAttempt||(ciRun.event==='pull_request'&&ciRun.head_branch!==(value.sourceKind==='main'?'main':pull.head.ref))||(!active(ciRun)&&!(value.mode==='shadow'&&ciRun.status==='completed'&&ciRun.conclusion==='success')))throw new Error('Current requesting CI attempt is no longer admitted');
+ const requesterPassed=ciRun.status==='completed'&&ciRun.conclusion==='success';
+ if(!await verifiedRequestingRun(github,repo,ciRun,value,ciWorkflow,controller.sha)||ciRun.id!==value.requestingRunId||ciRun.run_attempt!==value.requestingRunAttempt||(ciRun.event==='pull_request'&&ciRun.head_branch!==(value.sourceKind==='main'?'main':pull.head.ref))||(!active(ciRun)&&!requesterPassed))throw new Error('Current requesting CI attempt is no longer admitted');
  if(configuration.MATRIX_CI_ISOLATED_EXECUTION==='true'&&ciRun.event==='workflow_dispatch'&&ciRun.head_branch==='main')throw new Error('Main routing-only dispatch cannot hold a qualification lease');
  const latest=(await requestingRuns(github,repo,{...value,headRef:value.sourceKind==='main'?'main':pull.head.ref},ciWorkflow))[0];
  if(!latest||latest.id!==value.requestingRunId||latest.run_attempt!==value.requestingRunAttempt)throw new Error('A newer requesting CI attempt superseded this lease');
+ // Hosted recovery can finish while redundant Linux work is still running.
+ // Revoke that exact lease as superseded; this grants no receipt or coverage.
+ if(requesterPassed&&value.mode==='delegated')throw new Error('Requesting CI attempt already completed successfully');
 }

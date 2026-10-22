@@ -17,6 +17,8 @@ import { sql } from "kysely";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { createAiFundedMeteringRepository } from "./ai-funded-metering-repository.js";
+import { createFundedTerminalOutcome } from "./ai-funded-terminal-outcome.js";
+import { createFundedExecutionBatch } from "./ai-funded-execution-batch.js";
 import { createFundedExecutionRecovery } from "./ai-funded-execution-recovery.js";
 
 export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
@@ -386,6 +388,8 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     issueJevProbeCredential: (identity: FundedAiIdentity) => issueCredential(identity, true),
     revokeRuntimeCredential,
     releaseExecutionAdmission: createFundedExecutionRecovery({ db: options.db, now }),
+    releaseExecutionAdmissionBatch: createFundedExecutionBatch({ db: options.db, now }),
+    recordTerminalOutcome: createFundedTerminalOutcome({ db: options.db, now }),
     ...metering,
   };
 }

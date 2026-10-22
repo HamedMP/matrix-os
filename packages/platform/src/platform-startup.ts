@@ -40,6 +40,7 @@ import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
 import type { EntitlementAccessDecision } from './profile-routing.js';
 import type { BillingEntitlement } from './billing.js';
 import type { PlatformApp } from './platform-app-types.js';
+import { shutdownPlatformApp } from './shutdown-platform-app.js';
 import {
   PlatformStartupConfigError,
   loadPlatformRuntimeConfig,
@@ -70,6 +71,8 @@ import {
   type CustomerVpsReconciliationWorker,
 } from './customer-vps-reconciliation-worker.js';
 import { createPrivatePreviewSweep } from './private-preview-sweep.js';
+import { createFundedHostActivationRoutes } from './funded-host-activation.js';
+import { createManagedFeatureActivator, createManagedFeatureReconciliationPass, type ManagedFeatureActivator } from './managed-feature-activation.js';
 import { registerPlatformWebSocketUpgradeHandler } from './platform-websocket-upgrade.js';
 import { createAiFundedPolicyRepository, type AiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { cleanupExpiredReservations } from './ai-funded-reservation-cleanup.js';
@@ -239,6 +242,7 @@ type CreatePlatformApp = (deps: {
   fundedModelProbes?: FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
   customerVpsService?: CustomerVpsService;
+  activateManagedFeatures?: ManagedFeatureActivator;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
   customerVpsObjectStore?: CustomerVpsObjectStore;
@@ -760,9 +764,11 @@ async function startPlatformServerWithCleanup(
   }
 
   let customerVpsService: CustomerVpsService | undefined;
+  let activateManagedFeatures: ManagedFeatureActivator | undefined;
   let goldenSnapshotService: GoldenSnapshotService | undefined;
   let goldenSnapshotConfig: GoldenSnapshotRuntimeConfig | undefined;
   let customerVpsReconciliationWorker: CustomerVpsReconciliationWorker | undefined;
+  let managedFeatureReconciliationWorker: CustomerVpsReconciliationWorker | undefined;
   let goldenSnapshotInterval: ReturnType<typeof setInterval> | undefined;
   let goldenSnapshotPromise: Promise<void> | undefined;
   let billingRuntimeCaptureEvent: ((
@@ -812,6 +818,22 @@ async function startPlatformServerWithCleanup(
           )
         : undefined,
     });
+    activateManagedFeatures = createManagedFeatureActivator({ db, platformSecret: customerVpsConfig.platformSecret,
+      relayOrigin: customerVpsConfig.fundedAiRelayUrl, fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
+      speechEnabled: customerVpsConfig.platformSpeechEnabled, activateSpeech: target => customerVpsService!.activateSpeech(target),
+      fetchDispatcher: customerVpsProxyDispatcher });
+    if (customerVpsConfig.fundedAiEnabled && internalFundedAiRuntimeRoutes) {
+      internalFundedAiRuntimeRoutes.route('/', createFundedHostActivationRoutes({ db,
+        platformSecret: customerVpsConfig.platformSecret, relayOrigin: customerVpsConfig.fundedAiRelayUrl }));
+    }
+    const reconcileManagedFeatures = createManagedFeatureReconciliationPass(activateManagedFeatures);
+    if (backgroundWorkersEnabled) {
+      managedFeatureReconciliationWorker = startCustomerVpsReconciliationWorker({ intervalMs: 60_000, runPass: reconcileManagedFeatures });
+      registerCustomMcpStartupCleanup(async () => {
+        managedFeatureReconciliationWorker?.stop();
+        await managedFeatureReconciliationWorker?.drain();
+      });
+    }
     goldenSnapshotConfig = customerVpsConfig.goldenSnapshots;
     {
       const [
@@ -1026,6 +1048,7 @@ async function startPlatformServerWithCleanup(
     fundedModelProbes,
     collaboration,
     customerVpsService,
+    activateManagedFeatures,
     goldenSnapshotService,
     goldenSnapshotConfig,
     customerVpsObjectStore,
@@ -1056,6 +1079,7 @@ async function startPlatformServerWithCleanup(
     console.log(`[platform] Received ${signal}, shutting down`);
     accountDeletion?.stop();
     customerVpsReconciliationWorker?.stop();
+    managedFeatureReconciliationWorker?.stop();
     if (goldenSnapshotInterval) clearInterval(goldenSnapshotInterval);
     if (customMcpSweepInterval) clearInterval(customMcpSweepInterval);
     if (previewDriveSweepInterval) clearInterval(previewDriveSweepInterval);
@@ -1076,6 +1100,7 @@ async function startPlatformServerWithCleanup(
         accountDeletion?.close();
         await atsBackgroundWorker?.shutdown();
         await customerVpsReconciliationWorker?.drain();
+        await managedFeatureReconciliationWorker?.drain();
         if (goldenSnapshotPromise) await goldenSnapshotPromise;
         await Promise.allSettled([
           stopGooglePurchaseWorker(),
@@ -1088,7 +1113,7 @@ async function startPlatformServerWithCleanup(
           customMcpShutdown?.(),
         ]);
         posthogProcessErrors.dispose();
-        await app.shutdownPostHog();
+        await shutdownPlatformApp(app);
         await processPosthogErrorTracker.shutdown();
         await Promise.all([db.destroy(), atsDb?.destroy()]);
       })()

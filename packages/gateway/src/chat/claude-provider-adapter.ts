@@ -1,6 +1,10 @@
+import type { SharedBrowserBroker } from "../shared-browser/broker.js";
+import { openNativeSharedBrowserRun, type NativeSharedBrowserRun } from "./native-shared-browser-run.js";
+import { configureClaudeSharedBrowser } from "./claude-shared-browser-launch.js";
 import { classifiedClaudeCliFailure, classifiedClaudeFailureEvidence } from "./claude-run-failure.js";
 import { createClaudeInputController } from "./claude-input-control.js";
 import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
+import { createClaudeBuiltinToolApprovalControl } from "./claude-builtin-tool-approval.js";
 import { createClaudeIntegrationApprovalControl } from "./claude-integration-approval.js";
 import type { PreviewDrivePlatformClient } from "./preview-drive-platform-client.js";
 import type { CustomMcpApprovalClient } from "./custom-mcp-approval-client.js";
@@ -67,7 +71,7 @@ const ClaudeStreamLineSchema = z.object({
 }).passthrough();
 
 type ClaudeChatState = z.infer<typeof ClaudeChatStateSchema>;
-const DEFAULT_TIMEOUT_MS = 30 * 60_000;
+const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000;
 // Claude's stream-json protocol repeats bounded tool-result envelopes throughout
 // a Run, so healthy repository tasks routinely exceed one MiB in total. This is
 // still a hard process-output ceiling; per-event projection and the queue remain
@@ -156,15 +160,18 @@ export function createClaudeChatProviderAdapter(options: {
   homePath: string;
   credentialKey?: Buffer;
   spawnFn?: CanonicalCliSpawn;
+  /** Maximum time without CLI output or accepted input. */
   timeoutMs?: number;
   resolveCredentialEnv?: () => Promise<Record<string, string | undefined> | undefined>;
   /** The run id doubles as the funded priority claim key for this turn. */
   resolveCredentialLaunch?: (context: { runId: string; instanceId: string }) => Promise<KernelCredentialLaunch>;
+  sharedBrowser?: SharedBrowserBroker;
+  sharedBrowserGatewayPort?: number;
   matrixMcpCapabilityIssuer?: MatrixMcpCapabilityIssuer;
   previewDriveClient?: Pick<PreviewDrivePlatformClient, "grantAction">;
   customMcpApprovalClient?: CustomMcpApprovalClient;
 }): CanonicalChatProviderAdapter<ClaudeChatState> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const idleTimeoutMs = options.timeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const activeRuns = new Map<string, {
     ownerId: string;
     ownerType: CanonicalProviderRunInput["owner"]["type"];
@@ -182,6 +189,20 @@ export function createClaudeChatProviderAdapter(options: {
     approvalReady = true,
   ): AsyncGenerator<CanonicalProviderRunEvent> {
     const input = parseCanonicalProviderRunInput(inputValue);
+    const processController = new AbortController();
+    let browserRun: NativeSharedBrowserRun | undefined;
+    let browserCleanupUnconfirmed = false;
+    const closeBrowser = async () => {
+      try { await browserRun?.close(); return true; }
+      catch (error: unknown) {
+        console.warn("[chat-claude] Browser cleanup unavailable", error instanceof Error ? error.name : "UnknownError");
+        if (!browserCleanupUnconfirmed) {
+          browserCleanupUnconfirmed = true;
+          input.onCleanupUnconfirmed?.();
+        }
+        return false;
+      }
+    };
     const cwd = input.executionRoot ?? options.homePath;
     const selectedPermission = permissionMode(input.permissionMode, input.interactionMode);
     const fullAccess = selectedPermission === "bypassPermissions";
@@ -218,6 +239,7 @@ export function createClaudeChatProviderAdapter(options: {
     let launch: ReturnType<typeof buildAgentLaunch>;
     let credentialLaunch: KernelCredentialLaunch;
     try {
+      browserRun = options.sharedBrowser ? openNativeSharedBrowserRun({ broker: options.sharedBrowser, gatewayPort: options.sharedBrowserGatewayPort ?? 4000, harness: "claude_code" }, { ...input, signal: AbortSignal.any([input.signal, processController.signal]) }) : undefined;
       launch = buildAgentLaunch({
         agent: "claude",
         cwd,
@@ -237,6 +259,7 @@ export function createClaudeChatProviderAdapter(options: {
         matrixDriveContext: Boolean(input.context?.drives?.length),
         matrixCustomMcpScope: previewDrive ? "preview_drive_call" : mcpScope,
       });
+      if (browserRun) configureClaudeSharedBrowser(launch, browserRun);
       if (resumeState) {
         const separator = launch.args.indexOf("--");
         launch.args.splice(separator < 0 ? launch.args.length : separator, 0, "--resume", resumeState.sessionId);
@@ -270,6 +293,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
     } catch (error: unknown) {
       capability?.revoke();
+      await closeBrowser();
       throw error;
     }
     const credentialEnv = credentialLaunch.env;
@@ -278,9 +302,10 @@ export function createClaudeChatProviderAdapter(options: {
       : definedEnvironment({ ...credentialEnv, ...launch.env });
     // Host control credentials are never delegated, including launches where
     // scoped capability issuance fails (for example shared Preview runtimes).
-    for (const name of ["MATRIX_AUTH_TOKEN", "UPGRADE_TOKEN", "MATRIX_CODE_PROXY_TOKEN", "AI_RELAY_CONTROL_TOKEN"]) {
+    for (const name of ["MATRIX_AUTH_TOKEN", "UPGRADE_TOKEN", "MATRIX_CODE_PROXY_TOKEN", "AI_RELAY_CONTROL_TOKEN", "MATRIX_SHARED_BROWSER_TOKEN", "MATRIX_SHARED_BROWSER_GATEWAY_PORT"]) {
       delete runEnv[name];
     }
+    if (browserRun) Object.assign(runEnv, browserRun.mcpServer.env);
     if (capability) {
       // The MCP child receives only this actor/run capability, never the VPS
       // machine bearer. The wrapper requires the scoped bearer for this launch.
@@ -301,7 +326,6 @@ export function createClaudeChatProviderAdapter(options: {
     let emittedState = resumeState;
     let steerPrompt: string | undefined;
     let cancellationRequested = false;
-    const processController = new AbortController();
     const processSignal = AbortSignal.any([input.signal, processController.signal]);
     let finishInput: (() => void) | undefined;
     let writeControl: ((frame: string) => Promise<void>) | undefined;
@@ -316,6 +340,16 @@ export function createClaudeChatProviderAdapter(options: {
       ...(previewDrive && options.previewDriveClient ? { previewDriveClient: options.previewDriveClient } : {}),
       emit: event => queue.push(event), onError: () => processController.abort(),
     }) : undefined;
+    const verifyBuiltinToolDecision = options.customMcpApprovalClient?.verifyIntegrationDecision?.bind(options.customMcpApprovalClient);
+    // Auto Accept Edits still asks for non-edit tools; Auto's classifier refusals are deliberate and stay denied.
+    const builtinToolApproval = verifyBuiltinToolDecision
+      && (selectedPermission === "default" || selectedPermission === "acceptEdits")
+      && input.interactionMode === "default"
+      ? createClaudeBuiltinToolApprovalControl({
+        runId: input.runId, chatId: input.chatId, homePath: options.homePath, verify: verifyBuiltinToolDecision,
+        emit: event => queue.push(event),
+        onError: () => processController.abort(),
+      }) : undefined;
     let approvalRevoked = false;
     let finalRevokePromise: Promise<void> | undefined;
     let clearApprovalPromise: Promise<boolean> | undefined;
@@ -323,6 +357,7 @@ export function createClaudeChatProviderAdapter(options: {
       capability?.revoke();
       approvalControl?.close();
       integrationApproval?.close();
+      builtinToolApproval?.close();
       if (reason === "steer") {
         if (approvalClient && registeredGeneration && !clearApprovalPromise) {
           clearApprovalPromise = approvalClient.clearRunApprovals(input.runId, registeredGeneration)
@@ -358,8 +393,14 @@ export function createClaudeChatProviderAdapter(options: {
             processController.abort();
           });
           return true;
-        } : undefined))?.(request, respond) || false,
-      onToolPermissionCancel: id => { integrationApproval?.onToolPermissionCancel(id); approvalControl?.onToolPermissionCancel(id); },
+        } : undefined))?.(request, respond)
+        || builtinToolApproval?.onToolPermission(request, respond)
+        || false,
+      onToolPermissionCancel: id => {
+        integrationApproval?.onToolPermissionCancel(id);
+        approvalControl?.onToolPermissionCancel(id);
+        builtinToolApproval?.onToolPermissionCancel(id);
+      },
     });
     const activeRun = {
       ownerId: input.owner.ownerId,
@@ -369,6 +410,7 @@ export function createClaudeChatProviderAdapter(options: {
       submitInput: inputControl.submit,
       submitApproval: async (id: string, decision: Parameters<NonNullable<typeof approvalControl>["submit"]>[1], provenance?: Parameters<NonNullable<typeof approvalControl>["submit"]>[2]) => {
         if (integrationApproval?.has(id)) return integrationApproval.submit(id, decision, provenance);
+        if (builtinToolApproval?.has(id)) return builtinToolApproval.submit(id, decision, provenance);
         if (approvalControl) return approvalControl.submit(id, decision, provenance);
         throw new Error("Approval unavailable");
       },
@@ -692,7 +734,12 @@ export function createClaudeChatProviderAdapter(options: {
       env: runEnv,
       replaceEnv: true,
       signal: processSignal,
-      timeoutMs: Math.min(timeoutMs, credentialLaunch.fundedRunTimeoutMs ?? timeoutMs),
+      // Funding supplies a strict total deadline; owner credentials only use
+      // the progress-aware idle deadline.
+      ...(credentialLaunch.fundedRunTimeoutMs === undefined
+        ? {}
+        : { timeoutMs: credentialLaunch.fundedRunTimeoutMs }),
+      idleTimeoutMs: Math.min(idleTimeoutMs, credentialLaunch.fundedRunTimeoutMs ?? idleTimeoutMs),
       maxStdoutBytes: MAX_STREAM_BYTES,
       maxStderrBytes: MAX_STDERR_BYTES,
       spawnFn: options.spawnFn,
@@ -761,6 +808,11 @@ export function createClaudeChatProviderAdapter(options: {
       }
       flushPendingDelta();
       if (steerPrompt && emittedState && !input.signal.aborted) {
+        if (!await closeBrowser()) {
+          releaseActiveRun();
+          queue.push({ type: "run.completed", outcome: "failed", error: { code: "run_failed", safeMessage: "Browser cleanup could not be confirmed. Try again after restoring browser control.", retryable: true, recoveryActions: ["retry"] } });
+          queue.finish(); return;
+        }
         capability?.revoke();
         const cleared = await (clearApprovalPromise ?? Promise.resolve(true));
         if (cancellationRequested || input.signal.aborted || activeRuns.get(input.runId) !== activeRun) {
@@ -808,7 +860,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
       const classifiedFailure = usageFailure ?? classifiedClaudeFailureEvidence(`${resultText}\n${stderrEvidence}`)
         ?? classifiedClaudeCliFailure(error);
-      if (!input.signal.aborted) {
+      if (!input.signal.aborted && !cancellationRequested) {
         console.warn("[chat-claude] Claude CLI Run failed", {
           category: classifiedFailure?.category ?? "provider_exit",
           cliFailureKind: error instanceof CanonicalCliError ? error.kind : "unknown",
@@ -819,8 +871,8 @@ export function createClaudeChatProviderAdapter(options: {
       }
       queue.push(CanonicalProviderRunEventSchema.parse({
         type: "run.completed",
-        outcome: input.signal.aborted ? "aborted" : "failed",
-        ...(input.signal.aborted ? {} : {
+        outcome: input.signal.aborted || cancellationRequested ? "aborted" : "failed",
+        ...(input.signal.aborted || cancellationRequested ? {} : {
           error: classifiedFailure?.safeError ?? {
             code: "run_failed",
             safeMessage: "Claude could not complete this Run. Check its connection and retry.",
@@ -830,8 +882,13 @@ export function createClaudeChatProviderAdapter(options: {
         }),
       }));
       queue.finish();
+    }).catch((error: unknown) => {
+      // Replacement executions can fail while draining their browser after
+      // terminal events. Finish the forwarding stream with that failure too.
+      releaseActiveRun();
+      queue.finish(error instanceof Error ? error : new Error("Claude execution unavailable"));
     }).finally(() => { if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
-      capability?.revoke(); approvalControl?.close(); integrationApproval?.close();
+      capability?.revoke(); approvalControl?.close(); integrationApproval?.close(); builtinToolApproval?.close();
     } else revokeApproval(); });
 
     let streamCompleted = false;
@@ -847,9 +904,10 @@ export function createClaudeChatProviderAdapter(options: {
         revokeApproval();
         await finalRevokePromise;
       } else if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
-        capability?.revoke(); approvalControl?.close(); integrationApproval?.close();
+        capability?.revoke(); approvalControl?.close(); integrationApproval?.close(); builtinToolApproval?.close();
       } else revokeApproval();
       capability?.revoke();
+      if (!await closeBrowser()) throw new Error("Browser cleanup unconfirmed");
     }
   }
 

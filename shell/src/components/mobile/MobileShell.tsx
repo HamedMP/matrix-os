@@ -99,7 +99,7 @@ const BUILT_IN_APPS: MobileApp[] = [
   { id: "files", name: "Files", path: "__file-browser__", iconSlug: "files" },
   ...(HERMES_CHAT_HIDDEN
     ? []
-    : [{ id: "chat", name: "Hermes", path: "__chat__", iconSlug: "chat" } as MobileApp]),
+    : [{ id: "chat", name: "Chat", path: "__chat__", iconSlug: "chat" } as MobileApp]),
 ];
 
 
@@ -659,8 +659,10 @@ function MobileAppFrame({
         onSubmit={chat.submitMessage}
               agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
         onSubmitApproval={chat.submitApproval}
+                browserPermissions={chat.browserPermissions}
         onSubmitInput={chat.submitInput}
         providerSelection={chat.providerSelection}
+              executionControls={chat.executionControls}
         boundProviderInstanceId={chat.boundProviderInstanceId}
         composerDraftRequest={chat.composerDraftRequest}
         onComposerDraftConsumed={chat.consumeComposerDraft}

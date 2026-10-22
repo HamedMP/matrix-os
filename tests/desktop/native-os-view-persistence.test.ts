@@ -5,6 +5,9 @@ import {
 } from "@desktop/renderer/src/features/desktop-shell/native-os-view-persistence";
 
 describe("Electron Desktop OS-view persistence projection", () => {
+  it.each([["matrix-browser", "__browser__"], ["matrix-cloud-desktop", "__cloud-desktop__"]])("persists product identity %s under its canonical destination", (appIdentity, path) => {
+    expect(nativeTabOsViewPath({ id: appIdentity, kind: "app", slug: "browser-lab", appIdentity, title: "Product", closable: true }, [])).toBe(path);
+  });
   it("uses the same canonical built-in paths as Web Desktop", () => {
     expect(nativeTabOsViewPath({ id: "chat", kind: "work", title: "Chat", closable: false }, [])).toBe("__chat__");
     expect(nativeTabOsViewPath({ id: "files", kind: "files", title: "Files", closable: false }, [])).toBe("__file-browser__");

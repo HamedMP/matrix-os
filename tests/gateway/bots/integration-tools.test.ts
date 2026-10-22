@@ -65,13 +65,18 @@ beforeEach(async () => {
 });
 afterEach(async () => destroy());
 
-function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject: "Hello" }] }, summary: "1 thread" })), beforeTransaction?: (number: number) => Promise<void>, assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>, homePath?: string, recipe = RECIPE) {
+function fixtureTransactions(beforeTransaction?: (number: number) => Promise<void>) {
   const baseTransact = createBotStateTransactions(new ChatRepository(db as unknown as Kysely<ChatDatabase>));
   let transactions = 0;
   const transact: BotStateTransactions = async (ownerId, work) => {
     await beforeTransaction?.(++transactions);
     return baseTransact(ownerId, work);
   };
+  return transact;
+}
+
+function setup(call = vi.fn(async () => ({ data: { threads: [{ id: "t1", subject: "Hello" }] }, summary: "1 thread" })), beforeTransaction?: (number: number) => Promise<void>, assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>, homePath?: string, recipe = RECIPE) {
+  const transact = fixtureTransactions(beforeTransaction);
   const client = { inventory: vi.fn(async () => connected), call };
   const tools = createBotIntegrationTools({
     client, transact, ...(homePath ? { homePath } : {}), recipes: createBotRecipeCatalog([recipe]), assertSource,
@@ -391,7 +396,7 @@ describe("bot integration tools", () => {
     const reference = JSON.parse(shown);
     expect(reference).toMatchObject({ kind: "workspace_attachment", size, sha256: createHash("sha256").update(bytes).digest("hex"), untrusted: true });
     expect(reference.relPath).toMatch(/^gmail-attachment-[0-9]{2}\.bin$/);
-    expect(await readFile(join(path, reference.relPath))).toEqual(bytes);
+    expect((await readFile(join(path, reference.relPath))).equals(bytes)).toBe(true);
     // Follow the reference through the same bounded dispatcher the bot can use.
     const dispatcher = createBotToolDispatcher({ homePath: home });
     const chunks: Buffer[] = [];
@@ -410,7 +415,7 @@ describe("bot integration tools", () => {
       expect(chunk.eof).toBe(chunk.nextOffset === size);
       chunks.push(data); offset = chunk.nextOffset;
     }
-    expect(Buffer.concat(chunks)).toEqual(bytes);
+    expect(Buffer.concat(chunks).equals(bytes)).toBe(true);
     expect(shown).not.toContain(bytes.toString("base64url").slice(0, 100));
     expect(sent).toHaveBeenCalledExactlyOnceWith(OWNER, expect.objectContaining({ connectionId: WORK.connectionId }), undefined);
     expect(await readdir(join(path, ".bot-save"))).toEqual([]);

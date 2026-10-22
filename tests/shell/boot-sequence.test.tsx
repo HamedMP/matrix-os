@@ -89,12 +89,32 @@ describe("BootSequence", () => {
     expect(screen.getByTestId("shell")).toBeTruthy();
   });
 
-  it("shows the plan step for plan_required", async () => {
+  it("opens billing automatically for plan_required without a plan interstitial", async () => {
     mockJourney(baseState);
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
-    expect(await screen.findByText("Choose your plan")).toBeTruthy();
-    const link = screen.getByText("View plans") as HTMLAnchorElement;
-    expect(link.getAttribute("href")).toContain("plans=1");
+    await waitFor(() => {
+      expect(onboardingNavigation.navigate).toHaveBeenCalledExactlyOnceWith(baseState.nextAction.url);
+    });
+    expect(screen.queryByText("Choose your plan")).toBeNull();
+    expect(screen.queryByText("View plans")).toBeNull();
+    expect(screen.queryByTestId("shell")).toBeNull();
+  });
+
+  it("preserves the billing destination supplied by the journey", async () => {
+    const url = "https://app.matrix-os.com/?plans=1&runtime=studio";
+    mockJourney({ ...baseState, nextAction: { kind: "open_plans", url } });
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+    await waitFor(() => {
+      expect(onboardingNavigation.navigate).toHaveBeenCalledExactlyOnceWith(url);
+    });
+  });
+
+  it("opens the local billing entrypoint if the journey omits the plans URL", async () => {
+    mockJourney({ ...baseState, nextAction: { kind: "open_plans" } });
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+    await waitFor(() => {
+      expect(onboardingNavigation.navigate).toHaveBeenCalledExactlyOnceWith("/?plans=1");
+    });
     expect(screen.queryByTestId("shell")).toBeNull();
   });
 
@@ -108,6 +128,7 @@ describe("BootSequence", () => {
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
     expect(await screen.findByText("Activating your subscription")).toBeTruthy();
     expect(screen.queryByText("Choose your plan")).toBeNull();
+    expect(onboardingNavigation.navigate).not.toHaveBeenCalled();
   });
 
   it("escalates to support when settling is delayed", async () => {
@@ -508,12 +529,14 @@ describe("BootSequence", () => {
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
     expect(await screen.findByText("We can’t reach Matrix right now.")).toBeTruthy();
     expect(screen.queryByTestId("shell")).toBeNull();
+    expect(onboardingNavigation.navigate).not.toHaveBeenCalled();
   });
 
   it("re-authenticates (does not loop) when the journey returns 401", async () => {
     const fetchMock = mockJourney(baseState, 401);
     render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
     expect(await screen.findByTestId("redirect-to-sign-in")).toBeTruthy();
+    expect(onboardingNavigation.navigate).not.toHaveBeenCalled();
     // Stops polling under persistent auth failure: exactly one journey fetch.
     const journeyCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes("/api/journey"));
     expect(journeyCalls).toHaveLength(1);

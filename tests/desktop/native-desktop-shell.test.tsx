@@ -531,6 +531,26 @@ describe("native desktop shell", () => {
     expect(screen.getByRole("tab", { name: "Chat" }).getAttribute("aria-selected")).toBe("true");
   });
 
+  it("keeps Browser launch, focus, minimize and close in the browser analytics category", () => {
+    const events: unknown[] = [];
+    const capture = (event: Event) => events.push((event as CustomEvent).detail);
+    window.addEventListener(DESKTOP_ANALYTICS_EVENT, capture);
+    try {
+      render(<NativeDesktopShell overlayOpen={false} />);
+      fireEvent.doubleClick(screen.getByRole("button", { name: "Browser" }));
+      fireEvent.click(screen.getByRole("button", { name: "Focus Browser" }));
+      fireEvent.click(getWindowControl("Browser", "Minimize"));
+      fireEvent.click(screen.getByRole("button", { name: "Restore Browser" }));
+      fireEvent.click(getWindowControl("Browser", "Close"));
+      for (const name of ["desktop_app_opened", "desktop_app_focused", "desktop_app_minimized", "desktop_app_closed"]) {
+        expect(events).toContainEqual({ name, appKind: "browser" });
+      }
+      expect(events).not.toContainEqual(expect.objectContaining({ appKind: "installed_app" }));
+    } finally {
+      window.removeEventListener(DESKTOP_ANALYTICS_EVENT, capture);
+    }
+  });
+
   it("tracks Create app and user-installed app launches without app identity", () => {
     const events: unknown[] = [];
     const capture = (event: Event) => events.push((event as CustomEvent).detail);
@@ -981,7 +1001,7 @@ describe("native desktop shell", () => {
     render(<NativeDesktopShell overlayOpen={false} />);
     fireEvent.doubleClick(screen.getByRole("button", { name: "Browser" }));
 
-    const content = screen.getByTestId("desktop-surface-content-browser");
+    const content = within(screen.getByRole("dialog", { name: "Browser window" })).getByTestId("desktop-surface-content-app");
     expect(content.style.paddingRight).toBe("");
     expect(content.style.paddingBottom).toBe("");
     const frame = content.closest("[data-os-window]")!;
@@ -1002,7 +1022,7 @@ describe("native desktop shell", () => {
     expect(Number.parseFloat(frame.style.left) + Number.parseFloat(frame.style.width) + 24).toBeLessThanOrEqual(1200);
     expect(Number.parseFloat(frame.style.top) + Number.parseFloat(frame.style.height) + 24)
       .toBeLessThanOrEqual(800 - NATIVE_DESKTOP_LAYOUT.taskbarReservedHeight - NATIVE_DESKTOP_LAYOUT.tabStripHeight);
-    const content = screen.getByTestId("desktop-surface-content-browser");
+    const content = within(screen.getByRole("dialog", { name: "Browser window" })).getByTestId("desktop-surface-content-app");
     expect(content.style.paddingLeft).toBe("");
     expect(content.style.paddingBottom).toBe("");
     vi.stubGlobal("PointerEvent", MouseEvent);

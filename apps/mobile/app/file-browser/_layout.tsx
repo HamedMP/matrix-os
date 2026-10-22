@@ -24,7 +24,6 @@ export default function FileBrowserLayout() {
       iconColor={theme.v2.appColors.ink}
       iconTestID="file-browser-close-icon"
       buttonSize={32}
-      pressedOpacity={1}
       onPress={() => router.dismiss()}
     />
   );
@@ -36,7 +35,6 @@ export default function FileBrowserLayout() {
       iconColor={theme.v2.appColors.ink}
       iconTestID="file-browser-back-icon"
       buttonSize={32}
-      pressedOpacity={1}
       onPress={() => router.back()}
     />
   );

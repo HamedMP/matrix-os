@@ -22,9 +22,10 @@ async function fixture(mode: string) {
 const send=x=>console.log(JSON.stringify(x));
 readline.createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);fs.appendFileSync(process.env.TEST_REQUESTS,r.method+'\\n');
 if(r.method==='initialize')send({id:r.id,result:{}});
-if(r.method==='account/login/start') {send({id:r.id,result:{type:'chatgptDeviceCode',loginId:'fixture-login',verificationUrl:${JSON.stringify(mode === "unsafe" ? "https://evil.test/codex/device" : "https://auth.openai.com/codex/device")},userCode:${JSON.stringify(mode === 'lowercase' ? 'abcd-efghi' : 'ABCD-EFGHI')}}});
-if(${JSON.stringify(mode)}==='success')setTimeout(()=>{fs.writeFileSync(process.env.TEST_ACCOUNT,'connected-account');send({method:'account/login/completed',params:{loginId:'fixture-login',success:true}})},25);
-if(${JSON.stringify(mode)}==='mismatch')setTimeout(()=>send({method:'account/login/completed',params:{loginId:'other-login',success:true}}),25);}
+if(r.method==='account/read')send({id:r.id,result:{account:${JSON.stringify(mode)}==='existing-native'?{type:'chatgpt',email:'fixture@example.invalid',planType:'plus'}:${JSON.stringify(mode)}==='existing-key'?{type:'apiKey'}:null,requiresOpenaiAuth:true}});
+if(r.method==='account/login/start') {if(${JSON.stringify(mode)}==='early-success')send({method:'account/login/completed',params:{loginId:'11111111-1111-4111-8111-111111111111',success:true,error:null}});send({id:r.id,result:{type:'chatgptDeviceCode',loginId:'11111111-1111-4111-8111-111111111111',verificationUrl:${JSON.stringify(mode === "unsafe" ? "https://evil.test/codex/device" : "https://auth.openai.com/codex/device")},userCode:${JSON.stringify(mode === 'lowercase' ? 'abcd-efghi' : 'ABCD-EFGHI')}}});
+if(${JSON.stringify(mode)}==='success')setTimeout(()=>{fs.writeFileSync(process.env.TEST_ACCOUNT,'connected-account');send({method:'account/login/completed',params:{loginId:'11111111-1111-4111-8111-111111111111',success:true}})},25);
+if(${JSON.stringify(mode)}==='mismatch')setTimeout(()=>send({method:'account/login/completed',params:{loginId:'22222222-2222-4222-8222-222222222222',success:true}}),25);}
 if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
 });`);
   const publish = vi.fn(), complete = vi.fn(), release = vi.fn();
@@ -68,12 +69,13 @@ it("rejects a device code outside the public workflow contract", async () => {
   expect(f.publish).not.toHaveBeenCalledWith(expect.objectContaining({ deviceCode: expect.any(String) }));
   expect(f.release).toHaveBeenCalledOnce();
 });
-it("does not confirm cancellation or release the profile when the native child cannot be reaped", async () => {
+it.each([false, true])("does not confirm cancellation or release the profile when the native child cannot be reaped (authenticated: %s)", async authenticated => {
   vi.useFakeTimers();
   const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => false) });
   vi.mocked(childProcess.spawn).mockReturnValueOnce(child as unknown as ReturnType<typeof childProcess.spawn>);
   const release = vi.fn(), publish = vi.fn(), onSuccess = vi.fn();
   const running = await createCodexSettingsLogin({ command: "fake-codex", cwd: "/fake", env: {}, acquire: async () => release })({ publish, onSuccess });
+  if (authenticated) child.stdout.emit("data", JSON.stringify({ id: 4, result: { account: { type: "chatgpt", email: "fixture@example.invalid", planType: "plus" } } }) + "\n");
   const outcome = running.cancel().then(() => null, error => error);
   await vi.advanceTimersByTimeAsync(5000);
   expect(await outcome).toMatchObject({ message: "unavailable" });
@@ -83,5 +85,102 @@ it("does not confirm cancellation or release the profile when the native child c
   child.emit("close", 1);
   await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
   await expect(running.cancel()).resolves.toBeUndefined();
+  expect(release).toHaveBeenCalledOnce();
+});
+
+it("accepts the official matching completion notification arriving before the login-start reply", async () => {
+  const f = await fixture("early-success");
+  try {
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledWith({ state: "succeeded", safeFailure: null }));
+    expect(f.complete).toHaveBeenCalledOnce();
+    expect(f.release).toHaveBeenCalledOnce();
+  } finally { await f.running.cancel(); }
+});
+
+it("reuses an already authenticated native subscription without starting replacement consent", async () => {
+  const f = await fixture("existing-native");
+  try {
+    await vi.waitFor(() => expect(f.publish).toHaveBeenCalledWith({ state: "succeeded", safeFailure: null }));
+    const requests = await readFile(join(f.home, "requests"), "utf8");
+    expect(requests).toContain("account/read");
+    expect(requests).not.toContain("account/login/start");
+    expect(requests).not.toContain("account/logout");
+    expect(await readFile(join(f.home, "existing-account"), "utf8")).toBe("original-account");
+  } finally { await f.running.cancel(); }
+});
+
+it("refuses to replace an existing native API key without explicit sign-out", async () => {
+  const f = await fixture("existing-key");
+  await vi.waitFor(() => expect(f.publish).toHaveBeenCalledWith({ state: "failed", safeFailure: "unavailable" }));
+  const requests = await readFile(join(f.home, "requests"), "utf8");
+  expect(requests).toContain("account/read");
+  expect(requests).not.toContain("account/login/start");
+  expect(requests).not.toContain("account/logout");
+  expect(await readFile(join(f.home, "existing-account"), "utf8")).toBe("original-account");
+  expect(f.complete).not.toHaveBeenCalled();
+});
+
+it("cancels after confirmed child exit but before held native proof can start private completion", async () => {
+  const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => true) });
+  vi.mocked(childProcess.spawn).mockReturnValueOnce(child as unknown as ReturnType<typeof childProcess.spawn>);
+  let resolveProof!: (proof: () => Promise<boolean>) => void;
+  const captureAccountProof = vi.fn(() => new Promise<() => Promise<boolean>>(resolve => { resolveProof = resolve; }));
+  const release = vi.fn(), publish = vi.fn(), onSuccess = vi.fn();
+  const running = await createCodexSettingsLogin({ command: "fake-codex", cwd: "/fake", env: {},
+    acquire: async () => release, captureAccountProof })({ publish, onSuccess });
+  child.stdout.emit("data", JSON.stringify({ id: 4, result: { account: { type: "chatgpt", email: "fixture@example.invalid", planType: "plus" } } }) + "\n");
+  child.emit("close", 0);
+  await vi.waitFor(() => expect(captureAccountProof).toHaveBeenCalledOnce());
+  const cancelled = running.cancel();
+  resolveProof(async () => true);
+  await cancelled;
+  expect(onSuccess).not.toHaveBeenCalled();
+  expect(publish).not.toHaveBeenCalledWith(expect.objectContaining({ state: "succeeded" }));
+  expect(release).toHaveBeenCalledOnce();
+});
+
+it("retains the login writer until a proof-reader child has confirmed exit, including late-close cleanup recovery", async () => {
+  vi.useFakeTimers();
+  const makeChild = () => Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => false) });
+  const login = makeChild(), observer = makeChild();
+  vi.mocked(childProcess.spawn).mockClear();
+  vi.mocked(childProcess.spawn).mockReturnValueOnce(login as unknown as ReturnType<typeof childProcess.spawn>)
+    .mockReturnValueOnce(observer as unknown as ReturnType<typeof childProcess.spawn>);
+  const release = vi.fn(), publish = vi.fn(), onSuccess = vi.fn();
+  const captureAccountProof = vi.fn(async (spawnObserver = childProcess.spawn) => {
+    spawnObserver("fake-proof-reader", ["app-server", "--stdio"], { stdio: "pipe" });
+    // The real reader returns no proof if cleanup was not confirmed.
+    throw new Error("native proof unavailable");
+  });
+  const running = await createCodexSettingsLogin({ command: "fake-codex", cwd: "/fake", env: {},
+    acquire: async () => release, captureAccountProof })({ publish, onSuccess });
+  login.stdout.emit("data", JSON.stringify({ id: 4, result: { account: { type: "chatgpt", email: "fixture@example.invalid", planType: "plus" } } }) + "\n");
+  login.emit("close", 0);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(captureAccountProof).toHaveBeenCalledOnce();
+  expect(childProcess.spawn).toHaveBeenCalledTimes(2);
+  const outcome = running.cancel().then(() => null, error => error);
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(await outcome).toMatchObject({ message: "unavailable" });
+  expect(release).not.toHaveBeenCalled(); expect(onSuccess).not.toHaveBeenCalled();
+  observer.emit("close", 1);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(release).toHaveBeenCalledOnce();
+  await expect(running.cancel()).resolves.toBeUndefined();
+  expect(release).toHaveBeenCalledOnce();
+});
+
+it("waits for a private completion already dispatched and preserves its actual successful result", async () => {
+  const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(() => true) });
+  vi.mocked(childProcess.spawn).mockReturnValueOnce(child as unknown as ReturnType<typeof childProcess.spawn>);
+  let resolveCommit!: () => void;
+  const onSuccess = vi.fn(() => new Promise<void>(resolve => { resolveCommit = resolve; }));
+  const release = vi.fn(), publish = vi.fn();
+  const running = await createCodexSettingsLogin({ command: "fake-codex", cwd: "/fake", env: {}, acquire: async () => release })({ publish, onSuccess });
+  child.stdout.emit("data", JSON.stringify({ id: 4, result: { account: { type: "chatgpt", email: "fixture@example.invalid", planType: "plus" } } }) + "\n");
+  child.emit("close", 0);
+  await vi.waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
+  const cancelled = running.cancel(); resolveCommit(); await cancelled;
+  expect(publish).toHaveBeenCalledWith({ state: "succeeded", safeFailure: null });
   expect(release).toHaveBeenCalledOnce();
 });

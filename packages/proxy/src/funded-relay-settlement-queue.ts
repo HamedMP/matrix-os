@@ -1,8 +1,10 @@
-import type { FundedAiFinalizationRequest } from "@matrix-os/contracts";
+import type { FundedAiFinalizationRequest, FundedAiTerminalOutcomeRequest } from "@matrix-os/contracts";
 
 interface PendingSettlement {
-  task: FundedAiFinalizationRequest;
+  task: FundedAiFinalizationRequest | FundedAiTerminalOutcomeRequest;
+  kind: "finalize" | "terminal";
   expiresAt: number;
+  acknowledged: ReturnType<typeof Promise.withResolvers<boolean>>;
 }
 
 export class SettlementRetryQueue {
@@ -18,6 +20,7 @@ export class SettlementRetryQueue {
     batchSize?: number;
     now: () => number;
     finalize: (task: FundedAiFinalizationRequest) => Promise<unknown>;
+    terminal?: (task: FundedAiTerminalOutcomeRequest) => Promise<unknown>;
   }) {
     this.timer = setInterval(() => {
       this.sweepExpired();
@@ -34,32 +37,47 @@ export class SettlementRetryQueue {
     return [...this.pending.keys()];
   }
 
-  enqueue(task: FundedAiFinalizationRequest): void {
-    if (this.closing) return;
+  enqueue(task: FundedAiFinalizationRequest): void { void this.add(task, "finalize"); }
+
+  enqueueTerminal(task: FundedAiTerminalOutcomeRequest): Promise<boolean> { return this.add(task, "terminal"); }
+
+  private add(task: PendingSettlement["task"], kind: PendingSettlement["kind"]): Promise<boolean> {
+    if (this.closing) return Promise.resolve(false);
     this.sweepExpired();
     const existing = this.pending.get(task.reservationId);
-    if (existing) {
+    if (existing && !(existing.kind === "terminal" && kind === "finalize" && "mode" in task && task.mode === "exact")) {
+      if (existing.kind === "finalize" && kind === "terminal") return Promise.resolve(false);
       if (JSON.stringify(existing.task) !== JSON.stringify(task)) {
         console.warn("[proxy] Conflicting funded AI finalization was ignored");
       }
-      return;
+      return existing.acknowledged.promise;
     }
-    if (this.pending.size >= this.options.capacity) {
+    if (!existing && this.pending.size >= this.options.capacity) {
       const oldest = this.pending.keys().next().value as string | undefined;
-      if (oldest !== undefined) this.pending.delete(oldest);
+      if (oldest !== undefined) {
+        this.pending.get(oldest)?.acknowledged.resolve(false);
+        this.pending.delete(oldest);
+      }
       console.warn("[proxy] Funded AI finalization queue evicted its oldest work");
     }
-    this.pending.set(task.reservationId, {
-      task,
+    existing?.acknowledged.resolve(false);
+    const item: PendingSettlement = {
+      task, kind,
       expiresAt: this.options.now() + this.options.ttlMs,
-    });
+      acknowledged: Promise.withResolvers<boolean>(),
+    };
+    this.pending.set(task.reservationId, item);
     void this.flush();
+    return item.acknowledged.promise;
   }
 
   sweepExpired(): void {
     const now = this.options.now();
     for (const [reservationId, item] of this.pending) {
-      if (item.expiresAt <= now) this.pending.delete(reservationId);
+      if (item.expiresAt <= now) {
+        item.acknowledged.resolve(false);
+        this.pending.delete(reservationId);
+      }
     }
   }
 
@@ -80,6 +98,7 @@ export class SettlementRetryQueue {
     clearInterval(this.timer);
     await this.flush();
     if (this.pending.size > 0) await this.flush();
+    for (const item of this.pending.values()) item.acknowledged.resolve(false);
     this.pending.clear();
   }
 
@@ -89,13 +108,18 @@ export class SettlementRetryQueue {
     const batch = [...this.pending].slice(0, batchSize);
     await Promise.all(batch.map(async ([reservationId, item]) => {
       try {
-        await this.options.finalize(item.task);
+        if (item.kind === "terminal") {
+          if (!this.options.terminal) throw new Error("Terminal outcome transport is missing");
+          await this.options.terminal(item.task as FundedAiTerminalOutcomeRequest);
+        } else await this.options.finalize(item.task as FundedAiFinalizationRequest);
         if (this.pending.get(reservationId) === item) this.pending.delete(reservationId);
+        item.acknowledged.resolve(true);
       } catch (error) {
         const status = typeof error === "object" && error !== null && "status" in error
           ? Number((error as { status: unknown }).status) : null;
         if (status !== null && status >= 400 && status < 500 && status !== 408 && status !== 429) {
-          this.pending.delete(reservationId);
+          if (this.pending.get(reservationId) === item) this.pending.delete(reservationId);
+          item.acknowledged.resolve(false);
         }
         const errorName = error instanceof Error ? error.name : "UnknownError";
         console.warn("[proxy] Funded AI finalization retry failed", { errorName, status });

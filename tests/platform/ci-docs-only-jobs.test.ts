@@ -8,7 +8,7 @@ import { parse } from 'yaml';
 const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
 const sourceJobs = [
   'typecheck', 'shell-production-build', 'patterns', 'react-doctor',
-  'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'funded-host-root', 'e2e',
+  'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'collaboration-postgres', 'funded-host-root', 'e2e',
 ];
 
 interface GitHubFixture {
@@ -56,7 +56,7 @@ function aggregateStatus(docsResult: string) {
     };
     for (const name of [
       'TYPECHECK', 'SHELL_PRODUCTION_BUILD', 'PATTERNS', 'REACT_DOCTOR',
-      'SYNC_CLIENT', 'AGENT_SDK_COMPATIBILITY', 'UNIT', 'FUNDED_POSTGRES', 'FUNDED_HOST_ROOT', 'E2E',
+      'SYNC_CLIENT', 'AGENT_SDK_COMPATIBILITY', 'UNIT', 'FUNDED_POSTGRES', 'COLLABORATION_POSTGRES', 'FUNDED_HOST_ROOT', 'E2E',
     ]) env[`${name}_RESULT`] = 'skipped';
     execFileSync('bash', ['-c', step.run], { env, stdio: 'pipe' });
   } finally {

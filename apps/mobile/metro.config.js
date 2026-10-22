@@ -15,6 +15,19 @@ function resolveFromMobileApp(moduleName) {
   return require.resolve(moduleName, { paths: [projectRoot] });
 }
 
+const workspacePackagesRoot = path.join(workspaceRoot, "packages") + path.sep;
+
+// Workspace TypeScript packages import their siblings by the names they are
+// built to (`./pcm.js` for `pcm.ts`), as Node's ES modules want. Metro looks
+// for the file as written, so point such an import at the source that exists.
+function workspaceSourceFor(originModulePath, moduleName) {
+  if (!moduleName.startsWith(".") || !moduleName.endsWith(".js")) return null;
+  if (!originModulePath.startsWith(workspacePackagesRoot)) return null;
+  const base = path.resolve(path.dirname(originModulePath), moduleName.slice(0, -".js".length));
+  if (fs.existsSync(`${base}.js`)) return null;
+  return [".ts", ".tsx"].map((extension) => `${base}${extension}`).find((file) => fs.existsSync(file)) ?? null;
+}
+
 // Metro stats every watch folder and throws on a missing one. The pnpm global
 // store only exists on macOS dev machines; on Linux (CI, EAS workers) packages
 // live under the workspace root instead, so the folder is simply dropped there.
@@ -48,6 +61,11 @@ config.resolver = {
         type: "sourceFile",
         filePath: resolveFromMobileApp(moduleName),
       };
+    }
+
+    const workspaceSource = workspaceSourceFor(context.originModulePath, moduleName);
+    if (workspaceSource) {
+      return { type: "sourceFile", filePath: workspaceSource };
     }
 
     if (defaultResolveRequest) {

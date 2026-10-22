@@ -11,7 +11,11 @@ import {
   hasActiveWindowInteraction,
 } from "@/components/desktop/DesktopWindow";
 import { TrafficLights } from "@/components/desktop/DesktopDockControls";
-import type { AppWindow } from "@/hooks/useWindowManager";
+import {
+  useWindowManager,
+  resetWindowManagerLayoutPersistenceForTests,
+  type AppWindow,
+} from "@/hooks/useWindowManager";
 
 const viewerProps=vi.hoisted(()=>({current: null as null | {onOpenApp: unknown}}));
 vi.mock("@/components/AppViewer", () => ({
@@ -19,6 +23,64 @@ vi.mock("@/components/AppViewer", () => ({
 }));
 
 describe("web desktop window controls", () => {
+  it("hides a fullscreen Browser with the yellow control and restores the same window from the launcher", () => {
+    resetWindowManagerLayoutPersistenceForTests();
+    useWindowManager.setState({
+      windows: [], nextZ: 1, closedPaths: new Set(), closedLayouts: new Map(),
+      focusedWindowId: null, fullscreenWindowId: null,
+    });
+    useWindowManager.getState().openWindow("Browser", "__browser__", 80);
+    const original = useWindowManager.getState().windows[0];
+    useWindowManager.getState().toggleFullscreen(original.id);
+    const noop = vi.fn();
+
+    function BrowserDesktop() {
+      const win = useWindowManager((state) => state.windows[0]);
+      const fullscreenWindowId = useWindowManager((state) => state.fullscreenWindowId);
+      return <>
+        <button onClick={() => useWindowManager.getState().openWindow("Browser", "__browser__", 80)}>
+          Open Browser
+        </button>
+        <DesktopWindow
+          win={win}
+          dockPosition="bottom"
+          fullscreenWindowId={fullscreenWindowId}
+          interacting={false}
+          minimizingIds={new Set()}
+          onAnimateMinimize={useWindowManager.getState().minimizeWindow}
+          onCloseWindow={useWindowManager.getState().closeWindow}
+          onDragEnd={noop}
+          onDragMove={noop}
+          onDragStart={noop}
+          onFocusWindow={useWindowManager.getState().focusWindow}
+          onOpenWindow={noop}
+          onResizeInteractionChange={noop}
+          onToggleFullscreen={useWindowManager.getState().toggleFullscreen}
+          topInset={38}
+        />
+      </>;
+    }
+
+    const view = render(<BrowserDesktop />);
+    try {
+      const frame = view.container.querySelector<HTMLElement>("[data-window-id]")!;
+      fireEvent.click(screen.getByRole("button", { name: "Minimize" }));
+      expect(frame.style.display).toBe("none");
+
+      fireEvent.click(screen.getByRole("button", { name: "Open Browser" }));
+      expect(view.container.querySelector("[data-window-id]")).toBe(frame);
+      expect(frame.style.display).toBe("");
+      expect(useWindowManager.getState().focusedWindowId).toBe(original.id);
+      expect(useWindowManager.getState().windows).toHaveLength(1);
+      expect(useWindowManager.getState().windows[0]).toMatchObject({
+        x: original.x, y: original.y, width: original.width, height: original.height,
+      });
+    } finally {
+      view.unmount();
+      resetWindowManagerLayoutPersistenceForTests();
+    }
+  });
+
   it("reserves the visible launch bar below a maximized Web Desktop app", () => {
     const win: AppWindow = {
       id: "maximized-demo", title: "Demo", path: "apps/demo/dist/index.html",

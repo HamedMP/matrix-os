@@ -12,6 +12,7 @@ import {
   BotBrokerRequestSchema,
   BotImageChunkSchema,
   BotRunSpecSchema,
+  SHARED_BROWSER_ACTION_DEADLINE_MS,
   type BotEvent,
   type BotImageChunk,
   type BotImageChunkRequest,
@@ -208,7 +209,7 @@ export function createBotBrokerActions(deps: {
       throw new BotBrokerActionError("stale_generation");
     }
     const deadline = request.capability === "jev.inbox" && ["evaluate", "batch_next"].includes(request.args.operation)
-      ? 10 * 60_000 : request.capability === "agent.task" ? 120_000 : toolTimeoutMs;
+      ? 10 * 60_000 : request.capability === "browser.action" ? SHARED_BROWSER_ACTION_DEADLINE_MS : request.capability === "agent.task" ? 120_000 : toolTimeoutMs;
     const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(deadline)]);
     try {
       const { result, outcomeRef } = await untilAborted(deps.tools.dispatch(binding, request, signal), signal);

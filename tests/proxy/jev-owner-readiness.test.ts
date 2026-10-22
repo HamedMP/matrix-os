@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { expect, it, vi } from "vitest";
-import { JEV_EMAIL_TRIAGE_ANSWER_IDS, JEV_MODEL_ID, JEV_PRICING_VERSION } from "@matrix-os/contracts";
+import { FundedAiStartRequestSchema, FundedAiTerminalOutcomeRequestSchema, FundedAiTerminalOutcomeResponseSchema,
+  JEV_EMAIL_TRIAGE_ANSWER_IDS, JEV_MODEL_ID, JEV_PRICING_VERSION } from "@matrix-os/contracts";
 import { fixedJevProbeRequest } from "../../packages/proxy/src/funded-relay-jev-probe.js";
 import { createFundedRelay, resolveFundedRelayConfig } from "../../packages/proxy/src/funded-relay.js";
 
@@ -11,6 +12,7 @@ function fixture(mode = "valid", reviewEnv: NodeJS.ProcessEnv = {}, now = defaul
   const later = (minutes: number) => new Date(now.getTime() + minutes * 60_000).toISOString();
   const finalizations: Record<string, unknown>[] = [];
   const events: string[] = [];
+  let executionId: string | undefined;
   const identity = { tokenId: "credential_fixture", ownerId: "owner_fixture", machineId: "machine_fixture", runtimeSlot: "primary",
     audience: "matrix-funded-relay", scope: "ai:invoke", expiresAt: later(15) };
   const policy = { enabled: true, globalRevision: 1, runtimeRevision: 1, allowedModelIds: [JEV_MODEL_ID],
@@ -36,8 +38,23 @@ function fixture(mode = "valid", reviewEnv: NodeJS.ProcessEnv = {}, now = defaul
           reservedMicrousd: 5_000, maxCostMicrousd: 5_000, billingMode: "usage", jevPricingVersion: JEV_PRICING_VERSION,
           remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000, periodStart: funding.periodStart,
           expiresAt: later(5), status: "reserved" } });
-      if (action === "start") return Response.json({ contractVersion: 1, reservationId: "reservation_fixture", requestId: "request_fixture",
-        tokenId: identity.tokenId, startedAt: now.toISOString(), expiresAt: later(5), status: "in_flight" });
+      if (action === "start") {
+        const start = FundedAiStartRequestSchema.parse(JSON.parse(String(init?.body)));
+        expect(start).toEqual({ reservationId: "reservation_fixture", tokenId: identity.tokenId, executionId: expect.any(String) });
+        executionId ??= start.executionId;
+        expect(start.executionId).toBe(executionId);
+        return Response.json({ contractVersion: 1, reservationId: "reservation_fixture", requestId: "request_fixture",
+          tokenId: identity.tokenId, startedAt: now.toISOString(), expiresAt: later(5), status: "in_flight", executionId });
+      }
+      if (action === "terminal") {
+        const terminal = FundedAiTerminalOutcomeRequestSchema.parse(JSON.parse(String(init?.body)));
+        expect(terminal).toEqual({ contractVersion: 1, reservationId: "reservation_fixture", requestId: "request_fixture",
+          tokenId: identity.tokenId, ownerId: identity.ownerId, machineId: identity.machineId, runtimeSlot: identity.runtimeSlot,
+          startedAt: now.toISOString(), expiresAt: later(5), executionId, terminalState: "failed",
+          terminalAt: clock.toISOString(), outcome: "usage_unknown" });
+        return Response.json(FundedAiTerminalOutcomeResponseSchema.parse({ contractVersion: 1, outcomeAccepted: true,
+          usageKnown: false, receivedAt: clock.toISOString() }));
+      }
       if (action === "release") return Response.json({ contractVersion: 1, reservationId: "reservation_fixture", requestId: "request_fixture",
         tokenId: identity.tokenId, releasedMicrousd: 5_000, releasedAt: clock.toISOString(), reason: "pre_upstream_failure",
         status: "released", funding });
@@ -87,7 +104,13 @@ it("awaits exact owner-funded settlement before marking the fixed Jev readiness 
 });
 it.each(["missing-usage", "settlement-failure", "wrong-finalization", "revoked"])("never marks %s probe ready", async mode => {
   const f = fixture(mode);
-  try { expect((await f.request()).status).not.toBe(200); } finally { await f.relay.close(); }
+  try {
+    expect((await f.request()).status).not.toBe(200);
+    if (mode === "missing-usage") {
+      expect(f.events).toEqual(["check", "authorize", "start", "evaluate", "terminal"]);
+      expect(f.finalizations).toEqual([]);
+    }
+  } finally { await f.relay.close(); }
 });
 it.each(["wrong-control", "caller-body"])("denies %s before paid probe", async mode => {
   const f = fixture();

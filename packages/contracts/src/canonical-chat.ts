@@ -1,3 +1,4 @@
+import { BrowserApprovalLifecycleSchema, BrowserGrantViewSchema } from "#browser-chat-approval";
 import { CanonicalChatCommandPreviewSchema } from "#command-preview";
 export { CanonicalChatCommandPreviewSchema } from "#command-preview";
 import { ImportedChatProvenancePartSchema, ImportedChatReferencePartSchema } from "#canonical-chat-import-parts";
@@ -563,11 +564,15 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
     risk: z.enum(["low", "medium", "high"]),
     safeDescription: z.string().min(1).max(4_000).optional(),
     allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
+    browserApproval: BrowserApprovalLifecycleSchema.optional(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("approval.resolved"),
     approvalId: canonicalReferenceId(128),
     decision: CanonicalChatApprovalDecisionSchema,
+    browserApproval: BrowserApprovalLifecycleSchema.optional(),
+    browserGrant: BrowserGrantViewSchema.optional(),
+    reason: z.enum(["expired"]).optional(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("input.requested"),
@@ -623,4 +628,4 @@ export type CanonicalChatAgentActivityKind = z.infer<typeof CanonicalChatAgentAc
 export type CanonicalChatAgentActivityStatus = z.infer<typeof CanonicalChatAgentActivityStatusSchema>;
 
 export { canonicalChatToolDetail } from "#canonical-chat-tool-details";
-export { canonicalChatToolActivities, type CanonicalToolActivity } from "#canonical-chat-tool-activities";
+export { canonicalChatToolActivities, canonicalChatToolActivityState, type CanonicalToolActivity } from "#canonical-chat-tool-activities";

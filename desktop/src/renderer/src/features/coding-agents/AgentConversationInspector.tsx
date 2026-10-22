@@ -217,7 +217,7 @@ export function AgentConversationInspector({
                       className="min-w-3.5 shrink-0 rounded-full px-0.5 text-center text-[9px] tabular-nums"
                       style={{
                         background: selected ? "var(--accent-muted)" : "var(--bg-surface)",
-                        color: selected ? "var(--accent)" : "var(--text-tertiary)",
+                        color: selected ? "var(--accent-text)" : "var(--text-tertiary)",
                       }}
                     >
                       {count}

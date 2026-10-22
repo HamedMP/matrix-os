@@ -26,7 +26,7 @@ function upstream(model:string,stream:boolean,missingUsage=false){
 }
 function platform(){return{
  check:vi.fn(async()=>({identity})),authorize:vi.fn(async(input:{modelId:string,requestId:string})=>({identity,reservation:{reservationId:'reservation_test',requestId:input.requestId,modelId:input.modelId,reservedMicrousd:1,billingMode:'usage'}})),
- start:vi.fn(async()=>({reservationId:'reservation_test',requestId:'request_test',tokenId:identity.tokenId})),release:vi.fn(),finalize:vi.fn(async()=>({})),
+ start:vi.fn(async(input: { executionId?: string })=>({ executionId: input.executionId,contractVersion:1,status:'in_flight',startedAt:now.toISOString(),expiresAt:'2026-10-15T12:10:00.000Z',reservationId:'reservation_test',requestId:'request_test',tokenId:identity.tokenId})),release:vi.fn(),terminal:vi.fn(async()=>({})),finalize:vi.fn(async()=>({})),
 };}
 
 describe('all approved Workers models through funded Relay',()=>{
@@ -55,6 +55,7 @@ describe('all approved Workers models through funded Relay',()=>{
  it('leaves missing aggregate usage unresolved for an added model',async()=>{
   const model=models[0][0];const control=platform();const relay=createFundedRelay({...config(),now:()=>now,fetch:async()=>upstream(model,true,true),platformClient:control as unknown as FundedPlatformClient,requestIdFactory:()=> 'request_test'});const app=new Hono();relay.register(app);
   try{const response=await app.request('/v1/chat/completions',{method:'POST',headers:{authorization:`Bearer ${credential}`,'content-type':'application/json'},body:JSON.stringify({model,messages:[{role:'user',content:'hello'}],max_tokens:2048,stream:true})});await response.text();}finally{await relay.close();}
-  expect(control.finalize).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({mode:'conservative'}),expect.any(AbortSignal));
+  expect(control.finalize).not.toHaveBeenCalled();
+  expect(control.terminal).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({outcome:'usage_unknown'}),expect.any(AbortSignal));
  });
 });

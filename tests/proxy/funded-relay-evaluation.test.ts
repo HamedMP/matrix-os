@@ -183,7 +183,7 @@ describe("funded Jev evaluation relay", () => {
         if (action === "start") {
           return json({
             contractVersion: 1, reservationId: "reservation_123", requestId: "request_123",
-            tokenId: "credential_123", startedAt: NOW.toISOString(),
+            tokenId: "credential_123", executionId: body.executionId, startedAt: NOW.toISOString(),
             expiresAt: "2026-09-22T10:30:00.000Z", status: "in_flight",
           });
         }
@@ -359,7 +359,7 @@ describe("funded Jev evaluation relay", () => {
     const upstream = vi.fn();
     const platformClient = {
       check: vi.fn(async () => { throw new FundedControlPlaneError(429); }),
-      authorize: vi.fn(), start: vi.fn(), release: vi.fn(), finalize: vi.fn(),
+      authorize: vi.fn(), start: vi.fn(), release: vi.fn(), terminal: vi.fn(), finalize: vi.fn(),
     };
     const config = resolveFundedRelayConfig(environment())!;
     const relay = createFundedRelay({ ...config, fetch: upstream as typeof fetch, platformClient, now: () => NOW });
@@ -390,7 +390,7 @@ describe("funded Jev evaluation relay", () => {
     await relay.close();
   });
 
-  it("keeps an ambiguous timeout for manual usage reconciliation without a false charge", async () => {
+  it("durably reports an ambiguous terminal timeout without a false charge", async () => {
     const platformClient = {
       check: vi.fn(async () => ({ contractVersion: 1 as const, authorized: true as const, identity: identity(), policy: policy() })),
       authorize: vi.fn(async (input: { requestId: string }) => ({
@@ -404,12 +404,13 @@ describe("funded Jev evaluation relay", () => {
           status: "reserved" as const,
         },
       })),
-      start: vi.fn(async () => ({
+      start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId,
         contractVersion: 1 as const, reservationId: "reservation_123", requestId: "request_123",
         tokenId: "credential_123", startedAt: NOW.toISOString(),
         expiresAt: "2026-09-22T10:30:00.000Z", status: "in_flight" as const,
       })),
       release: vi.fn(),
+      terminal: vi.fn(async () => ({ contractVersion: 1 as const, outcomeAccepted: true as const, usageKnown: false as const, receivedAt: NOW.toISOString() })),
       finalize: vi.fn(async () => ({
         contractVersion: 1 as const, reservationId: "reservation_123", requestId: "request_123",
         tokenId: "credential_123", actualCostMicrousd: 5_000, releasedMicrousd: 0,
@@ -433,5 +434,7 @@ describe("funded Jev evaluation relay", () => {
     expect(response.status).toBe(504);
     await relay.close();
     expect(platformClient.finalize).not.toHaveBeenCalled();
+    expect(platformClient.terminal).toHaveBeenCalledTimes(1);
+    expect(platformClient.terminal).toHaveBeenCalledWith(expect.objectContaining({ outcome: "usage_unknown", terminalState: "failed" }), expect.any(AbortSignal));
   });
 });
