@@ -21,7 +21,7 @@ describe('Gmail PostgreSQL CI qualification', () => {
     expect(JSON.stringify(job.env)).not.toContain('secrets.');
     expect(job.env.MATRIX_TEST_POSTGRES_URL).toBe('postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_test');
   });
-  it.each([undefined, 'postgresql://user:secret@production.invalid/matrix_test', 'postgresql://user:secret@127.0.0.1/customer'])('rejects unavailable or non-disposable database configuration', url => {
+  it.each([undefined, 'postgresql://user:secret@production.invalid/matrix_test', 'postgresql://user:secret@localhost/matrix_test', 'postgresql://user:secret@127.0.0.1/customer'])('rejects unavailable or non-disposable database configuration', url => {
     expect(() => runGmailPostgres(process.cwd(), { MATRIX_TEST_POSTGRES_URL: url })).toThrow('Disposable PostgreSQL');
   });
   it('requires fresh exact-file results with every assertion passed', () => {
