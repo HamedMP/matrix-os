@@ -1,0 +1,11 @@
+# Canonical assistant copy deletion — ENG-355
+
+`createGoogleCanonicalMessageDeletionHandler` is an opt-in adapter for registered `derived/cm_<messageId>` copies. It compares the exact existing JSONB payload hash under owned chat/run/message/sidecar locks before replacing assistant content with a fixed notice. User messages, row IDs, sequence, run and turn links remain intact. Changed content is reported as modified. A fully redacted, sidecar-free message is idempotently missing after a worker crash or expired lease.
+
+The registry worker already owns its copy lock. The handler takes no context or registry lock and owns a bounded content transaction, never the host pool. Owner/message discovery is metadata only; identity and payload are rechecked under locks. Owned encrypted sidecars, search, byte count, preview and a content-free durable invalidation change atomically. The optional live invalidation callback runs only after actual COMMIT; callback failure does not undo completed redaction, and durable metadata remains replayable. Joined transaction handles are rejected because their return does not prove COMMIT.
+
+Cancellation rolls back pending changes and withholds a completion returned after cancellation. Database failures propagate as failures. No content enters errors or callbacks. This adapter does not authorize provider processing or install itself at startup.
+
+This is one deletion adapter, not complete retained-data deletion. Persistent historical outbox projections, activity events, run/queue snapshots, attachment metadata/files, imports, external processors and infrastructure copies retain their separate coverage/evidence requirements. Never treat this adapter or OAuth disconnect as proof those copies were erased. The controlled runtime must install the corresponding complete write/deletion composition before enablement.
+
+Validation: tests first reproduced absent deletion and absent invalidation. Native PostgreSQL cases cover exact owner/hash, modified parts/search/bytes, preservation of user rows and sequence, sidecar deletion, cancellation rollback, idempotent retry, real copy-locked purge execution and post-COMMIT metadata notification. Public documentation remains the separate site PR287.
