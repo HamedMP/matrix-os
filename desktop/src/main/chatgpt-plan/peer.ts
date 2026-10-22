@@ -1,8 +1,19 @@
 import { sign } from 'node:crypto';
 import { z } from 'zod/v4';
 import { CHATGPT_PLAN_PEER_POLL_BYTE_LIMIT, CHATGPT_PLAN_PEER_CLOCK_SKEW_MS, CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS, chatGptPlanPeerRequestId, ChatGptPlanPeerChallengeSchema, ChatGptPlanPeerSessionSchema, ChatGptPlanPeerReplySchema, ChatGptPlanPeerPollSchema, chatGptPlanPeerProof, type ChatGptPlanPeerSnapshot, type ChatGptPlanPeerRequest } from '@matrix-os/contracts';
-import { logPlanFailure, PlanFailure } from './diagnostics';
+import { logPlanFailure, PlanFailure, planPeerNetworkFailureDiagnostic, type PlanNetworkDiagnostic } from './diagnostics';
 const POST_CONFLICT = Symbol('reply already settled');
+// A failed poll may already have dequeued a cancel. Only failures establishing
+// the connection prove no request reached the server; resets/timeouts do not.
+const PRECONNECT_CHROME_CODES = new Set(['ERR_CONNECTION_REFUSED', 'ERR_CONNECTION_TIMED_OUT', 'ERR_NAME_NOT_RESOLVED']);
+const PRECONNECT_NODE_CODES = new Set(['UND_ERR_CONNECT_TIMEOUT', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN']);
+function retryablePollConnectionFailure(error: unknown): boolean {
+    if (!(error instanceof PlanFailure) || error.stage !== 'peer_poll' || error.category !== 'network_error'
+        || error.networkDiagnostic?.phase !== 'before_headers') return false;
+    const { chromiumCode, code, causeCode } = error.networkDiagnostic;
+    if (chromiumCode !== undefined) return PRECONNECT_CHROME_CODES.has(chromiumCode);
+    return code !== undefined ? PRECONNECT_NODE_CODES.has(code) : PRECONNECT_NODE_CODES.has(causeCode ?? '');
+}
 async function readPeerText(response: Response, limit: number, signal: AbortSignal, interruption: Promise<never>): Promise<string> {
     if (!response.body) return '';
     const reader = response.body.getReader();
@@ -59,7 +70,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
     const calls = new Map<string, AbortController>(); // <=4 calls, drained on every disconnect.
     async function post(binding: PlanPeerBinding, path: string, body: unknown, signal: AbortSignal, limit = 2 * 1024 * 1024) {
         if (!deps.current(binding))
-            throw new Error('peer changed');
+            throw new PlanFailure(`peer_${path}`, 'stale_source', undefined, undefined, { phase: 'before_headers' });
         const url = new URL(`/api/chatgpt-plan/device/${path}`, binding.origin);
         if (binding.runtimeSlot !== 'primary')
             url.searchParams.set('runtime', binding.runtimeSlot);
@@ -72,6 +83,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
         let interrupted!: () => void;
         const interruption = new Promise<never>((_, reject) => { interrupted = () => reject(deadline.reason); });
         deadline.addEventListener('abort', interrupted, { once: true });
+        let phase: PlanNetworkDiagnostic['phase'] = 'before_headers';
         try {
             deadline.throwIfAborted();
             const response = await Promise.race([deps.fetchFn(url.toString(), {
@@ -80,6 +92,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
                 },
                 body: encoded, signal: deadline,
             }), interruption]);
+            phase = 'body_read';
             if (path === 'reply' && response.status === 409) {
                 void response.body?.cancel().catch((error: unknown) => logPlanFailure('peer_reply_cleanup', error));
                 return POST_CONFLICT;
@@ -90,8 +103,9 @@ export function createPlanNativePeer(deps: PeerDependencies) {
             }
             const text = await readPeerText(response, path === 'poll' ? CHATGPT_PLAN_PEER_POLL_BYTE_LIMIT : limit, deadline, interruption);
             deadline.throwIfAborted();
+            phase = 'post_read_binding';
             if (!deps.current(binding))
-                throw new Error('peer changed');
+                throw new PlanFailure(`peer_${path}`, 'stale_source', undefined, undefined, { phase });
             return text ? JSON.parse(text) as unknown : {};
         } catch (error: unknown) {
             // Retain the transport boundary without exposing fetch URLs or
@@ -102,8 +116,13 @@ export function createPlanNativePeer(deps: PeerDependencies) {
                 throw new PlanFailure(`peer_${path}`, reason.name === 'TimeoutError' ? 'timeout'
                     : reason.name === 'AbortError' ? 'cancelled' : 'transport_error');
             }
-            if (error instanceof TypeError) throw new PlanFailure(`peer_${path}`, 'network_error');
             if (error instanceof SyntaxError || error instanceof z.ZodError) throw new PlanFailure(`peer_${path}`, 'invalid_schema');
+            const network = planPeerNetworkFailureDiagnostic(error, phase);
+            if (error instanceof Error && error.message === 'response too large')
+                throw new PlanFailure(`peer_${path}`, 'response_oversize', undefined, undefined, network);
+            if (error instanceof TypeError || network.chromiumCode && network.chromiumCode !== 'unknown' || network.code || network.causeCode)
+                throw new PlanFailure(`peer_${path}`, 'network_error', undefined, undefined, network);
+            if (error instanceof Error) throw new PlanFailure(`peer_${path}`, 'local_failure', undefined, undefined, network);
             throw error;
         } finally {
             deadline.removeEventListener('abort', interrupted);
@@ -155,11 +174,25 @@ export function createPlanNativePeer(deps: PeerDependencies) {
             throw new Error('peer changed');
         deps.connected(true);
         let lastSequence = 0; // Session-scoped high-water mark, never evicted.
+        let consecutivePollFailures = 0;
         const pending = new Set<Promise<void>>(); // <=4 calls; drain on transport close.
         task = (async () => {
             try {
                 while (connection === value && deps.current(binding)) {
-                    const poll = ChatGptPlanPeerPollSchema.parse(await post(binding, 'poll', session, controller.signal));
+                    let poll;
+                    try {
+                        poll = ChatGptPlanPeerPollSchema.parse(await post(binding, 'poll', session, controller.signal));
+                        consecutivePollFailures = 0;
+                    } catch (error: unknown) {
+                        if (consecutivePollFailures === 0 && connection === value && !controller.signal.aborted
+                            && deps.current(binding) && [...calls.values()].some(call => !call.signal.aborted)
+                            && retryablePollConnectionFailure(error)) {
+                            consecutivePollFailures = 1;
+                            logPlanFailure('peer_poll', error);
+                            continue;
+                        }
+                        throw error;
+                    }
                     for (const request of poll.requests) {
                         if (request.action === 'cancel') {
                             calls.get(request.id)?.abort();
