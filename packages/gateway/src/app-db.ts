@@ -48,13 +48,18 @@ export interface AppDbWithKysely {
   kysely: Kysely<any>;
 }
 
-export function createAppDb(opts: string | { dialect: any }): AppDbWithKysely {
+export function createAppDb(opts: string | { dialect: any }, options: { connectionTimeoutMillis?: 2000 } = {}): AppDbWithKysely {
+  // Explicit owner-host pilot composition only. Ordinary callers retain the deployed pool defaults.
+  if (options.connectionTimeoutMillis !== undefined && (options.connectionTimeoutMillis !== 2000 || typeof opts !== 'string')) {
+    throw new Error('Owner database configuration unavailable');
+  }
   let kysely: Kysely<any>;
   let pool: pg.Pool | null = null;
   let destroyPromise: Promise<void> | undefined;
 
   if (typeof opts === "string") {
-    pool = new pg.Pool({ connectionString: opts, max: 10 });
+    pool = new pg.Pool({ connectionString: opts, max: 10,
+      ...(options.connectionTimeoutMillis !== undefined ? { connectionTimeoutMillis: options.connectionTimeoutMillis } : {}) });
     observePostgresPoolErrors(pool, (err) => {
       console.error("[app-db] Postgres connection error:", err.message);
     });

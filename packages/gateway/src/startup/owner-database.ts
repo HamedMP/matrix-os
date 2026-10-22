@@ -131,7 +131,7 @@ export async function initializeOwnerDatabaseServices(
     databaseUrl: options.databaseUrl,
     services,
     initialize: async () => {
-      const { db, kysely } = createAppDb(options.databaseUrl!);
+      const { db, kysely } = createAppDb(options.databaseUrl!, options.googlePilot?.enabled ? { connectionTimeoutMillis: 2000 } : undefined);
       services.appDb = db;
       services.kyselyInstance = kysely;
       await db.bootstrap();
