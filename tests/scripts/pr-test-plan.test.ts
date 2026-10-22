@@ -95,7 +95,7 @@ describe("CI wiring for PR test planning", () => {
     expect(outputs.e2e_tests).toMatch(/\|\| 'true' \}\}$/u);
   });
 
-  it("runs selected files only after a successful selection and uses every hosted vCPU", () => {
+  it("runs selected files only after a successful selection", () => {
     const select = unitSteps.find((step) => step.id === "select");
     expect(select?.if).toContain("needs.changes.outputs.unit_scope == 'affected'");
     // The import graph resolves workspace packages through their built dist output.
@@ -104,7 +104,7 @@ describe("CI wiring for PR test planning", () => {
     expect(controllerUpload?.if).toContain("needs.changes.outputs.unit_scope != 'affected'");
     const test = unitSteps.find((step) => step.run?.startsWith('GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test --'));
     expect(test?.env?.UNIT_SELECTION).toBe("${{ steps.select.outputs.list }}");
-    expect(test?.env?.MATRIX_TEST_WORKERS).toBe("4");
+    expect(test?.env?.MATRIX_TEST_WORKERS).toBeUndefined();
     expect(test?.run).toContain('${UNIT_SELECTION:+--passWithNoTests $(cat "$UNIT_SELECTION")}');
   });
 

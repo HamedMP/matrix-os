@@ -827,8 +827,8 @@ jobs:
       - run: GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile.json=output/ci/unit-${{ matrix.shard }}.json ${UNIT_SELECTION:+--passWithNoTests $(cat "$UNIT_SELECTION")}
         env:
           UNIT_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
-          # Hosted Linux runners for public repositories have 4 vCPUs; the default of 2 left half idle.
-          MATRIX_TEST_WORKERS: "4"
+          # Keep Vitest's default of 2 workers: 4 measured no faster on 4-vCPU runners (#2843) and
+          # starved the CPU-heavy gateway build in customer-vps-runtime-loader past its timeout.
           # Set only after a successful affected-test selection; empty runs the full suite.
           UNIT_SELECTION: ${{ steps.select.outputs.list }}
         if: needs.changes.outputs.should_run == 'true'
