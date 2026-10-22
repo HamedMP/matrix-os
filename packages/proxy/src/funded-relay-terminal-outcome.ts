@@ -16,9 +16,10 @@ export function createRelayTerminalRecorder(options: {
   now: () => Date;
   queue: SettlementRetryQueue;
   acknowledgementTimeoutMs?: number;
+  shutdownSignal?: AbortSignal;
 }) {
   let started: FundedAiStartResponse | undefined;
-  let reporting: Promise<void> | undefined;
+  let reporting: Promise<boolean> | undefined;
   let responseEnded: Promise<void> | undefined;
   const executionId = randomUUID();
 
@@ -30,10 +31,11 @@ export function createRelayTerminalRecorder(options: {
       responseEnded = observed.ended;
       return observed.response;
     },
-    unknown: (terminalState: "completed" | "failed" | "cancelled"): Promise<void> => {
-      if (!started) return Promise.resolve();
+    unknown: (terminalState: "completed" | "failed" | "cancelled"): Promise<boolean> => {
+      if (!started) return Promise.resolve(false);
       if (reporting) return reporting;
       const binding = started;
+      let accepted = false;
       const publish = async () => {
         const receipt = FundedAiTerminalOutcomeRequestSchema.safeParse({
           contractVersion: 1,
@@ -56,14 +58,15 @@ export function createRelayTerminalRecorder(options: {
           // One prompt retry uses the same immutable receipt; the existing queue
           // retains any outage beyond the caller's bounded acknowledgement wait.
           await options.queue.flush();
-          await acknowledged;
+          accepted = await acknowledged;
         }
         else console.warn("[proxy] Funded AI terminal evidence failed validation");
       };
       // The original body can outlive a failed transform or rejection parser.
       // Unconfirmed cancellation leaves this promise pending and fails closed.
       const publication = responseEnded ? responseEnded.then(publish) : publish();
-      reporting = waitForRelayWork(publication, options.acknowledgementTimeoutMs ?? 1_000);
+      reporting = waitForRelayWork(publication, options.acknowledgementTimeoutMs ?? 1_000, options.shutdownSignal)
+        .then((completed) => completed && accepted);
       return reporting;
     },
   };

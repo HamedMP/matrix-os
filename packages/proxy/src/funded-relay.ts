@@ -1,5 +1,5 @@
 import { createRelayTerminalRecorder } from "./funded-relay-terminal-outcome.js";
-import { createRelayRequestDrain } from "./funded-relay-lifecycle.js";
+import { createRelayRequestDrain, RELAY_SHUTDOWN_TIMEOUT_MS } from "./funded-relay-lifecycle.js";
 import { isManagedWorkersAiModel } from "@matrix-os/contracts";
 import { createHmac, randomUUID } from "node:crypto";
 import {
@@ -77,7 +77,7 @@ interface ActiveRequestState {
 
 export interface FundedRelay {
   register(app: Hono): void;
-  close(): Promise<void>;
+  close(signal?: AbortSignal): Promise<boolean>;
 }
 
 function safeDiagnosticKey(key: string): string {
@@ -262,6 +262,7 @@ function createDisabledRelay(): FundedRelay {
     },
     async close() {
       // Disabled relays own no resources.
+      return true;
     },
   };
 }
@@ -274,14 +275,19 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
   const requestIdFactory = config.requestIdFactory ?? randomUUID;
   const admission = new AdmissionController(config, () => now().getTime());
   const platform = config.platformClient ?? createFundedPlatformClient({ ...config, fetch: fetchImpl });
+  const shutdown = new AbortController();
+  let closing = false;
+  let terminalComplete = true;
+  let closeResult: Promise<boolean> | undefined;
+  const controlSignal = () => AbortSignal.any([AbortSignal.timeout(config.platformTimeoutMs), shutdown.signal]);
   const settlementQueue = new SettlementRetryQueue({
     capacity: config.settlementQueueCapacity,
     batchSize: config.settlementBatchSize,
     ttlMs: config.settlementTtlMs,
     retryIntervalMs: config.settlementRetryIntervalMs,
     now: () => now().getTime(),
-    finalize: (task) => platform.finalize(task, AbortSignal.timeout(config.platformTimeoutMs)),
-    terminal: (task) => platform.terminal(task, AbortSignal.timeout(config.platformTimeoutMs)),
+    finalize: (task) => platform.finalize(task, controlSignal()),
+    terminal: (task) => platform.terminal(task, controlSignal()),
   });
   const activeRequests = createRelayRequestDrain();
   const requestStates = new WeakMap<Context, ActiveRequestState>();
@@ -293,7 +299,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     try {
       const released = await platform.release(
         { reservationId, tokenId, reason: "pre_upstream_failure" },
-        AbortSignal.timeout(config.platformTimeoutMs),
+        controlSignal(),
       );
       return released.reservationId === reservationId && released.tokenId === tokenId
         && released.status === "released" && released.reason === "pre_upstream_failure";
@@ -499,10 +505,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       tokenId: authorization.identity.tokenId,
     };
     const terminal = createRelayTerminalRecorder({ identity: authorization.identity, reservationId: reservation.reservationId,
-      requestId, now, queue: settlementQueue, acknowledgementTimeoutMs: Math.min(10_000, 2 * config.platformTimeoutMs) });
+      requestId, now, queue: settlementQueue, acknowledgementTimeoutMs: Math.min(10_000, 2 * config.platformTimeoutMs), shutdownSignal: shutdown.signal });
     const enqueueFinalization = async (result: FundedFinalization, terminalState: "completed" | "failed" | "cancelled" = "completed"): Promise<void> => {
       if (result.mode === "conservative" && reservation.billingMode === "usage") {
-        await terminal.unknown(terminalState);
+        if (!await terminal.unknown(terminalState) && closing) terminalComplete = false;
       } else if (result.mode === "exact" && (reservation.billingMode === "usage" || result.actualCostMicrousd <= reservation.reservedMicrousd)) {
         settlementQueue.enqueue({ ...finalizationLocator, ...result });
       } else {
@@ -591,6 +597,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
             push: (chunk: Uint8Array) => tracker.push(chunk),
             complete: () => enqueueFinalization(tracker.complete()),
             ambiguous: () => enqueueFinalization({ mode: "conservative" }, "cancelled"),
+            unconfirmed: () => { if (closing) terminalComplete = false; },
           };
         })(),
         Math.min(10_000, 2 * config.platformTimeoutMs),
@@ -702,7 +709,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       tokenId: authorization.identity.tokenId,
     };
     const terminal = createRelayTerminalRecorder({ identity: authorization.identity, reservationId: reservation.reservationId,
-      requestId, now, queue: settlementQueue, acknowledgementTimeoutMs: Math.min(10_000, 2 * config.platformTimeoutMs) });
+      requestId, now, queue: settlementQueue, acknowledgementTimeoutMs: Math.min(10_000, 2 * config.platformTimeoutMs), shutdownSignal: shutdown.signal });
     const enqueueFinalization = async (result: FundedFinalization | {
       mode: "exact";
       actualCostMicrousd: number;
@@ -711,7 +718,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       if (result.mode === "exact" && result.actualCostMicrousd <= config.jevMaxCostMicrousd) {
         settlementQueue.enqueue({ ...finalizationLocator, ...result });
       } else {
-        await terminal.unknown("failed");
+        if (!await terminal.unknown("failed") && closing) terminalComplete = false;
       }
     };
 
@@ -812,7 +819,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         const task = { ...finalizationLocator, mode: "not_dispatched" as const,
           expectedRequestId: requestId, jevPricingVersion: pricing.version };
         try {
-          const settled = await platform.finalize(task, AbortSignal.timeout(config.platformTimeoutMs));
+          const settled = await platform.finalize(task, controlSignal());
           assertJevProbeSettlement(settled, { ...finalizationLocator, requestId, actualCostMicrousd: 0 });
         } catch (settlementError) {
           console.warn("[proxy] Jev no-dispatch settlement will retry", {
@@ -922,10 +929,27 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           ? handleEvaluation(c, state, c.req.path === JEV_READINESS_PATH) : handle(c, state);
       });
     },
-    async close() {
+    close(shutdownSignal?: AbortSignal) {
+      if (closeResult) return closeResult;
+      const signal = shutdownSignal ?? AbortSignal.timeout(RELAY_SHUTDOWN_TIMEOUT_MS);
+      closing = true;
       admission.close();
-      await activeRequests.close(Math.min(10_000, 2 * config.platformTimeoutMs));
-      await settlementQueue.close();
+      settlementQueue.beginShutdown(signal);
+      // Install the deadline before cancellation starts, without aborting the
+      // live terminal retry until that shared deadline actually expires.
+      const abort = () => shutdown.abort(signal.reason);
+      if (signal.aborted) abort();
+      else signal.addEventListener("abort", abort, { once: true });
+      closeResult = (async () => {
+        try {
+          const ended = await activeRequests.close(Math.min(10_000, 2 * config.platformTimeoutMs), signal);
+          const acknowledged = await settlementQueue.close(signal);
+          return ended && acknowledged && terminalComplete && !signal.aborted;
+        } finally {
+          signal.removeEventListener("abort", abort);
+        }
+      })();
+      return closeResult;
     },
   };
 }
