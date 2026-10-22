@@ -161,7 +161,8 @@ async function openPlanResponse(input: PlanResponseInput): Promise<Response> {
 }
 
 /** One SSE event is buffered at a time; a completed event stays private until EOF. */
-export async function* requestPlanResponseStream(input: PlanResponseInput, validateChunks = true): AsyncGenerator<string> {
+export async function* requestPlanResponseStream(input: PlanResponseInput, validateChunks = true,
+    onProgress?: () => void): AsyncGenerator<string> {
     const response = await openPlanResponse(input);
     let head = '', tail = '', observedBytes = 0;
     const sample = (value: string) => {
@@ -223,6 +224,7 @@ export async function* requestPlanResponseStream(input: PlanResponseInput, valid
         if (part) yield part;
     }
     function* drainFrames(eof: boolean): Generator<string> {
+        let batch = '', batchBytes = 0;
         let boundary: RegExpExecArray | null;
         while ((boundary = /(?:\r\n|\r(?!\n)|(?<!\r)\n){2}/.exec(pending)) !== null) {
             // A trailing CR may become CRLF when the next transport read arrives.
@@ -236,8 +238,24 @@ export async function* requestPlanResponseStream(input: PlanResponseInput, valid
                 if (Buffer.byteLength(heldTerminal) > INFERENCE_RESPONSE_BUFFER_MAX_BYTES) fail('response_too_large');
             } else {
                 if (validateChunks) input.validate();
-                yield* splitOutput(output);
+                for (const piece of splitOutput(output)) {
+                    const bytes = Buffer.byteLength(piece);
+                    if (batchBytes + bytes > INFERENCE_RESPONSE_CHUNK_MAX_BYTES) {
+                        if (validateChunks) input.validate();
+                        refreshIdle();
+                        yield batch;
+                        refreshIdle();
+                        batch = ''; batchBytes = 0;
+                    }
+                    batch += piece; batchBytes += bytes;
+                }
             }
+        }
+        if (batch) {
+            if (validateChunks) input.validate();
+            refreshIdle();
+            yield batch;
+            refreshIdle();
         }
     }
     const bodyStream = response.body;
@@ -249,8 +267,16 @@ export async function* requestPlanResponseStream(input: PlanResponseInput, valid
         throw error;
     }
     const deadline = new AbortController();
-    const timeout = setTimeout(() => deadline.abort(new DOMException('Response deadline', 'TimeoutError')), 120000);
+    const expire = () => deadline.abort(new DOMException('Response deadline', 'TimeoutError'));
+    let timeout = setTimeout(expire, 120000);
     const signal = AbortSignal.any([input.signal, deadline.signal]);
+    function refreshIdle() {
+        if (!validateChunks || signal.aborted) return;
+        clearTimeout(timeout);
+        timeout = setTimeout(expire, 120000);
+        timeout.unref?.();
+        onProgress?.();
+    }
     let interrupted!: () => void;
     const interruption = new Promise<never>((_, reject) => { interrupted = () => reject(signal.reason); });
     signal.addEventListener('abort', interrupted, { once: true });
@@ -268,6 +294,7 @@ export async function* requestPlanResponseStream(input: PlanResponseInput, valid
                 }
             })();
             if (read.done) break;
+            if (read.value.byteLength) refreshIdle();
             for (let offset = 0; offset < read.value.byteLength; offset += 4096) {
                 let decoded: string;
                 try { decoded = decoder.decode(read.value.subarray(offset, offset + 4096), { stream: true }); }
@@ -293,7 +320,11 @@ export async function* requestPlanResponseStream(input: PlanResponseInput, valid
         if (pending.trim()) fail(/^(?:data|event):/m.test(head) ? 'incomplete_stream' : 'invalid_stream');
         if (!completed) fail(sawData ? 'incomplete_stream' : 'invalid_stream');
         input.validate();
-        yield* splitOutput(heldTerminal);
+        for (const piece of splitOutput(heldTerminal)) {
+            refreshIdle();
+            yield piece;
+            refreshIdle();
+        }
     } finally {
         clearTimeout(timeout); signal.removeEventListener('abort', interrupted);
         try { void reader.cancel().catch((error: unknown) => logPlanFailure('response_stream_cleanup', error)); }

@@ -284,7 +284,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
     }
     function prepareInference(request: Extract<ChatGptPlanPeerRequest, {
         action: 'infer';
-    }>, signal: AbortSignal) {
+    }>, signal: AbortSignal, streaming = false) {
         const live = deps.auth.getStatus();
         const value = bound(live);
         const permission = grant(value.computerId);
@@ -302,7 +302,8 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             throw new Error('request capacity');
         const controller = new AbortController();
         requests.add(controller);
-        const operationSignal = AbortSignal.any([signal, controller.signal, AbortSignal.timeout(120000)]);
+        const operationSignal = AbortSignal.any(streaming ? [signal, controller.signal]
+            : [signal, controller.signal, AbortSignal.timeout(120000)]);
         return {
             controller,
             input: {
@@ -324,10 +325,10 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
     }
     async function* inferStream(request: Extract<ChatGptPlanPeerRequest, {
         action: 'infer';
-    }>, signal: AbortSignal): AsyncGenerator<string> {
-        const { controller, input } = prepareInference(request, signal);
+    }>, signal: AbortSignal, progress: () => void): AsyncGenerator<string> {
+        const { controller, input } = prepareInference(request, signal, true);
         try {
-            yield* requestPlanResponseStream(input);
+            yield* requestPlanResponseStream(input, true, progress);
         } finally {
             requests.delete(controller);
         }

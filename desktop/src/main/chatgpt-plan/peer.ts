@@ -45,7 +45,7 @@ interface PeerDependencies {
     }>, signal: AbortSignal): Promise<string>;
     inferStream?(request: Extract<ChatGptPlanPeerRequest, {
         action: 'infer';
-    }>, signal: AbortSignal): AsyncIterable<string>;
+    }>, signal: AbortSignal, progress: () => void): AsyncIterable<string>;
     connected(value: boolean): void;
 }
 /** Private authenticated transport. Never exposes its session nonce or OAuth material. */
@@ -179,9 +179,21 @@ export function createPlanNativePeer(deps: PeerDependencies) {
                         const call = new AbortController();
                         calls.set(request.id, call);
                         const operation = (async () => {
-                            const signal = AbortSignal.any([call.signal, controller.signal, AbortSignal.timeout(Math.ceil(Math.min(remaining, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS)))]);
+                            const streaming = request.responseMode === 'stream';
+                            const idle = streaming ? new AbortController() : null;
+                            let idleTimer: ReturnType<typeof setTimeout> | undefined;
+                            const signal = AbortSignal.any([call.signal, controller.signal, idle
+                                ? idle.signal : AbortSignal.timeout(Math.ceil(Math.min(remaining, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS)))]);
+                            const progress = () => {
+                                if (!idle || signal.aborted) return;
+                                clearTimeout(idleTimer);
+                                idleTimer = setTimeout(() => idle.abort(new DOMException('Inference idle', 'TimeoutError')),
+                                    CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS);
+                                idleTimer.unref?.();
+                            };
+                            progress();
                             try {
-                                if (request.responseMode === 'stream') {
+                                if (streaming) {
                                     if (!deps.inferStream) throw new Error('stream inference unavailable');
                                     let sequence = 0;
                                     const send = async (reply: unknown) => {
@@ -192,12 +204,16 @@ export function createPlanNativePeer(deps: PeerDependencies) {
                                         if (!validated.success) throw new PlanFailure('peer_reply', 'invalid_schema');
                                         return true;
                                     };
-                                    for await (const chunk of deps.inferStream(request, signal)) {
+                                    for await (const chunk of deps.inferStream(request, signal, progress)) {
                                         signal.throwIfAborted();
+                                        if (!chunk) continue;
+                                        progress();
                                         if (!await send({ ...session, id: request.id, ok: true, stream: 'chunk', sequence, body: chunk })) return;
+                                        progress();
                                         sequence += 1;
                                     }
                                     signal.throwIfAborted();
+                                    progress();
                                     await send({ ...session, id: request.id, ok: true, stream: 'end', sequence });
                                 } else {
                                     const body = await deps.infer(request, signal);
@@ -223,6 +239,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
                                 }
                             }
                             finally {
+                                clearTimeout(idleTimer);
                                 calls.delete(request.id);
                             }
                         })();
