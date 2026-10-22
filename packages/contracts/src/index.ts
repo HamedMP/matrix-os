@@ -87,6 +87,7 @@ export * from "#provider-managed-credit";
 export * from "#funded-ai";
 export * from "#jev";
 export * from "#jev-inbox";
+export * from "#get-started";
 export * from "#getting-started";
 export * from "#integration-connections";
 export * from "#onboarding-widget";

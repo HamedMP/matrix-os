@@ -242,6 +242,7 @@ import {
 } from "./plugins/index.js";
 import { createHermesRoutes } from "./routes/hermes.js";
 import { createSettingsRoutes } from "./routes/settings.js";
+import { createGetStartedRoutes } from "./routes/get-started.js";
 import { bootstrapSocialSchema, createSocialRoutes, type SocialRoutes } from "./social.js";
 import { createGatewayHomeMirrorLifecycle } from "./sync/home-mirror-lifecycle.js";
 import { initializeSyncInfrastructure } from "./sync/infrastructure.js";
@@ -1807,6 +1808,11 @@ export async function createGateway(config: GatewayConfig) {
     agentRuntimeController: agentRuntimeServices.controller,
     aiProviderService,
   });
+  // Spec 635: Get started wizard state. Off unless the deployment opts in.
+  app.route("/api/settings/get-started", createGetStartedRoutes({
+    homePath,
+    enabled: process.env.MATRIX_GET_STARTED_ENABLED === "true",
+  }));
   app.route("/api/settings", settingsRoutes);
   if (osViewStateRepository) {
     app.route("/api/os-view-state", createOsViewStateRoutes({
