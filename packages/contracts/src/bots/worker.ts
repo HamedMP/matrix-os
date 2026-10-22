@@ -7,6 +7,9 @@ import { BotIdSchema } from "#bots/ids";
 import { BotRecipeRefSchema } from "#bots/bot";
 import { BotBlockedReasonSchema } from "#bots/tasks";
 
+/** Output ceiling used by ordinary Matrix Pi turns across managed routes. */
+export const MATRIX_PI_DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
+
 /** Model route resolved by the gateway from Provider V3; the worker never chooses one. */
 export const BotModelRouteSchema = z.object({
   api: z.enum(["anthropic-messages", "openai-responses", "openai-completions"]),

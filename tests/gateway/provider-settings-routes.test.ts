@@ -95,6 +95,7 @@ function createApp(options: {
   getSnapshot?: () => Promise<ProviderSettingsSnapshot>;
   mutate?: (input: ProviderSettingsMutation) => Promise<ProviderSettingsMutationResponse>;
   getPrincipal?: () => unknown;
+  canAccessUpstreamPreference?: () => boolean;
 } = {}) {
   const getSnapshot = vi.fn(options.getSnapshot ?? (async () => snapshot));
   const mutate = vi.fn(options.mutate ?? (async () => ({
@@ -106,6 +107,9 @@ function createApp(options: {
   app.route("/api/ai", createProviderSettingsRoutes({
     store: { getSnapshot, mutate },
     getPrincipal,
+    ...(options.canAccessUpstreamPreference
+      ? { canAccessUpstreamPreference: options.canAccessUpstreamPreference }
+      : {}),
   }));
   return { app, getSnapshot, mutate, getPrincipal };
 }
@@ -122,7 +126,8 @@ describe("provider settings routes", () => {
       },
     };
     const { app, mutate } = createApp({ getSnapshot: async () => preferenceSnapshot,
-      mutate: async () => ({ kind: "snapshot", snapshot: preferenceSnapshot }) });
+      mutate: async () => ({ kind: "snapshot", snapshot: preferenceSnapshot }),
+      canAccessUpstreamPreference: () => true });
     const legacy = await (await app.request("/api/ai/provider-settings")).json();
     expect(legacy).not.toHaveProperty("upstreamPreference");
     expect(legacy.supportedActions).not.toContain("set_gateway_upstream");
@@ -136,6 +141,38 @@ describe("provider settings routes", () => {
     expect(mutated.snapshot.upstreamPreference).toEqual(preferenceSnapshot.upstreamPreference);
     mutate.mockClear();
     expect((await app.request("/api/ai/provider-settings/actions?includeUpstreamPreference=maybe", request)).status).toBe(400);
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("hides and rejects the owner preference for authenticated runtime guests", async () => {
+    const preferenceSnapshot: ProviderSettingsSnapshot = {
+      ...snapshot,
+      supportedActions: [...snapshot.supportedActions, "set_gateway_upstream"],
+      upstreamPreference: {
+        selectedUpstream: "aws_bedrock", effectiveUpstream: "aws_bedrock",
+        effectiveBedrockModelIds: ["anthropic/claude-opus-5"], revision: 2,
+        updatedAt: "2026-08-30T09:59:00.000Z", validThrough: "2026-09-30T00:00:00.000Z",
+      },
+    };
+    const { app, mutate } = createApp({ getSnapshot: async () => preferenceSnapshot,
+      mutate: async () => ({ kind: "snapshot", snapshot: preferenceSnapshot }),
+      getPrincipal: () => ({ userId: "reviewer_123" }), canAccessUpstreamPreference: () => false });
+
+    const read = await (await app.request(
+      "/api/ai/provider-settings?includeUpstreamPreference=true",
+    )).json();
+    expect(read).not.toHaveProperty("upstreamPreference");
+    expect(read.supportedActions).not.toContain("set_gateway_upstream");
+    const response = await app.request(
+      "/api/ai/provider-settings/actions?includeUpstreamPreference=true",
+      { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "set_gateway_upstream", selectedUpstream: "cloudflare",
+          expectedRevision: 0, expectedUpstreamRevision: 2, idempotencyKey: "guest-preference" }) },
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      error: { code: "not_found", message: "Provider settings item was not found." },
+    });
     expect(mutate).not.toHaveBeenCalled();
   });
 
