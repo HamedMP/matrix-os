@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useChatMaximized } from "@desktop/renderer/src/features/onboarding-widget/use-chat-maximized";
 import { useDesktopSurfaces, type DesktopSurface } from "@desktop/renderer/src/stores/desktop-surfaces";
 import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-desktop-mode";
+import { useProjectView } from "@desktop/renderer/src/stores/project-view";
 import { useTabs, type Tab } from "@desktop/renderer/src/stores/tabs";
 
 const BOUNDS = { x: 0, y: 0, width: 800, height: 600 };
@@ -24,6 +25,7 @@ function arrange({ tab, mode, workspaceView = "tabs", osView = "desktop" }: {
 }
 
 const chatTab: Tab = { id: "chat-1", kind: "work", workRoute: "chat", title: "Chat", closable: false };
+const projectTab: Tab = { id: "project-1", kind: "work", workRoute: "project", projectSlug: "demo", chatView: "conversation", chatId: "chat-1", title: "Chat", closable: false };
 const terminalTab: Tab = { id: "term-1", kind: "terminal", title: "Terminal", closable: true };
 
 describe("useChatMaximized", () => {
@@ -31,6 +33,7 @@ describe("useChatMaximized", () => {
     useTabs.setState(useTabs.getInitialState(), true);
     useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
     useNativeDesktopMode.setState(useNativeDesktopMode.getInitialState(), true);
+    useProjectView.setState(useProjectView.getInitialState(), true);
   });
 
   afterEach(cleanup);
@@ -53,5 +56,15 @@ describe("useChatMaximized", () => {
 
     arrange({ tab: chatTab, mode: "tab", osView: "canvas" });
     expect(renderHook(() => useChatMaximized()).result.current).toBe(false);
+  });
+
+  it("hides the widget over a full-screen project Chat, then restores it for the project Board", () => {
+    arrange({ tab: projectTab, mode: "tab" });
+    useProjectView.getState().setView("demo", "chats");
+    const { result } = renderHook(() => useChatMaximized());
+    expect(result.current).toBe(true);
+
+    act(() => useProjectView.getState().setView("demo", "board"));
+    expect(result.current).toBe(false);
   });
 });
