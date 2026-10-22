@@ -9,6 +9,9 @@ import { ManagedRouteControlConfigError, parseManagedRouteControlConfig, type Ma
 const PREFIX = '/internal/google-managed-route';
 const fail = (c: Context, status: 400 | 401 | 404 | 405 | 413 | 429 | 503) => c.json({ error: 'Managed route unavailable' }, status);
 class Refused extends Error { constructor(readonly status: 400 | 413 | 503) { super('Managed route unavailable'); } }
+function coarseErrorClass(error: unknown): string {
+  return error instanceof TypeError ? 'TypeError' : error instanceof RangeError ? 'RangeError' : error instanceof Error ? 'Error' : 'UnknownError';
+}
 async function readJson(c: Context, declared: number, signal: AbortSignal): Promise<unknown> {
   if (!c.req.raw.body) throw new Refused(400);
   const reader = c.req.raw.body.getReader(); const bytes = new Uint8Array(4096); let size = 0; let chunks = 0; let stop!: () => void;
@@ -23,7 +26,7 @@ async function readJson(c: Context, declared: number, signal: AbortSignal): Prom
     if (signal.aborted) throw new Refused(503); if (size !== declared) throw new Refused(400);
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size)));
   } catch (error) {
-    void reader.cancel().catch(cleanupError => console.warn('[managed-route-control] Body cleanup:', cleanupError instanceof Error ? cleanupError.name : 'UnknownError'));
+    void reader.cancel().catch(cleanupError => console.warn('[managed-route-control] Body cleanup:', coarseErrorClass(cleanupError)));
     if (error instanceof SyntaxError || error instanceof TypeError) throw new Refused(400);
     throw error;
   } finally { signal.removeEventListener('abort', stop); reader.releaseLock(); }
@@ -77,7 +80,10 @@ export function createManagedRouteControl(options: { config: FundedRelayConfig; 
             if (signal.aborted || closed || Date.parse(result.descriptor.evidence.expiresAt) <= now().getTime() || Buffer.byteLength(encoded) > 65536) { c.res = fail(c, 503); return; }
             c.res = c.body(encoded, 200, { 'Content-Type': 'application/json' });
           }) ?? c.res;
-        } catch (error) { return fail(c, error instanceof Refused ? error.status : 503); }
+        } catch (error) {
+          if (!(error instanceof Refused)) console.warn('[managed-route-control] Unexpected request failure', { errorClass: coarseErrorClass(error) });
+          return fail(c, error instanceof Refused ? error.status : 503);
+        }
         finally { clearTimeout(timer); controller.abort(); active.delete(controller); if (!active.size) { resolveDrained?.(); resolveDrained = undefined; } }
       });
       app.all(`${PREFIX}/*`, c => fail(c, 404));
