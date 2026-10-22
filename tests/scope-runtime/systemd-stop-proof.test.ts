@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createSystemdScopeRuntimeLauncher, type ScopeRuntimeCommandRunner } from '../../packages/scope-runtime/src/systemd-launcher.js';
+import { createSystemdScopeRuntimeLauncher, defaultRunCommand, type ScopeRuntimeCommandRunner } from '../../packages/scope-runtime/src/systemd-launcher.js';
 import { createScopeRuntimeController } from '../../packages/scope-runtime/src/supervisor.js';
 import { SCOPE_RUNTIME_PROFILE_ID, SCOPE_RUNTIME_PROFILE_VERSION, SCOPE_RUNTIME_PROFILE_DIGEST, SCOPE_RUNTIME_HARNESS_VERSION } from '../../packages/scope-runtime/src/profile.js';
 const handle = `runtime_${'a'.repeat(32)}`;
@@ -11,7 +11,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const fn of cleanups.splice(0)) await fn();
 });
-async function fixture() {
+async function fixture(timeoutMs = 100) {
   const root = await mkdtemp(join(tmpdir(), 'systemd-stop-proof-'));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const stateRoot = join(root, 'state');
@@ -29,6 +29,7 @@ async function fixture() {
   await writeFile(metadata, JSON.stringify(provenance), { mode: 0o600 });
   let status: Record<string, string> = { Id: unit, LoadState: 'loaded', ActiveState: 'inactive', SubState: 'dead', MainPID: '0', ControlPID: '0', TasksCurrent: '0', ControlGroup: `/system.slice/${unit}`, Job: '' };
   let onStop: () => Promise<void> = async () => undefined;
+  let onReset: () => Promise<void> = async () => { if (status.ActiveState === 'failed') status = { ...status, ActiveState: 'inactive', SubState: 'dead' }; };
   const runCommand = vi.fn<ScopeRuntimeCommandRunner>(async (_command, args) => {
     if (args[0] === 'is-active')
       throw Object.assign(new Error('not active'), { code: 3 });
@@ -36,14 +37,15 @@ async function fixture() {
       await onStop();
       return { stdout: '' };
     }
+    if (args[0] === 'reset-failed') { await onReset(); return { stdout: '' }; }
     if (args[0] === 'show')
       return { stdout: Object.entries(status).map(([key, value]) => `${key}=${value}`).join('\n') + '\n' };
     return { stdout: '' };
   });
   const launcher = createSystemdScopeRuntimeLauncher({ stateRoot, sdkDirectory: root, nativeDirectory: root, workerFile: join(root, 'worker'), brokerSocket: join(root, 'broker'),
-    runCommand, stopInspection: { cgroupRoot, timeoutMs: 100, pollMs: 2 } });
+    runCommand, stopInspection: { cgroupRoot, timeoutMs, pollMs: 2 } });
   return { launcher, runCommand, stateRoot, runtimeRoot, group, cgroupRoot, metadata, provenance,
-    status(value: Partial<typeof status>) { status = { ...status, ...value }; }, onStop(fn: typeof onStop) { onStop = fn; } };
+    status(value: Partial<typeof status>) { status = { ...status, ...value }; }, onStop(fn: typeof onStop) { onStop = fn; }, onReset(fn: typeof onReset) { onReset = fn; } };
 }
 it.each(['activating', 'deactivating', 'failed'])('unconditionally stops a known %s unit and waits for actual quiescence', async (initial) => {
   const f = await fixture();
@@ -142,4 +144,50 @@ it('accepts a failed unit only after unconditional stop and confirmed task absen
   f.status({ ActiveState: 'failed', SubState: 'failed', TasksCurrent: '[not set]', Job: '0' });
   await expect(f.launcher.stop(handle, '7')).resolves.toBeUndefined();
   expect(f.runCommand).toHaveBeenCalledWith('/usr/bin/systemctl', ['stop', unit]);
+});
+
+it('reads a nonzero unloaded-unit snapshot from the actual execFile adapter', async () => {
+  const f = await fixture(2000); f.onStop(async () => { await rm(f.group, { recursive: true }); });
+  const stdout = ['Id='+unit, 'LoadState=not-found', 'ActiveState=inactive', 'SubState=dead', 'MainPID=0', 'ControlPID=0', 'TasksCurrent=[not set]', 'ControlGroup=', 'Job='].join('\n')+'\n';
+  const oldRunner = f.runCommand.getMockImplementation()!; let shown = 0;
+  f.runCommand.mockImplementation(async(command, args) => args[0] === 'show' && ++shown > 1
+    ? defaultRunCommand(process.execPath, ['-e', `process.stdout.write(${JSON.stringify(stdout)});process.exit(1)`])
+    : oldRunner(command,args));
+  await expect(f.launcher.stop(handle,'7')).resolves.toBeUndefined();
+  expect(f.runCommand).toHaveBeenCalledWith('/usr/bin/systemctl', ['stop',unit]);
+  await expect(readFile(f.metadata,'utf8')).rejects.toMatchObject({code:'ENOENT'});
+});
+it('resets failed transient units only after task absence, so stopped units do not accumulate', async () => {
+  const f = await fixture(); f.status({ActiveState:'failed', SubState:'failed'});
+  f.onReset(async () => {
+    expect(await readFile(join(f.group,'cgroup.events'),'utf8')).toContain('populated 0');
+    expect(f.runCommand.mock.calls.filter(([,args])=>args[0]==='show').length).toBeGreaterThanOrEqual(3);
+    f.status({ActiveState:'inactive',SubState:'dead',LoadState:'not-found',ControlGroup:'',TasksCurrent:'[not set]'});
+    await rm(f.group,{recursive:true});
+  });
+  await expect(f.launcher.stop(handle,'7')).resolves.toBeUndefined();
+  expect(f.runCommand).toHaveBeenCalledWith('/usr/bin/systemctl',['reset-failed',unit]);
+});
+
+it.each(['exit','killed','signal','loaded','empty','malformed'])('denies an untrusted nonzero show %s result and preserves evidence', async kind => {
+  const f = await fixture();
+  const oldRunner = f.runCommand.getMockImplementation()!;
+  f.runCommand.mockImplementation(async(command,args) => {
+    if(args[0] !== 'show') return oldRunner(command,args);
+    const result=await oldRunner(command,args);
+    const stdout=result.stdout.replace('LoadState=loaded','LoadState=not-found').replace('ControlGroup=/system.slice/'+unit,'ControlGroup=');
+    throw Object.assign(new Error('unavailable'), {code:kind==='exit'?2:1,killed:kind==='killed',signal:kind==='signal'?'SIGTERM':null,
+      stdout:kind==='loaded'?result.stdout:kind==='empty'?'':kind==='malformed'?'LoadState=not-found\n':stdout});
+  });
+  await expect(f.launcher.stop(handle,'7')).rejects.toThrow();
+  expect(await readFile(f.metadata,'utf8')).toContain('executionGeneration');
+});
+it.each(['tasks','reset_failure','reset_no_effect'])('preserves failed runtime evidence for %s instead of clearing it early',async kind=>{
+  const f=await fixture();f.status({ActiveState:'failed',SubState:'failed'});
+  if(kind==='tasks')await writeFile(join(f.group,'cgroup.events'),'populated 1\n');
+  if(kind==='reset_failure')f.onReset(async()=>{throw new Error('reset unavailable');});
+  if(kind==='reset_no_effect')f.onReset(async()=>undefined);
+  await expect(f.launcher.stop(handle,'7')).rejects.toThrow();
+  if(kind==='tasks')expect(f.runCommand.mock.calls.some(([,args])=>args[0]==='reset-failed')).toBe(false);
+  expect(await readFile(f.metadata,'utf8')).toContain('executionGeneration');
 });
