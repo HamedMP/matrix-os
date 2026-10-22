@@ -189,8 +189,9 @@ A dedicated endpoint instead of generic file writes: answers are validated again
 
 ## Integration wiring
 
-- `createGetStartedRoutes({ homePath, enabled })` mounted at `/api/settings/get-started` next to the settings routes in `server.ts`; `enabled` comes from `MATRIX_GET_STARTED_ENABLED` (default off).
-- First-boot marker written by `ensureHome()` in the "home does not exist" branch only (Section 2).
+- `createGetStartedRoutes({ homePath, enabled })` mounted at `/api/settings/get-started` next to the settings routes in `server.ts`; `enabled` is `MATRIX_GET_STARTED_ENABLED=true` (default off).
+- Eligibility is seeded on the VPS by `matrix-restore.sh` (Section 2), which runs as the owner user before the gateway starts. In its first-installation branch (no `system/vps-meta.json` and no backup pointer in R2, primary runtime slot, `MATRIX_GET_STARTED_ENABLED=true` in `host.env`) it calls `matrix-get-started-seed /home/matrix/home`, which no-clobber writes `{ "version": 1, "status": "pending" }`. Seeding is best effort and never blocks the restore gate.
+- The platform passes `MATRIX_GET_STARTED_ENABLED` from its own environment into `host.env` in both cloud-init templates, like `MATRIX_FUNDED_AI_ENABLED`. Turning it on for customers needs a platform deploy.
 - Shell hosts read the state on desktop load and render the shared wizard (Section 3).
 
 ## Failure modes
@@ -213,7 +214,11 @@ A dedicated endpoint instead of generic file writes: answers are validated again
 Each section is one layer, under the 3000-line limit, tests first.
 
 1. **Contracts and gateway state (P0):** `GetStartedState` / `GetStartedAnswers` schemas and catalog in `@matrix-os/contracts`; `GET/PUT /api/settings/get-started`; `onboarding-complete.json` with `wx` on terminal transitions.
-2. **Eligibility for new computers plus kill switch (P0):** `ensureHome()` writes `pending` only when it creates the home; verify golden snapshots don't ship a pre-built home; env flag default off.
+2. **Eligibility for new computers plus kill switch (P0):** seeded by the restore gate's first-installation branch (see Integration wiring); env flag default off on the platform and the gateway.
+   - Why not `ensureHome()`: cloud-init creates `/home/matrix/home` before the gateway starts, so its "home does not exist" branch never runs on a VPS. "No `system/` yet" is not safe either: a returning owner on a new machine gets home files back later through the sync agent.
+   - Golden snapshots: `matrix-golden-snapshot-sanitize` removes `restore-complete`, `/var/lib/matrix` and the home, so snapshot-based computers still run the restore gate and its first-installation branch.
+   - Accepted edge: if registration's `vps-meta` write failed and the owner had no backup yet, a re-provisioned computer looks new and is offered the wizard once.
+   - Local dev: no restore gate; write `system/get-started.json` with `{"version":1,"status":"pending"}` by hand and set `MATRIX_GET_STARTED_ENABLED=true`.
 3. **Wizard UI on all three desktop surfaces (P0):** shared reducer + `GetStartedWizard`; thin hosts in Web Desktop, Web Canvas, Electron Desktop; no close/minimize while running; draft saved each step; Getting started and widget auto-open suppressed while it runs.
 4. **Connect your tools (P0):** picked tools (max 4) plus 2 suggestions, reusing `startConnect`, the external opener and bounded polling.
 5. **Personalised arrival (P0):** Getting started and widget order by goal; greet by name. No new writes.
