@@ -173,6 +173,9 @@ export function resolveFundedRelayConfig(
   const workersAiToken = env.CLOUDFLARE_WORKERS_AI_TOKEN?.trim()
     ? readSecret(env, "CLOUDFLARE_WORKERS_AI_TOKEN") : undefined;
   const bedrockRoute = resolveBedrockRouteConfig(env);
+  if (bedrockRoute && reservationMode !== "usage") {
+    throw new Error("MATRIX_FUNDED_BEDROCK_ROUTE requires usage reservation mode");
+  }
   if (workersAiToken === relayControlToken || workersAiToken === metadataSecret) {
     throw new Error("Workers AI credential must not reuse internal relay authority");
   }
