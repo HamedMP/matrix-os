@@ -1,3 +1,4 @@
+import { createCodexNativeConnectionRecovery } from "./codex-native-connection-recovery.js";
 import { readManagedCreditObservation } from "./provider-managed-credit-observation.js";
 import { assertCodexNativeLoginSelection } from "./codex-native-login-completion.js";
 import { readLifecycleAccountDependencies } from "./provider-lifecycle-account-dependencies.js";
@@ -130,6 +131,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
   readonly #readRuntimeRecovery: (refresh: boolean) => Promise<void>;
   #writeTail: Promise<void> = Promise.resolve();
   #mutationGeneration = 0;
+  readonly #recoverCodexNativeConnection = createCodexNativeConnectionRecovery(input => this.completeCodexNativeLogin(input));
 
   constructor(options: ProviderSettingsStoreOptions) {
     if (!options.homePath) throw new Error("Provider settings home path is required");
@@ -337,7 +339,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     await this.#serialize(() => this.#readRuntimeRecovery(refresh));
     // All inventory, funding, catalog and native probes run outside mutation
     // admission. Only configuration reconciliation and the final cheap fence
-    // serialize with writes. A raced read retries once without optional metadata.
+    // serialize with writes. A raced read retries once; retained Codex identity
+    // must pass its private verifier again before reuse.
+    let retryMetadata: CodexNativeAccountMetadata | null = null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       // A writer increments its generation before native logout/save finishes.
       // Sample only after prior admissions drain, never in the middle of one.
@@ -357,7 +361,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       if (!config) continue;
       let claudeMetadata: ClaudeNativeAccountMetadata | null = null;
       let claudeSignedOut: ClaudeNativeSignedOut | null = null;
-      let metadata: CodexNativeAccountMetadata | null = null;
+      let metadata: CodexNativeAccountMetadata | null = attempt === 1 ? await verifyNativeAccountMetadata(retryMetadata) : null;
       let hermesMetadata: CodexNativeAccountMetadata | null = null;
       if (options.includeNativeAccountMetadata && attempt === 0) {
         const installed = (id: string) => captured.canonical.drivers.some(driver => driver.id === id && driver.installState === "installed");
@@ -373,11 +377,13 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
             verifyNativeAccountMetadata(codex), verifyNativeAccountMetadata(hermes),
             verifyNativeAccountMetadata(claude) as Promise<ClaudeNativeAccountMetadata | null>,
           ]);
+          retryMetadata = metadata;
           config = await this.#serialize(async () => generation === this.#mutationGeneration
             ? this.#configuration(captured.canonical, captured.enrichment) : null);
           if (!config) continue;
         }
       }
+      retryMetadata = metadata;
       if (options.includeNativeAccountMetadata && attempt === 0 && !claudeMetadata
         && captured.canonical.drivers.some(driver => driver.id === "claude_code" && driver.installState === "installed")) {
         claudeSignedOut = await readVerifiedClaudeNativeSignedOut(this.#claudeAccountMetadata?.readSignedOut);
@@ -399,7 +405,18 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         const saved = await readSavedProviderSettingsConfiguration(this.configurationPath);
         return generation === this.#mutationGeneration && saved?.revision === config.revision;
       });
-      if (accepted) return snapshot;
+      if (accepted) {
+        if (options.recoverNativeConnection && options.includeNativeAccountMetadata) {
+          try {
+            const recovered = await this.#recoverCodexNativeConnection(config, metadata);
+            if (recovered) return recovered;
+          } catch (error) {
+            if (error instanceof ProviderSettingsStoreError && error.code === "revision_conflict") continue;
+            throw error;
+          }
+        }
+        return snapshot;
+      }
     }
     throw new ProviderSettingsStoreError("projection_unavailable", 503);
   }

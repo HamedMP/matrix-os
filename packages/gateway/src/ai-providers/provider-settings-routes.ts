@@ -217,7 +217,7 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     if (!claudeAccountDetails.success || !accountDetails.success || !refresh.success || !capabilities.success || !modelCapabilities.success || !inventory.success || !fundingState.success || !chatFunding.success || !matrixConnection.success) return invalidRequest(context);
     try {
       const ownerMetadata = options.canReadNativeAccountMetadata?.(context) === true;
-      const snapshot = await options.store.getSnapshot({ refresh: refresh.data === "true", ...(ownerMetadata ? { includeNativeAccountMetadata: true } : {}) });
+      const snapshot = await options.store.getSnapshot({ refresh: refresh.data === "true", ...(ownerMetadata ? { includeNativeAccountMetadata: true, recoverNativeConnection: true } : {}) });
       if (options.canReadNativeAccountMetadata && !ownerMetadata) {
         snapshot.accessSources = snapshot.accessSources.map(source => source.id === "owner_openai_profile"
           || source.kind === "harness_profile" && source.harness === "hermes"

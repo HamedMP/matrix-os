@@ -1559,6 +1559,7 @@ export async function createGateway(config: GatewayConfig) {
   const {
     catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
   } = createGatewayChatProviderCatalog({
+    canRecoverNativeConnection: principal => codingAgentOwnerIds.includes(principal.userId),
     observationScope: canonicalPhaseDiscovery.observationScope,
     homePath,
     codexExecutable,

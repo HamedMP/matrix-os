@@ -505,6 +505,7 @@ function projectSkills(
 }
 
 export function createChatProviderCatalogService(options: {
+  canRecoverNativeConnection?: (principal: RequestPrincipal) => boolean;
   observationScope?: (principal: RequestPrincipal) => "canonical_matrix" | undefined;
   codingProviders: Pick<CodingAgentProviderRegistry, "listProviders" | "invalidate">;
   agentRuntimeSource: AgentRuntimeSource;
@@ -587,6 +588,7 @@ export function createChatProviderCatalogService(options: {
         ...(nativeCodexIdentityRequired ? {
           includeNativeAccountMetadata: true,
           includeNativeAccountUsage: false,
+          ...(options.canRecoverNativeConnection?.(principal) === true ? { recoverNativeConnection: true } : {}),
         } : {}),
       }) ?? Promise.resolve(undefined),
       systemRuntimeReads,

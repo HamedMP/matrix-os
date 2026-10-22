@@ -9,6 +9,9 @@ import { normalizeCodexNativeAccountMetadata } from "../../packages/gateway/src/
 
 import { createNativeProviderWorkflowAdapters } from "../../packages/gateway/src/ai-providers/provider-workflow-native.js";
 import { createProviderWorkflowService } from '../../packages/gateway/src/ai-providers/provider-workflows.js';
+import { createCodexExecutionAdmission } from "../../packages/gateway/src/coding-agents/codex-execution-admission.js";
+import { createChatProviderCatalogService } from "../../packages/gateway/src/chat/provider-catalog.js";
+import { createProviderSettingsRoutes } from "../../packages/gateway/src/ai-providers/provider-settings-routes.js";
 import { bindNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 
 const roots: string[] = [], services: AiProviderService[] = [];
@@ -43,7 +46,7 @@ async function fixture(unboundProof = false) {
   await writeFile(store.configurationPath, JSON.stringify(config));
   const before = await store.getSnapshot();
   const input = { harnessInstanceId: harness.id, expectedRevision: before.revision, idempotencyKey: "fixture-complete" };
-  return { store, before, input, runtime, prepareRevocation, releaseRevocation, systemRead, systemUpdate, readMetadata, runCommand,
+  return { home, store, before, input, runtime, prepareRevocation, releaseRevocation, systemRead, systemUpdate, readMetadata, runCommand,
     setLoggedIn: (value: boolean) => { loggedIn = value; }, setPrincipal: (value: string) => { principal = value; },
     removeDriver: () => { installed = false;  }, setMetadataMode: (mode: string) => { metadataMode = mode; } };
 }
@@ -138,19 +141,21 @@ it('drains native sessions before Off and does not commit Off after ambiguous cl
 });
 
 
-it('keeps legacy native identity visible but requires explicit completion for executable consent', async () => {
+it('automatically completes a saved native Codex connection during an owner read', async () => {
   const f = await fixture();
   const config = JSON.parse(await readFile(f.store.configurationPath, 'utf8'));
   const native = config.harnesses.find((row: {id: string}) => row.id === f.input.harnessInstanceId);
   native.enabled = true; native.accessSourceId = 'owner_openai_profile'; native.selectedAccountId = 'owner_codex';
   await writeFile(f.store.configurationPath, JSON.stringify(config));
-  const legacy = await f.store.getSnapshot({ includeNativeAccountMetadata: true });
+  const legacy = await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true });
   expect(legacy.accounts.find(row => row.id === 'owner_codex')?.authState).toBe('authenticated');
-  expect(legacy.accessSources.find(row => row.id === 'owner_openai_profile')?.readiness.state).toBe('auth_required');
-  expect(legacy.harnesses.find(row => row.id === native.id)).toMatchObject({ enabled: false, configuredEnabled: true });
-  const complete = await f.store.completeCodexNativeLogin(f.input);
-  expect(complete.snapshot.accessSources.find(row => row.id === 'owner_openai_profile')?.readiness.state).toBe('ready');
-  expect(complete.snapshot.harnesses.find(row => row.id === native.id)?.enabled).toBe(true);
+  expect(legacy.accessSources.find(row => row.id === 'owner_openai_profile')?.readiness.state).toBe('ready');
+  expect(legacy.harnesses.find(row => row.id === native.id)).toMatchObject({ enabled: true, configuredEnabled: true });
+  const saved = JSON.parse(await readFile(f.store.configurationPath, 'utf8'));
+  expect(saved.revision).toBe(config.revision + 1);
+  expect(saved.harnesses.find((row: {id: string}) => row.id === native.id)).toMatchObject({ nativeAccountGeneration: expect.stringMatching(/^[a-f0-9]{64}$/), nativeAccountConsentRevision: saved.revision });
+  expect((await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true })).revision).toBe(saved.revision);
+  expect(f.systemRead).not.toHaveBeenCalled(); expect(f.systemUpdate).not.toHaveBeenCalled();
 });
 it('updates the exact native account method after a previously signed-out key is explicitly replaced by subscription consent', async () => {
   const f = await fixture();
@@ -206,4 +211,121 @@ it('preserves an already committing real native selection when cancel waits for 
     expect(f.systemRead).not.toHaveBeenCalled(); expect(f.systemUpdate).not.toHaveBeenCalled();
     expect(terminal.terminateTab).not.toHaveBeenCalled();
   } finally { release(); await service.close(); }
+});
+
+async function saveLegacyNativeConnection(f: Awaited<ReturnType<typeof fixture>>) {
+  const config = JSON.parse(await readFile(f.store.configurationPath, 'utf8'));
+  const native = config.harnesses.find((row: {id: string}) => row.id === f.input.harnessInstanceId);
+  Object.assign(native, { enabled: true, accessSourceId: 'owner_openai_profile', selectedAccountId: 'owner_codex' });
+  await writeFile(f.store.configurationPath, JSON.stringify(config));
+  return config;
+}
+
+it('coalesces concurrent owner reads into one automatic completion', async () => {
+  const f = await fixture(); const before = await saveLegacyNativeConnection(f);
+  const results = await Promise.all(Array.from({ length: 4 }, () => f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true })));
+  expect(results.every(result => result.harnesses.find(row => row.id === f.input.harnessInstanceId)?.enabled)).toBe(true);
+  const after = JSON.parse(await readFile(f.store.configurationPath, 'utf8'));
+  expect(after.revision).toBe(before.revision + 1);
+});
+
+it.each(['ordinary-read', 'non-owner-read', 'key-route', 'signed-out', 'unbound-proof', 'expired-proof', 'different-account'] as const)('does not repair using %s', async mode => {
+  const f = await fixture(mode === 'unbound-proof'); const before = await saveLegacyNativeConnection(f);
+  if (mode === 'key-route') {
+    const native = before.harnesses.find((row: {id: string}) => row.id === f.input.harnessInstanceId);
+    native.accessSourceId = 'owner_openai_key'; native.selectedAccountId = 'owner_openai';
+    await writeFile(f.store.configurationPath, JSON.stringify(before));
+  }
+  if (mode === 'signed-out') f.setLoggedIn(false);
+  if (mode === 'expired-proof') f.setMetadataMode('expired');
+  if (mode === 'different-account') {
+    await f.store.completeCodexNativeLogin(f.input);
+    f.setPrincipal('replacement@example.invalid');
+  }
+  const revision = (await f.store.getSnapshot()).revision;
+  await f.store.getSnapshot({ includeNativeAccountMetadata: mode !== 'ordinary-read', recoverNativeConnection: mode !== 'non-owner-read' }).catch(error => {
+    expect(error).toMatchObject({ code: 'projection_unavailable' });
+  });
+  const after = JSON.parse(await readFile(f.store.configurationPath, 'utf8'));
+  expect(after.revision).toBe(revision);
+});
+
+it('does not reenable a saved route changed while an automatic identity probe is pending', async () => {
+  const f = await fixture(); const before = await saveLegacyNativeConnection(f);
+  let release!: () => void, entered!: () => void;
+  const pending = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  f.runCommand.mockImplementationOnce(async () => { entered(); await gate; return { principal: 'fixture@example.invalid', loggedIn: true }; });
+  const reading = f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true });
+  await pending;
+  await f.store.mutate({ type: 'set_harness_enabled', harnessInstanceId: f.input.harnessInstanceId, enabled: false, expectedRevision: before.revision, idempotencyKey: 'revocation-during-recovery' });
+  release();
+  const result = await reading;
+  expect(result.harnesses.find(row => row.id === f.input.harnessInstanceId)?.configuredEnabled).toBe(false);
+  expect(JSON.parse(await readFile(f.store.configurationPath, 'utf8')).revision).toBe(before.revision + 1);
+});
+
+it('returns retryable unavailability on a failed repair, preserves the saved login, and recovers on retry', async () => {
+  const f = await fixture(); const before = await saveLegacyNativeConnection(f);
+  const apply = f.runtime.applyConfiguration.bind(f.runtime);
+  vi.spyOn(f.runtime, 'applyConfiguration').mockRejectedValueOnce(new Error('synthetic-transient-failure')).mockImplementation(apply);
+  const routes = createProviderSettingsRoutes({ store: f.store, getPrincipal: () => ({ userId: 'owner' }), canReadNativeAccountMetadata: () => true });
+  const failed = await routes.request('/provider-settings');
+  expect(failed.status).toBe(503);
+  expect(await failed.json()).toMatchObject({ error: { code: 'provider_settings_unavailable' } });
+  const saved = JSON.parse(await readFile(f.store.configurationPath, 'utf8'));
+  expect(saved.revision).toBe(before.revision);
+  expect(saved.harnesses.find((row: {id: string}) => row.id === f.input.harnessInstanceId).enabled).toBe(true);
+  const recovered = await routes.request('/provider-settings');
+  expect(recovered.status).toBe(200);
+  expect((await recovered.json()).harnesses.find((row: {id: string}) => row.id === f.input.harnessInstanceId).enabled).toBe(true);
+});
+
+it('repairs through the Chat catalog and admits the same verified native principal without reconnect', async () => {
+  const f = await fixture(); const before = await saveLegacyNativeConnection(f);
+  const catalog = createChatProviderCatalogService({
+    canRecoverNativeConnection: principal => principal.userId === 'owner',
+    codingProviders: { invalidate() {}, listProviders: async () => [{ id: 'codex', kind: 'codex', displayName: 'Codex', availability: 'available', installStatus: 'installed', authStatus: 'unknown', supportedModes: ['default'], defaultMode: 'default', defaultModel: 'gpt-test', setupActions: [] }] },
+    codingModelCatalogSource: async () => ({ models: [{ id: 'gpt-test', displayName: 'Test model', supportsVision: false, supportsToolUse: true, capabilities: ['tools'] }], options: [], defaultModel: 'gpt-test' }),
+    agentRuntimeSource: async () => { throw new Error('No system runtime in fixture'); },
+    harnessSettingsSource: f.store, executableDriverKinds: ['codex'],
+  });
+  // A collaborator can observe the existing status but cannot repair it.
+  await catalog.getCatalog({ userId: 'collaborator', source: 'jwt' }, { instanceId: 'codex_default', model: 'gpt-test' });
+  expect((await f.store.getSnapshot()).revision).toBe(before.revision);
+  const result = await catalog.getCatalog({ userId: 'owner', source: 'jwt' }, { instanceId: 'codex_default', model: 'gpt-test' });
+  expect(result.instances.find(row => row.id === 'codex_default')).toMatchObject({ availability: 'available' });
+  const admission = createCodexExecutionAdmission({ homePath: f.home, isOwner: id => id === 'owner',
+    getSnapshot: () => f.store.getSnapshot({ includeNativeAccountMetadata: true }), readNativeAccount: f.readMetadata });
+  await expect(admission.start('owner', 'sess_repaired')).resolves.toEqual(expect.any(String));
+  await expect(admission.validateLaunch('owner', 'sess_repaired')).resolves.toMatchObject({ expectedConsentRevision: before.revision + 1 });
+  await expect(admission.start('collaborator')).rejects.toThrow('unavailable');
+});
+
+it('rejects a different principal observed between automatic discovery and completion', async () => {
+  const f = await fixture(); const before = await saveLegacyNativeConnection(f);
+  f.runCommand.mockImplementationOnce(async () => ({ principal: 'fixture@example.invalid', loggedIn: true }))
+    .mockImplementationOnce(async () => { f.setPrincipal('replacement@example.invalid'); return { principal: 'replacement@example.invalid', loggedIn: true }; });
+  const apply = vi.spyOn(f.runtime, 'applyConfiguration');
+  await expect(f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true })).rejects.toMatchObject({ code: 'projection_unavailable' });
+  const after = JSON.parse(await readFile(f.store.configurationPath, 'utf8'));
+  expect(after.revision).toBe(before.revision);
+  expect(after.harnesses.find((row: {id: string}) => row.id === f.input.harnessInstanceId).nativeAccountGeneration).toBeUndefined();
+  expect(apply).not.toHaveBeenCalled();
+});
+
+it('returns connected when another owner read repairs while its identity probe is delayed', async () => {
+  const f = await fixture(); const before = await saveLegacyNativeConnection(f);
+  let release!: () => void, entered!: () => void;
+  const enteredProbe = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  f.runCommand.mockImplementationOnce(async () => { entered(); await gate; return { principal: 'fixture@example.invalid', loggedIn: true }; });
+  const delayed = f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true });
+  await enteredProbe;
+  const immediate = await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true });
+  release();
+  const recovered = await delayed;
+  expect(recovered.revision).toBe(before.revision + 1);
+  expect(recovered.revision).toBe(immediate.revision);
+  expect(recovered.harnesses.find(row => row.id === f.input.harnessInstanceId)?.enabled).toBe(true);
 });
