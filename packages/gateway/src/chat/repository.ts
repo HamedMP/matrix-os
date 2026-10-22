@@ -1472,8 +1472,9 @@ export class ChatRepository {
   async appendAssistantAttachment(
     ownerInput: ChatOwner,
     input: Parameters<ChatRunLifecycleRepository["appendAssistantAttachment"]>[1],
+    signal?: AbortSignal,
   ) {
-    return this.runLifecycle.appendAssistantAttachment(ownerInput, input);
+    return this.runLifecycle.appendAssistantAttachment(ownerInput, input, signal);
   }
 
   async finishRun(ownerInput: ChatOwner, input: {
@@ -1484,8 +1485,8 @@ export class ChatRepository {
     completedAt: string;
     diagnostic?: ChatRunFailureDiagnostic;
     output?: CanonicalChatMessage;
-  }): Promise<{ run: CanonicalChatRun; transitioned: boolean }> {
-    return this.runLifecycle.finishRun(ownerInput, input);
+  }, signal?: AbortSignal): Promise<{ run: CanonicalChatRun; transitioned: boolean }> {
+    return this.runLifecycle.finishRun(ownerInput, input, signal);
   }
 
   async replayOutbox(ownerInput: ChatOwner, input: {
