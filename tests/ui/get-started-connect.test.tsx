@@ -31,6 +31,7 @@ function makeConnector(initial: Partial<GetStartedConnect>) {
       connectedServices: new Set(),
       failedServices: new Set(),
       connectingService: null,
+      logoUrls: new Map([["github", "https://example.test/github.png"]]),
       unavailable: false,
       connect,
       ...state,
@@ -49,7 +50,8 @@ describe("Get started connect list", () => {
     render(<GetStartedGate port={port({ name: "Sam", goals: ["code"], tools: ["github", "claude-code"] })} zIndex={1} connector={Connector} />);
     const list = await screen.findByRole("list", { name: "Connect your tools" });
     const rows = within(list).getAllByRole("listitem");
-    expect(rows.map((row) => within(row).getByText(/GitHub|Claude Code|Figma|Slack/).textContent)).toEqual(["GitHub", "Claude Code"]);
+    expect(rows.map((row) => row.querySelector(".mxo-app__name")?.firstChild?.textContent)).toEqual(["GitHub", "Claude Code"]);
+    expect(rows[0]!.querySelector("img")).toHaveAttribute("src", "https://example.test/github.png");
     expect(within(rows[0]!).getByText("So your AI can work on your repos")).toBeInTheDocument();
     expect(within(rows[1]!).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.getByText("Popular with developers")).toBeInTheDocument();

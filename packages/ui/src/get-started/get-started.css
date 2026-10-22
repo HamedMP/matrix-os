@@ -1,13 +1,12 @@
-/* Spec 635: the Get started wizard. It shares the onboarding widget's tokens
-   (`.mxo-root`) and covers the whole desktop instead of sitting in a corner. */
+/* Spec 635: the Get started wizard is the onboarding widget's setup step.
+   Controls, chips, buttons, app rows and tokens come from
+   onboarding-widget.css (`.mxo-root`); this file only lays the widget out
+   over the whole desktop. */
 .mxo-root.mxo-gs {
   inset: 0;
-  right: 0;
-  bottom: 0;
   display: grid;
   place-items: center;
   padding: 16px;
-  align-items: center;
 }
 
 .mxo-gs__scrim {
@@ -28,16 +27,20 @@
   border-radius: 20px;
   background: var(--mxo-bg);
   box-shadow: 0 24px 64px color-mix(in srgb, var(--mxo-ink) 18%, transparent);
-  animation: mxo-gs-enter 320ms var(--mxo-ease) both;
+  animation: mxo-rise 320ms var(--mxo-ease) both;
 }
 
-.mxo-gs__header {
+.mxo-gs__header,
+.mxo-gs__footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 20px 24px 0;
+  gap: 12px;
+  padding: 20px 24px;
 }
+
+.mxo-gs__header { padding-bottom: 0; }
+.mxo-gs__footer { padding-top: 16px; }
 
 .mxo-gs__brand {
   display: inline-flex;
@@ -61,17 +64,22 @@
   height: 4px;
   border-radius: 999px;
   background: var(--mxo-border);
-  transition: background 200ms var(--mxo-ease);
 }
 
 .mxo-gs__progress li[data-done] { background: var(--mxo-ink); }
 
 .mxo-gs__body {
+  display: flex;
   flex: 1;
   min-height: 0;
+  flex-direction: column;
+  gap: 16px;
   overflow-y: auto;
   padding: 28px 24px 8px;
 }
+
+.mxo-gs__body h3,
+.mxo-gs__body h4 { margin: 0 0 8px; font-weight: 500; }
 
 .mxo-gs__title {
   margin: 0;
@@ -82,11 +90,7 @@
   outline: none;
 }
 
-.mxo-gs__hint {
-  margin: 6px 0 20px;
-  font-size: 13px;
-  color: var(--mxo-muted);
-}
+.mxo-gs__hint { margin: -10px 0 4px; }
 
 .mxo-gs__input {
   width: 100%;
@@ -99,7 +103,6 @@
   font-size: 15px;
   color: var(--mxo-ink);
   outline: none;
-  transition: border-color 150ms var(--mxo-ease);
 }
 
 .mxo-gs__input::placeholder { color: var(--mxo-placeholder); }
@@ -111,48 +114,11 @@
   gap: 18px;
 }
 
-.mxo-gs__group-title {
-  margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--mxo-muted);
-}
-
-.mxo-gs__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.mxo-gs__chip {
-  height: 34px;
-  padding: 0 14px;
-  border: 1px solid var(--mxo-border);
-  border-radius: 999px;
-  background: var(--mxo-surface);
-  font: inherit;
-  font-size: 13px;
-  color: var(--mxo-text);
-  cursor: pointer;
-  transition: background 150ms var(--mxo-ease), color 150ms var(--mxo-ease), border-color 150ms var(--mxo-ease);
-}
-
-.mxo-gs__chip:hover { background: var(--mxo-soft); }
-
-.mxo-gs__chip[aria-pressed="true"] {
-  border-color: var(--mxo-ink);
-  background: var(--mxo-ink);
-  color: var(--mxo-bg);
-}
-
 .mxo-gs__summary {
   display: grid;
   gap: 10px;
   margin: 0;
   padding: 14px 16px;
-  border: 1px solid var(--mxo-border);
-  border-radius: 14px;
-  background: var(--mxo-surface);
   font-size: 13px;
 }
 
@@ -165,155 +131,18 @@
 .mxo-gs__summary dt { color: var(--mxo-muted); }
 .mxo-gs__summary dd { margin: 0; text-align: right; color: var(--mxo-ink); }
 
-.mxo-gs__connect-section { margin-top: 20px; }
-.mxo-gs__suggestion-title { margin-top: 14px; }
+.mxo-gs__why { display: block; font-weight: 400; }
 
-.mxo-gs__connect {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.mxo-gs__connect-row {
+.mxo-gs__connect-section {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--mxo-border);
-  border-radius: 12px;
-  background: var(--mxo-surface);
-}
-
-.mxo-gs__connect-icon {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: var(--mxo-soft);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--mxo-ink);
-}
-
-.mxo-gs__connect-text {
-  display: flex;
-  flex: 1;
-  min-width: 0;
   flex-direction: column;
-  gap: 2px;
-}
-
-.mxo-gs__connect-name { font-size: 13px; font-weight: 500; color: var(--mxo-ink); }
-.mxo-gs__connect-why { font-size: 12px; color: var(--mxo-muted); }
-
-.mxo-gs__later { font-size: 12px; color: var(--mxo-placeholder); }
-
-.mxo-gs__connected {
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--mxo-green-soft);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--mxo-green-ink);
-}
-
-.mxo-gs__waiting,
-.mxo-gs__retry {
-  display: inline-flex;
-  align-items: center;
   gap: 8px;
-  font-size: 12px;
-  color: var(--mxo-muted);
-  text-align: right;
-}
-
-.mxo-gs__spinner {
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--mxo-border);
-  border-top-color: var(--mxo-ink);
-  border-radius: 50%;
-  animation: mxo-gs-spin 800ms linear infinite;
-}
-
-.mxo-gs__note {
-  margin: 12px 0 0;
-  font-size: 12px;
-  color: var(--mxo-muted);
-}
-
-@keyframes mxo-gs-spin { to { transform: rotate(360deg); } }
-
-.mxo-gs__error {
-  margin: 16px 0 0;
-  font-size: 13px;
-  color: var(--mxo-red);
-}
-
-.mxo-gs__footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 24px 20px;
-}
-
-.mxo-gs__footer-end {
-  display: inline-flex;
-  gap: 8px;
-}
-
-.mxo-gs__primary,
-.mxo-gs__ghost,
-.mxo-gs__link {
-  height: 36px;
-  padding: 0 16px;
-  border-radius: 10px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.mxo-gs__primary {
-  border: 1px solid var(--mxo-ink);
-  background: var(--mxo-ink);
-  color: var(--mxo-bg);
-}
-
-.mxo-gs__ghost {
-  border: 1px solid var(--mxo-border);
-  background: var(--mxo-surface);
-  color: var(--mxo-text);
-}
-
-.mxo-gs__link {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--mxo-muted);
-}
-
-.mxo-gs__link:hover { color: var(--mxo-ink); }
-
-.mxo-gs button:disabled {
-  cursor: default;
-  opacity: 0.6;
 }
 
 .mxo-gs button:focus-visible,
 .mxo-gs__title:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--mxo-ink) 30%, transparent);
   outline-offset: 2px;
-}
-
-@keyframes mxo-gs-enter {
-  from { opacity: 0; transform: translateY(8px) scale(0.98); }
-  to { opacity: 1; transform: none; }
 }
 
 @media (max-width: 480px) {
@@ -323,6 +152,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mxo-gs__card,
-  .mxo-gs__spinner { animation: none; }
+  .mxo-gs__card { animation: none; }
 }

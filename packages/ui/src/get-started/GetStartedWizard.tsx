@@ -8,7 +8,7 @@ import {
   type GetStartedWizardState,
 } from "@matrix-os/contracts";
 import { useEffect, useId, useMemo, useRef, type KeyboardEvent, type ReactNode } from "react";
-import { RabbitAvatar } from "../onboarding-widget/parts.js";
+import { ButtonRow, RabbitAvatar, ToggleChip } from "../onboarding-widget/parts.js";
 import { GetStartedConnectList, type GetStartedConnect } from "./connect.js";
 
 export interface GetStartedWizardProps {
@@ -24,14 +24,6 @@ export interface GetStartedWizardProps {
 
 const FOCUSABLE = "button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])";
 
-function Chip({ label, pressed, onToggle }: { label: string; pressed: boolean; onToggle(): void }) {
-  return (
-    <button type="button" className="mxo-gs__chip" aria-pressed={pressed} onClick={onToggle}>
-      {label}
-    </button>
-  );
-}
-
 function ChoiceGroup({ group, wizard, dispatch }: {
   group: GetStartedChoiceGroup;
   wizard: GetStartedWizardState;
@@ -42,21 +34,21 @@ function ChoiceGroup({ group, wizard, dispatch }: {
   if (group.kind === "tools") {
     const picked = new Set(wizard.tools);
     chips = group.tools.map((tool) => (
-      <Chip key={tool.id} label={tool.label} pressed={picked.has(tool.id)} onToggle={() => dispatch({ type: "toggle-tool", tool: tool.id })} />
+      <ToggleChip key={tool.id} label={tool.label} pressed={picked.has(tool.id)} onToggle={() => dispatch({ type: "toggle-tool", tool: tool.id })} />
     ));
   } else if (group.kind === "app-idea") {
     chips = group.options.map((idea) => (
-      <Chip key={idea.id} label={idea.label} pressed={wizard.appIdea === idea.id} onToggle={() => dispatch({ type: "pick-app-idea", id: idea.id })} />
+      <ToggleChip key={idea.id} label={idea.label} pressed={wizard.appIdea === idea.id} onToggle={() => dispatch({ type: "pick-app-idea", id: idea.id })} />
     ));
   } else {
     chips = group.options.map((starter) => (
-      <Chip key={starter.id} label={starter.label} pressed={wizard.starter === starter.id} onToggle={() => dispatch({ type: "pick-starter", id: starter.id })} />
+      <ToggleChip key={starter.id} label={starter.label} pressed={wizard.starter === starter.id} onToggle={() => dispatch({ type: "pick-starter", id: starter.id })} />
     ));
   }
   return (
     <section className="mxo-gs__group" aria-labelledby={titleId}>
-      <h3 id={titleId} className="mxo-gs__group-title">{group.title}</h3>
-      <div className="mxo-gs__chips">{chips}</div>
+      <h3 id={titleId} className="mxo-muted">{group.title}</h3>
+      <div className="mxo-chips">{chips}</div>
     </section>
   );
 }
@@ -65,7 +57,7 @@ function Summary({ wizard }: { wizard: GetStartedWizardState }) {
   const picked = new Set(wizard.goals);
   const goals = GET_STARTED_GOALS.filter((goal) => picked.has(goal.id)).map((goal) => goal.label);
   return (
-    <dl className="mxo-gs__summary">
+    <dl className="mxo-card mxo-gs__summary">
       <div>
         <dt>Using it for</dt>
         <dd>{goals.length > 0 ? goals.join(", ") : "Exploring"}</dd>
@@ -159,7 +151,7 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
         >
           {stepTitle(wizard)}
         </h2>
-        <p id={hintId} className="mxo-gs__hint">{stepHint(wizard)}</p>
+        <p id={hintId} className="mxo-muted mxo-gs__hint">{stepHint(wizard)}</p>
 
         {wizard.step === "name" ? (
           <input
@@ -177,9 +169,9 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
         ) : null}
 
         {wizard.step === "goals" ? (
-          <div className="mxo-gs__chips" role="group" aria-labelledby={titleId}>
+          <div className="mxo-chips" role="group" aria-labelledby={titleId}>
             {GET_STARTED_GOALS.map((goal) => (
-              <Chip key={goal.id} label={goal.label} pressed={pickedGoals.has(goal.id)} onToggle={() => dispatch({ type: "toggle-goal", goal: goal.id })} />
+              <ToggleChip key={goal.id} label={goal.label} pressed={pickedGoals.has(goal.id)} onToggle={() => dispatch({ type: "toggle-goal", goal: goal.id })} />
             ))}
           </div>
         ) : null}
@@ -195,29 +187,29 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
         {isSummary ? <Summary wizard={wizard} /> : null}
         {isSummary && connect ? <GetStartedConnectList answers={answers} connect={connect} /> : null}
 
-        {error ? <p className="mxo-gs__error" role="alert">{error}</p> : null}
+        {error ? <p className="mxo-failed-line" role="alert">{error}</p> : null}
       </div>
 
       <footer className="mxo-gs__footer">
         {wizard.step === "name" ? (
-          <button type="button" className="mxo-gs__link" onClick={onSkipAll} disabled={submitting}>Skip setup</button>
+          <button type="button" className="mxo-link" onClick={onSkipAll} disabled={submitting}>Skip setup</button>
         ) : (
-          <button type="button" className="mxo-gs__ghost" onClick={() => dispatch({ type: "back" })} disabled={submitting}>Back</button>
+          <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => dispatch({ type: "back" })} disabled={submitting}>Back</button>
         )}
-        <span className="mxo-gs__footer-end">
+        <ButtonRow>
           {isSummary ? (
-            <button type="button" className="mxo-gs__primary" onClick={onFinish} disabled={submitting} aria-busy={submitting}>
+            <button type="button" className="mxo-btn mxo-btn--dark" onClick={onFinish} disabled={submitting} aria-busy={submitting}>
               Enter your computer
             </button>
           ) : (
             <>
-              <button type="button" className="mxo-gs__ghost" onClick={() => dispatch({ type: "skip" })}>Skip</button>
-              <button type="button" className="mxo-gs__primary" onClick={() => dispatch({ type: "next" })}>
+              <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => dispatch({ type: "skip" })}>Skip</button>
+              <button type="button" className="mxo-btn mxo-btn--dark" onClick={() => dispatch({ type: "next" })}>
                 {wizard.step === "tools" ? "Finish" : "Next"}
               </button>
             </>
           )}
-        </span>
+        </ButtonRow>
       </footer>
     </div>
   );
