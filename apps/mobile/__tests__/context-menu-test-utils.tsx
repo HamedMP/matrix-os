@@ -32,9 +32,10 @@ export function swiftUiContextMenuModule() {
       return <View testID="context-menu-preview" {...{ previewModifiers: modifiers }}>{children}</View>;
     },
     ContextMenu,
-    Button: function Button({ label, systemImage, onPress }: { label: string; systemImage?: string; onPress?: () => void }) {
+    // Hands its role on as a prop a test can read: "destructive" draws it in red.
+    Button: function Button({ label, systemImage, role, onPress }: { label: string; systemImage?: string; role?: string; onPress?: () => void }) {
       return (
-        <Pressable accessibilityRole="menuitem" accessibilityLabel={label} accessibilityHint={systemImage} onPress={onPress}>
+        <Pressable accessibilityRole="menuitem" accessibilityLabel={label} accessibilityHint={systemImage} onPress={onPress} {...{ menuRole: role }}>
           <Text>{label}</Text>
         </Pressable>
       );

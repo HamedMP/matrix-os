@@ -1,5 +1,6 @@
 import {
   FundedAiAuthorizationRequestSchema,
+  FundedAiTerminalOutcomeRequestSchema, FundedAiExecutionRecoveryBatchRequestSchema,
   FundedAiExecutionRecoveryRequestSchema,
   FundedAiOperatorGlobalPolicyResponseSchema,
   FundedAiOperatorGlobalPolicyUpdateRequestSchema,
@@ -521,6 +522,13 @@ export function createAiFundedOperatorRoutes(options: {
     }
   });
 
+  app.post("/execution-recovery/batch", bodyLimit({ maxSize: 16 * 1024 }), async (c) => {
+    const request = FundedAiExecutionRecoveryBatchRequestSchema.safeParse(await readStrictJson(c));
+    if (!request.success || !EmptyQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams)).success) return c.json(safeError("invalid_request"), 400);
+    try { return c.json(await options.repository.releaseExecutionAdmissionBatch(request.data), 200); }
+    catch (error) { return policyErrorResponse(c, error); }
+  });
+
   app.post("/runtimes/:handle/policy-execution-release", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
     const handle = HandleSchema.safeParse(c.req.param("handle"));
     const query = EmptyQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
@@ -616,6 +624,12 @@ export function createAiFundedRelayRoutes(options: {
     } catch (error) {
       return policyErrorResponse(c, error);
     }
+  });
+  app.post("/terminal", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
+    const request = FundedAiTerminalOutcomeRequestSchema.safeParse(await readStrictJson(c));
+    if (!request.success) return c.json(safeError("invalid_request"), 400);
+    try { return c.json(await options.repository.recordTerminalOutcome(request.data), 200); }
+    catch (error) { return policyErrorResponse(c, error); }
   });
   app.post("/finalize", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
     const request = FundedAiFinalizationRequestSchema.safeParse(await readStrictJson(c));

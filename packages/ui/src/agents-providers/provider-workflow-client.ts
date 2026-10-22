@@ -24,7 +24,7 @@ export function isProviderWorkflowAuthorizationUrl(value: unknown): value is str
 }
 
 export class ProviderWorkflowClientError extends Error {
-  constructor(readonly reason: "rejected" | "forbidden" | "unauthorized" | "unsupported" | "conflict" | "unavailable" = "unavailable") {
+  constructor(readonly reason: "rejected" | "key_workspace_required" | "forbidden" | "unauthorized" | "unsupported" | "conflict" | "unavailable" = "unavailable") {
     super("Provider action is unavailable.");
     this.name = "ProviderWorkflowClientError";
   }

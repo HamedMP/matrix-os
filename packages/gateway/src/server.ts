@@ -1,11 +1,15 @@
+import { createSupervisedBrowserRuntime } from "./startup/browser-approvals.js";
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
 import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
 import { createCanonicalPhaseDiscovery } from "./server/canonical-phase-discovery.js";
+import { codexNativeEnvironment } from "./ai-providers/codex-native-environment.js";
+import { createNativeCodexRuntime } from "./server/native-codex-runtime.js";
 import { registerAppIntegrationCapabilities, registerAppAiCapabilities, createAppAiSubscriptionObservation, closeAppAiCapabilities } from "./server/app-capabilities.js";
 import { withMatrixAnthropicProviderInstances } from "./bots/matrix-anthropic-provider-instance.js";
 import { createMatrixAnthropicRuntime } from "./server/matrix-anthropic-runtime.js";
 import { withChatGptPlanProviderInstance } from "./bots/chatgpt-plan-provider-instance.js";
 import { createNativeProviderWorkflowRuntime } from "./server/native-provider-workflow-runtime.js";
+import { buildAgentRuntimeEnvironment as buildSettingsAccountEnvironment } from "./agent-launcher.js";
 import { createNativeProviderProfileGuard } from "./ai-providers/native-provider-profile-guard.js";
 import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
 import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
@@ -57,16 +61,15 @@ import { createCustomMcpApprovalClient } from "./chat/custom-mcp-approval-client
 import { createCanonicalCodingChatProviderAdapter } from "./chat/coding-provider-adapter.js";
 import type { ChatExecutionRootResolver } from "./chat/execution-root.js";
 import type { createGatewayChatEventStream } from "./chat/gateway-event-stream.js";
-import { createHermesChatProviderAdapter } from "./chat/hermes-provider-adapter.js";
+import { createInitialChatAdapters } from "./server/initial-chat-adapters.js";
+import { createSharedBrowserRuntime } from "./shared-browser/runtime.js";
 import { withCanonicalIdleChat } from "./chat/idle-runtime-admission.js";
-import { createKernelChatProviderAdapter } from "./chat/kernel-provider-adapter.js";
 import { createMatrixMcpCapabilityRegistry } from "./chat/matrix-mcp-launch.js";
 import { createPreviewDrivePlatformClient } from "./chat/preview-drive-platform-client.js";
 import { createPreviewDriveWiring } from "./chat/preview-drive-wiring.js";
-import { createOpenClawChatProviderAdapter } from "./chat/openclaw-provider-adapter.js";
 import { CanonicalChatOrchestrator } from "./chat/orchestrator.js";
 import { createOwnerToolOutputProjection } from "./chat/owner-tool-output.js";
-import { createProjectChatCleanup } from "./chat/project-deletion.js";
+import { registerWorkspaceLifecycle } from "./server/workspace-lifecycle.js";
 import {
   CanonicalChatProviderRegistry,
   type CanonicalChatProviderAdapter,
@@ -190,12 +193,10 @@ import { createTerminalLiveOwnership } from "./terminal-live-ownership.js";
 import { createWatcher, type Watcher } from "./watcher.js";
 import { createWorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createWorkspaceEventStore } from "./workspace-events.js";
-import { createWorkspaceRoutes } from "./workspace-routes.js";
 import {
   createWorkspaceSessionOrchestrator,
   type WorkspaceSessionOrchestrator,
 } from "./workspace-session-orchestrator.js";
-import { createWorkspaceStartupRecovery } from "./workspace-startup-recovery.js";
 import { createWorktreeManager } from "./worktree-manager.js";
 
 import { type Kysely } from "kysely";
@@ -270,6 +271,9 @@ import { registerOperationalRoutes } from "./server/operational-routes.js";
 import { registerShellTerminalRoutes } from "./server/shell-terminal-routes.js";
 import { registerSystemOperatorRoutes } from "./server/system-operator-routes.js";
 import { createPlatformSpeechHostConfigRoutes } from "./speech/host-activation.js";
+import { createPlatformFundedAiHostConfigRoutes } from "./funded-host-activation.js";
+import { createExecutionAdmissionFence } from "./execution-admission-fence.js";
+import { createManagedFeatureRestartCoordinator } from "./managed-feature-restart.js";
 import { registerTerminalWebSocketRoutes } from "./server/terminal-ws-routes.js";
 import type { GatewayConfig, ServerMessage } from "./server/types.js";
 import { registerVoiceWebSocketRoutes } from "./server/voice-ws-routes.js";
@@ -509,6 +513,10 @@ export async function createGateway(config: GatewayConfig) {
   // canonical when present; MATRIX_CLERK_USER_ID supports VPS-native hosts
   // provisioned before the canonical variable was added.
   const terminalRuntimeOwnerId = process.env.MATRIX_USER_ID ?? process.env.MATRIX_CLERK_USER_ID;
+  const supervisedBrowserRuntime = createSupervisedBrowserRuntime({ env: process.env, ownerId: terminalRuntimeOwnerId, clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
+  const sharedBrowserRuntime = createSharedBrowserRuntime({ homePath, authorizeAction: supervisedBrowserRuntime?.control.authorizeAction,
+    enabled: process.env.MATRIX_BROWSER_LAB === "true", ownerId: terminalRuntimeOwnerId,
+    clerkOwnerId: process.env.MATRIX_CLERK_USER_ID });
   const terminalRuntimeOwnerIds = terminalRuntimeOwnerId
     ? [terminalRuntimeOwnerId]
     : process.env.NODE_ENV === "production" ? [] : ["default"];
@@ -544,6 +552,13 @@ export async function createGateway(config: GatewayConfig) {
   const codingAgentProviders: CodingAgentProviderAdapter[] = [];
   const codingAgentRegistryProviders: CodingAgentProviderAdapter[] = [];
   let providerSettingsStore: ProviderSettingsStore | undefined;
+  const nativeCodexRuntime = createNativeCodexRuntime({
+    homePath, executable: codexExecutable, ownerIds: terminalRuntimeOwnerIds,
+    environment: () => codexNativeEnvironment(homePath, buildSettingsAccountEnvironment(homePath), process.env.CODEX_HOME),
+    profileGuard: nativeProviderProfileGuard,
+    getSettings: () => providerSettingsStore,
+    getRuntime: () => codingAgentWorkspaceRuntime,
+  });
   // S08: the owner's Provider V3 snapshot reader is built after the owner database, so the
   // collaboration runtime receives a lazy reader; it is only consulted at policy writes and
   // run admission, never during construction, and reads fail closed until the service exists.
@@ -556,8 +571,28 @@ export async function createGateway(config: GatewayConfig) {
   };
   const backgroundAgentRuntime = createBackgroundAgentRuntime({ homePath });
   const backgroundChatProjection = createBackgroundChatProjection();
+  // Public workspace sessions and coding-agent threads share native admission,
+  // runtime ownership and the single shutdown path, even without installed agents.
+  const codingAgentSessionManager = createAgentSessionManager({
+    homePath,
+    worktreeManager: codingAgentWorktreeManager,
+    agentLauncher: agentCredentialLauncher,
+    resolveNativeCodexSubscription: nativeCodexRuntime.resolveSubscription,
+    beforeProjectSessionRemove: nativeCodexRuntime.beforeProjectSessionRemove,
+    terminalRuntime: terminalWorkspaceRuntime,
+    backgroundRuntime: backgroundAgentRuntime,
+  });
+  codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
+    homePath,
+    projectManager: codingAgentProjectManager,
+    worktreeManager: codingAgentWorktreeManager,
+    agentSessionManager: codingAgentSessionManager,
+    onClose: () => codingAgentSessionManager.shutdown(),
+    agentSandbox: createAgentSandbox({ homePath }),
+    sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+    eventPublisher: workspaceEventPublisher,
+  });
   if (codingAgentWorkspaceAgents.length > 0) {
-    const codingAgentProjectManager = createProjectManager({ homePath });
     codexEventBridge = codexExecutable
       ? createCodexEventBridge({
         homePath,
@@ -570,29 +605,14 @@ export async function createGateway(config: GatewayConfig) {
         },
       })
       : undefined;
-    const codingAgentSessionManager = createAgentSessionManager({
-      homePath,
-      worktreeManager: codingAgentWorktreeManager,
-      agentLauncher: agentCredentialLauncher,
-      terminalRuntime: terminalWorkspaceRuntime,
-      backgroundRuntime: backgroundAgentRuntime,
-    });
-    codingAgentWorkspaceRuntime = createWorkspaceSessionOrchestrator({
-      homePath,
-      projectManager: codingAgentProjectManager,
-      worktreeManager: codingAgentWorktreeManager,
-      agentSessionManager: codingAgentSessionManager,
-      onClose: () => codingAgentSessionManager.shutdown(),
-      agentSandbox: createAgentSandbox({ homePath }),
-      sessionRuntimeBridge: workspaceSessionRuntimeBridge,
-      eventPublisher: workspaceEventPublisher,
-    });
     const providerSet = createWorkspaceCodingAgentProviderSet({
       agents: codingAgentWorkspaceAgents,
       runtime: codingAgentWorkspaceRuntime,
       homePath,
       codexEvents: codexEventBridge,
+      codexAdmission: nativeCodexRuntime.admission,
       codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
+      sharedBrowserEnabled: !!sharedBrowserRuntime && !!codexExecutable,
       pi: {
         resolveCredentialLaunch: createCodingHarnessCredentialResolver({
           harness: "pi",
@@ -879,8 +899,10 @@ export async function createGateway(config: GatewayConfig) {
         }),
       })
     : undefined;
+  const executionAdmissionFence = createExecutionAdmissionFence();
   const dispatcher: Dispatcher = createDispatcher({
     homePath,
+    executionAdmissionFence,
     model: config.model,
     maxTurns: config.maxTurns,
     spawnFn: config.spawnFn,
@@ -1252,7 +1274,19 @@ export async function createGateway(config: GatewayConfig) {
       })
     : undefined;
   app.route("/api/speech", speechRuntime.routes);
-  app.route("/api/internal/platform-speech", createPlatformSpeechHostConfigRoutes());
+  const isManagedFeatureRestartIdle = () => dispatcher.activeCount === 0 && dispatcher.queueLength === 0
+    && (canonicalChatOrchestrator?.activeCount ?? 0) === 0
+    && (canonicalChatOrchestrator?.pendingCount ?? 0) === 0;
+  const managedFeatureRestart = createManagedFeatureRestartCoordinator({
+    fence: executionAdmissionFence, isIdle: isManagedFeatureRestartIdle,
+  });
+  app.route("/api/internal/platform-speech", createPlatformSpeechHostConfigRoutes({
+    scheduleRestart: managedFeatureRestart.schedule,
+  }));
+  app.route("/api/internal/platform-funded-ai", createPlatformFundedAiHostConfigRoutes({
+    isIdle: isManagedFeatureRestartIdle,
+    scheduleRestart: managedFeatureRestart.schedule,
+  }));
   const fundedOwnerIds = new Set([
     fundedAiRuntimeConfig?.identity.ownerId,
     process.env.MATRIX_USER_ID?.trim(),
@@ -1310,13 +1344,16 @@ export async function createGateway(config: GatewayConfig) {
     canonicalChatExecutionRoots, gatewayCollaboration,
   });
 
-  const { processManager, customMcp } = registerDeferredRuntimeRoutes({
-    app, homePath, integrationRoutes, internalIntegrationBaseUrl,
+  const { processManager, customMcp, browserLab } = await registerDeferredRuntimeRoutes({
+    app, homePath, ownerDatabase: kyselyInstance, integrationRoutes, internalIntegrationBaseUrl,
+    ...(sharedBrowserRuntime && terminalRuntimeOwnerId ? { sharedBrowser: { broker: sharedBrowserRuntime.broker, ownerId: terminalRuntimeOwnerId } } : {}),
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest: (c, targetBase, machineToken, routePrefix) =>
       proxyIntegrationRequest(c, { targetBase, machineToken, routePrefix,
         ...(previewDriveClient ? { previewDriveClient } : {}) }),
     devAppAuthBypass: APP_AUTH_DEV_BYPASS,
+    upgradeWebSocket,
+    isAllowedBrowserLabOrigin: (origin) => allowedOriginController.resolve(origin) === origin,
     posthogErrorTracker, ownerTelemetryDistinctId,
   });
 
@@ -1472,11 +1509,12 @@ export async function createGateway(config: GatewayConfig) {
   });
   collaborationProviderSnapshots.attach(aiProviderService);
   const providerLoginCoordinator = createProviderTerminalLoginCoordinator({
+    codexExecutable: codexExecutable ?? undefined,
     profileGuard: nativeProviderProfileGuard,
     homePath,
     registry: providerLoginTerminalRegistry,
     enabledHarnesses: codingAgentWorkspaceAgents.filter(
-      (agent): agent is "claude" => agent === "claude",
+      (agent): agent is "claude" | "codex" => agent === "claude" || agent === "codex",
     ),
   });
   const providerAccountLifecycle = createDefaultProviderCliAccountLifecycleCoordinator({
@@ -1497,6 +1535,8 @@ export async function createGateway(config: GatewayConfig) {
     codexExecutable,
     observationScope: canonicalPhaseDiscovery.observationScope,
     homePath,
+    codexNativeAccountMetadataReader: nativeCodexRuntime.readAccount,
+    prepareNativeCodexRevocation: () => nativeCodexRuntime.admission.prepareRevocation(),
     providerSnapshotReader: aiProviderService,
     loginCoordinator: providerLoginCoordinator,
     accountLifecycle: providerAccountLifecycle,
@@ -1552,7 +1592,8 @@ export async function createGateway(config: GatewayConfig) {
     const chatAgents = new ChatAgentStore({ homePath, db: chatRepository.kysely });
     await chatAgents.bootstrap();
     botServices = await startBots({
-      homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
+      toolOutputKey, homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
+      ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}),
       runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,
       providers: aiProviderService,
       ...(matrixAnthropicRuntime.service ? { matrixAnthropic: matrixAnthropicRuntime.service } : {}),
@@ -1574,13 +1615,12 @@ export async function createGateway(config: GatewayConfig) {
         ? withChatGptPlanProviderInstance(sourceCatalog, botServices.chatgptPlanPeers,
           () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available)) : sourceCatalog;
     });
-    const canonicalAdapters: CanonicalChatProviderAdapter[] = [
-      createKernelChatProviderAdapter({ dispatcher }),
-      createHermesChatProviderAdapter({ homePath, toolOutputKey, ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}) }),
-      createOpenClawChatProviderAdapter({ rpc: openClawRpc, homePath }),
-    ];
+    const canonicalAdapters = createInitialChatAdapters({ homePath, dispatcher, toolOutputKey, rpc: openClawRpc,
+      ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}),
+      ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port });
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
       canonicalAdapters.push(createClaudeChatProviderAdapter({
+        ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker, sharedBrowserGatewayPort: port } : {}),
         homePath,
         credentialKey: toolOutputKey,
         resolveCredentialLaunch: resolveClaudeCredentialLaunch,
@@ -1595,6 +1635,7 @@ export async function createGateway(config: GatewayConfig) {
       if (codingAgentProviders.some((provider) => provider.providerId === "codex")) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "codex",
+          ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port,
           threads: codingAgentThreadStore,
           homePath,
           toolOutputKey,
@@ -1626,7 +1667,8 @@ export async function createGateway(config: GatewayConfig) {
       canonicalExecutableDriverKinds.push("matrix_pi");
     }
     canonicalChatRuntime = await createCanonicalChatRuntime({
-      homePath,
+      homePath, browserApprovals: supervisedBrowserRuntime?.control,
+      executionAdmissionFence,
       ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),
       assertChatReferenceAllowed: chatDriveContext.assertChatReferenceAllowed,
       repository: chatRepository,
@@ -1687,39 +1729,30 @@ export async function createGateway(config: GatewayConfig) {
       });
     }
   }
-  // Bind deletion and run tombstone recovery only after Chat dependencies are ready.
-  const deleteProjectChats = chatRepository && canonicalChatOrchestrator
-    ? createProjectChatCleanup({ repository: chatRepository, orchestrator: canonicalChatOrchestrator })
-    : async () => { throw new Error("Project chat cleanup unavailable"); };
-  app.route("/", createWorkspaceRoutes({
-    homePath,
-    backgroundRuntime: backgroundAgentRuntime,
-    terminalRuntime: terminalWorkspaceRuntime,
-    agentLauncher: agentCredentialLauncher,
-    sessionRuntimeBridge: workspaceSessionRuntimeBridge,
-    eventStore: workspaceEventStore,
-    eventPublisher: workspaceEventPublisher,
-    reviewStore,
-    codingAgentThreadStore,
-    deleteProjectChats,
-    getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
-    ...(gatewayCollaboration ? {
-      projectOperationAdmission: gatewayCollaboration.projectOperationAdmission,
-    } : {}),
-    ...chatBoundWorkspaceRouteDeps,
-  }));
-  app.route("/api", createShellRoutes(shellRouteDeps));
-  const workspaceStartupRecoveryController = createWorkspaceStartupRecovery({
-    deleteProjectChats,
-    homePath,
-    backgroundRuntime: backgroundAgentRuntime,
-    eventPublisher: workspaceEventPublisher,
-    codingAgentThreadStore,
+  const workspaceStartupRecoveryController = await registerWorkspaceLifecycle({
+    app, shellRoutes: createShellRoutes(shellRouteDeps), chatRepository,
+    orchestrator: canonicalChatOrchestrator, collaboration: gatewayCollaboration,
+    workspace: {
+      agentSessionManager: codingAgentSessionManager,
+      sessionOrchestrator: codingAgentWorkspaceRuntime,
+      startSession: nativeCodexRuntime.startSession,
+      beforeProjectSessionRemove: nativeCodexRuntime.beforeProjectSessionRemove,
+      homePath, backgroundRuntime: backgroundAgentRuntime, terminalRuntime: terminalWorkspaceRuntime,
+      agentLauncher: agentCredentialLauncher, sessionRuntimeBridge: workspaceSessionRuntimeBridge,
+      eventStore: workspaceEventStore, eventPublisher: workspaceEventPublisher,
+      reviewStore, codingAgentThreadStore,
+      getOwnerScope: (c) => ({ type: "user", id: requireRequestPrincipal(c).userId }),
+      ...(gatewayCollaboration ? { projectOperationAdmission: gatewayCollaboration.projectOperationAdmission } : {}),
+      ...chatBoundWorkspaceRouteDeps,
+    },
+    recovery: {
+      beforeProjectSessionRemove: nativeCodexRuntime.beforeProjectSessionRemove,
+      homePath,
+      backgroundRuntime: backgroundAgentRuntime,
+      eventPublisher: workspaceEventPublisher,
+      codingAgentThreadStore,
+    },
   });
-  const workspaceStartupRecovery = await workspaceStartupRecoveryController.run();
-  if (workspaceStartupRecovery.status === "degraded") {
-    console.warn("[gateway] Workspace startup recovery completed with degraded steps");
-  }
 
   if (!providerSettingsStore) throw new Error("Provider settings are unavailable");
   const workflowStore = createProviderTerminalLoginHandoff(providerSettingsStore, providerLoginTerminalRegistry.resolveTerminalRef, providerLoginCoordinator.resolveTerminalIdentity);
@@ -1736,6 +1769,7 @@ export async function createGateway(config: GatewayConfig) {
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
   const localChatImportLifecycle = registerCollaborationChatRoutes({
+    browserApprovals: supervisedBrowserRuntime?.control,
     app, upgradeWebSocket, canonicalChatEventStream, chatRepository, gatewayCollaboration,
     syncR2, runtimeOwnerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT,
     credentialKey: toolOutputKey, runtimeOwnerIds: terminalRuntimeOwnerIds,
@@ -1886,6 +1920,7 @@ export async function createGateway(config: GatewayConfig) {
     pluginRegistry,
     hookRunner,
     async close() {
+      await managedFeatureRestart.close();
       await jevInboxRuntime?.close();
       chatDriveContext.close();
       matrixMcpCapabilities.close();
@@ -1933,6 +1968,8 @@ export async function createGateway(config: GatewayConfig) {
       canonicalChatOrchestrator = null;
       await botServices?.close();
       botServices = undefined;
+      await sharedBrowserRuntime?.close();
+      await supervisedBrowserRuntime?.close();
       await canonicalChatRuntime?.agents.close();
       canonicalChatRuntime = null;
       await gatewayCollaboration?.shutdown();
@@ -1959,6 +1996,7 @@ export async function createGateway(config: GatewayConfig) {
       canvasSubscriptionHub?.close();
       systemActivityCandidates.clear();
       await channelManager.stop();
+      browserLab.close();
       customMcp.stop();
       await processManager.shutdownAll();
       await forwardTunnelHub.close();

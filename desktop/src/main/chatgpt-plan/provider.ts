@@ -5,12 +5,18 @@ import { PLAN_ISSUER, planJson } from './oauth';
 import { logPlanFailure, PlanFailure } from './diagnostics';
 import type { PlanAccount } from './vault';
 const CatalogSchema = z.object({ models: z.array(z.object({
-        slug: z.string().max(128), display_name: z.string().max(128), visibility: z.string().max(32)
+        slug: z.string().max(128), display_name: z.string().max(128), visibility: z.string().max(32),
+        input_modalities: z.array(z.enum(['text', 'image', 'audio'])).max(3).optional()
     })).max(256) });
 export function planCatalog(raw: unknown) {
     // Conservative app budgets, not claims of provider context/quota entitlement.
-    const models = CatalogSchema.parse(raw).models.filter(item => item.visibility === 'list').slice(0, 64).map(item => ChatgptPlanModelSchema.parse({
-        id: item.slug, displayName: item.display_name, input: ['text'], contextWindow: 32768, maxOutputTokens: 4096
+    // Only explicit catalog metadata grants image support. Older catalogs without
+    // modality metadata retain text-only behavior; names never imply capability.
+    const models = CatalogSchema.parse(raw).models.filter(item => item.visibility === 'list'
+        && (item.input_modalities === undefined || item.input_modalities.includes('text'))).slice(0, 64).map(item => ChatgptPlanModelSchema.parse({
+        id: item.slug, displayName: item.display_name,
+        input: item.input_modalities?.includes('image') ? ['text', 'image'] : ['text'],
+        contextWindow: 32768, maxOutputTokens: 4096
     }));
     if (new Set(models.map(item => item.id)).size !== models.length)
         throw new PlanFailure('catalog', 'invalid_catalog');

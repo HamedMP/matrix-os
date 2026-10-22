@@ -15,7 +15,6 @@ export default function TerminalSessionLayout() {
       iconColor={appColors.light.surface}
       iconTestID="terminal-close-icon"
       buttonSize={32}
-      pressedOpacity={1}
       onPress={() => router.dismiss()}
     />
   );

@@ -1,12 +1,13 @@
+import type { ApprovalProvenance } from "./approval-submission.js";
 import { CanonicalChatNavigationQuerySchema, CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationQuery, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
-import { ChatMetadataVersionSchema, projectChatMetadata } from "./metadata-wire.js";
+import { ChatMetadataVersionSchema, projectChatMetadata, ChatImportSourceVersionSchema, projectChatImportSource } from "./metadata-wire.js";
 import { projectChatFundingErrors } from "./funding-error-wire.js";
 import { ChatFundingWireVersionSchema } from "@matrix-os/contracts";
 import { LegacyUpdateChatTitleRequestSchema, type LegacyUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { ChatReadStateWireVersionSchema, projectChatReadStateResponse } from "@matrix-os/contracts";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
-import { ChatInputWireVersionSchema } from "@matrix-os/contracts";
+import { ChatInputWireVersionSchema, ChatCommandPreviewWireVersionSchema } from "@matrix-os/contracts";
 import { CanonicalSubmitChatInputRequestSchema, CanonicalChatInputSubmissionResponseSchema, type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmissionResponse } from "@matrix-os/contracts";
 import {
   ChatMessageWireVersionSchema,
@@ -222,7 +223,7 @@ export interface CanonicalChatRouteService {
     runId: string,
     approvalId: string,
     input: CanonicalSubmitChatApprovalRequest,
-    provenance?: { platformApprovalProof?: string },
+    provenance?: ApprovalProvenance,
   ): Promise<CanonicalChatApprovalSubmissionResponse>;
   retryTurn(
     principal: RequestPrincipal,
@@ -300,7 +301,8 @@ function handleError(c: Context, error: unknown) {
 }
 
 function chatJson(context: Context, value: object, status: 200 | 201 | 202 = 200) {
-  return context.json(projectChatReadStateResponse(projectChatRecipeSources(value),
+  return context.json(projectChatReadStateResponse(projectChatRecipeSources(projectChatImportSource(value,
+    ChatImportSourceVersionSchema.parse(context.req.query("importSourceVersion")))),
     ChatReadStateWireVersionSchema.parse(context.req.query("readStateVersion"))), status);
 }
 
@@ -310,8 +312,12 @@ export function createCanonicalChatRoutes(options: {
 }): Hono {
   const routes = new Hono();
   routes.use("/api/chats/*", async (context, next) => {
-    if (!ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success
+    if (!ChatImportSourceVersionSchema.safeParse(context.req.query("importSourceVersion")).success
+      || (context.req.queries("importSourceVersion")?.length ?? 0) > 1
+      || !ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion")).success
       || !ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion")).success
+      || !ChatCommandPreviewWireVersionSchema.safeParse(context.req.query("commandPreviewVersion")).success
+      || (context.req.queries("commandPreviewVersion")?.length ?? 0) > 1
       || !ChatReadStateWireVersionSchema.safeParse(context.req.query("readStateVersion")).success) {
       return validationError(context);
     }
@@ -397,7 +403,10 @@ export function createCanonicalChatRoutes(options: {
   routes.get("/api/chat-navigation", async (context) => {
     context.header("Cache-Control", "private, no-store");
     try {
-      const parsed = CanonicalChatNavigationQuerySchema.safeParse(context.req.query());
+      const { importSourceVersion: queryVersion, ...query } = context.req.query();
+      const importSourceVersion = queryVersion ?? context.req.header("x-matrix-chat-import-source");
+      if (!ChatImportSourceVersionSchema.safeParse(importSourceVersion).success) return validationError(context);
+      const parsed = CanonicalChatNavigationQuerySchema.safeParse(query);
       if (!parsed.success || Object.keys(context.req.query()).some(key => (context.req.queries(key)?.length ?? 0) > 1)) {
         return validationError(context);
       }
@@ -406,7 +415,7 @@ export function createCanonicalChatRoutes(options: {
       const result = await options.service.navigation(owner, parsed.data);
       const snapshot = CanonicalChatNavigationResponseSchema.safeParse(result);
       if (!snapshot.success) throw new Error("Navigation is unavailable");
-      return context.json(snapshot.data);
+      return context.json(projectChatImportSource(snapshot.data, ChatImportSourceVersionSchema.parse(importSourceVersion)));
     } catch (error: unknown) {
       return handleError(context, error);
     }
@@ -539,6 +548,7 @@ export function createCanonicalChatRoutes(options: {
         CanonicalChatDetailResponseSchema.parse(result),
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
         ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
+        ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
       ));
     } catch (error: unknown) {
       return handleError(context, error);
@@ -562,6 +572,7 @@ export function createCanonicalChatRoutes(options: {
         CanonicalChatTurnAdmissionResponseSchema.parse(result),
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
         ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
+        ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
       ), 202);
     } catch (error: unknown) {
       return handleError(context, error);
@@ -654,6 +665,7 @@ export function createCanonicalChatRoutes(options: {
         CanonicalChatRunSteeringResponseSchema.parse(result),
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
         ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
+        ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
       ));
     } catch (error: unknown) {
       return handleError(context, error);
@@ -681,6 +693,7 @@ export function createCanonicalChatRoutes(options: {
         CanonicalChatRunSteeringResponseSchema.parse(result),
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
         ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
+        ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
       ));
       } catch (error: unknown) {
         return handleError(context, error);
@@ -739,13 +752,14 @@ export function createCanonicalChatRoutes(options: {
       const parsed = CanonicalSubmitChatApprovalRequestSchema.safeParse(await context.req.json());
       if (!parsed.success) return validationError(context);
       const proof = context.req.header("x-matrix-custom-mcp-approval-proof");
+      const browserProof = context.req.header("x-matrix-browser-approval-proof");
       const result = await options.service.submitApproval(
         ownerFromPrincipal(options.getPrincipal(context)),
         chatId,
         runId,
         approvalId,
         parsed.data,
-        ...(proof ? [{ platformApprovalProof: proof }] : []),
+        { ...(proof ? { platformApprovalProof: proof } : {}), ...(browserProof ? { browserApprovalProof: browserProof } : {}) },
       );
       return chatJson(context, CanonicalChatApprovalSubmissionResponseSchema.parse(result));
     } catch (error: unknown) {

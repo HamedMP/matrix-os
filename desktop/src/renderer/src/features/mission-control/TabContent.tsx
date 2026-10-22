@@ -99,7 +99,7 @@ export function TabPane({
       return <WorkTab route="projects" active={active} visible={visible} />;
     case "app":
       return tab.slug
-        ? <EmbedHost kind="app" slug={tab.slug} appIdentity={tab.appIdentity} active={active} layoutRevision={layoutRevision} visualScale={visualScale} />
+        ? <EmbedHost kind="app" slug={tab.slug} appIdentity={tab.appIdentity} active={active} visible={visible} layoutRevision={layoutRevision} visualScale={visualScale} />
         : null;
     case "project":
       return <WorkTab route="project" projectSlug={tab.projectSlug} active={active} visible={visible} initialChatId={tab.chatId} initialChatTitle={tab.chatTitle} />;
@@ -112,7 +112,7 @@ export function TabPane({
         ? <TerminalView sessionName={tab.sessionName} active={active} visualScale={visualScale} />
         : null;
     case "settings":
-      return <SettingsView section={settingsSection} onSectionChange={onSettingsSectionChange} />;
+      return <SettingsView automaticCreditRefreshEnabled={visible} section={settingsSection} onSectionChange={onSettingsSectionChange} />;
     case "shared":
       return <DesktopChatCollaboration />;
     default:

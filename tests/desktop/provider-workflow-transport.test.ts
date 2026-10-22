@@ -18,6 +18,11 @@ describe("Electron provider workflow transport", () => {
     await expect(createDesktopProviderWorkflowClient(api, () => true).submitKey({
       harnessInstanceId: "codex", providerId: "openai", apiKey: "synthetic-key",
     }, new AbortController().signal)).rejects.toMatchObject({ reason: "rejected", message: "Provider action is unavailable." });
+    const workspaceApi = createApiClient({ baseUrl: "https://matrix.invalid", getRuntimeSlot: () => "primary",
+      fetchFn: async () => Response.json({ error: { code: "key_workspace_required", message: "private provider text" } }, { status: 400 }) });
+    await expect(createDesktopProviderWorkflowClient(workspaceApi, () => true).submitKey({
+      harnessInstanceId: "claude", providerId: "anthropic", apiKey: "synthetic-key",
+    }, new AbortController().signal)).rejects.toMatchObject({ reason: "key_workspace_required" });
   });
   it("preserves owner-only denial without expiring a valid Matrix session", async () => {
     const onUnauthorized = vi.fn();

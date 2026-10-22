@@ -1,7 +1,9 @@
 import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
+export * from "#browser-chat-approval";
 export { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 export { APP_CAPABILITY_CHANNEL, APP_CAPABILITY_TIMEOUT_MS, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES, appRuntimeSlugFromIdentity, appIntegrationReplyBytes, appCapabilityReplyBytes, AppIdentitySchema, AppCapabilityInputSchema, AppCapabilityRequestSchema, AppConnectedServiceSchema, AppCapabilitiesSchema, AppServiceDescriptionSchema, createAppCapabilityClient } from "#app-capabilities";
 export type { AppCapabilityInput, AppCapabilities, AppServiceDescription } from "#app-capabilities";
+export * from "#sites";
 export * from "#chat-drive-project";
 import { TerminalScrollLineSchema, TerminalScrollStateSchema } from "#terminal-scroll";
 export * from "#terminal-scroll";
@@ -40,7 +42,7 @@ import {
   textEncoder,
 } from "#legacy-contract-primitives";
 
-export const CODEX_VERIFIED_VERSION = "0.156.1";
+export const CODEX_VERIFIED_VERSION = "0.162.1";
 export const CODEX_VERIFIED_NPM_PACKAGE = `@openai/codex@${CODEX_VERIFIED_VERSION}`;
 /** Keep Codex output in xterm's normal buffer so scrollback remains selectable. */
 export const CODEX_TERMINAL_LAUNCH_COMMAND = "codex --no-alt-screen";
@@ -51,6 +53,7 @@ export * from "#billing-public";
 export * from "#agent-runtime-config";
 export * from "#agent-thread-contracts";
 export * from "#canonical-chat";
+export * from "#canonical-chat-execution-controls";
 export * from "#chat-agents";
 export * from "#chat-agent-context";
 export * from "#chat-agent-recipe";
@@ -80,10 +83,15 @@ export * from "#jev-hermes-route";
 export * from "#kernel-result";
 export * from "#kernel-conversations";
 export * from "#provider-settings";
+export * from "#provider-managed-credit";
 export * from "#funded-ai";
 export * from "#jev";
 export * from "#jev-inbox";
 export * from "#getting-started";
+export * from "#integration-connections";
+export * from "#onboarding-widget";
+export * from "#onboarding-widget-catalog";
+export * from "#onboarding-widget-view";
 export * from "#safe-client-error";
 export * from "#speech";
 export * from "#support-chat-properties";
@@ -1465,3 +1473,8 @@ export * from '#chatgpt-plan-wire';
 export * from '#matrix-anthropic-connection';
 
 export * from "#chat-navigation";
+
+export * from "#remote-browser";
+export * from "#shared-browser";
+export { createBrowserGrantUndoTracker, reconcileBrowserGrantObservation, browserPermissionChoices, browserPermissionRequest, browserPermissionOutcome, browserPermissionErrorKind, type BrowserPermissionChoice } from "#browser-permission-presentation";
+export * from "#funded-host-activation";

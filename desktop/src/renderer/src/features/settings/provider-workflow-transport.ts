@@ -22,7 +22,8 @@ function scopedProviderRequest(api: ApiClient, isIdentityCurrent: () => boolean)
         : error instanceof AppError && error.category === "unauthorized" ? "unauthorized"
         : error instanceof AppError && error.category === "notFound" ? "unsupported"
         : error instanceof AppError && error.category === "server" && error.detail === "conflict" ? "conflict"
-        : error instanceof AppError && error.detail === "rejected" ? "rejected" : "unavailable");
+        : error instanceof AppError && error.detail === "rejected" ? "rejected"
+        : error instanceof AppError && error.detail === "key_workspace_required" ? "key_workspace_required" : "unavailable");
     }
     if (!isIdentityCurrent() || input.signal.aborted) throw unavailable();
     return value;

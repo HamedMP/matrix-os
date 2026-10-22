@@ -38,20 +38,24 @@ async function requestJson(input: {
       && value.error && typeof value.error === "object" && "code" in value.error
       ? value.error.code : null;
     throw new ProviderWorkflowClientError(response.status === 401 ? "unauthorized" : response.status === 403 ? "forbidden"
-      : response.status === 409 && code === "conflict" ? "conflict" : response.status === 404 ? "unsupported" : response.status === 400 && code === "rejected" ? "rejected" : "unavailable");
+      : response.status === 409 && code === "conflict" ? "conflict" : response.status === 404 ? "unsupported" : response.status === 400 && code === "rejected" ? "rejected"
+      : response.status === 400 && code === "key_workspace_required" ? "key_workspace_required" : "unavailable");
   }
   return value;
 }
 
-function scopedProviderRequest(options: { fetcher?: typeof fetch; isIdentityCurrent?: () => boolean }) {
-  const gateway = getGatewayUrl();
+function scopedProviderRequest(options: { fetcher?: typeof fetch; isIdentityCurrent?: () => boolean; gatewayUrl?: string }) {
+  const gateway = options.gatewayUrl ?? getGatewayUrl();
+  const boundToMount = options.gatewayUrl !== undefined;
   return (input: ProviderWorkflowRequest) => requestJson({
     ...input, path: `${gateway}${input.path}`, fetcher: options.fetcher ?? fetch,
-    isIdentityCurrent: () => getGatewayUrl() === gateway && options.isIdentityCurrent?.() !== false,
+    // A bound gateway is the computer this page loaded on; in-app routes such as /shared
+    // rewrite the URL without leaving it. Settings still compares against the live URL.
+    isIdentityCurrent: () => (boundToMount || getGatewayUrl() === gateway) && options.isIdentityCurrent?.() !== false,
   });
 }
 
-export function createWebProviderWorkflowClient(options: { fetcher?: typeof fetch; isIdentityCurrent?: () => boolean } = {}) {
+export function createWebProviderWorkflowClient(options: { fetcher?: typeof fetch; isIdentityCurrent?: () => boolean; gatewayUrl?: string } = {}) {
   return createProviderWorkflowClient(scopedProviderRequest(options));
 }
 

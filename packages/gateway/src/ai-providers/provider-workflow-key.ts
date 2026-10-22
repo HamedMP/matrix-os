@@ -16,7 +16,39 @@ export interface ProviderKeyVerifier {
 }
 /** Fixed remote probe failed before any native saver was invoked. */
 export class ProviderKeyPreflightError extends ProviderWorkflowError {
-  constructor(code: 'rejected' | 'unavailable') { super(code); }
+  constructor(code: 'rejected' | 'key_workspace_required' | 'unavailable') { super(code); }
+}
+const WORKSPACE_PROBE_MAX_BYTES = 4096;
+/** Whether an Anthropic 400 says the key belongs to no workspace. Reads at most
+ * 4 KiB under the probe's own timeout; the text is never logged or returned. */
+async function anthropicKeyOutsideWorkspace(response: Response): Promise<boolean> {
+  if (response.status !== 400 || response.headers.get('content-type')?.toLowerCase().startsWith('application/json') !== true || !response.body)
+    return false;
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (size <= WORKSPACE_PROBE_MAX_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      size += value.byteLength;
+    }
+  } finally {
+    try { await reader.cancel(); }
+    catch (error) { console.warn('[provider-workflow] Key probe body cleanup unavailable:', error instanceof Error ? error.name : 'UnknownError'); }
+    reader.releaseLock();
+  }
+  if (size > WORKSPACE_PROBE_MAX_BYTES) return false;
+  try {
+    const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const message = parsed && typeof parsed === 'object' && 'error' in parsed && parsed.error && typeof parsed.error === 'object'
+      && 'message' in parsed.error ? parsed.error.message : null;
+    return typeof message === 'string' && /\bworkspace\b/i.test(message);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return false;
+  }
 }
 /** A fixed-origin, non-billable credentials probe; persistence remains the native adapter's responsibility. */
 export function createProviderKeyVerifier(options: {
@@ -31,6 +63,10 @@ export function createProviderKeyVerifier(options: {
   const verify = async (input: ProviderWorkflowKey, commit?: () => Promise<void>): Promise<void> => {
     if (input.providerId !== options.providerId)
       throw new ProviderKeyPreflightError('rejected');
+    // A Claude subscription OAuth token is never an API key; refuse it locally
+    // instead of sending a subscription credential to the key endpoint.
+    if (options.providerId === 'anthropic' && input.apiKey.trimStart().startsWith('sk-ant-oat'))
+      throw new ProviderKeyPreflightError('rejected');
     if (options.profileGuard && options.profile) {
       const release = await options.profileGuard.acquire(options.profile, { kind: "write" });
       await release();
@@ -38,10 +74,22 @@ export function createProviderKeyVerifier(options: {
     const url = { openai: 'https://api.openai.com/v1/models', anthropic: 'https://api.anthropic.com/v1/models', openrouter: 'https://openrouter.ai/api/v1/key' }[options.providerId];
     try {
       const response = await (options.fetchFn ?? fetch)(url, { redirect: 'error', signal: AbortSignal.timeout(10000), headers: options.providerId === 'anthropic' ? { 'x-api-key': input.apiKey, 'anthropic-version': '2023-06-01' } : { Authorization: `Bearer ${input.apiKey}` } });
-      // Never buffer an upstream body, account information or error text.
+      // A key outside any workspace is the one 400 that needs the owner's action.
+      if (options.providerId === 'anthropic' && await anthropicKeyOutsideWorkspace(response))
+        throw new ProviderKeyPreflightError('key_workspace_required');
+      // Otherwise never buffer an upstream body, account information or error text.
       await response.body?.cancel();
-      if (response.status !== 200)
+      // Only an explicit auth refusal proves a bad key; rate limits, overload,
+      // edge blocks and provider outages must not tell the owner to replace a
+      // working key. Headers alone classify a 403; the body is never read.
+      const providerRefusal = response.headers.get('content-type')?.toLowerCase().startsWith('application/json') === true
+        && !response.headers.has('cf-mitigated');
+      if (response.status === 401 || (response.status === 403 && providerRefusal))
         throw new ProviderKeyPreflightError('rejected');
+      if (response.status !== 200) {
+        console.warn('[provider-workflow] Key probe unavailable:', options.providerId, response.status);
+        throw new ProviderKeyPreflightError('unavailable');
+      }
     }
     catch (error) {
       if (error instanceof ProviderWorkflowError)

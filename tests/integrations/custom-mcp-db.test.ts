@@ -72,6 +72,14 @@ describe("Custom MCP platform persistence", () => {
     expect(privateRow?.encrypted_credentials).toBe("v1.nonce.ciphertext.tag");
   });
 
+  it("persists a compiled preset URL change with the owner and revision fence", async () => {
+    const row = await db.createCustomMcpServer({ userId, presetId: "posthog_oauth", name: "Analytics", url: "https://mcp.posthog.com/mcp?tools=projects-get", authMode: "oauth", pendingExpiresAt: new Date(Date.now() + 86400000) });
+    const url = "https://mcp.posthog.com/mcp?tools=projects-get,insight-update";
+    await db.updateCustomMcpServer(row.id, userId, row.revision, { url, enabled: false, status: "auth_required" });
+    expect((await db.getCustomMcpPresetForBroker("posthog_oauth", userId))?.url).toBe(url);
+    expect(await db.updateCustomMcpServer(row.id, userId, row.revision, { url: "https://stale.example" })).toBeNull();
+  });
+
   it("enforces optimistic revisions inside the UPDATE statement", async () => {
     const row = await db.createCustomMcpServer({
       userId,

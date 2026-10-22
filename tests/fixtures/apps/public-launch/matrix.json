@@ -1,0 +1,13 @@
+{
+  "name": "Matrix launch", "slug": "launch", "version": "1.0.0", "runtime": "vite", "runtimeVersion": "^1.0.0",
+  "description": "Launch guidance and RSVPs",
+  "build": { "command": "pnpm build", "output": "dist" },
+  "publishing": {
+    "data": { "event": "Meet Matrix OS", "date": "Friday, October 23", "intro": "Build your own apps. Share them with the world." },
+    "forms": [{ "id": "rsvp", "title": "Launch RSVP", "fields": {
+      "name": { "type": "text", "required": true, "maxLength": 100 },
+      "email": { "type": "email", "required": true },
+      "guests": { "type": "number", "required": true, "min": 1, "max": 5 }
+    } }]
+  }
+}

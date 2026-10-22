@@ -3,6 +3,9 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getThemeVariant, contrastRatio } from "../../packages/brand/src/themes";
+import { chromeToSemanticVars } from "../../packages/brand/src/themes/desktop-theme";
+import { resolvedStyleColor } from "./theme-contrast-test-utils";
 import ProvidersSection from "../../desktop/src/renderer/src/features/settings/sections/ProvidersSection";
 import { useProviderPreferences } from "../../desktop/src/renderer/src/features/settings/provider-preferences";
 import { resetProviderPreferences } from "./provider-preferences-test-utils";
@@ -268,7 +271,12 @@ describe("ProvidersSection", () => {
       key: "providerPreferences",
       value: { defaultProviderId: "codex" },
     });
-    expect(await screen.findByText("Default")).toBeTruthy();
+    const badge = await screen.findByText("Default");
+    const chrome = getThemeVariant("custom", "dark", { baseThemeId: "matrix", dark: { accent: "#413e3e" }, light: {} }).chrome;
+    const vars = chromeToSemanticVars(chrome);
+    const foreground = resolvedStyleColor(badge.style.color, vars);
+    const background = resolvedStyleColor(badge.style.background, vars);
+    expect(contrastRatio(foreground!, background!)).toBeGreaterThanOrEqual(4.5);
   });
 
   it("resets the default provider back to automatic", async () => {

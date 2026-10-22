@@ -16,6 +16,7 @@ const electronSuites = [
   "tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts",
   "tests/e2e/desktop/provider-settings-idle.e2e.test.ts",
   "tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts",
+  "tests/e2e/desktop/project-deletion.e2e.test.ts",
   "tests/e2e/desktop/terminal-clipboard.e2e.test.ts",
   "tests/e2e/desktop/terminal-file-drop.e2e.test.ts",
   "tests/e2e/desktop/terminal-snapshot.e2e.test.ts",
@@ -244,7 +245,7 @@ describe("isolated cold and warm benchmark execution", () => {
     const { result, calls } = invoke("full");
     expect(result.status, result.stderr).toBe(0);
     const gated = buildGatedElectronSuites();
-    expect(gated).toHaveLength(34);
+    expect(gated).toHaveLength(35);
     const general = calls.filter((call) => call.includes("--config vitest.e2e.config.ts") && call.includes("--exclude="));
     expect(general).toHaveLength(2);
     for (const call of general) {

@@ -6,6 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EmbedHost from "../../desktop/src/renderer/src/features/embeds/EmbedHost";
 import { invoke, onEvent } from "../../desktop/src/renderer/src/lib/operator";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+
+const publishing = vi.hoisted(() => ({ client: { get: vi.fn(async () => null), getConfig: vi.fn(async () => ({ data: {}, forms: [] })) } }));
+vi.mock("../../desktop/src/renderer/src/features/app-sites/site-client", () => ({ createDesktopSiteClient: () => publishing.client }));
 
 vi.mock("../../desktop/src/renderer/src/lib/operator", () => ({
   invoke: vi.fn(),
@@ -21,6 +25,7 @@ describe("EmbedHost", () => {
     vi.mocked(onEvent).mockReset();
     vi.mocked(onEvent).mockReturnValue(() => undefined);
     useConnection.setState(useConnection.getInitialState(), true);
+    useUi.setState(useUi.getInitialState(), true);
     useConnection.setState({ runtimeSlot: "primary" });
     openResolve = null;
     rect = { left: 10, top: 20, width: 300, height: 200 };
@@ -59,6 +64,30 @@ describe("EmbedHost", () => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("closes a retained hidden app's publishing portal and releases only its own renderer overlay", async () => {
+    useConnection.setState({ api: {} as NonNullable<ReturnType<typeof useConnection.getState>["api"]> });
+    useUi.getState().acquireRendererOverlay(); // A separate surface owns this lease.
+    const view = render(<EmbedHost kind="app" slug="notes" active />);
+    fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
+    await screen.findByRole("dialog", { name: "Publish app" });
+    expect(useUi.getState().rendererOverlayCount).toBe(2);
+    // Overlay-adjusted native activity is false, but the owning surface is still visible.
+    expect(screen.getByRole("dialog", { name: "Publish app" })).toBeTruthy();
+
+    view.rerender(<EmbedHost kind="app" slug="notes" active={false} />);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+    view.rerender(<EmbedHost kind="app" slug="notes" active />);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Publish app" }));
+    await screen.findByRole("dialog", { name: "Publish app" });
+    expect(useUi.getState().rendererOverlayCount).toBe(2);
+    view.unmount();
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+    useUi.getState().releaseRendererOverlay();
+    expect(useUi.getState().rendererOverlayCount).toBe(0);
   });
 
   it("sends the actual window radius at canvas scale and clears clipping in tab mode", async () => {

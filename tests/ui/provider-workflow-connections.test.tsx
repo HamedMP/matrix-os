@@ -2,10 +2,14 @@
 import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { HarnessWorkflowPanel } from "../../packages/ui/src/agents-providers/HarnessWorkflowPanel";
 import type { ProviderWorkflowClient, ProviderWorkflowUICapability } from "../../packages/ui/src/agents-providers/types";
 import { useHarnessWorkflowController } from "../../packages/ui/src/agents-providers/use-harness-workflow-controller";
+import { keyFailureMessage } from "../../packages/ui/src/agents-providers/key-format.js";
+import type { ProviderAccessSource, ProviderAccount, ProviderHarnessInstance } from "../../packages/contracts/src/index.js";
+import { isNativeAccountSource } from "../../packages/ui/src/agents-providers/harness-connection.js";
+import { resolvedWorkflowRowStatus } from "../../packages/ui/src/agents-providers/workflow-row-status.js";
 afterEach(cleanup);
 const options = [
   {id: "pi:openai:device", providerId: "openai", authKind: "subscription", method: "device_code", billingKind: "subscription", executionKind: "native", availability: "available"},
@@ -25,6 +29,15 @@ it("chooses an exact provider/method before native key saving", async () => {
  fireEvent.change(screen.getByLabelText("Paste your Anthropic API key"), {target: {value: "synthetic-only-key"}});
  fireEvent.click(screen.getByRole("button", {name: "Connect"}));
  await waitFor(() => expect(client.submitConnectionKey).toHaveBeenCalledWith({harnessInstanceId: "pi", optionId: "pi:anthropic:key", apiKey: "synthetic-only-key"}, expect.any(AbortSignal)));
+ expect(client.submitKey).not.toHaveBeenCalled();
+});
+it("explains a pasted Claude subscription token without sending it", async () => {
+ const client = setup();
+ fireEvent.click(screen.getByRole("button", {name: /Anthropic API key/}));
+ fireEvent.change(screen.getByLabelText("Paste your Anthropic API key"), {target: {value: "  sk-ant-oat01-synthetic"}});
+ fireEvent.click(screen.getByRole("button", {name: "Connect"}));
+ expect(await screen.findByText(/subscription sign-in token, not an API key/)).toBeInTheDocument();
+ expect(client.submitConnectionKey).not.toHaveBeenCalled();
  expect(client.submitKey).not.toHaveBeenCalled();
 });
 it("keeps unsupported runtime options unavailable with safe copy", () => {
@@ -136,3 +149,50 @@ it("discards an outstanding receipt read after the selected account changes", as
  expect(result.current.operation).toBeNull();
  expect(refresh).not.toHaveBeenCalled();
 });
+
+// API key failure wording shared by Settings and onboarding.
+{
+describe("API key failure wording", () => {
+  it("names the provider and the fix for a refused key", () => {
+    expect(keyFailureMessage("rejected", "anthropic")).toBe("Anthropic didn't accept this key. Check that you copied all of it, or create a new key in your Anthropic account.");
+    expect(keyFailureMessage("rejected", "openai")).toBe("OpenAI didn't accept this key. Check that you copied all of it, or create a new key in your OpenAI account.");
+    expect(keyFailureMessage("rejected", "anthropic", "short")).toBe("Anthropic didn't accept this key");
+  });
+
+  it("says how to fix a key outside any workspace", () => {
+    expect(keyFailureMessage("key_workspace_required", "anthropic")).toBe("This key isn't in a workspace. In the Anthropic Console, create a key inside a workspace, then paste it here.");
+    expect(keyFailureMessage("key_workspace_required", "anthropic", "short")).toBe("This key isn't in a workspace");
+  });
+
+  it("keeps an uncertain failure from blaming the key", () => {
+    expect(keyFailureMessage("unavailable", "anthropic")).toBe("Could not confirm the connection. Check its status before trying again.");
+    expect(keyFailureMessage("unavailable", "anthropic", "short")).toBe("Couldn't connect right now. Try again.");
+  });
+});
+}
+
+// Settings status for fixed Claude on the owner Anthropic key.
+{
+const readiness = { state: "unknown", checkedAt: null, staleAfter: null, action: "retry", safeReason: "unknown" } as ProviderAccessSource["readiness"];
+const keySource = { id: "owner_anthropic_key", kind: "provider_account", providerId: "anthropic", accountId: "owner_anthropic",
+  fundingKind: "owner_api_key", displayName: "Anthropic API key", eligibleModelIds: ["claude-sonnet-5"], readiness } as unknown as ProviderAccessSource;
+const keyAccount = { id: "owner_anthropic", providerId: "anthropic", accessSourceId: "owner_anthropic_key", authMethod: "api_key", authState: "authenticated" } as unknown as ProviderAccount;
+const claude = { id: "harness_claude_code", harness: "claude", installState: "installed", authState: "authenticated", enabled: true, configuredEnabled: true,
+  accessSourceId: "owner_anthropic_key", selectedAccountId: "owner_anthropic", route: { kind: "fixed", providerId: "anthropic", modelId: "claude-sonnet-5" } } as unknown as ProviderHarnessInstance;
+
+describe("Settings status for Claude on the owner's Anthropic key", () => {
+  it("treats the selected owner key as Claude's own connection and shows it as Connected", () => {
+    expect(isNativeAccountSource("claude", keySource, keyAccount)).toBe(true);
+    expect(resolvedWorkflowRowStatus(claude, keySource)).toBe("Connected");
+  });
+
+  it("is Not connected once the gateway no longer reports the key as signed in", () => {
+    expect(resolvedWorkflowRowStatus({ ...claude, authState: "unknown" }, keySource)).toBe("Not connected");
+  });
+
+  it("never treats a Matrix AI gateway source as Claude's own connection", () => {
+    const matrix = { ...keySource, id: "matrix_included", kind: "matrix_gateway", fundingKind: "matrix_included", accountId: null } as unknown as ProviderAccessSource;
+    expect(isNativeAccountSource("claude", matrix, undefined)).toBe(false);
+  });
+});
+}

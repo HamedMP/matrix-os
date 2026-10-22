@@ -1,12 +1,13 @@
 import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
-import { useMemo, useState } from "react";
-import { Alert } from "react-native";
-import { useLocalSearchParams, useNavigation } from "expo-router";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Alert, type TextInput } from "react-native";
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 
 import { composerAddProps } from "@/components/chat/composer-add";
 import { ModelPicker } from "@/components/ModelPicker";
 import { ProjectOptionsSheet, type ProjectOptionsPage } from "@/components/projects/ProjectOptionsSheet";
 import { ProjectScreen } from "@/components/projects/ProjectScreen";
+import { confirmArchiveProject } from "@/components/projects/project-archive";
 import { ARCHIVE_FAILED_TITLE, archiveFailureMessage, projectNameFailure } from "@/components/projects/project-failures";
 import { projectChatRows, projectRow } from "@/components/projects/project-rows";
 import { useBackOr } from "@/components/projects/use-back-or";
@@ -17,17 +18,19 @@ import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-
 import { supportedAttachmentKinds } from "@/lib/chat-attachments";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { useProjectChats } from "@/lib/queries/use-project-chats";
+import { useComposerSpeech } from "@/lib/speech/use-composer-speech";
 import { useArchiveProject, useRenameProject } from "@/lib/queries/use-project-mutations";
 import type { ProjectSummary } from "@/lib/requests/projects";
 import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
-import { useShowChatScreen } from "@/lib/use-shell-navigation";
+import { showToast } from "@/lib/toast";
 
 export default function ProjectRoute() {
-  const params = useLocalSearchParams<{ projectId?: string | string[] }>();
+  const params = useLocalSearchParams<{ projectId?: string | string[]; newChat?: string | string[] }>();
   const projectId = typeof params.projectId === "string" ? params.projectId : null;
+  const newChatRequested = params.newChat !== undefined;
   const navigation = useNavigation();
+  const router = useRouter();
   const goBack = useBackOr("/projects");
-  const showChatScreen = useShowChatScreen();
   const warmSessionToken = useSessionTokenWarmup();
   const { selectChat, setSelectionOverride } = useCanonicalChatSession();
   const list = useProjectList();
@@ -48,6 +51,23 @@ export default function ProjectRoute() {
   const shown = useMemo(() => (project ? projectRow(project) : null), [project]);
   const chatRows = useMemo(() => projectChatRows(chats.chats), [chats.chats]);
 
+  // A chat opens above the project, so back returns to its chats.
+  const showChat = (chatId: string) => {
+    if (!projectId) return;
+    router.push({ pathname: "/projects/[projectId]/chats/[chatId]", params: { projectId, chatId } } as never);
+  };
+
+  // A chat of this project asks for a new chat by coming back here with
+  // `newChat`. The cursor goes to the composer once it is on screen, and the
+  // request is taken so that it is answered once.
+  const composerInput = useRef<TextInput>(null);
+  const composerShown = project !== null;
+  useEffect(() => {
+    if (!newChatRequested || !composerShown) return;
+    composerInput.current?.focus();
+    navigation.setParams({ newChat: undefined } as never);
+  }, [newChatRequested, composerShown, navigation]);
+
   const selection = chosenModel ?? defaultCatalogSelection(catalog);
   const attachmentKinds = supportedAttachmentKinds(catalog, selection);
   const composer = useProjectComposer({
@@ -57,11 +77,11 @@ export default function ProjectRoute() {
     attachmentKinds,
     // There is no model to send to until the provider catalog has loaded.
     disabled: catalogPending,
-    onChatStarted: (_chatId, startedWith) => {
-      // The send made the new chat the one on the chat screen. The model it
-      // was started with stays chosen there.
+    onChatStarted: (chatId, startedWith) => {
+      // The send made the new chat the open one. The model it was started
+      // with stays chosen there.
       setSelectionOverride(startedWith);
-      if (navigation.isFocused()) showChatScreen();
+      if (navigation.isFocused()) showChat(chatId);
     },
   });
 
@@ -69,6 +89,13 @@ export default function ProjectRoute() {
     composer.setDraft(text);
     warmSessionToken();
   };
+
+  const speech = useComposerSpeech({
+    draftKey: `project:${project?.id ?? ""}`,
+    draft: composer.draft,
+    onChangeDraft: changeDraft,
+    enabled: project !== null,
+  });
 
   const reload = async () => {
     try {
@@ -93,6 +120,7 @@ export default function ProjectRoute() {
       onSuccess: () => {
         setPage(null);
         goBack();
+        showToast("Project archived");
       },
       onError: (error: unknown) => {
         setLeaving(null);
@@ -103,10 +131,7 @@ export default function ProjectRoute() {
 
   const confirmArchive = () => {
     if (!project) return;
-    Alert.alert(`Archive ${project.name}?`, "It leaves your project list. Its chats are kept.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Archive", onPress: () => archiveProject(project) },
-    ]);
+    confirmArchiveProject(project.name, () => archiveProject(project));
   };
 
   return (
@@ -128,16 +153,18 @@ export default function ProjectRoute() {
           },
           onOpenChat: (chatId) => {
             selectChat(chatId);
-            showChatScreen();
+            showChat(chatId);
           },
         }}
         composer={{
+          inputRef: composerInput,
           draft: composer.draft,
           onChangeDraft: changeDraft,
           onFocus: warmSessionToken,
           canSend: composer.canSend,
           onSend: composer.send,
           running: composer.isSending,
+          speech,
           ...composerAddProps({
             catalog,
             selection,
@@ -177,7 +204,12 @@ export default function ProjectRoute() {
             setPage("rename");
           }}
           onArchive={confirmArchive}
-          onSubmitName={(name) => rename.mutate({ slug: project.slug, name }, { onSuccess: () => setPage(null) })}
+          onSubmitName={(name) => rename.mutate({ slug: project.slug, name }, {
+            onSuccess: () => {
+              setPage(null);
+              showToast("Project renamed");
+            },
+          })}
           onClose={() => setPage(null)}
         />
       ) : null}

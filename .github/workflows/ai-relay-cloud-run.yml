@@ -190,8 +190,8 @@ jobs:
             fi
           done
 
-      - name: Require existing safe production baseline
-        if: ${{ inputs.environment == 'production' && !inputs.promote }}
+      - name: Require existing safe baseline and unused source-owned candidate tag
+        if: ${{ inputs.environment != 'production' || !inputs.promote }}
         run: python3 scripts/verify-funded-relay-evidence.py deployment-preflight
 
       - name: Build relay image
@@ -215,13 +215,17 @@ jobs:
           fi
           echo "IMAGE_DIGEST=${image%:*}@${digest}" >> "$GITHUB_ENV"
 
+      - name: Recheck existing routes before candidate deployment
+        if: ${{ inputs.environment != 'production' || !inputs.promote }}
+        run: python3 scripts/verify-funded-relay-evidence.py deployment-preflight
+
       - name: Deploy candidate revision
         if: ${{ inputs.environment != 'production' || !inputs.promote }}
         run: |
           set -euo pipefail
-          # Deploy onto an existing service and keep the digest-pinned candidate
-          # off its default URL. Only explicit promotion may route it.
-          traffic_flags=(--tag candidate --no-traffic)
+          # Preserve existing customer aliases, including the legacy candidate
+          # URL. Only the reviewed source owns this fresh zero-traffic tag.
+          traffic_flags=(--tag "$CANDIDATE_TAG" --no-traffic)
           gcloud run deploy "$AI_RELAY_CLOUD_RUN_SERVICE" \
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
@@ -257,8 +261,8 @@ jobs:
               --project "$GCP_PROJECT_ID" \
               --region "$GCP_REGION" \
               --format=json 2>/dev/null || true)"
-            candidate_url="$(printf '%s\n' "$service_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .url // empty' | head -1)"
-            candidate_revision="$(printf '%s\n' "$service_json" | jq -r '.status.traffic[]? | select(.tag == "candidate") | .revisionName // empty' | head -1)"
+            candidate_url="$(printf '%s\n' "$service_json" | jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag == $tag) | .url // empty' | head -1)"
+            candidate_revision="$(printf '%s\n' "$service_json" | jq -r --arg tag "$CANDIDATE_TAG" '.status.traffic[]? | select(.tag == $tag) | .revisionName // empty' | head -1)"
             if [ -n "$candidate_url" ] && [ -n "$candidate_revision" ]; then
               candidate_image="$(gcloud run revisions describe "$candidate_revision" \
                 --project "$GCP_PROJECT_ID" \

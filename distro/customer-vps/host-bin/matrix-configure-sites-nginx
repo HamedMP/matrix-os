@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Upgrade only Matrix-managed publishing locations; validate before reloading."""
+import argparse
+import fcntl
+import os
+import re
+import secrets
+import stat
+import subprocess
+import sys
+from contextlib import ExitStack
+
+MARKER = "# matrix-sites-publish-timeout-v1"
+LOCATION = 'location ~ "^/api/apps/[a-z0-9][a-z0-9-]{0,63}/site$" {'
+API = re.compile(r"(?m)^(?P<indent>[ \t]*)location /api/ \{\n(?P<body>(?:[^\n{}]*\n)+?)(?P=indent)\}")
+MAX_BYTES = 1024 * 1024
+ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C", "LC_ALL": "C"}
+
+
+def directory(path, stack, production):
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    stack.callback(os.close, fd)
+    for component in path.split("/"):
+        if not component:
+            continue
+        if component in (".", ".."):
+            raise ValueError("Invalid parent")
+        fd = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+        stack.callback(os.close, fd)
+        info = os.fstat(fd)
+        if production and (info.st_uid != 0 or info.st_mode & 0o022):
+            raise ValueError("Unsafe parent")
+    return fd
+
+
+def upgrade(text):
+    matches = list(API.finditer(text))
+    if len(matches) != 1:
+        raise ValueError("Unknown managed API layout")
+    match = matches[0]
+    body, indent = match["body"], match["indent"]
+    if body.count("proxy_pass http://127.0.0.1:4000;") != 1:
+        raise ValueError("Unknown API upstream")
+    # Clone every existing API header/auth directive, including self-host bearer
+    # includes. Only this exact publishing path gets the larger read budget.
+    body = re.sub(r"(?m)^[ \t]*proxy_read_timeout[^;\n]*;\n", "", body)
+    block = (indent + MARKER + "\n" + indent + LOCATION + "\n"
+             + indent + "  proxy_read_timeout 300s;\n" + body + indent + "}\n\n")
+    if MARKER in text:
+        if text.count(MARKER) != 1 or block + match[0] not in text:
+            raise ValueError("Changed managed publishing location")
+        return text
+    if LOCATION in text:
+        raise ValueError("Unrecognized publishing location")
+    return text[:match.start()] + block + text[match.start():]
+
+
+def replace(fd, name, data, info):
+    temporary = ".matrix-sites-nginx-" + secrets.token_hex(12)
+    created = False
+    try:
+        out = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+        created = True
+        with os.fdopen(out, "wb") as stream:
+            if os.geteuid() == 0:
+                os.fchown(stream.fileno(), info.st_uid, info.st_gid)
+            os.fchmod(stream.fileno(), stat.S_IMODE(info.st_mode))
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, name, src_dir_fd=fd, dst_dir_fd=fd)
+        created = False
+        os.fsync(fd)
+    finally:
+        if created:
+            os.unlink(temporary, dir_fd=fd)
+
+
+def command(args, accepted=(0,)):
+    result = subprocess.run(args, env=ENV, stdin=subprocess.DEVNULL, capture_output=True, timeout=10, check=False)
+    if result.returncode not in accepted:
+        raise RuntimeError("Configuration command failed")
+    return result.returncode
+
+
+def configure(root):
+    production = root == "/"
+    if not os.path.isabs(root) or (production and os.geteuid() != 0):
+        raise ValueError("Root operator required")
+    with ExitStack() as stack:
+        try:
+            fd = directory(root.rstrip("/") + "/etc/nginx/sites-available", stack, production)
+        except FileNotFoundError:
+            # Golden-image certification may precede nginx activation.
+            return
+        lock = os.open(".matrix-sites-nginx.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+        stack.callback(os.close, lock)
+        lock_info = os.fstat(lock)
+        if not stat.S_ISREG(lock_info.st_mode) or (production and (lock_info.st_uid != 0 or lock_info.st_mode & 0o077)):
+            raise ValueError("Unsafe update lock")
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        changes = []
+        for name in ("matrix", "matrix-self-host"):
+            try:
+                source = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+            except FileNotFoundError:
+                continue
+            with os.fdopen(source, "rb") as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_BYTES or (production and (info.st_uid != 0 or info.st_mode & 0o022)):
+                    raise ValueError("Unsafe managed configuration")
+                before = stream.read(MAX_BYTES + 1)
+            if len(before) > MAX_BYTES:
+                raise ValueError("Managed configuration exceeds bound")
+            after = upgrade(before.decode("utf-8")).encode("utf-8")
+            if len(after) > MAX_BYTES:
+                raise ValueError("Updated configuration exceeds bound")
+            if after != before:
+                changes.append((name, before, after, info))
+        if not changes:
+            return
+        validate = ["/usr/sbin/nginx", "-t", "-p", root, "-c", root.rstrip("/") + "/etc/nginx/nginx.conf"]
+        applied = []
+        running = production and command(["/usr/bin/systemctl", "is-active", "--quiet", "nginx"], (0, 3)) == 0
+        try:
+            for name, before, after, info in changes:
+                applied.append((name, before, info))
+                replace(fd, name, after, info)
+            command(validate)
+            if running:
+                command(["/usr/bin/systemctl", "reload", "nginx"])
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+            for name, before, info in reversed(applied):
+                replace(fd, name, before, info)
+            if running:
+                command(validate)
+                command(["/usr/bin/systemctl", "reload", "nginx"])
+            raise
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", default="/")
+    args = parser.parse_args()
+    try:
+        configure(args.root)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+        print("Matrix Sites nginx update failed", file=sys.stderr)
+        sys.exit(1)

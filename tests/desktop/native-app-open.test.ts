@@ -18,6 +18,12 @@ function fixture() {
 afterEach(() => vi.restoreAllMocks());
 
 describe("native installed-app opening", () => {
+  it.each([["matrix-browser", "Browser"], ["matrix-cloud-desktop", "Cloud desktop"]])("opens fixed %s aliases only from a product sender", async (appIdentity, name) => {
+    const f = fixture(); f.bridge.register(1, "matrix-browser", "browser-lab");
+    await f.bridge.openApp({ id: 1, url: "https://gateway.test/apps/browser-lab/?surface=browser" }, { name: "ignored", path: `matrix-app:${appIdentity}` });
+    expect(f.resolveApp).not.toHaveBeenCalled();
+    expect(f.openApp).toHaveBeenCalledWith({ slug: "browser-lab", appIdentity, name });
+  });
   it("retains a void launch-request contract and catches asynchronous rejection", async () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const invoke = vi.fn(async () => { throw new Error("private"); });

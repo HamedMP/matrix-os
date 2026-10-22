@@ -1,3 +1,5 @@
+import { BOT_IMAGE_INFERENCE_FRAME_MAX_BYTES } from "@matrix-os/contracts";
+import { ScopeRuntimeBotInferenceRequestSchema } from "@matrix-os/scope-runtime/broker-protocol";
 import {
   ScopeRuntimeBrokerRequestSchema,
   ScopeRuntimeBrokerResponseSchema,
@@ -477,6 +479,8 @@ export function createScopeRuntimeBrokerServer(options: {
    * routed handler resolving undefined drops the connection.
    */
   routeFrame?(raw: unknown): Promise<Record<string, unknown> | undefined> | undefined;
+  /** Explicitly registered Bot routes only; generic/shared frame caps remain unchanged. */
+  botImageFrames?: boolean;
   maxConnections?: number;
   requestTimeoutMs?: number;
   /**
@@ -520,7 +524,7 @@ export function createScopeRuntimeBrokerServer(options: {
     socket.on("data", (chunk) => {
       if (rejected) return;
       input += chunk;
-      if (Buffer.byteLength(input, "utf8") > MAX_REQUEST_FRAME_BYTES) {
+      if (Buffer.byteLength(input, "utf8") > (options.botImageFrames ? BOT_IMAGE_INFERENCE_FRAME_MAX_BYTES : MAX_REQUEST_FRAME_BYTES)) {
         rejected = true;
         input = "";
         socket.destroy();
@@ -539,6 +543,8 @@ export function createScopeRuntimeBrokerServer(options: {
             return;
           }
           const raw: unknown = JSON.parse(frames[0]!);
+          if (Buffer.byteLength(input, "utf8") > MAX_REQUEST_FRAME_BYTES
+            && (!options.botImageFrames || !ScopeRuntimeBotInferenceRequestSchema.safeParse(raw).success)) { socket.destroy(); return; }
           const routed = options.routeFrame?.(raw);
           let frame: string;
           if (routed) {

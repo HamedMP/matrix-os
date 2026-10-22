@@ -1,5 +1,6 @@
 import {
   FundedAiAuthorizationResponseSchema,
+  FundedAiTerminalOutcomeResponseSchema, type FundedAiTerminalOutcomeRequest, type FundedAiTerminalOutcomeResponse,
   FundedAiFinalizationResponseSchema,
   FundedAiPolicyCheckResponseSchema,
   FundedAiReleaseResponseSchema,
@@ -92,12 +93,13 @@ export interface FundedPlatformClient {
     billingMode?: "usage";
     jevPricingVersion?: string;
   }, signal: AbortSignal): Promise<FundedAiAuthorizationResponse>;
-  start(input: { reservationId: string; tokenId: string }, signal: AbortSignal): Promise<FundedAiStartResponse>;
+  start(input: { reservationId: string; tokenId: string; executionId?: string }, signal: AbortSignal): Promise<FundedAiStartResponse>;
   release(input: {
     reservationId: string;
     tokenId: string;
     reason: "pre_upstream_failure";
   }, signal: AbortSignal): Promise<FundedAiReleaseResponse>;
+  terminal(input: FundedAiTerminalOutcomeRequest, signal: AbortSignal): Promise<FundedAiTerminalOutcomeResponse>;
   finalize(input: FundedAiFinalizationRequest, signal: AbortSignal): Promise<FundedAiFinalizationResponse>;
 }
 
@@ -112,7 +114,7 @@ export function createFundedPlatformClient(options: Pick<
   const fetchImpl = options.fetch;
 
   async function call<T>(
-    action: "authorize" | "check" | "finalize" | "release" | "start",
+    action: "authorize" | "check" | "finalize" | "release" | "start" | "terminal",
     body: unknown,
     schema: z.ZodType<T>,
     lifetimeSignal: AbortSignal,
@@ -147,6 +149,7 @@ export function createFundedPlatformClient(options: Pick<
     authorize: (input, signal) => call("authorize", input, FundedAiAuthorizationResponseSchema, signal),
     start: (input, signal) => call("start", input, FundedAiStartResponseSchema, signal),
     release: (input, signal) => call("release", input, FundedAiReleaseResponseSchema, signal),
+    terminal: (input, signal) => call("terminal", input, FundedAiTerminalOutcomeResponseSchema, signal),
     finalize: (input, signal) => call("finalize", input, FundedAiFinalizationResponseSchema, signal),
   };
 }

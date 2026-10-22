@@ -51,6 +51,31 @@ describe("edge router worker", () => {
     expect((upstream as Request).headers.get("x-matrix-edge-secret")).toBe("edge-secret");
   });
 
+  it.each(["/vm/pr-2045", "/vm/pr-2045/~runtime/pr-2045"])("routes exact-Chat browser grant Undo through the candidate: %s", async prefix => {
+    const path = `${prefix}/api/chats/chat_my_drive_test/browser-grants/123e4567-e89b-42d3-a456-426614174000`;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok"));
+    const response = await handleEdgeRouterRequest(previewChatRequest(path, "DELETE"), PREVIEW_CHAT_ENV);
+    expect(response.headers.get("x-matrix-preview-platform-route")).toBe("candidate");
+    const upstream = fetchMock.mock.calls[0]![0] as Request;
+    expect(upstream.url).toBe(`${PREVIEW_CHAT_ENV.PREVIEW_CHAT_CANDIDATE_ORIGIN}${path}`);
+    expect(upstream.method).toBe("DELETE");
+    expect(await upstream.text()).toBe("{}");
+  });
+
+  it.each([
+    ["POST", "chat_my_drive_test", "123e4567-e89b-42d3-a456-426614174000", ""],
+    ["GET", "chat_my_drive_test", "123e4567-e89b-42d3-a456-426614174000", ""],
+    ["DELETE", "chat_other", "123e4567-e89b-42d3-a456-426614174000", ""],
+    ["DELETE", "chat_my_drive_test", "invalid", ""],
+    ["DELETE", "chat_my_drive_test", "123e4567-e89b-42d3-a456-426614174000", "?runtime=primary"],
+  ])("keeps an unselected browser grant operation on the default route: %s %s %s %s", async (method, chat, grant, query) => {
+    const path = `/vm/pr-2045/api/chats/${chat}/browser-grants/${grant}${query}`;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok"));
+    const response = await handleEdgeRouterRequest(previewChatRequest(path, method), PREVIEW_CHAT_ENV);
+    expect(response.headers.get("x-matrix-preview-platform-route")).toBeNull();
+    expect((fetchMock.mock.calls[0]![0] as Request).url).toBe(`${EDGE_ENV.PLATFORM_ORIGIN}${path}`);
+  });
+
   it.each([
     ["turn", "/turns", "at expiry", 60_000],
     ["turn", "/turns", "past expiry", 60_001],
@@ -109,6 +134,8 @@ describe("edge router worker", () => {
     ["mixed query runtimes", "/vm/pr-2045/api/chats/chat_my_drive_test/turns?runtime=pr-2045&runtime=primary", "POST"],
     ["queued turn", "/vm/pr-2045/api/chats/chat_my_drive_test/queued-turns", "POST"],
     ["turn read", "/vm/pr-2045/api/chats/chat_my_drive_test/turns", "GET"],
+    ["turn delete", "/vm/pr-2045/api/chats/chat_my_drive_test/turns", "DELETE"],
+    ["approval delete", "/vm/pr-2045/api/chats/chat_my_drive_test/runs/run_one/approvals/approval_one", "DELETE"],
     ["approval read", "/vm/pr-2045/api/chats/chat_my_drive_test/runs/run_one/approvals/approval_one", "GET"],
     ["other mutation", "/vm/pr-2045/api/chats/chat_my_drive_test/runs/run_one/cancel", "POST"],
     ["prefix trick", "/vm/pr-2045/api/chats/chat_my_drive_test_extra/turns", "POST"],

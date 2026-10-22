@@ -282,3 +282,24 @@ describe("mobile over-the-air update configuration", () => {
     }
   });
 });
+
+describe("mobile dictation configuration", () => {
+  const plugin = (appConfig.expo?.plugins ?? []).find(
+    (entry) => Array.isArray(entry) && entry[0] === "expo-audio",
+  );
+  const options = (Array.isArray(plugin) ? plugin[1] : undefined) as Record<string, unknown> | undefined;
+  const expo = appConfig.expo as {
+    ios?: { infoPlist?: Record<string, unknown> };
+    android?: { permissions?: string[] };
+  } | undefined;
+
+  it("records from the microphone with expo-audio, only while the app is open", () => {
+    expect(packageConfig.dependencies?.["expo-audio"]).toBeDefined();
+    expect(options).toMatchObject({ enableBackgroundRecording: false, enableBackgroundPlayback: false, recordAudioAndroid: true });
+  });
+
+  it("asks for the microphone in the words the app already uses", () => {
+    expect(options?.microphonePermission).toBe(expo?.ios?.infoPlist?.NSMicrophoneUsageDescription);
+    expect(expo?.android?.permissions).toContain("android.permission.RECORD_AUDIO");
+  });
+});

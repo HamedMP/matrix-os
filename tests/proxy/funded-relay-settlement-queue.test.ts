@@ -53,3 +53,28 @@ describe("funded settlement retry queue", () => {
     expect(queue.pendingCount).toBe(0);
   });
 });
+
+it.each([404, 409])("retains newer exact usage when replaced terminal transport finishes with %s", async (status) => {
+  const pending = Promise.withResolvers<void>(); const terminal = vi.fn(() => pending.promise); const finalize = vi.fn(async () => undefined);
+  const queue = new SettlementRetryQueue({ capacity: 2, ttlMs: 60_000, retryIntervalMs: 60_000, now: () => 0, terminal, finalize });
+  queue.enqueueTerminal({ contractVersion: 1, reservationId: "replacement", tokenId: "credential_123", requestId: "request_1",
+    ownerId: "owner", machineId: "machine", runtimeSlot: "primary", startedAt: "2026-09-10T12:00:00.000Z", expiresAt: "2026-09-10T12:10:00.000Z",
+    executionId: "execution", terminalState: "failed", terminalAt: "2026-09-10T12:00:30.000Z", outcome: "usage_unknown" });
+  await vi.waitFor(() => expect(terminal).toHaveBeenCalledTimes(1)); queue.enqueue(task("replacement"));
+  pending.reject(Object.assign(new Error("old terminal rejected"), { status })); await queue.flush();
+  expect(queue.pendingIds).toEqual(["replacement"]); await queue.flush(); expect(finalize).toHaveBeenCalledExactlyOnceWith(task("replacement"));
+  expect(queue.pendingCount).toBe(0); await queue.close();
+});
+
+it("does not evict unrelated exact usage when replacing a terminal task at capacity", async () => {
+  const older = Promise.withResolvers<void>(); const finalize = vi.fn((input: ReturnType<typeof task>) => input.reservationId === "older-exact" ? older.promise : Promise.resolve());
+  const queue = new SettlementRetryQueue({ capacity: 2, ttlMs: 60_000, retryIntervalMs: 60_000, now: () => 0, terminal: async () => undefined, finalize });
+  queue.enqueue(task("older-exact")); await vi.waitFor(() => expect(finalize).toHaveBeenCalledTimes(1));
+  queue.enqueueTerminal({ contractVersion: 1, reservationId: "replacement", tokenId: "credential_123", requestId: "request_1",
+    ownerId: "owner", machineId: "machine", runtimeSlot: "primary", startedAt: "2026-09-10T12:00:00.000Z", expiresAt: "2026-09-10T12:10:00.000Z",
+    executionId: "execution", terminalState: "failed", terminalAt: "2026-09-10T12:00:30.000Z", outcome: "usage_unknown" });
+  queue.enqueue(task("replacement")); const retained = queue.pendingIds;
+  older.resolve(); await queue.flush(); await queue.flush(); await queue.close();
+  expect(retained).toEqual(["older-exact", "replacement"]);
+  expect(finalize.mock.calls.map(([input]) => input.reservationId)).toEqual(["older-exact", "replacement"]);
+});

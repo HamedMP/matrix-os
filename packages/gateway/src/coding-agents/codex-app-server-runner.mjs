@@ -1,6 +1,11 @@
+import { CodexBrowserBindSchema, CodexBrowserStartSchema, createCodexBrowserBootstrap, codexBrowserThreadConfig, codexBrowserChildEnvironment, CODEX_BROWSER_INSTRUCTIONS } from "./codex-browser-bootstrap.mjs";
+import { startCodexNativeProviderSession } from "./codex-native-provider-session.mjs";
+import { RunnerConfigSchema, ModelOptionSchema, PendingTurnSchema, EffortSchema, ServiceTierSchema } from "./codex-runner-config.mjs";
+import { createNativeCodexExecutionProof, assertNativeCodexThreadProvider, verifyNativeCodexHumanControl } from "./native-codex-execution-proof.mjs";
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
 import { CodexExecutionTimeout, codexExecutionFailureReason, codexTerminalFailureReason } from "./codex-terminal-failure.mjs";
 import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
+import { codexCommandPreview } from "./codex-command-preview.mjs";
 import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
 import { createHash } from "node:crypto";
@@ -9,7 +14,7 @@ import { chmod, lstat, mkdir, open, realpath, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { CodexTransportError, MAX_CODEX_TRANSPORT_BYTES, consumeCodexProviderOutput } from "./codex-provider-output.mjs";
+import { CodexTransportError, MAX_CODEX_TRANSPORT_BYTES } from "./codex-provider-output.mjs";
 import { z } from "zod/v4";
 import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
 import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
@@ -17,7 +22,7 @@ import { createCodexExecutionWatchdog } from "./codex-execution-watchdog.mjs";
 import { CodexHibernateControlSchema, createCodexIdleHibernation } from "./codex-idle-hibernation.mjs";
 import { CodexDeferredInputControlSchema, deferCodexNativeInput } from "./codex-deferred-input.mjs";
 import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
-import { initializeCodexProvider, ProviderStartupCleanupUnconfirmed, signalCodexProviderChild } from "./codex-provider-startup.mjs";
+import { ProviderStartupCleanupUnconfirmed, signalCodexProviderChild } from "./codex-provider-startup.mjs";
 import { MATRIX_INTEGRATIONS_INSTRUCTIONS } from "./codex-matrix-integration-instructions.mjs";
 
 process.on("uncaughtException", () => {
@@ -50,7 +55,6 @@ const MAX_CAPTURED_ARTIFACT_BYTES = 10 * 1024 * 1024;
 const TURN_FRAME_V1_PREFIX = "matrix-turn-v1:";
 const TURN_FRAME_V2_PREFIX = "matrix-turn-v2:";
 const UNSAFE_DISPLAY_TEXT = /(stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
-const CREDENTIAL_DISPLAY_TEXT = /(?:api[_-]?key|authorization|cookie|credential|password|secret|token)\s*(?:=|:|\s)/i;
 const NativeRequestIdSchema = z.union([z.string().min(1).max(128), z.number().int().safe()]);
 const NativeReferenceSchema = z.string().min(1).max(512);
 const ApprovalMethodSchema = z.enum([
@@ -80,37 +84,6 @@ const NativeApprovalDecisionListSchema = z.array(z.unknown()).max(16).transform(
     const parsed = NativeApprovalDecisionSchema.safeParse(decision);
     return parsed.success ? [parsed.data] : [];
   }));
-// This runner is executed directly by plain Node, so keep this boundary schema
-// aligned with ProviderModelReferenceSchema from @matrix-os/contracts.
-const ProviderModelReferenceSchema = z.string()
-  .min(1)
-  .max(160)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*(?:\/[A-Za-z0-9][A-Za-z0-9_.:-]*)*$/)
-  .refine((value) => !value.includes(".."));
-const RunnerConfigSchema = z.object({
-  prompt: z.string().trim().min(1).max(64 * 1024),
-  providerThreadId: NativeReferenceSchema.optional(),
-  approvalPolicy: z.enum(["untrusted", "on-request", "never"]),
-  sandbox: z.enum(["read-only", "workspace-write", "danger-full-access"]),
-  writableRoots: z.array(z.string().min(1).max(4096).refine(isAbsolute)).max(20),
-  model: ProviderModelReferenceSchema.optional(),
-  effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional(),
-  serviceTier: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
-}).strict();
-const ModelOptionSchema = z.object({
-  id: z.string().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/),
-  value: z.union([
-    z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/),
-    z.boolean(),
-  ]),
-}).strict();
-const PendingTurnSchema = z.object({
-  prompt: z.string().trim().min(1).max(64 * 1024),
-  model: RunnerConfigSchema.shape.model,
-  modelOptions: z.array(ModelOptionSchema).max(32).default([]),
-}).strict();
-const EffortSchema = RunnerConfigSchema.shape.effort;
-const ServiceTierSchema = RunnerConfigSchema.shape.serviceTier;
 const ApprovalRequestSchema = z.object({
   id: NativeRequestIdSchema,
   method: ApprovalMethodSchema,
@@ -305,6 +278,8 @@ const SteerControlSchema = z.object({
 }).strict();
 const ControlSchema = z.discriminatedUnion("type", [
   CodexHibernateControlSchema,
+  CodexBrowserBindSchema,
+  CodexBrowserStartSchema,
   TurnControlSchema,
   SteerControlSchema,
   InterruptControlSchema,
@@ -348,6 +323,9 @@ try {
 }
 
 const toolOutputKey = process.env.MATRIX_HOME ? await tryLoadToolOutputKey(process.env.MATRIX_HOME) : undefined;
+const browserBootstrap = createCodexBrowserBootstrap(config.browserAttemptId);
+let currentBrowserLease;
+let nativeSession;
 const artifactHomePath = resolve(dirname(eventPath), "../../..");
 const artifactStorageDirectory = join(artifactHomePath, "data", "chat-artifacts", "codex", "sha256");
 const artifactSessionId = basename(eventPath, extname(eventPath));
@@ -388,6 +366,10 @@ let activeTurn = false;
 let activeTurnOutcome;
 let nativeThreadId;
 let activeNativeTurnId;
+// Native session mechanics live in codex-native-provider-session.mjs. This
+// composition guard stays here pending the runner-loop extraction planned in
+// specs/627-browser-vps-comparison/codex-claude-browser.md.
+let renewingNativeTurn = false;
 let activeTurnTokenUsage;
 let activeTurnFailureReason;
 let terminalEventCount = 0;
@@ -517,19 +499,11 @@ function safeDisplayPath(value) {
   return undefined;
 }
 
-function safeToolDetails(item) {
+function safeToolDetails(item, toolCallId) {
   if (item.type === "commandExecution") {
-    const command = typeof item.command === "string" ? item.command.trim() : "";
-    const safeCommand = command.length > 0
-      && command.length <= 1_000
-      && !UNSAFE_DISPLAY_TEXT.test(command)
-      && !CREDENTIAL_DISPLAY_TEXT.test(command)
-      && !/[\r\n\u0000]/.test(command)
-      ? command
-      : undefined;
     const cwd = safeDisplayPath(item.cwd);
     return {
-      ...(safeCommand ? { preview: safeCommand, previewKind: "command" } : {}),
+      ...codexCommandPreview(item.command, toolCallId, toolOutputKey),
       ...(cwd ? { detail: `Working directory: ${cwd}` } : {}),
     };
   }
@@ -908,7 +882,7 @@ async function handleItemLifecycle(raw) {
     privateToolItems.add(matrixItemId);
   }
   const presentation = toolPresentation(item);
-  const details = safeToolDetails(item);
+  const details = safeToolDetails(item, matrixItemId);
   if (parsed.data.method === "item/started") {
     assertTrackedItemCapacity(startedToolItems, matrixItemId);
     await persist({
@@ -946,6 +920,7 @@ async function handleItemLifecycle(raw) {
     type: "matrix.codex.tool.completed",
     toolCallId: matrixItemId,
     outcome: toolOutcome(item.status),
+    ...details,
   });
   startedToolItems.delete(matrixItemId);
   privateToolItems.delete(matrixItemId);
@@ -1073,11 +1048,7 @@ async function handleProviderMessage(raw) {
   }
 }
 
-async function discardProviderErrors(stream) {
-  for await (const _chunk of stream) {
-    // Provider stderr can include credentials, paths, or raw failures.
-  }
-}
+
 
 function controlResponse(socket, value) {
   socket.end(`${JSON.stringify(value)}\n`, () => { if (idleHibernation.closing) stop(); });
@@ -1098,6 +1069,7 @@ async function steerActiveTurn(control) {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) return false;
     try {
+      await verifyNativeSubscription?.(request);
       await request("turn/steer", {
         threadId: expectedThreadId,
         expectedTurnId,
@@ -1131,13 +1103,27 @@ async function applyControl(control) {
     const same = replay.fingerprint === digest([control]);
     return same ? { ok: true, replayed: true } : { ok: false };
   }
-  if (control.type === "turn") {
+  await verifyNativeCodexHumanControl(control, verifyNativeSubscription, request);
+  if (control.type === "browser_bind") {
+    const { type: _type, clientRequestId: _request, ...lease } = control;
+    if (!await browserBootstrap.bind(lease)) return { ok: false };
+  } else if (control.type === "browser_start") {
+    if (!browserBootstrap.release(control.attemptId)) return { ok: false };
+  } else if (control.type === "turn") {
     if (!enqueuePendingTurn(control)) return { ok: false };
   } else if (control.type === "steer") {
     if (!await steerActiveTurn(control)) return { ok: false };
   } else if (control.type === "interrupt") {
-    if (!nativeThreadId || !activeNativeTurnId) return { ok: false };
-    await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });
+    if (!nativeThreadId) return { ok: false };
+    if (!activeNativeTurnId) {
+      if (!renewingNativeTurn) return { ok: false };
+      // The admitted Matrix turn has no native id while its child is renewed.
+      // Stop the runner so it cannot dispatch that turn after reporting abort.
+      userStopped = true;
+      stop();
+    } else {
+      await request("turn/interrupt", { threadId: nativeThreadId, turnId: activeNativeTurnId });
+    }
   } else if (control.type === "defer_input") {
     if (!deferCodexNativeInput(control, pendingInputs, sendProvider)) return { ok: false };
   } else if (control.type === "approval") {
@@ -1320,6 +1306,7 @@ function stop() {
   if (stopping) return;
   stopping = true;
   startupController.abort();
+  browserBootstrap.fail();
   input.close();
   wakeTurn?.();
   wakeTurn = undefined;
@@ -1329,7 +1316,7 @@ function stop() {
   stopTimer.unref();
 }
 
-async function finishTurn(outcome, failureReason) {
+async function finishTurn(outcome, failureReason, requiresTerminal = false) {
   executionWatchdog.stop();
   await mcpElicitations.drain();
   const hasUnsettledItems = assistantItemsWithDelta.size > 0 ||
@@ -1337,7 +1324,7 @@ async function finishTurn(outcome, failureReason) {
     startedToolItems.size > 0 ||
     toolItemsWithOutput.size > 0;
   if (!activeTurn && !hasUnsettledItems) {
-    if ((outcome === "failed" || outcome === "aborted") && terminalEventCount === 0) {
+    if ((outcome === "failed" || outcome === "aborted") && (terminalEventCount === 0 || requiresTerminal)) {
       await persist({ type: outcome === "aborted" ? "turn.aborted" : "turn.failed",
         ...(outcome === "failed" && failureReason ? { failureReason } : {}) });
       terminalEventCount += 1;
@@ -1389,6 +1376,7 @@ async function runTurn(threadId, turn) {
   activeTurnTokenUsage = undefined;
   activeTurnFailureReason = undefined;
   try {
+    await verifyNativeSubscription?.(request);
     const started = await request("turn/start", turnStartParams(threadId, turn));
     activeNativeTurnId = z.object({
       turn: z.object({ id: NativeReferenceSchema }).passthrough(),
@@ -1431,67 +1419,57 @@ async function runTurn(threadId, turn) {
 process.once("SIGTERM", () => { userStopped = true; stop(); });
 process.once("SIGINT", () => { userStopped = true; stop(); });
 
-let exitCode = 0;
-try {
-  const initialized = await initializeCodexProvider({ command, args: commandArgs,
-    cwd: process.cwd(), env: process.env, signal: startupController.signal,
-    onRetry: async ({ label }) => {
-      startupReconnecting = true;
-      await persist({ type: "matrix.codex.tool.started", toolCallId: "startup_reconnect",
-        kind: "phase", displayName: label });
-    },
-  });
-  child = initialized.child;
-  childExit = initialized.closed.then((exit) => {
-    if (stopTimer) clearTimeout(stopTimer);
-    for (const pending of pendingRpc.values()) {
-      clearTimeout(pending.timeout);
-      pending.reject(new Error("provider_stopped"));
-    }
-    pendingRpc.clear();
-    return exit;
-  });
-  providerOutput = consumeCodexProviderOutput(child.stdout, handleProviderMessage).then(
-    () => ({ ok: true }), (error) => {
-      if (error instanceof CodexTransportError) {
-        process.stderr.write(`${JSON.stringify({
-          event: "coding_transport_failed", category: error.category,
-          bytes: error.bytes, limitBytes: MAX_CODEX_TRANSPORT_BYTES,
-          pendingMethods: [...new Set([...pendingRpc.values()].map((rpc) => rpc.method))].slice(0, 8),
-        })}\n`);
-      }
+async function startNativeSession(lease) {
+  const resumeId = nativeThreadId ?? config.providerThreadId;
+  nativeSession = await startCodexNativeProviderSession({ command, args: commandArgs,
+    cwd: process.cwd(), env: codexBrowserChildEnvironment(process.env, lease), signal: startupController.signal,
+    onChild(value) { child = value; },
+    onClosed() { if (stopTimer) clearTimeout(stopTimer); for (const pending of pendingRpc.values()) { clearTimeout(pending.timeout); pending.reject(new Error("provider_stopped")); } pendingRpc.clear(); },
+    onMessage: handleProviderMessage,
+    onFailure(error) {
+      if (error instanceof CodexTransportError) process.stderr.write(JSON.stringify({
+        event: "coding_transport_failed", category: error.category,
+        methods: [...pendingRpc.values()].slice(0, 8).map(({ method }) => method),
+      }) + "\n");
       stop();
-      return { ok: false, error };
     },
-  );
-  providerErrors = discardProviderErrors(child.stderr).then(
-    () => ({ ok: true }), (error) => { stop(); return { ok: false, error }; },
-  );
-  if (startupReconnecting) {
-    await persist({ type: "matrix.codex.tool.completed", toolCallId: "startup_reconnect", outcome: "success" });
-    startupReconnecting = false;
-  }
-  startupController.signal.throwIfAborted();
-  sendProvider({ method: "initialized", params: {} });
-  const threadMethod = config.providerThreadId ? "thread/resume" : "thread/start";
-  const started = await request(threadMethod, {
-    // Matrix only needs the identity; Codex retains the complete model context.
-    ...(config.providerThreadId ? { threadId: config.providerThreadId, excludeTurns: true } : {}),
-    model: config.model,
-    developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS,
-    serviceTier: config.serviceTier,
-    cwd: process.cwd(),
-    approvalPolicy: config.approvalPolicy,
-    sandbox: config.sandbox,
-    runtimeWorkspaceRoots: config.writableRoots,
-    experimentalRawEvents: false,
+    onRetry: async ({ label }) => { startupReconnecting = true; await persist({ type: "matrix.codex.tool.started", toolCallId: "startup_reconnect", kind: "phase", displayName: label }); },
   });
-  nativeThreadId = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() })
-    .passthrough().parse(started).thread.id;
-  if (config.providerThreadId && nativeThreadId !== config.providerThreadId) {
-    throw new Error("provider_resume_identity_mismatch");
+  childExit = nativeSession.closed; providerOutput = nativeSession.output; providerErrors = nativeSession.errors;
+  if (startupReconnecting) { await persist({ type: "matrix.codex.tool.completed", toolCallId: "startup_reconnect", outcome: "success" }); startupReconnecting = false; }
+  startupController.signal.throwIfAborted(); sendProvider({ method: "initialized", params: {} });
+  await verifyNativeSubscription?.(request);
+  const started = await request(resumeId ? "thread/resume" : "thread/start", {
+    ...(resumeId ? { threadId: resumeId, excludeTurns: true } : {}), model: config.model,
+    ...(config.nativeSubscription ? { modelProvider: "openai" } : {}),
+    developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS + (lease ? "\n\n" + CODEX_BROWSER_INSTRUCTIONS : ""),
+    serviceTier: config.serviceTier, cwd: process.cwd(), approvalPolicy: config.approvalPolicy,
+    sandbox: config.sandbox, runtimeWorkspaceRoots: config.writableRoots, experimentalRawEvents: false,
+    config: codexBrowserThreadConfig(lease),
+  });
+  if (config.nativeSubscription) assertNativeCodexThreadProvider(started);
+  const identity = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() }).passthrough().parse(started).thread.id;
+  if (resumeId && identity !== resumeId) throw new Error("provider_resume_identity_mismatch");
+  nativeThreadId = identity;
+  if (lease) {
+    const catalog = await request("mcpServerStatus/list", { threadId: identity, serverName: "matrix_shared_browser", limit: 10 });
+    const parsed = z.object({ data: z.array(z.object({ name: z.string(), runtimeStatus: z.string().nullable().optional(), tools: z.record(z.string(), z.unknown()) }).passthrough()).max(10) }).passthrough().parse(catalog);
+    const entry = parsed.data.find(server => server.name === "matrix_shared_browser");
+    if (!entry || entry.runtimeStatus !== "connected" || Object.keys(entry.tools).length !== 1 || !entry.tools.shared_browser) throw new Error("Browser startup unavailable");
   }
-  await persist({ type: "thread.started", thread_id: nativeThreadId });
+  currentBrowserLease = lease;
+  await persist({ type: "thread.started", thread_id: identity });
+}
+
+let exitCode = 0;
+let verifyNativeSubscription;
+let pendingAdmittedTurn = false;
+try {
+  if (config.nativeSubscription) verifyNativeSubscription = await createNativeCodexExecutionProof(config.expectedNativePrincipal, process.env, config.expectedNativeConsent);
+  const initialBrowser = await browserBootstrap.waitLease(startupController.signal);
+  await startNativeSession(initialBrowser);
+  browserBootstrap.markReady();
+  await browserBootstrap.waitRelease(startupController.signal);
   let turn = PendingTurnSchema.parse({
     prompt: config.prompt,
     model: config.model,
@@ -1500,8 +1478,22 @@ try {
       ...(config.serviceTier ? [{ id: "service_tier", value: config.serviceTier }] : []),
     ],
   });
+  let firstTurn = true;
   while (turn && !stopping) {
+    pendingAdmittedTurn = true;
+    if (!firstTurn && (currentBrowserLease || turn.browser)) {
+      renewingNativeTurn = true;
+      try {
+        await nativeSession.close(); startupController.signal.throwIfAborted();
+        await startNativeSession(turn.browser ?? undefined);
+      } finally {
+        renewingNativeTurn = false;
+      }
+    }
+    if (stopping) break;
+    firstTurn = false;
     const outcome = await runTurn(nativeThreadId, turn);
+    pendingAdmittedTurn = false;
     if (outcome === "failed") exitCode = 1;
     const next = await Promise.race([
       nextTurn().then((value) => ({ type: "turn", value })),
@@ -1531,6 +1523,7 @@ try {
   await new Promise((resolve) => setTimeout(resolve, SHUTDOWN_REPLAY_GRACE_MS));
   if (activeTurn || terminalEventCount === 0) exitCode = 1;
 } catch (error) {
+  browserBootstrap.fail();
   exitCode = 1;
   if (error instanceof ProviderStartupCleanupUnconfirmed) {
     // Keep the runner/thread supervised and non-terminal while its exact child
@@ -1547,7 +1540,7 @@ try {
       outcome: userStopped ? "cancelled" : "failed" });
   }
   await finishTurn(userStopped ? "aborted" : "failed", error instanceof ProviderRpcError ? error.failureReason
-    : codexExecutionFailureReason(error)).catch((error) => {
+    : codexExecutionFailureReason(error), pendingAdmittedTurn).catch((error) => {
     console.warn("[coding-agents] Terminal startup state could not be persisted:", error instanceof Error ? error.name : "UnknownError");
   });
   stop();

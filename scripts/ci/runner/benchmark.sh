@@ -42,6 +42,11 @@ else
 fi
 measure install pnpm install --frozen-lockfile
 measure prerequisites pnpm --filter @matrix-os/observability --filter @matrix-os/kernel --filter @matrix-os/integrations-mcp build
+# Build the checkout's identity provider before direct Vitest lanes. No runtime
+# compilation or timestamp fallback is permitted when the addon is unavailable.
+if [[ -f packages/gateway/native/build.mjs ]]; then
+  measure filesystem-identity node packages/gateway/native/build.mjs
+fi
 # Historical baselines predate the no-emit helper; retain their existing wrapper.
 # Inspect JSON only and emit one of two fixed script names.
 typecheck_script=$(node --input-type=module -e '
@@ -99,6 +104,7 @@ general_native_suites=(
   operator
   organization-management
   project-chat-inspector
+  project-deletion
   project-folder-picker-layout
   provider-auth-terminal
   provider-settings-idle
@@ -175,6 +181,7 @@ run_suite() {
         tests/e2e/provider-authorization-electron.e2e.test.ts tests/e2e/desktop/provider-auth-terminal.e2e.test.ts \
         tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts \
         tests/e2e/desktop/provider-settings-idle.e2e.test.ts tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts \
+        tests/e2e/desktop/project-deletion.e2e.test.ts \
         tests/e2e/desktop/terminal-file-drop.e2e.test.ts \
         tests/e2e/desktop/terminal-snapshot.e2e.test.ts tests/e2e/desktop/release-alignment.e2e.test.ts \
         tests/e2e/desktop/chat-title-layout.e2e.test.ts

@@ -1,5 +1,5 @@
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
-import { ChatMetadataVersionSchema, projectChatMetadata } from "./metadata-wire.js";
+import { ChatMetadataVersionSchema, projectChatMetadata, ChatImportSourceVersionSchema, projectChatImportSource } from "./metadata-wire.js";
 import { projectChatFundingErrors } from "./funding-error-wire.js";
 import { ChatFundingWireVersionSchema } from "@matrix-os/contracts";
 import { ChatReadStateWireVersionSchema, projectChatReadStateResponse } from "@matrix-os/contracts";
@@ -7,6 +7,7 @@ import {
   ChatEventWireVersionSchema,
   ChatInputWireVersionSchema,
   ChatMessageWireVersionSchema,
+  ChatCommandPreviewWireVersionSchema,
   projectChatEventFrame,
   projectChatMessageFrame,
 } from "@matrix-os/contracts";
@@ -66,10 +67,16 @@ export function registerCanonicalChatEventHttpRoute(options: {
       return context.json({ error: "Invalid stream cursor" }, 400);
     }
 
+    const importSourceVersion = ChatImportSourceVersionSchema.safeParse(context.req.query("importSourceVersion"));
+    if (!importSourceVersion.success || (context.req.queries("importSourceVersion")?.length ?? 0) > 1) return context.json({ error: "Unsupported import source version" }, 400);
     const messageVersion = ChatMessageWireVersionSchema.safeParse(context.req.query("messageVersion"));
     if (!messageVersion.success) return context.json({ error: "Unsupported message version" }, 400);
     const inputVersion = ChatInputWireVersionSchema.safeParse(context.req.query("inputVersion"));
     if (!inputVersion.success) return context.json({ error: "Unsupported input version" }, 400);
+    const commandPreviewVersion = ChatCommandPreviewWireVersionSchema.safeParse(context.req.query("commandPreviewVersion"));
+    if (!commandPreviewVersion.success || (context.req.queries("commandPreviewVersion")?.length ?? 0) > 1) {
+      return context.json({ error: "Unsupported command preview version" }, 400);
+    }
     const metadataVersion = ChatMetadataVersionSchema.safeParse(context.req.header("x-matrix-chat-metadata"));
     if (!metadataVersion.success) return context.json({ error: "Unsupported metadata version" }, 400);
     const fundingVersion = ChatFundingWireVersionSchema.safeParse(context.req.query("fundingVersion"));
@@ -117,11 +124,11 @@ export function registerCanonicalChatEventHttpRoute(options: {
       send(frame: CanonicalChatTransportFrame): boolean {
         if (closed || (controller.desiredSize ?? 0) <= 0) return false;
         try {
-          const projected = projectChatMessageFrame(projectChatEventFrame(frame, eventVersion.data), messageVersion.data, inputVersion.data);
+          const projected = projectChatMessageFrame(projectChatEventFrame(frame, eventVersion.data), messageVersion.data, inputVersion.data, commandPreviewVersion.data);
           const readProjected = projected.type === "chat.content" ? {
             ...projected, content: projectChatReadStateResponse(projected.content, readStateVersion.data),
           } : projected;
-          controller.enqueue(encodeFrame(encoder, projectChatFundingErrors(projectChatMetadata(projectChatRecipeSources(readProjected), metadataVersion.data), fundingVersion.data)));
+          controller.enqueue(encodeFrame(encoder, projectChatFundingErrors(projectChatMetadata(projectChatRecipeSources(projectChatImportSource(readProjected, importSourceVersion.data)), metadataVersion.data), fundingVersion.data)));
           return true;
         } catch (error: unknown) {
           console.warn("[chat/event-http-route] Frame enqueue failed:", error instanceof Error ? error.name : "UnknownError");

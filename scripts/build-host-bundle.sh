@@ -44,6 +44,7 @@ pnpm --filter '@matrix-os/integrations-mcp' build
 pnpm --filter '@matrix-os/scope-runtime' build
 pnpm --filter '@matrix-os/bot-runtime' build
 pnpm --filter '@matrix-os/gateway' build
+test -f "$ROOT_DIR/packages/gateway/dist/collaboration/filesystem-identity.node"
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
 cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"
 node --import=tsx "$ROOT_DIR/scripts/smoke-gateway-production-loader.mjs"
@@ -123,6 +124,11 @@ chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/no
 find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
+# The Browser spike requires native services outside app/. Ship an explicit,
+# guarded operator setup command and prebuilt viewer, without enabling it on customers.
+pnpm exec vite build "$ROOT_DIR/scripts/spikes/browser-vps/lab" --config "$ROOT_DIR/scripts/spikes/browser-vps/lab/vite.config.ts"
+node "$ROOT_DIR/scripts/stage-browser-preview.mjs" "$ROOT_DIR/scripts/spikes/browser-vps" "$STAGE_DIR/bin"
+chmod 0755 "$STAGE_DIR/bin/matrix-install-browser-preview"
 node "$ROOT_DIR/scripts/prepare-funded-host-component.mjs" \
   "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/funded-host-config"
 chmod 0755 "$STAGE_DIR/bin/matrix-postgres-start"
@@ -143,6 +149,7 @@ chmod 0755 "$STAGE_DIR/bin/matrix-support-access"
 cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"
 install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh"
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
+test -f "$STAGE_DIR/app/packages/gateway/dist/collaboration/filesystem-identity.node"
 cp -a "$ROOT_DIR/shell" "$STAGE_DIR/app/shell"
 cp -a "$ROOT_DIR/home" "$STAGE_DIR/app/home"
 mkdir -p "$STAGE_DIR/app/scripts"

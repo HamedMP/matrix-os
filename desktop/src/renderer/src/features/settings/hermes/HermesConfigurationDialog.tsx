@@ -196,7 +196,7 @@ export function HermesConfigurationDialog({
       <div className="relative flex h-[min(720px,82vh)] flex-col overflow-hidden">
         <header className="flex items-start justify-between border-b px-5 py-4" style={{ borderColor: "var(--border-subtle)" }}>
           <div className="flex items-start gap-3">
-            <div className="rounded-lg p-2" style={{ background: "var(--accent-muted)", color: "var(--accent)" }}>
+            <div className="rounded-lg p-2" style={{ background: "var(--accent-muted)", color: "var(--accent-text)" }}>
               <Sparkles size={19} />
             </div>
             <div>

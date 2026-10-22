@@ -29,6 +29,9 @@ import {
 import { resolveLaunchUrl } from "./origin-policy";
 import { createWebContentsView } from "./web-contents-view";
 import type { NativeAppBridge } from "./native-app-bridge";
+import { createBrowserLabViewerAdmission, type BrowserLabViewerAuth } from "./browser-lab-viewer-admission";
+import { nativeBrowserProduct } from "../../shared/browser-products";
+import { browserProductLaunchUrl } from "./browser-product-launch";
 
 export type EmbedState = "loading" | "ready" | "auth-required" | "failed";
 
@@ -39,6 +42,8 @@ interface EmbedServiceDeps {
   emitState: (embedId: string, state: EmbedState) => void;
   appBridge?: NativeAppBridge;
   appPreloadPath?: string;
+  browserLabViewerAuth?: BrowserLabViewerAuth;
+  renewBrowserProductSession?: () => Promise<unknown>;
   startPortForward?: (options: StartPortForwardOptions) => Promise<PortForwardHandle>;
 }
 
@@ -74,6 +79,7 @@ export class EmbedService {
   private readonly manager: EmbedManager;
   private readonly tokenCache = new LaunchTokenCache();
   private readonly deps: EmbedServiceDeps;
+  private readonly viewerAdmission?: ReturnType<typeof createBrowserLabViewerAdmission>;
   private readonly pendingHostedShells = new Map<string, Bounds>();
   private readonly pendingApps = new Map<string, PendingAppEmbed>();
   private readonly pendingCodeEditors = new Map<string, Bounds>();
@@ -92,6 +98,8 @@ export class EmbedService {
 
   constructor(deps: EmbedServiceDeps) {
     this.deps = deps;
+    const viewerAdmission = deps.browserLabViewerAuth ? createBrowserLabViewerAdmission(deps.browserLabViewerAuth) : undefined;
+    this.viewerAdmission = viewerAdmission;
     this.manager = new EmbedManager({
       maxLive: 3,
       getAllowedOrigins: () => [this.deps.getGatewayOrigin()],
@@ -124,6 +132,11 @@ export class EmbedService {
           resolveNavigation,
           allowPublicNavigation,
           onState,
+          ...(kind === "app" && routeSlug === "browser-lab" && viewerAdmission
+            ? { registerViewerTransport: viewerAdmission.register } : {}),
+          ...(kind === "app" && slug && routeSlug && nativeBrowserProduct(slug, routeSlug)
+            ? { browserProduct: { origin: new URL(this.deps.getGatewayOrigin()).origin,
+                renew: this.deps.renewBrowserProductSession ?? (() => Promise.reject(new Error("browser unavailable"))) } } : {}),
           denyPermissions: kind === "code-editor" || kind === "browser",
           ...(bridge ? { appBridge: bridge } : {}),
         });
@@ -238,6 +251,7 @@ export class EmbedService {
   }
 
   closeAll(): void {
+    this.viewerAdmission?.close();
     this.hostedShellGeneration += 1;
     this.browserGeneration += 1;
     this.codeEditorGeneration += 1;
@@ -848,7 +862,8 @@ export class EmbedService {
     active = true,
     shouldAttach: () => boolean = () => true,
   ): Promise<"loading" | "auth-required" | "failed"> {
-    let cached = this.tokenCache.get(slug);
+    const product = nativeBrowserProduct(appIdentity, slug);
+    let cached = product ? null : this.tokenCache.get(slug);
     if (!cached) {
       let token;
       try {
@@ -858,13 +873,14 @@ export class EmbedService {
         return err instanceof AppLaunchError ? err.state : "failed";
       }
       if (token) {
-        this.tokenCache.set(slug, token);
+        if (!product) this.tokenCache.set(slug, token);
         cached = token;
       }
     }
     if (!cached) return "failed";
     if (!shouldAttach()) return "failed";
-    const resolved = resolveLaunchUrl(cached.launchUrl, gatewayOrigin);
+    const initial = resolveLaunchUrl(cached.launchUrl, gatewayOrigin);
+    const resolved = initial ? browserProductLaunchUrl(initial, slug, appIdentity) : null;
     if (!resolved) {
       console.warn("[embed-service] app launch url failed origin check");
       this.tokenCache.delete(slug);

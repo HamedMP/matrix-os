@@ -1,16 +1,20 @@
 import type { createGenericNativeWriter, GenericNativeWriterProfile } from "./generic-native-writer.js";
 import type { createHermesSettingsConnection } from "./hermes-settings-auth.js";
+import type { NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
 import { nativeWorkflowConnectionOptions } from "./native-workflow-options.js";
+import { createClaudeNativeConnectCompletion } from "./claude-native-connect-completion.js";
+import { observeNativeCommandCompletion } from './native-command-completion.js';
 import { authenticatedNativeHarness } from "./native-workflow-account.js";
 import type { createPiSettingsConnection } from "./pi-settings-auth.js";
 import type { createOpenClawSettingsConnection } from "./openclaw-settings-auth.js";
 import type { createOpenCodeSettingsConnection } from "./opencode-settings-auth.js";
+import type { createCodexSettingsConnection } from "./codex-settings-connection.js";
 import type { createClaudeSettingsLogin } from "./provider-workflow-browser.js";
 import type { NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
 import type { ProviderKeyVerifier } from "./provider-workflow-key.js";
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { randomUUID, createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { CODEX_VERIFIED_NPM_PACKAGE, type TerminalRef, type AiProviderSnapshotV3, type ProviderWorkflowStart } from '@matrix-os/contracts';
@@ -31,11 +35,13 @@ const packages = { claude: '@anthropic-ai/claude-code', codex: '@openai/codex', 
 function quote(value: string) { return `'${value.replaceAll("'", "'\\''")}'`; }
 export async function createNativeProviderWorkflowAdapters(options: {
   store: ProviderSettingsStoreWriter;
-  terminal: Pick<TerminalRuntimeSocketClient, 'ensureWorkspace' | 'createTab' | 'terminateTab' | 'attach' | 'listWorkspaces'>;
+  terminal: Pick<TerminalRuntimeSocketClient, 'ensureWorkspace' | 'createTab' | 'terminateTab' | 'attach' | 'listWorkspaces'>
+    & Partial<Pick<TerminalRuntimeSocketClient, 'getCommandResult'>>;
   runtimePrefix?: string;
   hermesCodexReuse?: () => Promise<void>;
   hermesConnection?: ReturnType<typeof createHermesSettingsConnection>;
   claudeBrowserLogin?: ReturnType<typeof createClaudeSettingsLogin>;
+  codexSettingsConnection?: ReturnType<typeof createCodexSettingsConnection>;
   piConnection?: ReturnType<typeof createPiSettingsConnection>;
   openclawConnection?: ReturnType<typeof createOpenClawSettingsConnection>;
   opencodeConnection?: ReturnType<typeof createOpenCodeSettingsConnection>;
@@ -79,8 +85,9 @@ export async function createNativeProviderWorkflowAdapters(options: {
     if (exact?.harness !== "claude" || provider !== "anthropic") return enableConnectedHarness(id, key);
     const source = current.accessSources.find(row => row.id === "owner_anthropic_key" && row.providerId === provider);
     if (!source || current.access.mode !== "writable" || !source.eligibleModelIds.includes(exact.route.modelId)) throw new ProviderWorkflowError("unavailable");
-    await options.store.mutate({ type: "select_access_source", harnessInstanceId: id, accessSourceId: source.id,
-      enableHarness: true, expectedRevision: current.revision, idempotencyKey: key });
+    // Fixed Claude refuses public access-source writes; only this verified key path may select the key.
+    if (!options.store.completeClaudeKeyConnection) throw new ProviderWorkflowError("unavailable");
+    await options.store.completeClaudeKeyConnection({ harnessInstanceId: id, expectedRevision: current.revision, idempotencyKey: key });
   };
   const snapshot = await options.store.getSnapshot();
   const hostControl = options.hostControl ?? await nativeHostControl();
@@ -110,18 +117,29 @@ export async function createNativeProviderWorkflowAdapters(options: {
     if (harness.harness === "hermes" && harness.installState === "installed" && options.hermesConnection) opencodeCapability = await options.hermesConnection.capabilities();
     const settingsConnection = harness.harness === "hermes" ? options.hermesConnection : harness.harness === "openclaw" ? options.openclawConnection : harness.harness === "pi" ? options.piConnection : options.opencodeConnection;
     const packageName = harness.harness in packages ? packages[harness.harness as keyof typeof packages] : null;
-    const canLogin = harness.installState === 'installed' && harness.loginMethods.includes('terminal') && harness.harness === 'claude';
+    const canLogin = harness.installState === 'installed' && harness.loginMethods.includes('terminal') && (harness.harness === 'claude' || harness.harness === 'codex' && snapshot.access.mode === 'writable');
     const canBrowserLogin = canLogin && harness.harness === 'claude' && !!options.claudeBrowserLogin;
+    const canDeviceLogin = canLogin && harness.harness === 'codex' && !!options.store.completeCodexNativeLogin
+      && await options.codexSettingsConnection?.available() === true;
     const system = harness.harness === 'hermes' || harness.harness === 'openclaw';
     const keyAdapter = harness.installState === 'installed' ? options.verifyKeys?.[harness.harness] : undefined;
     const loginMethods: NonNullable<ProviderWorkflowStart['method']>[] = [
       ...(canBrowserLogin ? ['browser' as const] : []),
+      ...(canDeviceLogin ? ['device_code' as const] : []),
       ...(canLogin ? ['terminal' as const] : []),
     ];
     const apiKeyProviders = opencodeCapability.apiKey && settingsConnection && "apiKeyProviders" in settingsConnection
       ? [...await settingsConnection.apiKeyProviders()] : opencodeCapability.apiKey ? ['openai' as const] : keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [];
-    const confirmNativeLogin = async (idempotencyKey: string) => {
+    const nativeClaudeCompletion = createClaudeNativeConnectCompletion(options.store, harness.id);
+    const confirmNativeLogin = async (idempotencyKey: string, startRevision?: number, current = () => true, verifyNativeAccount?: NativeAccountCompletionProof) => {
       const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
+      if (!current()) throw new ProviderWorkflowError('unavailable');
+      if (harness.harness === 'codex') {
+        if (startRevision === undefined || fresh.revision !== startRevision || fresh.access.mode !== 'writable' || !options.store.completeCodexNativeLogin) throw new ProviderWorkflowError('unavailable');
+        await options.store.completeCodexNativeLogin({ harnessInstanceId: harness.id, expectedRevision: startRevision,
+          idempotencyKey: `connect-${createHash('sha256').update(idempotencyKey).digest('hex')}`, ...(verifyNativeAccount ? { verifyNativeAccount } : {}) });
+        return;
+      }
       const exact = authenticatedNativeHarness(fresh, harness.id, harness.harness);
       if (!exact) throw new ProviderWorkflowError('unavailable');
       if (!exact.enabled) await options.store.mutate({ type: 'set_harness_enabled', harnessInstanceId: exact.id,
@@ -139,32 +157,41 @@ export async function createNativeProviderWorkflowAdapters(options: {
         await enableConnectedKey(harness.id, `key-connect-${randomUUID()}`, key.providerId);
       } } : {}),
       async start({ request, connectionOption, publish, registerCleanup }) {
-        // Hosted subscription login is permitted only for the native Claude client.
-        // V1 and direct adapter callers cannot bypass this provider boundary.
-        if (request.kind === 'login' && harness.harness !== 'claude') throw new ProviderWorkflowNotStartedError();
+        const codexTerminalLogin = harness.harness === 'codex' && request.kind === 'login' && request.method === 'terminal';
+        // Codex admits only the qualified official native protocol or Terminal handoff.
+        if (request.kind === 'login' && harness.harness !== 'claude' && !(harness.harness === 'codex' && (request.method === 'terminal' || request.method === 'device_code' && canDeviceLogin))) throw new ProviderWorkflowNotStartedError();
+        if (request.kind === 'login' && request.harnessInstanceId !== harness.id) throw new ProviderWorkflowNotStartedError();
         if (request.kind === 'login' && (!request.method || !loginMethods.includes(request.method))) throw new ProviderWorkflowNotStartedError();
         if (connectionOption && (connectionOption.availability !== "available" || connectionOption.providerId !== (harness.harness === "claude" ? "anthropic" : "openai"))) throw new ProviderWorkflowNotStartedError();
-        if (request.kind === 'login' && connectionOption && (connectionOption.authKind !== 'subscription' || connectionOption.method !== request.method)) throw new ProviderWorkflowNotStartedError();
+        if (request.kind === 'login' && connectionOption && (connectionOption.authKind !== 'subscription'
+          || connectionOption.billingKind !== 'subscription' || connectionOption.executionKind !== 'native'
+          || connectionOption.method !== request.method)) throw new ProviderWorkflowNotStartedError();
+        if (request.kind === 'login' && harness.harness === 'claude') {
+          // No native resource exists during adoption. Register that fact before
+          // a completion can fail after committing; failure must not strand the
+          // workflow admission or fall back to another authentication process.
+          if (await nativeClaudeCompletion.tryAdopt(request.idempotencyKey,
+            () => registerCleanup(async () => {}))) {
+            publish({ state: 'succeeded', safeFailure: null });
+            return { async cancel() {} };
+          }
+        }
+        if (codexTerminalLogin && typeof options.terminal.getCommandResult !== 'function') throw new ProviderWorkflowNotStartedError();
+        if (request.kind === 'login' && request.method === 'device_code') {
+          if (harness.harness !== 'codex' || !canDeviceLogin || !options.codexSettingsConnection) throw new ProviderWorkflowNotStartedError();
+          const fresh = await options.store.getSnapshot();
+          const exact = fresh.harnesses.find(row => row.id === harness.id && row.harness === 'codex');
+          if (!exact || exact.installState !== 'installed' || fresh.access.mode !== 'writable') throw new ProviderWorkflowNotStartedError();
+          return options.codexSettingsConnection.start({ publish, registerCleanup,
+            onSuccess: (proof, current) => {
+              if (!proof) throw new ProviderWorkflowError("unavailable");
+              return confirmNativeLogin(request.idempotencyKey, fresh.revision, current, proof);
+            } });
+        }
         if (request.kind === 'login' && request.method === 'browser') {
           if (harness.harness !== 'claude' || !options.claudeBrowserLogin) throw new ProviderWorkflowNotStartedError();
-          return options.claudeBrowserLogin({ publish, registerCleanup, onSuccess: async () => {
-            const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
-            const exact = fresh.harnesses.find(row => row.id === harness.id && row.harness === 'claude');
-            const source = fresh.accessSources.find(row => row.id === 'owner_claude_profile'
-              && row.providerId === 'anthropic' && row.kind === 'provider_account');
-            const account = fresh.accounts.find(row => row.id === source?.accountId
-              && row.providerId === 'anthropic' && row.accessSourceId === source?.id
-              && row.authMethod === 'terminal' && row.authState === 'authenticated');
-            if (!exact || exact.installState !== 'installed' || fresh.access.mode !== 'writable'
-              || !source || !account || exact.route.providerId !== 'anthropic'
-              || !source.eligibleModelIds.includes(exact.route.modelId)) throw new ProviderWorkflowError('unavailable');
-            // Consent selects its exact account even if a saved API-key/Matrix
-            // route was active before login. Do not enable that previous source.
-            if (!options.store.completeClaudeNativeLogin) throw new ProviderWorkflowError('unavailable');
-            await options.store.completeClaudeNativeLogin({ harnessInstanceId: exact.id,
-              expectedRevision: fresh.revision,
-              idempotencyKey: `connect-${createHash("sha256").update(request.idempotencyKey).digest("hex")}` });
-          } });
+          return options.claudeBrowserLogin({ publish, registerCleanup,
+            onSuccess: () => nativeClaudeCompletion.complete(request.idempotencyKey) });
         }
         let releaseProfile: (() => void | Promise<void>) | undefined;
         if (request.kind !== "login" && options.profileGuard && (harness.harness === "codex" || harness.harness === "claude")) releaseProfile = await options.profileGuard.acquire(harness.harness, { kind: "write", durable: true });
@@ -214,6 +241,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
           await terminate();
         });
         let incarnation: string | undefined;
+        let nativeLoginStartRevision: number | undefined;
         if (request.kind === 'login') {
           const fresh = await options.store.getSnapshot();
           const current = fresh.harnesses.find(row => row.id === harness.id);
@@ -223,6 +251,9 @@ export async function createNativeProviderWorkflowAdapters(options: {
           const result = await options.store.mutate({ type: 'start_login', harnessInstanceId: harness.id, accountId: current.selectedAccountId, method: 'terminal', expectedRevision: fresh.revision, idempotencyKey: request.idempotencyKey });
           if (result.kind !== 'login_attempt' || result.attempt.action.kind !== 'open_terminal')
             throw new ProviderWorkflowError('unavailable');
+          // start_login persists its own revision. Bind to that returned receipt,
+          // never a later refresh which could include an intervening Off.
+          nativeLoginStartRevision = result.snapshot.revision;
           const [workspaceId, tabId] = result.attempt.action.terminalSessionId.split(':');
           ref = { workspaceId: workspaceId!, tabId: tabId! };
           try {
@@ -275,11 +306,41 @@ export async function createNativeProviderWorkflowAdapters(options: {
         let cancelling = false;
         let timer: NodeJS.Timeout | undefined;
         let stream: ReturnType<TerminalRuntimeSocketClient['attach']> | undefined;
-        registerCleanup(async () => { await terminate(); if (finishTask) await finishTask; });
+        let commandCompletion: ReturnType<typeof observeNativeCommandCompletion> | undefined;
+        const completionAbort = new AbortController();
+        const cancelCommand = async () => {
+          // Keep Main's non-Codex login/install cancellation semantics intact.
+          if (!codexTerminalLogin) {
+            if (finishTask) { await finishTask; return; }
+            cancelling = true;
+            try {
+              await terminate();
+              stopped = true;
+              if (timer) clearTimeout(timer);
+              stream?.close();
+              buffer = '';
+            } finally { cancelling = false; }
+            return;
+          }
+          cancelling = true;
+          completionAbort.abort();
+          commandCompletion?.stop();
+          try {
+            if (finishTask) { await finishTask; return; }
+            await terminate();
+            stopped = true;
+            if (timer) clearTimeout(timer);
+            stream?.close();
+            buffer = '';
+          } finally { cancelling = false; }
+        };
+        registerCleanup(codexTerminalLogin ? cancelCommand : async () => { await terminate(); if (finishTask) await finishTask; });
         const failStream = async () => {
           if (stopped || cancelling)
             return;
           cancelling = true;
+          completionAbort.abort();
+          commandCompletion?.stop();
           try {
             await terminate();
             if (timer)
@@ -301,7 +362,9 @@ export async function createNativeProviderWorkflowAdapters(options: {
           if (stopped || cancelling)
             return;
           await releaseProfile?.();
+          if (codexTerminalLogin && (stopped || cancelling || completionAbort.signal.aborted)) return;
           stopped = true;
+          commandCompletion?.stop();
           if (timer)
             clearTimeout(timer);
           stream?.close();
@@ -312,7 +375,8 @@ export async function createNativeProviderWorkflowAdapters(options: {
           }
           try {
             if (request.kind === 'login') {
-              await confirmNativeLogin(request.idempotencyKey);
+              if (harness.harness === 'claude') await nativeClaudeCompletion.complete(request.idempotencyKey);
+              else await confirmNativeLogin(request.idempotencyKey, nativeLoginStartRevision, () => !codexTerminalLogin || !completionAbort.signal.aborted);
               publish({ state: 'succeeded', safeFailure: null });
               return;
             }
@@ -324,7 +388,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
           }
           catch (error) {
             console.warn('[provider-workflow] Completion probe failed:', error instanceof Error ? error.name : 'UnknownError');
-            publish({ state: 'failed', safeFailure: 'unavailable' });
+            if (!codexTerminalLogin || !completionAbort.signal.aborted) publish({ state: 'failed', safeFailure: 'unavailable' });
           }
         };
         try {
@@ -340,8 +404,11 @@ export async function createNativeProviderWorkflowAdapters(options: {
                     publish(code);
                 }
               }
-              if (frame.type === 'exit' && !finishTask)
-                finishTask = finish(frame.exitCode);
+              if (frame.type === 'exit' && !finishTask) {
+                // An attachment/client exit cannot supply the inner login's code.
+                if (codexTerminalLogin) void commandCompletion?.check();
+                else finishTask = finish(frame.exitCode);
+              }
             },
             onClose() { void failStream(); },
             onError(error) { console.warn('[provider-workflow] Terminal stream failed:', error.name); void failStream(); },
@@ -350,6 +417,13 @@ export async function createNativeProviderWorkflowAdapters(options: {
         catch (error) {
           await terminate();
           throw error;
+        }
+        if (codexTerminalLogin) {
+          commandCompletion = observeNativeCommandCompletion({
+            read: () => options.terminal.getCommandResult!(ref!, incarnation!),
+            active: () => !stopped && !cancelling && !completionAbort.signal.aborted,
+            onExited: async code => { finishTask ??= finish(code); await finishTask; },
+          });
         }
         const expire = () => {
           if (stopped)
@@ -360,6 +434,8 @@ export async function createNativeProviderWorkflowAdapters(options: {
             return;
           }
           cancelling = true;
+          completionAbort.abort();
+          commandCompletion?.stop();
           void terminate().then(() => { stopped = true; buffer = ''; stream?.close(); publish({ state: 'expired', safeFailure: 'expired' }); })
             .catch((error: unknown) => {
             publish({ safeFailure: 'unavailable' });
@@ -373,21 +449,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
           timer = setTimeout(expire, 600000);
           timer.unref();
         }
-        return { terminalSessionId: `${ref!.workspaceId}:${ref!.tabId}`, async cancel() {
-            if (finishTask) { await finishTask; return; }
-            cancelling = true;
-            try {
-              await terminate();
-              stopped = true;
-              if (timer)
-                clearTimeout(timer);
-              stream?.close();
-              buffer = '';
-            }
-            finally {
-              cancelling = false;
-            }
-          } };
+        return { terminalSessionId: `${ref!.workspaceId}:${ref!.tabId}`, cancel: cancelCommand };
       },
     } satisfies ProviderWorkflowAdapter;
   }));

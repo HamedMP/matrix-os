@@ -13,7 +13,7 @@ const BUTTON_STYLES: Record<ButtonVariant, CSSProperties> = {
   primary: { background: "var(--accent)", color: "var(--text-on-accent)" },
   ghost: { background: "transparent", color: "var(--text-secondary)" },
   subtle: { background: "var(--bg-hover)", color: "var(--text-primary)" },
-  danger: { background: "var(--danger-muted)", color: "var(--danger)" },
+  danger: { background: "var(--danger-muted)", color: "var(--danger-text)" },
 };
 
 export function Button({
@@ -25,7 +25,7 @@ export function Button({
   return (
     <button
       type="button"
-      className={`no-drag inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium transition-colors duration-100 hover:brightness-105 disabled:opacity-50 ${className}`}
+      className={`matrix-control-${variant} no-drag inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium transition-colors duration-100 hover:brightness-105 disabled:opacity-50 ${className}`}
       style={{ ...BUTTON_STYLES[variant], ...style }}
       {...props}
     />
@@ -44,7 +44,7 @@ export function IconButton({
       aria-label={label}
       className={`no-drag inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors duration-100 ${className}`}
       style={{
-        color: active ? "var(--accent)" : "var(--text-tertiary)",
+        color: active ? "var(--accent-text)" : "var(--text-tertiary)",
         background: active ? "var(--accent-muted)" : "transparent",
       }}
       onMouseEnter={(e) => {
@@ -83,6 +83,9 @@ export function Dialog({
   top = "18vh",
   preserveTitlebar = false,
   onCloseAutoFocus,
+  modal = true,
+  trigger,
+  onOpenChange,
 }: {
   open: boolean;
   onClose: () => void;
@@ -94,9 +97,13 @@ export function Dialog({
   top?: string;
   preserveTitlebar?: boolean;
   onCloseAutoFocus?: (event: Event) => void;
+  modal?: boolean;
+  trigger?: ReactNode;
+  onOpenChange?: (open: boolean) => void;
 }) {
   return (
-    <RadixDialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+    <RadixDialog.Root modal={modal} open={open} onOpenChange={(next) => { if (onOpenChange) onOpenChange(next); else if (!next) onClose(); }}>
+      {trigger ? <RadixDialog.Trigger asChild>{trigger}</RadixDialog.Trigger> : null}
       <RadixDialog.Portal>
         {preserveTitlebar && open ? (
           <div
@@ -132,7 +139,7 @@ export function Dialog({
             } : { top }),
           }}
         >
-          <GettingStartedBlocker />
+          <GettingStartedBlocker active={modal} />
           <RadixDialog.Title className="sr-only">{title}</RadixDialog.Title>
           {children}
         </RadixDialog.Content>

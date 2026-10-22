@@ -24,6 +24,7 @@ export function createAccountDeletionRoutes(options: {
   exportData?(owner: string, cursor?: string): Promise<AccountDeletionExport>;
   exportPlatformData?(owner:string): Promise<unknown>;
   registerAppleAuthorization?(owner:string,code:string):Promise<void>;
+  newRequestsEnabled:boolean;
 }): Hono {
   const app = new Hono();
   app.use('*', async(c,next)=> { c.header('Cache-Control','private, no-store'); await next(); });
@@ -70,6 +71,7 @@ export function createAccountDeletionRoutes(options: {
       catch(error:unknown) { if (!(error instanceof SyntaxError)) throw error; return c.json({error:'Invalid request'},400); }
       if (!Confirm.safeParse(payload).success) return c.json({error:'Confirm the account deletion request.'},422);
       if (!options.service) return c.json(unavailable(),503);
+      if (!path.endsWith('/cancel') && options.newRequestsEnabled === false) return c.json(unavailable(),503);
       try {
         const status=path.endsWith('/cancel') ? await options.service.cancel(owner) : await options.service.schedule(owner);
         return c.json(status,path.endsWith('/cancel')||status.status==='completed'?200:202);

@@ -226,8 +226,8 @@ describe("bot event projection", () => {
     for (const event of events) await project(event);
     expect(sent).toEqual([
       { seq: 0, event: { type: "assistant_delta", text: "Hi" } },
-      { seq: 1, event: { type: "tool_progress", toolCallId: "call_1", capability: "artifact.read", phase: "started" } },
-      { seq: 2, event: { type: "tool_progress", toolCallId: "call_1", capability: "artifact.read", phase: "failed" } },
+      { seq: 1, event: { type: "tool_progress", toolCallId: "call_1", capability: "artifact.read", phase: "started", display: { name: "read_artifact" } } },
+      { seq: 2, event: { type: "tool_progress", toolCallId: "call_1", capability: "artifact.read", phase: "failed", display: { name: "read_artifact", output: "No displayable text result was recorded." } } },
     ]);
   });
 });
@@ -359,4 +359,65 @@ describe("bot worker commands", () => {
     await expect(bot.handle({ kind: "bot.run" })).rejects.toEqual(new BotWorkerError("invalid_command"));
     await expect(bot.handle({ ...runCommand, systemPrompt: "inline" })).rejects.toEqual(new BotWorkerError("invalid_command"));
   });
+});
+
+it("retains managed Pi display evidence through partial and final tool results", async () => {
+  const sent: BotEvent[] = [];
+  const project = createEventProjector({ send: async event => { sent.push(event); }, capabilityForTool: () => "mcp.call" });
+  await project({ type: "tool_execution_start", toolCallId: "call_display", toolName: "mcp_call", args: { tool: "run_command", arguments: { command: "printf proof" } } });
+  await project({ type: "tool_execution_update", toolCallId: "call_display", toolName: "mcp_call", args: {}, partialResult: { content: [{ type: "text", text: "partial" }], details: undefined } });
+  await project({ type: "tool_execution_end", toolCallId: "call_display", toolName: "mcp_call", result: { content: [{ type: "text", text: "final" }] }, isError: false });
+  await project.drain(); project.close();
+  expect(sent).toMatchObject([
+    { event: { phase: "started", display: { name: "mcp_call", command: "printf proof" } } },
+    { event: { phase: "updated", display: { output: "partial" } } },
+    { event: { phase: "completed", display: { output: "final" } } },
+  ]);
+});
+
+it("reserves a bounded terminal event after live text fills the event budget", async () => {
+  const sent: BotEvent[] = []; let clock = 0;
+  const project = createEventProjector({ send: async event => { sent.push(event); }, capabilityForTool: () => "artifact.read", now: () => clock });
+  await project({ type: "tool_execution_start", toolCallId: "call_budget", toolName: "read_artifact", args: { path: "proof.txt" } });
+  const partial = fauxAssistantMessage(fauxText(""));
+  for (let i = 0; i < MAX_EVENTS_PER_TURN; i++) {
+    clock += 300;
+    await project({ type: "message_update", message: partial, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x", partial } });
+  }
+  await project({ type: "tool_execution_end", toolCallId: "call_budget", toolName: "read_artifact", result: { content: [{ type: "text", text: "final proof" }] }, isError: false });
+  project.close();
+  expect(sent.length).toBeLessThanOrEqual(MAX_EVENTS_PER_TURN);
+  expect(sent.at(-1)?.event).toMatchObject({ type: "tool_progress", phase: "completed", display: { output: "final proof" } });
+});
+
+it.each([
+  { openFirst: false, deltas: 1999, buffered: false, reverse: false, visible: [], paused: 1 },
+  { openFirst: false, deltas: 1997, buffered: true, reverse: false, visible: ["call_b"], paused: 0 },
+  { openFirst: true, deltas: 1996, buffered: false, reverse: false, visible: ["call_a", "call_b"], paused: 0 },
+  { openFirst: true, deltas: 1996, buffered: false, reverse: true, visible: ["call_a", "call_b"], paused: 0 },
+  { openFirst: true, deltas: 1997, buffered: false, reverse: false, visible: ["call_a"], paused: 1 },
+  { openFirst: true, deltas: 1997, buffered: false, reverse: true, visible: ["call_a"], paused: 1 },
+])("keeps tool starts paired with reserved terminals at the event boundary (%j)", async ({ openFirst, deltas, buffered, reverse, visible, paused }) => {
+  const sent: BotEvent[] = []; let clock = 0;
+  const project = createEventProjector({ send: async event => { sent.push(event); }, capabilityForTool: () => "artifact.read", now: () => clock });
+  const start = (toolCallId: string): AgentEvent => ({ type: "tool_execution_start", toolCallId, toolName: "read_artifact", args: { path: "proof.txt" } });
+  const end = (toolCallId: string): AgentEvent => ({ type: "tool_execution_end", toolCallId, toolName: "read_artifact", result: { content: [{ type: "text", text: "final proof" }] }, isError: false });
+  const partial = fauxAssistantMessage(fauxText(""));
+  const delta: AgentEvent = { type: "message_update", message: partial, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x", partial } };
+  try {
+    if (openFirst) await project(start("call_a"));
+    for (let i = 0; i < deltas; i++) { clock += 300; await project(delta); }
+    if (buffered) await project(delta); // Flushed by the following start, before admission.
+    await project(start("call_b"));
+    await project({ type: "tool_execution_update", toolCallId: "call_b", toolName: "read_artifact", args: {}, partialResult: { content: [{ type: "text", text: "partial" }] } });
+    for (const id of reverse ? ["call_b", "call_a"] : ["call_a", "call_b"]) await project(end(id));
+    await project(end("call_b")); // A duplicate terminal cannot consume another slot.
+    await project.drain();
+  } finally { project.close(); }
+  const tools = sent.flatMap(item => item.event.type === "tool_progress" ? [item.event] : []);
+  expect(tools.filter(event => event.phase === "started").map(event => event.toolCallId).sort()).toEqual(visible);
+  expect(tools.filter(event => event.phase === "completed").map(event => event.toolCallId).sort()).toEqual(visible);
+  expect(sent.filter(item => item.event.type === "activity")).toHaveLength(paused);
+  expect(sent).toHaveLength(2000);
+  expect(sent.every((event, index) => event.seq === index)).toBe(true);
 });

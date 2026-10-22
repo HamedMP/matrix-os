@@ -99,6 +99,7 @@ const HMAC_WEBHOOK_PREFIXES = [
 const ROUTE_SCOPED_BEARER_PATHS = [
   "/api/internal/upgrade",
   "/api/internal/platform-speech/config",
+  "/api/internal/platform-funded-ai/config",
 ];
 const ROUTE_SCOPED_SIGNATURE_PATHS = [
   "/api/internal/terminal-acceptance/run",
@@ -249,6 +250,13 @@ export function authMiddleware(
     // not by bearer token. Exempt them here so the session middleware
     // (mounted separately) is the single verifier.
     if (APP_IFRAME_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
+      return nextWithReady(c, next);
+    }
+
+    // Public site submission is authenticated by its narrowly scoped HMAC verifier.
+    if (c.req.method === "POST" && /^\/api\/internal\/sites\/[a-f0-9-]{36}\/submit$/.test(normalizedPath)
+      && c.req.header("x-matrix-site-signature") && c.req.header("x-matrix-site-timestamp")) {
+      if (!webhookRateLimiter.check(getTrustedProxyClientIp(c))) return tooManyRequests(c);
       return nextWithReady(c, next);
     }
 

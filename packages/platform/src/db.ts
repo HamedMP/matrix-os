@@ -10,7 +10,8 @@ import {
   type Transaction,
   type Updateable,
 } from 'kysely';
-import pg from 'pg';
+import type pg from 'pg';
+import { createPostgresPool } from './database/postgres-connections.js';
 import { wrapPlatformDb } from './database/transaction-scope.js';
 import { runPlatformStartupMigrations } from './database/run-migrations.js';
 import { parseStringArray } from './database/json.js';
@@ -149,6 +150,7 @@ export interface AiFundedPriorityClaimsTable {
 }
 
 export interface AiFundedUsageReservationsTable {
+  terminal_outcome: Generated<string | null>;
   charge_waiver: Generated<string | null>;
   execution_admission_release: Generated<string | null>;
   execution_recovery_slot: Generated<0 | 1>;
@@ -816,6 +818,9 @@ export interface PlatformDatabase {
   billing_google_purchases: GooglePurchaseTable;
   billing_google_checkout_attribution: GoogleCheckoutAttributionTable;
   preview_drive_grants: PreviewDriveGrantsTable;
+  public_sites: import('./sites/types.js').SitesTable;
+  public_site_versions: import('./sites/types.js').SiteVersionsTable;
+  public_site_aliases: import('./sites/types.js').SiteAliasesTable;
   account_deletion_jobs: AccountDeletionJobsTable;
   users: UsersTable;
   containers: ContainersTable;
@@ -1316,10 +1321,7 @@ export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_P
   let pool: pg.Pool | null = null;
   const kysely = typeof opts === 'string'
     ? (() => {
-        pool = new pg.Pool({ connectionString: opts, max: 10 });
-        pool.on('error', (err) => {
-          console.error('[platform-db] Idle pool client error:', err.message);
-        });
+        pool = createPostgresPool({ connectionString: opts, max: 10 }, 'platform-db');
         return new Kysely<PlatformDatabase>({ dialect: new PostgresDialect({ pool }) });
       })()
     : new Kysely<PlatformDatabase>({ dialect: opts.dialect as never });

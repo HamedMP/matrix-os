@@ -1,3 +1,4 @@
+import { projectBotToolDisplay } from "./tool-event-display.js";
 /**
  * The `matrix_bot` canonical Chat adapter (spec 536). It turns a person's
  * message in a bot's direct chat into one bot run, and maps the worker's
@@ -10,6 +11,7 @@
  * found afterwards is failed, its runtime stopped, and nothing is replayed.
  */
 import { createHash } from "node:crypto";
+import { assertTextOnlySteering } from "../chat/steer-delivery-error.js";
 import type { BotEvent } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import {
@@ -55,7 +57,7 @@ function safeRef(prefix: string, value: string): string {
   return SAFE_REF.test(value) ? value : `${prefix}_${createHash("sha256").update(value).digest("hex").slice(0, 32)}`;
 }
 
-export function mapBotEvent(event: BotEvent["event"]): CanonicalProviderRunEvent[] {
+export function mapBotEvent(event: BotEvent["event"], options: { toolOutputKey?: Buffer } = {}): CanonicalProviderRunEvent[] {
   switch (event.type) {
     case "assistant_delta": {
       const deltas: CanonicalProviderRunEvent[] = [];
@@ -65,11 +67,11 @@ export function mapBotEvent(event: BotEvent["event"]): CanonicalProviderRunEvent
       return deltas;
     }
     case "tool_progress":
-      return [{
+      return projectBotToolDisplay(event, safeRef("tool", event.toolCallId), TOOL_LABELS[event.capability] ?? "Using a tool", options.toolOutputKey) ?? [{
         type: "tool.progress",
         toolCallId: safeRef("tool", event.toolCallId),
         label: TOOL_LABELS[event.capability] ?? "Using a tool",
-        status: event.phase === "started" ? "running" : event.phase,
+        status: event.phase === "started" || event.phase === "updated" ? "running" : event.phase,
       }];
     case "activity":
       return [{
@@ -94,7 +96,7 @@ const FAILURES: Partial<Record<NonNullable<BotTurnResult["blockedReason"]>, { co
 function completion(result: BotTurnResult): CanonicalProviderRunEvent {
   if (result.status === "completed" || result.status === "waiting_person") return { type: "run.completed", outcome: "completed" };
   if (result.status === "cancelled") return { type: "run.completed", outcome: "aborted" };
-  const failure = (result.blockedReason && FAILURES[result.blockedReason])
+  const failure = result.inputUnavailable ? { code: "resource_unavailable" as const, message: "The attachments could not be read. Attach the files again, using PNG, JPEG or WebP images up to 2 MiB, or files up to 1 MiB." } : (result.blockedReason && FAILURES[result.blockedReason])
     ?? { code: "run_failed" as const, message: "The bot could not finish this request." };
   return {
     type: "run.completed",
@@ -121,7 +123,7 @@ export function createMatrixBotChatProviderAdapter(options: {
       if (input.owner.type !== "personal") throw new Error("Bots run only for a personal owner");
       const handle = options.orchestrator.start({
         ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId,
-        selection: input.selection, text: messageText(input.parts), signal: input.signal,
+        selection: input.selection, text: messageText(input.parts), parts: input.parts, signal: input.signal,
       });
       let result: BotTurnResult;
       let drained = false;
@@ -159,6 +161,7 @@ export function createMatrixBotChatProviderAdapter(options: {
       yield CanonicalProviderRunEventSchema.parse(completion(result));
     },
     async steer(input) {
+      assertTextOnlySteering(input.parts);
       const text = messageText(input.parts) || input.prompt;
       if (!await options.orchestrator.steer(input.runId, text)) throw new Error("Bot run is not accepting messages");
     },

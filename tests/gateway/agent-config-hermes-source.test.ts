@@ -313,3 +313,33 @@ describe("Hermes agent settings source", () => {
     expect(JSON.stringify(logWarning.mock.calls)).not.toContain(canary);
   });
 });
+
+describe('trusted Anthropic credential kind observation',()=>{
+ const model='claude-haiku-4-5-20251001';
+ const row={slug:'anthropic',authenticated:true,is_user_defined:false,models:[model]};
+ const observation={providerId:'anthropic',modelId:model,credentialKind:'api_key'} as const;
+ const read=(providers:unknown[]=[row],selected=model)=>vi.fn(async(path:string)=>path==='/api/status'?{gateway_running:false}:{provider:'anthropic',model:selected,providers});
+ it('uses bounded native kind proof for one exact built-in row with absent auth_type',async()=>{
+  const source=createHermesRuntimeSource(read(),{now:()=>1000,readNativeCredentialKind:async()=>observation});
+  const result=await source(new AbortController().signal);
+  expect(result.providers[0]?.authKind).toBe('api_key');
+  expect(result.runtime.options[0]?.nativeRouteObservation).toMatchObject({providerId:'anthropic',modelId:model,credentialKind:'api_key'});
+ });
+ it.each([
+  {providers:[row,row]},
+  {providers:[{...row,is_user_defined:true}]},
+  {providers:[{...row,authenticated:false}]},
+  {providers:[{...row,auth_type:'oauth'}]},
+  {providers:[{...row,auth_type:null}]},
+  {providers:[{...row,auth_type:'unrecognized'}]},
+  {providers:[row],selected:'different-model'},
+ ])('never overrides ambiguous or explicit native authentication',async({providers,selected})=>{
+  const source=createHermesRuntimeSource(read(providers,selected),{now:()=>1000,readNativeCredentialKind:async()=>observation});
+  const result=await source(new AbortController().signal);
+  expect(result.runtime.options[0]?.nativeRouteObservation?.credentialKind).not.toBe('api_key');
+ });
+ it('keeps metadata ambiguity closed when proof fails',async()=>{
+  const source=createHermesRuntimeSource(read(),{now:()=>1000,readNativeCredentialKind:async()=>null});
+  expect((await source(new AbortController().signal)).runtime.options[0]?.nativeRouteObservation).toBeUndefined();
+ });
+});

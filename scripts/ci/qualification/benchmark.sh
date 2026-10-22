@@ -43,10 +43,15 @@ for lane in unit mechanical web e2e;do
  measure setup "source-$lane" "${proof[@]}" --source-check "$lane" postinstall
  (( install_status == 0 )) || exit "$install_status"
 done
+build_prerequisites() {
+ pnpm --filter @matrix-os/observability --filter @matrix-os/kernel --filter @matrix-os/integrations-mcp build || return
+ # Direct Vitest lanes bypass the root test script that builds this native addon.
+ if [[ -f packages/gateway/native/build.mjs ]];then node packages/gateway/native/build.mjs;fi
+}
 for lane in unit mechanical web e2e;do
  cd "/work/$lane"
  export XDG_CACHE_HOME="/work/cache/$lane" XDG_DATA_HOME="/work/share/$lane" PYTHONPYCACHEPREFIX="/work/cache/$lane/python"
- measure setup "prerequisites-$lane" pnpm --filter @matrix-os/observability --filter @matrix-os/kernel --filter @matrix-os/integrations-mcp build
+ measure setup "prerequisites-$lane" build_prerequisites
  measure setup "brand-build-$lane" pnpm --filter @matrix-os/brand build
  measure setup "source-prerequisites-$lane" "${proof[@]}" --source-check "$lane" after-prerequisites
 done
@@ -121,6 +126,7 @@ e2e_lane() {
   step e2e electron-input xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/desktop/canonical-input.e2e.test.ts --maxWorkers=2 --reporter=default --reporter=json --outputFile=/work/results/electron-input.json
   step e2e electron-providers env MATRIX_PROVIDER_AUTH_ELECTRON=1 MATRIX_SETTINGS_EVIDENCE_DIR=output/playwright/settings-providers xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/provider-authorization-electron.e2e.test.ts tests/e2e/desktop/provider-auth-terminal.e2e.test.ts tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts tests/e2e/desktop/provider-settings-idle.e2e.test.ts --maxWorkers=2 --reporter=default --reporter=json --outputFile=/work/results/electron-providers.json
   step e2e electron-folder xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts --maxWorkers=2 --reporter=default --reporter=json --outputFile=/work/results/electron-folder.json
+  step e2e electron-deletion xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/desktop/project-deletion.e2e.test.ts --maxWorkers=2 --reporter=default --reporter=json --outputFile=/work/results/electron-deletion.json
   step e2e electron-clipboard xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/desktop/terminal-clipboard.e2e.test.ts --maxWorkers=1 --reporter=default --reporter=json --outputFile=/work/results/electron-clipboard.json
   step e2e electron-drop xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/desktop/terminal-file-drop.e2e.test.ts --maxWorkers=2 --reporter=default --reporter=json --outputFile=/work/results/electron-drop.json
   step e2e electron-snapshot xvfb-run --auto-servernum pnpm exec vitest run --config vitest.e2e.config.ts tests/e2e/desktop/terminal-snapshot.e2e.test.ts --maxWorkers=2 --reporter=default --reporter=json --outputFile=/work/results/electron-snapshot.json

@@ -33,10 +33,10 @@ it("keeps an ambiguous writer failure fenced after gateway recreation",async()=>
  expect(next).not.toHaveBeenCalled();
  await expect(writer.run("opencode",async()=>"independent")).resolves.toBe("independent");
 });
-it.each([401,500])("releases a typed pre-write probe refusal (%s) without a native write",async status=>{
+it.each([[401,"rejected"],[500,"unavailable"]] as const)("releases a typed pre-write probe refusal (%s) without a native write",async(status,code)=>{
  const {home,writer}=await fixture(), save=vi.fn();
  const verifier=createProviderKeyVerifier({providerId:"openai",save,fetchFn:async()=>new Response(null,{status})});
- await expect(writer.run("hermes",()=>verifier({harnessInstanceId:"hermes",providerId:"openai",apiKey:"synthetic"}))).rejects.toMatchObject({code:"rejected"});
+ await expect(writer.run("hermes",()=>verifier({harnessInstanceId:"hermes",providerId:"openai",apiKey:"synthetic"}))).rejects.toMatchObject({code});
  expect(save).not.toHaveBeenCalled();
  await expect(createGenericNativeWriter(home).run("hermes",async()=>"next")).resolves.toBe("next");
 });

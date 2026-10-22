@@ -35,9 +35,14 @@ describe("shared Chat owner list and detail reads", () => {
     await fixture.destroy();
   });
 
-  it.each(["discussion_only", "shared_ai"] as const)(
-    "projects an internal %s binding through the owner's normal list and detail APIs",
-    async (mode) => {
+  it.each([
+    { mode: "discussion_only", lifecycle: "shared" },
+    { mode: "shared_ai", lifecycle: "shared" },
+    { mode: "discussion_only", lifecycle: "deleting" },
+    { mode: "shared_ai", lifecycle: "deleting" },
+  ] as const)(
+    "projects an internal $mode binding in $lifecycle through the owner's list and detail APIs",
+    async ({ mode, lifecycle }) => {
       await repository.create(owner, {
         id: CHAT_ID,
         clientRequestId: `req_create_${mode}`,
@@ -60,7 +65,7 @@ describe("shared Chat owner list and detail reads", () => {
         resource_id: CHAT_ID,
         parent_scope_id: null,
         membership_mode: "direct",
-        lifecycle: "shared",
+        lifecycle,
         authority_runtime_id: "runtime_shared_chat_owner",
         execution_generation: mode === "shared_ai" ? 1 : null,
         execution_eligibility: null,

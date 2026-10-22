@@ -48,8 +48,12 @@ function platform() {
         modelId: input.modelId, reservedMicrousd: Math.min(1_000, input.maxCostMicrousd),
         maxCostMicrousd: input.maxCostMicrousd, billingMode: "usage" },
     })),
-    start: vi.fn(async () => ({ reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId })),
-    release: vi.fn(), finalize: vi.fn(async () => ({})),
+    start: vi.fn(async (input: { executionId?: string }) => ({
+      reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId,
+      executionId: input.executionId, contractVersion: 1, status: "in_flight" as const,
+      startedAt: NOW.toISOString(), expiresAt: "2026-10-13T10:10:00.000Z",
+    })),
+    release: vi.fn(), terminal: vi.fn(async () => ({})), finalize: vi.fn(async () => ({})),
   };
 }
 
@@ -103,8 +107,10 @@ describe("funded Bedrock relay", () => {
         modelId: input.modelId, reservedMicrousd: 1_000, maxCostMicrousd: input.maxCostMicrousd,
         billingMode: "usage" as const },
     }; });
-    control.start.mockImplementation(async () => { order.push("start"); return {
+    control.start.mockImplementation(async (input) => { order.push("start"); return {
       reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId,
+      executionId: input.executionId, contractVersion: 1, status: "in_flight" as const,
+      startedAt: NOW.toISOString(), expiresAt: "2026-10-13T10:10:00.000Z",
     }; });
     const bedrockUpstream: FundedGenerationUpstream = {
       dispatch: vi.fn(async () => { order.push("dispatch"); return { response: response(), provenance: {
@@ -223,8 +229,8 @@ describe("funded Bedrock relay", () => {
     const result = await app.fetch(request());
     expect(result.status).toBe(200);
     await expect(result.text()).rejects.toThrow("AI response stream failed");
-    await vi.waitFor(() => expect(control.finalize).toHaveBeenCalled());
-    expect(control.finalize).not.toHaveBeenCalledWith(expect.objectContaining({ mode: "exact" }), expect.anything());
+    await vi.waitFor(() => expect(control.terminal).toHaveBeenCalled());
+    expect(control.finalize).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
     await relay.close();
   });

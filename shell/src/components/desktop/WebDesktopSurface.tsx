@@ -8,6 +8,7 @@ import { useDesktopConfigStore, type DesktopIconPlacement } from "@/stores/deskt
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { buildWebDesktopIconApps, webGalleryLauncherIconUrl } from "@/lib/web-desktop-app-launch";
 import {
+  DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
   createDefaultOsViewDesktopIcons,
   fitOsViewDesktopIconsToViewport,
   normalizeOsViewDesktopAppPath,
@@ -188,7 +189,7 @@ function DesktopDestination({
         className="max-w-full truncate text-[12px] font-medium text-white"
         style={{ textShadow: "0 1px 2px rgba(0,0,0,.95), 0 0 3px rgba(0,0,0,.8)" }}
       >
-        {app.name === "Hermes" ? "Chat" : app.name}
+        {app.name}
       </span>
       </button>
       {menu && onRemove ? (
@@ -202,7 +203,7 @@ function DesktopDestination({
               setMenu(null);
             }}
           >
-            Remove {app.name === "Hermes" ? "Chat" : app.name} from Desktop
+            Remove {app.name} from Desktop
           </button>
         </div>
       ) : null}
@@ -274,7 +275,10 @@ export function WebDesktopSurface({
     height: typeof window === "undefined" ? 594 : Math.max(1, window.innerHeight - 126),
   }));
   const primeDesktopIcons = useDesktopConfigStore((state) => state.primeDesktopIcons);
-  const desktopApps = useMemo(() => buildWebDesktopIconApps(apps).slice(0, 10), [apps]);
+  const desktopApps = useMemo(
+    () => buildWebDesktopIconApps(apps).slice(0, DEFAULT_OS_VIEW_DESKTOP_APP_PATHS.length),
+    [apps],
+  );
   const defaultPlacements = useMemo<DesktopIconPlacement[]>(createDefaultOsViewDesktopIcons, []);
   useLayoutEffect(() => {
     if (desktopIcons === undefined) primeDesktopIcons(defaultPlacements);

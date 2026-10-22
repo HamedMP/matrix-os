@@ -90,6 +90,21 @@ describe("project cascade cleanup", () => {
 });
 
 describe("canonical project chats", () => {
+  it("cancels an active shared run through the scoped orchestrator before deleting its Chat", async () => {
+    const list = vi.fn().mockResolvedValueOnce({ items: [{ chat: { id: "chat_shared" }, activeRun: { runId: "run_shared" } }] })
+      .mockResolvedValue({ items: [] });
+    const hardDelete = vi.fn();
+    const cancelRun = vi.fn().mockRejectedValue(new Error("Personal cancellation must remain fenced"));
+    const cancelSharedRun = vi.fn();
+    await createProjectChatCleanup({ repository: { list, hardDelete }, orchestrator: { cancelRun, cancelSharedRun },
+      resolveSharedScope: async () => "10000000-0000-4000-8000-000000000902",
+    })(project, principal);
+    expect(cancelSharedRun).toHaveBeenCalledWith({ type: "personal", ownerId: "user_a" },
+      "10000000-0000-4000-8000-000000000902", "chat_shared", "run_shared");
+    expect(cancelRun).not.toHaveBeenCalled();
+    expect(hardDelete).toHaveBeenCalledOnce();
+  });
+
   it("includes archived chats and repeated pages, cancelling runs before transactional deletion", async () => {
     const order: string[] = [];
     const list = vi.fn().mockResolvedValueOnce({ items: [

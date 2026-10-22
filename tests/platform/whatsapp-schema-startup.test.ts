@@ -66,6 +66,7 @@ describe('WhatsApp schema startup', () => {
         { scope: 'billing-google-purchases', ...GOOGLE_TRACKING_REVISION },
         { scope: 'core', ...PLATFORM_SCHEMA_REVISION },
         { scope: 'funded-probe-cache', ...FUNDED_PROBE_CACHE_REVISION },
+        { scope: 'sites', generation: 1, fingerprint: 'public-app-sites-v1' },
         { scope: 'whatsapp', ...WHATSAPP_SCHEMA_REVISION },
       ]);
       await runPlatformStartupMigrations(db);

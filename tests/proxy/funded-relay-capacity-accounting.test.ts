@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdmissionController } from "../../packages/proxy/src/funded-relay-admission.js";
+import { boundedBody } from "../../packages/proxy/src/funded-relay-stream.js";
 import { createFundedRelay, resolveFundedRelayConfig, type FundedRelay } from "../../packages/proxy/src/funded-relay.js";
 import { FundedControlPlaneError, type FundedPlatformClient } from "../../packages/proxy/src/funded-relay-platform-client.js";
 
@@ -27,8 +28,8 @@ function fixture(options: Record<string, unknown> = {}) {
       return { identity: IDENTITY, reservation: { reservationId: "reservation_1", requestId: input.requestId,
         modelId: input.modelId, reservedMicrousd: 1, billingMode: "usage" } };
     }),
-    start: vi.fn(async () => ({ reservationId: "reservation_1", requestId: currentRequestId, tokenId: IDENTITY.tokenId })),
-    release: vi.fn(async () => ({ reservationId: "reservation_1", tokenId: IDENTITY.tokenId, status: "released", reason: "pre_upstream_failure" })), finalize: vi.fn(async () => ({})),
+    start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId, contractVersion: 1, status: "in_flight", startedAt: NOW.toISOString(), expiresAt: "2026-09-10T12:10:00.000Z", reservationId: "reservation_1", requestId: currentRequestId, tokenId: IDENTITY.tokenId })),
+    release: vi.fn(async () => ({ reservationId: "reservation_1", tokenId: IDENTITY.tokenId, status: "released", reason: "pre_upstream_failure" })), terminal: vi.fn(async () => ({})), finalize: vi.fn(async () => ({})),
   };
   const upstream = vi.fn(async () => new Response(JSON.stringify({ id: "response_1", model: MODEL, choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }),
     { headers: { "content-type": "application/json" } }));
@@ -40,7 +41,7 @@ function fixture(options: Record<string, unknown> = {}) {
     method: "POST", headers: { authorization: `Bearer ${CREDENTIAL}`, "content-type": "application/json", ...extraHeaders }, signal,
     body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: "hi" }], max_tokens: 16 }),
   });
-  return { control, upstream, send, relay };
+  return { control, upstream, send, relay, app };
 }
 
 describe("funded generation capacity accounting", () => {
@@ -198,5 +199,185 @@ describe("runtime attempt leases", () => {
   it("does not reopen admission after shutdown", () => {
     const { admission } = controller(); const attempt = admission.beginRuntimeAttempt("a")!;
     admission.close(); attempt.refund(); expect(admission.beginRuntimeAttempt("a")).toBeNull(); expect(admission.acquireGlobal()).toBeNull();
+  });
+  it("waits for original Workers body cancellation after normalization failure before attesting terminal", async () => {
+    const { upstream, control, send } = fixture(); const cancellation = Promise.withResolvers<void>();
+    upstream.mockImplementationOnce(async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode("data: {invalid-json}\n\n")); }, cancel: () => cancellation.promise,
+    }), { headers: { "content-type": "text/event-stream" } }));
+    const response = await send(); await expect(response.text()).rejects.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 0)); expect(control.terminal).not.toHaveBeenCalled();
+    cancellation.resolve(); await vi.waitFor(() => expect(control.terminal).toHaveBeenCalledTimes(1));
+  });
+
+});
+
+describe("stalled stream cancellation cleanup", () => {
+  it("frees Relay capacity at the existing cancellation deadline without releasing unknown funding", async () => {
+    vi.useFakeTimers();
+    const cancellation = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    const caller = new AbortController();
+    const { control, upstream, send, app } = fixture({ globalConcurrency: 1, rateLimitPerMinute: 5,
+      platformTimeoutMs: 750, timeoutMs: 60_000 });
+    upstream.mockImplementationOnce(async () => new Response(new ReadableStream<Uint8Array>({
+      cancel: () => { entered.resolve(); return cancellation.promise; },
+    }), { headers: { "content-type": "text/event-stream" } }));
+    try {
+      const first = await app.request("/v1/messages", { method: "POST", signal: caller.signal,
+        headers: { authorization: `Bearer ${CREDENTIAL}`, "content-type": "application/json" },
+        body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 16, stream: true,
+          messages: [{ role: "user", content: "hi" }] }) });
+      expect(first.status).toBe(200);
+      caller.abort("caller stopped");
+      await entered.promise;
+      await vi.advanceTimersByTimeAsync(1_499);
+      expect((await send()).status).toBe(429);
+      expect(control.authorize).toHaveBeenCalledTimes(1);
+      expect(control.terminal).not.toHaveBeenCalled();
+      expect(control.finalize).not.toHaveBeenCalled();
+      expect(control.release).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+
+      const otherIdentity = { ...IDENTITY, ownerId: "owner_other", tokenId: "credential_other", machineId: "machine_other" };
+      let otherRequest = "";
+      control.check.mockResolvedValueOnce({ identity: otherIdentity });
+      control.authorize.mockImplementationOnce(async (input) => {
+        otherRequest = input.requestId;
+        return { identity: otherIdentity, reservation: { reservationId: "reservation_other", requestId: input.requestId,
+          modelId: input.modelId, reservedMicrousd: 1, billingMode: "usage" } };
+      });
+      control.start.mockImplementationOnce(async (input) => ({ executionId: input.executionId, contractVersion: 1,
+        status: "in_flight", startedAt: NOW.toISOString(), expiresAt: "2026-09-10T12:10:00.000Z",
+        reservationId: "reservation_other", requestId: otherRequest, tokenId: otherIdentity.tokenId }));
+      const accepted = await send({ authorization: `Bearer sk-matrix-funded-credential_other.${"s".repeat(43)}` });
+      expect(accepted.status).toBe(200);
+      await accepted.text();
+      expect(upstream).toHaveBeenCalledTimes(2);
+      expect(control.finalize).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reservationId: "reservation_other" }), expect.any(AbortSignal));
+      expect(control.terminal).not.toHaveBeenCalled();
+      expect(control.release).not.toHaveBeenCalled();
+    } finally {
+      cancellation.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps late cancellation proof separate from a newer local lease", async () => {
+    vi.useFakeTimers();
+    const cancellation = Promise.withResolvers<void>();
+    const { admission } = controller({ globalConcurrency: 1, rateLimitPerMinute: 2 });
+    const global = admission.acquireGlobal()!;
+    admission.beginRuntimeAttempt("owner");
+    const resources = admission.acquireResources("owner")!;
+    const release = vi.fn(() => { resources.release(); global.release(); });
+    const ambiguous = vi.fn();
+    const complete = vi.fn();
+    const body = boundedBody(new ReadableStream<Uint8Array>({ cancel: () => cancellation.promise }), 100,
+      { release }, () => undefined, new AbortController().signal,
+      { push: () => undefined, complete, ambiguous }, 100);
+    const pending = body.cancel("caller stopped");
+    try {
+      await vi.advanceTimersByTimeAsync(99);
+      expect(admission.acquireGlobal()).toBeNull();
+      expect(admission.acquireResources("owner")).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(release).toHaveBeenCalledTimes(1);
+      await pending;
+      expect(ambiguous).not.toHaveBeenCalled();
+      expect(complete).not.toHaveBeenCalled();
+      const nextGlobal = admission.acquireGlobal();
+      const nextResources = admission.acquireResources("owner");
+      expect(nextGlobal).not.toBeNull();
+      expect(nextResources).not.toBeNull();
+      cancellation.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(ambiguous).toHaveBeenCalledTimes(1);
+      expect(complete).not.toHaveBeenCalled();
+      expect(release).toHaveBeenCalledTimes(1);
+      expect(admission.acquireGlobal()).toBeNull();
+      expect(admission.acquireResources("owner")).toBeNull();
+      nextResources?.release();
+      nextGlobal?.release();
+    } finally {
+      cancellation.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves the durable terminal barrier after cancellation acknowledges within budget", async () => {
+    vi.useFakeTimers();
+    const cancellation = Promise.withResolvers<void>();
+    const publication = Promise.withResolvers<void>();
+    const release = vi.fn();
+    const ambiguous = vi.fn(() => publication.promise);
+    const complete = vi.fn();
+    const body = boundedBody(new ReadableStream<Uint8Array>({ cancel: () => cancellation.promise }), 100,
+      { release }, () => undefined, new AbortController().signal,
+      { push: () => undefined, complete, ambiguous }, 100);
+    let completed = false;
+    const pending = body.cancel("caller stopped").then(() => { completed = true; });
+    try {
+      await vi.advanceTimersByTimeAsync(50);
+      cancellation.resolve();
+      await vi.advanceTimersByTimeAsync(150);
+      expect(ambiguous).toHaveBeenCalledTimes(1);
+      expect(complete).not.toHaveBeenCalled();
+      expect(release).not.toHaveBeenCalled();
+      expect(completed).toBe(false);
+      publication.resolve();
+      await pending;
+      expect(release).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      cancellation.resolve();
+      publication.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps pending-pull cancellation leased until its acknowledgement and terminal barrier", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const reading = Promise.withResolvers<void>();
+    const cancellation = Promise.withResolvers<void>();
+    const publication = Promise.withResolvers<void>();
+    const release = vi.fn();
+    const ambiguous = vi.fn(() => publication.promise);
+    const complete = vi.fn();
+    const body = boundedBody(new ReadableStream<Uint8Array>({
+      pull: () => { reading.resolve(); }, cancel: () => cancellation.promise,
+    }, { highWaterMark: 0 }), 100, { release }, () => undefined, new AbortController().signal,
+    { push: () => undefined, complete, ambiguous }, 100);
+    const reader = body.getReader();
+    const firstRead = reader.read();
+    await reading.promise;
+    const pending = reader.cancel("caller stopped");
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(release).not.toHaveBeenCalled();
+      expect(complete).not.toHaveBeenCalled();
+      expect(ambiguous).not.toHaveBeenCalled();
+      cancellation.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(ambiguous).toHaveBeenCalledTimes(1);
+      expect(release).not.toHaveBeenCalled();
+      publication.resolve();
+      await pending;
+      expect(await firstRead).toEqual({ done: true, value: undefined });
+      expect(release).toHaveBeenCalledTimes(1);
+      expect(complete).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      cancellation.resolve();
+      publication.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      reader.releaseLock();
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });

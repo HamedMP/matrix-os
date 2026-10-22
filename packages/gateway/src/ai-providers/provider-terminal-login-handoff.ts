@@ -20,10 +20,20 @@ export function createProviderTerminalLoginHandoff(
     throw new Error("Provider login attempt resolver is required");
   }
   return {
+    // The production Settings route also uses this facade for quiet credit reads.
+    ...(typeof store.getManagedCreditObservation === "function" ? {
+      getManagedCreditObservation: (options) => store.getManagedCreditObservation!(options),
+    } : {}),
     // Production native workflows use this facade too. Preserve server-only
     // completion without rerouting it through the public Terminal mutation path.
     ...(typeof store.completeClaudeNativeLogin === "function" ? {
       completeClaudeNativeLogin: (input: Parameters<NonNullable<ProviderSettingsStoreWriter["completeClaudeNativeLogin"]>>[0]) => store.completeClaudeNativeLogin!(input),
+    } : {}),
+    ...(typeof store.completeClaudeKeyConnection === "function" ? {
+      completeClaudeKeyConnection: (input: Parameters<NonNullable<ProviderSettingsStoreWriter["completeClaudeKeyConnection"]>>[0]) => store.completeClaudeKeyConnection!(input),
+    } : {}),
+    ...(typeof store.completeCodexNativeLogin === "function" ? {
+      completeCodexNativeLogin: (input: Parameters<NonNullable<ProviderSettingsStoreWriter["completeCodexNativeLogin"]>>[0]) => store.completeCodexNativeLogin!(input),
     } : {}),
     getSnapshot: (options) => store.getSnapshot(options),
     async mutate(mutation) {

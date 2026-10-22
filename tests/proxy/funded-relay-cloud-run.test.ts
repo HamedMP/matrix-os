@@ -28,7 +28,7 @@ gcloud() {
 }
 ${script}
 `], { encoding: "utf8", timeout: 10_000, env: {
-    ...process.env, GITHUB_SHA: "a".repeat(40),
+    ...process.env, GITHUB_SHA: "a".repeat(40), CANDIDATE_TAG: `relay-${"a".repeat(12)}`,
     GATEWAY_TOKEN_SECRET: "cloudflare-ai-gateway-token", GATEWAY_TOKEN_VERSION: "latest",
     WORKERS_TOKEN_SECRET: "cloudflare-workers-ai-token-preview", WORKERS_TOKEN_VERSION: "latest",
     CONTROL_TOKEN_SECRET: "ai-relay-control-token", CONTROL_TOKEN_VERSION: "latest",
@@ -238,7 +238,7 @@ describe("funded relay Cloud Run service", () => {
     expect(workflow).toContain("AI_RELAY_CONTROL_TOKEN=${CONTROL_TOKEN_SECRET}:${CONTROL_TOKEN_VERSION}");
     expect(workflow).toContain("AI_RELAY_METADATA_SECRET=${METADATA_SECRET_SECRET}:${METADATA_SECRET_VERSION}");
     expect(workflow).toContain("--allow-unauthenticated");
-    expect(workflow).toContain("traffic_flags=(--tag candidate --no-traffic)");
+    expect(workflow).toContain('traffic_flags=(--tag "$CANDIDATE_TAG" --no-traffic)');
     expect(workflow).toContain("for _attempt in {1..10}; do");
     expect(workflow).toContain('gcloud run services describe "$AI_RELAY_CLOUD_RUN_SERVICE"');
     expect(workflow).toContain('gcloud run revisions describe "$candidate_revision"');
@@ -247,9 +247,7 @@ describe("funded relay Cloud Run service", () => {
     expect(workflow).toContain('[ "$candidate_digest" = "$expected_digest" ]');
     expect(workflow).toContain("sleep 3");
     expect(workflow).toContain("Candidate relay metadata did not become ready.");
-    expect(workflow).toContain(
-      "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6",
-    );
+    expect(workflow).toMatch(/^\s+(?:-\s+)?uses: actions\/checkout@[a-f0-9]{40}(?:\s+#.*)?$/m);
     expect(workflow).toContain(
       "google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3",
     );
@@ -311,7 +309,7 @@ function runDeploymentValidation(reviewedAt: string, validThrough: string, extra
     .split("- name: Authenticate to Google Cloud")[0]!.split("run: |\n")[1]!;
   const script = block.split("\n").map(line => line.replace(/^          /, "")).join("\n");
   return spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 10_000, env: {
-    ...process.env, DEPLOY_ENVIRONMENT: "staging", GITHUB_ENV: "/dev/null", GCP_PROJECT_ID: "fixture", GCP_REGION: "fixture",
+    ...process.env, DEPLOY_ENVIRONMENT: "staging", GITHUB_ENV: "/dev/null", GITHUB_SHA: "a".repeat(40), GCP_PROJECT_ID: "fixture", GCP_REGION: "fixture",
     ARTIFACT_REPOSITORY: "fixture", AI_RELAY_CLOUD_RUN_SERVICE: "fixture",
     AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: "fixture", PLATFORM_INTERNAL_URL: "https://platform.example.test",
     CLOUDFLARE_AI_GATEWAY_URL: enabledEnv().CLOUDFLARE_AI_GATEWAY_URL!,

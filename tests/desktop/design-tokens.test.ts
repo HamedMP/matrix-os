@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { productColors, productScales } from "../../packages/brand/src/tokens.js";
 
 const RENDERER_SRC = path.resolve(import.meta.dirname, "../../desktop/src/renderer/src");
 
@@ -17,6 +18,7 @@ const VAR_REFERENCE = /var\(\s*(--[A-Za-z0-9_-]+)/g;
 const CSS_DECLARATION = /(--[A-Za-z0-9_-]+)\s*:/g;
 const CSS_PROPERTY_RULE = /@property\s+(--[A-Za-z0-9_-]+)/g;
 const TS_CUSTOM_PROPERTY = /["'](--[A-Za-z0-9_-]+)["']\s*\]?\s*:/g;
+const TAILWIND_CUSTOM_PROPERTY = /\[(--[A-Za-z0-9_-]+)\s*:/g;
 const TS_STYLE_PROPERTY_SETTER = /\.style\.setProperty\(\s*["'](--[A-Za-z0-9_-]+)["']/g;
 const FRAMEWORK_VARS = new Set(["--spacing", "--scroll-fade-reveal"]);
 
@@ -29,6 +31,8 @@ function buildDefinitions(files: string[]): Set<string> {
       for (const match of source.matchAll(CSS_PROPERTY_RULE)) defined.add(match[1]!);
     } else {
       for (const match of source.matchAll(TS_CUSTOM_PROPERTY)) defined.add(match[1]!);
+      // Tailwind arbitrary properties also define variables, including variants.
+      for (const match of source.matchAll(TAILWIND_CUSTOM_PROPERTY)) defined.add(match[1]!);
       // Renderer bootstrap also defines canonical brand tokens through CSSOM.
       for (const match of source.matchAll(TS_STYLE_PROPERTY_SETTER)) defined.add(match[1]!);
     }
@@ -140,14 +144,17 @@ describe("Figma semantic surface tokens", () => {
   });
 
   it("defines the integration icon surface and danger text tokens in both modes", () => {
-    expect(tokenValue(themeBlock(tokensCss, ":root"), "--surface-card-foreground-subtle")).toBe(
-      "#fafaf6",
-    );
-    expect(tokenValue(themeBlock(tokensCss, ":root"), "--text-danger")).toBe("#b42318");
-    expect(tokenValue(themeBlock(tokensCss, '[data-theme="dark"]'), "--surface-card-foreground-subtle")).toBe(
-      "#242923",
-    );
-    expect(tokenValue(themeBlock(tokensCss, '[data-theme="dark"]'), "--text-danger")).toBe("#f28b82");
+    for (const [selector, card, danger] of [
+      [":root", productColors.card, productScales.coral[600]],
+      ['[data-theme="dark"]', productColors.ink, productScales.coral[200]],
+    ] as const) {
+      const block = themeBlock(tokensCss, selector);
+      expect(tokenValue(block, "--surface-card-foreground-subtle")).toBe(card);
+      expect(tokenValue(block, "--text-danger")).toBe(danger);
+      for (const surface of [card, tokenValue(block, "--bg-app")]) {
+        expect(contrastRatio(tokenValue(block, "--text-danger"), surface)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
   });
 });
 

@@ -140,6 +140,7 @@ describe("audited owner execution recovery without financial settlement", () => 
     const first = payload();
     expect((await send()).status).toBe(200);
     const row = await rows();
+    const second = await nextExpired("second_request");
     const audit = JSON.parse(row.execution_admission_release!);
     if (kind === "identity") audit.request.expectedOwnerId = "someone_else";
     if (kind === "ceiling") audit.response.maximumLiabilityMicrousd = 99;
@@ -147,8 +148,8 @@ describe("audited owner execution recovery without financial settlement", () => 
     await db.executor.updateTable("ai_funded_usage_reservations")
       .set({ execution_admission_release: kind === "invalid_json" ? "{" : JSON.stringify(audit) })
       .where("reservation_id", "=", first.reservationId).execute();
-    const second = await nextExpired("second_request");
     const before = await finance();
+    await expect(authorization("corrupt_history_admission")).rejects.toMatchObject({ code: "idempotency_conflict" });
     expect((await send(second)).status).toBe(409);
     expect(await finance()).toEqual(before);
     expect((await rows()).execution_admission_release).toBeNull();

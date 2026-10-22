@@ -2,16 +2,19 @@ import { randomUUID } from "node:crypto";
 import { WebSocket } from "ws";
 import { z } from "zod/v4";
 import { AgentConfigError } from "./errors.js";
+import { BROWSER_AUTHORITY_METHODS, BROWSER_AUTHORITY_TIMEOUT_MS, BROWSER_AUTHORITY_REQUEST_MAX_BYTES } from "../chat/openclaw-shared-browser-rpc.js";
 
 const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_REQUEST_BYTES = 16 * 1024;
 const MAX_AGENT_REQUEST_BYTES = 128 * 1024;
-const MAX_AGENT_TIMEOUT_MS = 5 * 60_000;
+const MAX_AGENT_TIMEOUT_MS = 30 * 60_000;
+const MAX_AGENT_WAIT_TIMEOUT_MS = 5 * 60_000;
 const MAX_EVENT_LISTENERS = 32;
 const MAX_CANCELLATION_CORRELATIONS = 8;
 const CONFIG_PATCH_LIMIT = 3;
 const CONFIG_PATCH_WINDOW_MS = 60_000;
 const ALLOWED_METHODS = new Set([
+  ...Object.keys(BROWSER_AUTHORITY_METHODS),
   "health",
   "channels.status",
   "models.list",
@@ -22,6 +25,8 @@ const ALLOWED_METHODS = new Set([
   "agent.wait",
   "chat.abort",
   "sessions.steer",
+  "matrix.browser.bind",
+  "matrix.browser.revoke",
 ]);
 
 const ChallengeSchema = z.object({
@@ -80,12 +85,12 @@ const AgentParamsSchema = z.object({
   sessionKey: SafeRpcReferenceSchema.optional(),
   thinking: z.string().min(1).max(64).optional(),
   deliver: z.boolean().optional(),
-  timeout: z.number().int().positive().max(300).optional(),
+  timeout: z.number().int().positive().max(1800).optional(),
   idempotencyKey: SafeRpcReferenceSchema,
 }).strict();
 const AgentWaitParamsSchema = z.object({
   runId: SafeRpcReferenceSchema,
-  timeoutMs: z.number().int().positive().max(MAX_AGENT_TIMEOUT_MS).optional(),
+  timeoutMs: z.number().int().positive().max(MAX_AGENT_WAIT_TIMEOUT_MS).optional(),
 }).strict();
 const ChatAbortParamsSchema = z.object({
   sessionKey: SafeRpcReferenceSchema,
@@ -99,7 +104,19 @@ const SessionSteerParamsSchema = z.object({
   message: z.string().min(1).max(96 * 1024),
   idempotencyKey: SafeRpcReferenceSchema,
 }).strict();
+const BrowserRunIdSchema = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+const BrowserBindParamsSchema = z.object({
+  runId: BrowserRunIdSchema,
+  sessionKey: SafeRpcReferenceSchema,
+  token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  expiresAt: z.number().int(),
+  bindingId: z.string().regex(/^[a-f0-9]{32}$/).optional(),
+}).strict();
+const BrowserRevokeParamsSchema = z.object({ runId: BrowserRunIdSchema,
+  bindingId: z.string().regex(/^[a-f0-9]{32}$/).optional(), nativeNotStarted: z.literal(true).optional(),
+}).strict().refine(value => value.nativeNotStarted !== true || value.bindingId !== undefined);
 const MethodParamsSchemas: Record<string, z.ZodType> = {
+  ...BROWSER_AUTHORITY_METHODS,
   health: EmptyParamsSchema,
   "channels.status": EmptyParamsSchema,
   "models.list": ModelsListParamsSchema,
@@ -110,6 +127,8 @@ const MethodParamsSchemas: Record<string, z.ZodType> = {
   "agent.wait": AgentWaitParamsSchema,
   "chat.abort": ChatAbortParamsSchema,
   "sessions.steer": SessionSteerParamsSchema,
+  "matrix.browser.bind": BrowserBindParamsSchema,
+  "matrix.browser.revoke": BrowserRevokeParamsSchema,
 };
 
 const HelloSchema = z.object({
@@ -167,6 +186,8 @@ export interface OpenClawRpcCallOptions {
   timeoutMs?: number;
   onAccepted?: (payload: unknown) => void;
   onEvent?: (event: OpenClawRpcEvent) => void;
+  /** Called at the last synchronous boundary before socket.send; a throwing send may still have dispatched. */
+  onDispatched?: () => void;
 }
 
 export interface OpenClawRpcClient {
@@ -237,7 +258,7 @@ function serializeRequest(id: string, method: string, params: unknown): string {
   } catch (error) {
     throw new AgentConfigError("agent_config_invalid", error);
   }
-  const maxBytes = method === "agent" ? MAX_AGENT_REQUEST_BYTES : MAX_REQUEST_BYTES;
+  const maxBytes = method in BROWSER_AUTHORITY_METHODS ? BROWSER_AUTHORITY_REQUEST_MAX_BYTES : method === "agent" ? MAX_AGENT_REQUEST_BYTES : MAX_REQUEST_BYTES;
   if (Buffer.byteLength(serialized) > maxBytes) {
     throw new AgentConfigError("agent_config_invalid");
   }
@@ -559,7 +580,7 @@ export function createOpenClawRpcClient(
     if (closed || socket === null || socket.readyState !== WebSocket.OPEN) {
       throw new AgentConfigError("runtime_unavailable");
     }
-    const pendingLimit = method === "chat.abort"
+    const pendingLimit = method === "chat.abort" || method === "matrix.browser.cancel"
       ? maxPending + MAX_CANCELLATION_CORRELATIONS
       : maxPending;
     if (pending.size >= pendingLimit) {
@@ -576,7 +597,7 @@ export function createOpenClawRpcClient(
     const callTimeoutMs = callOptions.timeoutMs ?? timeoutMs;
     if (!Number.isFinite(callTimeoutMs)
       || callTimeoutMs < 100
-      || callTimeoutMs > MAX_AGENT_TIMEOUT_MS) {
+      || callTimeoutMs > (method in BROWSER_AUTHORITY_METHODS ? BROWSER_AUTHORITY_TIMEOUT_MS : MAX_AGENT_TIMEOUT_MS)) {
       throw new AgentConfigError("agent_config_invalid");
     }
     const timer = setTimeout(() => {
@@ -596,6 +617,7 @@ export function createOpenClawRpcClient(
     signal.addEventListener("abort", onAbort, { once: true });
     if (method === "config.patch") configPatchWrites.push(now());
     try {
+      callOptions.onDispatched?.();
       socket.send(serialized);
     } catch (error) {
       pending.delete(id);

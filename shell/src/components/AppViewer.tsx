@@ -1,8 +1,12 @@
 "use client";
 
+import { RemoteBrowserView } from "./RemoteBrowserView";
+import { remoteBrowserSurfaceForPath } from "@matrix-os/contracts";
+import { BrowserLabView } from "./BrowserLabView";
 import { resolveAppBridgeLaunch } from "@/lib/app-bridge-launch";
 import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-bridge-request";
 import { readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
+import { AppSiteButton } from "./app-sites/AppSiteButton";
 
 import { useState, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
@@ -35,8 +39,10 @@ const BRIDGE_FETCH_TIMEOUT_MS = 10_000;
 
 interface AppViewerProps {
   path: string;
+  active?: boolean;
   sessionId?: string;
   onOpenApp?: (name: string, path: string) => void;
+  visible?: boolean;
 }
 
 function readCurrentTheme(): ThemeVars {
@@ -95,7 +101,19 @@ const requestBridgeData: BridgeDataRequest = async (action, app, key, value) => 
 // waits behind those writes instead of racing an independent component queue.
 const bridgeDataHandler = createCoalescedBridgeDataHandler(requestBridgeData);
 
-export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
+export function AppViewer(props: AppViewerProps) {
+  const surface = remoteBrowserSurfaceForPath(props.path);
+  if (surface) return <RemoteBrowserView key={`${getGatewayUrl()}:${surface}`} surface={surface} active={props.active ?? true}
+    onOpenCloudDesktop={props.onOpenApp ? () => props.onOpenApp!("Cloud desktop", "__cloud-desktop__") : undefined}
+    onOpenBrowser={props.onOpenApp ? () => props.onOpenApp!("Browser", "__browser__") : undefined} />;
+
+  // This reserved diagnostic surface is compiled with Matrix. Owner HTML never
+  // receives elevated iframe permissions; all other apps keep their sandbox.
+  if (extractSlug(props.path) === "browser-lab") return <BrowserLabView key={getGatewayUrl()} />;
+  return <SandboxedAppViewer {...props} />;
+}
+
+function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -377,6 +395,7 @@ export function AppViewer({ path, sessionId, onOpenApp }: AppViewerProps) {
 
   return (
     <div className="flex h-full w-full flex-col">
+      {slug && visible ? <div className="flex items-center justify-end border-b px-3 py-1.5"><AppSiteButton key={slug} appSlug={slug} /></div> : null}
       <iframe
         ref={iframeRef}
         key={refreshKey}

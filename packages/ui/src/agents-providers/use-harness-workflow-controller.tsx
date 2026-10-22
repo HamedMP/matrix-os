@@ -6,8 +6,9 @@ import type {
   ProviderWorkflowConnectionOption,
 } from "@matrix-os/contracts";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
+import { keyFailureMessage } from "./key-format.js";
 import { hasConfiguredConnection, hasStaleHermesConnection } from "./harness-connection.js";
-import { managedConnectionCapability } from "./managed-connection-capability.js";
+import { isCodexNativeLoginOption, managedConnectionCapability } from "./managed-connection-capability.js";
 import { useWorkflowPolling } from "./use-workflow-polling.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import type { ProviderWorkflowClient, ProviderWorkflowUICapability, ProviderWorkflowUIOperation } from "./types.js";
@@ -72,6 +73,9 @@ export function useHarnessWorkflowController({
   const [providerId, setProviderId] = useState(
     capability.apiKeyProviders[0] ?? "openai",
   );
+  // The provider whose key is being connected names the provider in key failures.
+  const keyProviderId = selectedOption?.authKind === "api_key" ? selectedOption.providerId : providerId;
+  const keyFailureProvider = keyProviderId === "anthropic" || keyProviderId === "openrouter" ? keyProviderId : "openai";
   const [authorizationCode, setAuthorizationCode] = useState("");
   const [codeSubmitted, setCodeSubmitted] = useState(false);
   const [apiKey, setApiKey] = useState("");
@@ -79,6 +83,7 @@ export function useHarnessWorkflowController({
   const [startingLogin, setStartingLogin] = useState(false);
   const [reconciling, setReconciling] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [terminalReadBlocked, setTerminalReadBlocked] = useState(false);
   const connected = hasConfiguredConnection(harness, source);
   const connectionPresent = connected || hasStaleHermesConnection(harness, source);
   const previousConnection = useRef(connected);
@@ -166,6 +171,7 @@ export function useHarnessWorkflowController({
     setStartingLogin(false);
     setReconciling(false);
     setFailure(null);
+    setTerminalReadBlocked(false);
     previousConnection.current = connected;
     setDisconnectOpen(false);
     setUninstall(false);
@@ -222,7 +228,7 @@ export function useHarnessWorkflowController({
   }, [operation?.state]);
   const live = (controller: AbortController) =>
     !controller.signal.aborted && scope.current === controller;
-  const run = async (action: (signal: AbortSignal) => Promise<void>, context: "start" | "other" = "other") => {
+  const run = async (action: (signal: AbortSignal) => Promise<void>, context: "start" | "status" | "other" = "other") => {
     const controller = scope.current;
     if (!controller || pending || disabled) return;
     completionRefresh.current = null;
@@ -231,8 +237,10 @@ export function useHarnessWorkflowController({
     setFailure(null);
     try {
       await action(controller.signal);
+      if (live(controller) && (context === "status" || context === "start")) setTerminalReadBlocked(false);
     } catch (caught) {
       if (live(controller)) {
+        if (context === "status" && !(caught instanceof ProviderWorkflowClientError && caught.reason === "unavailable")) setTerminalReadBlocked(true);
         console.warn(
           "[provider-settings] Workflow action failed:",
           caught instanceof Error ? caught.name : typeof caught,
@@ -241,17 +249,18 @@ export function useHarnessWorkflowController({
           context === "start" && caught instanceof ProviderWorkflowClientError && caught.reason === "conflict"
             ? "Another connection or agent operation is running. Finish or cancel it, then try again."
             : method === "key"
-            ? caught instanceof ProviderWorkflowClientError &&
-              caught.reason === "rejected"
-              ? "The key could not be verified. Check it and try again."
-              : "Could not confirm the connection. Check its status before trying again."
+            ? keyFailureMessage(
+                caught instanceof ProviderWorkflowClientError && (caught.reason === "rejected" || caught.reason === "key_workspace_required")
+                  ? caught.reason : "unavailable",
+                keyFailureProvider,
+              )
             : "The connection could not be updated. Try again.",
         );
         if (
           method === "key" &&
           !(
             caught instanceof ProviderWorkflowClientError &&
-            caught.reason === "rejected"
+            (caught.reason === "rejected" || caught.reason === "key_workspace_required")
           )
         )
           onRefresh();
@@ -263,8 +272,8 @@ export function useHarnessWorkflowController({
       }
     }
   };
-  const start = (kind: "login" | "install" | "uninstall", terminal = false, option?: ProviderWorkflowConnectionOption) =>
-    run(async (signal) => {
+  const start = (kind: "login" | "install" | "uninstall", terminal = false, option?: ProviderWorkflowConnectionOption) => {
+    const startOperation = async (signal: AbortSignal) => {
       if (kind === "login") {
         setStartingLogin(true);
         setMethod("account");
@@ -272,8 +281,8 @@ export function useHarnessWorkflowController({
         setAuthorizationCode("");
         setCodeSubmitted(false);
       }
-      if (kind === "login" && harness.harness !== "claude") throw new Error("connection unavailable");
       const exactOption = option ?? (kind === "login" ? selectedOption ?? operation?.connectionOption ?? undefined : undefined);
+      if (kind === "login" && harness.harness !== "claude" && !(harness.harness === "codex" && isCodexNativeLoginOption(exactOption))) throw new Error("connection unavailable");
       if (kind === "login" && capability.connectionOptions && (!exactOption || !client.startConnection
         || !capability.connectionOptions.some(item => item.id === exactOption.id && item.availability === "available" && item.authKind === "subscription")))
         throw new Error("connection unavailable");
@@ -303,6 +312,7 @@ export function useHarnessWorkflowController({
         optionId: exactOption.id, idempotencyKey: pendingStart.current.idempotencyKey}, signal)
         : await client.start({harnessInstanceId: harness.id, kind, method: loginMethod,
           idempotencyKey: pendingStart.current.idempotencyKey}, signal);
+      if (kind === "login" && harness.harness === "codex" && !isCodexNativeLoginOption(result.connectionOption)) throw new Error("workflow scope mismatch");
       if (exactOption && result.connectionOption?.id !== exactOption.id) throw new Error("workflow scope mismatch");
       if (result.harnessInstanceId !== harness.id || result.kind !== kind)
         throw new Error("workflow scope mismatch");
@@ -322,7 +332,10 @@ export function useHarnessWorkflowController({
         )
           onOpenTerminal(result.terminalSessionId);
       }
-    }, "start");
+    };
+    // react-doctor-disable-next-line react-doctor/no-impure-state-updater -- run is the abortable async workflow above, not a React state setter; this callback executes once per explicit event.
+    return run(startOperation, "start");
+  };
   useEffect(() => {
     // A failed receipt or completion refresh can outlive native sign-in. Only
     // reconcile a newly confirmed connection; replacement errors on an
@@ -354,8 +367,12 @@ export function useHarnessWorkflowController({
     );
   }, [pending, reconciling, operation, failure, disconnectOpen]);
   const { stop: stopPolling, restart: restartPolling } = useWorkflowPolling({ operation, client, harnessId: harness.id,
-    onFailure: () => setFailure("Connection status is unavailable. Check again."),
+    onFailure: retryable => {
+      setFailure("Connection status is unavailable. Check again.");
+      if (!retryable) setTerminalReadBlocked(true);
+    },
     onUpdate: next => {
+      setTerminalReadBlocked(false);
       setOperation(next);
       setFailure(null);
       setNow(Date.now());
@@ -378,6 +395,7 @@ export function useHarnessWorkflowController({
   const seconds = operation
     ? Math.max(0, Math.ceil((Date.parse(operation.expiresAt) - now) / 1000))
     : 0;
+  const canContinueInTerminal = active(operation) && seconds > 0 && !terminalReadBlocked;
   const connecting = active(operation);
   const reuseCodex = capability.loginMethods.includes("existing_codex");
   const browserLogin = harness.harness === "claude" && (operation?.connectionOption ? operation.connectionOption.method === "browser" : capability.loginMethods.includes("browser")) && !!client.submitCode;
@@ -405,6 +423,6 @@ export function useHarnessWorkflowController({
     setOperation(null);
   };
 
-  return { selectedOption, setSelectedOption, harness, source, capability, client, disabled, onRefresh, onOpenTerminal, onOpenAuthorizationUrl, onConnectSaved, connectSavedDisabled, onDisconnect, onStateChange, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, connectRequest, operation, setOperation, method, setMethod, providerId, setProviderId, authorizationCode, setAuthorizationCode, codeSubmitted, setCodeSubmitted, apiKey, setApiKey, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, disconnectOpen, setDisconnectOpen, uninstall, setUninstall, copied, setCopied, connectionPanel, pendingStart, dialog, run, start, stopPolling, restartPolling, failed, seconds, connecting, reuseCodex, browserLogin, inlineLogin, hasSubscription, subscriptionName, back };
+  return { canContinueInTerminal, selectedOption, setSelectedOption, harness, source, capability, client, disabled, onRefresh, onOpenTerminal, onOpenAuthorizationUrl, onConnectSaved, connectSavedDisabled, onDisconnect, onStateChange, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, connectRequest, operation, setOperation, method, setMethod, providerId, setProviderId, authorizationCode, setAuthorizationCode, codeSubmitted, setCodeSubmitted, apiKey, setApiKey, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, disconnectOpen, setDisconnectOpen, uninstall, setUninstall, copied, setCopied, connectionPanel, pendingStart, dialog, run, start, stopPolling, restartPolling, failed, seconds, connecting, reuseCodex, browserLogin, inlineLogin, hasSubscription, subscriptionName, back };
 }
 export type HarnessWorkflowController = ReturnType<typeof useHarnessWorkflowController>;

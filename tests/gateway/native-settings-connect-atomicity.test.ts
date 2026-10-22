@@ -185,3 +185,31 @@ it.each(["unsafe-prior", "symlink-prior", "malformed-staged", "drained-cli-failu
   expect((await readdir(join(home, ".codex"))).filter(name => name.startsWith(".matrix-key-"))).toEqual([]);
   await expect(guard().run("codex", { kind: "write" }, async () => "released")).resolves.toBe("released");
 });
+
+// The terminal service is not running: its socket is missing or refuses connections.
+function terminalServiceDown(code: "ENOENT" | "ECONNREFUSED") {
+  return Object.assign(new Error(`connect ${code} /synthetic/terminal.sock`), { code, syscall: "connect" });
+}
+it.each(["ENOENT", "ECONNREFUSED"] as const)("admits a Claude key write when the terminal service is not running (%s)", async code => {
+  const home = await fixture();
+  const guard = createNativeProviderProfileGuard({ homePath: home, registry: {
+    get: vi.fn(), observeAgentLiveness: vi.fn(), listProfileSessions: vi.fn(async () => { throw terminalServiceDown(code); }),
+  } });
+  await expect(guard.run("claude", { kind: "write" }, async () => "saved")).resolves.toBe("saved");
+  // With the guard passed, a wrong key now reaches the provider check and gets a real verdict.
+  const fetchFn = vi.fn(async () => new Response("{}", { status: 401, headers: { "content-type": "application/json" } }));
+  const verify = createProviderKeyVerifier({ providerId: "anthropic", profile: "claude", profileGuard: guard, fetchFn, save: vi.fn() });
+  await expect(verify({ harnessInstanceId: "harness_claude_code", providerId: "anthropic", apiKey: "sk-ant-api03-synthetic" })).rejects.toMatchObject({ code: "rejected" });
+  expect(fetchFn).toHaveBeenCalledOnce();
+});
+it("still refuses a Claude key write when the terminal service fails for any other reason", async () => {
+  const home = await fixture();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const guard = createNativeProviderProfileGuard({ homePath: home, registry: {
+    get: vi.fn(), observeAgentLiveness: vi.fn(), listProfileSessions: vi.fn(async () => { throw Object.assign(new Error("synthetic timeout"), { code: "ETIMEDOUT", syscall: "read" }); }),
+  } });
+  await expect(guard.run("claude", { kind: "write" }, async () => "saved")).rejects.toMatchObject({ code: "lifecycle_unavailable" });
+  // The refusal names the real cause instead of only a generic store error.
+  expect(warn).toHaveBeenCalledWith("[provider-settings] Native profile admission refused:", "Error", "ETIMEDOUT");
+  warn.mockRestore();
+});

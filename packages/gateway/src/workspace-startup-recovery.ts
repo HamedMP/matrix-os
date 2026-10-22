@@ -231,10 +231,12 @@ export async function runWorkspaceStartupRecovery(
 }
 
 export function createWorkspaceStartupRecovery(options: {
+  beforeProjectSessionRemove?: Parameters<typeof createAgentSessionManager>[0]["beforeProjectSessionRemove"];
   backgroundRuntime?: BackgroundAgentRuntime;
   homePath: string;
   eventPublisher?: WorkspaceStartupRecoveryDeps["eventPublisher"];
   deleteProjectChats?: ProjectChatCleanup;
+  canRecoverProjectDeletion?: (project: ProjectConfig) => Promise<boolean>;
   codingAgentThreadStore?: Pick<CodingAgentThreadStore, "deleteProjectThreads">;
 }) {
   const homePath = resolve(options.homePath);
@@ -251,10 +253,12 @@ export function createWorkspaceStartupRecovery(options: {
     agentLauncher,
     terminalRuntime,
     backgroundRuntime: options.backgroundRuntime,
+    beforeProjectSessionRemove: options.beforeProjectSessionRemove,
   });
   const reviewStore = createReviewStore({ homePath });
   const projectLifecycleRecovery = createProjectLifecycleService({
     projectManager,
+    canRecoverDeletion: options.canRecoverProjectDeletion,
     findBlockers: async () => [],
     cleanupRelatedState: createProjectDeletionCleanup({
       sessions: agentSessionManager, reviews: reviewStore, threads: options.codingAgentThreadStore,

@@ -9,6 +9,7 @@ import "@matrix-os/ui/agents-providers.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
+import { CreditDiagnosticDisclosure } from "./CreditDiagnosticDisclosure";
 import { createDesktopProviderWorkflowClient, createDesktopMatrixAnthropicClient, loadDesktopAiCreditHistory, openDesktopProviderWorkflowAuthorization } from "./provider-workflow-transport";
 import { createDesktopChatgptPlanClient } from "./local-chatgpt-plan-client";
 import {
@@ -73,23 +74,23 @@ function ConnectedAgentsProvidersAdapter({
   identityKey,
   platformHost,
   runtimeSlot,
+  automaticCreditRefreshEnabled,
 }: {
   api: ApiClient;
   identityKey: string;
   platformHost: string;
   runtimeSlot: string;
+  automaticCreditRefreshEnabled: boolean;
 }) {
   const runtimeApi = useMemo(() => api.forRuntime(runtimeSlot), [api, runtimeSlot]);
-  const transport = useMemo(
-    () => createDesktopProviderSettingsTransport(runtimeApi),
-    [runtimeApi],
-  );
+  const transport = useMemo(() => createDesktopProviderSettingsTransport(runtimeApi), [runtimeApi]);
   const onCatalogChanged = useCallback((intent?: ProviderSettingsMutationIntent, snapshot?: ProviderSettingsSnapshot) => {
     invalidateDesktopProviderCatalog(identityKey, intent, snapshot);
   }, [identityKey]);
-  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged });
+  const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged, automaticCreditRefreshEnabled });
   const [actionError, setActionError] = useState<string | null>(null);
   const checkoutLifetime = useRef<AbortController | null>(null);
+  const synchronizedInitialSnapshot = useRef(false);
   useEffect(() => {
     const lifetime = new AbortController();
     checkoutLifetime.current = lifetime;
@@ -103,6 +104,14 @@ function ConnectedAgentsProvidersAdapter({
     () => desktopProviderIdentityKey(useConnection.getState()) === identityKey,
     [identityKey],
   );
+  useEffect(() => {
+    if (controller.snapshot === null || synchronizedInitialSnapshot.current || !isIdentityCurrent()) return;
+    // Settings can discover a CLI login that happened after Chat prewarmed its
+    // catalog. Revalidate once when the first authoritative snapshot arrives so
+    // the two surfaces cannot disagree until the user presses Refresh manually.
+    synchronizedInitialSnapshot.current = true;
+    onCatalogChanged();
+  }, [controller.snapshot, isIdentityCurrent, onCatalogChanged]);
   const workflowClient = useMemo(() => createDesktopProviderWorkflowClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
   const matrixAnthropicClient = useMemo(() => createDesktopMatrixAnthropicClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -156,15 +165,18 @@ function ConnectedAgentsProvidersAdapter({
 
   if (controller.snapshot === null) {
     return (
+      <>
       <ProviderSettingsUnavailable
         signedOut={false}
         failed={controller.error !== null}
         onRetry={() => void controller.refresh()}
       />
+      </>
     );
   }
 
   return (
+    <>
     <AgentsProvidersView
       snapshot={controller.snapshot}
       selectedHarnessId={controller.selectedHarnessId}
@@ -207,10 +219,13 @@ function ConnectedAgentsProvidersAdapter({
       onLoadUsageHistory={loadUsageHistory}
       onAddCredit={addCredit}
     />
+    <CreditDiagnosticDisclosure api={runtimeApi} snapshot={controller.snapshot}
+      selectedHarnessId={controller.selectedHarnessId} identityKey={identityKey} />
+    </>
   );
 }
 
-export default function AgentsProvidersAdapter() {
+export default function AgentsProvidersAdapter({ automaticCreditRefreshEnabled = false }: { automaticCreditRefreshEnabled?: boolean }) {
   const status = useConnection((state) => state.status);
   const handle = useConnection((state) => state.handle);
   const userId = useConnection((state) => state.userId);
@@ -238,6 +253,7 @@ export default function AgentsProvidersAdapter() {
       identityKey={identityKey}
       platformHost={platformHost}
       runtimeSlot={runtimeSlot}
+      automaticCreditRefreshEnabled={automaticCreditRefreshEnabled}
     />
   );
 }

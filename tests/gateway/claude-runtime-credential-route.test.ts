@@ -93,11 +93,49 @@ describe("production native Claude credential resolver", () => {
     expect(f.getCredential).not.toHaveBeenCalled();
   });
 
-  it("rejects a saved API-key source for native Claude without removing the independent owner key", async () => {
+  it("launches native Claude with the explicitly selected owner API key and no ambient or funded credential", async () => {
     const f = await fixture("owner_anthropic_key");
-    await expect(f.compose().resolveClaudeCredentialLaunch()).rejects.toThrow("Selected AI access is unavailable");
-    await expect(buildKernelCredentialLaunch(f.homePath, {}, "owner_anthropic_key", undefined,
-      { requestClass: "interactive" })).resolves.toMatchObject({ env: { ANTHROPIC_API_KEY: "synthetic-owner-key" } });
+    vi.stubEnv("ANTHROPIC_API_KEY", "ambient-key"); vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", "ambient-oauth");
+    vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "ambient-token"); vi.stubEnv("ANTHROPIC_BASE_URL", "https://other.invalid");
+    const launch = await f.compose().resolveClaudeCredentialLaunch({ runId: "run_1" });
+    expect(launch.env?.ANTHROPIC_API_KEY).toBe("synthetic-owner-key");
+    for (const variable of ["ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL"]) expect(launch.env).not.toHaveProperty(variable);
+    expect(f.getCredential).not.toHaveBeenCalled();
+  });
+
+  it("passes the selected owner key into the actual adapter before spawning", async () => {
+    const f = await fixture("owner_anthropic_key");
+    const spawnFn = successfulSpawn();
+    const adapter = createClaudeChatProviderAdapter({ homePath: f.homePath, spawnFn, resolveCredentialLaunch: f.compose().resolveClaudeCredentialLaunch });
+    const events = [];
+    for await (const event of adapter.start(input(f.harness.id))) events.push(event);
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
+    expect(spawnFn.mock.calls[0]?.[2]?.env?.ANTHROPIC_API_KEY).toBe("synthetic-owner-key");
+    expect(f.getCredential).not.toHaveBeenCalled();
+  });
+
+  it.each(["disabled", "missing-account", "wrong-account", "missing-source", "ineligible-model", "multiple-enabled", "missing-key-file", "conflicting-saved-source"])("fails closed for %s owner-key configuration before spawn or funding", async scenario => {
+    const f = await fixture("owner_anthropic_key");
+    const snapshot = structuredClone(await f.store.getSnapshot());
+    const row = snapshot.harnesses.find(row => row.id === f.harness.id)!;
+    if (scenario === "disabled") { row.configuredEnabled = false; row.enabled = false; }
+    if (scenario === "missing-account") snapshot.accounts = snapshot.accounts.filter(account => account.accessSourceId !== "owner_anthropic_key");
+    if (scenario === "wrong-account") row.selectedAccountId = "owner_claude_profile";
+    if (scenario === "missing-source") snapshot.accessSources = snapshot.accessSources.filter(source => source.id !== "owner_anthropic_key");
+    if (scenario === "ineligible-model") snapshot.accessSources.find(source => source.id === "owner_anthropic_key")!.eligibleModelIds = [];
+    if (scenario === "multiple-enabled") snapshot.harnesses.push({ ...row, id: "second-claude" });
+    if (scenario === "missing-key-file") await unlink(join(f.homePath, "system/ai-providers/anthropic-key.json"));
+    if (scenario === "conflicting-saved-source") row.configuredAccessSourceId = "owner_claude_profile";
+    const reader = vi.fn(async (): Promise<ProviderSettingsSnapshot> => snapshot);
+    const spawnFn = vi.fn();
+    const adapter = createClaudeChatProviderAdapter({ homePath: f.homePath, spawnFn, resolveCredentialLaunch: f.compose(reader).resolveClaudeCredentialLaunch });
+    await expect(adapter.start(input(f.harness.id))[Symbol.asyncIterator]().next()).rejects.toThrow("Selected AI access is unavailable");
+    expect(spawnFn).not.toHaveBeenCalled(); expect(f.getCredential).not.toHaveBeenCalled();
+  });
+
+  it("still refuses a retired Matrix AI native selection before any credential read", async () => {
+    const f = await fixture("owner_anthropic_key");
+    await expect(f.compose().resolveClaudeCredentialLaunch({ runId: "run_1", instanceId: "claude_code_matrix_included" })).rejects.toThrow("Selected AI access is unavailable");
     expect(f.getCredential).not.toHaveBeenCalled();
   });
 

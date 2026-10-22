@@ -1,11 +1,43 @@
 # Chat tool display and replay
 
 Codex tool lifecycle records must retain their identity even when optional
-preview text cannot be displayed. A command preview uses the thread event's
+preview text cannot be displayed. A plaintext command preview uses the thread event's
 1,000-character/4,000-byte bound; working-directory detail uses its
 2,000-character/8,000-byte bound. Neither field is a 120-character tool label.
 Rejected optional metadata is omitted independently. An incomplete preview/kind
 pair is omitted together, without discarding the start event.
+
+Complete Codex commands, including absolute owner VPS paths and multiline shell
+snippets, use an optional encrypted `protectedPreview`. It reuses the runtime's
+existing owner key with a distinct `matrix-tool-preview:v1:<toolCallId>`
+authentication purpose; result ciphertext cannot be replayed as a command.
+Recognized credential assignments, headers, flags and values suppress the
+command rather than publishing them. A filename such as `.env`, `auth.json`, or
+`id_rsa`, or a `token` identifier alone, is not a credential value. Command
+contents use the existing encrypted envelope bound of 4,000 UTF-16 units /
+16 KiB UTF-8 bytes. Commands beyond that cap or with invalid controls omit
+optional command evidence while retaining tool identity and status. Plaintext
+legacy previews remain capped at 1,000 characters / 4,000 bytes; a longer
+command is retained only as protected owner content.
+
+Only an authenticated matching personal Chat owner who is also the configured
+VPS owner may open a command preview. Shared/non-owner responses, exports and
+legacy thread HTTP/WebSocket copies strip the preview sidecar; shared reads
+continue to redact private paths. Missing or invalid keys retain safe coarse
+metadata. New canonical clients opt into `commandPreviewVersion=1` for complete
+previews; unversioned responses retain the legacy safe preview contract.
+
+Provider ingestion, including Claude and Hermes tool projections, retains the
+strict plaintext preview contract. The wider owner response schema must never
+admit raw private commands: only the authenticated encrypted sidecar may supply
+them. Read, export and legacy thread projections also apply the coarse policy
+to historical unprotected metadata before any authorized owner decryption.
+
+Native completion metadata enriches the existing activity ID instead of
+emitting another start, so status, activity sequence and watchdog accounting
+remain stable. Detail expansion shows all command lines alongside the working
+directory and result; Electron Desktop's copy action preserves the exact
+command. Previously discarded commands cannot be reconstructed.
 
 All arbitrary tool result text is **private owner content**, including text that
 contains no recognizable secret marker. A denylist cannot prove a string safe.
@@ -113,3 +145,59 @@ is covered by the component test, not represented as device acceptance.
 ![Electron Desktop expanded tool result](assets/chat-tool-details-electron.png)
 
 Pi and OpenCode retain their existing thread event/journal contracts. When their results enter canonical Chat, the shared coding adapter seals them with the runtime key before canonical activities and outbox persistence; missing keys leave coarse notices. Their pre-existing thread journals are outside this output-protection boundary. Legacy unsealed Codex output remains coarse because Codex sealing belongs before journal persistence.
+
+## Managed Matrix Pi (ENG265 follow-up)
+
+`matrix_pi` uses `managed-pi-runtime` and the pinned bot worker, not the native
+Pi CLI collector. The internal broker's optional `tool_progress.display`
+selects a tool name, known scalar input fields, an allowed command and recognized
+text blocks. It never forwards raw argument/result objects, binary content or
+model thinking. Gateway ingestion rechecks evidence and seals parameters and
+output with the existing owner key before canonical activity/outbox writes.
+Command evidence uses `protectedPreview`; selected parameters and result use
+`protectedOutput`. Private parameter paths are filtered independently, so they
+cannot hide an otherwise displayable result. Known credential context/results
+remain withheld even from the owner; absent keys retain coarse notices.
+
+Start, update and completion use the same toolCallId/activityId. Managed Pi
+`tool.output` entries are authoritative display snapshots; projections select
+the latest one rather than concatenate partial and final results. Codex/Claude
+retain append semantics. Worker tracking is capped at60 tools per turn, three
+updates per tool at least250ms apart, 750 characters of selected input, 3,000
+characters of result and 4,000 characters of command. Gateway repeats tool/update
+caps. The global event budget reserves a terminal slot for every tracked tool.
+Canonical retention remains500 records; full tool snapshots do not grow without
+bound. Snapshot replacement preserves parameters alongside the current result.
+
+Cancellation keeps the existing orchestrator rule rejecting late provider
+output. Pending managed cards derive stopped/failed/partial from the canonical
+Run when it is aborted/failed/completed, including after reload; explicit tool
+terminal states remain unchanged. Missing end events never imply success.
+Empty text, unavailable/unknown envelopes, hidden sensitive output and truncated
+output have separate notices. Historical payload-free events remain supported;
+previously discarded details cannot be reconstructed.
+
+SDK partial results and supported Custom MCP progress notifications update the
+same managed card. For MCP the existing authorized POST opts into a bounded
+NDJSON response: the pinned HTTPS requester parses complete SSE notifications
+from that same upstream call, RemoteMcpClient matches a unique per-call progress
+token, and owner tools encrypt the selected progress text before canonical
+persistence. There is no additional execution, reconnect retry or receipt
+consumption. Non-stream callers retain JSON behavior. Cancellation aborts this
+request without evicting a remote session shared by other invocations. Late or
+foreign updates are ignored. Three updates are sampled per call; the last
+snapshot announces that live updates paused until completion. The final result
+retains its own192KiB transport limit, with a separate bounded allowance for
+three progress frames and framing overhead.
+
+MCP progress messages describe service-provided progress; they are not an
+implicit stdout/stderr contract. Artifact and ordinary integration tools still
+return final results. No local shell executor or arbitrary server log feed is
+added. A producer returning final content only cannot show real intermediate
+output. Actual stdout acceptance needs a specifically identified producer
+that supplies those frames; fixture notifications cannot establish it.
+Broker-encoded MCP results reveal recognized text content and isError only;
+details/structuredContent are not serialized into the display. This changes
+display status without changing the model's execution result or approval rules.
+Private Preview and local Electron acceptance precede HumanReview; Greptile and
+formal CI follow user acceptance. Live evidence is still required separately.

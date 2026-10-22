@@ -4,6 +4,10 @@ This directory owns the GitHub Actions workflows for Matrix OS. Keep workflow
 changes small and explicit: PR checks optimize for actionable signal, while
 main, release, and scheduled workflows preserve comprehensive validation.
 
+Automatic Claude Code Review is removed from CI. The separate `claude.yml`
+workflow remains available for explicit `@claude` requests. Codex automatic
+reviews are managed in Codex repository settings, outside GitHub Actions.
+
 ## Required Checks
 
 The branch protection rule should require `CI Results` from `ci.yml` as the stable

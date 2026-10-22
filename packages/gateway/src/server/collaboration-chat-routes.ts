@@ -1,3 +1,5 @@
+import { createBrowserGrantRoutes } from "../chat/browser-grant-routes.js";
+import type { BrowserApprovalControl } from "../chat/browser-approval-control.js";
 /** Mount canonical Chat, provider and collaboration routes after startup. */
 import { createChatNavigationRepository } from "../chat/navigation-repository.js";
 import type { Context, Hono } from "hono";
@@ -6,6 +8,7 @@ import { AiProviderService } from "../ai-providers/service.js";
 import { createAiProviderRoutes } from "../ai-providers/routes.js";
 import type { ProviderSettingsStoreWriter } from "../ai-providers/provider-settings-store.js";
 import type { GmailAccountRow } from "../chat/jev-recipe-authority.js";
+import { createManagedCreditOwnerAuthorization } from "../ai-providers/provider-managed-credit-authorization.js";
 import { createProviderSettingsRoutes } from "../ai-providers/provider-settings-routes.js";
 import { createChatAgentRoutes } from "../chat/agent-routes.js";
 import { createCodexChatImportRoutes } from "../chat/codex-import-routes.js";
@@ -38,6 +41,7 @@ import { registerOwnerCollaborationRoutes } from "../startup/collaboration.js";
 
 export interface CollaborationChatRouteOptions {
   app: Hono;
+  browserApprovals?: BrowserApprovalControl;
   upgradeWebSocket: ReturnType<typeof createNodeWebSocket>["upgradeWebSocket"];
   canonicalChatEventStream: ReturnType<typeof createGatewayChatEventStream> | null;
   chatRepository: ChatRepository | null;
@@ -92,6 +96,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   }));
   const localImports = registerLocalChatImports({ app, repository: chatRepository, storage: options.syncR2,
     runtimeOwnerId: options.runtimeOwnerId, runtimeSlot: options.runtimeSlot, getPrincipal: c => requireRequestPrincipal(c) });
+  app.route("/", createBrowserGrantRoutes({ control: options.browserApprovals, getPrincipal: c => requireRequestPrincipal(c) }));
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {
@@ -148,6 +153,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   }));
   app.route("/api/ai", createProviderSettingsRoutes({
     store: providerSettingsStore,
+    canReadManagedCredit: createManagedCreditOwnerAuthorization(options.runtimeOwnerId, requireRequestPrincipal),
     canReadNativeAccountMetadata: (c) => Boolean(options.runtimeOwnerId) && requireRequestPrincipal(c).userId === options.runtimeOwnerId,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));

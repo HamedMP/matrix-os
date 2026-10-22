@@ -2,7 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { ProviderWorkflowSchema, ProviderWorkflowCapabilitySchema, type ProviderWorkflow, type ProviderWorkflowCapability, type ProviderWorkflowStart, type ProviderWorkflowKey, type ProviderWorkflowLogs, type ProviderWorkflowConnectionOption, type ProviderWorkflowStartV2, type ProviderWorkflowKeyV2, type ProviderWorkflowV2, type ProviderWorkflowCapabilityV2 } from '@matrix-os/contracts';
 import { qualifiedConnectionOptions } from './provider-workflow-options.js';
 export class ProviderWorkflowError extends Error {
-  constructor(readonly code: 'unavailable' | 'not_found' | 'conflict' | 'rejected' | 'forbidden') { super(code); }
+  constructor(readonly code: 'unavailable' | 'not_found' | 'conflict' | 'rejected' | 'key_workspace_required' | 'forbidden') { super(code); }
 }
 /** Adapter proves launch failed before acquiring any native resource or writer. */
 export class ProviderWorkflowNotStartedError extends ProviderWorkflowError {

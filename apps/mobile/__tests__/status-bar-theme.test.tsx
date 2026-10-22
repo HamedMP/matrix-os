@@ -25,6 +25,7 @@ jest.mock("@clerk/clerk-expo", () => ({
 jest.mock("expo-splash-screen", () => ({
   preventAutoHideAsync: jest.fn(() => Promise.resolve(true)),
   hideAsync: jest.fn(() => Promise.resolve()),
+  setOptions: jest.fn(),
 }));
 
 jest.mock("@expo-google-fonts/inter", () => ({ useFonts: () => [true] }));

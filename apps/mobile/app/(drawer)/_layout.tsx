@@ -1,18 +1,21 @@
-import { useAuth } from "@clerk/clerk-expo";
+import { useAuth, useOrganizationList } from "@clerk/clerk-expo";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Keyboard } from "react-native";
+import type { PanGesture } from "react-native-gesture-handler";
 import { useUnistyles } from "react-native-unistyles";
-import * as Haptics from "expo-haptics";
 import { useSegments } from "expo-router";
 import {
   Drawer,
   getDrawerStatusFromState,
   useDrawerStatus,
   type DrawerContentComponentProps,
+  type DrawerOptionsArgs,
 } from "expo-router/drawer";
+import type { ParamListBase } from "expo-router/react-navigation";
 
 import { SidePanel } from "@/components/shell/SidePanel";
 import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
+import { tapHaptic } from "@/lib/haptics";
 import { useAgentStatuses } from "@/lib/queries/use-agent-statuses";
 import { useAgents } from "@/lib/queries/use-agents";
 import { useCanonicalChatPages } from "@/lib/queries/use-canonical-chats";
@@ -29,17 +32,6 @@ import {
   sharedScreenParams,
 } from "@/lib/shell-routes";
 import { agentChatIds, withoutAgentChats } from "@/lib/side-panel-chats";
-
-function triggerDrawerHaptic() {
-  void Promise.resolve(
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium),
-  ).catch((error: unknown) => {
-    console.warn(
-      "[mobile] drawer haptic unavailable",
-      error instanceof Error ? error.name : "unknown",
-    );
-  });
-}
 
 /**
  * Puts the keyboard away when the panel closes. The search field keeps it up
@@ -60,8 +52,22 @@ function DismissKeyboardOnClose() {
   return null;
 }
 
+/**
+ * Lets only a rightward swipe move the closed panel. The navigator's pan starts
+ * on 5pt of movement either way, and it shifts a panel of this type by how far
+ * past the panel's edge the touch began, which pulled the closed panel out for a
+ * leftward swipe from the right edge. RNGH checks fail offsets first, so that
+ * swipe now fails the pan instead.
+ */
+function rightwardSwipeOnly(pan: PanGesture) {
+  return pan.failOffsetX(-5);
+}
+
 export default function DrawerLayout() {
   const { getToken } = useAuth();
+  const { isLoaded: organizationsLoaded, userMemberships } = useOrganizationList({
+    userMemberships: { infinite: true },
+  });
   const getTokenRef = useRef(getToken);
   const drawerStatusRef = useRef<ReturnType<typeof getDrawerStatusFromState> | null>(null);
   useEffect(() => { getTokenRef.current = getToken; }, [getToken]);
@@ -78,6 +84,16 @@ export default function DrawerLayout() {
   // every other screen keeps the swipe for its own lists and for going back.
   const chatScreenFocused = isChatScreen(useSegments());
   const collaborationEnabled = systemInfo?.capabilities?.collaboration === true;
+  // Fail open while Clerk's listing is incomplete or unavailable so a real member
+  // does not lose the destination because of a transient identity request. Only a
+  // complete empty listing proves that this is an individual account.
+  const confirmedNoOrganizations = organizationsLoaded
+    && Boolean(userMemberships)
+    && !userMemberships?.hasNextPage
+    && !userMemberships?.isFetching
+    && !userMemberships?.isError
+    && userMemberships?.data.length === 0;
+  const sharedAvailable = collaborationEnabled && !confirmedNoOrganizations;
   const [pendingInvitationCount, setPendingInvitationCount] = useState(0);
 
   // An agent's own conversation belongs to the Agents tab. Until the agents'
@@ -88,7 +104,7 @@ export default function DrawerLayout() {
   const projectCountKnown = !projects.isPending && !(projects.isError && projects.projects.length === 0);
 
   useEffect(() => {
-    if (!collaborationEnabled) return;
+    if (!sharedAvailable) return;
     let current = true;
     const load = () => void (async () => {
       try {
@@ -103,7 +119,7 @@ export default function DrawerLayout() {
     load();
     const unsubscribe = subscribeCollaborationDiscoveryChanged(load);
     return () => { current = false; unsubscribe(); };
-  }, [collaborationEnabled]);
+  }, [sharedAvailable]);
 
   return (
     <Drawer
@@ -116,7 +132,7 @@ export default function DrawerLayout() {
             const status = getDrawerStatusFromState(data.state);
             if (status !== drawerStatusRef.current) {
               drawerStatusRef.current = status;
-              triggerDrawerHaptic();
+              tapHaptic();
             }
           },
         };
@@ -134,8 +150,8 @@ export default function DrawerLayout() {
               chatsLoading={chatPages.isPending}
               chatsFailed={chatPages.isError}
               projectCount={projectCountKnown ? projects.projects.length : undefined}
-              collaborationEnabled={collaborationEnabled}
-              pendingInvitationCount={collaborationEnabled ? pendingInvitationCount : 0}
+              collaborationEnabled={sharedAvailable}
+              pendingInvitationCount={sharedAvailable ? pendingInvitationCount : 0}
               searchQuery={searchQuery}
               searchResults={searchResults}
               searching={search.isSearching}
@@ -167,7 +183,7 @@ export default function DrawerLayout() {
           </>
         );
       }}
-      screenOptions={{
+      screenOptions={({ navigation }: DrawerOptionsArgs<ParamListBase>) => ({
         headerShown: false,
         drawerPosition: "left",
         // The panel slides over the screen, which stays where it is under the scrim.
@@ -184,8 +200,11 @@ export default function DrawerLayout() {
         overlayAccessibilityLabel: "Close side panel",
         swipeEnabled: chatScreenFocused,
         swipeEdgeWidth: 800,
+        // An open panel keeps the leftward swipe that closes it.
+        configureGestureHandler:
+          getDrawerStatusFromState(navigation.getState()) === "open" ? undefined : rightwardSwipeOnly,
         sceneStyle: { backgroundColor: theme.v2.colors.background },
-      }}
+      })}
     >
       <Drawer.Screen name={TABS_ROUTE} />
     </Drawer>

@@ -14,14 +14,23 @@ import {
   createBedrockFundedUpstream,
 } from "./funded-bedrock-upstream.js";
 import { isBedrockPricingCurrent, priceBedrockUsageMicrousd } from "./funded-bedrock-route.js";
+import { RELAY_SHUTDOWN_TIMEOUT_MS, waitForRelayWork } from "./funded-relay-lifecycle.js";
 import { serializeFundedOpenAiRequest } from "./funded-relay-openai-request.js";
 import { createFundedUsageTracker } from "./funded-relay-usage.js";
 import type { FundedGenerationUpstream } from "./funded-relay-upstream.js";
+import type { FundedPlatformClient } from "./funded-relay-platform-client.js";
 
 export interface FundedRelayService {
   app: Hono;
-  close(): Promise<void>;
+  close(signal?: AbortSignal): Promise<boolean>;
 }
+
+type FundedRelayServiceConfig = FundedRelayConfig & {
+  fetch?: typeof fetch;
+  now?: () => Date;
+  platformClient?: FundedPlatformClient;
+  bedrockUpstream?: FundedGenerationUpstream;
+};
 
 export function requireFundedRelayServiceConfig(
   env: NodeJS.ProcessEnv = process.env,
@@ -33,7 +42,7 @@ export function requireFundedRelayServiceConfig(
   return config;
 }
 
-export function createFundedRelayService(config: FundedRelayConfig, options: {
+export function createFundedRelayService(config: FundedRelayServiceConfig, options: {
   fetchFn?: typeof fetch;
   now?: () => Date;
   bedrockUpstream?: FundedGenerationUpstream;
@@ -42,11 +51,16 @@ export function createFundedRelayService(config: FundedRelayConfig, options: {
   const errorTracker = installPostHogHonoErrorTracking(app, {
     service: "matrix-funded-ai-relay",
   });
-  const now = options.now ?? (() => new Date());
+  const now = options.now ?? config.now ?? (() => new Date());
   const bedrockUpstream = config.bedrockRoute
-    ? options.bedrockUpstream ?? createBedrockFundedUpstream(config.bedrockRoute)
+    ? options.bedrockUpstream ?? config.bedrockUpstream ?? createBedrockFundedUpstream(config.bedrockRoute)
     : undefined;
-  const relay = createFundedRelay({ ...config, fetch: options.fetchFn, now, bedrockUpstream });
+  const relay = createFundedRelay({
+    ...config,
+    ...(options.fetchFn ? { fetch: options.fetchFn } : {}),
+    now,
+    bedrockUpstream,
+  });
 
   app.get("/health", (c) => c.json({ status: "ok" }));
   app.get("/ready", async (c) => {
@@ -113,12 +127,20 @@ export function createFundedRelayService(config: FundedRelayConfig, options: {
     return c.json(ready ? { ready: true, priceValidThrough } : { ready: false }, ready ? 200 : 503);
   });
   relay.register(app);
+  let closing: Promise<boolean> | undefined;
 
   return {
     app,
-    async close() {
-      await relay.close();
-      await errorTracker.shutdown();
+    close(shutdownSignal?: AbortSignal) {
+      if (closing) return closing;
+      const signal = shutdownSignal ?? AbortSignal.timeout(RELAY_SHUTDOWN_TIMEOUT_MS);
+      closing = (async () => {
+        const drained = await relay.close(signal);
+        if (signal.aborted) return false;
+        const tracked = await waitForRelayWork(errorTracker.shutdown(), signal);
+        return drained && tracked && !signal.aborted;
+      })();
+      return closing;
     },
   };
 }
