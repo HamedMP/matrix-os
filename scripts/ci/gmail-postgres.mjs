@@ -18,6 +18,7 @@ export function gmailPostgresFiles(root) {
   collect('tests/gateway/google-data');
   files.push('tests/gateway/google-broker-collection-startup.test.ts',
     'tests/gateway/google-context-admission-startup.test.ts',
+    'tests/gateway/google-platform-policy-composition.test.ts',
     'tests/gateway/google-managed-profile-resolution.test.ts',
     'tests/gateway/google-pilot-copy-lifecycle.test.ts',
     'tests/gateway/google-pilot-owner-pool.test.ts',
