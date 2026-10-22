@@ -276,8 +276,7 @@ describe('VPS update manifest trust boundary', () => {
   it('rejects a retry manifest that changes the bundle URL to HTTP', () => {
     const { result, curlCalls, error } = probeRetryUrl('http://storage.example/plaintext-bundle');
     expect(result.status).toBe(1);
-    expect(curlCalls).toHaveLength(1);
-    expect(curlCalls[0]).toContain('--proto =https --proto-redir =https');
+    expect(curlCalls).toHaveLength(0);
     expect(error).toBe('download_metadata_changed');
   });
 

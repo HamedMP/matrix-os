@@ -1651,14 +1651,19 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(hostBinInstall).toBeGreaterThan(installRuntime);
   });
 
-  it('sync agent refreshes immutable metadata and resumes one bounded bundle download', () => {
+  it('sync agent refreshes immutable metadata for bounded bundle chunks', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
 
     expect(syncAgent).toContain('download_bundle()');
-    expect(syncAgent).toContain('for attempt in 1 2; do');
-    expect(syncAgent).toContain('/usr/bin/timeout --signal=KILL 1800 curl');
-    expect(syncAgent).toContain('continue_args=(--continue-at -)');
+    expect(syncAgent).toContain('chunk_size=8388608');
+    expect(syncAgent).toContain('max_bundle_size=21474836480');
+    expect(syncAgent).toContain('for attempt in 1 2 3; do');
+    expect(syncAgent).toContain('local transfer_deadline_seconds=3600');
+    expect(syncAgent).toContain('/usr/bin/timeout --signal=KILL "$curl_timeout" curl');
+    expect(syncAgent).toContain('--range "$start-$end" --max-filesize "$expected_chunk"');
+    expect(syncAgent).toContain("status_code != '206'");
+    expect(syncAgent).toContain('os.O_RDONLY | os.O_NOFOLLOW');
     expect(syncAgent).toContain('fetch_manifest "$(release_url_for_version "$version")"');
     expect(syncAgent).toContain('[ "$refreshed_version" = "$version" ]');
     expect(syncAgent).toContain('[ "$refreshed_sha256" = "$expected_sha256" ]');
@@ -1666,6 +1671,10 @@ json_field() { python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.a
     expect(syncAgent).toContain('write_update_error "download_metadata_changed"');
     expect(syncAgent).toContain('write_update_error "download_failed"');
     expect(syncAgent).toContain('download_bundle "$version" "$sha256" "$(json_field "$manifest" size)" "$bundle_url" "$bundle_file"');
+    expect(syncAgent).toContain('actual_sha256="$(sha256sum "$bundle_file"');
+    expect(syncAgent).toContain('if [ "$actual_sha256" != "$sha256" ]');
+    expect(syncAgent).toContain("-name 'failed-*' -o -name 'bundle-*'");
+    expect(syncAgent).toContain('[ ! -L "$path" ] || continue');
   });
 
   it('sync agent publishes coarse bootstrap evidence before entering its polling loop', () => {
