@@ -1,0 +1,39 @@
+# Qualified funded issuer and checker (ENG-355)
+
+This implementation adds opt-in factories. Existing startup does not construct or pass them, install their schema, configure a provider, approve Google processing or enable managed inference. Original plans remain unchanged. The original funded/Jev CTE is extracted into `ai-funded-credential-issuer.ts` with unchanged legacy token, class, cooldown, policy and response behavior.
+
+## Explicit composition and authority
+
+| Endpoint | Authentication | Input and behavior |
+| --- | --- | --- |
+| `POST /internal/containers/:handle/ai/qualified/managed-route?runtimeSlot=...` | Actual active machine handle/ID/slot and its current runtime-token epoch HMAC | Separate strict discovery selector; current allowed route disclosure, no grant |
+| `POST /internal/containers/:handle/ai/qualified/funded-credential?runtimeSlot=...` | Same actual runtime authentication, rechecked after control resolution inside write transaction | Separate issue schema; exact model/class/expected digest; token and child minted atomically |
+| `POST /internal/ai/funded/qualified/check` | Exact service-owned control bearer, checked in constant time before body access | Separate qualified token schema and complete token HMAC; current child, model/policy and actual route checks |
+
+The factories require an explicit qualified service dependency. Existing runtime/relay factories accept it optionally; absent preserves existing routes and payloads. No owner session, model header, client owner/route/approval field, legacy machine token or old funded token authenticates the new protocol. Runtime params/query are strict, exact identity is derived from the machine row, and only active authorized nondeleted machines are admitted. Errors are fixed and generic. Responses are private/no-store; no CORS permission is added.
+
+All new POST handlers authenticate before body reading, require JSON with exact Content-Length 1–4096 bytes and no transfer encoding, use Hono body limits plus a bounded reader (4 KiB/64 chunks), and share a ten-second request deadline/caller abort. Invalid/extra fields are refused. The service tracks at most eight aggregate active request/operation scopes, aborts and drains them on close, including authenticated stalled bodies; it does not close its injected database runner.
+
+## Actual control resolution
+
+`createFundedManagedRouteClient` accepts only an operator-provided canonical HTTPS relay base URL and service control token. It calls the fixed `/internal/google-managed-route/resolve` path on that origin, never a request Host, body URL or model-provided endpoint. It sends only the strict API/model selector with exact Content-Length, forbids redirects, and bounds the combined fetch/body lifetime to five seconds (also caller-cancelled). Response bodies are limited to 64 KiB/64 chunks and cancelled on rejection; late responses after abort are also cancelled. It validates the actual returned descriptor, canonical SHA-256, exact advertised relay/API/model and review time window. No provider request, readiness probe, credential fallback or authorization cache is used.
+
+## Private database runner and lifecycle
+
+`createQualifiedFundedTransactionRunner` creates its own opt-in pool, never the host/shared pool. Its fixed maximum is four connections (tests may lower it). Admission is capped at pool capacity with immediate refusal beyond it, so it creates no pool wait queue. A real connection handshake is bounded to one second. Before any transaction work it installs server-side statement limits of at most five seconds and lock limits of at most two seconds, further clipped to the remaining absolute request lifetime. Caller abort/deadline ends only the runner's actual borrowed client; installed pg's public client end destroys an active socket. The operation/transaction and socket end drain before that client is removed/released. A Kysely facade cannot return or close the actual borrowed resource. Healthy clients return only after commit/rollback; local settings do not leak.
+
+The runner is for controlled database-only callbacks, never external HTTP or arbitrary unbounded callbacks. All service control HTTP completes outside its transaction. It rechecks cancellation after acquisition and before commit. Close stops admission, aborts/drains its bounded operations and ends only its owned pool; close is idempotent. Host composition must call `service.close()` then `runner.close()` on shutdown. The runner does not run startup migrations. The existing child installer must finish before the service is exposed; a missing schema is a failure, never a legacy fallback.
+
+## Issuance, checking and races
+
+Issuance resolves the current control descriptor before taking database locks. In a single caller-owned transaction it acquires existing deletion/billing admission, funded owner admission, then machine-before-runtime/global locks. It rechecks exact original handle/machine/owner/slot/runtime epoch and actual bearer, current exact selected model, policy state, credit restrictions and review expiry. Token expiry is clipped before minting to configured TTL, exact review expiry and runtime-policy expiry. The class cooldown, token hash and immutable route child commit or roll back together. A failed child insert consumes neither a token nor cooldown. No route substitution or legacy retry is allowed.
+
+Qualified issuance IDs are strictly `q1_<canonical decimal runtime epoch>_<lowercase v4 UUID>`. Epochs are checked against 1–2147483647 using bounded canonical decimal parsing (no leading zero or JS precision loss). This is actual runtime authorization metadata, not provider account/credential-generation evidence. The full distinct opaque token—including prefix and ID—is HMAC authenticated before the checker parses this metadata. Unknown versions/malformed IDs fail closed; current machine epoch must still match. Existing legacy IDs and database token/FK layout are unchanged.
+
+Checking first authenticates the entire qualified token, validates its exact stored owner/machine/slot/class/API/model/digest and current policy, resolves current control metadata outside the transaction, then repeats current token/child/policy checks before returning the original binding. It holds a fresh credential read lock while assembling the final policy snapshot, so revocation cannot interleave that snapshot. No returned snapshot is itself a Google profile/consent grant; actual egress must revalidate at send/release.
+
+Cancellation during commit can leave an atomically committed token/child whose response was never delivered. It remains bounded by its clipped expiry and cannot be used without its opaque secret and downstream qualification. This unit does not claim network-response delivery and database commit are atomic.
+
+## Remaining required composition
+
+Qualified reservation/authorization contracts and proxy checks before every content-bearing send/retry and streaming release remain absent. The new prefix intentionally fails through old check/authorize parsers, so issued tokens cannot spend through legacy endpoints. Broker/gateway qualified caches, configured route/profile selection and owner Google consent must be wired without legacy fallback before managed Google-bearing inference is usable. Operator processing-account evidence, default Anthropic billing resolution, future Bedrock transport, exact-build CI/live workflow evidence and private-site documentation remain separate stack deliverables. No provider approval or live qualification is inferred from these local tests.
