@@ -47,9 +47,12 @@ export function createGoogleCanonicalMessageDeletionHandler(database: Kysely<Cha
           AND kind='chat' AND resource_id=${chat.id} AND lifecycle NOT IN ('private','preparing') LIMIT 1`.execute(tx);
         check(signal);
         if (shared.rows.length) return { status: 'modified' as const };
-        const run = await tx.selectFrom('chat_runs').select('id').where('id', '=', discovered.run_id)
+        const run = await tx.selectFrom('chat_runs').select(['id', 'status']).where('id', '=', discovered.run_id)
           .where('chat_id', '=', chat.id).forUpdate().executeTakeFirst();
         if (!run) return { status: 'modified' as const };
+        // Host cancellation/drain happens before the copy-locked worker invokes
+        // us. Never attest deletion while that run can still produce content.
+        if (!['completed', 'failed', 'aborted'].includes(run.status)) return { status: 'unavailable' as const };
         const key = { owner: { type: 'personal' as const, ownerId }, chatId: chat.id, runId: run.id, messageId: messageId.data };
         const hash = await canonicalMessagePayloadHash(tx, key);
         check(signal);
