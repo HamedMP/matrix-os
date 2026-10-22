@@ -372,6 +372,11 @@ restore_rollback_release_metadata() {
 funded_host_bootstrap() { return 1; }
 # END funded host bootstrap
 
+# BEGIN Browser host bootstrap
+# Build emits reviewed inline bootstrap with exact release and payload digests.
+reconcile_browser_host_bootstrap() { return 0; }
+# END Browser host bootstrap
+
 install_host_bin_payload() {
   local source_dir="$1" source name incoming destination protected_helper
   [ -d "$source_dir" ] && [ ! -L "$source_dir" ] || return 1
@@ -1970,6 +1975,7 @@ if [[ "$funded_installed_version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] && [ 
   # Startup installs independently verified bytes only; it never stops a runtime.
   funded_host_bootstrap install "$funded_installed_version" || log "WARN: funded host component installation deferred"
 fi
+reconcile_browser_host_bootstrap || log "WARN: Browser first-upgrade bootstrap deferred"
 reconcile_postgres_root_service || log "WARN: PostgreSQL root service reconciliation failed"
 maybe_retire_legacy_symphony || log "WARN: legacy Symphony retirement will retry"
 maybe_reconcile_hermes_release || log "WARN: Hermes release reconciliation retry failed"

@@ -101,6 +101,7 @@ remove_targets=(
   etc/matrix
   opt/matrix/env
   opt/matrix-browser-lab
+  var/lib/matrix-browser-bootstrap
   opt/matrix/config
   opt/matrix/secrets
   opt/matrix/tls
@@ -162,6 +163,7 @@ sensitive_targets=(
   etc/matrix
   opt/matrix/env
   opt/matrix-browser-lab
+  var/lib/matrix-browser-bootstrap
   opt/matrix/config
   opt/matrix/secrets
   opt/matrix/tls

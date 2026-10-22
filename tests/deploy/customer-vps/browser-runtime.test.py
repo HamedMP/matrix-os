@@ -13,6 +13,10 @@ spec = importlib.util.spec_from_file_location('browser_runtime', SOURCE)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
+fixture_spec = importlib.util.spec_from_file_location('browser_health_fixture', Path('tests/deploy/customer-vps/browser-health-fixture.py'))
+fixture = importlib.util.module_from_spec(fixture_spec)
+fixture_spec.loader.exec_module(fixture)
+
 
 class BrowserRuntimeTest(unittest.TestCase):
     def setUp(self):
@@ -111,6 +115,71 @@ class BrowserRuntimeTest(unittest.TestCase):
         self.assertEqual((prefix / 'app/previous').read_text(), 'keep')
         self.assertFalse((prefix / 'app/candidate').exists())
         self.assertEqual(self.env.read_bytes(), original)
+
+    def test_native_health_accepts_real_supervisor_startup_without_opening_human_input(self):
+        self.runtime.prepare()
+        self.runtime.write(self.env, self.env.read_text() + 'MATRIX_BROWSER_LAB_VIEWER_AUTH="Basic eDp5"\n', 0o640, self.runtime.gid)
+        with fixture.native_health_fixture() as (initial, opener, run, viewer_connection):
+            self.assertFalse(initial['initial']['humanControlAvailable'])
+            with patch.object(module.urllib.request, 'build_opener', return_value=opener), \
+                 patch.object(self.runtime, 'run', side_effect=run), \
+                 patch.object(module.socket, 'create_connection', side_effect=viewer_connection):
+                self.runtime.health()
+            with opener.open('http://127.0.0.1:8730/browser-status', timeout=2) as response:
+                self.assertIs(json.loads(response.read())['humanControlAvailable'], False)
+
+    def test_exhausted_interrupted_activation_recovers_before_budget_and_optout(self):
+        self.runtime.prepare()
+        self.runtime.write(self.root / 'opt/matrix/release.json', '{"version":"v-test"}')
+        original = self.env.read_bytes()
+        profile = self.root / 'home/matrix/home/.local/share/matrix-browser-lab/chrome/session'
+        profile.parent.mkdir(parents=True)
+        profile.write_text('retained owner session')
+        for disabled in (False, True):
+            with self.subTest(disabled=disabled):
+                app, previous = self.runtime.prefix / 'app', self.runtime.prefix / '.previous'
+                for tree in (app, previous):
+                    if tree.exists():
+                        module.shutil.rmtree(tree)
+                previous.mkdir()
+                (previous / 'retained').write_text('previous native runtime')
+                app.mkdir(exist_ok=True)
+                (app / 'candidate').write_text('interrupted candidate')
+                self.runtime.write(self.runtime.prefix / 'activation.json', json.dumps({'hadApp': True,
+                    'environment': module.base64.b64encode(original).decode(), 'files': {}}), 0o600)
+                self.runtime.write(self.env, original + b'CURRENT_NON_BROWSER_KEY=preserved\nMATRIX_FUNDED_AI_RUNTIME_TOKEN=new-token\n' + ('MATRIX_BROWSER_LAB=false\n' if disabled else 'MATRIX_BROWSER_LAB=true\n').encode(), 0o640, self.runtime.gid)
+                self.runtime.write(self.runtime.prefix / 'status.json', '{"version":"v-test","attempts":3,"status":"installing"}')
+                with patch.object(self.runtime, 'run', return_value=''), patch.object(self.runtime, '_reconcile') as attempt:
+                    self.runtime.reconcile()
+                attempt.assert_not_called()
+                self.assertEqual((app / 'retained').read_text(), 'previous native runtime')
+                self.assertFalse((app / 'candidate').exists())
+                self.assertFalse((self.runtime.prefix / 'activation.json').exists())
+                self.assertEqual(json.loads((self.runtime.prefix / 'status.json').read_text())['status'], 'disabled' if disabled else 'exhausted')
+                if disabled:
+                    self.assertEqual(self.runtime.environment()[1]['MATRIX_BROWSER_LAB'], 'false')
+                self.assertIn('CURRENT_NON_BROWSER_KEY=preserved', self.env.read_text())
+                self.assertIn('MATRIX_FUNDED_AI_RUNTIME_TOKEN=new-token', self.env.read_text())
+                self.assertEqual(profile.read_text(), 'retained owner session')
+
+    def test_activation_recovery_preserves_operator_origin_changes(self):
+        self.runtime.prepare()
+        original = self.env.read_text()
+        for saved_origin, current_origin, expected in (
+                (None, 'https://app.matrix-os.com', None),
+                (None, 'https://new-operator.example', 'https://new-operator.example'),
+                ('https://old-operator.example', 'https://new-operator.example', 'https://new-operator.example'),
+                ('https://old-operator.example', None, None)):
+            with self.subTest(saved=saved_origin, current=current_origin):
+                saved = original + (f'SHELL_ORIGIN={saved_origin}\n' if saved_origin else '')
+                current = original + (f'SHELL_ORIGIN={current_origin}\n' if current_origin else '')
+                self.runtime.write(self.env, current, 0o640, self.runtime.gid)
+                self.runtime.write(self.runtime.prefix / 'activation.json', json.dumps({'hadApp': False,
+                    'environment': module.base64.b64encode(saved.encode()).decode(), 'files': {}}), 0o600)
+                with patch.object(self.runtime, 'run', return_value=''):
+                    self.runtime.recover_activation()
+                origins = [line for line in self.env.read_text().splitlines() if line.startswith('SHELL_ORIGIN=')]
+                self.assertEqual(origins, [f'SHELL_ORIGIN={expected}'] if expected else [])
 
     def test_warm_upgrade_does_not_restart_unchanged_chrome_or_display_units(self):
         self.runtime.prepare()
@@ -347,7 +416,7 @@ class BrowserRuntimeTest(unittest.TestCase):
         self.runtime.write(self.runtime.prefix / 'status.json', '{"version":"v-test","attempts":1,"status":"ready"}')
         with patch.object(self.runtime, '_reconcile') as reconcile, patch.object(self.runtime, 'health') as health:
             self.runtime.reconcile()
-        health.assert_called_once_with(allow_control_locked=True)
+        health.assert_called_once_with()
         reconcile.assert_not_called()
 
     def test_viewer_socket_requires_authenticated_101_and_matching_accept(self):
@@ -392,11 +461,91 @@ class BrowserRuntimeTest(unittest.TestCase):
         self.runtime.prepare()
         self.runtime.write(self.root / 'opt/matrix/release.json', '{"version":"v-test"}')
         self.runtime.write(self.runtime.prefix / 'status.json', '{"version":"v-test","status":"ready"}')
-        with patch.object(self.runtime, 'run') as run:
+        with patch.object(self.runtime, 'run', return_value='active\n' * 6) as run:
             self.assertEqual(self.runtime.retry(), {'status': 'ready', 'retryAvailable': False})
             self.env.write_text(self.env.read_text() + 'MATRIX_BROWSER_LAB=false\n')
             self.assertEqual(self.runtime.retry(), {'status': 'disabled', 'retryAvailable': False})
+        run.assert_called_once_with(['/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', *self.runtime.service_names], timeout=2)
+
+    def test_ready_status_checks_all_native_services_once_without_full_health(self):
+        self.runtime.prepare()
+        self.runtime.write(self.root / 'opt/matrix/release.json', '{"version":"v-test"}')
+        self.runtime.write(self.runtime.prefix / 'status.json', '{"version":"v-test","status":"ready"}')
+        with patch.object(self.runtime, 'health') as health, patch.object(self.runtime, 'run', return_value='active\n\n' * 6) as run:
+            self.assertEqual(self.runtime.product_status(), {'status': 'ready', 'retryAvailable': False})
+        run.assert_called_once_with(['/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', *self.runtime.service_names], timeout=2)
+        health.assert_not_called()
+        for index in range(6):
+            for active in ('inactive', 'failed', 'activating', 'deactivating', 'reloading'):
+                with self.subTest(unit=index, state=active):
+                    states = ['active'] * 6
+                    states[index] = active
+                    with patch.object(self.runtime, 'run', return_value='\n'.join(states)):
+                        failed = active in ('inactive', 'failed')
+                        self.assertEqual(self.runtime.product_status(), {'status': 'failed' if failed else 'installing', 'retryAvailable': failed})
+        self.assertEqual(json.loads((self.runtime.prefix / 'status.json').read_text())['status'], 'ready')
+
+    def test_ready_status_rejects_missing_extra_and_unknown_service_states(self):
+        self.runtime.prepare()
+        self.runtime.write(self.root / 'opt/matrix/release.json', '{"version":"v-test"}')
+        self.runtime.write(self.runtime.prefix / 'status.json', '{"version":"v-test","status":"ready"}')
+        for states in ('active\n' * 5, 'active\n' * 7, 'active\n' * 5 + 'unknown\n'):
+            with patch.object(self.runtime, 'run', return_value=states), self.assertRaises(ValueError):
+                self.runtime.product_status()
+
+    def test_stopped_ready_browser_can_retry_but_retains_manual_cooldown(self):
+        self.runtime.prepare()
+        for name in self.runtime.service_names:
+            self.runtime.write(self.runtime.units / name, 'native unit')
+        self.runtime.write(self.root / 'opt/matrix/release.json', '{"version":"v-test"}')
+        self.runtime.write(self.runtime.prefix / 'status.json', '{"version":"v-test","status":"ready"}')
+        before = self.env.read_bytes()
+        with patch.object(self.runtime, 'run', return_value='active\n' * 5 + 'failed\n') as run:
+            self.assertEqual(self.runtime.retry(), {'status': 'installing', 'retryAvailable': False})
+        self.assertEqual([call.args[0] for call in run.call_args_list][1:], [
+            ['/usr/bin/systemctl', 'reset-failed', 'matrix-browser-runtime.service', *self.runtime.service_names],
+            ['/usr/bin/systemctl', 'start', '--no-block', 'matrix-browser-runtime.service']])
+        self.assertEqual(self.env.read_bytes(), before)
+        self.runtime.write(self.runtime.prefix / 'status.json', '{"version":"v-test","status":"ready"}')
+        with patch.object(self.runtime, 'run', return_value='active\n' * 5 + 'inactive\n') as run:
+            self.assertEqual(self.runtime.retry(), {'status': 'failed', 'retryAvailable': False})
+        self.assertEqual(run.call_count, 1)
+
+    def test_initial_retry_omits_unknown_native_units_before_they_are_installed(self):
+        self.runtime.prepare()
+        self.runtime.write(self.root / 'opt/matrix/release.json', '{"version":"v-test"}')
+        self.runtime.write(self.runtime.units / 'matrix-browser-runtime.service', 'lifecycle unit')
+        def systemctl(arguments, **kwargs):
+            if arguments[1] == 'reset-failed':
+                for name in arguments[2:]:
+                    if not (self.runtime.units / name).is_file():
+                        raise module.subprocess.CalledProcessError(1, arguments, stderr='Unit not loaded')
+            return ''
+        for status in ('pending', 'failed'):
+            with self.subTest(status=status):
+                (self.runtime.prefix / 'retry.json').unlink(missing_ok=True)
+                self.runtime.write(self.runtime.prefix / 'status.json', json.dumps({'version': 'v-test', 'status': status}))
+                with patch.object(self.runtime, 'run', side_effect=systemctl) as run:
+                    self.assertEqual(self.runtime.retry(), {'status': 'installing', 'retryAvailable': False})
+                self.assertEqual([call.args[0] for call in run.call_args_list], [
+                    ['/usr/bin/systemctl', 'reset-failed', 'matrix-browser-runtime.service'],
+                    ['/usr/bin/systemctl', 'start', '--no-block', 'matrix-browser-runtime.service']])
+
+    def test_retry_rejects_symlinked_or_writable_native_units_before_service_calls(self):
+        self.runtime.prepare()
+        self.runtime.write(self.root / 'opt/matrix/release.json', '{"version":"v-test"}')
+        self.runtime.write(self.runtime.prefix / 'status.json', '{"version":"v-test","status":"failed"}')
+        unit = self.runtime.units / self.runtime.service_names[0]
+        unit.symlink_to(self.root / 'outside')
+        with patch.object(self.runtime, 'run') as run:
+            with self.assertRaises(ValueError):
+                self.runtime.retry()
+            unit.unlink()
+            self.runtime.write(unit, 'unsafe unit', 0o666)
+            with self.assertRaises(ValueError):
+                self.runtime.retry()
         run.assert_not_called()
+        self.assertFalse((self.runtime.prefix / 'retry.json').exists())
 
     def test_retry_budget_survives_failure_restart_and_expires_after_one_hour(self):
         self.runtime.prepare()

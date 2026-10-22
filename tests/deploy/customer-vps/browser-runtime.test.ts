@@ -14,6 +14,12 @@ describe('customer Browser lifecycle', () => {
     expect(result.stderr).toMatch(/\nOK\s*$/);
   });
 
+  it('executes the generated first-upgrade migration and tamper regressions', () => {
+    const result = spawnSync('python3', ['-I', '-B', 'tests/deploy/customer-vps/browser-bootstrap.test.py'], { encoding: 'utf8', timeout: 30_000 });
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(result.stderr).toMatch(/\nOK\s*$/);
+  });
+
   it('root-executes only the isolated protected helper and retries without blocking core readiness', () => {
     const unit = readFileSync('distro/customer-vps/systemd/matrix-browser-runtime.service', 'utf8');
     expect(unit).toContain('ExecStart=/usr/bin/python3 -I /usr/local/libexec/matrix-browser-runtime.py');

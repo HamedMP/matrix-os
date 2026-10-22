@@ -264,7 +264,7 @@ class Runtime:
         if not ports.issubset(observed):
             raise ValueError('Browser listeners missing')
 
-    def health(self, allow_control_locked=False):
+    def health(self):
         self.check_listeners()
         for name in self.service_names:
             self.run(['/usr/bin/systemctl', 'is-active', '--quiet', name], timeout=10)
@@ -278,7 +278,7 @@ class Runtime:
                 if len(data) > 65536:
                     raise ValueError('Browser health limit')
                 result = json.loads(data)
-                if not result.get(field) and not (port == 8730 and allow_control_locked and result.get(field) is False):
+                if (port == 9222 and not result.get(field)) or (port == 8730 and not isinstance(result.get(field), bool)):
                     raise ValueError('Browser native health unavailable')
                 if port == 8730 and (result.get('available') is not True or result.get('chrome', {}).get('present') is not True):
                     raise ValueError('Browser Chrome window unavailable')
@@ -342,7 +342,20 @@ class Runtime:
             previous.rename(app)
         elif not state['hadApp'] and app.exists():
             shutil.rmtree(app)
-        self.write(self.env, base64.b64decode(state['environment'], validate=True), 0o640, self.gid)
+        current, values = self.environment()
+        saved = base64.b64decode(state['environment'], validate=True).decode()
+        # Activation owns only its enablement and optional origin default.
+        # Keep current identity/credentials/funded routing and explicit opt-out.
+        lines = [line for line in current.splitlines() if not line.startswith('MATRIX_BROWSER_LAB=')]
+        lines += [line for line in saved.splitlines() if line.startswith('MATRIX_BROWSER_LAB=')]
+        # Only remove our unchanged missing-origin default. Activation never
+        # owns an existing origin or a subsequent operator change/removal.
+        if not any(line.startswith('SHELL_ORIGIN=') for line in saved.splitlines()):
+            lines = [line for line in lines if line != 'SHELL_ORIGIN=https://app.matrix-os.com']
+        if values.get('MATRIX_BROWSER_LAB') == 'false':
+            lines = [line for line in lines if not line.startswith('MATRIX_BROWSER_LAB=')]
+            lines.append('MATRIX_BROWSER_LAB=false')
+        self.write(self.env, '\n'.join(lines) + '\n', 0o640, self.gid)
         for name, value in state['files'].items():
             destination = self.destination(name)
             if value is None:
@@ -439,7 +452,17 @@ class Runtime:
         status = state.get('status', 'pending') if state.get('version') == version else 'pending'
         if status not in ('pending', 'installing', 'ready', 'failed', 'exhausted', 'disabled'):
             raise ValueError('Invalid Browser lifecycle state')
-        if status == 'installing':
+        if status == 'ready':
+            # One bounded activity probe exposes stopped/start-limited services
+            # to owner recovery without running health or touching active input.
+            states = self.run(['/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', *self.service_names], timeout=2).split()
+            if len(states) != len(self.service_names) or any(value not in ('active', 'inactive', 'failed', 'activating', 'deactivating', 'reloading') for value in states):
+                raise ValueError('Browser native activity unavailable')
+            if any(value in ('inactive', 'failed') for value in states):
+                status = 'failed'
+            elif any(value != 'active' for value in states):
+                status = 'installing'
+        elif status == 'installing':
             active = self.run(['/usr/bin/systemctl', 'show', '--property=ActiveState', '--value', 'matrix-browser-runtime.service'], timeout=2).strip()
             if active in ('inactive', 'failed'):
                 status = 'exhausted' if state.get('attempts', 0) >= 3 else 'failed'
@@ -453,6 +476,17 @@ class Runtime:
         result = self.product_status()
         if not result['retryAvailable']:
             return result
+        installed = []
+        for name in self.service_names:
+            unit = self.units / name
+            try:
+                info = unit.lstat()
+            except FileNotFoundError:
+                continue  # Initial setup can fail before native units exist.
+            if not stat.S_ISREG(info.st_mode):
+                raise ValueError('Unsafe Browser native unit')
+            self.read(unit, 32768)  # Root-owned, non-writable and no symlinks.
+            installed.append(name)
         version = json.loads(self.read(self.path('/opt/matrix/release.json')))['version']
         self.write(self.prefix / 'retry.json', json.dumps({'version': version, 'requestedAt': time.time()}), 0o600)
         # Consume the budget before service calls; interruptions cannot create
@@ -460,7 +494,7 @@ class Runtime:
         state = {'version': version, 'attempts': 0, 'status': 'installing'}
         self.write(self.prefix / 'status.json', json.dumps(state))
         try:
-            self.run(['/usr/bin/systemctl', 'reset-failed', 'matrix-browser-runtime.service'], timeout=10)
+            self.run(['/usr/bin/systemctl', 'reset-failed', 'matrix-browser-runtime.service', *installed], timeout=10)
             self.run(['/usr/bin/systemctl', 'start', '--no-block', 'matrix-browser-runtime.service'], timeout=10)
         except (OSError, subprocess.SubprocessError):
             state['status'] = 'failed'
@@ -470,6 +504,7 @@ class Runtime:
 
     def reconcile(self):
         self.prepare()
+        self.recover_activation()  # Recovery is mandatory even after budget/opt-out.
         _, values = self.environment()
         if values.get('MATRIX_BROWSER_LAB') == 'false':
             self.write(self.prefix / 'status.json', '{"status":"disabled"}\n')
@@ -482,7 +517,7 @@ class Runtime:
         attempts = state.get('attempts', 0) if state.get('version') == version else 0
         if state.get('status') == 'ready' and state.get('version') == version:
             try:
-                self.health(allow_control_locked=True)
+                self.health()
                 return
             except (ValueError, OSError, subprocess.SubprocessError):
                 attempts = 0
@@ -526,7 +561,7 @@ class Runtime:
         installed = self.prefix / 'installed-release'
         if installed.exists() and self.read(installed, 256).decode().strip() == version:
             try:
-                self.health(allow_control_locked=True)
+                self.health()
                 return
             except (ValueError, OSError, subprocess.SubprocessError):
                 pass  # Explicitly repair failed native health, retaining data.

@@ -184,6 +184,8 @@ find "$STAGE_DIR/app/home" -type d -name node_modules -prune -exec rm -rf {} +
 # Writes release.json plus the incremental app manifest before packaging, then
 # writes the bundle manifest beside the tarball.
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-release
+# Bind first-upgrade repair to the final committed build metadata and exact payload.
+node "$ROOT_DIR/scripts/prepare-browser-host-bootstrap.mjs" "$STAGE_DIR"
 HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES:-node_modules/}" \
   node "$ROOT_DIR/scripts/host-bundle-incremental-manifest.mjs" "$STAGE_DIR/app" "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/objects"
 cp -a "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/incremental-manifest.json"

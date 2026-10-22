@@ -17,9 +17,13 @@ describe('Browser preview installation payload', () => {
     const { stageBrowserRuntime } = await import('../../scripts/stage-browser-preview.mjs');
     const root = await mkdtemp(join(tmpdir(), 'browser-runtime-bundle-')); temporary.push(root);
     const source = join(root, 'source'); const bin = join(root, 'bin');
-    await mkdir(join(source, 'lab/dist'), { recursive: true });
-    await writeFile(join(source, 'lab/dist/index.html'), '<!doctype html><html><head><title>Browser Lab</title></head><body>built viewer</body></html>');
     execFileSync('cp', ['-a', 'scripts/spikes/browser-vps/.', source]);
+    // A clean CI checkout has no ignored Vite dist. Build an explicit fixture
+    // after copying so local build artifacts cannot overwrite the test input.
+    await rm(join(source, 'lab/dist'), { recursive: true, force: true });
+    await mkdir(join(source, 'lab/dist/assets'), { recursive: true });
+    await writeFile(join(source, 'lab/dist/index.html'), '<!doctype html><html><head><title>Browser Lab</title></head><body>built viewer</body></html>');
+    await writeFile(join(source, 'lab/dist/assets/index-fixture.js'), '/* built fixture */');
     await stageBrowserRuntime(source, bin);
     const archive = join(bin, 'matrix-browser-runtime.tar.gz');
     const files = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' });
@@ -27,6 +31,7 @@ describe('Browser preview installation payload', () => {
     expect((await readFile(archive + '.sha256', 'utf8')).trim()).toBe(createHash('sha256').update(await readFile(archive)).digest('hex'));
     expect((await stat(archive + '.sha256')).mode & 0o777).toBe(0o644);
     expect(files).toContain('runtime-services.json');
+    expect(await readFile(join(bin, 'matrix-browser-ui-index-fixture.js'), 'utf8')).toBe('/* built fixture */');
     expect(await readFile(join(bin, 'matrix-browser-ui-index.html'), 'utf8')).toContain('matrix-browser-product');
     expect(await readFile(join(bin, 'matrix-browser-ui-index.html'), 'utf8')).toContain('<title>Browser</title>');
     expect(await readFile(join(source, 'lab/dist/index.html'), 'utf8')).toContain('<title>Browser Lab</title>');
@@ -39,10 +44,11 @@ describe('Browser preview installation payload', () => {
     const { stageBrowserPreview } = await import('../../scripts/stage-browser-preview.mjs');
     const root = await mkdtemp(join(tmpdir(), 'browser-preview-bundle-')); temporary.push(root);
     const source = join(root, 'source'); const bin = join(root, 'bin');
-    await mkdir(join(source, 'lab/dist'), { recursive: true });
-    await writeFile(join(source, 'lab/dist/index.html'), '<div>built viewer</div>');
     // Use the actual reviewed runtime files; no dependency checkout is needed by the installer.
     execFileSync('cp', ['-a', 'scripts/spikes/browser-vps/.', source]);
+    await rm(join(source, 'lab/dist'), { recursive: true, force: true });
+    await mkdir(join(source, 'lab/dist'), { recursive: true });
+    await writeFile(join(source, 'lab/dist/index.html'), '<div>built viewer</div>');
     await mkdir(join(source, 'node_modules'), { recursive: true });
     await writeFile(join(source, 'node_modules/private'), 'must not ship');
     await mkdir(join(source, '.venv'), { recursive: true });
