@@ -17,6 +17,8 @@ export interface GoogleInferenceIdentity {
 }
 export type GoogleInferenceDecision = { allowed: false } | { allowed: true; googleOrigin: boolean };
 export interface GoogleDataInferenceAuthority {
+  /** Trusted registry/context classifier plus exact managed lease source, never model-selected. */
+  managed?: import('../managed/broker.js').GoogleManagedBrokerTransport;
   authorize(input: { phase: "dispatch" | "release"; binding: PiRuntimeBinding;
     identity: GoogleInferenceIdentity | null; signal: AbortSignal }): Promise<GoogleInferenceDecision>;
 }

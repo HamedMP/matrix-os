@@ -1,3 +1,7 @@
+import { createGoogleManagedBrokerTransport } from '../google-data/managed/broker.js';
+import type { GoogleQualifiedCredentialManager } from '../google-data/managed/credential-manager.js';
+import type { GoogleDataPilotConfig } from '../google-data/runtime/pilot-config.js';
+import { isManagedPiBinding } from '../bots/runtime-registry.js';
 import type { Kysely } from 'kysely';
 import { isDeepStrictEqual } from 'node:util';
 import type { BotRuntimeRegistry, PiRuntimeBinding } from '../bots/runtime-registry.js';
@@ -20,6 +24,9 @@ export async function createGoogleBrokerRuntime<DB>(options: {
   database: Kysely<DB>; registry: BotRuntimeRegistry; transport?: BotIntegrationTransport;
   /** The exact broker credential authority, not a caller-provided identity or a funded token lease. */
   credentials?: Pick<MatrixAnthropicAuthority, 'credential' | 'revalidate'>;
+  qualifiedCredentials?: GoogleQualifiedCredentialManager;
+  /** Production always supplies explicit host admission. Absence is library-level uninstalled composition. */
+  pilotAdmission?: GoogleDataPilotConfig;
 }) {
   const contexts = createGoogleContextStore(options.database);
   const pins = createGoogleRunPinStore(options.database);
@@ -28,7 +35,6 @@ export async function createGoogleBrokerRuntime<DB>(options: {
   const transport: BotIntegrationTransport = options.transport ?? (async () => { throw new Error('Google policy transport unavailable'); });
   const policyClient = createGooglePlatformPolicyClient(transport);
   const ownerConsentClient = createGoogleOwnerConsentClient(transport);
-  const authority = createGoogleRuntimeInferenceAuthority({ registry: options.registry, contexts, pins, policyClient });
   const closing = new AbortController();
   let closed = false;
   let collections = 0; let collectionDrain = Promise.resolve(); let collectionsDone: (() => void) | undefined;
@@ -45,6 +51,14 @@ export async function createGoogleBrokerRuntime<DB>(options: {
     inspect: (...args: Parameters<typeof contexts.inspect>) => trackedDatabase(() => contexts.inspect(...args)),
     mark: (input: Parameters<typeof contexts.mark>[0]) => trackedDatabase(() => contexts.mark(input)),
   };
+  const collectionPins = {
+    get: (...args: Parameters<typeof pins.get>) => trackedDatabase(() => pins.get(...args)),
+    latch: (...args: Parameters<typeof pins.latch>) => trackedDatabase(() => pins.latch(...args)),
+  };
+  const authority = createGoogleRuntimeInferenceAuthority({ registry: options.registry, contexts: collectionContexts, pins: collectionPins, policyClient });
+  const managed = createGoogleManagedBrokerTransport({ registry: options.registry, contexts: collectionContexts, credentials: options.qualifiedCredentials, lifetime: closing.signal });
+  const pilotOwner = (binding: PiRuntimeBinding) => options.pilotAdmission?.enabled === true && isManagedPiBinding(binding)
+    && binding.ownerId === options.pilotAdmission.ownerId;
   const toolEgress = createGoogleToolEgressGuard({ registry: options.registry, contexts: collectionContexts });
   const observed = new Map<string, { binding: PiRuntimeBinding; identity: GoogleInferenceIdentity; signal: AbortSignal; expiresAt: number }>(); // <=64; TTL/LRU eviction and shutdown clear.
   const live = (binding: PiRuntimeBinding) => {
@@ -60,6 +74,11 @@ export async function createGoogleBrokerRuntime<DB>(options: {
     return value && isDeepStrictEqual(value.binding, binding) ? structuredClone(value.identity) : null;
   };
   const resolveIdentity = async (binding: PiRuntimeBinding, signal: AbortSignal): Promise<GoogleInferenceIdentity | null> => {
+    if (options.pilotAdmission && !pilotOwner(binding)) return null;
+    if (binding.accessSourceId === 'matrix_included') {
+      try { return await managed.resolveIdentity(binding, AbortSignal.any([signal, closing.signal])); }
+      catch (error) { console.warn('[google-data] Managed processing identity unavailable'); return null; }
+    }
     const identity = observedIdentity(binding); const runSignal = live(binding); const credentials = options.credentials;
     // Only the current explicit API-key broker exposes a durable credential generation.
     // Managed relay tokens and delegated/native subscriptions cannot stand in for processor evidence.
@@ -80,11 +99,15 @@ export async function createGoogleBrokerRuntime<DB>(options: {
     return isDeepStrictEqual(fresh, identity) ? fresh : null;
   };
   const inference: GoogleDataInferenceAuthority = {
+    managed,
     async authorize(input) {
       if (closed) return { allowed: false };
       const binding = structuredClone(input.binding);
       const candidate = input.identity === null ? null : structuredClone(input.identity);
+      if (options.pilotAdmission?.enabled && !pilotOwner(binding)) return { allowed: false };
+      if (options.pilotAdmission && !pilotOwner(binding) && await managed.required(binding, input.signal)) return { allowed: false };
       const result = await authority.authorize({ ...input, binding, identity: candidate });
+      if (result.allowed && result.googleOrigin && options.pilotAdmission && !pilotOwner(binding)) return { allowed: false };
       const signal = live(binding);
       const identity = GoogleInferenceIdentitySchema.safeParse(candidate);
       if (result.allowed && input.phase === 'dispatch' && signal && identity.success && !input.signal.aborted) {
@@ -106,10 +129,10 @@ export async function createGoogleBrokerRuntime<DB>(options: {
      * a model permission default is not consent. No token or credential is returned. */
     async prepareCollection(binding: PiRuntimeBinding, accountUUID: string, signal: AbortSignal,
       requestConsent: GoogleCollectionClientDependencies['requestConsent']) {
-      if (closed || collections >= 32) deny();
+      if (closed || collections >= 32 || options.pilotAdmission && !pilotOwner(binding)) deny();
       if (collections++ === 0) collectionDrain = new Promise(resolve => { collectionsDone = resolve; });
       try {
-        const collection = createGoogleCollectionClient({ registry: options.registry, contexts: collectionContexts, pins,
+        const collection = createGoogleCollectionClient({ registry: options.registry, contexts: collectionContexts, pins: collectionPins,
           policyClient, ownerConsentClient, resolveIdentity, requestConsent });
         return await collection.prepare(binding, accountUUID, AbortSignal.any([signal, closing.signal]));
       } finally { if (--collections === 0) { collectionsDone?.(); collectionsDone = undefined; } }

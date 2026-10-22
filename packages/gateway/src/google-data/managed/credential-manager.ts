@@ -15,6 +15,7 @@ export interface GoogleQualifiedCredentialLease {
   requestClass: FundedAiRequestClass; binding: GoogleQualifiedFundedBinding;
 }
 export interface GoogleQualifiedCredentialManager {
+  readonly identity: Readonly<FundedAiRuntimeConfig['identity']>;
   resolveRoute(selector: Selector, signal?: AbortSignal): Promise<GoogleQualifiedFundedRoute>;
   getCredential(options: Selector & { requestClass: FundedAiRequestClass; minValidityMs?: number; signal?: AbortSignal }): Promise<GoogleQualifiedCredentialLease>;
   invalidate(tokenId?: string): void;
@@ -87,6 +88,7 @@ export function createGoogleQualifiedCredentialManager(input: FundedAiRuntimeCon
     if (result.route.api !== selector.api || result.route.canonicalModelId !== selector.canonicalModelId) deny(); return result.route;
   }
   return {
+    identity: Object.freeze({ ...config.identity }),
     resolveRoute(selector, signal) { return bounded(signal, (current, live) => discover(selector, current, live)); },
     getCredential(options) { return bounded(options.signal, async (signal, live) => {
       const minValidity = Math.max(options.minValidityMs ?? config.maxRunMs + 60000, 60000);
