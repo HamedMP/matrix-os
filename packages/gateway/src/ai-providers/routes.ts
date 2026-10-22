@@ -16,6 +16,7 @@ export function createAiProviderRoutes(options: {
   service: AiProviderSnapshotReader;
   getPrincipal: (context: Context) => unknown;
   canReadMatrixConnections?: (context: Context) => boolean;
+  canAccessUpstreamPreference?: (context: Context) => boolean;
 }) {
   if (!options.service) throw new Error("AI provider service is required");
   if (!options.getPrincipal) throw new Error("AI provider principal resolver is required");
@@ -39,7 +40,9 @@ export function createAiProviderRoutes(options: {
       const snapshot = {
         ...baseSnapshot,
         ...(query.data.includeMatrixAnthropicConnection === "true" && options.canReadMatrixConnections?.(context) === true && matrixAnthropicConnection ? { matrixAnthropicConnection: projectConnectionModelInputs(matrixAnthropicConnection) } : {}),
-        ...(query.data.includeUpstreamPreference === "true" && upstreamPreference ? { upstreamPreference } : {}),
+        ...(query.data.includeUpstreamPreference === "true"
+          && options.canAccessUpstreamPreference?.(context) === true
+          && upstreamPreference ? { upstreamPreference } : {}),
         // Internal policy inventory is projected through the canonical Chat
         // catalog. Historical V3 clients reject unknown source fields.
         accessSources: internalSnapshot.accessSources.map(({ discoverableModelIds: _discovery, ...source }) => legacyReadiness(source)),

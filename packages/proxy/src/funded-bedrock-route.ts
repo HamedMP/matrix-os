@@ -1,4 +1,7 @@
-import { ProviderModelReferenceSchema } from "@matrix-os/contracts";
+import {
+  MATRIX_PI_DEFAULT_MAX_OUTPUT_TOKENS,
+  ProviderModelReferenceSchema,
+} from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import type { FundedTokenUsage } from "./funded-relay-model.js";
 
@@ -33,7 +36,10 @@ const BedrockRouteConfigSchema = z.object({
   resolvedModel: z.string().min(1).max(256).regex(SAFE_MODEL_ID),
   inferenceProfile: z.string().min(1).max(2_048).regex(SAFE_MODEL_ID),
   maxInputTokens: z.number().int().positive().max(10_000_000),
-  maxOutputTokens: z.number().int().positive().max(128_000),
+  // A route advertised to Matrix Pi must accept the ordinary turn ceiling.
+  // Lower provider limits fail startup closed instead of producing a model
+  // that passes readiness but rejects every normal message before dispatch.
+  maxOutputTokens: z.number().int().min(MATRIX_PI_DEFAULT_MAX_OUTPUT_TOKENS).max(128_000),
   pricing: BedrockPricingSchema,
 }).strict();
 

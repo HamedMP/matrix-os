@@ -12,7 +12,11 @@
  * are never selected.
  */
 import type { AiProviderSnapshotV3, BotModelRoute, CanonicalChatModelSelection } from "@matrix-os/contracts";
-import { BotModelRouteSchema, MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
+import {
+  BotModelRouteSchema,
+  MANAGED_WORKERS_AI_MODEL_IDS,
+  MATRIX_PI_DEFAULT_MAX_OUTPUT_TOKENS,
+} from "@matrix-os/contracts";
 import type { BotCredentialAccessSourceId } from "./credentials.js";
 import { MATRIX_DEFAULT_MODEL_ID } from "../ai-providers/model-catalog.js";
 import { isEffectiveBedrockModel } from "../ai-providers/effective-bedrock-route.js";
@@ -23,7 +27,6 @@ const SOURCES_IN_ORDER: ReadonlyArray<{ id: string; credential: BotCredentialAcc
   { id: "matrix_included", credential: "matrix_included", anthropicOnly: true },
   { id: "owner_anthropic_key", credential: "owner_anthropic_key", anthropicOnly: true },
 ];
-const DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
 const ANTHROPIC_CONTEXT_WINDOW = 200_000;
 const OTHER_CONTEXT_WINDOW = 128_000;
 
@@ -67,7 +70,7 @@ function routeFor(snapshot: AiProviderSnapshotV3, entry: (typeof SOURCES_IN_ORDE
     // that exact request path can translate and enforce image inputs.
     input: !bedrock && model.capabilities.includes("vision") ? ["text", "image"] : ["text"],
     contextWindow: anthropic ? ANTHROPIC_CONTEXT_WINDOW : OTHER_CONTEXT_WINDOW,
-    maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+    maxOutputTokens: MATRIX_PI_DEFAULT_MAX_OUTPUT_TOKENS,
   });
   return route.success ? { route: route.data, accessSourceId: entry.credential } : undefined;
 }

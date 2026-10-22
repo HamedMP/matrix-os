@@ -77,6 +77,7 @@ export interface ProviderSettingsRouteOptions {
   store: ProviderSettingsStoreWriter;
   canReadManagedCredit?: (context: Context) => boolean;
   canReadNativeAccountMetadata?: (context: Context) => boolean;
+  canAccessUpstreamPreference?: (context: Context) => boolean;
   getPrincipal: (context: Context) => unknown;
 }
 
@@ -90,6 +91,12 @@ function invalidRequest(context: Context) {
   return context.json({
     error: { code: "invalid_request", message: "Invalid provider settings request." },
   }, 400);
+}
+
+function preferenceNotFound(context: Context) {
+  return context.json({
+    error: { code: "not_found", message: "Provider settings item was not found." },
+  }, 404);
 }
 
 function authorize(context: Context, options: ProviderSettingsRouteOptions): Response | null {
@@ -235,7 +242,8 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
           : account.accessSourceId === "owner_openai_profile"
             ? { ...account, displayName: account.authMethod === "api_key" ? "API key" : "Codex account" } : account);
       }
-      return context.json(withCapabilities(snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", ownerMetadata && accountDetails.data === "true", chatFunding.data === "true", ownerMetadata && matrixConnection.data === "true", ownerMetadata && claudeAccountDetails.data === "true", upstreamPreference.data === "true"));
+      const ownerPreference = options.canAccessUpstreamPreference?.(context) === true;
+      return context.json(withCapabilities(snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", ownerMetadata && accountDetails.data === "true", chatFunding.data === "true", ownerMetadata && matrixConnection.data === "true", ownerMetadata && claudeAccountDetails.data === "true", ownerPreference && upstreamPreference.data === "true"));
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -255,8 +263,12 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     const mutation = ProviderSettingsMutationSchema.safeParse(await readJson(context));
     if (!mutation.success) return invalidRequest(context);
     try {
+      const ownerPreference = options.canAccessUpstreamPreference?.(context) === true;
+      if (mutation.data.type === "set_gateway_upstream" && !ownerPreference) {
+        return preferenceNotFound(context);
+      }
       const result = await options.store.mutate(mutation.data);
-      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", false, chatFunding.data === "true", matrixConnection.data === "true" && options.canReadNativeAccountMetadata?.(context) === true, false, upstreamPreference.data === "true") });
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", false, chatFunding.data === "true", matrixConnection.data === "true" && options.canReadNativeAccountMetadata?.(context) === true, false, ownerPreference && upstreamPreference.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }
@@ -285,8 +297,9 @@ export function createProviderSettingsRoutes(options: ProviderSettingsRouteOptio
     } satisfies ProviderSettingsMutation);
     if (!mutation.success) return invalidRequest(context);
     try {
+      const ownerPreference = options.canAccessUpstreamPreference?.(context) === true;
       const result = await options.store.mutate(mutation.data);
-      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", false, chatFunding.data === "true", matrixConnection.data === "true" && options.canReadNativeAccountMetadata?.(context) === true, false, upstreamPreference.data === "true") });
+      return context.json({ ...result, snapshot: withCapabilities(result.snapshot, capabilities.data === "true", modelCapabilities.data === "true", inventory.data === "true", fundingState.data === "true", false, chatFunding.data === "true", matrixConnection.data === "true" && options.canReadNativeAccountMetadata?.(context) === true, false, ownerPreference && upstreamPreference.data === "true") });
     } catch (error) {
       return handleStoreError(context, error);
     }
