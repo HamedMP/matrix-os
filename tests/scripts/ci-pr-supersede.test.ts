@@ -15,7 +15,7 @@ async function execute(runs: unknown[], heads = [currentSha], cancellationError?
   let call = 0;
   const cancel = vi.fn().mockResolvedValue({ status: 202 });
   if (cancellationError) cancel.mockRejectedValueOnce(cancellationError);
-  const get = vi.fn().mockImplementation(async () => ({ data: { head: { sha: heads[Math.min(call++, heads.length - 1)] }, state: 'open', base: { repo: { id: 123 } }, merge_commit_sha: 'c'.repeat(40) } }));
+  const get = vi.fn().mockImplementation(async () => ({ data: { head: { sha: heads[Math.min(call++, heads.length - 1)], ref: 'feature', repo: { id: 123 } }, state: 'open', base: { repo: { id: 123 } }, merge_commit_sha: 'c'.repeat(40) } }));
   const list = vi.fn().mockResolvedValue({ data: { workflow_runs: runs } });
   const github = { rest: { pulls: { get }, actions: { listWorkflowRuns: list, cancelWorkflowRun: cancel } } };
   const core = { info: vi.fn(), warning: vi.fn() };
@@ -42,6 +42,23 @@ describe('trusted PR CI supersession', () => {
     expect(cancel.mock.calls.map(([arg]) => arg.run_id)).toEqual([1]);
     expect(list.mock.calls[0][0].workflow_id).toBe('ci.yml');
     expect(list.mock.calls[0][0].per_page).toBe(100);
+  });
+
+  it('cancels outdated runs even though GitHub reports the current head on their PR association', async () => {
+    const { cancel } = await execute([
+      { ...run(1, previousSha), pull_requests: [{ number: 17, head: { sha: currentSha }, base: { repo: { id: 123 } } }] },
+    ]);
+    expect(cancel.mock.calls.map(([arg]) => arg.run_id)).toEqual([1]);
+  });
+
+  it('cancels outdated stacked-PR runs that GitHub leaves without a PR association', async () => {
+    const stacked = (id: number, sha: string, branch: string, repoId = 123) =>
+      ({ ...run(id, sha), pull_requests: [], head_branch: branch, head_repository: { id: repoId } });
+    const { cancel } = await execute([
+      stacked(1, previousSha, 'feature'), stacked(2, currentSha, 'feature'),
+      stacked(3, previousSha, 'other'), stacked(4, previousSha, 'feature', 999),
+    ]);
+    expect(cancel.mock.calls.map(([arg]) => arg.run_id)).toEqual([1]);
   });
 
   it('does nothing when this event was overtaken by a newer PR head', async () => {

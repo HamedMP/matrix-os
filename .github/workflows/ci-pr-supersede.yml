@@ -46,13 +46,16 @@ jobs:
                 throw new Error('Invalid CI run list');
               }
               for (const run of data.workflow_runs) {
-                const associated = run.pull_requests?.find(candidate =>
-                  candidate.number === pr.number && candidate.base?.repo?.id === live.base.repo.id);
+                // A run's pull_requests entry reports the PR's current head, not the run's, and is empty
+                // for stacked PRs whose base is not the default branch, so the run's own head SHA decides
+                // staleness and its head branch identifies stacked runs.
+                const associated = run.pull_requests?.some(candidate =>
+                  candidate.number === pr.number && candidate.base?.repo?.id === live.base.repo.id) ||
+                  (typeof live.head.ref === 'string' && run.head_branch === live.head.ref &&
+                    Number.isSafeInteger(live.head.repo?.id) && run.head_repository?.id === live.head.repo.id);
                 if (run.event !== 'pull_request' || !active.has(run.status) ||
                     !Number.isSafeInteger(run.id) || run.id <= 0 ||
-                    !shaPattern.test(run.head_sha ?? '') ||
-                    !shaPattern.test(associated?.head?.sha ?? '') ||
-                    associated.head.sha === live.head.sha ||
+                    !shaPattern.test(run.head_sha ?? '') || !associated ||
                     run.head_sha === live.head.sha || run.head_sha === live.merge_commit_sha) continue;
                 // Events can arrive out of order. Stop immediately if the PR moved.
                 const { data: latest } = await github.rest.pulls.get(request);
