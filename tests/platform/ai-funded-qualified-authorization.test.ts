@@ -46,13 +46,18 @@ describe.skipIf(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL)('qualified re
   it('commits a waiting interactive claim before rejection so background cannot jump the queue', async () => {
     const interactive = await issued();
     const active = await service.authorize({ ...authorization(interactive.lease.credential.token), requestId: 'active_request' }, signal());
-    await expect(service.authorize({ ...authorization(interactive.lease.credential.token), requestId: 'waiting_request', claimKey: 'waiting_turn' }, signal())).rejects.toThrow();
+    await expect(service.authorize({ ...authorization(interactive.lease.credential.token), requestId: 'waiting_request', claimKey: 'waiting_turn' }, signal())).rejects.toMatchObject({ status: 429, priorityReason: 'slot_busy' });
     const claims = await db.executor.selectFrom('ai_funded_priority_claims').selectAll().execute();
     expect(claims).toEqual([expect.objectContaining({ owner_id: identity.ownerId, machine_id: identity.machineId, claim_key: 'waiting_turn', billing_mode: 'usage' })]);
+    const control = 'c'.repeat(32); const app = new Hono().route('/qualified', createQualifiedFundedRelayRoutes({ service, controlToken: control }));
+    const encoded = JSON.stringify({ ...authorization(interactive.lease.credential.token), requestId: 'waiting_request', claimKey: 'waiting_turn' });
+    const response = await app.request('/qualified/authorize', { method: 'POST', headers: { authorization: `Bearer ${control}`, 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(encoded)) }, body: encoded });
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({ error: { code: 'rate_limited', message: 'Try again later', reason: 'slot_busy' } });
     const metering = createAiFundedMeteringRepository({ db, credentialHashSecret: hashSecret, now: () => at, policyFreshnessMs: 1000, reservationTtlMs: 30000, inFlightTtlMs: 60000 });
     await metering.releaseReservation({ reservationId: active.authorization.reservation.reservationId, tokenId: interactive.lease.credential.tokenId, reason: 'pre_upstream_failure' });
     const background = await service.issue(auth(), { ...selector(), requestClass: 'background' }, signal());
-    await expect(service.authorize({ ...authorization(background.lease.credential.token), requestId: 'background_request' }, signal())).rejects.toThrow();
+    await expect(service.authorize({ ...authorization(background.lease.credential.token), requestId: 'background_request' }, signal())).rejects.toMatchObject({ status: 429, priorityReason: 'priority_hold' });
     expect((await rows()).filter(row => row.status === 'reserved')).toHaveLength(0);
     expect(await db.executor.selectFrom('ai_funded_priority_claims').selectAll().execute()).toEqual(claims);
     const resumed = await service.authorize({ ...authorization(interactive.lease.credential.token), requestId: 'resumed_request', claimKey: 'waiting_turn' }, signal());

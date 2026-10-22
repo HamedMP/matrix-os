@@ -1,3 +1,5 @@
+import * as workspaceSaves from "../../../packages/gateway/src/bots/tool-dispatcher.js";
+import * as googleRuntime from "../../../packages/gateway/src/startup/google-data.js";
 import { createOwnerChatHistoryRepository } from '../../../packages/gateway/src/startup/chat-history.js';
 import { createExecutionAdmissionFence } from '../../../packages/gateway/src/execution-admission-fence.js';
 import { mkdtemp, rm } from "node:fs/promises";
@@ -56,6 +58,42 @@ const base = () => ({
 });
 
 describe("bot services at gateway start", () => {
+  it("rejects a mismatched funded owner before starting any background job", async () => {
+    const intervals = vi.spyOn(globalThis, 'setInterval');
+    try {
+      await expect(startBots({ ...base(), runtimeOwnerId: OWNER, googlePilot: { enabled: true, ownerId: OWNER },
+        googleCopies: {} as never, host: host().host as never, executionAdmissionFence: createExecutionAdmissionFence(),
+        pendingExecutionCount: () => 0, integrations: vi.fn() as never,
+        qualifiedFundedConfig: { identity: { ownerId: 'foreign-owner' } } as never })).rejects.toThrow('Google pilot unavailable');
+      expect(intervals).not.toHaveBeenCalled();
+    } finally { intervals.mockRestore(); }
+  });
+
+  it("drains acquired background jobs when later pilot construction fails", async () => {
+    const intervals = vi.spyOn(globalThis, 'setInterval');
+    const cleared = vi.spyOn(globalThis, 'clearInterval');
+    const factory = vi.spyOn(googleRuntime, 'createGoogleBrokerRuntime').mockRejectedValue(new Error('Synthetic unavailable'));
+    let release!: () => void;
+    const saves = vi.spyOn(workspaceSaves, 'sweepBotWorkspaceSaves').mockImplementation(() => new Promise<void>(resolve => { release = resolve; }));
+    try {
+      let settled = false;
+      const starting = startBots({ ...base(), runtimeOwnerId: OWNER, googlePilot: { enabled: true, ownerId: OWNER },
+        googleCopies: {} as never, host: host().host as never, executionAdmissionFence: createExecutionAdmissionFence(),
+        pendingExecutionCount: () => 0, integrations: vi.fn() as never });
+      const rejection = expect(starting.finally(() => { settled = true; })).rejects.toThrow();
+      await vi.waitFor(() => expect(factory).toHaveBeenCalledOnce());
+      expect(settled).toBe(false);
+      release();
+      await rejection;
+      expect(intervals.mock.results.length).toBeGreaterThan(0);
+      for (const result of intervals.mock.results) expect(cleared).toHaveBeenCalledWith(result.value);
+    } finally {
+      // Bound RED even when startup leaked its own timers.
+      for (const result of intervals.mock.results) clearInterval(result.value);
+      release?.(); saves.mockRestore(); factory.mockRestore(); intervals.mockRestore(); cleared.mockRestore();
+    }
+  });
+
   it("continues managed Chat checkpoint recovery beyond its bounded startup batch", async () => {
     let remaining = 250;
     const reconcile = vi.fn(async () => {

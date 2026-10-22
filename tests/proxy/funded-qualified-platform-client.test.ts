@@ -35,6 +35,23 @@ describe('qualified relay service-control client bounds', () => {
       expect(JSON.stringify(log.mock.calls)).not.toContain('private cleanup message');
     }finally{log.mockRestore();}
   });
+  it.each(['slot_busy', 'priority_hold', 'priority_queue', 'priority_full'] as const)('preserves only authenticated authorize priority refusal %s', async reason => {
+    const client = createQualifiedFundedPlatformClient(options(async () => Response.json({ error: { code: 'rate_limited', message: 'Try again later', reason } }, { status: 429 })));
+    await expect(client.authorize({ ...input(), requestId: 'request_one', maxCostMicrousd: 100, billingMode: 'usage' }, new AbortController().signal))
+      .rejects.toMatchObject({ status: 429, priorityReason: reason });
+    await expect(client.check(input(), new AbortController().signal)).rejects.toMatchObject({ status: 503, priorityReason: undefined });
+  });
+  it.each([
+    { status: 503, error: { code: 'rate_limited', message: 'Try again later', reason: 'slot_busy' } },
+    { status: 429, error: { code: 'rate_limited', message: 'private detail', reason: 'slot_busy' } },
+    { status: 429, error: { code: 'rate_limited', message: 'Try again later', reason: 'private-token' } },
+    { status: 429, error: { code: 'rate_limited', message: 'Try again later', reason: 'slot_busy', secret: 'private' } },
+    { status: 429, error: { code: 'rate_limited', message: 'Try again later' } },
+  ])('does not turn arbitrary failure into retry authority ($status)', async ({ status, error }) => {
+    const client = createQualifiedFundedPlatformClient(options(async () => Response.json({ error }, { status })));
+    await expect(client.authorize({ ...input(), requestId: 'request_one', maxCostMicrousd: 100, billingMode: 'usage' }, new AbortController().signal))
+      .rejects.toMatchObject({ status: 503, priorityReason: undefined });
+  });
   it('rejects parent abort while reading a stalled body and drains reader', async () => {
     const controller = new AbortController(), cancel = vi.fn(); const client = createQualifiedFundedPlatformClient(options(async () => {
       queueMicrotask(() => controller.abort()); return new Response(new ReadableStream({ pull: () => new Promise(() => undefined), cancel })); }));

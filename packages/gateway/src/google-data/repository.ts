@@ -50,11 +50,22 @@ export function createGoogleDataRepository<DB>(db: Kysely<DB>, options: { now?: 
   };
   const cleanup = (at = now()) => guarded(() => locked(async tx => {
     const cutoff = new Date(at.getTime() - RETAIN_MS);
-    // Queue invalid authority immediately. Each pass advances past already durable commands.
-    const invalid=(await sql<PurgeConsentRow>`SELECT c.id,c.owner_id,c.google_account_id FROM google_data_consents c
-      JOIN google_data_profiles p ON p.id=c.profile_id
+    // Reap already eligible ACKs before capacity admission; pending commands never expire.
+    const reapAcknowledged=()=>sql`DELETE FROM google_data_purge_commands WHERE id IN (SELECT d.id FROM google_data_purge_commands d
+      WHERE d.state='acked' AND d.acked_at<=${cutoff}
+      AND NOT EXISTS(SELECT 1 FROM google_data_consents c WHERE c.id=d.consent_id) ORDER BY d.acked_at,d.id LIMIT 100)`.execute(tx);
+    await reapAcknowledged();
+    // Full owners retain invalid authority rows for retry while other owners advance.
+    // Registry locking makes the bounded per-owner/global admission and insert atomic.
+    const invalid=(await sql<PurgeConsentRow>`WITH candidates AS (
+      SELECT c.id,c.owner_id,c.google_account_id,row_number() OVER(PARTITION BY c.owner_id ORDER BY c.id) AS position
+      FROM google_data_consents c JOIN google_data_profiles p ON p.id=c.profile_id
       WHERE (c.status='revoked' OR p.status='revoked' OR c.expires_at<=${at} OR p.expires_at<=${at})
-      AND NOT EXISTS(SELECT 1 FROM google_data_purge_commands d WHERE d.consent_id=c.id) ORDER BY c.id LIMIT 1000`.execute(tx)).rows;
+      AND NOT EXISTS(SELECT 1 FROM google_data_purge_commands d WHERE d.consent_id=c.id)
+    ), counts AS (SELECT owner_id,count(*) AS owned FROM google_data_purge_commands GROUP BY owner_id)
+    SELECT c.id,c.owner_id,c.google_account_id FROM candidates c LEFT JOIN counts d ON d.owner_id=c.owner_id
+      WHERE c.position<=GREATEST(0,1000-COALESCE(d.owned,0)) ORDER BY c.id
+      LIMIT LEAST(1000,GREATEST(0,100000-(SELECT count(*) FROM google_data_purge_commands)))`.execute(tx)).rows;
     await queueGooglePurgeConsents(tx,invalid);
     // Match snapshot's profile -> consent order before deleting either relation.
     await sql`WITH aged_consents AS (
@@ -73,9 +84,7 @@ export function createGoogleDataRepository<DB>(db: Kysely<DB>, options: { now?: 
       WHERE COALESCE(p.invalidated_at,p.expires_at)<=${cutoff}
       AND NOT EXISTS(SELECT 1 FROM google_data_consents c WHERE c.profile_id=p.id) ORDER BY p.id LIMIT 1000) RETURNING id`.execute(tx);
     // Never expire pending delivery or permit a still-present consent to be requeued after ACK cleanup.
-    await sql`DELETE FROM google_data_purge_commands WHERE id IN (SELECT d.id FROM google_data_purge_commands d
-      WHERE d.state='acked' AND d.acked_at<=${cutoff}
-      AND NOT EXISTS(SELECT 1 FROM google_data_consents c WHERE c.id=d.consent_id) ORDER BY d.acked_at,d.id LIMIT 100)`.execute(tx);
+    await reapAcknowledged();
     return {consents:removed.rows.length,profiles:profiles.rows.length};
   }));
   return {

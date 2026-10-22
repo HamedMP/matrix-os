@@ -46,7 +46,7 @@ async function fixture(stopped: boolean) {
     const fence = createExecutionAdmissionFence();
     registry = new BotRuntimeRegistry();
     lifecycle = await createGooglePilotCopyLifecycle({ database: repository.kysely, ownerId: owner.ownerId, storage: history.googleCopies!, repository, registry,
-        fence, pendingCount: () => 0 });
+        fence, pendingCount: () => 0, intervalMs:1000 });
     const stop = vi.fn(async (input: {chatId:string;runId:string}) => {
         if (!stopped)
             throw new Error('No actual stop evidence');
@@ -162,6 +162,59 @@ describe('durable exact-owner pilot copy cleanup', () => {
         await sql`UPDATE google_context_sources SET expires_at=now()-interval '1 second' WHERE google_account_id=${account}::uuid`.execute(f.repository.kysely);
         lifecycle!.start(); await new Promise(resolve=>setTimeout(resolve,20)); await lifecycle!.close();
         expect((await sql`SELECT * FROM google_pilot_purge_commands`.execute(f.repository.kysely)).rows).toHaveLength(1);
+    });
+    it('continues to the next expired account after an actual stop-proof failure', async () => {
+        const f = await fixture(false);
+        const next = '123e4567-e89b-42d3-a456-426614174009';
+        await admit(f.repository,'two');
+        await sql`UPDATE chat_runs SET driver_kind='matrix_pi' WHERE id='run_two'`.execute(f.repository.kysely);
+        const future = new Date(Date.now()+60000).toISOString();
+        await f.contexts.mark({ownerId:owner.ownerId,chatId:'chat_two',googleAccountId:next,consentId:'consent_two',profileId:'profile_one',profileRevision:1,purposeId:'assistant',expiresAt:future,retentionDeadline:future});
+        await f.repository.appendAssistantDelta(owner,{chatId:'chat_two',runId:'run_two',messageId:'msg_assistant_two',delta:'second account result',createdAt:new Date().toISOString()});
+        f.stop.mockImplementation(async input => {
+            if (input.runId==='run_one') throw new Error('Unknown live driver');
+            await lifecycle!.onStopped({version:1,ownerId:owner.ownerId,chatId:input.chatId,runId:input.runId,runtimeHandle:`runtime_${'b'.repeat(32)}`,executionGeneration:'1',stoppedAt:new Date().toISOString()});
+        });
+        await sql`UPDATE google_context_sources SET expires_at=now()-interval '1 second'`.execute(f.repository.kysely);
+        lifecycle!.start();
+        await vi.waitFor(async () => {
+            const rows=(await sql<{complete:boolean}>`SELECT complete FROM google_pilot_purge_commands WHERE account_id=${next}::uuid`.execute(f.repository.kysely)).rows;
+            expect(rows).toEqual([{complete:true}]);
+        },{timeout:4000,interval:50});
+        await lifecycle!.close();
+        expect(JSON.stringify(await f.repository.getDetailPage(owner,'chat_one',{limit:20}))).toContain('synthetic Google-derived result');
+        expect(JSON.stringify(await f.repository.getDetailPage(owner,'chat_two',{limit:20}))).not.toContain('second account result');
+    });
+    it('rotates past repeatedly failing expiry accounts and still runs independent metadata cleanup', async () => {
+        const f = await fixture(true);
+        const accounts = [account];
+        for (let i = 1; i <= 10; i++) {
+            const next = `123e4567-e89b-42d3-a456-426614174${String(i).padStart(3, '0')}`;
+            accounts.push(next);
+            const future = new Date(Date.now() + 60000).toISOString();
+            await f.contexts.mark({ownerId:owner.ownerId, chatId:'chat_one', googleAccountId:next, expectedRevision:i,
+                consentId:`consent_${i}`, profileId:'profile_one',profileRevision:1,purposeId:'assistant', expiresAt:future,retentionDeadline:future});
+            const source = (await f.contexts.sourcesForAccount(owner.ownerId,next))[0]!;
+            await f.history.googleCopies!.provenance.record({ownerId:owner.ownerId,kind:'derived',entityRef:`unknown_${i}`,contentHash:'c'.repeat(64),
+                origins:[{connectionId:source.originId,profileId:source.profileId,profileRevision:source.profileRevision,purpose:source.purposeId}],
+                retention:{choice:'until',deadline:future,decisionId:`decision_${i}`}});
+        }
+        for (const id of accounts.slice(0,10)) {
+            await sql`INSERT INTO google_pilot_purge_commands(owner_id,command_id,revision,account_id,input_digest,input)
+                VALUES(${owner.ownerId},gen_random_uuid(),1,${id}::uuid,'malformed','{}'::jsonb)`.execute(f.repository.kysely);
+        }
+        await sql`UPDATE google_context_sources SET expires_at=now()-interval '1 second'`.execute(f.repository.kysely);
+        await sql`INSERT INTO google_managed_stop_receipts VALUES(${owner.ownerId},'chat_one','run_one',${`runtime_${'a'.repeat(32)}`},'1',now()-interval '36 days')`.execute(f.repository.kysely);
+        const cleanup = vi.spyOn(f.history.googleCopies!.provenance,'cleanupDeleted').mockRejectedValueOnce(new Error('Synthetic cleanup failure'));
+        lifecycle!.start();
+        try {
+            await vi.waitFor(async () => {
+                const rows = await sql`SELECT 1 FROM google_pilot_purge_commands WHERE account_id=${accounts[10]}::uuid`.execute(f.repository.kysely);
+                expect(rows.rows).toHaveLength(1);
+                expect(cleanup).toHaveBeenCalled();
+                expect((await sql`SELECT 1 FROM google_managed_stop_receipts WHERE stopped_at<now()-interval '35 days'`.execute(f.repository.kysely)).rows).toHaveLength(0);
+            },{timeout:4000,interval:100});
+        } finally { await lifecycle!.close(); cleanup.mockRestore(); }
     });
     it('runs recurring expiry cleanup through the same durable command and actual stop proof', async () => {
         const f = await fixture(true);

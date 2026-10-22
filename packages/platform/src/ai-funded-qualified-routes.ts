@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
-import { GoogleQualifiedFundedDiscoveryRequestSchema, GoogleQualifiedFundedIssueRequestSchema, GoogleQualifiedFundedCheckRequestSchema, GoogleQualifiedFundedAuthorizationRequestSchema, GoogleQualifiedFundedDispatchCheckRequestSchema } from '@matrix-os/contracts';
+import { FundedAiPriorityReasonSchema, GoogleQualifiedFundedDiscoveryRequestSchema, GoogleQualifiedFundedIssueRequestSchema, GoogleQualifiedFundedCheckRequestSchema, GoogleQualifiedFundedAuthorizationRequestSchema, GoogleQualifiedFundedDispatchCheckRequestSchema } from '@matrix-os/contracts';
 import type { QualifiedFundedService } from './ai-funded-qualified-service.js';
 import { timingSafeTokenEquals } from './platform-token.js';
 import { QualifiedFundedError } from './ai-funded-qualified-errors.js';
@@ -9,6 +9,15 @@ import { QualifiedRuntimeAuthSchema } from './ai-funded-qualified-state.js';
 type RouteEnv = { Variables: { qualifiedSignal: AbortSignal } };
 
 const fail = (c: Context, status: 400 | 401 | 413 | 503) => c.json({ error: 'Qualified AI unavailable' }, status);
+function failure(c: Context, error: unknown): Response {
+  if (!(error instanceof QualifiedFundedError)) return fail(c, 503);
+  if (error.status === 429) {
+    const reason = FundedAiPriorityReasonSchema.safeParse(error.priorityReason);
+    if (reason.success) return c.json({ error: { code: 'rate_limited', message: 'Try again later', reason: reason.data } }, 429);
+    return fail(c, 503);
+  }
+  return fail(c, error.status);
+}
 const Query = z.strictObject({ runtimeSlot: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,79}$/) });
 function runtimeAuth(c: Context) {
   const query = Query.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
@@ -31,14 +40,14 @@ async function json(c: Context<RouteEnv>): Promise<unknown> {
     signal.throwIfAborted(); if (size !== Number(c.req.header('content-length'))) throw new QualifiedFundedError(400);
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size)));
   } catch (error) {
-    void reader.cancel().catch(cleanup => console.warn('[qualified-funded] Body cleanup:', cleanup instanceof Error ? cleanup.name : 'UnknownError'));
+    void reader.cancel().catch(cleanup => console.warn('[qualified-funded] Body cleanup:', cleanup instanceof Error ? 'failure' : 'non_error_failure'));
     if (error instanceof SyntaxError || error instanceof TypeError) throw new QualifiedFundedError(400); throw error;
   } finally { signal.removeEventListener('abort', abort); reader.releaseLock(); }
 }
 function routes(service: QualifiedFundedService, controlToken?: string) {
   if (!service || (controlToken !== undefined && !/^[\x21-\x7e]{32,4096}$/.test(controlToken))) throw new QualifiedFundedError();
   const app = new Hono<RouteEnv>();
-  app.onError((error, c) => fail(c, error instanceof QualifiedFundedError ? error.status : 503));
+  app.onError((error, c) => failure(c, error));
   app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store, private');
     try { return await service.requestScope(c.req.raw.signal, async signal => {
@@ -50,7 +59,7 @@ function routes(service: QualifiedFundedService, controlToken?: string) {
       } else await service.authenticate(runtimeAuth(c), signal);
       if (!headers(c)) return fail(c, 400); if (Number(c.req.header('content-length')) > 4096) return fail(c, 413);
       await next();
-    }); } catch (error) { return fail(c, error instanceof QualifiedFundedError ? error.status : 503); }
+    }); } catch (error) { return failure(c, error); }
   });
   return app;
 }
