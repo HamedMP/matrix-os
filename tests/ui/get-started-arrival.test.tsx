@@ -58,7 +58,7 @@ describe("Get started answers", () => {
     render(
       <GetStartedAnswersProvider scope="alice">
         <Goals />
-        <GetStartedGate port={port({ status: "in_progress", updatedAt: AT, draft: { step: 4, goals: ["build"], tools: [] } })} zIndex={1} />
+        <GetStartedGate port={port({ status: "in_progress", updatedAt: AT, draft: { step: 5, goals: ["build"], tools: [] } })} zIndex={1} />
       </GetStartedAnswersProvider>,
     );
     expect(screen.getByTestId("goals")).toHaveTextContent("unknown");

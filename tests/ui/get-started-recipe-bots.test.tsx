@@ -32,22 +32,36 @@ function setup(connected: string[] = [], options: { available?: string[]; draft?
 
 afterEach(() => cleanup());
 
-describe("Bots for you", () => {
-  it("suggests bots for the goals, adds them on request, and creates nothing by itself", async () => {
-    const { saves } = setup(["gmail"]);
-    const list = await screen.findByRole("list", { name: "Bots for you" });
-    expect(within(list).getAllByRole("listitem")).toHaveLength(3);
+describe("Meet your bots", () => {
+  it("gives bots their own screen with avatars and how they work", async () => {
+    setup(["gmail"]);
+    expect(await screen.findByRole("heading", { name: "Meet your bots" })).toBeInTheDocument();
+    const list = screen.getByRole("list", { name: "Bots for you" });
+    const bots = within(list).getAllByRole("listitem");
+    expect(bots).toHaveLength(3);
+    for (const bot of bots) expect(bot.querySelector("[data-recipe-rabbit]")).not.toBeNull();
     expect(within(list).getByText("Needs Google Calendar")).toBeInTheDocument();
-    expect(screen.getByText("Bots start with no access to your apps. You choose what each one can use.")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add Jev Inbox Triage" }));
+    expect(screen.getByText("Start with no access to your apps. You choose what each one can use.")).toBeInTheDocument();
+  });
+
+  it("adds bots on request, lists them in the summary, and creates nothing by itself", async () => {
+    const { saves } = setup(["gmail"]);
+    fireEvent.click(await screen.findByRole("button", { name: "Add Jev Inbox Triage" }));
     expect(screen.getByRole("button", { name: "Remove Jev Inbox Triage" })).toHaveAttribute("aria-pressed", "true");
+    expect(saves.some((update) => update.type === "complete")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+    expect((await screen.findByText("Your bots")).nextElementSibling).toHaveTextContent("Jev Inbox Triage");
     fireEvent.click(screen.getByRole("button", { name: "Enter your computer" }));
     await waitFor(() => expect(saves.at(-1)).toMatchObject({ type: "complete", answers: { bots: ["jev-inbox-triage"] } }));
   });
 
-  it("sends no bots when none are added", async () => {
-    const { saves } = setup();
-    fireEvent.click(await screen.findByRole("button", { name: "Enter your computer" }));
+  it("sends no bots when none are added or the screen is skipped", async () => {
+    const { saves } = setup(["gmail"]);
+    fireEvent.click(await screen.findByRole("button", { name: "Add Jev Inbox Triage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(await screen.findByText("Your bots")).toBeInTheDocument();
+    expect(screen.getByText("Your bots").nextElementSibling).toHaveTextContent(/^None yet$/);
+    fireEvent.click(screen.getByRole("button", { name: "Enter your computer" }));
     await waitFor(() => expect(saves.at(-1)?.type).toBe("complete"));
     expect(saves.at(-1)).not.toHaveProperty("answers.bots");
   });

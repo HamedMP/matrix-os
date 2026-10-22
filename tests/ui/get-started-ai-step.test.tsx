@@ -40,7 +40,8 @@ describe("Make your AI yours", () => {
     fireEvent.click(screen.getByRole("button", { name: "See what this writes" }));
     expect(screen.getByText(/Your name is Atlas\. You are Sam's personal Matrix assistant\./)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Finish" }));
     expect(await screen.findByText("Atlas · Straight shooter")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Enter your computer" }));
     await waitFor(() => expect(saves.at(-1)).toMatchObject({
@@ -54,6 +55,7 @@ describe("Make your AI yours", () => {
     render(<GetStartedGate port={gatePort} zIndex={1} />);
     fireEvent.click(await screen.findByRole("button", { name: "Atlas" }));
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Finish" }));
     expect((await screen.findByText("Your AI")).nextElementSibling).toHaveTextContent(/^Matrix$/);
     fireEvent.click(screen.getByRole("button", { name: "Enter your computer" }));
     await waitFor(() => expect(saves.at(-1)?.type).toBe("complete"));
@@ -64,7 +66,8 @@ describe("Make your AI yours", () => {
     const { port: gatePort } = port();
     render(<GetStartedGate port={gatePort} zIndex={1} />);
     fireEvent.change(await screen.findByLabelText("AI name"), { target: { value: "Juno" } });
-    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Finish" }));
     expect(await screen.findByText(/^Juno · /)).toBeInTheDocument();
   });
 
@@ -93,10 +96,10 @@ describe("Make your AI yours", () => {
     render(<GetStartedGate port={gatePort} zIndex={1} />);
     fireEvent.change(await screen.findByLabelText("AI name"), { target: { value: "Task-master" } });
     expect(screen.getByRole("alert")).toHaveTextContent("That name can't be used. Try another.");
-    expect(screen.getByRole("button", { name: "Finish" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("AI name"), { target: { value: "Taskmaster" } });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Finish" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
   });
 
   it("says which choices the sample reply reflects", async () => {

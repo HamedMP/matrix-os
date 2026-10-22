@@ -22,17 +22,17 @@ describe("get started wizard", () => {
     const state = initialGetStartedWizard();
     expect(state.step).toBe("name");
     expect(getStartedAnswersFromWizard(state)).toEqual({ goals: [], tools: [] });
-    expect(GET_STARTED_WIZARD_STEPS).toEqual(["name", "goals", "tools", "ai", "summary"]);
+    expect(GET_STARTED_WIZARD_STEPS).toEqual(["name", "goals", "tools", "ai", "bots", "summary"]);
   });
 
   it("walks forward and back through every step without passing the ends", () => {
     let state = initialGetStartedWizard();
     state = run(state, { type: "back" });
     expect(state.step).toBe("name");
-    state = run(state, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" });
+    state = run(state, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" });
     expect(state.step).toBe("summary");
     state = run(state, { type: "back" });
-    expect(state.step).toBe("ai");
+    expect(state.step).toBe("bots");
   });
 
   it("caps the name while typing and trims it in the answers", () => {
@@ -97,7 +97,9 @@ describe("get started wizard", () => {
     state = run(state, { type: "pick-starter", id: "ask-anything" }, { type: "skip" });
     expect(state.step).toBe("ai");
     state = run(state, { type: "bot", patch: { name: "Atlas" } }, { type: "skip" });
-    expect(state).toMatchObject({ step: "summary", botChosen: false, bot: { name: "Matrix" } });
+    expect(state).toMatchObject({ step: "bots", botChosen: false, bot: { name: "Matrix" } });
+    state = run(state, { type: "toggle-bot", id: "writing-bot" }, { type: "skip" });
+    expect(state).toMatchObject({ step: "summary", bots: [] });
     expect(getStartedAnswersFromWizard(state)).toEqual({ goals: [], tools: [] });
   });
 
@@ -128,7 +130,7 @@ describe("get started wizard", () => {
   });
 
   it("reports progress across the questions only", () => {
-    expect(getStartedQuestionProgress(initialGetStartedWizard())).toEqual({ current: 0, total: 4 });
-    expect(getStartedQuestionProgress(initialGetStartedWizard({ step: 4, goals: [], tools: [] }))).toEqual({ current: 4, total: 4 });
+    expect(getStartedQuestionProgress(initialGetStartedWizard())).toEqual({ current: 0, total: 5 });
+    expect(getStartedQuestionProgress(initialGetStartedWizard({ step: 5, goals: [], tools: [] }))).toEqual({ current: 5, total: 5 });
   });
 });

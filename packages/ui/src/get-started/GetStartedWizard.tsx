@@ -1,10 +1,12 @@
 import {
   GET_STARTED_GOALS,
   GET_STARTED_PERSONALITIES,
+  GET_STARTED_RECIPE_BOTS,
   getStartedAnswersFromWizard,
   getStartedBotFromWizard,
   getStartedQuestionProgress,
   getStartedToolGroupsForGoals,
+  type GetStartedAnswers,
   type GetStartedChoiceGroup,
   type GetStartedWizardEvent,
   type GetStartedWizardState,
@@ -65,9 +67,11 @@ function yourAi(wizard: GetStartedWizardState): string {
   return `${bot.name} · ${GET_STARTED_PERSONALITIES.find((personality) => personality.id === bot.personality)?.label ?? ""}`;
 }
 
-function Summary({ wizard }: { wizard: GetStartedWizardState }) {
+function Summary({ wizard, answers }: { wizard: GetStartedWizardState; answers: GetStartedAnswers }) {
   const picked = new Set(wizard.goals);
   const goals = GET_STARTED_GOALS.filter((goal) => picked.has(goal.id)).map((goal) => goal.label);
+  const addedBots = new Set(answers.bots ?? []);
+  const bots = GET_STARTED_RECIPE_BOTS.filter((bot) => addedBots.has(bot.recipeId)).map((bot) => bot.label);
   return (
     <dl className="mxo-card mxo-gs__summary">
       <div>
@@ -77,6 +81,10 @@ function Summary({ wizard }: { wizard: GetStartedWizardState }) {
       <div>
         <dt>Your AI</dt>
         <dd>{yourAi(wizard)}</dd>
+      </div>
+      <div>
+        <dt>Your bots</dt>
+        <dd>{bots.length > 0 ? bots.join(", ") : "None yet"}</dd>
       </div>
     </dl>
   );
@@ -89,6 +97,7 @@ function stepTitle(wizard: GetStartedWizardState): string {
     case "goals": return "What will you use Matrix for?";
     case "tools": return "Which tools do you use?";
     case "ai": return "Give your AI a name";
+    case "bots": return "Meet your bots";
     case "summary": return name ? `All set, ${name}.` : "All set.";
   }
 }
@@ -99,6 +108,7 @@ function stepHint(wizard: GetStartedWizardState): string {
     case "goals": return "Pick any. We'll set up those first.";
     case "tools": return "Nothing connects yet. This tells us what to set up first.";
     case "ai": return "It uses this name and style everywhere you talk to Matrix.";
+    case "bots": return "Bots are AI teammates that each do one job for you. Add any you like.";
     case "summary": return "You can change any of this later.";
   }
 }
@@ -212,9 +222,10 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
 
         {wizard.step === "ai" ? <GetStartedAiStep bot={wizard.bot} answers={answers} dispatch={dispatch} /> : null}
 
-        {isSummary ? <Summary wizard={wizard} /> : null}
+        {wizard.step === "bots" ? <GetStartedRecipeBots wizard={wizard} connect={connect} dispatch={dispatch} /> : null}
+
+        {isSummary ? <Summary wizard={wizard} answers={answers} /> : null}
         {isSummary && connect ? <GetStartedConnectList answers={answers} connect={connect} /> : null}
-        {isSummary ? <GetStartedRecipeBots wizard={wizard} connect={connect} dispatch={dispatch} /> : null}
 
         {error ? <p className="mxo-failed-line" role="alert">{error}</p> : null}
         <SignInPending connect={connect} step={wizard.step} />
@@ -235,7 +246,7 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
             <>
               <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => dispatch({ type: "skip" })}>Skip</button>
               <button type="button" className="mxo-btn mxo-btn--dark" disabled={botNameInvalid} onClick={() => dispatch({ type: "next" })}>
-                {wizard.step === "ai" ? "Finish" : "Next"}
+                {wizard.step === "bots" ? "Finish" : "Next"}
               </button>
             </>
           )}

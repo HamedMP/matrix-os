@@ -178,6 +178,59 @@
   gap: 8px;
 }
 
+/* "Meet your bots": one card per bot, its gallery avatar on the left. */
+.mxo-gs__bots {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mxo-gs__bot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mxo-gs__bot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  transition: border-color 160ms var(--mxo-ease);
+  animation: mxo-rise 320ms var(--mxo-ease) both;
+}
+
+.mxo-gs__bot:nth-child(2) { animation-delay: 60ms; }
+.mxo-gs__bot:nth-child(3) { animation-delay: 120ms; }
+.mxo-gs__bot[data-added] { border-color: var(--mxo-ink); }
+
+.mxo-gs__bot > .matrix-recipe-rabbit { flex-shrink: 0; }
+
+/* On narrow cards the action wraps to its own line instead of squeezing the text. */
+.mxo-gs__bot-text {
+  display: flex;
+  flex: 1 1 180px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.mxo-gs__bot-text strong { font-weight: 600; color: var(--mxo-ink); }
+.mxo-gs__bot-text + * { margin-left: auto; }
+
+.mxo-gs__bot-facts {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0 0 0 16px;
+  font-size: 12px;
+}
+
 .mxo-gs button:focus-visible,
 .mxo-gs__title:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--mxo-ink) 30%, transparent);
@@ -191,5 +244,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mxo-gs__card { animation: none; }
+  .mxo-gs__card,
+  .mxo-gs__bot { animation: none; }
 }

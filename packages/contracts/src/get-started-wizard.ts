@@ -20,7 +20,7 @@ import { getStartedRecipeBotIdsForGoals, type GetStartedRecipeBotId } from "#get
 // Spec 635, Section 3: the wizard's client state machine. It is shared by
 // every desktop surface so they cannot drift; hosts only load and save.
 
-export const GET_STARTED_WIZARD_STEPS = ["name", "goals", "tools", "ai", "summary"] as const;
+export const GET_STARTED_WIZARD_STEPS = ["name", "goals", "tools", "ai", "bots", "summary"] as const;
 export type GetStartedWizardStep = (typeof GET_STARTED_WIZARD_STEPS)[number];
 
 export interface GetStartedWizardState {
@@ -68,6 +68,7 @@ function clearStep(state: GetStartedWizardState): GetStartedWizardState {
     case "goals": return { ...state, goals: [] };
     case "tools": return { ...state, tools: [], appIdea: undefined, starter: undefined };
     case "ai": return { ...state, bot: DEFAULT_GET_STARTED_BOT, botChosen: false };
+    case "bots": return { ...state, bots: [] };
     case "summary": return state;
   }
 }

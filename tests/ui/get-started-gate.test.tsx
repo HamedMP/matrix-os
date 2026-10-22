@@ -123,6 +123,8 @@ describe("GetStartedGate", () => {
     fireEvent.click(screen.getByRole("button", { name: "GitHub" }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(await screen.findByRole("button", { name: "Skip" }));
+    expect(await screen.findByRole("heading", { name: "Meet your bots" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
 
     expect(await screen.findByRole("heading", { name: "All set, Sam." })).toBeInTheDocument();
     expect(screen.getByText("Write code with agents")).toBeInTheDocument();
@@ -161,7 +163,7 @@ describe("GetStartedGate", () => {
   it("keeps the answers and offers a retry when finishing fails", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     let fail = true;
-    const { port, saves } = makePort({ status: "in_progress", updatedAt: AT, draft: { step: 4, name: "Sam", goals: [], tools: [] } });
+    const { port, saves } = makePort({ status: "in_progress", updatedAt: AT, draft: { step: 5, name: "Sam", goals: [], tools: [] } });
     const save = port.save;
     port.save = vi.fn(async (update: GetStartedUpdate) => {
       if (update.type === "complete" && fail) throw new Error("Postgres said no at /home/matrix");
