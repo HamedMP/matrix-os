@@ -42,6 +42,7 @@ export function createFundedRelayService(input: FundedRelayServiceConfig, option
   const now = options.now ?? (() => new Date());
   const relay = createFundedRelay({
     ...config,
+    ...(settings ? { managedRouteControl: settings } : {}),
     ...(options.fetchFn ? { fetch: options.fetchFn } : {}),
     ...(options.now ? { now: options.now } : {}),
   });
