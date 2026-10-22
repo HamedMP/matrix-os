@@ -146,15 +146,19 @@ describe("AWS Bedrock funded upstream", () => {
   });
 
   it("loads the optional route into funded relay configuration without provider credentials", () => {
-    const config = resolveFundedRelayConfig({
+    const baseEnv = {
       MATRIX_FUNDED_AI_ENABLED: "true",
-      MATRIX_FUNDED_AI_RESERVATION_MODE: "usage",
       MATRIX_FUNDED_BEDROCK_ROUTE: ROUTE_JSON,
       CLOUDFLARE_AI_GATEWAY_URL: "https://gateway.ai.cloudflare.com/v1/0123456789abcdef0123456789abcdef/preview/anthropic",
       CLOUDFLARE_AI_GATEWAY_TOKEN: "cloudflare-gateway-token-123456789012345",
       PLATFORM_INTERNAL_URL: "https://platform.example.com",
       AI_RELAY_CONTROL_TOKEN: "relay-control-token-1234567890123456789",
       AI_RELAY_METADATA_SECRET: "metadata-secret-12345678901234567890123",
+    };
+    expect(() => resolveFundedRelayConfig(baseEnv)).toThrow(/usage/i);
+    const config = resolveFundedRelayConfig({
+      ...baseEnv,
+      MATRIX_FUNDED_AI_RESERVATION_MODE: "usage",
     });
     expect(config?.bedrockRoute).toEqual(route());
   });
