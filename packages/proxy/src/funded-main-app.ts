@@ -38,7 +38,7 @@ export function createFundedRelayService(input: FundedRelayServiceConfig, option
   const errorTracker = installPostHogHonoErrorTracking(app, {
     service: "matrix-funded-ai-relay",
   });
-  const relay = createFundedRelay(config);
+  const relay = createFundedRelay({ ...config, ...(settings ? { managedRouteControl: settings } : {}) });
   control?.register(app);
 
   app.get("/health", (c) => c.json({ status: "ok" }));
