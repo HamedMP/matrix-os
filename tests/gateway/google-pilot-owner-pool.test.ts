@@ -14,7 +14,7 @@ describe('pilot-only actual owner-pool acquisition timeout', () => {
     expect(()=>createAppDb('postgresql://synthetic@127.0.0.1/owner_test',{connectionTimeoutMillis:0 as never})).toThrow('Owner database configuration unavailable');
   });
   it('times out and drains an actual stalled PostgreSQL handshake instead of leaving a borrowed connection alive', async () => {
-    const sockets=new Set<Socket>(); const server=createServer(socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
+    const sockets=new Set<Socket>(); const server=createServer(socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));socket.resume();});
     await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve)); const address=server.address(); if(!address||typeof address==='string')throw new Error('fixture unavailable');
     const app=createAppDb(`postgresql://synthetic@127.0.0.1:${address.port}/owner_test`,{connectionTimeoutMillis:2000});
     const bound=setTimeout(()=>{for(const socket of sockets)socket.destroy();},3500);
