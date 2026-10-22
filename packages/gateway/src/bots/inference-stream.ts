@@ -22,13 +22,26 @@ function abortable<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 /** Own the reader so cancellation also tears down a stalled upstream body. */
-export async function* inferenceResponseText(response: Response, signal: AbortSignal): AsyncGenerator<string> {
+export async function* inferenceResponseText(response: Response, signal: AbortSignal, idleTimeoutMs?: number): AsyncGenerator<string> {
   if (!response.body) throw new Error('Inference body unavailable');
   const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8', { fatal: true });
+  const idle = idleTimeoutMs === undefined ? undefined : { controller: new AbortController(), remaining: idleTimeoutMs };
+  const readSignal = idle ? AbortSignal.any([signal, idle.controller.signal]) : signal;
   try {
     while (true) {
-      const next = await abortable(reader.read(), signal);
+      // Only upstream wait time counts: downstream backpressure is not provider idleness.
+      const started = performance.now();
+      const timer = idle ? setTimeout(() => idle.controller.abort(new DOMException('Inference body idle', 'TimeoutError')), idle.remaining) : undefined;
+      timer?.unref?.();
+      let next: ReadableStreamReadResult<Uint8Array>;
+      try { next = await abortable(reader.read(), readSignal); }
+      finally {
+        if (timer !== undefined) clearTimeout(timer);
+        if (idle) idle.remaining = Math.max(0, idle.remaining - (performance.now() - started));
+      }
       if (next.done) break;
+      // Empty reads are not progress and cannot renew a stalled body's deadline.
+      if (idle && next.value.byteLength > 0) idle.remaining = idleTimeoutMs!;
       // A fetch read can contain many events. Decode bounded byte slices.
       for (let offset = 0; offset < next.value.length; offset += INFERENCE_RESPONSE_CHUNK_MAX_BYTES) {
         const text = decoder.decode(next.value.subarray(offset, offset + INFERENCE_RESPONSE_CHUNK_MAX_BYTES), { stream: true });
