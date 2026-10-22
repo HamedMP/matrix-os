@@ -1,7 +1,7 @@
 import { validateBotImageInferenceBody } from "@matrix-os/contracts";
 import { CHATGPT_PLAN_RESPONSE_BYTE_LIMIT, INFERENCE_RESPONSE_BUFFER_MAX_BYTES, INFERENCE_RESPONSE_CHUNK_MAX_BYTES, ChatGptPlanWireSchema } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
-import { PlanFailure, logPlanFailure, safePlanResponseDiagnostic, type PlanResponseDiagnostic } from './diagnostics';
+import { PlanFailure, logPlanFailure, planNetworkFailureDiagnostic, safePlanResponseDiagnostic, type PlanResponseDiagnostic } from './diagnostics';
 import { PLAN_RESOURCE } from './oauth';
 const DIAGNOSTIC_BYTE_LIMIT = 16 * 1024;
 /** Only complete JSON objects from bounded SSE samples are inspected. */
@@ -140,18 +140,21 @@ async function openPlanResponse(input: PlanResponseInput): Promise<Response> {
     const accessToken = await input.accessToken();
     input.validate();
     let response: Response;
+    const requestBody = JSON.stringify(body);
+    const fetchBegan = performance.now();
     try {
         response = await input.fetchFn(`${PLAN_RESOURCE}/responses`, {
             method: 'POST', redirect: 'error',
             headers: {
                 authorization: `Bearer ${accessToken}`, 'content-type': 'application/json'
             },
-            body: JSON.stringify(body), signal: input.signal,
+            body: requestBody, signal: input.signal,
         });
     }
     catch (error: unknown) {
         const category = input.signal.aborted ? input.signal.reason instanceof DOMException && input.signal.reason.name === 'TimeoutError' ? 'timeout' : 'cancelled' : 'network_error';
-        throw new PlanFailure('responses', category);
+        throw new PlanFailure('responses', category, undefined, undefined,
+            planNetworkFailureDiagnostic(error, Math.round(performance.now() - fetchBegan), Buffer.byteLength(requestBody)));
     }
     if (!response.ok) {
         const read = await readResponseBody(response, input.signal, DIAGNOSTIC_BYTE_LIMIT, 1500);

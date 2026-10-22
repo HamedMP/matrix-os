@@ -28,6 +28,51 @@ export function safePlanResponseDiagnostic(value: unknown): PlanResponseDiagnost
     }
     return result as PlanResponseDiagnostic;
 }
+const NETWORK_DIAGNOSTIC_VALUES = {
+    errorName: ['Error', 'TypeError', 'RangeError', 'AggregateError', 'DOMException', 'AbortError', 'TimeoutError',
+        'SocketError', 'ConnectTimeoutError', 'HeadersTimeoutError', 'BodyTimeoutError'],
+    code: ['UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT',
+        'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE', 'ENETUNREACH', 'EHOSTUNREACH',
+        'ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN',
+        'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'ERR_SSL_WRONG_VERSION_NUMBER', 'ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE'],
+    phase: ['before_headers'],
+} as const;
+export interface PlanNetworkDiagnostic {
+    errorName?: typeof NETWORK_DIAGNOSTIC_VALUES.errorName[number];
+    code?: typeof NETWORK_DIAGNOSTIC_VALUES.code[number];
+    causeCode?: typeof NETWORK_DIAGNOSTIC_VALUES.code[number];
+    phase?: 'before_headers';
+    elapsedMs?: number;
+    requestBodyBytes?: number;
+}
+/** Inspect only named fields, never stringify an Error or walk a cause chain. */
+function networkField(value: unknown, key: string): unknown {
+    try {
+        return value && typeof value === 'object' && !Array.isArray(value) ? Reflect.get(value, key) : undefined;
+    } catch (error: unknown) {
+        // A hostile getter/proxy must not replace the original transport failure.
+        console.warn('[chatgpt-plan] network_diagnostic_unavailable');
+        return undefined;
+    }
+}
+/** Used again at both console and disk boundaries; all strings are fixed enums. */
+export function safePlanNetworkDiagnostic(value: unknown): PlanNetworkDiagnostic {
+    const result: Record<string, string | number> = {};
+    for (const key of ['errorName', 'code', 'causeCode', 'phase'] as const) {
+        const item = networkField(value, key);
+        const allowed = NETWORK_DIAGNOSTIC_VALUES[key === 'causeCode' ? 'code' : key];
+        if (typeof item === 'string' && (allowed as readonly string[]).includes(item)) result[key] = item;
+    }
+    for (const [key, maximum] of [['elapsedMs', 24 * 60 * 60 * 1000], ['requestBodyBytes', 512000]] as const) {
+        const item = networkField(value, key);
+        if (typeof item === 'number' && Number.isInteger(item) && item >= 0 && item <= maximum) result[key] = item;
+    }
+    return result as PlanNetworkDiagnostic;
+}
+export function planNetworkFailureDiagnostic(error: unknown, elapsedMs: number, requestBodyBytes: number): PlanNetworkDiagnostic {
+    return safePlanNetworkDiagnostic({ errorName: networkField(error, 'name'), code: networkField(error, 'code'),
+        causeCode: networkField(networkField(error, 'cause'), 'code'), phase: 'before_headers', elapsedMs, requestBodyBytes });
+}
 const LOCAL_FAILURE_CATEGORIES = {
     'invalid plan credential': 'invalid_plan_credential',
     'invalid identity': 'invalid_identity',
@@ -45,7 +90,8 @@ function localFailureCategory(error: unknown): string {
 }
 /** Only fixed stages/categories/statuses reach trusted diagnostics, never provider text. */
 export class PlanFailure extends Error {
-    constructor(readonly stage: string, readonly category: string, readonly httpStatus?: number, readonly responseDiagnostic?: PlanResponseDiagnostic) {
+    constructor(readonly stage: string, readonly category: string, readonly httpStatus?: number, readonly responseDiagnostic?: PlanResponseDiagnostic,
+        readonly networkDiagnostic?: PlanNetworkDiagnostic) {
         super(category);
         this.name = 'PlanFailure';
     }
@@ -78,11 +124,12 @@ export function logPlanFailure(stage: string, error: unknown, context?: unknown)
                 ].includes(error.message) ? 'stale_source'
                     : error instanceof Error && error.message === 'background not permitted' ? 'background_denied' : localFailureCategory(error));
     const diagnostic = failure?.responseDiagnostic ? safePlanResponseDiagnostic(failure.responseDiagnostic) : null;
+    const network = failure?.networkDiagnostic ? safePlanNetworkDiagnostic(failure.networkDiagnostic) : null;
     const correlation = safeFailureCorrelation(context);
-    console.warn(`[chatgpt-plan] ${failure?.stage ?? stage}: ${category}${failure?.httpStatus !== undefined ? ` (http ${failure.httpStatus})` : ''}${diagnostic ? ` ${JSON.stringify(diagnostic)}` : ''}${correlation ? ` ${JSON.stringify({ correlation })}` : ''}`);
+    console.warn(`[chatgpt-plan] ${failure?.stage ?? stage}: ${category}${failure?.httpStatus !== undefined ? ` (http ${failure.httpStatus})` : ''}${diagnostic ? ` ${JSON.stringify(diagnostic)}` : ''}${network ? ` ${JSON.stringify({ networkDiagnostic: network })}` : ''}${correlation ? ` ${JSON.stringify({ correlation })}` : ''}`);
     if (failureSink) {
         const row = safePlanFailureRecord({ observedAt: new Date().toISOString(), stage: failure?.stage ?? stage,
-            category, httpStatus: failure?.httpStatus, correlation: context });
+            category, httpStatus: failure?.httpStatus, correlation: context, networkDiagnostic: network });
         if (row) {
             try { failureSink(row); }
             catch (error: unknown) { console.warn('[chatgpt-plan] diagnostic_record_failed'); }
@@ -108,6 +155,7 @@ export interface PlanFailureRecord {
     stage: string;
     category: string;
     httpStatus?: number;
+    networkDiagnostic?: PlanNetworkDiagnostic;
     correlation?: Partial<Record<'requestId' | 'runId' | 'computerId', string>>;
 }
 /** Disk records have a smaller contract than console diagnostics. No arbitrary strings. */
@@ -120,6 +168,8 @@ export function safePlanFailureRecord(value: unknown): PlanFailureRecord | null 
         stage: typeof input.stage === 'string' && PERSISTED_STAGES.has(input.stage) ? input.stage : 'other',
         category: typeof input.category === 'string' && PERSISTED_CATEGORIES.has(input.category) ? input.category : 'local_failure' };
     if (typeof input.httpStatus === 'number' && Number.isInteger(input.httpStatus) && input.httpStatus >= 100 && input.httpStatus <= 599) row.httpStatus = input.httpStatus;
+    const network = safePlanNetworkDiagnostic(input.networkDiagnostic);
+    if (Object.keys(network).length) row.networkDiagnostic = network;
     const correlation = safeFailureCorrelation(input.correlation);
     if (correlation) {
         const ids: NonNullable<PlanFailureRecord['correlation']> = {};
