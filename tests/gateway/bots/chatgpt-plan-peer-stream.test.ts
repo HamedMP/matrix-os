@@ -136,17 +136,21 @@ describe('ChatGPT subscription peer streaming', () => {
     await buffered.body[Symbol.asyncIterator]().return?.();
   });
 
-  it('expires a stalled chunk at the existing 120-second pending deadline', async () => {
+  it('expires empty-chunk inactivity, releases admission, and refuses late success', async () => {
     const { peer, session, binding } = await connected();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const response = await peer.inferStream(binding, '{}', new AbortController().signal);
     const request = (await peer.poll('owner', session)).requests[0]!;
     const waitingAck = expect(peer.reply('owner', { ...session, id: request.id, ok: true,
-      stream: 'chunk', sequence: 0, body: 'data: held\n\n' })).rejects.toThrow('unavailable');
+      stream: 'chunk', sequence: 0, body: '' })).rejects.toThrow('unavailable');
     await vi.advanceTimersByTimeAsync(CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS);
     await waitingAck;
     await expect(response.body[Symbol.asyncIterator]().next()).rejects.toThrow('unavailable');
     expect((await peer.poll('owner', session)).requests).toEqual([{ version: 1, action: 'cancel', id: request.id }]);
+    expect(() => peer.reply('owner', { ...session, id: request.id, ok: true, stream: 'end', sequence: 1 })).toThrow('conflict');
+    const replacement = await peer.inferStream(binding, '{}', new AbortController().signal);
+    expect(replacement.status).toBe(200);
+    await replacement.body[Symbol.asyncIterator]().return?.();
   });
 
   it('rejects a multi-byte chunk exceeding 64 KiB before advancing the stream sequence', async () => {

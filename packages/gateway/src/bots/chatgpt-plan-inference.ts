@@ -22,8 +22,41 @@ export async function forwardChatGptPlanInference(request: ScopeRuntimeBotInfere
         return refused(request.requestId, 'invalid_request');
     }
     const streamLifetime = new AbortController();
-    const signal = AbortSignal.any([deps.signal, streamLifetime.signal, AbortSignal.timeout(120000)]);
-    const authorized = async () => !signal.aborted && deps.stillAuthorized() && await deps.authority.revalidate(binding, signal) && !signal.aborted && deps.stillAuthorized();
+    const streaming = request.responseMode === 'stream';
+    const signal = AbortSignal.any([deps.signal, streamLifetime.signal, ...(!streaming ? [AbortSignal.timeout(120000)] : [])]);
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    let handedOff = false;
+    const pauseIdle = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = undefined;
+    };
+    const clearIdle = () => {
+        pauseIdle();
+        signal.removeEventListener('abort', clearIdle);
+    };
+    if (streaming) signal.addEventListener('abort', clearIdle, { once: true });
+    const refreshIdle = () => {
+        if (!streaming || signal.aborted) return;
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => streamLifetime.abort(new DOMException('Inference stalled', 'TimeoutError')), 120000);
+        idleTimer.unref();
+    };
+    const finish = () => { clearIdle(); streamLifetime.abort(); };
+    refreshIdle(); // Bounds preparation/headers and then the first real body read.
+    const waitFor = <T>(pending: Promise<T>): Promise<T> => {
+        if (!streaming) return pending;
+        return new Promise<T>((resolve, reject) => {
+            // Authority/setup waits stay bounded even while body idle is paused.
+            const timer = setTimeout(() => streamLifetime.abort(new DOMException('Inference control stalled', 'TimeoutError')), 120000);
+            timer.unref();
+            const cleanup = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); };
+            const abort = () => { cleanup(); reject(signal.reason); };
+            signal.addEventListener('abort', abort, { once: true });
+            pending.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+            if (signal.aborted) abort();
+        });
+    };
+    const authorized = async () => !signal.aborted && deps.stillAuthorized() && await waitFor(deps.authority.revalidate(binding, signal)) && !signal.aborted && deps.stillAuthorized();
     try {
         if (!await authorized())
             return refused(request.requestId, 'action_denied');
@@ -31,15 +64,30 @@ export async function forwardChatGptPlanInference(request: ScopeRuntimeBotInfere
             return refused(request.requestId, 'action_denied');
         if (request.responseMode === 'stream') {
             if (!deps.authority.inferStream) return refused(request.requestId, 'provider_unavailable');
-            const response = await deps.authority.inferStream(binding, body, signal);
+            const response = await waitFor(deps.authority.inferStream(binding, body, signal));
             if (response.status !== 200 || response.headers['content-type'] !== 'text/event-stream') {
                 streamLifetime.abort();
                 return refused(request.requestId, 'provider_unavailable');
             }
+            refreshIdle();
+            async function* progress() {
+                try {
+                    for await (const chunk of response.body) {
+                        // A received chunk is bounded downstream backpressure,
+                        // not time spent waiting for more provider data.
+                        if (chunk.length) pauseIdle();
+                        yield chunk;
+                        if (chunk.length) refreshIdle();
+                    }
+                } finally {
+                    pauseIdle(); // EOF/terminal delivery has no upstream idle.
+                }
+            }
+            handedOff = true;
             return { version: 1, requestId: request.requestId, ok: true, status: response.status,
                 headers: { 'content-type': 'text/event-stream' },
-                body: guardInferenceStream(validateChatGptStream(response.body, binding.route.modelId, authorized), {
-                    signal, authorized, abort: () => streamLifetime.abort(),
+                body: guardInferenceStream(validateChatGptStream(progress(), binding.route.modelId, authorized), {
+                    signal, authorized, abort: finish,
                 }) };
         }
         const response = await deps.authority.infer(binding, body, signal);
@@ -61,5 +109,7 @@ export async function forwardChatGptPlanInference(request: ScopeRuntimeBotInfere
             return refused(request.requestId, 'response_too_large');
         console.warn('[bots] ChatGPT plan inference unavailable:', error instanceof Error ? error.name : 'UnknownError');
         return refused(request.requestId, 'provider_unavailable');
+    } finally {
+        if (!handedOff) finish();
     }
 }

@@ -333,6 +333,11 @@ export function createChatGptPlanPeers(deps: {
                 p.wake?.();
                 fail(unavailable());
             };
+            const resumeIdle = () => {
+                if (!p.pending.has(id) || signal.aborted) return;
+                clearTimeout(pending.timer);
+                pending.timer = setTimeout(abort, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS);
+            };
             const iterator: AsyncIterableIterator<string> = {
                 [Symbol.asyncIterator]() { return this; },
                 next() {
@@ -340,6 +345,7 @@ export function createChatGptPlanPeers(deps: {
                     if (buffered) {
                         const chunk = buffered;
                         buffered = undefined;
+                        if (chunk.value.length) resumeIdle();
                         chunk.acknowledge();
                         return Promise.resolve({ value: chunk.value, done: false as const });
                     }
@@ -352,6 +358,9 @@ export function createChatGptPlanPeers(deps: {
                     return { value: undefined, done: true as const };
                 },
             };
+            // expiresAt fences admission/replay. An admitted stream keeps its
+            // bounded idle lease only through valid, nonempty ordered chunks.
+            // A bounded received chunk awaiting consumption is backpressure.
             const timer = setTimeout(abort, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS);
             const pending: Pending = {
                 kind: 'stream', signal, abort, timer, reject: fail,
@@ -361,11 +370,15 @@ export function createChatGptPlanPeers(deps: {
                     nextSequence += 1;
                     return new Promise<void>((acknowledge, reject) => {
                         if (waiting) {
+                            if (value.length) resumeIdle();
                             const read = waiting;
                             waiting = undefined;
                             read.resolve({ value, done: false });
                             acknowledge();
-                        } else buffered = { value, acknowledge, reject };
+                        } else {
+                            if (value.length) clearTimeout(pending.timer);
+                            buffered = { value, acknowledge, reject };
+                        }
                     });
                 },
                 end(endSequence) {
