@@ -1,3 +1,4 @@
+// CI measurement only: this PR is never merged.
 // Gate check titles stay generic on the public PR, and the controller log is public too: never
 // print raw exception text. Plain static helper messages (letters, digits, simple punctuation)
 // are printed verbatim; anything that could carry a URL, host, path or upstream body (':', '.',
