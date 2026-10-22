@@ -121,6 +121,9 @@ describe("get started personality", () => {
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: "Unable to save your setup" });
     expect(await readFile(outside, "utf-8")).toBe("untouched\n");
+    // Setup stays unfinished so the wizard retries instead of closing without the owner's AI.
+    expect(JSON.parse(await read("get-started.json")).status).toBe("in_progress");
+    expect(ensureMatrixBot).not.toHaveBeenCalled();
   });
 });
 

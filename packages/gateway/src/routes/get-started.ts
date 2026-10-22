@@ -134,15 +134,16 @@ export function createGetStartedRoutes(opts: GetStartedRoutesOptions) {
           const current = await readState(dir);
           if (!current) return null;
           const transition = transitionGetStarted(current, update, now());
-          if (transition.kind === "write") await dir.writeAtomic(STATE_FILE, `${JSON.stringify(transition.state, null, 2)}\n`, 0o644);
-          if (transition.kind !== "conflict" && isTerminal(transition.state)) {
-            // Idempotent, so a retried completion finishes whatever an earlier attempt could not.
-            const finished = transition.state;
-            if (finished.status === "completed" && finished.answers.bot) {
-              await applyGetStartedPersonality(homePath, { ...finished.answers, bot: finished.answers.bot });
-            }
-            await ensureOnboardingMarker(dir, now().toISOString());
+          if (transition.kind === "conflict") return transition;
+          // The owner's choices are written before setup is saved as completed, so a failed
+          // SOUL write leaves setup unfinished and the wizard offers a retry. Idempotent: a
+          // repeated completion reapplies them.
+          const next = transition.state;
+          if (next.status === "completed" && next.answers.bot) {
+            await applyGetStartedPersonality(homePath, { ...next.answers, bot: next.answers.bot });
           }
+          if (transition.kind === "write") await dir.writeAtomic(STATE_FILE, `${JSON.stringify(next, null, 2)}\n`, 0o644);
+          if (isTerminal(next)) await ensureOnboardingMarker(dir, now().toISOString());
           return transition;
         });
         return saved ?? ({ kind: "not_eligible" } as const);
