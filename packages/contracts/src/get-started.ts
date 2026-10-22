@@ -8,8 +8,8 @@ import { GET_STARTED_RECIPE_BOT_IDS, GET_STARTED_RECIPE_BOTS_MAX } from "#get-st
 
 export const GET_STARTED_NAME_MAX_CHARS = 40;
 export const GET_STARTED_DRAFT_MAX_BYTES = 4 * 1024;
-/** Name, goals, tools, the AI's name and style, bots, and the summary: the last step index is this minus one. */
-export const GET_STARTED_STEP_COUNT = 6;
+/** Name, goals, tools, the main bot's name and style, App Gallery, bots, and the summary: the last step index is this minus one. */
+export const GET_STARTED_STEP_COUNT = 7;
 
 export const GET_STARTED_GOALS = [
   { id: "code", label: "Write code with agents" },

@@ -11,7 +11,7 @@ const AT = "2026-10-25T10:12:00.000Z";
 function setup(connected: string[] = [], options: { available?: string[]; draft?: Record<string, unknown> } = {}) {
   const saves: GetStartedUpdate[] = [];
   const port: GetStartedPort = {
-    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 4, name: "Sam", goals: ["business"], tools: [], ...options.draft } })),
+    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 5, name: "Sam", goals: ["business"], tools: [], ...options.draft } })),
     save: vi.fn(async (update: GetStartedUpdate) => {
       saves.push(update);
       if (update.type === "complete") return { status: "completed", completedAt: AT, answers: update.answers };
@@ -76,7 +76,7 @@ describe("Meet your bots", () => {
   it("saves added bots right away, so a reload keeps them", async () => {
     const { saves } = setup(["gmail"]);
     fireEvent.click(await screen.findByRole("button", { name: "Add Jev Inbox Triage" }));
-    await waitFor(() => expect(saves.at(-1)).toMatchObject({ type: "draft", draft: { step: 4, bots: ["jev-inbox-triage"] } }));
+    await waitFor(() => expect(saves.at(-1)).toMatchObject({ type: "draft", draft: { step: 5, bots: ["jev-inbox-triage"] } }));
     cleanup();
     setup(["gmail"], { draft: { bots: ["jev-inbox-triage"] } });
     expect(await screen.findByRole("button", { name: "Remove Jev Inbox Triage" })).toHaveAttribute("aria-pressed", "true");

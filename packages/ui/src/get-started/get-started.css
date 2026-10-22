@@ -178,6 +178,52 @@
   gap: 8px;
 }
 
+/* App Gallery: the ideas as a two-column grid of cards. */
+.mxo-gs__gallery {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mxo-gs__ideas {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mxo-gs__idea {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: var(--mxo-muted);
+  cursor: pointer;
+  transition: border-color 160ms var(--mxo-ease);
+}
+
+.mxo-gs__idea strong { font-size: 13px; font-weight: 600; color: var(--mxo-ink); }
+.mxo-gs__idea[aria-pressed="true"] { border-color: var(--mxo-ink); }
+
+.mxo-gs__idea-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: 4px;
+  border-radius: 8px;
+  background: var(--mxo-soft);
+  color: var(--mxo-ink);
+}
+
+@media (max-width: 480px) {
+  .mxo-gs__ideas { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* "Meet your bots": one card per bot, its gallery avatar on the left. */
 .mxo-gs__bots {
   display: flex;

@@ -60,7 +60,9 @@ Times are positions in the demo video. Quoted copy is the intended product copy.
   - Sounds fun (exploring, or nothing picked): Build something small, Play a game, Ask anything
 
   Nothing connects here; these are preferences.
-- **Step 4, "Give your AI a name"** (Atlas, Nova, Ada, Sage or own; Brief / Friendly / Playful). Becomes the full P2 bot setup. Without P2 this step is dropped and the AI stays "Matrix".
+- **Step 4, "Name your main bot"** (Atlas, Nova, Ada, Sage or own; Brief / Friendly / Playful): "This is your main bot. It uses this name and style everywhere you talk to Matrix." Becomes the full P2 bot setup. Without P2 this step is dropped and the AI stays "Matrix".
+- **Step 5, "Build your own apps" (App Gallery):** shown to everyone. Four example apps as cards (Habit tracker, Client CRM, Budget planner, Recipe box) with icon and one line; picking one is the owner's app idea (shared with the "First app idea" choice on step 3), so Matrix offers to build it on arrival. "Make anything else in App Gallery anytime." Skip clears the pick.
+- **Step 6, "Meet your bots":** see Section 7b.
 
 ### Scene 2: All set + Connect your tools (0:13–0:18), P0
 

@@ -15,6 +15,7 @@ import {
 import { useEffect, useId, useMemo, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { ButtonRow, RabbitAvatar, ToggleChip } from "../onboarding-widget/parts.js";
 import { GetStartedAiStep } from "./ai-step.js";
+import { GetStartedAppGalleryStep } from "./app-gallery-step.js";
 import { GetStartedConnectList, type GetStartedConnect } from "./connect.js";
 import { GetStartedRecipeBots } from "./recipe-bots.js";
 
@@ -96,7 +97,8 @@ function stepTitle(wizard: GetStartedWizardState): string {
     case "name": return "What should we call you?";
     case "goals": return "What will you use Matrix for?";
     case "tools": return "Which tools do you use?";
-    case "ai": return "Give your AI a name";
+    case "ai": return "Name your main bot";
+    case "gallery": return "Build your own apps";
     case "bots": return "Meet your bots";
     case "summary": return name ? `All set, ${name}.` : "All set.";
   }
@@ -107,7 +109,8 @@ function stepHint(wizard: GetStartedWizardState): string {
     case "name": return "Your AI will use this.";
     case "goals": return "Pick any. We'll set up those first.";
     case "tools": return "Nothing connects yet. This tells us what to set up first.";
-    case "ai": return "It uses this name and style everywhere you talk to Matrix.";
+    case "ai": return "This is your main bot. It uses this name and style everywhere you talk to Matrix.";
+    case "gallery": return "Describe an app and Matrix builds it for you to keep and use. Pick one to start with.";
     case "bots": return "Bots are AI teammates that each do one job for you. Add any you like.";
     case "summary": return "You can change any of this later.";
   }
@@ -221,6 +224,8 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
         ) : null}
 
         {wizard.step === "ai" ? <GetStartedAiStep bot={wizard.bot} answers={answers} dispatch={dispatch} /> : null}
+
+        {wizard.step === "gallery" ? <GetStartedAppGalleryStep wizard={wizard} dispatch={dispatch} labelledBy={titleId} /> : null}
 
         {wizard.step === "bots" ? <GetStartedRecipeBots wizard={wizard} connect={connect} dispatch={dispatch} /> : null}
 

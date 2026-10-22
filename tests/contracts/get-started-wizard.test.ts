@@ -22,14 +22,14 @@ describe("get started wizard", () => {
     const state = initialGetStartedWizard();
     expect(state.step).toBe("name");
     expect(getStartedAnswersFromWizard(state)).toEqual({ goals: [], tools: [] });
-    expect(GET_STARTED_WIZARD_STEPS).toEqual(["name", "goals", "tools", "ai", "bots", "summary"]);
+    expect(GET_STARTED_WIZARD_STEPS).toEqual(["name", "goals", "tools", "ai", "gallery", "bots", "summary"]);
   });
 
   it("walks forward and back through every step without passing the ends", () => {
     let state = initialGetStartedWizard();
     state = run(state, { type: "back" });
     expect(state.step).toBe("name");
-    state = run(state, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" });
+    state = run(state, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" }, { type: "next" });
     expect(state.step).toBe("summary");
     state = run(state, { type: "back" });
     expect(state.step).toBe("bots");
@@ -73,13 +73,19 @@ describe("get started wizard", () => {
       { type: "pick-starter", id: "ask-anything" },
       { type: "toggle-goal", goal: "build" },
     );
-    expect(getStartedAnswersFromWizard(state)).toEqual({ goals: ["code"], tools: ["github"] });
+    // The app idea is also App Gallery's own answer, so it stays.
+    expect(getStartedAnswersFromWizard(state)).toEqual({ goals: ["code"], tools: ["github"], appIdea: "habit-tracker" });
   });
 
   it("keeps a starter only when exploring is on screen", () => {
     const state = run(initialGetStartedWizard(), { type: "pick-starter", id: "play-a-game" });
     expect(getStartedAnswersFromWizard(state).starter).toBe("play-a-game");
     expect(getStartedAnswersFromWizard(run(state, { type: "toggle-goal", goal: "code" })).starter).toBeUndefined();
+  });
+
+  it("keeps an app idea picked in App Gallery whatever the goals", () => {
+    const state = run(initialGetStartedWizard(), { type: "toggle-goal", goal: "code" }, { type: "pick-app-idea", id: "habit-tracker" });
+    expect(getStartedAnswersFromWizard(state).appIdea).toBe("habit-tracker");
   });
 
   it("toggles the single app idea", () => {
@@ -97,7 +103,9 @@ describe("get started wizard", () => {
     state = run(state, { type: "pick-starter", id: "ask-anything" }, { type: "skip" });
     expect(state.step).toBe("ai");
     state = run(state, { type: "bot", patch: { name: "Atlas" } }, { type: "skip" });
-    expect(state).toMatchObject({ step: "bots", botChosen: false, bot: { name: "Matrix" } });
+    expect(state).toMatchObject({ step: "gallery", botChosen: false, bot: { name: "Matrix" } });
+    state = run(state, { type: "pick-app-idea", id: "recipe-box" }, { type: "skip" });
+    expect(state).toMatchObject({ step: "bots", appIdea: undefined });
     state = run(state, { type: "toggle-bot", id: "writing-bot" }, { type: "skip" });
     expect(state).toMatchObject({ step: "summary", bots: [] });
     expect(getStartedAnswersFromWizard(state)).toEqual({ goals: [], tools: [] });
@@ -130,7 +138,7 @@ describe("get started wizard", () => {
   });
 
   it("reports progress across the questions only", () => {
-    expect(getStartedQuestionProgress(initialGetStartedWizard())).toEqual({ current: 0, total: 5 });
-    expect(getStartedQuestionProgress(initialGetStartedWizard({ step: 5, goals: [], tools: [] }))).toEqual({ current: 5, total: 5 });
+    expect(getStartedQuestionProgress(initialGetStartedWizard())).toEqual({ current: 0, total: 6 });
+    expect(getStartedQuestionProgress(initialGetStartedWizard({ step: 6, goals: [], tools: [] }))).toEqual({ current: 6, total: 6 });
   });
 });

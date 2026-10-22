@@ -26,7 +26,7 @@ describe("Make your AI yours", () => {
   it("names the AI, previews its style, shows what it writes, and saves it", async () => {
     const { port: gatePort, saves } = port();
     render(<GetStartedGate port={gatePort} zIndex={1} />);
-    expect(await screen.findByRole("dialog", { name: "Give your AI a name" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Name your main bot" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Atlas" }));
     fireEvent.click(screen.getByRole("button", { name: "Straight shooter" }));
     expect(screen.getByText("Here's the fix. One warning: that change will lock the table.")).toBeInTheDocument();
@@ -40,6 +40,8 @@ describe("Make your AI yours", () => {
     fireEvent.click(screen.getByRole("button", { name: "See what this writes" }));
     expect(screen.getByText(/Your name is Atlas\. You are Sam's personal Matrix assistant\./)).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByRole("heading", { name: "Build your own apps" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(await screen.findByRole("button", { name: "Finish" }));
     expect(await screen.findByText("Atlas · Straight shooter")).toBeInTheDocument();
@@ -55,6 +57,8 @@ describe("Make your AI yours", () => {
     render(<GetStartedGate port={gatePort} zIndex={1} />);
     fireEvent.click(await screen.findByRole("button", { name: "Atlas" }));
     fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(await screen.findByRole("heading", { name: "Build your own apps" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(await screen.findByRole("button", { name: "Finish" }));
     expect((await screen.findByText("Your AI")).nextElementSibling).toHaveTextContent(/^Matrix$/);
     fireEvent.click(screen.getByRole("button", { name: "Enter your computer" }));
@@ -66,6 +70,8 @@ describe("Make your AI yours", () => {
     const { port: gatePort } = port();
     render(<GetStartedGate port={gatePort} zIndex={1} />);
     fireEvent.change(await screen.findByLabelText("AI name"), { target: { value: "Juno" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByRole("heading", { name: "Build your own apps" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(await screen.findByRole("button", { name: "Finish" }));
     expect(await screen.findByText(/^Juno · /)).toBeInTheDocument();
