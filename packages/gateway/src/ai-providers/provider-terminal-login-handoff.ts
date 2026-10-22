@@ -29,6 +29,9 @@ export function createProviderTerminalLoginHandoff(
     ...(typeof store.completeClaudeNativeLogin === "function" ? {
       completeClaudeNativeLogin: (input: Parameters<NonNullable<ProviderSettingsStoreWriter["completeClaudeNativeLogin"]>>[0]) => store.completeClaudeNativeLogin!(input),
     } : {}),
+    ...(typeof store.completeCodexNativeLogin === "function" ? {
+      completeCodexNativeLogin: (input: Parameters<NonNullable<ProviderSettingsStoreWriter["completeCodexNativeLogin"]>>[0]) => store.completeCodexNativeLogin!(input),
+    } : {}),
     getSnapshot: (options) => store.getSnapshot(options),
     async mutate(mutation) {
       const result = await store.mutate(mutation);

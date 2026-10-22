@@ -21,23 +21,26 @@ export function boundedBody(
   lifetimeSignal: AbortSignal,
   observer?: {
     push(chunk: Uint8Array): void;
-    complete(): void;
-    ambiguous(): void;
+    complete(): void | Promise<void>;
+    ambiguous(): void | Promise<void>;
   },
+  cancellationTimeoutMs = 10_000,
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   let seen = 0;
   let settled = false;
   let terminalReported = false;
-  const reportComplete = (): void => {
+  let cancelling = false;
+  let cancellation: Promise<void> | undefined;
+  const reportComplete = async (): Promise<void> => {
     if (terminalReported) return;
     terminalReported = true;
-    observer?.complete();
+    await observer?.complete();
   };
-  const reportAmbiguous = (): void => {
+  const reportAmbiguous = async (): Promise<void> => {
     if (terminalReported) return;
     terminalReported = true;
-    observer?.ambiguous();
+    await observer?.ambiguous();
   };
   const settle = (): void => {
     if (settled) return;
@@ -45,13 +48,33 @@ export function boundedBody(
     lifetimeSignal.removeEventListener("abort", onLifetimeAbort);
     lease.release();
   };
+  const cancelSource = (reason?: unknown): Promise<void> => {
+    cancelling = true;
+    if (!cancellation) {
+      const deadline = Promise.withResolvers<void>();
+      const cleanupTimer = setTimeout(() => {
+        // Local capacity can expire without proving that the provider body ended.
+        settle();
+        deadline.resolve();
+      }, cancellationTimeoutMs);
+      const confirmed = reader.cancel(reason).then(() => {
+        clearTimeout(cleanupTimer);
+        // The observer keeps its own bounded durable-receipt barrier after ACK.
+        return reportAmbiguous();
+      }).finally(() => {
+        clearTimeout(cleanupTimer);
+        settle();
+      });
+      // Preserve late real proof and rejection handling after local cleanup wins.
+      cancellation = Promise.race([confirmed, deadline.promise]);
+    }
+    return cancellation;
+  };
   const onLifetimeAbort = (): void => {
-    reportAmbiguous();
-    void reader.cancel("request lifetime ended").catch((error: unknown) => {
+    void cancelSource("request lifetime ended").catch((error: unknown) => {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded AI response cancellation failed", { errorName });
     });
-    settle();
   };
   if (lifetimeSignal.aborted) {
     onLifetimeAbort();
@@ -61,20 +84,21 @@ export function boundedBody(
 
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
+      let sourceFailed = false;
       try {
-        const result = await reader.read();
+        const result = await reader.read().catch((error: unknown) => { sourceFailed = true; throw error; });
         if (result.done) {
-          reportComplete();
-          settle();
+          if (!cancelling) await reportComplete();
+          if (!cancelling) settle();
           reader.releaseLock();
           controller.close();
           return;
         }
         seen += result.value.byteLength;
         if (seen > maxBytes) {
-          reportAmbiguous();
+          const ended = cancelSource("response limit exceeded");
           abortUpstream("response limit exceeded");
-          await reader.cancel("response limit exceeded");
+          await ended;
           settle();
           controller.error(new Error("AI response exceeded the configured limit"));
           return;
@@ -82,8 +106,11 @@ export function boundedBody(
         observer?.push(result.value);
         controller.enqueue(result.value);
       } catch (error) {
-        reportAmbiguous();
-        settle();
+        if (sourceFailed && !cancelling) await reportAmbiguous();
+        else if (!cancelling) await cancelSource("response processing failed").catch((cancelError: unknown) => {
+          console.warn("[proxy] Funded AI response cancellation failed", { errorName: cancelError instanceof Error ? cancelError.name : "UnknownError" });
+        });
+        if (!cancelling) settle();
         if (!lifetimeSignal.aborted) {
           const errorName = error instanceof Error ? error.name : "UnknownError";
           console.warn("[proxy] Funded AI response stream failed", { errorName });
@@ -92,10 +119,10 @@ export function boundedBody(
       }
     },
     async cancel(reason) {
-      reportAmbiguous();
+      const ended = cancelSource(reason);
       abortUpstream(reason);
       try {
-        await reader.cancel(reason);
+        await ended;
       } finally {
         settle();
       }

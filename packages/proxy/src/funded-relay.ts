@@ -1,3 +1,5 @@
+import { createRelayTerminalRecorder } from "./funded-relay-terminal-outcome.js";
+import { createRelayRequestDrain } from "./funded-relay-lifecycle.js";
 import { isManagedWorkersAiModel } from "@matrix-os/contracts";
 import { createHmac, randomUUID } from "node:crypto";
 import {
@@ -279,8 +281,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     retryIntervalMs: config.settlementRetryIntervalMs,
     now: () => now().getTime(),
     finalize: (task) => platform.finalize(task, AbortSignal.timeout(config.platformTimeoutMs)),
+    terminal: (task) => platform.terminal(task, AbortSignal.timeout(config.platformTimeoutMs)),
   });
-  const activeRequests = new Set<AbortController>();
+  const activeRequests = createRelayRequestDrain();
   const requestStates = new WeakMap<Context, ActiveRequestState>();
 
   async function releaseBeforeStart(
@@ -495,8 +498,12 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       reservationId: reservation.reservationId,
       tokenId: authorization.identity.tokenId,
     };
-    const enqueueFinalization = (result: FundedFinalization): void => {
-      if (result.mode === "exact" && (reservation.billingMode === "usage" || result.actualCostMicrousd <= reservation.reservedMicrousd)) {
+    const terminal = createRelayTerminalRecorder({ identity: authorization.identity, reservationId: reservation.reservationId,
+      requestId, now, queue: settlementQueue, acknowledgementTimeoutMs: Math.min(10_000, 2 * config.platformTimeoutMs) });
+    const enqueueFinalization = async (result: FundedFinalization, terminalState: "completed" | "failed" | "cancelled" = "completed"): Promise<void> => {
+      if (result.mode === "conservative" && reservation.billingMode === "usage") {
+        await terminal.unknown(terminalState);
+      } else if (result.mode === "exact" && (reservation.billingMode === "usage" || result.actualCostMicrousd <= reservation.reservedMicrousd)) {
         settlementQueue.enqueue({ ...finalizationLocator, ...result });
       } else {
         settlementQueue.enqueue({ ...finalizationLocator, mode: "conservative" });
@@ -526,20 +533,23 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     let dispatched = false;
     try {
       const started = await platform.start(
-        { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId },
+        { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId,
+          ...(reservation.billingMode === "usage" ? { executionId: terminal.executionId } : {}) },
         state.lifetimeSignal,
       );
       if (started.reservationId !== reservation.reservationId
-        || started.requestId !== requestId || started.tokenId !== authorization.identity.tokenId) {
+        || started.requestId !== requestId || started.tokenId !== authorization.identity.tokenId
+        || reservation.billingMode === "usage" && started.executionId !== terminal.executionId) {
         throw new Error("Funded AI start response did not match its reservation");
       }
+      terminal.started(started);
       dispatched = true;
-      const fetched = await fetchImpl(generationUrl, generationInit);
+      const fetched = terminal.response(await fetchImpl(generationUrl, generationInit));
       const upstream = isOpenAi && fetched.ok
         ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
       clearTimeout(firstResponseTimer);
       if (!upstream.ok) {
-        enqueueFinalization(await classifyFundedUpstreamRejection({
+        await enqueueFinalization(await classifyFundedUpstreamRejection({
           upstream, canonicalModelId: model.canonicalModelId,
           requestPath: c.req.path, signal: state.lifetimeSignal,
         }));
@@ -558,7 +568,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         return errorResponse(c, 502, "api_error", "AI access is temporarily unavailable");
       }
       if (!upstream.body) {
-        enqueueFinalization({ mode: "conservative" });
+        await enqueueFinalization({ mode: "conservative" });
         resourceLease.release();
         state.resourceLease = null;
         return new Response(null, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
@@ -580,9 +590,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           return {
             push: (chunk: Uint8Array) => tracker.push(chunk),
             complete: () => enqueueFinalization(tracker.complete()),
-            ambiguous: () => enqueueFinalization({ mode: "conservative" }),
+            ambiguous: () => enqueueFinalization({ mode: "conservative" }, "cancelled"),
           };
         })(),
+        Math.min(10_000, 2 * config.platformTimeoutMs),
       );
       state.handedOff = true;
       return new Response(responseBody, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
@@ -596,7 +607,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         refundFundedCapacityAttempt(runtimeAttempt, error);
         return controlPlaneError(c, error);
       }
-      enqueueFinalization({ mode: "conservative" });
+      await enqueueFinalization({ mode: "conservative" }, "failed");
       resourceLease.release();
       state.resourceLease = null;
       const errorName = error instanceof Error ? error.name : "UnknownError";
@@ -690,22 +701,17 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       reservationId: reservation.reservationId,
       tokenId: authorization.identity.tokenId,
     };
-    const enqueueFinalization = (result: FundedFinalization | {
+    const terminal = createRelayTerminalRecorder({ identity: authorization.identity, reservationId: reservation.reservationId,
+      requestId, now, queue: settlementQueue, acknowledgementTimeoutMs: Math.min(10_000, 2 * config.platformTimeoutMs) });
+    const enqueueFinalization = async (result: FundedFinalization | {
       mode: "exact";
       actualCostMicrousd: number;
       jevProvenance: { resolvedModel: string; pricingVersion: string };
-    }): void => {
+    }): Promise<void> => {
       if (result.mode === "exact" && result.actualCostMicrousd <= config.jevMaxCostMicrousd) {
         settlementQueue.enqueue({ ...finalizationLocator, ...result });
       } else {
-        // Platform deliberately refuses conservative settlement for usage
-        // billing. Keep the durable in-flight hold for operator review rather
-        // than retrying a request that can never succeed or charging without
-        // verified provider usage.
-        console.warn("[proxy] Jev usage requires manual reconciliation", {
-          reservationId: reservation.reservationId,
-          requestId,
-        });
+        await terminal.unknown("failed");
       }
     };
 
@@ -718,13 +724,15 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       // Keep the admitted review; a new deployment attestation cannot renew this request.
       reviewedJevPricing(now(), pricing);
       const startResult = await platform.start(
-        { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId },
+        { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId, executionId: terminal.executionId },
         state.lifetimeSignal,
       );
       if (startResult.reservationId !== reservation.reservationId
-        || startResult.requestId !== requestId || startResult.tokenId !== authorization.identity.tokenId) {
+        || startResult.requestId !== requestId || startResult.tokenId !== authorization.identity.tokenId
+        || startResult.executionId !== terminal.executionId) {
         throw new Error("Funded AI start response did not match its reservation");
       }
+      terminal.started(startResult);
       started = true;
       // A successful platform start is not evidence of an upstream call.
       reviewedJevPricing(now(), pricing);
@@ -743,9 +751,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         redirect: "error",
         signal: evaluationSignal,
       });
-      const text = await readBoundedText(upstream, config.maxControlResponseBytes);
+      const text = await readBoundedText(terminal.response(upstream), config.maxControlResponseBytes);
       if (!upstream.ok) {
-        enqueueFinalization({ mode: "conservative" });
+        await enqueueFinalization({ mode: "conservative" });
         resourceLease.release();
         state.resourceLease = null;
         if (upstream.status === 429) {
@@ -790,10 +798,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
             || checked.policy.runtimeRevision !== latest.policy.runtimeRevision) throw new Error("Jev probe authorization changed");
           reviewedJevPricing(now(), pricing); state.lifetimeSignal.throwIfAborted();
         } catch (error) {
-          enqueueFinalization(finalization);
+          await enqueueFinalization(finalization);
           throw error;
         }
-      } else enqueueFinalization(finalization);
+      } else await enqueueFinalization(finalization);
       resourceLease.release();
       state.resourceLease = null;
       return probe ? c.json({ ready: true, priceValidThrough: pricing.validThrough }, 200) : c.json(normalized.result, 200);
@@ -813,7 +821,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           settlementQueue.enqueue(task);
         }
       } else {
-        enqueueFinalization({ mode: "conservative" });
+        await enqueueFinalization({ mode: "conservative" });
       }
       resourceLease.release();
       state.resourceLease = null;
@@ -915,9 +923,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       });
     },
     async close() {
-      for (const controller of activeRequests) controller.abort("relay shutting down");
-      activeRequests.clear();
       admission.close();
+      await activeRequests.close(Math.min(10_000, 2 * config.platformTimeoutMs));
       await settlementQueue.close();
     },
   };

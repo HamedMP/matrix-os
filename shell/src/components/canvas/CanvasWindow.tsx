@@ -86,7 +86,6 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
   const [interacting, setInteracting] = useState(false);
   const [minimizePhase, setMinimizePhase] = useState<"idle" | "minimizing">("idle");
   const isInteractive = zoom >= INTERACTION_THRESHOLD;
-  const inverseScale = 1 / zoom;
 
   // Iframe windows get a "click-to-interact" overlay so wheel events reach
   // the canvas instead of being swallowed by the iframe's browsing context.
@@ -128,6 +127,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
 
   useEffect(() => {
     // react-doctor-disable-next-line react-hooks-js/set-state-in-effect, react-doctor/no-adjust-state-on-prop-change -- `contentFocused` is event-captured (set true on the overlay pointerdown), not derivable from props; this effect resets it to false when the canvas starts scrolling or the window loses focus so the click-to-interact overlay reappears. Computing it in render would discard the user's click.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset event-owned iframe interaction when Canvas scroll/focus changes; the user click itself is retained between those changes.
     if (isCanvasScrolling || !isFocused) setContentFocused(false);
   }, [isCanvasScrolling, isFocused]);
 
@@ -499,8 +499,10 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
               onSubmit={chatState.submitMessage}
               agentClient={chatState.agentClient} agentSummaryClient={chatState.agentSummaryClient} authorityKey={chatState.authorityKey} composerIdentity={chatState.composerIdentity} isCurrentAuthority={chatState.isCurrentAuthority} navigationFresh={chatState.navigationFresh} navigationClassifications={chatState.navigationClassifications} botEventRevision={chatState.botEventRevision} queuedTurns={chatState.queuedTurns} onCancelQueuedTurn={chatState.cancelQueuedTurn}
               onSubmitApproval={chatState.submitApproval}
+                browserPermissions={chatState.browserPermissions}
               onSubmitInput={chatState.submitInput}
               providerSelection={chatState.providerSelection}
+              executionControls={chatState.executionControls}
               boundProviderInstanceId={chatState.boundProviderInstanceId}
               composerDraftRequest={chatState.composerDraftRequest}
               onComposerDraftConsumed={chatState.consumeComposerDraft}
@@ -525,7 +527,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
           )}
         </div>
       ) : (
-        <CanvasAppViewer path={win.path} />
+        <CanvasAppViewer path={win.path} active={isFocused && !win.minimized && !hidden && !isPreview} />
       )}
     </>
   );

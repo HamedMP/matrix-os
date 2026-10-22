@@ -90,6 +90,7 @@ function ConnectedAgentsProvidersAdapter({
   const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged, automaticCreditRefreshEnabled });
   const [actionError, setActionError] = useState<string | null>(null);
   const checkoutLifetime = useRef<AbortController | null>(null);
+  const synchronizedInitialSnapshot = useRef(false);
   useEffect(() => {
     const lifetime = new AbortController();
     checkoutLifetime.current = lifetime;
@@ -103,6 +104,14 @@ function ConnectedAgentsProvidersAdapter({
     () => desktopProviderIdentityKey(useConnection.getState()) === identityKey,
     [identityKey],
   );
+  useEffect(() => {
+    if (controller.snapshot === null || synchronizedInitialSnapshot.current || !isIdentityCurrent()) return;
+    // Settings can discover a CLI login that happened after Chat prewarmed its
+    // catalog. Revalidate once when the first authoritative snapshot arrives so
+    // the two surfaces cannot disagree until the user presses Refresh manually.
+    synchronizedInitialSnapshot.current = true;
+    onCatalogChanged();
+  }, [controller.snapshot, isIdentityCurrent, onCatalogChanged]);
   const workflowClient = useMemo(() => createDesktopProviderWorkflowClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
   const matrixAnthropicClient = useMemo(() => createDesktopMatrixAnthropicClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
   const authGeneration = useConnection((state) => state.authGeneration);

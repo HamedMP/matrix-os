@@ -25,8 +25,8 @@ function setup(upstream: () => Response | Promise<Response>, model = SONNET) {
       identity: IDENTITY, reservation: { reservationId: "reservation_1", requestId: input.requestId,
         modelId: input.modelId, reservedMicrousd: 100_000, billingMode: "usage" },
     })),
-    start: vi.fn(async () => ({ reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId })),
-    release: vi.fn(), finalize: vi.fn(async (task: unknown, signal: AbortSignal) => { void task; void signal; return {}; }),
+    start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId, contractVersion: 1, status: "in_flight", startedAt: NOW.toISOString(), expiresAt: "2026-09-10T12:10:00.000Z", reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId })),
+    release: vi.fn(), terminal: vi.fn(async () => ({})), finalize: vi.fn(async (task: unknown, signal: AbortSignal) => { void task; void signal; return {}; }),
   };
   const config = resolveFundedRelayConfig({
     MATRIX_FUNDED_AI_ENABLED: "true", MATRIX_FUNDED_AI_RESERVATION_MODE: "usage",
@@ -92,14 +92,14 @@ describe("funded generation rejection settlement", () => {
     ["server failure", () => json(rejection, 500)],
     ["SSE media type", () => new Response(JSON.stringify(rejection), { status: 429, headers: { "content-type": "text/event-stream" } })],
     ["oversized rejection", () => json({ ...rejection, padding: "x".repeat(20_000) })],
-  ] as const)("keeps %s conservative", async (_label, upstream) => {
+  ] as const)("retains unknown usage for %s", async (_label, upstream) => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { control, relay, send } = setup(upstream);
     try {
       await send();
-      await vi.waitFor(() => expect(control.finalize).toHaveBeenCalledWith({
-        reservationId: "reservation_1", tokenId: IDENTITY.tokenId, mode: "conservative",
-      }, expect.any(AbortSignal)));
+      await vi.waitFor(() => expect(control.terminal).toHaveBeenCalledWith(expect.objectContaining({
+        reservationId: "reservation_1", tokenId: IDENTITY.tokenId, outcome: "usage_unknown",
+      }), expect.any(AbortSignal)));
       expect(control.release).not.toHaveBeenCalled();
     } finally { await relay.close(); }
   });
@@ -108,7 +108,7 @@ describe("funded generation rejection settlement", () => {
     const { control, relay, send } = setup(() => json(rejection), GLM);
     try {
       await send();
-      await vi.waitFor(() => expect(control.finalize).toHaveBeenCalledWith(expect.objectContaining({ mode: "conservative" }), expect.any(AbortSignal)));
+      await vi.waitFor(() => expect(control.terminal).toHaveBeenCalledWith(expect.objectContaining({ outcome: "usage_unknown" }), expect.any(AbortSignal)));
     } finally { await relay.close(); }
   });
 
@@ -120,7 +120,7 @@ describe("funded generation rejection settlement", () => {
       const response = await send();
       expect(response.status).toBe(200);
       await response.text();
-      await vi.waitFor(() => expect(control.finalize).toHaveBeenCalledWith(expect.objectContaining({ mode: "conservative" }), expect.any(AbortSignal)));
+      await vi.waitFor(() => expect(control.terminal).toHaveBeenCalledWith(expect.objectContaining({ outcome: "usage_unknown" }), expect.any(AbortSignal)));
     } finally { await relay.close(); }
   });
 });
@@ -182,4 +182,17 @@ describe("bounded rejection evidence", () => {
     expect(pull).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledTimes(1);
   });
+});
+
+it.each(["pending", "rejects"])("does not attest a rejected response while its body cancellation %s", async (kind) => {
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const cancel = Promise.withResolvers<void>();
+  const fixture = setup(() => new Response(new ReadableStream<Uint8Array>({ cancel: () => cancel.promise }), { status: 500 }));
+  try {
+    expect((await fixture.send()).status).toBe(502);
+    await new Promise((resolve) => setTimeout(resolve, 0)); expect(fixture.control.terminal).not.toHaveBeenCalled();
+    if (kind === "rejects") cancel.reject(new Error("synthetic cancellation failure")); else cancel.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fixture.control.terminal).toHaveBeenCalledTimes(kind === "rejects" ? 0 : 1);
+  } finally { await fixture.relay.close(); }
 });

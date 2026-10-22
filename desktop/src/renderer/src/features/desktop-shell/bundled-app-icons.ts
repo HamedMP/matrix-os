@@ -30,6 +30,7 @@ const icons: Readonly<Record<string,string>> = {
 };
 
 export function bundledDesktopIconForPath(path: string): string | undefined {
+  if (path === "__cloud-desktop__") return icons.desktop;
   const url = osViewBundledIconUrlForPath(path);
   if (!url) return undefined;
   return icons[url.slice(url.lastIndexOf("/") + 1, -4)];

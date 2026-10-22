@@ -54,6 +54,7 @@ function rememberScanOffset(directory: string, offset: number): void {
 
 const EFFECTS: Record<BotToolRequest["capability"], BotEffectClass> = {
   "agent.task": "write",
+  "browser.action": "write",
   "artifact.read": "read",
   "artifact.write": "write",
   "jev.inbox": "write",

@@ -46,7 +46,7 @@ export function providerAuthSettingsSnapshot(authenticated: boolean, nativeClaud
     accessSources: [{
       id: accessSourceId,
       kind: "provider_account",
-      fundingKind: "owner_subscription",
+      fundingKind: nativeClaudeProfile ? "owner_account" : "owner_subscription",
       providerId: "anthropic",
       accountId,
       displayName: "Claude account",

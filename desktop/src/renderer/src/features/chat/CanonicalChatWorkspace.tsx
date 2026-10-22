@@ -1,3 +1,5 @@
+import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
+import { canonicalChatExecutionControls } from "@matrix-os/contracts";
 import { chatAttachmentComposerPolicy } from "@matrix-os/ui";
 import { openChatProviderSettings } from "./open-chat-provider-settings";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
@@ -38,8 +40,10 @@ import type {
   CanonicalProviderCatalog,
   CanonicalChatQueuedTurn,
 } from "@matrix-os/contracts";
+import { SupervisedToolApprovalBar } from "@matrix-os/ui";
+import { pendingSupervisedTool, supervisedToolCallbacks } from "./supervised-tool-approval-wiring";
 import { Plus, Search } from "@renderer/lib/hugeicons";
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type ComponentProps } from "react";
 import { flushSync } from "react-dom";
 import { ConversationTranscript } from "../../components/conversation/transcript";
 import { CHAT_CONTENT_WIDTH_CLASS } from "../../components/conversation/layout";
@@ -86,8 +90,12 @@ import { ChatCredentialDisclosure } from "./ChatCredentialDisclosure";
 const EMPTY_PROVIDER_SUMMARIES: AgentProviderSummary[] = [];
 
 
+export function CanonicalChatWorkspace(props: ComponentProps<typeof CanonicalChatWorkspaceContent>) {
+  return <BrowserPermissionReviewProvider><CanonicalChatWorkspaceContent {...props}/></BrowserPermissionReviewProvider>;
+}
+
 // react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing workspace coordinates the canonical Chat controller, composer, credential disclosure and shared routes; this change only removes live-share callbacks. Splitting it belongs in a focused refactor.
-export function CanonicalChatWorkspace({
+function CanonicalChatWorkspaceContent({
   api,
   client,
   projectId,
@@ -132,6 +140,7 @@ export function CanonicalChatWorkspace({
   onActiveChatChanged?: (chatId: string | null, title?: string) => void;
   eventSource?: Pick<CanonicalChatEventSource, "subscribe">;
 }) {
+  const [permissionModeRequest, setPermissionModeRequest] = useState(0);
   const actorId = useConnection((state) => state.userId);
   const authStatus = useConnection((state) => state.status);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -180,8 +189,9 @@ export function CanonicalChatWorkspace({
     void client.getDetail(event.chatId, { limit: 1 }).then((fresh) => {
       if (fresh.record.chat.collaboration || fresh.record.chat.lifecycle !== "active") return;
       setCredentialSuspendedChatId((current) => current === event.chatId ? null : current);
-    }).catch(() => {
+    }).catch((error: unknown) => {
       // Keep disclosure suspended until a fresh private-owner read succeeds.
+      console.warn("[chat] credential refresh failed", error instanceof Error ? error.name : "UnknownError");
     });
   }, [client]);
   const controller = useCanonicalChatRouteController({
@@ -268,12 +278,16 @@ export function CanonicalChatWorkspace({
     refreshRuntimeSummary,
     api ?? null,
   );
+  const executionControls = useMemo(() => controller.detail ? canonicalChatExecutionControls({
+    chatId: controller.detail.record.chat.id, currentSelection: controller.detail.record.chat.currentSelection, runs: controller.detail.runs,
+  }) : undefined, [controller.detail]);
   const { selection: providerSelection, onSelectionChange } = useCanonicalComposerSelection({
     catalog: providerCatalog,
     catalogReady: Boolean(catalog || liveCatalog.lastSuccessAt !== null || liveCatalog.status === "error"),
     initializeImmediately: Boolean(catalog),
     chatId: controller.detail?.record.chat.id ?? null,
     currentSelection: controller.detail?.record.chat.currentSelection,
+    executionControls,
     boundInstanceId: controller.detail?.record.providerBinding?.instanceId,
   });
   const botBinding = useDirectBotBinding(explicitSharedRoute ? undefined : routedComposerChatId ?? undefined, client.agents);
@@ -384,6 +398,7 @@ export function CanonicalChatWorkspace({
     ...controller.detail,
     streamedMessageIds: controller.streamedMessageIds,
   }) : [];
+  const pendingTool = pendingSupervisedTool(transcript);
   const projectedSharedChat = sharedChatMembershipFromProjection(controller.detail?.record.chat.collaboration);
   const privateOwner = controller.detail?.record.chat.ownerScope;
   const credentialScopeKey = active && live && api && authStatus === "signed-in" && actorId
@@ -420,7 +435,7 @@ export function CanonicalChatWorkspace({
       return;
     }
     if (action.kind === "approval") {
-      const submitted = await submitApproval(action.requestId, action.decision);
+      const submitted = await submitApproval(action.requestId, action.decision, action.browserChoice);
       if (!submitted) throw new Error("ApprovalUnavailable");
       return;
     }
@@ -739,7 +754,9 @@ export function CanonicalChatWorkspace({
         }}
       />
 
+      <BrowserPermissionReminder/>
       <SharedChatComposer
+        permissionModeRequest={permissionModeRequest}
         value={draft}
         onChange={setDraft}
         draftScopeKey={routedComposerChatId ?? `new:${projectId ?? "global"}`}
@@ -964,6 +981,9 @@ export function CanonicalChatWorkspace({
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
+              browserChatId: controller.detail.record.chat.id,
+              browserPermissions: client.browserPermissions,
+              openPermissionMode: () => setPermissionModeRequest(value => value + 1),
               ...artifactActions,
               renderCredentialMarker: (message, offset, marker, number) => {
                 if (message.role !== "assistant" || credentialScopeKey === null) return marker;
@@ -997,10 +1017,19 @@ export function CanonicalChatWorkspace({
               submitInput: controller.submitInput,
               performAction: performTranscriptAction,
               canPerformAction: canPerformTranscriptAction,
+              ...supervisedToolCallbacks({ selection: providerSelection, catalog: providerCatalog, directBot: Boolean(directBotId), onSelectionChange, draft, setDraft }),
             }} />
             </div>
             </ChatContextMenu>
-            <div className={cn("mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5")}>{composer}</div>
+            <div className={cn("mx-auto w-full max-w-[808px] shrink-0 px-6 pb-5")}>
+              {pendingTool ? (
+                <SupervisedToolApprovalBar
+                  label={`Waiting for you · ${pendingTool.bar}`}
+                  onReview={() => document.getElementById(`tool-approval-${pendingTool.id}`)?.scrollIntoView({ block: "center" })}
+                />
+              ) : null}
+              {composer}
+            </div>
             </BotChatPanel>
           </>
         ) : globalView === "conversation" && (controller.activeChatId || initialChatId) ? (

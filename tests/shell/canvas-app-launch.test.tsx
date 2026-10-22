@@ -127,12 +127,12 @@ describe("Web Desktop app bridge launches", () => {
 
 for (const surface of ["canvas", "desktop"] as const) {
   describe(`Web ${surface === "canvas" ? "Canvas" : "Desktop"} shell-owned bridge destinations`, () => {
-    it.each(["__browser__", "apps/browser", "apps/browser/dist/index.html"])("opens Browser through its existing external destination for %s", async (path) => {
+    it.each(["__browser__", "apps/browser", "apps/browser/dist/index.html"])("opens the persistent Browser app for %s", async (path) => {
       const open = vi.spyOn(window, "open").mockImplementation(() => null);
       const frame = await mountedGalleryFrame(surface);
       await requestOpen(frame, path);
-      expect(open).toHaveBeenCalledWith("https://www.google.com", "_blank", "noopener,noreferrer");
-      expect(useWindowManager.getState().windows).toEqual([galleryWindow]);
+      expect(open).not.toHaveBeenCalled();
+      expect(useWindowManager.getState().windows).toContainEqual(expect.objectContaining({path: "__browser__", title: "Browser", minimized: false}));
     });
     it("opens Editor as the existing Files surface with its canonical title", async () => {
       const frame = await mountedGalleryFrame(surface);

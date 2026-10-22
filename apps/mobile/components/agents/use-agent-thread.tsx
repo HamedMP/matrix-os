@@ -15,9 +15,11 @@ import { composerAddProps } from "@/components/chat/composer-add";
 import { useChatThread } from "@/components/chat/use-chat-thread";
 import { defaultTurnModes } from "@/lib/canonical-chat-selection";
 import { supportedAttachmentKinds } from "@/lib/chat-attachments";
+import { chatDraftKey } from "@/lib/chat-drafts";
 import { useBotChat } from "@/lib/queries/use-bot-chat";
 import { useCanonicalChatDetail } from "@/lib/queries/use-canonical-chat-detail";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
+import { useComposerSpeech } from "@/lib/speech/use-composer-speech";
 import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { useChatComposer } from "@/lib/use-chat-composer";
 import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
@@ -101,6 +103,13 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
     warmSessionToken();
   }, [setDraft, warmSessionToken]);
 
+  const speech = useComposerSpeech({
+    draftKey: chatDraftKey(chatId),
+    draft,
+    onChangeDraft: handleDraftChange,
+    enabled: signedIn,
+  });
+
   const interactions = botChat.snapshot?.interactions ?? NO_INTERACTIONS;
 
   return {
@@ -136,6 +145,7 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
       onSend: send,
       running: busy,
       onStop,
+      speech,
       ...composerAddProps({
         catalog,
         selection,

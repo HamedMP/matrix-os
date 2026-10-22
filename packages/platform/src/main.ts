@@ -1,4 +1,6 @@
 import { registerFundedHostConfigRoutes } from "./funded-host-config-registration.js";
+import { registerBrowserChatApprovalRoutes } from "./browser-chat-approval-registration.js";
+import type { BrowserApprovalMachineLookup } from "./browser-approval-machine-lookup.js";
 import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
@@ -259,6 +261,7 @@ export function createApp(deps: {
   clerkAuth?: ClerkAuth;
   matrixProvisioner?: MatrixProvisioner;
   platformSecret?: string;
+  browserApprovalMachineLookup?: BrowserApprovalMachineLookup;
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
   previewDriveIntegration?: PreviewDriveIntegration;
@@ -276,6 +279,7 @@ export function createApp(deps: {
   collaboration?: PlatformCollaborationComposition;
   accountDeletion?: AccountDeletionRuntime;
   customerVpsService?: CustomerVpsService;
+  activateManagedFeatures?: import('./managed-feature-activation.js').ManagedFeatureActivator;
   /** Overrides the collaboration organization projection for Private Preview membership. */
   privatePreviewMembership?: PrivatePreviewMembershipCheck;
   goldenSnapshotService?: GoldenSnapshotService;
@@ -395,7 +399,8 @@ export function createApp(deps: {
     verify:async(token)=>{const result=await clerkAuth?.verify(token);return result?.authenticated?result.userId??null:null;},
     webhookSecret:appEnv.CLERK_USER_WEBHOOK_SIGNING_SECRET, publishableKey:appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
     exportData:deps.accountDeletion?.exportData,exportPlatformData:deps.accountDeletion?.exportPlatformData,
-    registerAppleAuthorization:deps.accountDeletion?.registerAppleAuthorization}));
+    registerAppleAuthorization:deps.accountDeletion?.registerAppleAuthorization,
+    newRequestsEnabled:appEnv.ACCOUNT_DELETION_ENABLED==='true'}));
 
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
@@ -658,6 +663,7 @@ export function createApp(deps: {
   deps.collaboration?.register(app);
 
   registerFundedHostConfigRoutes(app, { db, platformSecret, env: appEnv });
+  app.shutdownBrowserApprovals = registerBrowserChatApprovalRoutes(app, { platformSecret, env: appEnv, lookup: deps.browserApprovalMachineLookup });
 
   // Runtime speech uses its own runtime-bound credential and must never fall
   // through to Clerk session routing or the tenant proxy.
@@ -781,6 +787,7 @@ export function createApp(deps: {
 
     app.route('/vps', createCustomerVpsRoutes({
       service: deps.customerVpsService,
+      activateManagedFeatures: deps.activateManagedFeatures,
       platformSecret,
       goldenSnapshotOperatorSecret,
       probeMachineHealth,

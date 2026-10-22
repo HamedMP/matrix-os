@@ -147,7 +147,7 @@ describe("coding agent source-control route", () => {
       expect(body.commitSha).toMatch(/^[0-9a-f]{40}$/);
       expect(JSON.stringify(body)).not.toMatch(/\/tmp\/matrix-coding-agent-source-control|src\/index|token|bearer|secret/i);
     } finally {
-      await rm(harness.homePath, { recursive: true, force: true });
+      await rm(harness.homePath, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
   });
 

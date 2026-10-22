@@ -1,4 +1,4 @@
-import { Duplex } from 'node:stream';
+import { PostgresSocket } from '../helpers/postgres-socket.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import pg from 'pg';
 import { sql } from 'kysely';
@@ -11,33 +11,6 @@ vi.mock('../../packages/platform/src/database/run-migrations.js', () => ({
 vi.mock('../../packages/platform/src/ats-schema.js', () => ({
   migrateAts: vi.fn().mockResolvedValue(undefined),
 }));
-
-const ready = Buffer.from([90, 0, 0, 0, 5, 73]);
-// Exercise the real pg Client and Pool lifecycle without a network dependency.
-class PostgresSocket extends Duplex {
-  private startup = true;
-  holdQueries = false;
-  connect() { queueMicrotask(() => this.emit('connect')); }
-  setNoDelay() {}
-  ref() {}
-  unref() {}
-  _read() {}
-  _write(chunk: Buffer, _encoding: string, callback: (error?: Error | null) => void) {
-    if (this.startup) {
-      this.startup = false;
-      queueMicrotask(() => this.push(Buffer.concat([
-        Buffer.from([82, 0, 0, 0, 8, 0, 0, 0, 0]), ready,
-      ])));
-    } else if (chunk[0] === 81 && !this.holdQueries) {
-      queueMicrotask(() => this.push(Buffer.concat([
-        Buffer.from([67, 0, 0, 0, 13]), Buffer.from('SELECT 1\0'), ready,
-      ])));
-    } else if (chunk[0] === 88) {
-      this.destroy();
-    }
-    callback();
-  }
-}
 
 const OriginalPool = pg.Pool;
 const OriginalClient = pg.Client;

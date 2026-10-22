@@ -1,3 +1,4 @@
+import { readTerminalOutcome } from "../../ai-funded-terminal-outcome.js";
 import { sql } from 'kysely';
 import { ensureFundedReservationIndexes } from '../../ai-funded-reservation-indexes.js';
 import { migrateUsageWaivers } from './ai-funded-usage-waivers.js';
@@ -178,6 +179,16 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
     CHECK (finalization_mode IN ('exact', 'conservative'))
   `.execute(db);
   await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS execution_admission_release TEXT`.execute(db);
+  await sql`ALTER TABLE ai_funded_usage_reservations ADD COLUMN IF NOT EXISTS terminal_outcome TEXT
+    CHECK (terminal_outcome IS NULL OR octet_length(terminal_outcome) <= 8192)`.execute(db);
+  let terminalCursor = "";
+  for (;;) {
+    const terminalRows = await db.selectFrom("ai_funded_usage_reservations").selectAll()
+      .where("terminal_outcome", "is not", null).where("reservation_id", ">", terminalCursor).orderBy("reservation_id").limit(100).execute();
+    for (const row of terminalRows) readTerminalOutcome(row);
+    if (terminalRows.length < 100) break;
+    terminalCursor = terminalRows[terminalRows.length - 1].reservation_id;
+  }
   await migrateUsageWaivers(db);
   await ensureFundedReservationIndexes(db);
   await sql`

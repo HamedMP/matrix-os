@@ -5,6 +5,7 @@ const EDGE_SECRET_HEADER = "X-Matrix-Edge-Secret";
 const PREVIEW_CHAT_CANDIDATE_MAX_DURATION_MS = 2 * 60 * 60 * 1000;
 const PREVIEW_CHAT_PATH = /^\/vm\/(pr-[1-9][0-9]{0,8})(?:\/~runtime\/(pr-[1-9][0-9]{0,8}))?\/api\/chats\/(chat_[A-Za-z0-9_-]{1,128})\/(.+)$/;
 const PREVIEW_CHAT_APPROVAL_PATH = /^runs\/run_[A-Za-z0-9_-]{1,128}\/approvals\/[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
+const PREVIEW_BROWSER_GRANT_PATH = /^browser-grants\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
 export type EdgeRouteClass = "platform" | "app" | "code" | "unknown";
 
@@ -103,7 +104,7 @@ function previewChatCandidateOrigin(
   env: EdgeRouterEnv,
   platformOrigin: string,
 ): string | null {
-  if (routeClass !== "app" || request.method !== "POST") return null;
+  if (routeClass !== "app" || (request.method !== "POST" && request.method !== "DELETE")) return null;
   const match = PREVIEW_CHAT_PATH.exec(url.pathname);
   if (!match) return null;
   const [, handle, runtimeSlot, chatId, actionPath] = match;
@@ -111,7 +112,10 @@ function previewChatCandidateOrigin(
   // The Platform may resolve a no-prefix /vm route from the runtime query.
   // Keep that selector bound to the same Preview runtime as the path.
   if (url.searchParams.getAll("runtime").some((slot) => slot !== handle)) return null;
-  if (actionPath !== "turns" && !PREVIEW_CHAT_APPROVAL_PATH.test(actionPath!)) return null;
+  const selectedMutation = request.method === "POST"
+    ? actionPath === "turns" || PREVIEW_CHAT_APPROVAL_PATH.test(actionPath!)
+    : PREVIEW_BROWSER_GRANT_PATH.test(actionPath!);
+  if (!selectedMutation) return null;
   if (handle !== env.PREVIEW_CHAT_CANDIDATE_HANDLE || chatId !== env.PREVIEW_CHAT_CANDIDATE_CHAT_ID) return null;
 
   const expiresAt = env.PREVIEW_CHAT_CANDIDATE_EXPIRES_AT;

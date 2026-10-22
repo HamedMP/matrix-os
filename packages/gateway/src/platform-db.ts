@@ -1,3 +1,4 @@
+import { observePostgresPoolErrors } from "@matrix-os/observability/postgres";
 import { Kysely, PostgresDialect, sql, type InsertObject } from "kysely";
 import pg from "pg";
 import { createCustomMcpCredentialMutations } from "./integrations/custom-mcp/credential-mutations.js";
@@ -257,8 +258,8 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
   if (typeof opts === "string") {
     pool = new pg.Pool({ connectionString: opts, max: 10,
       connectionTimeoutMillis: 5_000, statement_timeout: 5_000 });
-    pool.on("error", (err) => {
-      console.error("[platform-db] Idle pool client error:", err.message);
+    observePostgresPoolErrors(pool, (err) => {
+      console.error("[platform-db] Postgres connection error:", err.message);
     });
     kysely = new Kysely<PlatformDatabase>({ dialect: new PostgresDialect({ pool }) });
   } else {

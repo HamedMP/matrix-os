@@ -29,9 +29,9 @@ describe("scope-runtime-bot-v1 profile", () => {
     }
   });
 
-  it("pins its own digest and leaves the shared-chat digest unchanged", () => {
+  it("pins its own digest and the current shared-chat qualification", () => {
     expect(SCOPE_RUNTIME_BOT_PROFILE_DIGEST).toBe("884f3410867236443e79580ae16425c23909bc15fb79daec11db6c3dc81eebd4");
-    expect(SCOPE_RUNTIME_PROFILE_DIGEST).toBe("9f4e3e2ad9e63cb300854dfca7bc31370d4cbae6d15fab902841b2b50a6443c0");
+    expect(SCOPE_RUNTIME_PROFILE_DIGEST).toBe("78a58c7045b1083a0b1e538ae36fdc06c6a145d9aa09d36a3c75eb47ea3b1ed3");
   });
 
   it("names the Pi version pinned in the bot-runtime bundle as its harness version", async () => {

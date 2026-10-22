@@ -1,3 +1,5 @@
+import { createBrowserGrantRoutes } from "../chat/browser-grant-routes.js";
+import type { BrowserApprovalControl } from "../chat/browser-approval-control.js";
 /** Mount canonical Chat, provider and collaboration routes after startup. */
 import { createChatNavigationRepository } from "../chat/navigation-repository.js";
 import type { Context, Hono } from "hono";
@@ -39,6 +41,7 @@ import { registerOwnerCollaborationRoutes } from "../startup/collaboration.js";
 
 export interface CollaborationChatRouteOptions {
   app: Hono;
+  browserApprovals?: BrowserApprovalControl;
   upgradeWebSocket: ReturnType<typeof createNodeWebSocket>["upgradeWebSocket"];
   canonicalChatEventStream: ReturnType<typeof createGatewayChatEventStream> | null;
   chatRepository: ChatRepository | null;
@@ -93,6 +96,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   }));
   const localImports = registerLocalChatImports({ app, repository: chatRepository, storage: options.syncR2,
     runtimeOwnerId: options.runtimeOwnerId, runtimeSlot: options.runtimeSlot, getPrincipal: c => requireRequestPrincipal(c) });
+  app.route("/", createBrowserGrantRoutes({ control: options.browserApprovals, getPrincipal: c => requireRequestPrincipal(c) }));
   app.route("/", createCanonicalChatRoutes({
     service: chatRepository
         ? createCanonicalChatService(chatRepository, {

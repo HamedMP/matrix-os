@@ -506,7 +506,7 @@ describe("Chat canonical provider state", () => {
     />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(onSubmitApproval).toHaveBeenCalledWith("run_original", "approval_1", "approve"));
+    await waitFor(() => expect(onSubmitApproval).toHaveBeenCalledWith("run_original", "approval_1", "approve", undefined));
     expect(screen.getByRole("button", { name: "Decline" })).toBeVisible();
   });
 

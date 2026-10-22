@@ -1,3 +1,4 @@
+import { remoteBrowserSurfaceForPath, remoteBrowserWindowSize } from "@matrix-os/contracts";
 import { constrainFloatingWindow } from "@matrix-os/ui";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
@@ -244,6 +245,9 @@ function computeDefaultWindowSize(path: string): { width: number; height: number
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
   const mode = useDesktopMode.getState().mode;
+  if (remoteBrowserSurfaceForPath(path)) {
+    return remoteBrowserWindowSize(desktopWorkArea({ width: vw, height: vh }, mode === "desktop"));
+  }
   const preferred = isTerminalWindowPath(path)
     ? { width: TERMINAL_DEFAULT_WINDOW_WIDTH, height: TERMINAL_DEFAULT_WINDOW_HEIGHT }
     : getEffectiveMinimumWindowSize(path);
@@ -366,6 +370,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
             ),
             nextZ: zState.nextZ + 1,
             focusedWindowId: existing.id,
+            fullscreenWindowId: state.fullscreenWindowId === existing.id ? existing.id : null,
             appLaunchTimes: launchTimes,
           };
         }
@@ -405,6 +410,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           windows: [...zState.windows, nextWindow],
           nextZ: zState.nextZ + 1,
           focusedWindowId: nextWindow.id,
+          fullscreenWindowId: null,
           appLaunchTimes: launchTimes,
         };
       });
@@ -492,6 +498,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           w.id === id ? { ...w, minimized: true } : w,
         ),
         focusedWindowId: state.focusedWindowId === id ? null : state.focusedWindowId,
+        fullscreenWindowId: state.fullscreenWindowId === id ? null : state.fullscreenWindowId,
       }));
     },
 
@@ -507,6 +514,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
     restoreAndFocusWindow: (id) => {
       markUserLayoutMutation();
       set((state) => {
+        if (!state.windows.some(window => window.id === id)) return state;
         const zState = normalizeWindowZOrder(state.windows, state.nextZ);
         return {
           windows: zState.windows.map((w) =>
@@ -514,6 +522,7 @@ export const useWindowManager = create<WindowManagerState & WindowManagerActions
           ),
           nextZ: zState.nextZ + 1,
           focusedWindowId: id,
+          fullscreenWindowId: state.fullscreenWindowId === id ? id : null,
         };
       });
     },

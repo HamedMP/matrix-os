@@ -1,4 +1,5 @@
 import { projectManagedCreditUsage } from "./provider-managed-credit-usage.js";
+import { nativeAccountPrincipalFingerprint } from "./native-account-metadata-binding.js";
 import { readLifecycleAccountDependencies } from "./provider-lifecycle-account-dependencies.js";
 import { projectClaudeNativeAccount } from "./claude-native-account-projection.js";
 import type { ClaudeNativeAccountMetadata } from "./claude-native-account-metadata.js";
@@ -349,6 +350,17 @@ function projectHarness(input: {
     && routeSourceEligible && source?.id === "owner_claude_profile" && source.kind === "provider_account"
     && source.accountId === input.claudeAuthenticatedAccountId
     && input.stored.selectedAccountId === input.claudeAuthenticatedAccountId;
+  const codexNativeAccount = source?.kind === "provider_account" && source.accountId
+    ? input.accounts.find((account) => account.id === source.accountId)
+    : undefined;
+  const codexNativeOwnerRoute = input.stored.harness === "codex" && driverId === "codex"
+    && source?.id === "owner_openai_profile" && source.kind === "provider_account"
+    && source.fundingKind === "owner_account" && codexNativeAccount?.authMethod === "terminal";
+  // A discovered terminal login is not execution authority. Keep the route
+  // closed until the projected native identity matches the saved account and
+  // its explicit consent is current.
+  const codexNativeOwnerRouteRunnable = !codexNativeOwnerRoute
+    || (nativeCredentialAuthenticated && source.readiness.state === "ready");
   const visibleMethods = input.loginMethods === undefined
     ? defaultLoginMethods(input.stored.harness)
     : input.loginMethods(input.stored);
@@ -358,6 +370,7 @@ function projectHarness(input: {
     displayName: input.stored.displayName,
     accentColor: input.stored.accentColor,
     enabled: Boolean(executionRouteAvailable
+      && codexNativeOwnerRouteRunnable
       && input.stored.enabled && driver?.installState === "installed"),
     configuredEnabled: generatedNative ? true : input.stored.enabled,
     configuredAccessSourceId: input.stored.accessSourceId,
@@ -457,10 +470,22 @@ export async function projectProviderSettings(input: {
       delete nativeAccount.connectionDetails;
     } else if (metadata.connectionDetails) nativeAccount.connectionDetails = metadata.connectionDetails;
     if (metadata.authMethod === "terminal") {
+      nativeAccount.authMethod = "terminal";
       nativeAccount.authState = "authenticated";
       nativeAccount.lastCheckedAt = metadata.checkedAt;
     }
     if (metadata.authMethod === "terminal" && metadata.usage) nativeSource.usage = metadata.usage;
+  }
+  if (nativeAuthenticatedAccountId && nativeSource?.kind === "provider_account" && nativeSource.fundingKind === "owner_account") {
+    const saved = input.config.harnesses.find(row => row.harness === "codex" && row.accessSourceId === nativeSource.id);
+    const fingerprint = metadataFresh && metadata?.authMethod === "terminal" ? nativeAccountPrincipalFingerprint(metadata) : null;
+    const missingConsent = !saved?.nativeAccountGeneration || saved.nativeAccountConsentRevision === undefined;
+    const changedPrincipal = fingerprint !== null && saved?.nativeAccountGeneration !== fingerprint;
+    if (missingConsent || changedPrincipal) {
+      nativeSource.readiness = { state: "auth_required", action: "connect", safeReason: "auth", checkedAt: metadata?.checkedAt ?? null, staleAfter: metadata?.staleAfter ?? null };
+    } else if (fingerprint !== null && nativeAuthenticatedAccountId) {
+      nativeSource.readiness = { state: "ready", action: "none", safeReason: null, checkedAt: metadata!.checkedAt, staleAfter: metadata!.staleAfter };
+    }
   }
   const hermesMetadata = input.hermesNativeAccountMetadata;
   const hermesSource = sources.find(source => source.kind === "harness_profile" && source.harness === "hermes" && source.providerId === "openai-codex");

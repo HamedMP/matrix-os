@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod/v4";
 import { isMachineSpeechReady, readBoundedHostJson } from "./host-readiness.js";
 import {
@@ -57,6 +58,7 @@ export async function activatePlatformSpeechFleet(options: {
   wait?: (delayMs: number) => Promise<void>;
   verificationAttempts?: number;
   concurrency?: number;
+  signal?: AbortSignal;
 }): Promise<SpeechFleetActivationResult> {
   const machines = z.array(MachineSchema).max(500).parse(options.machines);
   const origin = new URL(options.platformOrigin);
@@ -65,7 +67,7 @@ export async function activatePlatformSpeechFleet(options: {
     throw new Error("Speech fleet activation is misconfigured");
   }
   const fetchImpl = options.fetchImpl ?? fetch;
-  const wait = options.wait ?? ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)));
+  const wait = options.wait ?? ((delayMs: number) => delay(delayMs, undefined, { signal: options.signal }));
   const attempts = options.verificationAttempts ?? 12;
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 30) {
     throw new Error("Speech activation verification policy is invalid");
@@ -91,11 +93,12 @@ export async function activatePlatformSpeechFleet(options: {
       .digest("hex");
     const requestOptions = () => ({
       headers: { authorization },
-      signal: AbortSignal.timeout(10_000),
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
       redirect: "error" as const,
       ...(options.fetchDispatcher ? { dispatcher: options.fetchDispatcher } : {}),
     }) as RequestInit & { dispatcher?: import("undici").Dispatcher };
     try {
+      options.signal?.throwIfAborted();
       const response = await fetchImpl(`${base}/api/internal/platform-speech/config`, {
         ...requestOptions(),
         method: "POST",
@@ -119,8 +122,11 @@ export async function activatePlatformSpeechFleet(options: {
         }
         return { machineId: machine.machineId, handle: machine.handle, status: "failed" as const, error: `HTTP ${rejectedStatus}` };
       }
+      await response.body?.cancel();
       for (let attempt = 0; attempt < attempts; attempt += 1) {
+        options.signal?.throwIfAborted();
         await wait(1_000);
+        options.signal?.throwIfAborted();
         try {
           const status = await fetchImpl(`${base}/api/internal/platform-speech/config`, {
             ...requestOptions(),
@@ -130,7 +136,7 @@ export async function activatePlatformSpeechFleet(options: {
             return { machineId: machine.machineId, handle: machine.handle, status: "activated" as const };
           }
         } catch (error: unknown) {
-          if (attempt === attempts - 1) throw error;
+          if (options.signal?.aborted || attempt === attempts - 1) throw error;
         }
       }
       return { machineId: machine.machineId, handle: machine.handle, status: "failed" as const, error: "verification timeout" };

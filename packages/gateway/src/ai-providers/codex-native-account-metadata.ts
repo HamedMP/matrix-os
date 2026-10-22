@@ -48,6 +48,12 @@ export function normalizeCodexNativeAccountMetadata(accountRaw: unknown, limitsR
   return value;
 }
 
+export interface CodexNativeAccountReadOptions {
+  /** Server-only canonical completion: fresh identity, never a quota refresh. */
+  purpose: "native_completion";
+}
+export type CodexNativeAccountMetadataReader = (options?: CodexNativeAccountReadOptions) => Promise<CodexNativeAccountMetadata | null>;
+
 type SpawnProcess = (command: string, args: readonly string[], options: SpawnOptionsWithoutStdio) => ChildProcessWithoutNullStreams;
 
 /** Runtime-bound reader: quota reads are rate-limited; reuse requires fresh private identity proof. */
@@ -55,10 +61,11 @@ export function createCodexNativeAccountMetadataReader(input: {
   executable: string; cwd: string; environment: Record<string, string>; now?: () => Date;
   timeoutMs?: number; terminateGraceMs?: number; spawnProcess?: SpawnProcess;
   readCredentialFileProof?: () => Promise<string | null>;
-}): () => Promise<CodexNativeAccountMetadata | null> {
+}): CodexNativeAccountMetadataReader {
   if (!input.environment.HOME || input.environment.HOME !== input.cwd) throw new Error("Native account runtime scope is required");
-  const readCredentialFileProof = input.readCredentialFileProof ?? createCodexCredentialFileProofReader({ homePath: input.cwd, codexHome: input.environment.CODEX_HOME });
+  const readCredentialFileProof = input.readCredentialFileProof ?? createCodexCredentialFileProofReader({ homePath: input.cwd, codexHome: input.environment.CODEX_HOME, allowApiKey: true });
   let pending: Promise<CodexNativeAccountMetadata | null> | null = null;
+  let completionPending: Promise<CodexNativeAccountMetadata | null> | null = null;
   let cached: CodexNativeAccountMetadata | null = null;
   let blockedUntilExit = false;
   let lastStartedAt = -Infinity;
@@ -222,7 +229,7 @@ export function createCodexNativeAccountMetadataReader(input: {
                   valid = valid && freshAt(value, (input.now ?? (() => new Date()))().getTime());
                   if (!valid && cached === value) cached = null;
                   return valid;
-                });
+                }, proof, { credentialIdentityBound: fileBackend && Boolean(credentialProof) });
               }
               finish(value);
             })().catch((error: unknown) => {
@@ -235,25 +242,53 @@ export function createCodexNativeAccountMetadataReader(input: {
       send(1, "initialize", { clientInfo: { name: "matrix-os-settings", version: "1.0.0" }, capabilities: {} });
     });
   };
-  return () => {
-    if (!pending) pending = (async () => {
-      const time = (input.now ?? (() => new Date()))().getTime();
-      if (time - lastStartedAt < 5000) {
-        const value = cached;
-        const proof = value && principals.get(value);
-        if (value && proof && freshAt(value, time) && await verifyProof(proof)
-          && freshAt(value, (input.now ?? (() => new Date()))().getTime())) return value;
-        cached = null;
-        return null;
+  return (options) => {
+    if (options?.purpose === "native_completion") {
+      if (!completionPending) {
+        const preceding = pending;
+        const task = (async () => {
+          // Drain older ordinary/identity observations before sampling this
+          // completion. Hold pending so later ordinary callers cannot overlap.
+          if (preceding) await preceding;
+          if (verification) await verification;
+          if (!verification) verification = read(true).finally(() => { verification = null; });
+          const value = await verification;
+          cached = value && principals.has(value) && freshAt(value, (input.now ?? (() => new Date()))().getTime()) ? value : null;
+          return cached;
+        })().catch((error: unknown) => {
+          cached = null;
+          console.warn("[provider-settings] Native completion identity unavailable:", error instanceof Error ? error.name : "UnknownError");
+          return null;
+        }).finally(() => {
+          if (pending === task) pending = null;
+          if (completionPending === task) completionPending = null;
+        });
+        completionPending = task;
+        pending = task;
       }
-      const value = await read();
-      cached = value && principals.has(value) ? value : null;
-      return value;
-    })().catch((error: unknown) => {
-      cached = null;
-      console.warn("[provider-settings] Native account metadata unavailable:", error instanceof Error ? error.name : "UnknownError");
-      return null;
-    }).finally(() => { pending = null; });
+      return completionPending;
+    }
+    if (!pending) {
+      const task = (async () => {
+        const time = (input.now ?? (() => new Date()))().getTime();
+        if (time - lastStartedAt < 5000) {
+          const value = cached;
+          const proof = value && principals.get(value);
+          if (value && proof && freshAt(value, time) && await verifyProof(proof)
+            && freshAt(value, (input.now ?? (() => new Date()))().getTime())) return value;
+          cached = null;
+          return null;
+        }
+        const value = await read();
+        cached = value && principals.has(value) ? value : null;
+        return value;
+      })().catch((error: unknown) => {
+        cached = null;
+        console.warn("[provider-settings] Native account metadata unavailable:", error instanceof Error ? error.name : "UnknownError");
+        return null;
+      }).finally(() => { if (pending === task) pending = null; });
+      pending = task;
+    }
     return pending;
   };
 }

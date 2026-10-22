@@ -80,6 +80,7 @@ function runCiResults(ciResultsRun: string, triggerRequested: boolean): number |
         DOCS_CONTRACT_RESULT: 'success',
         E2E_RESULT: 'success',
         FUNDED_POSTGRES_RESULT: 'success',
+        COLLABORATION_POSTGRES_RESULT: 'success',
         FUNDED_HOST_ROOT_RESULT: 'success',
         GITHUB_STEP_SUMMARY: summary,
         OS_VIEW_PARITY_RESULT: 'success',
@@ -343,7 +344,7 @@ describe('CI workflows', () => {
     const name = aggregate.name.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
     expect(Function('github', `return (${name});`)({ event_name: 'push', event: {} })).toBe('CI Results');
     expect(workflow).toContain('if: always()');
-    expect(aggregate.needs).toEqual(['redirect', 'changes', 'isolated-ci-backend', 'ci-backend', 'typecheck', 'shell-production-build', 'patterns', 'react-doctor', 'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'funded-host-root', 'docs-contract', 'os-view-parity', 'e2e', 'dedicated-linux', 'completion-handoff']);
+    expect(aggregate.needs).toEqual(['redirect', 'changes', 'isolated-ci-backend', 'ci-backend', 'typecheck', 'shell-production-build', 'patterns', 'react-doctor', 'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'collaboration-postgres', 'funded-host-root', 'docs-contract', 'os-view-parity', 'e2e', 'dedicated-linux', 'completion-handoff']);
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
@@ -357,7 +358,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('needs.docs-contract.result');
     expect(workflow).toContain('needs.os-view-parity.result');
     expect(workflow).toContain('needs.e2e.result');
-    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
+    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
 
     const ciResultsRun = readCiResultsRun(root);
     expect(ciResultsRun).toBeDefined();
@@ -1133,7 +1134,7 @@ describe('CI workflows', () => {
     expect(targetedJob).toContain('.healthy == true and .runtimeVersion == $version');
     expect(targetedJob).toContain('{handle: $handle}');
     expect(targetedJob).toContain('.activated == 1 and .failed == 0 and .complete == true');
-    expect(targetedJob).toContain('node scripts/ci/targeted-fleet-maintenance.mjs activate-fleet');
+    expect(targetedJob).toContain('node scripts/ci/targeted-fleet-maintenance.mjs activate-managed-features');
     expect(targetedJob).toContain('::add-mask::$TARGET_HANDLE');
     expect(targetedJob).not.toContain('printf \'%s\\n\' "$FLEET_RESPONSE"');
   });

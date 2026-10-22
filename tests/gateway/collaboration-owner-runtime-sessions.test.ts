@@ -104,6 +104,22 @@ describe("owner runtime direct sessions", () => {
     await fixture.service.shutdown();
   });
 
+  it("admits only exact owner POST inspection/confirmation paths for existing resource IDs", async () => {
+    const fixture = makeFixture();
+    const session = await fixture.service.create(fixture.create());
+    const prefix = `/api/collaboration/runtimes/vps%3A11111111-1111-4111-8111-111111111111/catalog/10000000-0000-4000-8000-000000000001/reauthorization`;
+    for (const action of ["inspect", "confirm"]) {
+      await expect(fixture.service.authenticate(fixture.signedRequest(session.id, `${prefix}/${action}`)))
+        .resolves.toMatchObject({ actorId: ownerId, authorityGeneration: 1 });
+      await expect(fixture.service.authenticate(fixture.signedRequest(session.id, `${prefix}/${action}`, new Uint8Array(), "GET")))
+        .rejects.toMatchObject({ code: "denied" });
+    }
+    for (const path of [prefix, `${prefix}/delete`, `${prefix}/confirm/extra`, prefix.replace("10000000-0000-4000-8000-000000000001", "any") + "/confirm"]) {
+      await expect(fixture.service.authenticate(fixture.signedRequest(session.id, path))).rejects.toMatchObject({ code: "denied" });
+    }
+    await fixture.service.shutdown();
+  });
+
   it("ends the session renewably when the ticket action budget runs out", async () => {
     const fixture = makeFixture();
     const session = await fixture.service.create(fixture.create());

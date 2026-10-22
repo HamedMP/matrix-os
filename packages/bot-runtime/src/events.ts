@@ -1,5 +1,5 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
-import type { BotEvent, BotToolCapability } from "@matrix-os/contracts";
+import { botToolDisplayInput, botToolDisplayOutput, botToolDisplayMcpResult, type BotToolDisplay, type BotEvent, type BotToolCapability } from "@matrix-os/contracts";
 import { bridgeToolCallId } from "./tool-call-id.js";
 
 /** Leaves room for the event envelope inside the 16 KiB assistant delta bound. */
@@ -38,7 +38,8 @@ export interface EventProjector {
 
 /**
  * Projects Pi agent events into ordered, bounded bot events. Model reasoning
- * (thinking deltas) and raw tool arguments are never forwarded. Text deltas
+ * (thinking deltas) and raw tool argument/result objects are never forwarded. Selected display
+ * snapshots cross only the private broker; the gateway seals them before Chat. Text deltas
  * are buffered and sent within 250 ms (a timer covers pauses in the stream),
  * when the buffer fills, or at a message or tool boundary. Every send goes
  * through one serial chain, so events leave in `seq` order. After
@@ -49,6 +50,7 @@ export function createEventProjector(options: {
   send(event: BotEvent): Promise<void>;
   capabilityForTool(toolName: string): BotToolCapability | undefined;
   now?(): number;
+  signal?: AbortSignal;
 }): EventProjector {
   const now = options.now ?? Date.now;
   let seq = 0;
@@ -58,10 +60,18 @@ export function createEventProjector(options: {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let chain: Promise<void> = Promise.resolve();
   let failure: unknown;
+  // At most the run action budget; terminal events evict immediately.
+  const tools = new Map<string, { display: BotToolDisplay; privateContext: boolean; updates: number; lastUpdate: number }>();
+  const MAX_TOOLS = 60;
+  let toolStarts = 0;
 
   const emit = async (event: BotEvent["event"]) => {
-    if (seq >= MAX_EVENTS_PER_TURN) return;
-    if (seq === MAX_EVENTS_PER_TURN - 1) {
+    const terminal = event.type === "tool_progress" && ["completed", "failed", "cancelled"].includes(event.phase);
+    const started = event.type === "tool_progress" && event.phase === "started";
+    // Reserve one slot per outstanding tool; text/update floods cannot lose its result.
+    const limit = MAX_EVENTS_PER_TURN - (terminal ? 0 : tools.size);
+    if (seq >= limit) return;
+    if (!terminal && !started && seq === limit - 1) {
       await options.send({ seq: seq++, event: { type: "activity", label: PAUSED_LABEL, state: "started" } });
       return;
     }
@@ -117,17 +127,41 @@ export function createEventProjector(options: {
       await serial(flush);
       return;
     }
-    if (event.type === "tool_execution_start" || event.type === "tool_execution_end") {
+    if (event.type === "tool_execution_start" || event.type === "tool_execution_update" || event.type === "tool_execution_end") {
       const capability = options.capabilityForTool(event.toolName);
       await serial(async () => {
         await flush();
         if (!capability) return;
-        await emit({
-          type: "tool_progress",
-          toolCallId: bridgeToolCallId(event.toolCallId),
-          capability,
-          phase: event.type === "tool_execution_start" ? "started" : event.isError ? "failed" : "completed",
-        });
+        const id = bridgeToolCallId(event.toolCallId);
+        if (event.type === "tool_execution_start") {
+          if (tools.has(id) || toolStarts >= MAX_TOOLS) return;
+          // Track only a display whose start and terminal both fit beside pending results.
+          if (seq + tools.size + 2 > MAX_EVENTS_PER_TURN) {
+            await emit({ type: "activity", label: PAUSED_LABEL, state: "started" });
+            return;
+          }
+          toolStarts += 1;
+          tools.set(id, { ...botToolDisplayInput(event.toolName, event.args), updates: 0, lastUpdate: -Infinity });
+        }
+        const tool = tools.get(id);
+        if (!tool) return;
+        if (event.type === "tool_execution_update") {
+          if (tool.updates >= 3 || now() - tool.lastUpdate < DELTA_FLUSH_INTERVAL_MS) return;
+          tool.updates += 1;
+          tool.lastUpdate = now();
+        }
+        const rawResult = event.type === "tool_execution_end" ? event.result : event.type === "tool_execution_update" ? event.partialResult : undefined;
+        const result = capability === "mcp.call" ? botToolDisplayMcpResult(rawResult) : { value: rawResult, isError: false };
+        const output = event.type === "tool_execution_start" ? {} : botToolDisplayOutput(result.value, tool.privateContext);
+        if (event.type === "tool_execution_update" && tool.updates === 3) {
+          output.output = `${output.output?.slice(0, 2900)}\n\nLive updates paused until this tool finishes.`;
+          output.truncated = true;
+        }
+        const display = { ...tool.display, ...output };
+        if (event.type === "tool_execution_end") tools.delete(id);
+        await emit({ type: "tool_progress", toolCallId: id, capability,
+          phase: event.type === "tool_execution_start" ? "started" : event.type === "tool_execution_update" ? "updated"
+            : options.signal?.aborted ? "cancelled" : event.isError || result.isError ? "failed" : "completed", display });
       });
     }
   };
@@ -136,6 +170,7 @@ export function createEventProjector(options: {
     close() {
       if (timer) clearTimeout(timer);
       timer = undefined;
+      tools.clear();
     },
   });
 }

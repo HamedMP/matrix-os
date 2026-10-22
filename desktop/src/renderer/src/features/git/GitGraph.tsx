@@ -122,7 +122,7 @@ export const GitGraph = memo(function GitGraph({
               style={{
                 background: "var(--accent-muted)",
                 borderColor: "color-mix(in srgb, var(--accent) 45%, transparent)",
-                color: "var(--accent)",
+                color: "var(--accent-text)",
               }}
             >
               HEAD
@@ -244,7 +244,7 @@ export const GitGraph = memo(function GitGraph({
               onClick={onLoadMore}
               disabled={loadingMore}
               className="text-xs font-medium"
-              style={{ color: "var(--accent)" }}
+              style={{ color: "var(--text-primary)" }}
             >
               {loadingMore ? "Loading…" : "Load more"}
             </button>
