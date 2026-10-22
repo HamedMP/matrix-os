@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, mkdtempSync, symlinkSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ensureHome } from "../../packages/kernel/src/boot.js";
+import { ensureHome, smartSyncTemplate } from "../../packages/kernel/src/boot.js";
 
 function makeTmpDir() {
   return mkdtempSync(join(tmpdir(), "matrixos-boot-test-"));
@@ -123,14 +123,22 @@ describe("ensureHome", () => {
 
   it("adds a missing PNG when a same-stem SVG is unchanged bundled artwork", () => {
     const homePath = join(tmpDir, "home");
+    const templatePath = join(tmpDir, "template");
     mkdirSync(join(homePath, "system", "icons"), { recursive: true });
-    writeFileSync(join(homePath, "system", "icons", "profile.svg"),
-      readFileSync(join(process.cwd(), "home", "system", "icons", "profile.svg")));
+    mkdirSync(join(templatePath, "system", "icons"), { recursive: true });
+    writeFileSync(join(templatePath, "system", "icons", "example.svg"), "bundled SVG");
+    writeFileSync(join(templatePath, "system", "icons", "example.png"), "bundled PNG");
+    writeFileSync(join(templatePath, ".template-manifest.json"), JSON.stringify({
+      "system/icons/example.svg": "svg hash",
+      "system/icons/example.png": "png hash",
+    }));
+    writeFileSync(join(homePath, "system", "icons", "example.svg"), "bundled SVG");
 
-    const result = ensureHome(homePath);
+    const result = smartSyncTemplate(homePath, templatePath);
 
-    expect(existsSync(join(homePath, "system", "icons", "profile.png"))).toBe(true);
-    expect(result.added).toContain("system/icons/profile.png");
+    expect(readFileSync(join(homePath, "system", "icons", "example.png"), "utf-8"))
+      .toBe("bundled PNG");
+    expect(result.added).toContain("system/icons/example.png");
   });
 
   it("rejects a symlinked icon directory before copying bundled icons", () => {
