@@ -316,6 +316,33 @@ describe("UserButton", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "View plans" }));
     expect(onOpenSettings).toHaveBeenCalledWith("billing");
   });
+
+  it("shows the active organization and switches it from the Web menubar account menu", async () => {
+    clerkState.organization = { id: "org_matrix" };
+    clerkState.memberships = [
+      { organization: { id: "org_matrix", name: "Matrix Main" } },
+      { organization: { id: "org_finna", name: "Finna" } },
+    ];
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+    const view = render(<UserButton variant="menubar" />);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), { button: 0, ctrlKey: false });
+    expect((await screen.findByRole("menuitemradio", { name: "Matrix Main" })).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Finna" }));
+    await waitFor(() => expect(clerkState.setActive).toHaveBeenCalledWith({ organization: "org_finna" }));
+    clerkState.organization = { id: "org_finna" };
+    view.rerender(<UserButton variant="menubar" />);
+    expect(screen.getByRole("menuitemradio", { name: "Finna" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("omits the organization section in the Web menubar for a confirmed individual account", async () => {
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+    render(<UserButton variant="menubar" />);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), { button: 0, ctrlKey: false });
+    await screen.findByRole("menuitem", { name: "Log out" });
+    expect(screen.queryByText("Organization")).toBeNull();
+  });
   it("excludes hosted computer actions in self-hosted mode", async () => {
     document.documentElement.dataset.matrixSelfHosted = "1";
     const { UserButton } = await import("../../shell/src/components/UserButton.js");

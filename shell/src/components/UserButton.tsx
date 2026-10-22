@@ -359,6 +359,7 @@ function TopBarAccountContent({ label, signingOut, onSignOut, onOpenSettings }: 
   const row = "flex cursor-default items-center gap-2.5 rounded-md px-2 py-2 text-[13px] outline-none data-[highlighted]:bg-foreground/5";
   return <>
     <div className="px-2 pb-2 pt-1 text-[11px] text-muted-foreground"><p className="mb-1 tracking-wider">PERSONAL ACCOUNT</p><p className="truncate">{label}</p></div>
+    <OrganizationMenuItems itemClass={row} />
     {onOpenSettings ? <>
       <DropdownMenuPrimitive.Item className={row} onSelect={() => onOpenSettings("appearance")}><SettingsIcon className="size-3.5" aria-hidden="true" />Settings</DropdownMenuPrimitive.Item>
       <DropdownMenuPrimitive.Item className={row} onSelect={() => onOpenSettings("billing")}><CreditCardIcon className="size-3.5" aria-hidden="true" />View plans</DropdownMenuPrimitive.Item>

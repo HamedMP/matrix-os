@@ -20,6 +20,7 @@ import { createDirectSessionRoutes } from "../../packages/gateway/src/collaborat
 import { DirectSessionService } from "../../packages/gateway/src/collaboration/direct-sessions.js";
 import { createOrganizationPrecondition } from "../../packages/gateway/src/collaboration/organization-precondition.js";
 import { OwnerRuntimeSessionService } from "../../packages/gateway/src/collaboration/owner-runtime-sessions.js";
+import { CollaborationProjectScopeService } from "../../packages/gateway/src/collaboration/project-scope.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { createCollaborationRoutes, type CollaborationRouteOptions } from "../../packages/gateway/src/collaboration/routes.js";
 import { CollaborationRelay } from "../../packages/platform/src/collaboration/relay.js";
@@ -27,6 +28,7 @@ import {
   ed25519PrivateKeyFromSeed, ed25519PublicKeyRaw, proofKeyThumbprint, signEd25519, ticketSigningPayload,
 } from "../../packages/platform/src/collaboration/ticket-crypto.js";
 import { createCollaborationDirectClient } from "../../packages/ui/src/collaboration/direct-client.js";
+import { createCollaborationDirectApi } from "../../packages/ui/src/collaboration/direct-api.js";
 import { createCollaborationTestDatabase, type CollaborationTestDatabase } from "../gateway/collaboration-test-support.js";
 
 const PLATFORM = "https://app.matrix-os.com";
@@ -39,6 +41,7 @@ const memberId = "user_private_grants_member";
 const organizationId = "org_private_grants";
 const privateScopeId = "10000000-0000-4000-8000-00000000e901";
 const sharedScopeId = "10000000-0000-4000-8000-00000000e902";
+const freshScopeId = "10000000-0000-4000-8000-00000000e903";
 const platformKey = ed25519PrivateKeyFromSeed(Buffer.alloc(32, 29).toString("base64url"));
 const GrantListSchema = z.array(CollaborationGrantSchema);
 
@@ -48,9 +51,13 @@ describe("choosing access on a private project before sharing it", () => {
   let ownerRuntimeSessions: OwnerRuntimeSessionService;
   let relay: CollaborationRelay;
   let warn: ReturnType<typeof vi.spyOn>;
+  let ticketReady: boolean;
+  let relayedPaths: string[];
 
   beforeEach(async () => {
     warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    ticketReady = true;
+    relayedPaths = [];
     fixture = await createCollaborationTestDatabase();
     await bootstrapChatDatabase(fixture.db);
     await bootstrapCollaborationDatabase(fixture.db);
@@ -91,6 +98,18 @@ describe("choosing access on a private project before sharing it", () => {
     home.route("/", createDirectSessionRoutes({ sessions: directSessions, ownerRuntimeSessions }));
     home.route("/", createCollaborationRoutes({
       runtimeId, repository, authority, directSessions, ownerRuntimeSessions, capabilities,
+      projectScope: new CollaborationProjectScopeService(fixture.db, {
+        runtimeId, preflightSecret: "s".repeat(32), now: () => now,
+        createScopeId: () => freshScopeId,
+        source: { getProject: async (actorId, projectId) => actorId === ownerId && projectId === "project_fresh"
+          ? { id: projectId, ownerId: actorId, revision: 1 } : null },
+      }),
+      projectSharing: { preview: async ({ scopeId }: { scopeId: string }) => ({
+        scopeId, projectId: "project_fresh", projectRevision: 1, scopeRevision: 1,
+        ownedItems: [], externalReferences: [], blockers: [], membershipEffects: [],
+        inventoryHash: "a".repeat(64), membershipHash: "b".repeat(64), inventoryToken: "c".repeat(64),
+        expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+      }) },
       capabilityEvaluator: new CollaborationCapabilityEvaluator({ db: fixture.db, grants: capabilities, organizationPrecondition: precondition, now: () => now }),
       verifier: new CollaborationActorProofVerifier({ runtimeId, keys: { "legacy-1": "x".repeat(32) }, now: () => now, authority }),
       executionPolicies: { resolve: async () => null },
@@ -100,11 +119,13 @@ describe("choosing access on a private project before sharing it", () => {
       // A private project is not in the directory; only the shared one has a scope route.
       resolveScopeHome: async (id) => (id === sharedScopeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null),
       resolveInvitationHome: async () => null,
-      resolveRuntimeHome: async () => null,
+      resolveRuntimeHome: async (actorId, id) => actorId === ownerId && id === runtimeId
+        ? { runtimeId: logicalRuntimeId, origin: HOME } : null,
       resolveSessionHome: async (id) => (id === logicalRuntimeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null),
       resolveOwnerRuntimeHome: async (actorId, id) => (actorId === ownerId && id === logicalRuntimeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null),
       fetchImpl: (async (input: string, init: RequestInit) => {
         const url = new URL(input);
+        relayedPaths.push(`${init.method ?? "GET"} ${url.pathname}`);
         return home.request(`${url.pathname}${url.search}`, init);
       }) as typeof fetch,
     });
@@ -119,12 +140,13 @@ describe("choosing access on a private project before sharing it", () => {
   });
 
   /** The platform: issues the owner-runtime ticket for the signed-in actor and relays everything else. */
-  const client = (actorId: string) => createCollaborationDirectClient({
-    platformBaseUrl: PLATFORM, clientOrigin: PLATFORM, now: () => now,
-    fetchImpl: (async (input: string | URL | Request, init?: RequestInit) => {
+  const clientFetch = (actorId: string, requestLog?: string[]): typeof fetch =>
+    (async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(input));
+      requestLog?.push(`${init?.method ?? "GET"} ${url.pathname}`);
       const body = typeof init?.body === "string" ? init.body : "";
       if (url.pathname === "/api/collaboration/owner-runtime/connections") {
+        if (!ticketReady) return Response.json({ error: "host_offline" }, { status: 503 });
         const request = JSON.parse(body) as { proofPublicKey: string };
         const ticket = {
           protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, ticketId: randomUUID(), nonce: randomUUID().replaceAll("-", ""),
@@ -141,11 +163,81 @@ describe("choosing access on a private project before sharing it", () => {
         actorId, method: (init?.method ?? "GET").toUpperCase(), path: url.pathname, query: url.search.slice(1),
         headers: new Headers(init?.headers), body: body ? new TextEncoder().encode(body) : null,
       });
-    }) as typeof fetch,
+    }) as typeof fetch;
+  const client = (actorId: string, requestLog?: string[]) => createCollaborationDirectClient({
+    platformBaseUrl: PLATFORM, clientOrigin: PLATFORM, now: () => now, fetchImpl: clientFetch(actorId, requestLog),
   });
 
   const outboxRows = () => fixture.db.selectFrom("collaboration_directory_outbox").select("event_id")
     .where("scope_id", "=", privateScopeId).execute();
+
+  it("prepares a fresh project on the first click through the real relay routes, then keeps it private", async () => {
+    const requests: string[] = [];
+    const api = createCollaborationDirectApi({ platformBaseUrl: PLATFORM, clientOrigin: PLATFORM, now: () => now,
+      fetchImpl: clientFetch(ownerId, requests) });
+    const setup = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}`;
+    const preflight = await api.post(`${setup}/scopes/preflight`, {
+      kind: "project", resourceId: "project_fresh", organizationId,
+    }) as { resourceRevision: string; confirmationToken: string };
+    const created = await api.post(`${setup}/scopes`, {
+      kind: "project", resourceId: "project_fresh", organizationId,
+      clientRequestId: randomUUID(), expectedRevision: preflight.resourceRevision,
+      confirmationToken: preflight.confirmationToken,
+    }) as { id: string };
+    expect(created.id).toBe(freshScopeId);
+    const base = `/api/collaboration/scopes/${created.id}`;
+    const scope = await api.get(base) as { revision: string; lifecycle: string };
+    expect(scope.lifecycle).toBe("private");
+    expect(await api.get(`${base}/grants`)).toEqual([]);
+    await api.post(`${base}/grants`, {
+      clientRequestId: randomUUID(), expectedRevision: scope.revision,
+      audience: { kind: "organization" }, preset: "contributor",
+    });
+    expect(await api.get(`${base}/project/inventory`)).toMatchObject({ scopeId: freshScopeId, projectId: "project_fresh" });
+
+    expect(requests).toEqual([
+      "POST /api/collaboration/owner-runtime/connections",
+      "POST /api/collaboration/owner-runtime/sessions",
+      `POST ${setup}/scopes/preflight`, `POST ${setup}/scopes`,
+      `GET ${base}`, `GET ${base}/grants`, `POST ${base}/grants`, `GET ${base}/project/inventory`,
+    ]);
+    expect(relayedPaths).toEqual(requests.slice(1));
+    expect(await fixture.db.selectFrom("collaboration_scopes").select("lifecycle").where("id", "=", freshScopeId).executeTakeFirst())
+      .toEqual({ lifecycle: "private" });
+    expect(await fixture.db.selectFrom("collaboration_directory_outbox").select("event_id").where("scope_id", "=", freshScopeId).execute())
+      .toEqual([]);
+  });
+
+  it("fails closed on a simulated offline owner ticket and recovers when ticket issuance resumes", async () => {
+    const requests: string[] = [];
+    const api = createCollaborationDirectApi({ platformBaseUrl: PLATFORM, clientOrigin: PLATFORM, now: () => now,
+      fetchImpl: clientFetch(ownerId, requests) });
+    const preflightPath = `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`;
+    const input = { kind: "project", resourceId: "project_fresh", organizationId };
+
+    ticketReady = false;
+    await expect(api.post(preflightPath, input)).rejects.toThrow("CollaborationUnavailable");
+    expect(requests).toEqual(["POST /api/collaboration/owner-runtime/connections"]);
+    expect(await fixture.db.selectFrom("collaboration_scopes").select("id").where("id", "=", freshScopeId).execute())
+      .toEqual([]);
+    expect(await fixture.db.selectFrom("collaboration_directory_outbox").select("event_id").where("scope_id", "=", freshScopeId).execute())
+      .toEqual([]);
+
+    ticketReady = true;
+    const preflight = await api.post(preflightPath, input) as { resourceRevision: string; confirmationToken: string };
+    const prepared = await api.post(`/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes`, {
+      ...input, clientRequestId: randomUUID(), expectedRevision: preflight.resourceRevision,
+      confirmationToken: preflight.confirmationToken,
+    }) as { id: string; lifecycle: string };
+    expect(prepared).toMatchObject({ id: freshScopeId, lifecycle: "private" });
+    expect(requests.slice(1, 4)).toEqual([
+      "POST /api/collaboration/owner-runtime/connections",
+      "POST /api/collaboration/owner-runtime/sessions",
+      `POST ${preflightPath}`,
+    ]);
+    expect(await fixture.db.selectFrom("collaboration_directory_outbox").select("event_id").where("scope_id", "=", freshScopeId).execute())
+      .toEqual([]);
+  });
 
   it("lists, creates, changes and revokes grants with the owner setup key and publishes none of them", async () => {
     const direct = client(ownerId);
@@ -204,5 +296,9 @@ describe("choosing access on a private project before sharing it", () => {
     // The member holds a valid owner-runtime ticket for nothing: the home serves only its own owner.
     await expect(client(memberId).requestOwnerProject(runtimeId, organizationId, "GET", `/api/collaboration/scopes/${privateScopeId}/grants`))
       .rejects.toMatchObject({ code: expect.stringMatching(/denied|not_found/) });
+    await expect(client("user_outside_org").requestOwnerProject(runtimeId, organizationId, "GET",
+      `/api/collaboration/scopes/${privateScopeId}/grants`))
+      .rejects.toMatchObject({ code: expect.stringMatching(/denied|not_found/) });
+    expect(await outboxRows()).toEqual([]);
   });
 });

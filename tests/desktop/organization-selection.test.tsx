@@ -19,6 +19,7 @@ vi.mock("@desktop/renderer/src/lib/collaboration", () => ({
 
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { DesktopOrganizationMenuItems } from "@desktop/renderer/src/features/mission-control/DesktopOrganizationMenuItems";
+import AccountMenu from "@desktop/renderer/src/features/mission-control/AccountMenu";
 import { DesktopDefaultOrganization } from "@desktop/renderer/src/features/collaboration/DesktopDefaultOrganization";
 
 const KEY = "matrix.desktop.selectedOrganization:";
@@ -137,6 +138,29 @@ describe("connection store organization selection", () => {
 });
 
 describe("DesktopOrganizationMenuItems", () => {
+  it("renders the organization picker in the Electron account menu and updates the shared selection", async () => {
+    apiState.get.mockResolvedValue({ complete: true, organizations: [
+      organization("org_finna", "Finna"),
+      organization("org_matrix", "Matrix Main"),
+    ] });
+    render(<AccountMenu collapsed={false} />);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Open account menu" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Matrix Main" }));
+
+    expect(useConnection.getState().organizationId).toBe("org_matrix");
+    expect(screen.getByRole("menuitemradio", { name: "Matrix Main" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("omits the organization section in the Electron account menu for a confirmed individual account", async () => {
+    apiState.get.mockResolvedValue({ complete: true, organizations: [] });
+    render(<AccountMenu collapsed={false} />);
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Open account menu" }), { button: 0, ctrlKey: false });
+    await waitFor(() => expect(apiState.get).toHaveBeenCalledWith("/api/organizations"));
+    expect(screen.queryByText("Organization")).toBeNull();
+  });
+
   it("lists the member's organizations and selects the one they choose", async () => {
     apiState.get.mockResolvedValue({ complete: true, organizations: [
       organization("org_finna", "Finna"),
