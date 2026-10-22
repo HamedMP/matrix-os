@@ -199,7 +199,9 @@ export function createCanonicalChatEventStream(options: {
         if (subscriber.buffered.length >= maxAttachBuffer) {
           dead.push(subscriber.id);
         } else {
-          subscriber.buffered.push(event);
+          // Delayed delivery is metadata-only; do not retain copied content or a mutable event reference.
+          subscriber.buffered.push({ cursor: event.cursor, chatId: event.chatId, revision: event.revision,
+            eventType: event.eventType, createdAt: event.createdAt, payload: {} });
         }
       } else if (!deliver(subscriber, event)) {
         dead.push(subscriber.id);

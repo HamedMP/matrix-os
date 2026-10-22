@@ -1516,10 +1516,15 @@ export class ChatRepository {
         .executeTakeFirst();
       if (!cursorExists) return { events: [], gap: true };
     }
-    const events = await this.replayOutbox(owner, {
-      afterCursor: afterCursor ?? 0,
-      limit: Math.max(1, Math.min(100, Math.trunc(input.limit))),
-    });
+    // SSE replay is notification-only: never materialize persisted copied content into this delayed path.
+    // The explicit owner inspection replayOutbox API retains its separate full-payload behavior.
+    const rows = await this.kysely.selectFrom("chat_outbox")
+      .select(["cursor", "owner_type", "owner_id", "chat_id", "revision", "event_type", "created_at",
+        sql<Record<string, never>>`'{}'::jsonb`.as("payload")])
+      .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
+      .where("cursor", ">", afterCursor ?? 0).orderBy("cursor")
+      .limit(Math.max(1, Math.min(100, Math.trunc(input.limit)))).execute();
+    const events = rows.map(toOutbox);
     const nextCursor = events.at(-1)?.cursor;
     if (events.length >= Math.max(1, Math.min(100, Math.trunc(input.limit)))) {
       const latest = await this.kysely.selectFrom("chat_outbox").select("cursor")
