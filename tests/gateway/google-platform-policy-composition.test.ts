@@ -12,6 +12,7 @@ describe('machine policy composition', () => {
     ({ db } = await createTestIntegrationDb());
     const owner = await db.createUser({ clerkId: 'owner-one', handle: 'owner-one', displayName: 'Owner', email: 'owner@example.test', containerId: 'owner-container' });
     const connection = await db.connectService({ userId: owner.id, service: 'gmail', pipedreamAccountId: 'apn_synthetic', accountLabel: 'Email', scopes: [] });
+    await db.googleData!.purgeDelivery.pinRuntime('owner-one', 'machine-one');
     const generation = '523e4567-e89b-42d3-a456-426614174000';
     const profile = profileInput({ credentialKind: 'byo', credentialGeneration: generation,
       endpoint: 'https://api.example.invalid/v1/messages', harnessId: GOOGLE_POLICY_HARNESS_ID['anthropic-messages'], harnessRevision: 'reviewed-build-1' });
@@ -24,13 +25,15 @@ describe('machine policy composition', () => {
     const request = (app: Hono) => app.request('/gmail/processing/authorize', { method: 'POST', headers: { 'content-type': 'application/json',
       'x-platform-user-id': 'owner-one', 'x-platform-verified': 'forged', 'x-matrix-machine-id': 'fake' }, body });
     expect((await request(routes)).status).toBe(401);
-    const wrapped = (signed: boolean, clerkId = 'owner-one') => {
+    const wrapped = (signed: boolean, clerkId = 'owner-one', machineId = 'machine-one', personalOwner = clerkId) => {
       const app = new Hono();
       app.use('*', async (c, next) => {
         // This models the already authenticated platform mount's private context;
         // browser headers above cannot set these values.
         c.set('internalSignedOwnerDelegation', signed);
         c.set('internalContainerHandle', 'machine-one');
+        c.set('internalContainerMachineId', machineId);
+        c.set('internalContainerPersonalOwner', personalOwner);
         c.set('internalContainerClerkUserId', clerkId);
         await next();
       });
@@ -38,6 +41,8 @@ describe('machine policy composition', () => {
     };
     expect((await request(wrapped(false))).status).toBe(401);
     expect((await request(wrapped(true, 'owner-two'))).status).toBe(401);
+    expect((await request(wrapped(true, 'owner-one', 'machine-one', 'other-owner'))).status).toBe(401);
+    expect((await request(wrapped(true, 'owner-one', 'other-machine'))).status).toBe(403);
     const missing = await request(wrapped(true));
     expect(missing.status).toBe(428);
     expect(await missing.json()).toMatchObject({ error: 'consent_required', consentRevision: 0 });

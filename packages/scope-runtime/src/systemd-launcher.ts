@@ -212,7 +212,7 @@ export function buildBotSystemdRunArgs(
   ];
 }
 
-async function defaultRunCommand(command: string, args: readonly string[]): Promise<{ stdout: string }> {
+export async function defaultRunCommand(command: string, args: readonly string[]): Promise<{ stdout: string }> {
   const result = await execFileAsync(command, [...args], {
     encoding: "utf8",
     timeout: COMMAND_TIMEOUT_MS,

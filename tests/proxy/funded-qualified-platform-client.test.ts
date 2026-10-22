@@ -25,6 +25,16 @@ describe('qualified relay service-control client bounds', () => {
     const client = createQualifiedFundedPlatformClient(options(async () => new Response(body, { status: kind === 'error' ? 500 : 200 })));
     await expect(client.check(input(), new AbortController().signal)).rejects.toThrow('Funded AI control-plane request failed'); expect(cancel).toHaveBeenCalledTimes(kind === 'invalid' || kind === 'error' ? 0 : 1);
   });
+  it('logs only a fixed classification when cleanup fails',async()=>{
+    const sensitive=Object.assign(new Error('private cleanup message'),{name:'PrivateCredentialValue'});
+    const log=vi.spyOn(console,'warn').mockImplementation(()=>{});
+    const body=new ReadableStream<Uint8Array>({pull(controller){controller.enqueue(new Uint8Array(65537));},cancel(){throw sensitive;}});
+    try{const client=createQualifiedFundedPlatformClient(options(async()=>new Response(body)));
+      await expect(client.check(input(),new AbortController().signal)).rejects.toThrow();
+      expect(log).toHaveBeenCalled();expect(JSON.stringify(log.mock.calls)).not.toContain('PrivateCredentialValue');
+      expect(JSON.stringify(log.mock.calls)).not.toContain('private cleanup message');
+    }finally{log.mockRestore();}
+  });
   it('rejects parent abort while reading a stalled body and drains reader', async () => {
     const controller = new AbortController(), cancel = vi.fn(); const client = createQualifiedFundedPlatformClient(options(async () => {
       queueMicrotask(() => controller.abort()); return new Response(new ReadableStream({ pull: () => new Promise(() => undefined), cancel })); }));
