@@ -16,7 +16,13 @@ export function gmailPostgresFiles(root) {
     }
   }
   collect('tests/gateway/google-data');
-  files.push('tests/gateway/google-broker-collection-startup.test.ts');
+  files.push('tests/gateway/google-broker-collection-startup.test.ts',
+    'tests/gateway/google-context-admission-startup.test.ts',
+    'tests/gateway/google-managed-profile-resolution.test.ts',
+    'tests/gateway/google-pilot-copy-lifecycle.test.ts',
+    'tests/gateway/google-pilot-owner-pool.test.ts',
+    'tests/platform/google-qualified-startup.test.ts',
+    'tests/platform/account-deletion-google-cleanup.test.ts');
   for (const entry of readdirSync(path.join(root, 'tests/platform'), { withFileTypes: true })) {
     if (entry.isFile() && /^(?:ai-funded-(?:qualified-.+|route-binding|managed-route-client)|google-collection-admission)\.test\.ts$/.test(entry.name)) files.push(`tests/platform/${entry.name}`);
   }
