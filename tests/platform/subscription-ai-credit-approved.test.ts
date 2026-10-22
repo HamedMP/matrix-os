@@ -89,6 +89,32 @@ describe('approved subscription-month allowances', () => {
     expect((await entries())[1]).toMatchObject({ expires_at: '2026-03-31T10:00:00.000Z' });
     expect(await repo.getFundingSummary(identity)).toMatchObject({ creditBalanceMicrousd: 5_000_000, monthlyBudgetMicrousd: 5_000_000 });
   });
+  it.skipIf(!process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL)('shares the global policy with unrelated readers while still serializing policy writes', async () => {
+    const name = await sql<{ name: string }>`SELECT current_database() AS name`.execute(db.executor);
+    const url = new URL(process.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL!);
+    url.pathname = `/${name.rows[0]!.name}`; url.searchParams.set('application_name', 'subscription_global_reader');
+    secondDb = createPlatformDb(url.href); await secondDb.ready;
+    const otherRepo = createAiFundedPolicyRepository({ db: secondDb, credentialHashSecret: 'h'.repeat(32), now: () => clock });
+    let issuance: Promise<unknown> | undefined, write: Promise<unknown> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await db.transaction(async trx => {
+        await trx.executor.selectFrom('ai_funded_global_policy').select('enabled').where('policy_id', '=', 'default').forShare().executeTakeFirstOrThrow();
+        issuance = issueConfiguredSubscriptionAiCredit({ db: secondDb!, repository: otherRepo, identity, env, now: clock });
+        const completed = await Promise.race([issuance, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Unrelated global policy reader blocked issuance')), 3000); })]);
+        clearTimeout(timer); expect(completed).toBe('accepted');
+        write = otherRepo.updateGlobalPolicy({ expectedRevision: 1, enabled: false, allowedModelIds: [] });
+        await vi.waitFor(async () => {
+          const waiting = await sql<{ count: number }>`SELECT count(*)::int AS count FROM pg_stat_activity
+            WHERE application_name='subscription_global_reader' AND wait_event_type='Lock'`.execute(trx.executor);
+          expect(waiting.rows[0]!.count).toBeGreaterThan(0);
+        }, { timeout: 3000, interval: 25 });
+        expect((await trx.executor.selectFrom('ai_funded_global_policy').select('enabled').executeTakeFirstOrThrow()).enabled).toBe(true);
+      });
+      await expect(write).resolves.toMatchObject({ enabled: false });
+      expect(await entries()).toHaveLength(1);
+    } finally { if (timer) clearTimeout(timer); await Promise.allSettled([issuance, write].filter((p): p is Promise<unknown> => p !== undefined)); }
+  });
   it('tops up an upgrade only after payment coverage and defers a downgrade until next month', async () => {
     await issue(); await plan('matrix_builder');
     await issue(); expect(await entries()).toHaveLength(1);

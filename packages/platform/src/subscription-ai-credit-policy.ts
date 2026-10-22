@@ -63,8 +63,9 @@ export async function issueConfiguredSubscriptionAiCredit(input: {
     const runtime = await trx.executor.selectFrom('ai_funded_runtime_policies').select([
       'owner_id', 'runtime_slot', 'enabled', 'expires_at', 'allowed_model_ids',
     ]).where('machine_id', '=', identity.machineId).forUpdate().executeTakeFirst();
+    // Concurrent owners share policy stability; policy updates still wait for issuance.
     const global = await trx.executor.selectFrom('ai_funded_global_policy').select(['enabled', 'allowed_model_ids'])
-      .where('policy_id', '=', 'default').forUpdate().executeTakeFirstOrThrow();
+      .where('policy_id', '=', 'default').forShare().executeTakeFirstOrThrow();
     if (!runtime?.enabled || !global.enabled || runtime.owner_id !== identity.ownerId
       || runtime.runtime_slot !== identity.runtimeSlot || runtime.expires_at !== null && runtime.expires_at <= at
       || intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids)).length === 0) return 'ineligible';
