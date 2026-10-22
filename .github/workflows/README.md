@@ -73,7 +73,9 @@ Playwright's apt install (`--with-deps`): `ubuntu-latest` already has the shared
 libraries Chromium and Electron load, and the apt step mostly fetched CJK/Thai
 fonts from a mirror that sometimes ran at ~30 kB/s (up to 11 minutes). A
 `Check browser shared libraries` step runs `ldd` on every installed browser and
-fails with the missing library if a runner image drops one.
+fails with the missing library if a runner image drops one. The Electron lane
+installs one font, `fonts-wqy-microhei` (1.6 MB), because the Chat title
+regression renders a Simplified Chinese title.
 Caches are accelerators, never a substitute for validation.
 
 Every unit shard uploads `unit-profile-<shard>` with Vitest JSON, including on

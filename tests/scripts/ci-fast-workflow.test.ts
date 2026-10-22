@@ -87,7 +87,11 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(browsers.every(s => !s.if?.includes('cache-hit'))).toBe(true);
     // ubuntu-latest ships Chromium's shared libraries; E2E never runs Playwright's apt install.
     const e2eRuns = workflow.jobs.e2e.steps.map(s => s.run ?? '').join('\n');
-    expect(e2eRuns).not.toMatch(/--with-deps|install-deps|apt-get/);
+    expect(e2eRuns).not.toMatch(/--with-deps|install-deps/);
+    // The only apt package is the one CJK font the Electron Chat title regression renders.
+    const font = workflow.jobs.e2e.steps.find(s => s.name === 'Install the CJK font the Chat title regression renders');
+    expect(font?.if).toContain("matrix.lane == 'electron'");
+    expect(e2eRuns.match(/apt-get install[^\n]*/g)?.every(line => line.endsWith('fonts-wqy-microhei \\') || line.endsWith('fonts-wqy-microhei; }'))).toBe(true);
     const libraries = workflow.jobs.e2e.steps.find(s => s.name === 'Check browser shared libraries');
     expect(libraries?.run).toContain("ldd \"$binary\" | grep 'not found'");
   });

@@ -783,6 +783,14 @@ jobs:
           echo "Checked $checked browser binaries; no shared library is missing."
           exit "$missing"
 
+      # The Chat title regression renders a Simplified Chinese title; without a CJK font it draws
+      # empty boxes and measures different glyph widths. One 1.6 MB font, no dependencies.
+      - name: Install the CJK font the Chat title regression renders
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
+        run: |
+          sudo apt-get install -y --no-install-recommends fonts-wqy-microhei \
+            || { sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-wqy-microhei; }
+
       - name: Save Playwright browser revisions
         if: needs.changes.outputs.should_run == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
