@@ -27,6 +27,8 @@ export async function createGoogleBrokerRuntime<DB>(options: {
   qualifiedCredentials?: GoogleQualifiedCredentialManager;
   /** Production always supplies explicit host admission. Absence is library-level uninstalled composition. */
   pilotAdmission?: GoogleDataPilotConfig;
+  /** Owning snapshot adapter. Required for an enabled production pilot, before any source transfer. */
+  admitContext?: (binding: PiRuntimeBinding, signal: AbortSignal) => Promise<void>;
 }) {
   const contexts = createGoogleContextStore(options.database);
   const pins = createGoogleRunPinStore(options.database);
@@ -59,6 +61,17 @@ export async function createGoogleBrokerRuntime<DB>(options: {
   const managed = createGoogleManagedBrokerTransport({ registry: options.registry, contexts: collectionContexts, credentials: options.qualifiedCredentials, lifetime: closing.signal });
   const pilotOwner = (binding: PiRuntimeBinding) => options.pilotAdmission?.enabled === true && isManagedPiBinding(binding)
     && binding.ownerId === options.pilotAdmission.ownerId;
+  async function admitContext(binding: PiRuntimeBinding, signal: AbortSignal) {
+    const runSignal = live(binding);
+    if (!runSignal || signal.aborted) deny();
+    if (options.pilotAdmission?.enabled && !options.admitContext) deny();
+    if (options.admitContext) await trackedDatabase(() => options.admitContext!(binding, AbortSignal.any([signal, closing.signal, runSignal!])));
+    if (signal.aborted || live(binding) !== runSignal) deny();
+  }
+  const managedDispatch = { ...managed, async required(binding: PiRuntimeBinding, signal: AbortSignal) {
+    if (options.pilotAdmission?.enabled) await admitContext(binding, signal);
+    return managed.required(binding, signal);
+  } };
   const toolEgress = createGoogleToolEgressGuard({ registry: options.registry, contexts: collectionContexts });
   const observed = new Map<string, { binding: PiRuntimeBinding; identity: GoogleInferenceIdentity; signal: AbortSignal; expiresAt: number }>(); // <=64; TTL/LRU eviction and shutdown clear.
   const live = (binding: PiRuntimeBinding) => {
@@ -99,13 +112,17 @@ export async function createGoogleBrokerRuntime<DB>(options: {
     return isDeepStrictEqual(fresh, identity) ? fresh : null;
   };
   const inference: GoogleDataInferenceAuthority = {
-    managed,
+    managed: managedDispatch,
     async authorize(input) {
       if (closed) return { allowed: false };
       const binding = structuredClone(input.binding);
       const candidate = input.identity === null ? null : structuredClone(input.identity);
       if (options.pilotAdmission?.enabled && !pilotOwner(binding)) return { allowed: false };
       if (options.pilotAdmission && !pilotOwner(binding) && await managed.required(binding, input.signal)) return { allowed: false };
+      if (options.pilotAdmission?.enabled) {
+        try { await admitContext(binding, input.signal); }
+        catch (error) { console.warn('[google-data] Context admission unavailable'); return { allowed: false }; }
+      }
       const result = await authority.authorize({ ...input, binding, identity: candidate });
       if (result.allowed && result.googleOrigin && options.pilotAdmission && !pilotOwner(binding)) return { allowed: false };
       const signal = live(binding);
@@ -132,6 +149,7 @@ export async function createGoogleBrokerRuntime<DB>(options: {
       if (closed || collections >= 32 || options.pilotAdmission && !pilotOwner(binding)) deny();
       if (collections++ === 0) collectionDrain = new Promise(resolve => { collectionsDone = resolve; });
       try {
+        await admitContext(binding, signal);
         const collection = createGoogleCollectionClient({ registry: options.registry, contexts: collectionContexts, pins: collectionPins,
           policyClient, ownerConsentClient, resolveIdentity, requestConsent });
         return await collection.prepare(binding, accountUUID, AbortSignal.any([signal, closing.signal]));
