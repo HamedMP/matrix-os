@@ -1,9 +1,10 @@
-import type { GetStartedGoalId } from "#get-started";
-import { GETTING_STARTED_STEP_IDS, type GettingStartedStepId } from "#getting-started";
+import type { GetStartedAnswers, GetStartedGoalId, GetStartedToolId } from "#get-started";
+import { GETTING_STARTED_STEP_IDS, type GettingStartedStep, type GettingStartedStepId } from "#getting-started";
 import { ONBOARDING_TASK_IDS, type OnboardingStarterTaskId } from "#onboarding-widget-catalog";
 
 // Spec 635, Section 5: the desktop a new owner lands on leads with what fits
-// their goals. Only the order changes; completion detection stays as it is.
+// their goals. Completion detection stays as it is, so a label only names what
+// its check counts.
 
 const STEP_PRIORITY: Record<GetStartedGoalId, readonly GettingStartedStepId[]> = {
   code: ["agent", "github", "first-work"],
@@ -34,6 +35,24 @@ export function getStartedStepOrder(goals: readonly GetStartedGoalId[]): Getting
 
 export function getStartedTaskOrder(goals: readonly GetStartedGoalId[]): OnboardingStarterTaskId[] {
   return merge(goals, TASK_PRIORITY, ONBOARDING_TASK_IDS);
+}
+
+// The agent step completes for Codex or Claude only (deriveGettingStartedSnapshot).
+const CHECKED_AGENTS: readonly { id: GetStartedToolId; label: string }[] = [
+  { id: "claude-code", label: "Claude Code" },
+  { id: "codex", label: "Codex" },
+];
+
+/** Getting started for this owner: their goals first, and the coding agents they picked by name. */
+export function personalizeGettingStartedSteps(
+  steps: readonly GettingStartedStep[],
+  answers: Pick<GetStartedAnswers, "goals" | "tools">,
+): GettingStartedStep[] {
+  const agents = CHECKED_AGENTS.filter((agent) => answers.tools.includes(agent.id)).map((agent) => agent.label);
+  const labelled = agents.length
+    ? steps.map((step) => (step.id === "agent" ? { ...step, label: `Log in to ${agents.join(" / ")}` } : step))
+    : steps;
+  return orderByIds(labelled, getStartedStepOrder(answers.goals));
 }
 
 /** Stable reorder: listed ids first in that order, everything else after in its original order. */

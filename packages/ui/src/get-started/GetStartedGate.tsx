@@ -32,7 +32,7 @@ export function GetStartedGate({ port, zIndex, children, connector: Connector, w
   const backdrop = useDesktopBackdrop(backdropSource, active);
   useGettingStartedBlocker(active);
   useGettingStartedAutoOpenSuppression(getStarted.phase !== "done");
-  usePublishGetStartedAnswers(getStarted.answers);
+  usePublishGetStartedAnswers(getStarted.answers, getStarted.ended);
 
   if (getStarted.phase === "loading") return null;
   if (getStarted.phase === "done" || !getStarted.wizard) return <>{children}</>;

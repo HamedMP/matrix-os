@@ -5,6 +5,7 @@ import {
   getStartedStepOrder,
   getStartedTaskOrder,
   orderByIds,
+  personalizeGettingStartedSteps,
 } from "../../packages/contracts/src/index.js";
 
 describe("personalised arrival order", () => {
@@ -34,5 +35,22 @@ describe("personalised arrival order", () => {
   it("orders items by id and keeps unknown ids at the end", () => {
     const items = [{ id: "a" }, { id: "b" }, { id: "c" }];
     expect(orderByIds(items, ["c", "a"]).map((item) => item.id)).toEqual(["c", "a", "b"]);
+  });
+});
+
+describe("personalised Getting started steps", () => {
+  const steps = GETTING_STARTED_STEP_IDS.map((id) => ({ id, label: id, status: "incomplete" as const }));
+
+  it("leads with the owner's goals and names the coding agents they picked", () => {
+    const personalized = personalizeGettingStartedSteps(steps, { goals: ["code"], tools: ["codex"] });
+    expect(personalized.map((step) => step.id)).toEqual(getStartedStepOrder(["code"]));
+    expect(personalized[0]).toEqual({ id: "agent", label: "Log in to Codex", status: "incomplete" });
+    const both = personalizeGettingStartedSteps(steps, { goals: [], tools: ["codex", "opencode", "claude-code"] });
+    expect(both.find((step) => step.id === "agent")?.label).toBe("Log in to Claude Code / Codex");
+  });
+
+  it("keeps the labels that completion can't check", () => {
+    // Only Codex and Claude count as a logged-in agent, so OpenCode never names the step.
+    expect(personalizeGettingStartedSteps(steps, { goals: [], tools: ["opencode", "github", "gmail"] })).toEqual(steps);
   });
 });

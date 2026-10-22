@@ -34,6 +34,8 @@ export interface GetStartedController {
   error: string | null;
   /** The finished wizard's answers: loaded when already completed, or saved just now. */
   answers: GetStartedAnswers | null;
+  /** The owner finished or skipped setup, earlier or just now. */
+  ended: boolean;
   dispatch(event: GetStartedWizardEvent): void;
   finish(): void;
   skipAll(): void;
@@ -45,6 +47,7 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<GetStartedAnswers | null>(null);
+  const [ended, setEnded] = useState(false);
   const wizardRef = useRef<GetStartedWizardState | null>(null);
   // Saves run one at a time so a slow draft can never land after completion.
   const saveChain = useRef<Promise<SaveResult> | null>(null);
@@ -68,6 +71,7 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
       const state = parsed.data;
       if (state.status !== "pending" && state.status !== "in_progress") {
         if (state.status === "completed") setAnswers(state.answers);
+        setEnded(state.status === "completed" || state.status === "skipped");
         setPhase("done");
         return;
       }
@@ -118,6 +122,7 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
       const parsed = GetStartedResponseSchema.safeParse(await port.load(new AbortController().signal));
       if (!parsed.success || (parsed.data.status !== "completed" && parsed.data.status !== "skipped")) return false;
       if (parsed.data.status === "completed") setAnswers(parsed.data.answers);
+      setEnded(true);
       setPhase("done");
       return true;
     } catch (loadError: unknown) {
@@ -133,6 +138,7 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
       const parsed = result.ok ? GetStartedResponseSchema.safeParse(result.value) : null;
       if (parsed?.success && parsed.data.status === expected) {
         if (parsed.data.status === "completed") setAnswers(parsed.data.answers);
+        setEnded(true);
         setPhase("done");
       } else {
         if (result.ok) console.warn("[get-started] unexpected save response");
@@ -149,5 +155,5 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
 
   const skipAll = useCallback(() => settle({ type: "skip" }, "skipped"), [settle]);
 
-  return { phase, wizard, submitting, error, answers, dispatch, finish, skipAll };
+  return { phase, wizard, submitting, error, answers, ended, dispatch, finish, skipAll };
 }

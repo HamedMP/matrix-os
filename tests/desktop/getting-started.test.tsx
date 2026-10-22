@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
 import { GettingStartedVisibilityProvider, useGettingStartedAutoOpenSuppression } from "../../packages/ui/src/getting-started-visibility";
+import { GetStartedAnswersProvider, GetStartedGate, type GetStartedPort } from "../../packages/ui/src/get-started/index.js";
 import React from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { act, cleanup, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import GettingStartedPopover, {
   gettingStartedAutoOpenKey,
@@ -174,6 +175,35 @@ describe("GettingStartedPopover", () => {
     render(<GettingStartedPopover />);
     expect(await screen.findByRole("dialog", { name: "Getting started" })).not.toBeNull();
     expect(localStorage.getItem(gettingStartedAutoOpenKey("neo", "primary"))).toBe("1");
+  });
+
+  describe("after Get started", () => {
+    function renderAfter(state: unknown) {
+      const port: GetStartedPort = { load: vi.fn(async () => state), save: vi.fn() };
+      render(
+        <GetStartedAnswersProvider scope="test">
+          <GetStartedGate port={port} zIndex={1} />
+          <GettingStartedPopover />
+        </GetStartedAnswersProvider>,
+      );
+    }
+
+    it("reopens on every load until done when setup was skipped", async () => {
+      renderAfter({ status: "skipped", skippedAt: "2026-10-22T10:00:00.000Z" });
+      expect(await screen.findByRole("dialog", { name: "Getting started" })).not.toBeNull();
+    });
+
+    it("leads with the owner's answers and shows an icon on every step", async () => {
+      renderAfter({ status: "completed", completedAt: "2026-10-22T10:00:00.000Z", answers: { goals: ["code"], tools: ["codex"] } });
+      const dialog = await screen.findByRole("dialog", { name: "Getting started" });
+      const rows = await waitFor(() => {
+        const buttons = within(dialog).getAllByRole("button");
+        expect(buttons[0].textContent).toContain("Log in to Codex");
+        return buttons;
+      });
+      expect(rows).toHaveLength(5);
+      for (const row of rows) expect(row.querySelector("svg")).not.toBeNull();
+    });
   });
 
   it("stays closed while the onboarding widget is showing, but still opens from its button", async () => {

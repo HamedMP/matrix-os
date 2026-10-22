@@ -1,12 +1,11 @@
 "use client";
 
-import { useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers } from "@matrix-os/ui";
+import { useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded } from "@matrix-os/ui";
 import { onboardingChecklist } from "@matrix-os/brand";
 import {
   deriveGettingStartedSnapshot,
   emptyGettingStartedSnapshot,
-  getStartedStepOrder,
-  orderByIds,
+  personalizeGettingStartedSteps,
   GETTING_STARTED_STEP_IDS,
   type GettingStartedSnapshot,
   type GettingStartedStep,
@@ -14,7 +13,7 @@ import {
 } from "@matrix-os/contracts";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
-import { CheckIcon, ClipboardCheck, DownloadIcon, Github } from "@/lib/hugeicons";
+import { CheckIcon, ClipboardCheck, CreditCard, DownloadIcon, Folder, Github, KeyRound, MailIcon } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
@@ -79,6 +78,14 @@ export function resolveDesktopDownloadSuggestion(
 
   return fallback;
 }
+
+const STEP_ICONS: Record<GettingStartedStepId, typeof Github> = {
+  github: Github,
+  "email-calendar": MailIcon,
+  agent: KeyRound,
+  "first-work": Folder,
+  billing: CreditCard,
+};
 
 export type GettingStartedSettingsSection = "integrations" | "agents-providers" | "billing";
 
@@ -192,12 +199,15 @@ function GettingStartedPopoverContent({
   const helpTriggerRef = useRef<HTMLButtonElement>(null);
   const [refreshRequest, setRefreshRequest] = useState(0);
   const [snapshot, setSnapshot] = useState(emptyGettingStartedSnapshot);
-  // Spec 635: lead with the steps that fit the owner's Get started goals.
+  // Spec 635: lead with the steps that fit the owner's Get started answers.
   const getStartedAnswers = useGetStartedAnswers();
   const steps = useMemo(
-    () => (getStartedAnswers ? orderByIds(snapshot.steps, getStartedStepOrder(getStartedAnswers.goals)) : snapshot.steps),
+    () => (getStartedAnswers ? personalizeGettingStartedSteps(snapshot.steps, getStartedAnswers) : snapshot.steps),
     [getStartedAnswers, snapshot.steps],
   );
+  // After Get started, the checklist reopens on every load until done, but only once per load.
+  const getStartedEnded = useGetStartedEnded();
+  const autoOpenedThisLoad = useRef(false);
   const [downloadSuggestion, setDownloadSuggestion] = useState<DesktopDownloadSuggestion>({
     href: DESKTOP_APP_DOWNLOAD_URL,
     label: "Choose desktop download",
@@ -251,10 +261,12 @@ function GettingStartedPopoverContent({
       || autoOpenSuppressed
       || isAutoOpenSuppressed()
       || snapshot.completedCount === TOTAL_STEPS
-      || hasAutoOpened(autoOpenKey)
+      || autoOpenedThisLoad.current
+      || (!getStartedEnded && hasAutoOpened(autoOpenKey))
     ) return;
+    autoOpenedThisLoad.current = true;
     setOpen(true);
-  }, [autoOpenKey, snapshot.completedCount, snapshot.loaded, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setOpen]);
+  }, [autoOpenKey, getStartedEnded, snapshot.completedCount, snapshot.loaded, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setOpen]);
 
   useEffect(() => {
     if (!open) return;
@@ -404,6 +416,7 @@ function GettingStartedPopoverContent({
             </a>
             {steps.map((step) => {
               const complete = step.status === "complete";
+              const StepIcon = STEP_ICONS[step.id];
               return (
                 <button
                   key={step.id}
@@ -425,9 +438,7 @@ function GettingStartedPopoverContent({
                   >
                     {step.label}
                   </span>
-                  {step.id === "github" ? (
-                    <Github className="size-4" aria-hidden="true" style={{ color: BRAND_COLORS.subtleText }} />
-                  ) : null}
+                  <StepIcon className="size-4 shrink-0" aria-hidden="true" style={{ color: BRAND_COLORS.subtleText }} />
                 </button>
               );
             })}
