@@ -1,3 +1,4 @@
+// CI measurement only: this PR is never merged.
 import { execFile } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
