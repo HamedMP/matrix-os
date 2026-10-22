@@ -13,15 +13,39 @@ function setup(owner: string | null = 'owner-one', owns = true) {
     recipients: [{ recipientId: 'example-provider', name: 'Example processor', role: 'Inference' }],
     retention: { revision: 1, policyId: 'retention', mode: 'duration', maxAgeSeconds: 86400 },
     dataKinds: ['gmail-metadata', 'gmail-content'], expiresAt: '2026-11-21T12:00:00.000Z' })) };
-  const app = createGoogleDataOwnerRoutes({ repository, authority, resolveOwner: async () => owner,
+  const resolveOwner = vi.fn(async () => owner);
+  const app = createGoogleDataOwnerRoutes({ repository, authority, resolveOwner,
     ownsGoogleAccount: vi.fn(async () => owns), now: () => new Date('2026-10-21T12:00:00.000Z') });
-  return { app, repository, authority };
+  return { app, repository, authority, resolveOwner };
 }
 const accepted = { connectionId: account, profileId, profileRevision: 1, evidenceRevision: 1, disclosureRevision: 1,
   retentionRevision: 1, purposeId: 'mail-assistance', dataKinds: ['gmail-metadata', 'gmail-content'],
   expiresAt: '2026-10-22T12:00:00.000Z', expectedConsentRevision: 0, accepted: true };
 
 describe('owner Gmail processing consent routes', () => {
+  it.each([
+    { method: 'POST', route: '/gmail/processing-consents', limit: 4096, declared: false },
+    { method: 'POST', route: '/gmail/processing-consents', limit: 4096, declared: true },
+    { method: 'DELETE', route: `/gmail/processing-consents/${account}`, limit: 1024, declared: false },
+    { method: 'DELETE', route: `/gmail/processing-consents/${account}`, limit: 1024, declared: true },
+  ])('bounds $method consent bodies before owner lookup (declared=$declared)', async ({ method, route, limit, declared }) => {
+    const { app, repository, authority, resolveOwner } = setup();
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (declared) headers['content-length'] = String(limit + 1);
+    const body = new ReadableStream<Uint8Array>({ start(controller) {
+      controller.enqueue(new Uint8Array(limit));
+      controller.enqueue(new Uint8Array(1));
+      controller.close();
+    } });
+    const response = await app.request(route, { method, headers, body, duplex: 'half' });
+    expect(response.status).toBe(413);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.json()).toEqual({ error: 'Request too large' });
+    expect(resolveOwner).not.toHaveBeenCalled();
+    expect(repository.recordConsent).not.toHaveBeenCalled();
+    expect(repository.revokeAccount).not.toHaveBeenCalled();
+    expect(authority.disclose).not.toHaveBeenCalled();
+  });
   it('contains identity lookup failures without exposing private errors', async () => {
     const { repository, authority } = setup();
     const app = createGoogleDataOwnerRoutes({ repository, authority,

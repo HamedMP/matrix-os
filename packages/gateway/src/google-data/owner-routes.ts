@@ -23,6 +23,10 @@ export function createGoogleDataOwnerRoutes(options: {
 }) {
   const app = new Hono();
   const now = options.now ?? (() => new Date());
+  const tooLarge = (c: Context) => {
+    c.header('Cache-Control', 'no-store');
+    return c.json({ error: 'Request too large' }, 413);
+  };
   const failure = (c: Context, error: unknown) => {
     if (error instanceof GoogleDataAuthorityError) return c.json({ error: 'Gmail data settings unavailable' }, error.code === 'conflict' ? 409 : error.code === 'capacity' ? 429 : 503);
     console.warn('[google-data] Owner settings unavailable:', error instanceof Error ? error.name : 'UnknownError');
@@ -30,7 +34,7 @@ export function createGoogleDataOwnerRoutes(options: {
   };
   app.onError((error, c) => {
     c.header('Cache-Control', 'no-store');
-    if (error.name === 'BodyLimitError') return c.json({ error: 'Request too large' }, 413);
+    if (error.name === 'BodyLimitError') return tooLarge(c);
     return failure(c, error);
   });
   app.get('/gmail/processing-profiles', async c => {
@@ -64,7 +68,7 @@ export function createGoogleDataOwnerRoutes(options: {
       return c.json({ profiles: disclosures });
     } catch (error: unknown) { return failure(c, error); }
   });
-  app.post('/gmail/processing-consents', bodyLimit({ maxSize: 4096 }), async c => {
+  app.post('/gmail/processing-consents', bodyLimit({ maxSize: 4096, onError: tooLarge }), async c => {
     c.header('Cache-Control', 'no-store');
     const ownerId = await options.resolveOwner(c);
     if (!ownerId) return c.json({ error: 'Unauthorized' }, 401);
@@ -72,7 +76,7 @@ export function createGoogleDataOwnerRoutes(options: {
     let body: unknown;
     try { body = await c.req.json(); }
     catch (error: unknown) {
-      if (error instanceof Error && error.name === 'BodyLimitError') return c.json({ error: 'Request too large' }, 413);
+      if (error instanceof Error && error.name === 'BodyLimitError') return tooLarge(c);
       if (!(error instanceof SyntaxError)) console.warn('[google-data] Consent request unavailable:', error instanceof Error ? error.name : 'UnknownError');
       return c.json({ error: 'Invalid request' }, 400);
     }
@@ -93,7 +97,7 @@ export function createGoogleDataOwnerRoutes(options: {
       return c.json({ consentRevision: recorded.revision, consentActive: true });
     } catch (error: unknown) { return failure(c, error); }
   });
-  app.delete('/gmail/processing-consents/:connectionId', bodyLimit({ maxSize: 1024 }), async c => {
+  app.delete('/gmail/processing-consents/:connectionId', bodyLimit({ maxSize: 1024, onError: tooLarge }), async c => {
     c.header('Cache-Control', 'no-store');
     const ownerId = await options.resolveOwner(c);
     if (!ownerId) return c.json({ error: 'Unauthorized' }, 401);
@@ -106,7 +110,7 @@ export function createGoogleDataOwnerRoutes(options: {
       await options.repository.revokeAccount(ownerId, parsed.data);
       return c.json({ revoked: true });
     } catch (error: unknown) {
-      if (error instanceof Error && error.name === 'BodyLimitError') return c.json({ error: 'Request too large' }, 413);
+      if (error instanceof Error && error.name === 'BodyLimitError') return tooLarge(c);
       return failure(c, error);
     }
   });

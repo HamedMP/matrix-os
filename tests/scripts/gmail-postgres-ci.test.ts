@@ -16,6 +16,7 @@ describe('Gmail PostgreSQL CI qualification', () => {
       'tests/gateway/google-managed-profile-resolution.test.ts',
       'tests/gateway/google-pilot-copy-lifecycle.test.ts',
       'tests/gateway/google-pilot-owner-pool.test.ts',
+      'tests/gateway/google-data-owner-routes.test.ts',
       'tests/platform/google-qualified-startup.test.ts',
       'tests/platform/account-deletion-google-cleanup.test.ts']) expect(files).toContain(file);
     expect(new Set(files).size).toBe(files.length);
