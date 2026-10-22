@@ -6,6 +6,7 @@ import { readDriveUploadFile, saveDriveDownloadFile } from "./files/organization
 import { registerTerminalClipboardIpc } from "./files/terminal-clipboard";
 import { pathToFileURL } from "node:url";
 import { createNativeChatgptPlanService } from "./chatgpt-plan/service";
+import { fetchNativePlan } from "./chatgpt-plan/transport";
 import { createPlanVault } from "./chatgpt-plan/vault";
 import { createPlanDiagnosticStore, planDiagnosticDirectory } from "./chatgpt-plan/diagnostic-store";
 import { createNavigationCache } from "./persistence/navigation-cache";
@@ -295,6 +296,7 @@ if (!gotLock) {
       }
       chatgptPlan = createNativeChatgptPlanService({
         auth, vault: createPlanVault({ dir: userData, safeStorage }),
+        fetchFn: fetchNativePlan,
         openBrowser: async url => {
           const authorizationUrl = safeChatgptAuthorizationUrl(url);
           if (!authorizationUrl) throw new Error("invalid authorization URL");
