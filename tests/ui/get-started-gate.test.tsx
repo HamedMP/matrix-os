@@ -200,4 +200,30 @@ describe("GetStartedGate", () => {
     await new Promise((done) => setTimeout(done, 0));
     expect(port.save).toHaveBeenCalledTimes(1);
   });
+
+  it("leaves the wizard when another window already ended setup", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const states: unknown[] = [{ status: "pending" }, { status: "completed", completedAt: AT, answers: { goals: ["code"], tools: [] } }];
+    const port: GetStartedPort = {
+      load: vi.fn(async () => states.shift()),
+      save: vi.fn(async () => { throw new Error("GetStartedRequestFailed:409"); }),
+    };
+    renderGate(port);
+    fireEvent.click(await screen.findByRole("button", { name: "Skip setup" }));
+    expect(await screen.findByTestId("desktop-widget")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(port.load).toHaveBeenCalledTimes(2);
+  });
+
+  it("still offers a retry when the save fails and setup is not over", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const port: GetStartedPort = {
+      load: vi.fn(async () => ({ status: "pending" })),
+      save: vi.fn(async () => { throw new Error("GetStartedRequestFailed:500"); }),
+    };
+    renderGate(port);
+    fireEvent.click(await screen.findByRole("button", { name: "Skip setup" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't save your setup. Try again.");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
 });

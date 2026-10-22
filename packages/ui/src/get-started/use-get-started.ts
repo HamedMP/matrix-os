@@ -112,21 +112,35 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
     if (next.step !== current.step) void enqueue({ type: "draft", draft: getStartedDraftFromWizard(next) });
   }, [enqueue]);
 
+  /** Another window may have finished or skipped setup (the save then fails with 409); the saved state decides. */
+  const endedElsewhere = useCallback(async (): Promise<boolean> => {
+    try {
+      const parsed = GetStartedResponseSchema.safeParse(await port.load(new AbortController().signal));
+      if (!parsed.success || (parsed.data.status !== "completed" && parsed.data.status !== "skipped")) return false;
+      if (parsed.data.status === "completed") setAnswers(parsed.data.answers);
+      setPhase("done");
+      return true;
+    } catch (loadError: unknown) {
+      console.warn("[get-started] state recheck failed:", errorName(loadError));
+      return false;
+    }
+  }, [port]);
+
   const settle = useCallback((update: GetStartedUpdate, expected: "completed" | "skipped") => {
     setSubmitting(true);
     setError(null);
-    void enqueue(update).then((result) => {
+    void enqueue(update).then(async (result) => {
       const parsed = result.ok ? GetStartedResponseSchema.safeParse(result.value) : null;
       if (parsed?.success && parsed.data.status === expected) {
         if (parsed.data.status === "completed") setAnswers(parsed.data.answers);
         setPhase("done");
       } else {
         if (result.ok) console.warn("[get-started] unexpected save response");
-        setError(GET_STARTED_SAVE_ERROR);
+        if (!(await endedElsewhere())) setError(GET_STARTED_SAVE_ERROR);
       }
       setSubmitting(false);
     });
-  }, [enqueue]);
+  }, [endedElsewhere, enqueue]);
 
   const finish = useCallback(() => {
     const current = wizardRef.current;
