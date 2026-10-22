@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -45,6 +46,27 @@ afterEach(() => {
 });
 
 describe("GetStartedGate", () => {
+  it("keeps background shortcuts like the command palette away while setup is open", async () => {
+    const shortcut = vi.fn();
+    window.addEventListener("keydown", shortcut);
+    try {
+      renderGate(makePort({ status: "pending" }).port);
+      const name = await screen.findByPlaceholderText("Your first name");
+      fireEvent.keyDown(document.body, { key: "k", metaKey: true });
+      fireEvent.keyDown(name, { key: "k", ctrlKey: true });
+      expect(shortcut).not.toHaveBeenCalled();
+      // Plain keys still reach the page, so typing, Tab and Enter keep working.
+      fireEvent.keyDown(name, { key: "a" });
+      expect(shortcut).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+      expect(await screen.findByTestId("desktop-widget")).toBeInTheDocument();
+      fireEvent.keyDown(document.body, { key: "k", metaKey: true });
+      expect(shortcut).toHaveBeenCalledTimes(2);
+    } finally {
+      window.removeEventListener("keydown", shortcut);
+    }
+  });
+
   it("holds the onboarding widget back while loading, then shows it for computers that are not eligible", async () => {
     let resolve!: (value: unknown) => void;
     const { port } = makePort(null, { load: vi.fn(() => new Promise((done) => { resolve = done; })) });
@@ -304,5 +326,37 @@ describe("GetStartedGate", () => {
       expect(document.querySelector(".mxo-gs__backdrop")).not.toBeNull();
       expect(document.querySelector<HTMLElement>(".mxo-gs__backdrop-image")?.style.backgroundImage ?? "").toBe("");
     });
+  });
+});
+
+const css = readFileSync("packages/ui/src/get-started/get-started.css", "utf8");
+const rule = (selector: string) => css.match(new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\{[^}]*\\}`))?.[0] ?? "";
+
+describe("get started styles", () => {
+  it("covers the whole desktop with an opaque backdrop despite the centered grid", () => {
+    expect(rule(".mxo-root.mxo-gs")).toContain("place-items: center");
+    const backdrop = rule(".mxo-gs__backdrop");
+    expect(backdrop).toContain("inset: 0");
+    expect(backdrop).toContain("place-self: stretch");
+    expect(backdrop).toContain("width: 100%");
+    expect(backdrop).toContain("height: 100%");
+    expect(backdrop).toContain("overflow: hidden");
+    // Opaque fallback so icons, the dock and windows never show through.
+    expect(backdrop).toMatch(/background-color: #[0-9a-f]{6};/i);
+  });
+
+  it("blurs its own copy of the wallpaper instead of relying on backdrop-filter", () => {
+    const image = rule(".mxo-gs__backdrop-image");
+    expect(image).toMatch(/inset: -\d+px/);
+    expect(image).toContain("background-size: cover");
+    expect(image).toMatch(/filter: blur\((4[0-9]|[5-9][0-9])px\)/);
+    expect(css).not.toContain("backdrop-filter");
+  });
+
+  it("keeps a light tint over the blurred wallpaper", () => {
+    const scrim = rule(".mxo-gs__scrim");
+    expect(scrim).toContain("inset: 0");
+    expect(scrim).toContain("place-self: stretch");
+    expect(scrim).toContain("color-mix(in srgb, var(--mxo-ink)");
   });
 });

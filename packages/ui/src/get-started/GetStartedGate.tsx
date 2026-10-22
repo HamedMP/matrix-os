@@ -1,10 +1,85 @@
-import type { ComponentType, ReactNode } from "react";
+import { useEffect, useState, type ComponentType, type CSSProperties, type ReactNode } from "react";
 import { useGettingStartedAutoOpenSuppression, useGettingStartedBlocker } from "../getting-started-visibility.js";
 import { usePublishGetStartedAnswers } from "./answers-context.js";
 import type { GetStartedConnect, GetStartedConnector } from "./connect.js";
 import { GetStartedWizard } from "./GetStartedWizard.js";
-import { useDesktopBackdrop, type GetStartedBackdropSource } from "./use-desktop-backdrop.js";
 import { useGetStarted, type GetStartedPort } from "./use-get-started.js";
+
+/** Returns the element that paints the surface's desktop background (Web: `<body>`, Electron: the background layer). */
+export type GetStartedBackdropSource = () => HTMLElement | null;
+
+interface DesktopBackdrop {
+  backgroundImage?: string;
+  backgroundColor?: string;
+}
+
+const TRANSPARENT = new Set(["", "transparent", "rgba(0, 0, 0, 0)"]);
+
+function readDesktopBackdrop(element: HTMLElement | null): DesktopBackdrop | null {
+  if (!element) return null;
+  const style = window.getComputedStyle(element);
+  const image = style.backgroundImage;
+  const color = style.backgroundColor;
+  const backdrop: DesktopBackdrop = {
+    ...(image && image !== "none" ? { backgroundImage: image } : {}),
+    ...(!TRANSPARENT.has(color) ? { backgroundColor: color } : {}),
+  };
+  return backdrop.backgroundImage || backdrop.backgroundColor ? backdrop : null;
+}
+
+function sameBackdrop(a: DesktopBackdrop | null, b: DesktopBackdrop | null): boolean {
+  return a?.backgroundImage === b?.backgroundImage && a?.backgroundColor === b?.backgroundColor;
+}
+
+/**
+ * Copies the desktop's own background (wallpaper image or colour) so the wizard can draw it
+ * blurred and opaque. It follows later changes: a background layer that mounts after the
+ * wizard (Electron) or a wallpaper that finishes loading. Page changes are read at most once
+ * per frame, and watching stops as soon as the wizard closes.
+ */
+function useDesktopBackdrop(source: GetStartedBackdropSource | undefined, active: boolean): CSSProperties | null {
+  const [backdrop, setBackdrop] = useState<DesktopBackdrop | null>(null);
+
+  useEffect(() => {
+    if (!active || !source || typeof window === "undefined") return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const next = readDesktopBackdrop(source());
+      setBackdrop((previous) => (sameBackdrop(previous, next) ? previous : next));
+    };
+    update();
+    if (typeof MutationObserver === "undefined") return;
+    const schedule = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(update);
+    };
+    const observer = new MutationObserver(schedule);
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["style", "class"] });
+    return () => {
+      observer.disconnect();
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [source, active]);
+
+  return backdrop;
+}
+
+/**
+ * While setup is open, modifier shortcuts (Cmd/Ctrl/Alt) stop at the window, so nothing behind the
+ * wizard, such as the command palette, opens and takes focus. Typing, Tab and Enter are untouched,
+ * and no default action is prevented, so copy and paste keep working.
+ */
+function useBlockBackgroundShortcuts(active: boolean): void {
+  useEffect(() => {
+    if (!active) return;
+    const block = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) event.stopPropagation();
+    };
+    window.addEventListener("keydown", block, true);
+    return () => window.removeEventListener("keydown", block, true);
+  }, [active]);
+}
 
 export interface GetStartedGateProps {
   port: GetStartedPort;
@@ -30,6 +105,7 @@ export function GetStartedGate({ port, zIndex, children, connector: Connector, w
   const getStarted = useGetStarted(port);
   const active = getStarted.phase === "active";
   const backdrop = useDesktopBackdrop(backdropSource, active);
+  useBlockBackgroundShortcuts(active);
   useGettingStartedBlocker(active);
   useGettingStartedAutoOpenSuppression(getStarted.phase !== "done");
   usePublishGetStartedAnswers(getStarted.answers, getStarted.ended);

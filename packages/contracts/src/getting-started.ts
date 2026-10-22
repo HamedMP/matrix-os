@@ -21,6 +21,8 @@ export interface GettingStartedSnapshot {
   steps: GettingStartedStep[];
   completedCount: number;
   loaded: boolean;
+  /** Signed-in coding agents ("codex", "claude"); null while unknown. */
+  availableAgents: string[] | null;
 }
 
 export interface GettingStartedResults {
@@ -106,12 +108,20 @@ export function emptyGettingStartedSnapshot(): GettingStartedSnapshot {
   return {
     loaded: false,
     completedCount: 0,
+    availableAgents: null,
     steps: GETTING_STARTED_STEP_IDS.map((id) => ({
       id,
       label: STEP_LABELS[id],
       status: "unavailable",
     })),
   };
+}
+
+/** The agents the agent step counts (Codex, Claude) that are signed in. */
+function availableAgents(value: unknown): string[] {
+  return (AgentStatusSchema.parse(value).agents ?? [])
+    .filter((agent) => (agent.agent === "codex" || agent.agent === "claude") && agent.status === "available")
+    .map((agent) => agent.agent);
 }
 
 export function deriveGettingStartedSnapshot(
@@ -131,12 +141,7 @@ export function deriveGettingStartedSnapshot(
       const services = connectedServices(value);
       return services.has("gmail") && services.has("google_calendar");
     }),
-    agent: statusFrom(results.agents, (value) => (
-      AgentStatusSchema.parse(value).agents?.some((agent) => (
-        (agent.agent === "codex" || agent.agent === "claude")
-        && agent.status === "available"
-      )) === true
-    )),
+    agent: statusFrom(results.agents, (value) => availableAgents(value).length > 0),
     "first-work": alternativeCompletionStatus(
       statusFrom(results.projects, (value) => ProjectsSchema.parse(value).projects.length > 0),
       statusFrom(results.chats, (value) => ChatsSchema.parse(value).items.length > 0),
@@ -156,5 +161,6 @@ export function deriveGettingStartedSnapshot(
     steps,
     completedCount: steps.filter((step) => step.status === "complete").length,
     loaded: true,
+    availableAgents: results.agents.status === "fulfilled" && statuses.agent !== "unavailable" ? availableAgents(results.agents.value) : null,
   };
 }

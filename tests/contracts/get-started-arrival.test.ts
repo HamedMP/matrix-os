@@ -6,6 +6,7 @@ import {
   getStartedTaskOrder,
   orderByIds,
   personalizeGettingStartedSteps,
+  deriveGettingStartedSnapshot,
 } from "../../packages/contracts/src/index.js";
 
 describe("personalised arrival order", () => {
@@ -47,6 +48,28 @@ describe("personalised Getting started steps", () => {
     expect(personalized[0]).toEqual({ id: "agent", label: "Log in to Codex", status: "incomplete" });
     const both = personalizeGettingStartedSteps(steps, { goals: [], tools: ["codex", "opencode", "claude-code"] });
     expect(both.find((step) => step.id === "agent")?.label).toBe("Log in to Claude Code / Codex");
+  });
+
+  it("ticks the named agent step only for an agent the owner picked", () => {
+    const signedIn = steps.map((step) => (step.id === "agent" ? { ...step, status: "complete" as const } : step));
+    const agent = (available: readonly string[] | null) => personalizeGettingStartedSteps(signedIn, { goals: [], tools: ["codex"] }, available)
+      .find((step) => step.id === "agent");
+    expect(agent(["claude"])).toEqual({ id: "agent", label: "Log in to Codex", status: "incomplete" });
+    expect(agent(["codex"])).toEqual({ id: "agent", label: "Log in to Codex", status: "complete" });
+    expect(agent(null)?.status).toBe("complete");
+  });
+
+  it("records which agents are signed in", () => {
+    const fulfilled = (value: unknown): PromiseSettledResult<unknown> => ({ status: "fulfilled", value });
+    const snapshot = deriveGettingStartedSnapshot({
+      github: fulfilled({ authenticated: false }),
+      integrations: fulfilled([]),
+      agents: fulfilled({ agents: [{ agent: "claude", status: "available" }, { agent: "codex", status: "missing" }] }),
+      projects: fulfilled({ projects: [] }),
+      chats: fulfilled({ items: [] }),
+      billing: fulfilled({ access: { runtimeProxyAllowed: false } }),
+    });
+    expect(snapshot.availableAgents).toEqual(["claude"]);
   });
 
   it("keeps the labels that completion can't check", () => {

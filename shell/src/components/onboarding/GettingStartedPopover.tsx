@@ -202,9 +202,10 @@ function GettingStartedPopoverContent({
   // Spec 635: lead with the steps that fit the owner's Get started answers.
   const getStartedAnswers = useGetStartedAnswers();
   const steps = useMemo(
-    () => (getStartedAnswers ? personalizeGettingStartedSteps(snapshot.steps, getStartedAnswers) : snapshot.steps),
-    [getStartedAnswers, snapshot.steps],
+    () => (getStartedAnswers ? personalizeGettingStartedSteps(snapshot.steps, getStartedAnswers, snapshot.availableAgents) : snapshot.steps),
+    [getStartedAnswers, snapshot.steps, snapshot.availableAgents],
   );
+  const completedCount = steps.filter((step) => step.status === "complete").length;
   // After Get started, the checklist reopens on every load until done, but only once per load.
   const getStartedEnded = useGetStartedEnded();
   const autoOpenedThisLoad = useRef(false);
@@ -260,13 +261,13 @@ function GettingStartedPopoverContent({
       || isBlocked()
       || autoOpenSuppressed
       || isAutoOpenSuppressed()
-      || snapshot.completedCount === TOTAL_STEPS
+      || completedCount === TOTAL_STEPS
       || autoOpenedThisLoad.current
       || (!getStartedEnded && hasAutoOpened(autoOpenKey))
     ) return;
     autoOpenedThisLoad.current = true;
     setOpen(true);
-  }, [autoOpenKey, getStartedEnded, snapshot.completedCount, snapshot.loaded, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setOpen]);
+  }, [autoOpenKey, getStartedEnded, completedCount, snapshot.loaded, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setOpen]);
 
   useEffect(() => {
     if (!open) return;
@@ -319,8 +320,8 @@ function GettingStartedPopoverContent({
     }
   }, [open, isBlocked, autoOpenKey]);
 
-  const label = `Getting started — ${snapshot.completedCount} of ${TOTAL_STEPS}`;
-  const progress = `${(snapshot.completedCount / TOTAL_STEPS) * 100}%`;
+  const label = `Getting started — ${completedCount} of ${TOTAL_STEPS}`;
+  const progress = `${(completedCount / TOTAL_STEPS) * 100}%`;
 
   const trigger = (closeHelp?: () => void) => <PopoverPrimitive.Trigger asChild>
         <button
@@ -335,15 +336,15 @@ function GettingStartedPopoverContent({
           }}
         >
           <ClipboardCheck className="size-4" aria-hidden="true" />
-          {helpMenu ? <><span className="flex-1">Getting started</span><span className="text-xs">{snapshot.completedCount} of {TOTAL_STEPS}</span><span className="h-1 w-full overflow-hidden rounded" style={{ background: BRAND_COLORS.progressTrack }}><span className="block h-full" style={{ width: progress, background: BRAND_COLORS.progressFill }} /></span></> : null}
-          {!helpMenu && snapshot.completedCount < TOTAL_STEPS ? (
+          {helpMenu ? <><span className="flex-1">Getting started</span><span className="text-xs">{completedCount} of {TOTAL_STEPS}</span><span className="h-1 w-full overflow-hidden rounded" style={{ background: BRAND_COLORS.progressTrack }}><span className="block h-full" style={{ width: progress, background: BRAND_COLORS.progressFill }} /></span></> : null}
+          {!helpMenu && completedCount < TOTAL_STEPS ? (
             <span aria-hidden="true" className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-primary" />
           ) : null}
         </button>
       </PopoverPrimitive.Trigger>;
   return (
     <PopoverPrimitive.Root open={open} onOpenChange={handleRadixOpenChange}>
-      {helpMenu ? <DesktopHelpMenu {...helpMenu} incomplete={snapshot.completedCount < TOTAL_STEPS} gettingStarted={trigger}
+      {helpMenu ? <DesktopHelpMenu {...helpMenu} incomplete={completedCount < TOTAL_STEPS} gettingStarted={trigger}
         gettingStartedOpen={requestedOpen} onGettingStartedClose={() => setOpen(false)} triggerRef={helpTriggerRef}
         anchorTrigger={(helpTrigger) => <PopoverPrimitive.Anchor asChild>{helpTrigger}</PopoverPrimitive.Anchor>} /> : trigger()}
       <PopoverPrimitive.Portal>
@@ -381,7 +382,7 @@ function GettingStartedPopoverContent({
               data-testid="getting-started-counter"
               style={{ color: BRAND_COLORS.subtleText, fontSize: 11, fontWeight: 500, lineHeight: "normal" }}
             >
-              {snapshot.completedCount} of {TOTAL_STEPS}
+              {completedCount} of {TOTAL_STEPS}
             </span>
           </div>
           <div className="px-3 pb-4">

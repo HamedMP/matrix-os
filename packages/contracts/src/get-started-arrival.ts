@@ -38,20 +38,28 @@ export function getStartedTaskOrder(goals: readonly GetStartedGoalId[]): Onboard
 }
 
 // The agent step completes for Codex or Claude only (deriveGettingStartedSnapshot).
-const CHECKED_AGENTS: readonly { id: GetStartedToolId; label: string }[] = [
-  { id: "claude-code", label: "Claude Code" },
-  { id: "codex", label: "Codex" },
+const CHECKED_AGENTS: readonly { id: GetStartedToolId; label: string; agent: string }[] = [
+  { id: "claude-code", label: "Claude Code", agent: "claude" },
+  { id: "codex", label: "Codex", agent: "codex" },
 ];
 
-/** Getting started for this owner: their goals first, and the coding agents they picked by name. */
+/**
+ * Getting started for this owner: their goals first, and the coding agents they picked by name.
+ * A named agent step is done only when one of those agents is signed in (`availableAgents`).
+ */
 export function personalizeGettingStartedSteps(
   steps: readonly GettingStartedStep[],
   answers: Pick<GetStartedAnswers, "goals" | "tools">,
+  availableAgents: readonly string[] | null = null,
 ): GettingStartedStep[] {
-  const agents = CHECKED_AGENTS.filter((agent) => answers.tools.includes(agent.id)).map((agent) => agent.label);
-  const labelled = agents.length
-    ? steps.map((step) => (step.id === "agent" ? { ...step, label: `Log in to ${agents.join(" / ")}` } : step))
-    : steps;
+  const picked = CHECKED_AGENTS.filter((agent) => answers.tools.includes(agent.id));
+  const named = (step: GettingStartedStep): GettingStartedStep => {
+    const label = `Log in to ${picked.map((agent) => agent.label).join(" / ")}`;
+    if (!availableAgents || step.status === "unavailable") return { ...step, label };
+    const ready = picked.some((agent) => availableAgents.includes(agent.agent));
+    return { ...step, label, status: ready ? "complete" : "incomplete" };
+  };
+  const labelled = picked.length ? steps.map((step) => (step.id === "agent" ? named(step) : step)) : steps;
   return orderByIds(labelled, getStartedStepOrder(answers.goals));
 }
 
