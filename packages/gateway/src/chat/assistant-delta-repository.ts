@@ -8,7 +8,8 @@ import { SealedAssistantCredentialSchema, type SealedAssistantCredential } from 
 import { ChatConflictError, ChatNotFoundError, ChatRunNotActiveError } from "./errors.js";
 import { jsonb, messageAttribution, messageSearchText, toMessage, type ChatOwner, type ChatOutboxEventType } from "./records.js";
 export type AssistantDeltaExecutor = Kysely<ChatDatabase> | Transaction<ChatDatabase>;
-export type AssistantDeltaTransact = <T>(work: (tx: AssistantDeltaExecutor) => Promise<T>) => Promise<T>;
+import type { ChatCommitReleaseCheck } from "./outbox-delivery.js";
+export type AssistantDeltaTransact = <T>(work: (tx: AssistantDeltaExecutor) => Promise<T>, beforeRelease?: ChatCommitReleaseCheck) => Promise<T>;
 export interface AssistantDeltaWriteKey { owner: ChatOwner; chatId: string; runId: string; messageId: string }
 export interface AssistantDeltaWriteHook {
   write<T>(key: AssistantDeltaWriteKey, transact: AssistantDeltaTransact,

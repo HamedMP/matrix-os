@@ -1,4 +1,4 @@
-import type { AssistantDeltaInput, AssistantDeltaWriteHook } from "./assistant-delta-repository.js";
+import type { AssistantDeltaInput, AssistantDeltaWriteHook, AssistantDeltaTransact } from "./assistant-delta-repository.js";
 import { createChat, type ChatCreationOptions } from "./creation-repository.js";
 import { readChatImportSource } from "./import-source.js";
 import { listChats, updateChat, renameChat } from "./metadata-repository.js";
@@ -516,7 +516,7 @@ export class ChatRepository {
     this.detail = new ChatDetailRepository(this.kysely, hydrateRecord.bind(null, this.kysely));
     this.runLifecycle = new ChatRunLifecycleRepository(
       this.kysely,
-      (fn) => this.transact(fn),
+      (fn, check) => this.transact(fn, check),
       (executor, owner, chatId, revision, eventType, payload) => this.appendOutbox(
         executor,
         owner,
@@ -620,18 +620,26 @@ export class ChatRepository {
     ));
   }
 
-  private async transact<T>(fn: (trx: Executor) => Promise<T>): Promise<T> {
-    if (this.transactionScoped) return fn(this.kysely);
-    const result = await this.kysely.transaction().execute(async (trx) => {
-      const pending = this.outboxDelivery.begin(trx);
-      try {
-        return { value: await fn(trx), pending };
-      } finally {
-        this.outboxDelivery.end(trx);
-      }
-    });
-    this.outboxDelivery.flush(result.pending);
-    return result.value;
+  private async transact<T>(fn: (trx: Executor) => Promise<T>, beforeRelease?: Parameters<AssistantDeltaTransact>[1]): Promise<T> {
+    if (this.transactionScoped) {
+      if (beforeRelease) this.outboxDelivery.beforeRelease(this.kysely, beforeRelease);
+      return fn(this.kysely);
+    }
+    let executor: Executor | undefined;
+    try {
+      const result = await this.kysely.transaction().execute(async (trx) => {
+        executor = trx;
+        const batch = this.outboxDelivery.begin(trx);
+        if (beforeRelease) this.outboxDelivery.beforeRelease(trx, beforeRelease);
+        const value = await fn(trx);
+        this.outboxDelivery.seal(trx);
+        return { value, batch };
+      });
+      this.outboxDelivery.commit(result.batch);
+      return result.value;
+    } finally {
+      if (executor) this.outboxDelivery.end(executor);
+    }
   }
 
   private async appendOutbox(
