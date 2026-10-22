@@ -1032,7 +1032,8 @@ jobs:
     needs: [changes, ci-backend]
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Cold Chromium setup can exceed10m before required Electron tests start.
+    timeout-minutes: 30
     env:
       LANG: C.UTF-8
       LC_ALL: C.UTF-8

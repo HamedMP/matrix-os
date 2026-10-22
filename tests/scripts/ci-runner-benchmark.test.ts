@@ -47,6 +47,7 @@ const nativeProjects = [
   ["packages/edge-router", "tsconfig.json", false],
   ["desktop", "tsconfig.json", false],
   ["desktop", "tsconfig.node.json", false],
+  ["shell", "tsconfig.e2e.json", false],
 ] as const;
 function expectBothNativePasses(calls: string[]) {
   const actual = calls.filter((call) => call.startsWith("native-check ")).map((call) => JSON.parse(call.slice("native-check ".length)));

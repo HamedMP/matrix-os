@@ -11,11 +11,11 @@ const configs = [
   'packages/observability/tsconfig.json', 'packages/integrations-mcp/tsconfig.json',
   'packages/gateway/tsconfig.json', 'packages/platform/tsconfig.typecheck.json',
   'packages/proxy/tsconfig.json', 'packages/edge-router/tsconfig.json',
-  'desktop/tsconfig.json', 'desktop/tsconfig.node.json',
+  'desktop/tsconfig.json', 'desktop/tsconfig.node.json', 'shell/tsconfig.e2e.json',
 ];
 
 describe('native standalone typecheck', () => {
-  it('checks all eight original projects with the pinned native entry point', async () => {
+  it('checks the original projects and separate shell E2E project with the pinned native entry point', async () => {
     const { runTypechecks } = await load();
     const calls: { binary: string; args: string[]; options: { cwd: string; timeout: number } }[] = [];
     const status = runTypechecks({ root, nativeEntry: '/compiler/bin/tsc', run: (binary: string, args: string[], options: typeof calls[number]['options']) => {
@@ -41,7 +41,7 @@ describe('native standalone typecheck', () => {
     expect(JSON.parse(readFileSync(join(root, 'packages/edge-router/tsconfig.json'), 'utf8')).compilerOptions.types).toEqual(['@cloudflare/workers-types']);
   });
 
-  it('offers the same eight projects through each package’s legacy compiler for parity checks', async () => {
+  it('offers the same projects including shell E2E through each package’s legacy compiler for parity checks', async () => {
     const { runTypechecks } = await load();
     const calls: { binary: string; args: string[]; cwd: string }[] = [];
     expect(runTypechecks({ root, compiler: 'legacy', run: (binary: string, args: string[], options: { cwd: string }) => { calls.push({ binary, args, cwd: options.cwd }); return { status: 0 }; } })).toBe(0);
