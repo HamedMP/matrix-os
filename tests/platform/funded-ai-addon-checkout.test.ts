@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
+import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import {
   createBillingRoutes,
   type StripeBillingClient,
@@ -81,6 +82,7 @@ describe("funded AI add-on checkout", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await destroyTestPlatformDb(db);
   });
 
@@ -437,6 +439,30 @@ describe("funded AI add-on checkout", () => {
       modelId: "anthropic/claude-sonnet-5",
       maxCostMicrousd: 1,
     })).rejects.toMatchObject({ code: "access_disabled" });
+  });
+  it('aligns credit-backed budgets through signed dispute reversal and restoration without duplicate grants', async () => {
+    await repository.setRuntimePolicy({ identity, expectedRevision: 1, enabled: true,
+      allowedModelIds: ['anthropic/claude-sonnet-5'], monthlyBudgetMicrousd: 0, budgetMode: 'credit_backed', expiresAt: null });
+    await purchaseCredit();
+    expect(await repository.getFundingSummary(identity)).toMatchObject({ monthlyBudgetMicrousd: 5_000_000 });
+    expect((await deliver(disputeEvent('charge.dispute.created', 'under_review', 'evt_cap_open'))).status).toBe(200);
+    expect(await repository.getFundingSummary(identity)).toMatchObject({ creditBalanceMicrousd: 0, monthlyBudgetMicrousd: 0 });
+    expect((await deliver(disputeEvent('charge.dispute.closed', 'won', 'evt_cap_won'))).status).toBe(200);
+    expect(await repository.getFundingSummary(identity)).toMatchObject({ creditBalanceMicrousd: 5_000_000, monthlyBudgetMicrousd: 5_000_000 });
+    const before = await repository.getRuntimePolicy(identity);
+    expect((await deliver(disputeEvent('charge.dispute.closed', 'won', 'evt_cap_won_duplicate'))).status).toBe(200);
+    expect(await repository.getRuntimePolicy(identity)).toEqual(before);
+  });
+  it('continues refund reconciliation after account deletion admission closes', async () => {
+    await purchaseCredit();
+    const secret = 'deletion-fixture-secret-at-least-32-bytes';
+    vi.stubEnv('ACCOUNT_DELETION_SECRET', secret);
+    const deletion = new AccountDeletionRepository(db.kysely, { secret, now: () => new Date('2026-08-31T10:00:00.000Z') });
+    await deletion.accept({ clerkUserId: identity.ownerId, appleTokens: [] }, false);
+    expect((await deliver(refundedEvent())).status).toBe(200);
+    expect(await repository.getFundingSummary(identity)).toMatchObject({ creditBalanceMicrousd: 0 });
+    expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('kind')
+      .where('kind', '=', 'addon_reversal').execute()).toHaveLength(1);
   });
 
   it("ignores unrelated Stripe refunds without trapping subscription webhook delivery", async () => {

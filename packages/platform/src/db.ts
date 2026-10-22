@@ -117,6 +117,7 @@ export interface AiFundedRuntimePoliciesTable {
   enabled: boolean;
   allowed_model_ids: string;
   monthly_budget_microusd: number;
+  budget_mode: Generated<'fixed' | 'credit_backed'>;
   expires_at: string | null;
   next_issue_at: string;
   next_background_issue_at: Generated<string>;

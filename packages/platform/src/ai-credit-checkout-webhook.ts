@@ -1,5 +1,6 @@
 import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import { z } from "zod/v4";
+import { sql } from 'kysely';
 import type { AiFundedPolicyRepository } from "./ai-funded-policy-repository.js";
 import {
   assertAiCreditCheckoutMetadata,
@@ -130,13 +131,30 @@ async function processSessionEvent(options: {
   return { received: true, processed: true };
 }
 
+async function lockedReconciliationClaim(trx: PlatformDB, paymentIntentId: string | null,
+  chargeId: string | null, requestId: string | null) {
+  const locator = await getClaimByPaymentReference(trx, paymentIntentId, chargeId, false)
+    ?? (requestId ? await getClaimByRequestId(trx, requestId) : undefined);
+  if (!locator) return undefined;
+  // Resolve owner before taking any claim lock. Reconciliation continues during
+  // account deletion; admission only serializes it with billing and erasure.
+  return withAccountDeletionOwnerLock(trx, locator.owner_id, async locked => {
+    await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${locator.owner_id}`}, 0))`.execute(locked.executor);
+    const claim = await getClaimByPaymentReference(locked, paymentIntentId, chargeId)
+      ?? (requestId ? await getClaimByRequestId(locked, requestId, true) : undefined);
+    if (!claim || claim.request_id !== locator.request_id || claim.owner_id !== locator.owner_id) {
+      throw new Error('Funded AI reconciliation claim changed');
+    }
+    return claim;
+  });
+}
+
 async function processRefundEvent(event: StripeWebhookEvent, trx: PlatformDB, at: string) {
   if (event.type !== "charge.refunded") return null;
   const charge = StripeRefundedChargeSchema.parse(event.data.object);
   const paymentIntentId = expandableStripeId(charge.payment_intent);
   const metadataRequestId = readAiCreditCheckoutRequestId(event.data.object);
-  const claim = await getClaimByPaymentReference(trx, paymentIntentId, charge.id)
-    ?? (metadataRequestId ? await getClaimByRequestId(trx, metadataRequestId, true) : undefined);
+  const claim = await lockedReconciliationClaim(trx, paymentIntentId, charge.id, metadataRequestId);
   if (!claim && !metadataRequestId) return { received: true, ignored: true } as const;
   if (!claim || claim.currency !== charge.currency || Number(claim.granted_microusd) <= 0) {
     throw new Error("Funded AI refund claim is missing");
@@ -158,8 +176,7 @@ async function processDisputeEvent(event: StripeWebhookEvent, trx: PlatformDB, a
   const chargeId = expandableStripeId(dispute.charge);
   const paymentIntentId = expandableStripeId(dispute.payment_intent);
   const metadataRequestId = readAiCreditCheckoutRequestId(event.data.object);
-  const claim = await getClaimByPaymentReference(trx, paymentIntentId, chargeId)
-    ?? (metadataRequestId ? await getClaimByRequestId(trx, metadataRequestId, true) : undefined);
+  const claim = await lockedReconciliationClaim(trx, paymentIntentId, chargeId, metadataRequestId);
   if (!claim && !metadataRequestId) return { received: true, ignored: true } as const;
   if (!claim || !chargeId || Number(claim.granted_microusd) <= 0) {
     throw new Error("Funded AI dispute claim is missing");

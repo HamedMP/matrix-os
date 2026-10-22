@@ -130,9 +130,10 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       }
 
       const billingMode: FundedBillingMode = request.billingMode === "usage" ? "usage" : "hold";
-      const monthlyBudget = exactInteger(runtime.monthly_budget_microusd);
       const balance = await trx.executor.selectFrom("ai_funded_runtime_balances")
         .selectAll().where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirstOrThrow();
+      const monthlyBudget = fundingSummary(balance, exactInteger(runtime.monthly_budget_microusd),
+        checkedAt, runtime.budget_mode).monthlyBudgetMicrousd;
       // Upper bounds ignore active holds, which may still be released. A request that
       // cannot fit even then fails now and never takes a priority place.
       const sourceAvailability = await fundingSourceAvailability(trx.executor, identity, balance, checkedAt);

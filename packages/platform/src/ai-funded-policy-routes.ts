@@ -454,6 +454,7 @@ export function createAiFundedOperatorRoutes(options: {
         revision: policy.revision,
         allowedModelIds: policy.allowedModelIds,
         monthlyBudgetMicrousd: policy.monthlyBudgetMicrousd,
+        ...(policy.budgetMode ? { budgetMode: policy.budgetMode } : {}),
         expiresAt: policy.expiresAt,
         updatedAt: policy.updatedAt,
       },

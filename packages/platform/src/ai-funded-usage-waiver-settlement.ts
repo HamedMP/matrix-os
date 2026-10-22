@@ -10,7 +10,8 @@ import { readUsageWaiverAudit } from "./ai-funded-usage-waiver-audit.js";
 export async function settleWaivedUsage(executor: PlatformDB["executor"],
   row: Selectable<AiFundedUsageReservationsTable>, actual: number, monthlyBudget: number,
   checkedAt: string, provenance?: z.infer<typeof JevProvenanceSchema>,
-  manualReview?: { expectedRequestId: string; evidenceRef: string; reviewer: string }) {
+  manualReview?: { expectedRequestId: string; evidenceRef: string; reviewer: string },
+  budgetMode?: 'fixed' | 'credit_backed') {
   const audit = readUsageWaiverAudit(row);
   const expected = audit.request.reservations.find((item) => item.reservationId === row.reservation_id)!;
   if (actual > expected.maximumLiabilityMicrousd) throw new AiFundedPolicyError("over_settlement");
@@ -25,7 +26,7 @@ export async function settleWaivedUsage(executor: PlatformDB["executor"],
   const balance = await executor.selectFrom("ai_funded_runtime_balances").selectAll()
     .where("machine_id", "=", row.machine_id).where("owner_id", "=", row.owner_id)
     .where("runtime_slot", "=", row.runtime_slot).executeTakeFirstOrThrow();
-  const funding = fundingSummary(balance, monthlyBudget, checkedAt);
+  const funding = fundingSummary(balance, monthlyBudget, checkedAt, budgetMode);
   const response = FundedAiSettlementResponseSchema.parse({ contractVersion: 1,
     reservationId: row.reservation_id, requestId: row.request_id, tokenId: row.token_id,
     actualCostMicrousd: actual, chargedCostMicrousd: 0, matrixAbsorbedMicrousd: actual,

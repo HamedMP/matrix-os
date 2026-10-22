@@ -68,6 +68,7 @@ export async function initializeCustomerFundedStarterPolicy(
     const inserted = existing ? undefined : await trx.executor.insertInto('ai_funded_runtime_policies').values({
       machine_id: machineId, owner_id: machine.clerk_user_id, runtime_slot: 'primary', enabled: true,
       allowed_model_ids: JSON.stringify(models), monthly_budget_microusd: STARTER_MICROUSD,
+      budget_mode: 'credit_backed',
       expires_at: null, revision: 1, next_issue_at: '1970-01-01T00:00:00.000Z', created_at: at, updated_at: at,
     }).onConflict(conflict => conflict.column('machine_id').doNothing()).returning('machine_id').executeTakeFirst();
     const month = new Date(Date.UTC(new Date(at).getUTCFullYear(), new Date(at).getUTCMonth(), 1)).toISOString();

@@ -72,6 +72,7 @@ export const FundedAiOperatorRuntimePolicyUpdateRequestSchema = z.object({
   enabled: z.boolean(),
   allowedModelIds: UniqueModelIdsSchema,
   monthlyBudgetMicrousd: MicrousdSchema,
+  budgetMode: z.enum(['fixed', 'credit_backed']).optional(),
   expiresAt: IsoTimestampSchema.nullable(),
 }).strict();
 
@@ -82,6 +83,7 @@ export const FundedAiOperatorRuntimePolicyResponseSchema = z.object({
     revision: RevisionSchema,
     allowedModelIds: UniqueModelIdsSchema,
     monthlyBudgetMicrousd: MicrousdSchema,
+    budgetMode: z.enum(['fixed', 'credit_backed']).optional(),
     expiresAt: IsoTimestampSchema.nullable(),
     updatedAt: IsoTimestampSchema,
   }).strict(),
