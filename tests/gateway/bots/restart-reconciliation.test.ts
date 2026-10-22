@@ -1,3 +1,5 @@
+import { createOwnerChatHistoryRepository } from '../../../packages/gateway/src/startup/chat-history.js';
+import { createExecutionAdmissionFence } from '../../../packages/gateway/src/execution-admission-fence.js';
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -167,6 +169,33 @@ describe("bot services at gateway start", () => {
     expect(down.registerAuthorizer).not.toHaveBeenCalled();
     await expect(services!.botChats.directBot({ type: "personal", ownerId: OWNER }, "chat_none")).resolves.toBeNull();
     await services!.close();
+  });
+
+  it("starts exact-owner pilot purge delivery and drains actual transport before local services close", async () => {
+    const history=createOwnerChatHistoryRepository(repository.kysely,{pilot:{enabled:true,ownerId:OWNER}}); await history.bootstrap();
+    const {host:runtimeHost}=host(); let release!:(response:Response)=>void;
+    const integrations=vi.fn(async (_owner:string,request:{path:string;signal?:AbortSignal})=>{
+      expect(_owner).toBe(OWNER); expect(request.path).toBe('/gmail/processing/purge-commands');
+      return new Promise<Response>(resolve=>{release=resolve;});
+    });
+    const services=await startBots({...base(),repository:history.repository,runtimeOwnerId:OWNER,host:runtimeHost as never,
+      googlePilot:{enabled:true,ownerId:OWNER},googleCopies:history.googleCopies,
+      executionAdmissionFence:createExecutionAdmissionFence(),pendingExecutionCount:()=>0,integrations});
+    expect(services?.purgeGoogleAccount).toBeTypeOf('function');
+    await vi.waitFor(()=>expect(integrations).toHaveBeenCalledOnce());
+    let closed=false;const closing=services!.close().then(()=>{closed=true;}); await new Promise(resolve=>setTimeout(resolve,10));expect(closed).toBe(false);
+    release(Response.json({commands:[]}));await closing;expect(closed).toBe(true);
+    expect(await repository.kysely.selectFrom('chat_runs').select('id').execute()).toEqual([]);
+  });
+
+  it("refuses enabled pilot startup when required transport or bot state is unavailable", async () => {
+    const closed = await createBotStateDatabase({ migrate: false }); await closed.destroy();
+    const { host: runtimeHost } = host();
+    const options = { ...base(), runtimeOwnerId: OWNER, googlePilot: { enabled: true as const, ownerId: OWNER },
+      googleCopies: {} as never, host: runtimeHost as never, executionAdmissionFence: createExecutionAdmissionFence(),
+      pendingExecutionCount: () => 0, repository: { kysely: closed.db, withTransaction: vi.fn() } as never };
+    await expect(startBots(options)).rejects.toThrow('Google pilot unavailable');
+    await expect(startBots({ ...options, integrations: vi.fn(async () => new Response()) as never })).rejects.toThrow('Google pilot unavailable');
   });
 
   it("leaves bots unavailable, without failing the gateway, when bot state cannot be prepared", async () => {

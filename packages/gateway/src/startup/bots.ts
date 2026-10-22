@@ -1,3 +1,4 @@
+import { createGooglePurgeDeliveryPoller } from '../google-data/purge-delivery/poller.js';
 import { createGooglePilotCopyLifecycle, type GooglePilotPurgeCommand, type GooglePilotPurgeReceipt } from './google-pilot-copy-lifecycle.js';
 import type { ExecutionAdmissionFence } from '../execution-admission-fence.js';
 import { createGooglePilotArtifactAdmission } from './google-pilot-artifact-admission.js';
@@ -179,7 +180,7 @@ export async function startBots(options: {
   checkpointReconcile?: { passes?: number; intervalMs?: number };
 }): Promise<BotServices | undefined> {
   const pilot = options.googlePilot ?? { enabled: false as const };
-  if (pilot.enabled && (pilot.ownerId !== options.runtimeOwnerId || !options.googleCopies || !options.host?.available || !options.executionAdmissionFence || !options.pendingExecutionCount)) throw new Error('Google pilot unavailable');
+  if (pilot.enabled && (pilot.ownerId !== options.runtimeOwnerId || !options.googleCopies || !options.host?.available || !options.executionAdmissionFence || !options.pendingExecutionCount || !options.integrations)) throw new Error('Google pilot unavailable');
   const now = () => options.now?.() ?? new Date();
   const lifetime = new AbortController();
   const db = ownerBotExecutor(options.repository.kysely);
@@ -187,6 +188,7 @@ export async function startBots(options: {
     await bootstrapBotDatabase(db);
   } catch (error: unknown) {
     console.warn("[bots] bot state unavailable:", error instanceof Error ? error.name : "UnknownError");
+    if (pilot.enabled) throw new Error("Google pilot unavailable");
     return undefined;
   }
   const recipes = createBotRecipeCatalog();
@@ -350,7 +352,9 @@ export async function startBots(options: {
     ...(options.integrations ? { transport: options.integrations } : {}) }).catch(async (error: unknown) => { await qualifiedCredentials?.close(); throw error; });
   const copyLifecycle = pilot.enabled ? await createGooglePilotCopyLifecycle({ database: options.repository.kysely,
     ownerId: pilot.ownerId, storage: options.googleCopies!, repository: options.repository, registry,
-    fence: options.executionAdmissionFence!, pendingCount: options.pendingExecutionCount! }) : undefined;
+    fence: options.executionAdmissionFence!, pendingCount: options.pendingExecutionCount! }).catch(async (error: unknown) => { await googleData.close(); await qualifiedCredentials?.close(); throw error; }) : undefined;
+  const purgeDelivery = copyLifecycle ? createGooglePurgeDeliveryPoller({ ownerId: options.runtimeOwnerId!,
+    transport: options.integrations!, purgeAccount: copyLifecycle.purgeAccount, lifetime: lifetime.signal }) : undefined;
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
   const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
     registry, profileGuard: options.nativeProfileGuard, lifetime: lifetime.signal, callTool: (binding, request, signal) => brokerTool(binding, request, signal) }) : undefined;
@@ -468,6 +472,7 @@ export async function startBots(options: {
   const unregister = registerBotBroker(host, actions);
   googleData.start();
   copyLifecycle?.start();
+  purgeDelivery?.start();
   const adapter = createMatrixBotChatProviderAdapter({
     orchestrator,
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
@@ -489,9 +494,10 @@ export async function startBots(options: {
     managedAdapter: managed.adapter,
     cancelAnthropicInference: () => registry.cancelAnthropicInference(),
     async close() {
+      lifetime.abort();
+      await purgeDelivery?.close();
       await copyLifecycle?.close();
       chatgptPlanPeers?.close();
-      lifetime.abort();
       unregister();
       registry.shutdown();
       await jevTools?.close();

@@ -12,6 +12,7 @@ describe('machine policy composition', () => {
     ({ db } = await createTestIntegrationDb());
     const owner = await db.createUser({ clerkId: 'owner-one', handle: 'owner-one', displayName: 'Owner', email: 'owner@example.test', containerId: 'owner-container' });
     const connection = await db.connectService({ userId: owner.id, service: 'gmail', pipedreamAccountId: 'apn_synthetic', accountLabel: 'Email', scopes: [] });
+    await db.googleData!.purgeDelivery.pinRuntime('owner-one', 'machine-one');
     const generation = '523e4567-e89b-42d3-a456-426614174000';
     const profile = profileInput({ credentialKind: 'byo', credentialGeneration: generation,
       endpoint: 'https://api.example.invalid/v1/messages', harnessId: GOOGLE_POLICY_HARNESS_ID['anthropic-messages'], harnessRevision: 'reviewed-build-1' });
@@ -31,6 +32,8 @@ describe('machine policy composition', () => {
         // browser headers above cannot set these values.
         c.set('internalSignedOwnerDelegation', signed);
         c.set('internalContainerHandle', 'machine-one');
+        c.set('internalContainerMachineId', 'machine-one');
+        c.set('internalContainerPersonalOwner', clerkId);
         c.set('internalContainerClerkUserId', clerkId);
         await next();
       });
