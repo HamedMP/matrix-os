@@ -124,11 +124,12 @@ chmod -R g+rwX "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/no
 find "$STAGE_DIR/runtime/node/lib/node_modules" "$STAGE_DIR/runtime/node/bin" -type d -exec chmod g+s {} +
 
 cp -a "$ROOT_DIR/distro/customer-vps/host-bin/." "$STAGE_DIR/bin/"
-# The Browser spike requires native services outside app/. Ship an explicit,
-# guarded operator setup command and prebuilt viewer, without enabling it on customers.
+# Native Browser services live outside app/. Stage separate guarded Preview and
+# customer lifecycle payloads; customer setup is scheduled after core readiness.
 pnpm exec vite build "$ROOT_DIR/scripts/spikes/browser-vps/lab" --config "$ROOT_DIR/scripts/spikes/browser-vps/lab/vite.config.ts"
 node "$ROOT_DIR/scripts/stage-browser-preview.mjs" "$ROOT_DIR/scripts/spikes/browser-vps" "$STAGE_DIR/bin"
-chmod 0755 "$STAGE_DIR/bin/matrix-install-browser-preview"
+chmod 0755 "$STAGE_DIR/bin/matrix-install-browser-preview" "$STAGE_DIR/bin/matrix-install-browser"
+chmod 0644 "$STAGE_DIR/bin/matrix-browser-runtime.py"
 node "$ROOT_DIR/scripts/prepare-funded-host-component.mjs" \
   "$STAGE_DIR/bin/matrix-sync-agent" "$STAGE_DIR/funded-host-config"
 chmod 0755 "$STAGE_DIR/bin/matrix-postgres-start"
@@ -183,6 +184,8 @@ find "$STAGE_DIR/app/home" -type d -name node_modules -prune -exec rm -rf {} +
 # Writes release.json plus the incremental app manifest before packaging, then
 # writes the bundle manifest beside the tarball.
 node "$ROOT_DIR/scripts/host-bundle-release.mjs" write-release
+# Bind first-upgrade repair to the final committed build metadata and exact payload.
+node "$ROOT_DIR/scripts/prepare-browser-host-bootstrap.mjs" "$STAGE_DIR"
 HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES="${HOST_BUNDLE_INCREMENTAL_EXCLUDE_PREFIXES:-node_modules/}" \
   node "$ROOT_DIR/scripts/host-bundle-incremental-manifest.mjs" "$STAGE_DIR/app" "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/objects"
 cp -a "$STAGE_DIR/incremental-manifest.json" "$DIST_DIR/incremental-manifest.json"

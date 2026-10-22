@@ -100,10 +100,13 @@ fi
 remove_targets=(
   etc/matrix
   opt/matrix/env
+  opt/matrix-browser-lab
+  var/lib/matrix-browser-bootstrap
   opt/matrix/config
   opt/matrix/secrets
   opt/matrix/tls
   opt/matrix/restore-complete
+  etc/systemd/system/multi-user.target.wants/matrix-browser-runtime.service
   var/lib/matrix
   home/matrix/home
   home/matrix/.hermes
@@ -145,6 +148,12 @@ remove_targets=(
   var/tmp
 )
 
+# Native units and enablement are per-owner activation outputs, never image
+# inputs. Keep only verified bundle payload/program bytes in /opt/matrix/bin.
+for unit in matrix-browser-lab{,-vnc,-wm,-desktop,-panel,-chrome}.service; do
+  remove_targets+=("etc/systemd/system/$unit" "etc/systemd/system/multi-user.target.wants/$unit")
+done
+
 # Overwrite allocated blocks in the bounded trees where builder credentials,
 # cloud-init user-data, customer-like state, or secret-bearing logs may exist.
 # Do not content-scan the entire filesystem here: it is redundant with the
@@ -153,6 +162,8 @@ remove_targets=(
 sensitive_targets=(
   etc/matrix
   opt/matrix/env
+  opt/matrix-browser-lab
+  var/lib/matrix-browser-bootstrap
   opt/matrix/config
   opt/matrix/secrets
   opt/matrix/tls
@@ -184,6 +195,14 @@ sensitive_targets=(
 )
 
 if [ "$root" = "/" ] && id matrix >/dev/null 2>&1; then
+  for unit in matrix-browser-runtime.service matrix-browser-lab{,-vnc,-wm,-desktop,-panel,-chrome}.service; do
+    if systemctl cat "$unit" >/dev/null 2>&1; then
+      timeout --kill-after=5 60 systemctl disable --now "$unit" || {
+        echo "golden snapshot Browser quiescence failed" >&2
+        exit 67
+      }
+    fi
+  done
   matrix_uid="$(id -u matrix)"
   if ! timeout --kill-after=5 30 loginctl disable-linger matrix; then
     echo "golden snapshot matrix user quiescence failed" >&2

@@ -1,0 +1,19 @@
+[Unit]
+Description=Matrix OS customer Browser lifecycle
+After=network-online.target matrix-gateway.service matrix-shell.service
+Wants=network-online.target
+ConditionPathExists=/usr/local/libexec/matrix-browser-runtime.py
+StartLimitIntervalSec=3600
+StartLimitBurst=3
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 -I /usr/local/libexec/matrix-browser-runtime.py
+TimeoutStartSec=30min
+# The updater waits on the Browser lock before stopping this lifecycle unit.
+TimeoutStopSec=30min
+Restart=on-failure
+RestartSec=60s
+[Install]
+WantedBy=multi-user.target
