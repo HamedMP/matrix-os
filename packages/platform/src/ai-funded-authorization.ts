@@ -53,28 +53,31 @@ export interface FundedAuthorizeDependencies {
   reservationTtlMs: number;
   policyFreshnessMs: number;
   /** Read once at startup; free runtimes are refused funded work without a daily ceiling. */
-  freeFunding: FreeFundingConfig;
-  grantCreditInTransaction: FreeAllowanceGrant;
+  freeFunding?: FreeFundingConfig & { grantCreditInTransaction: FreeAllowanceGrant };
+  /** Fixed server adapter only; never selected by an HTTP/body flag. Default legacy decoder is unchanged. */
+  protocol?: { decode(input: unknown): { request: z.infer<typeof FundedAiAuthorizationRequestSchema>; tokenId: string; routeDigest: string } };
 }
 
 export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
   return async function authorize(input: z.input<typeof FundedAiAuthorizationRequestSchema>): Promise<FundedAiAuthorizationResponse> {
-    const request = FundedAiAuthorizationRequestSchema.parse(input);
-    const tokenMatch = FUNDED_TOKEN_PATTERN.exec(request.credential);
-    if (!tokenMatch) throw new AiFundedPolicyError("unauthorized");
+    const decoded = deps.protocol?.decode(input);
+    const request = decoded?.request ?? FundedAiAuthorizationRequestSchema.parse(input);
+    const tokenId = decoded?.tokenId ?? FUNDED_TOKEN_PATTERN.exec(request.credential)?.[1];
+    if (!tokenId) throw new AiFundedPolicyError("unauthorized");
     const checked = deps.now();
     const checkedAt = checked.toISOString();
     const payloadHash = createHash("sha256").update(JSON.stringify({
-      tokenId: tokenMatch[1], requestId: request.requestId,
+      tokenId, requestId: request.requestId,
       modelId: request.modelId, maxCostMicrousd: request.maxCostMicrousd,
       ...(request.billingMode ? { billingMode: request.billingMode } : {}),
       ...(request.billingPolicy ? { billingPolicy: request.billingPolicy } : {}),
       ...(request.jevPricingVersion ? { jevPricingVersion: request.jevPricingVersion } : {}),
+      ...(decoded ? { qualifiedRouteDigest: decoded.routeDigest } : {}),
     })).digest("hex");
     await deps.db.ready;
     const outcome = await deps.db.transaction(async (trx): Promise<AuthorizeOutcome> => {
       const credential = await trx.executor.selectFrom("ai_runtime_credentials")
-        .selectAll().where("token_id", "=", tokenMatch[1]).executeTakeFirst();
+        .selectAll().where("token_id", "=", tokenId).executeTakeFirst();
       if (!credential || !hashesEqual(credential.token_hash, deps.hashCredential(request.credential))
         || credential.revoked_at !== null || Date.parse(credential.expires_at) <= checked.getTime()
         || credential.audience !== FUNDED_AI_AUDIENCE || credential.scope !== FUNDED_AI_SCOPE) {
@@ -110,10 +113,13 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
       const free = machine?.free_metal === true;
       // A runtime that became free needs the exclusive fence taken above; the caller retries.
       if (free && !freeBeforeLock) throw new AiFundedPolicyError("busy");
+      const freeFunding = free ? deps.freeFunding : undefined;
+      if (free && !freeFunding) throw new AiFundedPolicyError("access_disabled");
+      // A monthly allowance can lock the global policy. Take it before locking the runtime.
+      const globalQuery = trx.executor.selectFrom("ai_funded_global_policy").selectAll().where("policy_id", "=", "default");
+      const global = await (freeFunding ? globalQuery.forUpdate() : globalQuery).executeTakeFirstOrThrow();
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .selectAll().where("machine_id", "=", credential.machine_id).forUpdate().executeTakeFirst();
-      const global = await trx.executor.selectFrom("ai_funded_global_policy")
-        .selectAll().where("policy_id", "=", "default").executeTakeFirstOrThrow();
       const restriction = await trx.executor.selectFrom("ai_funded_credit_restrictions")
         .select(["debt_microusd", "frozen"]).where("machine_id", "=", credential.machine_id)
         .forUpdate().executeTakeFirst();
@@ -139,7 +145,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         runtimeSlot: credential.runtime_slot,
       };
       await reconcileExpiredPromotionalCredit(trx.executor, identity, checkedAt);
-      if (free) await grantFreeMonthlyAllowance(trx, identity, checked, deps.grantCreditInTransaction);
+      if (freeFunding) await grantFreeMonthlyAllowance(trx, identity, checked, freeFunding.grantCreditInTransaction);
       const balance = await trx.executor.updateTable("ai_funded_runtime_balances").set({
         ...advanceMonthWindow(utcMonthStart(checked)),
         updated_at: checkedAt,
@@ -238,8 +244,8 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         holdMicrousd = Math.min(holdMicrousd, credit, budget);
       }
       if (holdMicrousd > sourceAvailability.availableMicrousd) throw new AiFundedPolicyError("insufficient_credit");
-      const reservedAt = free
-        ? await admitFreeDailySpend(trx.executor, deps.freeFunding, request.maxCostMicrousd, deps.now)
+      const reservedAt = freeFunding
+        ? await admitFreeDailySpend(trx.executor, freeFunding, request.maxCostMicrousd, deps.now)
         : checked;
       // Retry if the free spend lock wait crossed the funding window.
       // Paid reservations use the window returned by the balance update.

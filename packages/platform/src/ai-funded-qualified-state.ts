@@ -7,6 +7,7 @@ import { FUNDED_AI_AUDIENCE, FUNDED_AI_SCOPE, GOOGLE_QUALIFIED_FUNDED_TOKEN_PREF
 import type { PlatformDB, PlatformDatabase } from './db.js';
 import { buildPlatformRuntimeVerificationToken, timingSafeTokenEquals } from './platform-token.js';
 import { insertAiFundedRouteBinding } from './ai-funded-route-binding.js';
+import { isFreeMetalRuntime } from './free-tier/free-runtime.js';
 import { QualifiedFundedError } from './ai-funded-qualified-errors.js';
 
 export const QualifiedRuntimeAuthSchema = z.strictObject({ handle: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
@@ -44,6 +45,8 @@ function models(raw: string): string[] {
 }
 /** Machine lock must already be held. Match publication's global-before-runtime lock order. */
 export async function qualifiedPolicy(db: PlatformDB, identity: FundedAiIdentity, model: string, at: Date) {
+  // Qualified Gmail routes have no free-tier funding configuration.
+  if (await isFreeMetalRuntime(db.executor, identity.machineId)) deny();
   const global = await db.executor.selectFrom('ai_funded_global_policy').selectAll().where('policy_id', '=', 'default').forShare().executeTakeFirst();
   const runtime = await db.executor.selectFrom('ai_funded_runtime_policies').selectAll().where('machine_id', '=', identity.machineId).forUpdate().executeTakeFirst();
   const restriction = await db.executor.selectFrom('ai_funded_credit_restrictions').selectAll().where('machine_id', '=', identity.machineId).forShare().executeTakeFirst();

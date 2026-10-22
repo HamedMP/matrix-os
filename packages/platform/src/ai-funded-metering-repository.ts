@@ -537,8 +537,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     reservationIdFactory,
     reservationTtlMs: options.reservationTtlMs,
     policyFreshnessMs: options.policyFreshnessMs,
-    freeFunding: options.freeFunding ?? {},
-    grantCreditInTransaction,
+    freeFunding: { ...options.freeFunding, grantCreditInTransaction },
   });
 
   async function startReservation(
