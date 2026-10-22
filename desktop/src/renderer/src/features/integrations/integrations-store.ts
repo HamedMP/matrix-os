@@ -3,6 +3,7 @@
 // enforced by the parsers). All user-facing error strings go through the
 // shared display boundary — upstream provider/platform text never renders.
 import { create } from "zustand";
+import { GmailConnectionMethodSchema, type GmailConnectionMethod } from "@matrix-os/contracts/integration-marketplace";
 import { AppError, categoryMessage } from "../../../../shared/app-error";
 import type { ApiClient } from "../../lib/api";
 import { toUserMessage } from "../../lib/errors";
@@ -13,7 +14,8 @@ import {
   isValidServiceId,
   parseAvailableIntegrations,
   parseConnectedIntegrations,
-  parseConnectUrl,
+  parseIntegrationConnectResponse,
+  type IntegrationConnectResponse,
   type AvailableIntegration,
   type ConnectedIntegration,
 } from "./types";
@@ -35,13 +37,16 @@ interface IntegrationsState {
   // the runtime does not expose integrations, so the store goes "unavailable"
   // instead of "error". Omit the argument to use the active runtime client.
   refresh: (apiOverride?: ApiClient | null) => Promise<void>;
+  // Connection settlement runs after the catalog loaded. Invalidate earlier
+  // reads and restore that catalog without clearing its data or error message.
+  cancelPendingRefresh: () => void;
   // Pulls the authoritative account list (POST /sync). "superseded" means the
   // account/computer changed mid-flight -- not a failure, and callers must not
   // show an error for it. Failures leave errorMessage alone; callers decide.
   syncNow: (apiOverride?: ApiClient | null) => Promise<"ok" | "failed" | "superseded">;
   // Starts the OAuth flow: returns the HTTPS consent URL to open externally,
   // or null after setting a generic errorMessage.
-  startConnect: (serviceId: string, apiOverride?: ApiClient | null) => Promise<string | null>;
+  startConnect: (serviceId: string, apiOverride?: ApiClient | null, connectionMethod?: GmailConnectionMethod, onResponse?: (response: IntegrationConnectResponse) => void) => Promise<string | null>;
   // Disconnects one account. On failure the connection stays in the list and
   // errorMessage holds generic copy (partial-failure safe).
   disconnect: (connectionId: string, apiOverride?: ApiClient | null) => Promise<boolean>;
@@ -74,6 +79,11 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
   connections: [],
   status: "idle",
   errorMessage: null,
+
+  cancelPendingRefresh: () => {
+    refreshSequence += 1;
+    set(state => state.status === "loading" ? { status: "ready" } : {});
+  },
 
   refresh: async (apiOverride) => {
     const api = resolveApi(apiOverride);
@@ -145,9 +155,9 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
     }
   },
 
-  startConnect: async (serviceId, apiOverride) => {
+  startConnect: async (serviceId, apiOverride, connectionMethod, onResponse) => {
     const api = resolveApi(apiOverride);
-    if (!isValidServiceId(serviceId)) {
+    if (!isValidServiceId(serviceId) || (connectionMethod && (serviceId !== "gmail" || !GmailConnectionMethodSchema.safeParse(connectionMethod).success))) {
       set({ errorMessage: categoryMessage("server") });
       return null;
     }
@@ -160,16 +170,17 @@ export const useIntegrations = create<IntegrationsState>()((set) => ({
     // through linking a third-party account to a runtime they have left.
     const runtimeGeneration = captureRuntimeGeneration();
     try {
-      const raw = await api.post<unknown>(CONNECT_PATH, { service: serviceId });
+      const raw = await api.post<unknown>(CONNECT_PATH, { service: serviceId, ...(connectionMethod ? { connectionMethod } : {}) });
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;
-      const url = parseConnectUrl(raw);
-      if (!url) {
+      const response = parseIntegrationConnectResponse(raw);
+      if (!response) {
         logWarn("connect returned no usable https url", new Error("invalid_connect_url"));
         set({ errorMessage: categoryMessage("server") });
         return null;
       }
       set({ errorMessage: null });
-      return url;
+      onResponse?.(response);
+      return response.url;
     } catch (err: unknown) {
       logWarn("connect failed", err);
       if (!isCurrentRuntimeGeneration(runtimeGeneration)) return null;

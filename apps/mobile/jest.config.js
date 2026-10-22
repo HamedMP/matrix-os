@@ -22,6 +22,7 @@ module.exports = {
   setupFilesAfterEnv: ["./jest.after-env.js"],
   testMatch: ["**/__tests__/**/*.test.[jt]s?(x)"],
   moduleNameMapper: {
+    "^@matrix-os/contracts/integration-marketplace$": "<rootDir>/../../packages/contracts/src/integration-marketplace.ts",
     "^\\./canonical-chat-api\\.js$": "<rootDir>/../../packages/contracts/src/canonical-chat-api.ts",
     "^\\./canonical-chat-inputs\\.js$": "<rootDir>/../../packages/contracts/src/canonical-chat-inputs.ts",
     // The shared speech hook (@matrix-os/ui/speech) imports its siblings by their built names.

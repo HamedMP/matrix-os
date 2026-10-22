@@ -48,6 +48,7 @@ interface FakeApiOptions {
   connections?: unknown;
   syncServices?: unknown;
   connectUrl?: string;
+  gmailOptions?: unknown;
   getError?: (path: string) => Error | null;
   deleteError?: Error;
 }
@@ -59,6 +60,7 @@ function makeApi(opts: FakeApiOptions = {}) {
     syncServices = [GMAIL_CONNECTION],
     connectUrl = "https://pipedream.com/connect?token=abc",
     getError,
+    gmailOptions = { methods: ["pipedream"], defaultMethod: "pipedream" },
     deleteError,
   } = opts;
   return {
@@ -66,6 +68,7 @@ function makeApi(opts: FakeApiOptions = {}) {
     get: vi.fn(async (path: string) => {
       const err = getError?.(path);
       if (err) throw err;
+      if (path === "/api/integrations/gmail/connection-options") return gmailOptions;
       if (path === "/api/integrations/available") return available;
       if (path === "/api/integrations") return connections;
       throw new AppError("notFound");
@@ -89,6 +92,8 @@ function makeApi(opts: FakeApiOptions = {}) {
 
 describe("desktop integrations settings section", () => {
   beforeEach(() => {
+    HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
+    HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.open = false; });
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: vi.fn().mockReturnValue({ matches: false }),
@@ -287,7 +292,7 @@ describe("desktop integrations settings section", () => {
     fireEvent.click(screen.getByTestId("integration-connect-gmail"));
 
     await waitFor(() =>
-      expect(api.post).toHaveBeenCalledWith("/api/integrations/connect", { service: "gmail" }),
+      expect(api.post).toHaveBeenCalledWith("/api/integrations/connect", { service: "gmail", connectionMethod: "pipedream" }),
     );
     expect(window.operator.invoke).toHaveBeenCalledWith("shell:open-external", {
       url: "https://pipedream.com/connect?token=abc",
@@ -354,7 +359,7 @@ describe("desktop integrations settings section", () => {
     await waitFor(() => expect(screen.getByText("Gmail")).not.toBeNull());
     fireEvent.click(screen.getByTestId("integration-connect-gmail"));
     await waitFor(() =>
-      expect(previousApi.post).toHaveBeenCalledWith("/api/integrations/connect", { service: "gmail" }),
+      expect(previousApi.post).toHaveBeenCalledWith("/api/integrations/connect", { service: "gmail", connectionMethod: "pipedream" }),
     );
 
     await act(async () => {
@@ -437,4 +442,22 @@ describe("desktop integrations settings section", () => {
     );
     expect(screen.getByText("Work")).not.toBeNull();
   });
+  it.each(["matrix", "pipedream"])("sends the selected Gmail %s connection method", async method => {
+    const api = makeApi({ gmailOptions: { methods: ["matrix", "pipedream"], defaultMethod: "matrix" } });
+    useConnection.setState({ api: api as never });
+    render(<IntegrationsSettingsSection pollIntervals={[60_000]} />);
+    fireEvent.click(await screen.findByTestId("integration-connect-gmail"));
+    fireEvent.click(await screen.findByRole("button", { name: method === "matrix" ? "Connect with Matrix (internal preview)" : "Connect with Pipedream" }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/integrations/connect", { service: "gmail", connectionMethod: method }));
+  });
+  it("cancels Gmail method choice without external consent", async () => {
+    const api = makeApi({ gmailOptions: { methods: ["matrix", "pipedream"], defaultMethod: "matrix" } });
+    useConnection.setState({ api: api as never });
+    render(<IntegrationsSettingsSection />);
+    fireEvent.click(await screen.findByTestId("integration-connect-gmail"));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(api.post).not.toHaveBeenCalled();
+    expect(window.operator.invoke).not.toHaveBeenCalled();
+  });
+
 });

@@ -1,28 +1,28 @@
 import { describe, it, expect } from "vitest";
 import {
-  hasNewConnectionForService,
+  hasCompletedConnectionForService,
   shouldLogIntegrationWarning,
 } from "../../shell/src/components/settings/sections/integrations-helpers";
 
 describe("IntegrationsSection polling helper", () => {
   it("ignores newly added connections for a different service", () => {
-    const previousIds = new Set(["gmail-1"]);
+    const previous = [{ id: "gmail-1", service: "gmail", status: "active", connected_at: "2026-10-01T00:00:00Z" }];
     const list = [
-      { id: "gmail-1", service: "gmail" },
-      { id: "slack-1", service: "slack" },
+      { id: "gmail-1", service: "gmail", status: "active", connected_at: "2026-10-01T00:00:00Z" },
+      { id: "slack-1", service: "slack", status: "active", connected_at: "2026-10-01T00:00:00Z" },
     ];
 
-    expect(hasNewConnectionForService(previousIds, "gmail", list)).toBe(false);
+    expect(hasCompletedConnectionForService(previous, "gmail", list)).toBe(false);
   });
 
   it("detects a newly added connection for the requested service", () => {
-    const previousIds = new Set(["gmail-1"]);
+    const previous = [{ id: "gmail-1", service: "gmail", status: "active", connected_at: "2026-10-01T00:00:00Z" }];
     const list = [
-      { id: "gmail-1", service: "gmail" },
-      { id: "gmail-2", service: "gmail" },
+      { id: "gmail-1", service: "gmail", status: "active", connected_at: "2026-10-01T00:00:00Z" },
+      { id: "gmail-2", service: "gmail", status: "active", connected_at: "2026-10-01T00:00:00Z" },
     ];
 
-    expect(hasNewConnectionForService(previousIds, "gmail", list)).toBe(true);
+    expect(hasCompletedConnectionForService(previous, "gmail", list)).toBe(true);
   });
 
   it("suppresses timeout warnings for AbortError", () => {

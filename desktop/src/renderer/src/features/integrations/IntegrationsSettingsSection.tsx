@@ -5,14 +5,17 @@
 // the sync endpoint with backoff until the account lands; Disconnect asks
 // for confirmation first. The renderer only displays name/category/label/
 // email/status and public app logos — never tokens or upstream error text.
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { hasCompletedIntegrationConnection, parseIntegrationAttemptStatus, isCompletedIntegrationAttempt, type IntegrationAttemptStatus, type AvailableIntegration, type ConnectedIntegration } from "@matrix-os/contracts";
+import type { GmailConnectionMethod } from "@matrix-os/contracts/integration-marketplace";
+import { fetchGmailConnectionOptions } from "./gmail-connection-request";
 import { diagnosticErrorKind } from "../../lib/errors";
 import { invoke } from "../../lib/operator";
 import { categoryMessage } from "../../../../shared/app-error";
 import { RefreshButton } from "../settings/sections/ProvidersSection";
 import { useConnection } from "../../stores/connection";
 import { captureRuntimeGeneration, isCurrentRuntimeGeneration } from "../../stores/runtime-generation";
-import { IntegrationMarketplace } from "@matrix-os/ui";
+import { GmailConnectionChoice, useGmailConnectionChoice, IntegrationMarketplace } from "@matrix-os/ui";
 import { AvailableServiceCard } from "./AvailableServiceCard";
 import { ConnectPendingBanner } from "./ConnectPendingBanner";
 import { DEFAULT_CONNECT_POLL_INTERVALS_MS, startConnectPoll } from "@matrix-os/ui";
@@ -23,6 +26,31 @@ import { displayIntegrationName } from "./types";
 import { SettingsSectionHeader } from "../settings/sections/section-kit";
 
 const GENERIC_ERROR = categoryMessage("server");
+async function readReceipt(api: NonNullable<ReturnType<typeof useConnection.getState>["api"]>, attemptId: string, isCurrent: () => boolean): Promise<IntegrationAttemptStatus> {
+  const receipt = parseIntegrationAttemptStatus(await api.get(`/api/integrations/gmail/pipedream/attempts/${attemptId}`));
+  if (!receipt || receipt.status === "failed" || receipt.status === "expired") throw new Error("Connection unavailable");
+  if (receipt.status === "succeeded" && isCurrent()) await useIntegrations.getState().refresh(api);
+  return receipt;
+}
+
+function integrationCatalog(available: readonly AvailableIntegration[], connections: readonly ConnectedIntegration[]): AvailableIntegration[] {
+  const known = new Set(available.map((service) => service.id));
+  const services = [
+    ...available,
+    ...connections
+      .filter((connection) => !known.has(connection.service))
+      .map((connection) => ({
+        id: connection.service,
+        name: displayIntegrationName(connection.service),
+        category: "other",
+      })),
+  ];
+  return services.sort((left, right) => {
+    const leftConnected = connections.some((connection) => connection.service === left.id);
+    const rightConnected = connections.some((connection) => connection.service === right.id);
+    return Number(rightConnected) - Number(leftConnected);
+  });
+}
 
 export interface IntegrationsSettingsSectionProps {
   // Test-only hook: override the connect poll backoff schedule.
@@ -31,6 +59,9 @@ export interface IntegrationsSettingsSectionProps {
 
 export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSettingsSectionProps = {}) {
   const api = useConnection((s) => s.api);
+  const loadGmailOptions = useCallback(() => fetchGmailConnectionOptions(api), [api]);
+  const gmailChoice = useGmailConnectionChoice(loadGmailOptions);
+  const connectInFlight = useRef(false);
   const available = useIntegrations((s) => s.available);
   const connections = useIntegrations((s) => s.connections);
   const status = useIntegrations((s) => s.status);
@@ -42,8 +73,9 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
   const cancelPollRef = useRef<(() => void) | null>(null);
-  const previousIdsRef = useRef<Set<string> | null>(null);
+  const previousConnectionsRef = useRef<ConnectedIntegration[] | null>(null);
   const connectAttemptRef = useRef(0);
+  const receiptRef = useRef<string | null>(null);
   const disconnectAttemptRef = useRef(0);
 
   useEffect(() => {
@@ -53,7 +85,9 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     disconnectAttemptRef.current += 1;
     cancelPollRef.current?.();
     cancelPollRef.current = null;
-    previousIdsRef.current = null;
+    previousConnectionsRef.current = null;
+    receiptRef.current = null;
+    connectInFlight.current = false;
     setConnectingService(null);
     setManualBusy(false);
     setManualNote(null);
@@ -65,6 +99,10 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
   // Unmount teardown: a live poll must not settle into a gone component.
   useEffect(() => {
     return () => {
+      connectAttemptRef.current += 1;
+      if (receiptRef.current) useIntegrations.getState().cancelPendingRefresh();
+      receiptRef.current = null;
+      connectInFlight.current = false;
       cancelPollRef.current?.();
       cancelPollRef.current = null;
     };
@@ -75,25 +113,42 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     cancelPollRef.current = null;
   };
 
+  const settleConnect = (): void => {
+    connectAttemptRef.current += 1;
+    useIntegrations.getState().cancelPendingRefresh();
+    receiptRef.current = null;
+    previousConnectionsRef.current = null;
+    connectInFlight.current = false;
+    cancelConnectPoll();
+    setConnectingService(null);
+    setManualBusy(false);
+    setManualNote(null);
+  };
+
   const refresh = (): void => {
     void useIntegrations.getState().refresh(api);
   };
 
-  const handleConnect = async (serviceId: string): Promise<void> => {
-    if (!api || connectingService) return;
+  const handleConnect = async (serviceId: string, connectionMethod?: GmailConnectionMethod): Promise<void> => {
+    if (!api || connectingService || connectInFlight.current) return;
+    connectInFlight.current = true;
     const attempt = ++connectAttemptRef.current;
     const runtimeGeneration = captureRuntimeGeneration();
     const isCurrentAttempt = (): boolean =>
       connectAttemptRef.current === attempt && isCurrentRuntimeGeneration(runtimeGeneration);
     setManualNote(null);
     setConnectingService(serviceId);
-    const previousIds = new Set(useIntegrations.getState().connections.map((conn) => conn.id));
-    previousIdsRef.current = previousIds;
+    const previousConnections = useIntegrations.getState().connections.map(connection => ({ ...connection }));
+    previousConnectionsRef.current = previousConnections;
 
-    const url = await useIntegrations.getState().startConnect(serviceId, api);
+    receiptRef.current = null;
+    let receiptId: string | undefined;
+    const url = await useIntegrations.getState().startConnect(serviceId, api, connectionMethod, response => { receiptId = response.attemptId; });
+    if (isCurrentAttempt()) receiptRef.current = receiptId ?? null;
+    if (isCurrentAttempt()) connectInFlight.current = false;
     if (!isCurrentAttempt()) return;
     if (!url) {
-      setConnectingService(null);
+      settleConnect();
       return;
     }
     try {
@@ -102,15 +157,15 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
       if (!isCurrentAttempt()) return;
       console.warn("[integrations] failed to open consent url:", diagnosticErrorKind(err));
       useIntegrations.getState().showError(GENERIC_ERROR);
-      setConnectingService(null);
+      settleConnect();
       return;
     }
     if (!isCurrentAttempt()) return;
 
-    const isLanded = () =>
-      useIntegrations
-        .getState()
-        .connections.some((conn) => conn.service === serviceId && !previousIds.has(conn.id));
+    let receipt: IntegrationAttemptStatus = { status: "pending" };
+    const isLanded = () => receiptId
+      ? isCompletedIntegrationAttempt(receipt, serviceId, useIntegrations.getState().connections)
+      : hasCompletedIntegrationConnection(previousConnections, serviceId, useIntegrations.getState().connections);
 
     cancelConnectPoll();
     cancelPollRef.current = startConnectPoll({
@@ -118,6 +173,17 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
       tick: async () => {
         if (!isCurrentAttempt()) {
           cancelConnectPoll();
+          return;
+        }
+        if (receiptId) {
+          try {
+            receipt = await readReceipt(api, receiptId, isCurrentAttempt);
+          } catch (error) {
+            console.warn("[integrations] Receipt unavailable:", diagnosticErrorKind(error));
+            if (!isCurrentAttempt()) return;
+            settleConnect();
+            useIntegrations.getState().showError(GENERIC_ERROR);
+          }
           return;
         }
         const result = await useIntegrations.getState().syncNow(api);
@@ -130,12 +196,18 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
         if (!isCurrentAttempt()) return;
         cancelPollRef.current = null;
         if (found) {
-          setConnectingService(null);
+          settleConnect();
           return;
         }
         setManualNote("Still waiting — finish the sign-in in your browser, then select I've connected.");
       },
     });
+  };
+
+  const requestConnect = (serviceId: string) => {
+    if (connectingService || connectInFlight.current) return;
+    if (serviceId === "gmail") gmailChoice.request(method => void handleConnect(serviceId, method));
+    else void handleConnect(serviceId);
   };
 
   const handleManualConfirm = async (): Promise<void> => {
@@ -147,14 +219,21 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     setManualBusy(true);
     setManualNote(null);
     try {
+      if (receiptRef.current) {
+        const receipt = await readReceipt(api, receiptRef.current, isCurrentAttempt);
+        if (!isCurrentAttempt()) return;
+        if (isCompletedIntegrationAttempt(receipt, connectingService, useIntegrations.getState().connections)) {
+          settleConnect();
+        } else setManualNote("Not connected yet — finish the sign-in in your browser, then try again.");
+        return;
+      }
       const result = await useIntegrations.getState().syncNow(api);
       if (!isCurrentAttempt()) return;
-      const landed = useIntegrations
-        .getState()
-        .connections.some((conn) => conn.service === connectingService && !previousIdsRef.current?.has(conn.id));
+      const landed = previousConnectionsRef.current !== null && hasCompletedIntegrationConnection(
+        previousConnectionsRef.current, connectingService, useIntegrations.getState().connections,
+      );
       if (landed) {
-        cancelConnectPoll();
-        setConnectingService(null);
+        settleConnect();
         return;
       }
       // "superseded" is not a failure: the account/computer changed underneath
@@ -165,17 +244,15 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
       }
       if (result === "superseded") return;
       setManualNote("Not connected yet — finish the sign-in in your browser, then try again.");
+    } catch (error) {
+      console.warn("[integrations] Receipt unavailable:", diagnosticErrorKind(error));
+      if (isCurrentAttempt()) { settleConnect(); useIntegrations.getState().showError(GENERIC_ERROR); }
     } finally {
       if (isCurrentAttempt()) setManualBusy(false);
     }
   };
 
-  const handleCancelConnect = (): void => {
-    connectAttemptRef.current += 1;
-    cancelConnectPoll();
-    setConnectingService(null);
-    setManualNote(null);
-  };
+  const handleCancelConnect = settleConnect;
 
   const handleDisconnect = async (): Promise<void> => {
     if (!api || !confirmId) return;
@@ -197,24 +274,7 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
     ? (available.find((service) => service.id === connectingService)?.name ?? connectingService)
     : null;
 
-  const catalogServices = useMemo(() => {
-    const known = new Set(available.map((service) => service.id));
-    const services = [
-      ...available,
-      ...connections
-        .filter((connection) => !known.has(connection.service))
-        .map((connection) => ({
-          id: connection.service,
-          name: displayIntegrationName(connection.service),
-          category: "other",
-        })),
-    ];
-    return services.sort((left, right) => {
-      const leftConnected = connections.some((connection) => connection.service === left.id);
-      const rightConnected = connections.some((connection) => connection.service === right.id);
-      return Number(rightConnected) - Number(leftConnected);
-    });
-  }, [available, connections]);
+  const catalogServices = useMemo(() => integrationCatalog(available, connections), [available, connections]);
 
   let body: ReactNode;
   if (status === "idle" || status === "loading") {
@@ -241,12 +301,12 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
             <EmptyCatalogState />
           ) : (
             <IntegrationMarketplace services={catalogServices} connectedIds={connections.map(c => c.service)} connectingId={connectingService}
-              onConnect={id => void handleConnect(id)} renderService={service => (
+              onConnect={requestConnect} renderService={service => (
                 <AvailableServiceCard service={service} connected={connections.some(c => c.service === service.id)}
                   connections={connections.filter(c => c.service === service.id)} connecting={connectingService === service.id}
                   disabled={connectingService !== null}
                   connectDisabled={connectingService !== null || !available.some(s => s.id === service.id)}
-                  onConnect={() => void handleConnect(service.id)} onDisconnect={target => setConfirmId(target.id)} />
+                  onConnect={() => requestConnect(service.id)} onDisconnect={target => setConfirmId(target.id)} />
               )} />
           )}
         </section>
@@ -276,6 +336,8 @@ export function IntegrationsSettingsSection({ pollIntervals }: IntegrationsSetti
       </div>
 
       {body}
+
+      <GmailConnectionChoice choice={gmailChoice} />
 
       <DisconnectConfirmDialog
         connection={confirmConnection}
