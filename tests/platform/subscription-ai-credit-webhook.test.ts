@@ -1,3 +1,6 @@
+import { loadStripePriceCatalog } from '../../packages/platform/src/billing.js';
+import { hashAccountDeletionOwner } from '../../packages/platform/src/account-deletion/repository.js';
+import { issueSubscriptionRuntimeCredit, recordSubscriptionCreditPayment, recordSubscriptionCreditTerms } from '../../packages/platform/src/subscription-ai-credit-billing.js';
 import { Hono } from 'hono';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { createBillingRoutes, type StripeBillingClient, type StripeWebhookEvent } from '../../packages/platform/src/billing-routes.js';
@@ -88,6 +91,125 @@ describe('signed subscription billing to allowance ledger', () => {
     const bill = invoice(); bill.lines.data[0]!.subscription = 'sub_other';
     expect((await deliver('invoice.paid', bill)).status).toBeGreaterThanOrEqual(500);
     expect(await grants()).toEqual([]);
+  });
+  it.each([
+    ['incomplete lines', (b: ReturnType<typeof invoice>) => ({ ...b, lines: { ...b.lines, has_more: true } })],
+    ['not fully paid', (b: ReturnType<typeof invoice>) => ({ ...b, amount_paid: 1 })],
+    ['wrong customer', (b: ReturnType<typeof invoice>) => ({ ...b, customer: 'cus_other' })],
+    ['ambiguous priced lines', (b: ReturnType<typeof invoice>) => ({ ...b, lines: { ...b.lines, data: [b.lines.data[0], b.lines.data[0]] } })],
+    ['invalid paid dates', (b: ReturnType<typeof invoice>) => ({ ...b, lines: { ...b.lines, data: [{ ...b.lines.data[0], period: { start: epoch(end), end: epoch(anchor) } }] } })],
+  ] as const)('refuses invalid signed payment evidence without persisting a grant: %s', async (_name, change) => {
+    await deliver('customer.subscription.created', subscription());
+    expect((await deliver('invoice.paid', change(invoice()))).status).toBeGreaterThanOrEqual(500);
+    expect(await grants()).toEqual([]);
+    expect(await db.executor.selectFrom('ai_subscription_credit_payments').selectAll().execute()).toEqual([]);
+  });
+  it.each(['unknown-price', 'missing-price', 'negative-proration'] as const)('does not create paid coverage from %s', async kind => {
+    await deliver('customer.subscription.created', subscription());
+    const bill = invoice();
+    const line = { ...bill.lines.data[0], price: kind === 'missing-price' ? undefined : { id: kind === 'unknown-price' ? 'price_unknown' : 'price_starter' }, amount: kind === 'negative-proration' ? -100 : 10000 };
+    expect((await deliver('invoice.paid', { ...bill, lines: { ...bill.lines, data: [line] } })).status).toBe(200);
+    expect(await grants()).toEqual([]);
+  });
+  it.each(['plan', 'from', 'until'] as const)('refuses altered immutable invoice coverage: %s', async field => {
+    await deliver('customer.subscription.created', subscription()); await deliver('invoice.paid', invoice());
+    const bill = invoice();
+    if (field === 'plan') bill.lines.data[0]!.price.id = 'price_builder';
+    if (field === 'from') bill.lines.data[0]!.period.start += 1;
+    if (field === 'until') bill.lines.data[0]!.period.end -= 1;
+    expect((await deliver('invoice.paid', bill)).status).toBeGreaterThanOrEqual(500);
+    expect(await grants()).toHaveLength(1);
+  });
+  const context = () => ({ db, repository: repo, env, now: clock, changeAt: clock });
+  const projection = () => ({ clerkUserId: identity.ownerId, stripeCustomerId: 'cus_subscription', stripeSubscriptionId: 'sub_subscription', status: 'active' as const, runtimeSlot: 'primary', items: [] });
+  it('keeps all billing hooks disabled and refuses an enabled hook without a ledger', async () => {
+    const disabled = { ...context(), env: {} };
+    await issueSubscriptionRuntimeCredit(disabled, 'sub_subscription');
+    await recordSubscriptionCreditTerms(disabled, projection(), {});
+    await recordSubscriptionCreditPayment({ ...disabled, value: {}, priceCatalog: loadStripePriceCatalog(env) });
+    await expect(recordSubscriptionCreditPayment({ ...context(), value: {}, priceCatalog: loadStripePriceCatalog(env) })).rejects.toThrow(/incomplete/);
+    await expect(issueSubscriptionRuntimeCredit({ ...context(), repository: undefined }, 'sub_subscription')).rejects.toThrow(/ledger/);
+    await issueSubscriptionRuntimeCredit(context(), 'sub_missing');
+    expect(await grants()).toEqual([]);
+  });
+  it('waits for a running primary computer and refuses a projected identity mismatch', async () => {
+    await deliver('customer.subscription.created', subscription());
+    await db.executor.updateTable('user_machines').set({ status: 'stopped' }).execute();
+    await issueSubscriptionRuntimeCredit(context(), 'sub_subscription');
+    await expect(recordSubscriptionCreditTerms(context(), { ...projection(), runtimeSlot: 'secondary' }, {})).rejects.toThrow(/identity mismatch/);
+    await db.executor.updateTable('billing_subscriptions').set({ runtime_slot: 'secondary' }).execute();
+    await issueSubscriptionRuntimeCredit(context(), 'sub_subscription');
+    await recordSubscriptionCreditTerms(context(), { ...projection(), runtimeSlot: 'secondary' }, {});
+    expect(await grants()).toEqual([]);
+  });
+  it.each(['unknown-plan', 'no-anchor', 'future-anchor', 'start-date-fallback', 'no-paid-end'] as const)('records terms only from complete supported authority: %s', async kind => {
+    await deliver('customer.subscription.created', subscription());
+    await db.executor.deleteFrom('ai_subscription_credit_terms').execute();
+    if (kind === 'unknown-plan') await db.executor.updateTable('billing_subscriptions').set({ plan_slug: 'unapproved' }).execute();
+    if (kind === 'no-paid-end') await db.executor.updateTable('billing_subscriptions').set({ current_period_end: null }).execute();
+    const raw = kind === 'no-anchor' ? {} : kind === 'future-anchor' ? { billing_cycle_anchor: epoch(end) }
+      : kind === 'start-date-fallback' ? { start_date: epoch(anchor) } : { billing_cycle_anchor: epoch(anchor) };
+    await recordSubscriptionCreditTerms(context(), projection(), raw);
+    expect(await db.executor.selectFrom('ai_subscription_credit_terms').selectAll().execute())
+      .toHaveLength(['start-date-fallback', 'no-paid-end'].includes(kind) ? 1 : 0);
+    expect(await grants()).toEqual([]);
+  });
+  it('blocks terms and payment mutation during accepted account deletion', async () => {
+    await deliver('customer.subscription.created', subscription());
+    const secret = 'd'.repeat(32), at = clock.toISOString();
+    await db.executor.insertInto('account_deletion_jobs').values({ owner_hash: hashAccountDeletionOwner(identity.ownerId, secret), status: 'scheduled', due_at: at, next_attempt_at: at, created_at: at, updated_at: at }).execute();
+    const blocked = { ...context(), env: { ...env, ACCOUNT_DELETION_SECRET: secret } };
+    await recordSubscriptionCreditTerms(blocked, projection(), {});
+    await recordSubscriptionCreditPayment({ ...blocked, value: invoice(), priceCatalog: loadStripePriceCatalog(env) });
+    expect(await grants()).toEqual([]);
+    expect(await db.executor.selectFrom('ai_subscription_credit_payments').selectAll().execute()).toEqual([]);
+  });
+  it('requires reconciliation when cancellation encounters overlapping recorded cycles', async () => {
+    await deliver('customer.subscription.created', subscription()); await deliver('invoice.paid', invoice());
+    await db.executor.insertInto('ai_subscription_credit_cycles').values({ owner_id: identity.ownerId, runtime_slot: 'primary', subscription_id: 'sub_subscription', cycle_start: '2026-02-01T00:00:00.000Z', cycle_end: '2026-03-01T00:00:00.000Z', entitlement_microusd: 5_000_000, legacy_offset_microusd: 0, updated_at: anchor }).execute();
+    await db.executor.updateTable('billing_subscriptions').set({ current_period_end: '2026-02-15T00:00:00.000Z' }).execute();
+    await expect(recordSubscriptionCreditTerms(context(), projection(), subscription())).rejects.toThrow(/reconciliation/);
+    expect(await grants()).toHaveLength(1);
+  });
+  it.each([false, true, 'settle'] as const)('reclaims a stale high-tier installment issued before a delayed downgrade while preserving holds=%s', async hold => {
+    await deliver('customer.subscription.created', subscription('price_max'));
+    await deliver('invoice.paid', invoice('in_max', 'price_max'));
+    clock = new Date('2026-03-01T12:00:00.000Z');
+    expect(await repo.getFundingSummary(identity)).toMatchObject({ creditBalanceMicrousd: 20_000_000 });
+    const issued = hold ? await repo.issueRuntimeCredential(identity) : undefined;
+    const reserved = issued ? await repo.authorize({ credential: issued.credential.token, requestId: 'late-tier-hold',
+      modelId: '@cf/zai-org/glm-5.3-flash', maxCostMicrousd: 10_000_000 }) : undefined;
+    if (hold === 'settle' && issued && reserved) await repo.startReservation({ tokenId: issued.credential.tokenId, reservationId: reserved.reservation.reservationId });
+    clock = new Date(hold ? '2026-03-01T12:01:00.000Z' : '2026-03-02T12:00:00.000Z');
+    expect((await deliver('customer.subscription.updated', subscription(), new Date('2026-02-27T10:00:00.000Z'))).status).toBe(200);
+    expect(await repo.getFundingSummary(identity)).toMatchObject(hold
+      ? { creditBalanceMicrousd: 10_000_000, reservedMicrousd: 10_000_000, remainingBalanceMicrousd: 0 }
+      : { creditBalanceMicrousd: 5_000_000, remainingBalanceMicrousd: 5_000_000 });
+    if (issued && reserved) {
+      const key = { tokenId: issued.credential.tokenId, reservationId: reserved.reservation.reservationId };
+      if (hold === 'settle') await repo.settleReservation({ ...key, actualCostMicrousd: 3_000_000 });
+      else await repo.releaseReservation({ ...key, reason: 'pre_upstream_failure' });
+    }
+    const expected = hold === 'settle' ? 2_000_000 : 5_000_000;
+    expect(await repo.getFundingSummary(identity)).toMatchObject({ creditBalanceMicrousd: expected });
+    // Repeating the same effective downgrade cannot refill spent/retired credit.
+    await deliver('customer.subscription.updated', subscription(), new Date('2026-02-27T10:00:01.000Z'));
+    expect(await repo.getFundingSummary(identity)).toMatchObject({ creditBalanceMicrousd: expected });
+  });
+  it.each([2_000_000, 8_000_000])('keeps settled cost %s and purchased funds while correcting a stale installment, then permits a legitimate upgrade', async actual => {
+    await deliver('customer.subscription.created', subscription('price_max')); await deliver('invoice.paid', invoice('in_max', 'price_max'));
+    clock = new Date('2026-03-01T12:00:00.000Z'); await repo.getFundingSummary(identity);
+    await repo.grantCredit({ identity, entryId: 'addon:late-tier', kind: 'addon_grant', amountMicrousd: 10_000_000, sourceReference: 'fixture-purchase', expiresAt: null });
+    const issued = await repo.issueRuntimeCredential(identity);
+    const held = await repo.authorize({ credential: issued.credential.token, requestId: 'late-tier-settled', modelId: '@cf/zai-org/glm-5.3-flash', maxCostMicrousd: 10_000_000 });
+    const key = { tokenId: issued.credential.tokenId, reservationId: held.reservation.reservationId };
+    await repo.startReservation(key); await repo.settleReservation({ ...key, actualCostMicrousd: actual });
+    clock = new Date('2026-03-02T12:00:00.000Z');
+    await deliver('customer.subscription.updated', subscription(), new Date('2026-02-27T10:00:00.000Z'));
+    expect(await repo.getFundingSummary(identity)).toMatchObject({ creditBalanceMicrousd: 10_000_000 + Math.max(0, 5_000_000 - actual), addonBalanceMicrousd: 10_000_000, settledThisMonthMicrousd: actual, fundingShortfallMicrousd: 0 });
+    clock = new Date('2026-03-03T12:00:00.000Z');
+    await deliver('customer.subscription.updated', subscription('price_max'));
+    expect(await repo.getFundingSummary(identity)).toMatchObject({ creditBalanceMicrousd: 30_000_000 - actual, addonBalanceMicrousd: 10_000_000, settledThisMonthMicrousd: actual, fundingShortfallMicrousd: 0 });
   });
   it('expires an already-issued gift when cancellation arrives after its paid cutoff', async () => {
     await deliver('customer.subscription.created', subscription()); await deliver('invoice.paid', invoice());

@@ -1,3 +1,4 @@
+import { reconcileSubscriptionCredit } from './subscription-ai-credit-reconciliation.js';
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod/v4';
@@ -133,16 +134,19 @@ export async function issueConfiguredSubscriptionAiCredit(input: {
     }
     if (row.subscription_id !== subscription.stripe_subscription_id || row.cycle_end !== end) throw new Error('Subscription credit cycle requires reconciliation');
     const previous = exactInteger(row.entitlement_microusd);
-    if (entitled <= previous) return 'accepted';
     const digest = createHash('sha256').update(`${identity.ownerId}\0${identity.runtimeSlot}\0${cycle.start}`).digest('hex');
-    await input.repository.grantCreditInTransaction(trx, { identity,
-      entryId: `subscription-credit:${digest}:upto:${entitled}`, kind: 'promotional_grant',
-      amountMicrousd: entitled - previous, sourceReference: `subscription-credit-v1:${digest}`, expiresAt: end,
+    const { netIssued, grossIssued } = await reconcileSubscriptionCredit({ db: trx, identity, cycle: row, digest, entitled, at });
+    if (entitled > netIssued) await input.repository.grantCreditInTransaction(trx, { identity,
+      entryId: `subscription-credit:${digest}:upto:${entitled}:issued:${grossIssued}`, kind: 'promotional_grant',
+      amountMicrousd: entitled - netIssued, sourceReference: `subscription-credit-v1:${digest}`, expiresAt: end,
     }, at);
-    const updated = await trx.executor.updateTable('ai_subscription_credit_cycles').set({ entitlement_microusd: entitled, updated_at: at })
-      .where('owner_id', '=', identity.ownerId).where('runtime_slot', '=', identity.runtimeSlot).where('cycle_start', '=', cycle.start)
-      .where('entitlement_microusd', '=', previous).returning('cycle_start').executeTakeFirst();
-    if (!updated) throw new Error('Subscription credit cycle changed concurrently');
+    const next = Math.max(netIssued, entitled);
+    if (next !== previous) {
+      const updated = await trx.executor.updateTable('ai_subscription_credit_cycles').set({ entitlement_microusd: next, updated_at: at })
+        .where('owner_id', '=', identity.ownerId).where('runtime_slot', '=', identity.runtimeSlot).where('cycle_start', '=', cycle.start)
+        .where('entitlement_microusd', '=', previous).returning('cycle_start').executeTakeFirst();
+      if (!updated) throw new Error('Subscription credit cycle changed concurrently');
+    }
     return 'accepted';
   }, input.env);
 }
