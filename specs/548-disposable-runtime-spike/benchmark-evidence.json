@@ -1,0 +1,436 @@
+{
+  "kind": "measured-synthetic-lifecycle-not-production-Matrix",
+  "observedAt": "2026-10-18T11:43:10.964Z",
+  "host": {
+    "provider": "Hetzner",
+    "shape": "cx23",
+    "region": "hel1",
+    "vcpus": 2,
+    "ramGiB": 4,
+    "reportedMemoryMiB": 3819,
+    "architecture": "x86_64",
+    "hostNode": "v24.22.0",
+    "docker": "29.1.3",
+    "swapMiB": 0
+  },
+  "images": "sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 [\"node@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5\"]\nsha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826 [\"postgres@sha256:3645570cccdfa447589da9f57dd740faa29b30938e861289a5574b6ca6b03826\"]",
+  "measuredScriptSha256": "51d240a46ff6b3e059754ee213be0fda4cfb854d4fe4cfe71900e9faa7108ab4",
+  "rawEvidenceSha256": "9de9c78f4debacbb3399654b2013bf8bd95cc4aa13656d7fa6c49ffec2666bb6",
+  "bootstrap": {
+    "samples": 2,
+    "seconds": [
+      73.022,
+      64.861
+    ],
+    "boundary": "client create start to cloud-init ready marker; OS packages + Node + Docker + images; clocks assumed synchronized, marker precision 1 second",
+    "endToEndInteractiveWakeMeasured": false
+  },
+  "cycles": [
+    {
+      "fixtureMiB": 1,
+      "cycle": 1,
+      "fileAndSqlStateEqual": true,
+      "fileHash": "b98d036b3eaae0dd937db33c1a1394a5ab0dbfb4a3a9e7dcf42ff659a18b742c",
+      "sqlChecksumBefore": "4556c2161a261a6e408f1ee9d22c1b6b",
+      "sqlChecksumRestored": "4556c2161a261a6e408f1ee9d22c1b6b",
+      "restoredRows": 1000,
+      "mutatedRevision": 2,
+      "mutatedSqlRevisions": 2000,
+      "sourceContainersAndVolumesDeleted": true,
+      "freshNodeContainer": true,
+      "freshVolumes": true,
+      "cleanup": true,
+      "timingsMs": {
+        "coldFixtureReadyMs": 2392.503,
+        "checkpointMs": 327.789,
+        "destroyMs": 300.515,
+        "restoreToHealthMs": 2129.978
+      },
+      "restoredWarmHealthMs": [
+        1.988,
+        1.239,
+        2.53,
+        1.078,
+        1.11,
+        1.205,
+        1.374,
+        1.241,
+        0.991,
+        1.093,
+        1.165,
+        0.844,
+        0.893,
+        0.896,
+        0.891,
+        1.706,
+        0.839,
+        0.816,
+        0.825,
+        1.457
+      ],
+      "memorySnapshots": {
+        "sourceNodeRssBytes": 64040960,
+        "restoredNodeRssBytes": 64069632,
+        "restoredDockerWorkingSet": [
+          {
+            "component": "node",
+            "usage": "17.16MiB / 256MiB"
+          },
+          {
+            "component": "postgres",
+            "usage": "24.14MiB / 256MiB"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureMiB": 1,
+      "cycle": 2,
+      "fileAndSqlStateEqual": true,
+      "fileHash": "277f8d3336a7aca5fa4e911fc802bc54300662b1209d8d7dbdcad2ecbe31272d",
+      "sqlChecksumBefore": "f88877ba8b8eaa70352bf25e1f3cd8a4",
+      "sqlChecksumRestored": "f88877ba8b8eaa70352bf25e1f3cd8a4",
+      "restoredRows": 1000,
+      "mutatedRevision": 2,
+      "mutatedSqlRevisions": 2000,
+      "sourceContainersAndVolumesDeleted": true,
+      "freshNodeContainer": true,
+      "freshVolumes": true,
+      "cleanup": true,
+      "timingsMs": {
+        "coldFixtureReadyMs": 2094.826,
+        "checkpointMs": 383.324,
+        "destroyMs": 361.547,
+        "restoreToHealthMs": 2164.821
+      },
+      "restoredWarmHealthMs": [
+        2.053,
+        1.645,
+        1.322,
+        1.182,
+        1.044,
+        1.139,
+        1.635,
+        1.677,
+        1.294,
+        1.147,
+        1.412,
+        1.943,
+        1.155,
+        0.968,
+        0.902,
+        0.974,
+        1.166,
+        0.932,
+        0.887,
+        0.824
+      ],
+      "memorySnapshots": {
+        "sourceNodeRssBytes": 63987712,
+        "restoredNodeRssBytes": 64266240,
+        "restoredDockerWorkingSet": [
+          {
+            "component": "node",
+            "usage": "17.12MiB / 256MiB"
+          },
+          {
+            "component": "postgres",
+            "usage": "24.21MiB / 256MiB"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureMiB": 1,
+      "cycle": 3,
+      "fileAndSqlStateEqual": true,
+      "fileHash": "d475e8675160154ae820dc75dc536f3e77f821ff79d71916ae27aa2f7740e231",
+      "sqlChecksumBefore": "ab786ee55c580e10244439dcf9a72f6b",
+      "sqlChecksumRestored": "ab786ee55c580e10244439dcf9a72f6b",
+      "restoredRows": 1000,
+      "mutatedRevision": 2,
+      "mutatedSqlRevisions": 2000,
+      "sourceContainersAndVolumesDeleted": true,
+      "freshNodeContainer": true,
+      "freshVolumes": true,
+      "cleanup": true,
+      "timingsMs": {
+        "coldFixtureReadyMs": 2209.51,
+        "checkpointMs": 369.277,
+        "destroyMs": 328.476,
+        "restoreToHealthMs": 2291.228
+      },
+      "restoredWarmHealthMs": [
+        1.906,
+        1.182,
+        1.165,
+        1.07,
+        1.041,
+        1.834,
+        1.07,
+        1.118,
+        0.799,
+        0.827,
+        0.859,
+        0.708,
+        0.949,
+        0.717,
+        1.332,
+        1.669,
+        0.978,
+        0.691,
+        0.647,
+        0.789
+      ],
+      "memorySnapshots": {
+        "sourceNodeRssBytes": 63946752,
+        "restoredNodeRssBytes": 64000000,
+        "restoredDockerWorkingSet": [
+          {
+            "component": "node",
+            "usage": "17.14MiB / 256MiB"
+          },
+          {
+            "component": "postgres",
+            "usage": "24.13MiB / 256MiB"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureMiB": 16,
+      "cycle": 1,
+      "fileAndSqlStateEqual": true,
+      "fileHash": "9890a3c4f6f1884a61d9225918d337544aeb1f18e0d282d3761c0ace6b8571bd",
+      "sqlChecksumBefore": "98d0f720904a9efa1b1728eed4d0c159",
+      "sqlChecksumRestored": "98d0f720904a9efa1b1728eed4d0c159",
+      "restoredRows": 1000,
+      "mutatedRevision": 2,
+      "mutatedSqlRevisions": 2000,
+      "sourceContainersAndVolumesDeleted": true,
+      "freshNodeContainer": true,
+      "freshVolumes": true,
+      "cleanup": true,
+      "timingsMs": {
+        "coldFixtureReadyMs": 2316.811,
+        "checkpointMs": 432.678,
+        "destroyMs": 324.675,
+        "restoreToHealthMs": 2124.047
+      },
+      "restoredWarmHealthMs": [
+        1.805,
+        1.865,
+        1.111,
+        0.997,
+        1.009,
+        0.918,
+        1.583,
+        1.121,
+        0.901,
+        0.829,
+        1.713,
+        0.739,
+        0.714,
+        1.2,
+        0.806,
+        0.758,
+        0.848,
+        0.725,
+        0.709,
+        0.693
+      ],
+      "memorySnapshots": {
+        "sourceNodeRssBytes": 80678912,
+        "restoredNodeRssBytes": 64131072,
+        "restoredDockerWorkingSet": [
+          {
+            "component": "node",
+            "usage": "17.11MiB / 256MiB"
+          },
+          {
+            "component": "postgres",
+            "usage": "24.21MiB / 256MiB"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureMiB": 16,
+      "cycle": 2,
+      "fileAndSqlStateEqual": true,
+      "fileHash": "08699a633b467b3ec4c3be5773884efa86367f79d897c14d976e3fced9411958",
+      "sqlChecksumBefore": "5b094f84e7dcbe5519b5ee08d437090d",
+      "sqlChecksumRestored": "5b094f84e7dcbe5519b5ee08d437090d",
+      "restoredRows": 1000,
+      "mutatedRevision": 2,
+      "mutatedSqlRevisions": 2000,
+      "sourceContainersAndVolumesDeleted": true,
+      "freshNodeContainer": true,
+      "freshVolumes": true,
+      "cleanup": true,
+      "timingsMs": {
+        "coldFixtureReadyMs": 2099.264,
+        "checkpointMs": 427.359,
+        "destroyMs": 334.749,
+        "restoreToHealthMs": 2188.073
+      },
+      "restoredWarmHealthMs": [
+        1.598,
+        0.793,
+        0.834,
+        0.754,
+        0.736,
+        0.8,
+        1.26,
+        0.848,
+        0.728,
+        1.243,
+        0.681,
+        1.292,
+        1.127,
+        0.719,
+        0.673,
+        0.708,
+        0.638,
+        0.713,
+        0.688,
+        0.669
+      ],
+      "memorySnapshots": {
+        "sourceNodeRssBytes": 80605184,
+        "restoredNodeRssBytes": 63901696,
+        "restoredDockerWorkingSet": [
+          {
+            "component": "node",
+            "usage": "17.07MiB / 256MiB"
+          },
+          {
+            "component": "postgres",
+            "usage": "24.21MiB / 256MiB"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureMiB": 16,
+      "cycle": 3,
+      "fileAndSqlStateEqual": true,
+      "fileHash": "e0e367afa2c607c18cd5ec4430d2218544436f1ebfdce42dfb36e6e2b9152a84",
+      "sqlChecksumBefore": "7e79b08f9bf8507475d49191ac93b2a2",
+      "sqlChecksumRestored": "7e79b08f9bf8507475d49191ac93b2a2",
+      "restoredRows": 1000,
+      "mutatedRevision": 2,
+      "mutatedSqlRevisions": 2000,
+      "sourceContainersAndVolumesDeleted": true,
+      "freshNodeContainer": true,
+      "freshVolumes": true,
+      "cleanup": true,
+      "timingsMs": {
+        "coldFixtureReadyMs": 2154.593,
+        "checkpointMs": 404.72,
+        "destroyMs": 329.365,
+        "restoreToHealthMs": 2253.439
+      },
+      "restoredWarmHealthMs": [
+        2.231,
+        1.111,
+        1.042,
+        0.715,
+        0.751,
+        0.856,
+        0.729,
+        1.234,
+        0.704,
+        0.702,
+        0.606,
+        1.326,
+        0.954,
+        0.926,
+        0.793,
+        0.736,
+        0.713,
+        0.801,
+        0.703,
+        0.733
+      ],
+      "memorySnapshots": {
+        "sourceNodeRssBytes": 64061440,
+        "restoredNodeRssBytes": 80478208,
+        "restoredDockerWorkingSet": [
+          {
+            "component": "node",
+            "usage": "32.82MiB / 256MiB"
+          },
+          {
+            "component": "postgres",
+            "usage": "24.17MiB / 256MiB"
+          }
+        ]
+      }
+    }
+  ],
+  "priorReplication": {
+    "rawEvidenceSha256": "378e8d655934cddbea9813af4035b4a273d7b77cc930e40d18bc1679419a8810",
+    "scriptSha256": "ad9e3c6ad04e0940c24587b5f5c8fb29ac351fe70eaf6dc8272b8d7457dadb65",
+    "difference": "CLI explicit-root setup fix only; identical fixture workload",
+    "summary": [
+      {
+        "fixtureMiB": 1,
+        "cycles": 3,
+        "allIntegrityAndDeletionChecksPassed": true,
+        "restoreMs": [
+          2393.809,
+          2333.475,
+          2164.586
+        ],
+        "checkpointMs": [
+          347.559,
+          359.175,
+          367.334
+        ]
+      },
+      {
+        "fixtureMiB": 16,
+        "cycles": 3,
+        "allIntegrityAndDeletionChecksPassed": true,
+        "restoreMs": [
+          2302.947,
+          2430.955,
+          2135.762
+        ],
+        "checkpointMs": [
+          437.769,
+          412.791,
+          419.126
+        ]
+      }
+    ]
+  },
+  "wholeVpsDestruction": {
+    "sourceDeletedBeforeReplacementCreation": true,
+    "differentProviderServerIdentity": true,
+    "independentCheckpointVerifiedBeforeSourceDeletion": true,
+    "checkpointTransport": "operator-local temporary storage over SSH; R2 not tested",
+    "fileAndSqlStateEqual": true,
+    "restoredRows": 1000,
+    "mutatedRevision": 2,
+    "mutatedSqlRevisions": 2000,
+    "restoreToHealthMs": 2163.148,
+    "replacementContainersAndVolumesCleaned": true,
+    "saveRawSha256": "bec6b6a77f3aa21dfcf873234dce76b1f74969cc70252375c02be3dd3219592c",
+    "restoreRawSha256": "80a8a7540466aa38c622e7bba9f06212a801acbf387ce950884b22ae467e9efa"
+  },
+  "cleanup": {
+    "cloudServersDeleted": 2,
+    "ipv4Deleted": 2,
+    "ipv6Deleted": 2,
+    "temporarySshKeyDeleted": true,
+    "remainingLabeledServers": 0
+  },
+  "reviewValidation": {
+    "finalScriptSha256": "ccd2e7a1b81c888092efee253bb0025885510fd10552889c5414b1999d6d1a32",
+    "changeAfterRemoteMeasurement": "Extract existing post-mutation assertions into verifyMutationState and also apply them to restore-only before cleanup; reject evidence output inside checkpoint roots, including symlink aliases and missing descendants, before Docker or destructive work. No workload or timing changes; remote measurements remain historical.",
+    "storedCrossHostOutputsPassStricterAssertions": true,
+    "focusedTestsPassed": 19
+  }
+}

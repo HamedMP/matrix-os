@@ -1,0 +1,199 @@
+{
+  "kind": "illustrative-cost-model-not-provider-benchmark",
+  "observedDate": "2026-10-18",
+  "currency": "USD",
+  "poolAssumptions": {
+    "hostMemoryGiB": 8,
+    "reservedMemoryGiB": 1,
+    "runtimeMemoryGiB": 2,
+    "hostVcpu": 4,
+    "reservedVcpu": 1,
+    "runtimeVcpuBudget": 1,
+    "monthlyHostUsd": 9.99,
+    "monthHours": 730,
+    "targetOccupancy": 0.5,
+    "minHosts": 1
+  },
+  "plans": {
+    "free": {
+      "assumptions": {
+        "sessions": 20,
+        "workMinutes": 5,
+        "lifecycleMinutes": 1,
+        "idleMinutes": 5,
+        "memoryGiB": 2,
+        "vcpu": 1,
+        "peakFraction": 0.05,
+        "lambdaChunkWorkMinutes": 5,
+        "cloudflareShape": "standard-1: 0.5 vCPU / 4 GiB / 8 GB disk; assumed busy CPU=0.2 vCPU"
+      },
+      "workHours": 1.6666666666666667,
+      "residentHours": 3.6666666666666665,
+      "ephemeral": {
+        "billedHours": 20,
+        "usd": 0.2079999999999999,
+        "usdPerWorkHour": 0.12479999999999994
+      },
+      "cloudRunRequest": {
+        "billedSeconds": 7200,
+        "usd": 0.20880800000000002,
+        "usdPerWorkHour": 0.1252848
+      },
+      "cloudRunInstance": {
+        "billedSeconds": 13200,
+        "usd": 0.2904,
+        "usdPerWorkHour": 0.17423999999999998
+      },
+      "lambda": {
+        "billedSeconds": 7200,
+        "usd": 0.24000448000000002,
+        "compatibleUnsplit": true,
+        "invocationsAfterExplicitTaskRefactor": 20,
+        "usdPerWorkHour": 0.14400268800000002
+      },
+      "cloudflare": {
+        "billedSeconds": 13200,
+        "usd": 0.168192,
+        "usdPerWorkHour": 0.1009152
+      },
+      "fleets": [
+        {
+          "accounts": 10,
+          "pool": {
+            "hosts": 1,
+            "slotsPerHost": 3,
+            "concurrentSlots": 3,
+            "paidSlotHours": 2190,
+            "idleSlotHours": 2153.3333333333335,
+            "occupancy": 0.0167427701674277,
+            "usd": 9.99,
+            "usdPerResidentHour": 0.2724545454545455
+          },
+          "poolUsdPerAccount": 0.999,
+          "poolUsdPerWorkHour": 0.5993999999999999
+        },
+        {
+          "accounts": 1000,
+          "pool": {
+            "hosts": 17,
+            "slotsPerHost": 3,
+            "concurrentSlots": 51,
+            "paidSlotHours": 37230,
+            "idleSlotHours": 33563.333333333336,
+            "occupancy": 0.09848688333781,
+            "usd": 169.83,
+            "usdPerResidentHour": 0.046317272727272735
+          },
+          "poolUsdPerAccount": 0.16983,
+          "poolUsdPerWorkHour": 0.101898
+        }
+      ]
+    },
+    "starter": {
+      "assumptions": {
+        "sessions": 60,
+        "workMinutes": 20,
+        "lifecycleMinutes": 1,
+        "idleMinutes": 5,
+        "memoryGiB": 2,
+        "vcpu": 1,
+        "peakFraction": 0.1,
+        "lambdaChunkWorkMinutes": 5,
+        "cloudflareShape": "standard-1: 0.5 vCPU / 4 GiB / 8 GB disk; assumed busy CPU=0.2 vCPU"
+      },
+      "workHours": 20,
+      "residentHours": 26,
+      "ephemeral": {
+        "billedHours": 60,
+        "usd": 0.624,
+        "usdPerWorkHour": 0.0312
+      },
+      "cloudRunRequest": {
+        "billedSeconds": 75600,
+        "usd": 2.192424,
+        "usdPerWorkHour": 0.1096212
+      },
+      "cloudRunInstance": {
+        "billedSeconds": 93600,
+        "usd": 2.0592,
+        "usdPerWorkHour": 0.10296000000000001
+      },
+      "lambda": {
+        "billedSeconds": 86400,
+        "usd": 2.88005376,
+        "compatibleUnsplit": false,
+        "invocationsAfterExplicitTaskRefactor": 240,
+        "usdPerWorkHour": 0.144002688
+      },
+      "cloudflare": {
+        "billedSeconds": 93600,
+        "usd": 1.290816,
+        "usdPerWorkHour": 0.0645408
+      },
+      "fleets": [
+        {
+          "accounts": 10,
+          "pool": {
+            "hosts": 1,
+            "slotsPerHost": 3,
+            "concurrentSlots": 3,
+            "paidSlotHours": 2190,
+            "idleSlotHours": 1930,
+            "occupancy": 0.1187214611872146,
+            "usd": 9.99,
+            "usdPerResidentHour": 0.03842307692307692
+          },
+          "poolUsdPerAccount": 0.999,
+          "poolUsdPerWorkHour": 0.04995
+        },
+        {
+          "accounts": 1000,
+          "pool": {
+            "hosts": 34,
+            "slotsPerHost": 3,
+            "concurrentSlots": 102,
+            "paidSlotHours": 74460,
+            "idleSlotHours": 48460,
+            "occupancy": 0.34918076819769006,
+            "usd": 339.66,
+            "usdPerResidentHour": 0.013063846153846155
+          },
+          "poolUsdPerAccount": 0.33966,
+          "poolUsdPerWorkHour": 0.016983
+        }
+      ]
+    }
+  },
+  "accountLevelBaselines": {
+    "cloudflareWorkersPaidUsd": 5,
+    "poolOneHostUsd": 9.99
+  },
+  "excluded": [
+    "AI",
+    "durable Postgres",
+    "durable files and backup operations",
+    "network/IPv4",
+    "shared account/API/auth services",
+    "observability",
+    "tax",
+    "operations",
+    "redundancy"
+  ],
+  "notes": [
+    "No provider free allowances or commitments applied; allowances are shared, not per Matrix owner.",
+    "Pool price uses CX33 live list rate but no available EU capacity at observation; not deployable supply guarantee.",
+    "VPS creation lifetime <= one billing month; per-server cap does not cap repeated server creations.",
+    "Peak fractions and target occupancy are assumptions, not observed concurrent load or queue guarantees.",
+    "Cloud Run request estimate assumes durable queued work completes before response, and no idle compute.",
+    "One minute covers all lifecycle overhead per activation/chunk hypothetically; replace with full-workload measurements.",
+    "Cloudflare standard-1 is larger RAM but smaller CPU than other modeled runtimes; no throughput equivalence claimed.",
+    "Lambda estimate requires explicit five-minute task decomposition, not preservation of terminals/processes."
+  ],
+  "sources": {
+    "hetznerBilling": "https://docs.hetzner.com/cloud/billing/faq/",
+    "hetznerRates": "https://docs.hetzner.cloud/reference/cloud#server-types-get-all-server-types",
+    "cloudRun": "https://cloud.google.com/run/pricing",
+    "lambda": "https://aws.amazon.com/lambda/pricing/",
+    "cloudflare": "https://developers.cloudflare.com/containers/platform/pricing/"
+  }
+}
