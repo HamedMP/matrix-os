@@ -35,6 +35,7 @@ export async function recordOrdinaryCopyReceipts<DB>(tx: ReceiptExecutor<DB>, in
   if (!tx.isTransaction || inputs.length > 500) throw new GoogleProvenanceUnavailable();
   if (!inputs.length) return;
   const first = { ...inputs[0]!.key };
+  validate(tx, first, inputs[0]!.hash);
   const records = inputs.map(({ key, hash }) => {
     validate(tx, key, hash);
     if (key.ownerId !== first.ownerId || key.chatId !== first.chatId) throw new GoogleProvenanceUnavailable();
