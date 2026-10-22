@@ -1,8 +1,9 @@
 [Unit]
 Description=Matrix CI ephemeral runner slot %i
-After=docker.service network-online.target
+After=docker.service network-online.target matrix-ci-pool-firewall.service
 Wants=network-online.target
-Requires=docker.service
+# Never start job containers without the egress firewall.
+Requires=docker.service matrix-ci-pool-firewall.service
 
 [Service]
 ExecStart=/opt/matrix-ci-pool/pool.sh slot %i
