@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { parseDocument } from 'yaml';
 import { createRequire } from 'node:module';
 import { tokenizer } from 'acorn';
 import { JSDOM } from 'jsdom';
@@ -23,6 +25,13 @@ const FormData = legacyRequest('form-data') as new () => { getBoundary(): string
 
 afterEach(() => vi.restoreAllMocks());
 describe('runtime dependency security regressions', () => {
+  it('keeps the frozen lock parseable and deprecation metadata outside dependency snapshots',()=>{
+    const document=parseDocument(readFileSync('pnpm-lock.yaml','utf8'));
+    expect(document.errors).toEqual([]);
+    const lock=document.toJS() as {packages:Record<string,{deprecated?:string}>;snapshots:Record<string,unknown>};
+    expect(Object.values(lock.snapshots).some(value=>value!==null&&typeof value==='object'&&'deprecated' in value)).toBe(false);
+    for(const key of ['har-validator@5.1.5','request@2.88.2','rimraf@2.6.3'])expect(lock.packages[key]!.deprecated).toBeTypeOf('string');
+  });
   it('keeps a manual mock URL as one string literal instead of executable module statements', () => {
     const url = 'x"); globalThis.syntheticInjected = true; void("';
     const source = createManualModuleSource(url, ['synthetic']);
