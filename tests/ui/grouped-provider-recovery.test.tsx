@@ -15,10 +15,10 @@ function snapshot(): ProviderSettingsSnapshot {
     harnesses: [{ id: "pi", harness: "pi", displayName: "Pi", enabled: true, configuredEnabled: true, installState: "installed", authState: "unknown", loginMethods: [], connectivity: "online", accountIds: [], selectedAccountId: null, accessSourceId: "native_pi", route: { kind: "configurable", providerId: "anthropic", modelId: "test" } }],
     accessSources: [{ id: "native_pi", kind: "harness_profile", harness: "pi", providerId: "anthropic", accountId: null, fundingKind: "owner_account", displayName: "Pi account", eligibleModelIds: ["test"], localObservation: { state: "present_unverified", checkedAt: now, staleAfter: new Date(Date.now() + 5000).toISOString() }, readiness: { state: "unknown", checkedAt: now, staleAfter: null, action: "retry", safeReason: "unknown" }, usage: { kind: "unavailable", authority: "unavailable", state: "unavailable", scope: "access_source", reason: "unknown", asOf: null } }] } as unknown as ProviderSettingsSnapshot;
 }
-function view(next = snapshot(), overrides: Partial<React.ComponentProps<typeof AgentsProvidersView>> = {}) {
+function view(next = snapshot(), overrides: Partial<React.ComponentProps<typeof AgentsProvidersView>> = {}, name: RegExp = /^Pi/) {
   const mutate = vi.fn().mockResolvedValue(true); const refresh = vi.fn(); const setup = vi.fn().mockResolvedValue(true);
-  render(<AgentsProvidersView snapshot={next} selectedHarnessId="pi" onSelectHarness={vi.fn()} onRefresh={refresh} onMutate={mutate} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} onSetupHarness={setup} onAddCredit={vi.fn()} {...overrides} />);
-  fireEvent.click(screen.getByRole("button", { name: /^Pi/ }));
+  render(<AgentsProvidersView snapshot={next} selectedHarnessId={next.harnesses[0]!.id} onSelectHarness={vi.fn()} onRefresh={refresh} onMutate={mutate} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} onSetupHarness={setup} onAddCredit={vi.fn()} {...overrides} />);
+  fireEvent.click(screen.getByRole("button", { name }));
   return { mutate, refresh, setup };
 }
 it("disconnects a non-guided saved agent without logging out or changing its route", async () => {
@@ -39,11 +39,11 @@ it("does not invent a disable capability", () => {
   const next = snapshot(); next.supportedActions = []; view(next);
   expect(screen.queryByRole("button", { name: "Disconnect" })).toBeNull();
 });
-it("opens only an advertised Terminal setup inside collapsed Advanced", async () => {
+it("omits excluded generic Terminal auth even when a legacy catalog advertises setup", () => {
   const { setup } = view(); const summary = screen.getByText("Advanced configuration");
   expect(summary.closest("details")).not.toHaveAttribute("open"); fireEvent.click(summary);
-  fireEvent.click(screen.getByRole("button", { name: "Connect in Terminal" }));
-  await waitFor(() => expect(setup).toHaveBeenCalledWith("pi"));
+  expect(screen.queryByRole("button", { name: "Connect in Terminal" })).toBeNull();
+  expect(setup).not.toHaveBeenCalled();
 });
 it("does not expose the Terminal setup after owner denial", async () => {
   const client = { capabilities: vi.fn().mockRejectedValue(new ProviderWorkflowClientError("forbidden")) };
@@ -77,13 +77,25 @@ it.each(["none", "unsupported"] as const)("does not open an unadvertised %s Term
   expect(setup).not.toHaveBeenCalled();
 });
 
-it("retains one method-driven Advanced login when both recovery contracts exist", async () => {
+it("rejects a stale generic method-driven Advanced subscription login", () => {
   const next = snapshot(); next.supportedActions!.push("start_login");
   next.harnesses[0]!.loginMethods = ["terminal"];
   const { mutate, setup } = view(next);
   fireEvent.click(screen.getByText("Advanced configuration"));
   expect(screen.queryByRole("button", { name: "Connect in Terminal" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
-  await waitFor(() => expect(mutate).toHaveBeenCalledExactlyOnceWith({ type: "start_login", harnessInstanceId: "pi", accountId: null, method: "terminal" }));
+  expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+  expect(mutate).not.toHaveBeenCalled();
+  expect(setup).not.toHaveBeenCalled();
+});
+
+it("retains official Claude method-driven Terminal login through the legacy recovery contract", async () => {
+  const next = snapshot(); next.supportedActions!.push("start_login");
+  Object.assign(next.harnesses[0]!, {id:"claude",harness:"claude",displayName:"Claude Code",authState:"unauthenticated",accessSourceId:null,loginMethods:["terminal"],route:{kind:"fixed",providerId:"anthropic",modelId:"native"}});
+  next.accessSources=[]; next.configurationHarnessKinds=[]; next.harnessCatalog=[];
+  const {mutate,setup}=view(next,{},/^Claude Code/);
+  fireEvent.click(screen.getByText("Advanced configuration"));
+  expect(screen.getAllByRole("button",{name:"Sign in"})).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button",{name:"Sign in"}));
+  await waitFor(()=>expect(mutate).toHaveBeenCalledExactlyOnceWith({type:"start_login",harnessInstanceId:"claude",accountId:null,method:"terminal"}));
   expect(setup).not.toHaveBeenCalled();
 });

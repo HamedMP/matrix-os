@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createServer, request as httpRequest, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -5,7 +6,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
-import { RUNNING_RUNTIME_COMPATIBILITY } from "@matrix-os/contracts";
+import {
+  CollaborationChatMessagesResponseSchema,
+  CollaborationChatSchema,
+  CollaborationDirectSessionSchema,
+  CollaborationScopeSchema,
+  CollaborationSignedConnectionTicketSchema,
+  RUNNING_RUNTIME_COMPATIBILITY,
+} from "@matrix-os/contracts";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 
 const root = resolve(import.meta.dirname, "../../..");
@@ -15,11 +23,33 @@ const suite = hasDesktopBuild ? describe : describe.skip;
 const executablePath = createRequire(join(root, "desktop/package.json"))("electron") as string;
 const output = join(root, "output/playwright/shared-chat");
 const scopeId = "10000000-0000-4000-8000-000000000001";
+const runtimeId = "vps-11111111-1111-4111-8111-111111111111";
 const now = "2026-09-17T12:00:00.000Z";
+const organizationId = "org_matrix_team";
+const configuredExecutionPolicy = {
+  scope: { kind: "standalone_chat", scopeId, chatId: "chat_launch_plan" },
+  ownerId: "user-1",
+  source: {
+    accessSourceId: "owner_anthropic",
+    providerInstanceId: "claude_owner",
+    harness: "claude_code",
+  },
+  submitMode: "follow_organization",
+  organizationAiSubmission: "members",
+  effectiveSubmitMode: "members",
+  providerTermsAcknowledgedAt: now,
+  allowedModelIds: ["claude-sonnet-5"],
+  revision: "3",
+  updatedAt: now,
+};
 
-function json(res: ServerResponse, body: unknown): void {
-  res.writeHead(200, { "content-type": "application/json" });
+function json(res: ServerResponse, body: unknown, status = 200): void {
+  res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
+}
+
+function proofKeyThumbprint(proofPublicKey: string): string {
+  return createHash("sha256").update(Buffer.from(proofPublicKey, "base64url")).digest("base64url");
 }
 
 suite("Electron shared Chat presentation", () => {
@@ -31,6 +61,75 @@ suite("Electron shared Chat presentation", () => {
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const path = url.pathname;
+    if (req.method === "POST" && path === "/api/collaboration/connections") {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        const request = JSON.parse(body) as { proofPublicKey: string };
+        const issuedAt = new Date();
+        const signedTicket = CollaborationSignedConnectionTicketSchema.parse({
+          ticket: {
+            protocolVersion: 2,
+            ticketId: "10000000-0000-4000-8000-000000000010",
+            nonce: "a".repeat(64),
+            actorId: "user-1",
+            organizationId,
+            resource: { scopeId, kind: "chat" },
+            purpose: "direct_session",
+            runtime: { runtimeId, authorityGeneration: 1 },
+            proofKeyThumbprint: proofKeyThumbprint(request.proofPublicKey),
+            maxActions: 32,
+            issuedAt: issuedAt.toISOString(),
+            expiresAt: new Date(issuedAt.getTime() + 30_000).toISOString(),
+          },
+          keyId: "platform",
+          signature: "a".repeat(86),
+        });
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("Fixture server unavailable");
+        json(
+          res,
+          {
+            signedTicket,
+            endpoint: { origin: `http://127.0.0.1:${address.port}`, protocolVersion: 2 },
+          },
+          201,
+        );
+      });
+      return;
+    }
+    if (req.method === "POST" && path === "/api/collaboration/direct-sessions") {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        const request = JSON.parse(body) as { proofPublicKey: string };
+        const issuedAt = new Date();
+        json(
+          res,
+          CollaborationDirectSessionSchema.parse({
+            protocolVersion: 2,
+            id: "20000000-0000-4000-8000-000000000010",
+            actorId: "user-1",
+            organizationId,
+            scopeId,
+            runtimeId,
+            authorityGeneration: 1,
+            purpose: "direct_session",
+            proofKeyThumbprint: proofKeyThumbprint(request.proofPublicKey),
+            issuedAt: issuedAt.toISOString(),
+            expiresAt: new Date(issuedAt.getTime() + 300_000).toISOString(),
+            evidenceExpiresAt: new Date(issuedAt.getTime() + 20_000).toISOString(),
+            renewAfter: new Date(issuedAt.getTime() + 240_000).toISOString(),
+          }),
+          201,
+        );
+      });
+      return;
+    }
     if (path === "/api/system/info") {
       json(res, {
         version: "stub",
@@ -68,6 +167,7 @@ suite("Electron shared Chat presentation", () => {
           scopeId,
           runtimeId: "vps:11111111-1111-4111-8111-111111111111",
           ownerId: "user-1",
+          organizationId,
           kind: "chat",
           authorityGeneration: 1,
           status: "accepted",
@@ -108,9 +208,10 @@ suite("Electron shared Chat presentation", () => {
       return;
     }
     if (path === `/api/collaboration/scopes/${scopeId}`) {
-      json(res, {
+      json(res, CollaborationScopeSchema.parse({
         id: scopeId,
         ownerId: "user-1",
+        organizationId,
         kind: "chat",
         resourceId: "chat_launch_plan",
         membershipMode: "direct",
@@ -128,11 +229,11 @@ suite("Electron shared Chat presentation", () => {
           controlTerminal: false,
           stopTerminal: false,
         },
-      });
+      }));
       return;
     }
     if (path === `/api/collaboration/scopes/${scopeId}/chat`) {
-      json(res, {
+      json(res, CollaborationChatSchema.parse({
         id: "chat_launch_plan",
         scopeId,
         title: "Launch plan",
@@ -140,11 +241,11 @@ suite("Electron shared Chat presentation", () => {
         revision: "4",
         messageCount: "3",
         lastMessagePreview: "The launch checklist is ready.",
-      });
+      }));
       return;
     }
     if (path === `/api/collaboration/scopes/${scopeId}/chat/messages`) {
-      json(res, {
+      json(res, CollaborationChatMessagesResponseSchema.parse({
         messages: [
           {
             id: "msg_discussion_1",
@@ -180,7 +281,7 @@ suite("Electron shared Chat presentation", () => {
             createdAt: now,
           },
         ],
-      });
+      }));
       return;
     }
     if (path === `/api/collaboration/scopes/${scopeId}/chat/requests`) {
@@ -238,6 +339,43 @@ suite("Electron shared Chat presentation", () => {
       });
       return;
     }
+    if (path === `/api/collaboration/scopes/${scopeId}/execution-policy/options`) {
+      json(res, {
+        organizationAiSubmission: "members",
+        policy: configuredExecutionPolicy,
+        options: [{
+          source: configuredExecutionPolicy.source,
+          sourceLabel: "Owner Claude account",
+          sourceKind: "owner_account",
+          available: true,
+          modelIds: ["claude-opus-5", "claude-sonnet-5"],
+          defaultModelId: "claude-opus-5",
+        }],
+      });
+      return;
+    }
+    if (path === `/api/collaboration/scopes/${scopeId}/policy/preflight`) {
+      json(res, {
+        resourceKind: "chat",
+        state: "ready",
+        missingOwnerSetup: [],
+        sourceKind: "owner_account",
+        effectiveSubmitMode: "members",
+        items: [
+          { item: "ai_source", status: "ready" },
+          { item: "submit_mode", status: "ready" },
+        ],
+      });
+      return;
+    }
+    if (path === `/api/collaboration/scopes/${scopeId}/grants`) {
+      json(res, []);
+      return;
+    }
+    if (path === `/api/organizations/${organizationId}/members`) {
+      json(res, { members: [] });
+      return;
+    }
     if (path === `/api/collaboration/scopes/${scopeId}/connection-tickets`) {
       json(res, { ticket: "a".repeat(43), actorId: "user-1", expiresAt: "2026-09-17T13:00:00.000Z" });
       return;
@@ -260,7 +398,22 @@ suite("Electron shared Chat presentation", () => {
 
   beforeAll(async () => {
     mkdirSync(output, { recursive: true });
-    gateway = await startStubGateway();
+    gateway = await startStubGateway({
+      identity: { userId: "user-1", handle: "neo", displayName: "Nima" },
+      organizationManagement: {
+        organizations: [{
+          organizationId,
+          name: "Matrix Team",
+          slug: "matrix-team",
+          role: "org:admin",
+          memberCount: 2,
+          aiSubmission: "members",
+          membershipEpoch: 1,
+        }],
+        members: { [organizationId]: [] },
+        invitations: { [organizationId]: [] },
+      },
+    });
     await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
     const platformUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
     profile = mkdtempSync(join(tmpdir(), "shared-chat-electron-"));
@@ -303,9 +456,10 @@ suite("Electron shared Chat presentation", () => {
     await page.getByRole("button", { name: "Open Chat" }).click();
 
     await page.getByText("Launch plan", { exact: true }).first().waitFor();
+    await page.screenshot({ path: join(output, "electron-desktop.png") });
     expect(await page.getByRole("button", { name: "Rename Launch plan" }).count()).toBe(0);
     expect(await page.locator('[data-slot="canonical-chat-workspace"]').count()).toBe(1);
-    expect(await page.locator('[data-slot="native-shared-chat"]').count()).toBe(1);
+    expect(await page.locator('[data-slot="shared-chat-surface"]').count()).toBe(1);
     expect(await page.locator('[data-slot="collaboration-session-subheader"]').count()).toBe(0);
     expect(await page.getByLabel("Message Chat").isVisible()).toBe(true);
     expect(await page.getByRole("button", { name: "Ask AI" }).count()).toBe(0);
@@ -317,7 +471,17 @@ suite("Electron shared Chat presentation", () => {
       await page.getByRole("button", { name: /Getting started —/ }).click();
       await gettingStarted.waitFor({ state: "hidden" });
     }
-    await page.screenshot({ path: join(output, "electron-desktop.png") });
+    await page.getByRole("button", { name: "Collaboration access" }).click();
+    await page.getByRole("button", { name: "Manage access" }).click();
+    const manager = page.getByRole("dialog", { name: "Invite collaborators" });
+    await manager.getByRole("region", { name: "Contributor AI" }).waitFor();
+    expect(await manager.getByRole("region", { name: "Contributor AI" }).innerText())
+      .toContain("Contributors can send prompts using this owner-selected source and model.");
+    expect(await manager.getByLabel("Owner AI source").inputValue())
+      .toBe(JSON.stringify(["owner_anthropic", "claude_owner"]));
+    expect(await manager.getByLabel("Allowed model").inputValue()).toBe("claude-sonnet-5");
+    await page.screenshot({ path: join(output, "contributor-ai-electron-desktop.png") });
+    await manager.getByRole("button", { name: "Close" }).click();
 
     await page.getByRole("button", { name: "Open discussion" }).click();
     await page.getByRole("dialog", { name: "Discussion" }).waitFor();

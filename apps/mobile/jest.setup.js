@@ -4,53 +4,94 @@
 require("react-native-unistyles/mocks");
 require("./lib/unistyles");
 
-// Product screens intentionally mark decorative/loading elements (Spacer,
-// Skeleton, RefreshControl wrappers, etc.) accessibilityElementsHidden so
-// screen readers skip them, but still assign them testIDs for assertions.
-// RNTL v12 excludes hidden elements from queries by default -- opt back in
-// globally so tests can find those nodes without threading
-// `{ includeHiddenElements: true }` through every query call.
-const { configure } = require("@testing-library/react-native");
-configure({ defaultIncludeHiddenElements: true });
-
 jest.mock("react-native-reanimated", () => {
-  const { Text, View } = require("react-native");
+  const { FlatList, ScrollView, Text, View } = require("react-native");
   const mockReact = require("react");
+  // Draws the component it wraps with every prop, `entering`/`exiting`/`layout`
+  // included, so a test can read which animation a view was given.
+  const createAnimatedComponent = (Component) => {
+    const AnimatedComponent = mockReact.forwardRef(function AnimatedComponent(props, ref) {
+      return mockReact.createElement(Component, { ...props, ref });
+    });
+    return AnimatedComponent;
+  };
   const mockAnimated = {
-    View: (props) =>
-      mockReact.createElement(View, props, props.children),
-    Text: (props) =>
-      mockReact.createElement(Text, props, props.children),
+    View: createAnimatedComponent(View),
+    Text: createAnimatedComponent(Text),
+    ScrollView: createAnimatedComponent(ScrollView),
+    FlatList: createAnimatedComponent(FlatList),
+    createAnimatedComponent,
+  };
+  // Layout animations are chains of settings (`FadeIn.duration(200).delay(50)`);
+  // every step returns the same named animation.
+  const layoutAnimation = (name) => {
+    const animation = { animationName: name, toString: () => name };
+    for (const step of [
+      "duration", "delay", "springify", "damping", "stiffness", "mass",
+      "easing", "reduceMotion", "withCallback", "withInitialValues",
+    ]) {
+      animation[step] = () => animation;
+    }
+    return animation;
   };
   return {
     __esModule: true,
     default: mockAnimated,
-    FadeInLeft: { duration: () => ({ springify: () => "FadeInLeft" }) },
-    FadeInRight: { duration: () => ({ springify: () => "FadeInRight" }) },
-    FadeInUp: { duration: () => ({ delay: () => "FadeInUp" }) },
-    FadeInDown: { duration: () => ({ springify: () => "FadeInDown" }) },
-    ZoomIn: { springify: () => "ZoomIn" },
-    FadeIn: { duration: () => "FadeIn" },
+    createAnimatedComponent,
+    FadeIn: layoutAnimation("FadeIn"),
+    FadeOut: layoutAnimation("FadeOut"),
+    FadeInLeft: layoutAnimation("FadeInLeft"),
+    FadeInRight: layoutAnimation("FadeInRight"),
+    FadeInUp: layoutAnimation("FadeInUp"),
+    FadeInDown: layoutAnimation("FadeInDown"),
+    ZoomIn: layoutAnimation("ZoomIn"),
+    LinearTransition: layoutAnimation("LinearTransition"),
+    ReduceMotion: { System: "system", Always: "always", Never: "never" },
+    Easing: {
+      linear: (t) => t,
+      ease: (t) => t,
+      bezier: () => (t) => t,
+      in: (easing) => easing,
+      out: (easing) => easing,
+      inOut: (easing) => easing,
+    },
+    // Kept across renders, as the real one is, so a value set by a press is
+    // still there when the component draws again.
     useSharedValue: (init) => {
-      const shared = {
-        value: init,
-        get: () => shared.value,
-        set: (next) => {
-          shared.value = next;
-        },
-      };
-      return shared;
+      const ref = mockReact.useRef(null);
+      if (ref.current === null) {
+        const shared = {
+          value: init,
+          get: () => shared.value,
+          set: (next) => {
+            shared.value = typeof next === "function" ? next(shared.value) : next;
+          },
+        };
+        ref.current = shared;
+      }
+      return ref.current;
     },
     useAnimatedStyle: (fn) => fn(),
+    useReducedMotion: () => false,
+    interpolate: (value, input, output) => {
+      const [inStart, inEnd] = [input[0], input[input.length - 1]];
+      const [outStart, outEnd] = [output[0], output[output.length - 1]];
+      if (inEnd === inStart) return outStart;
+      return outStart + ((value - inStart) / (inEnd - inStart)) * (outEnd - outStart);
+    },
     withRepeat: (v) => v,
     withTiming: (v) => v,
     withSpring: (v) => v,
+    withDelay: (_delay, v) => v,
+    withSequence: (...values) => values[values.length - 1],
+    cancelAnimation: jest.fn(),
   };
 });
 
 jest.mock("expo-haptics", () => ({
   impactAsync: jest.fn(),
   notificationAsync: jest.fn(),
+  selectionAsync: jest.fn(),
   ImpactFeedbackStyle: { Light: "light", Medium: "medium", Heavy: "heavy" },
   NotificationFeedbackType: {
     Success: "success",
@@ -102,6 +143,7 @@ class MatrixMockWebSocket {
 global.WebSocket = MatrixMockWebSocket;
 
 jest.mock("expo-secure-store", () => ({
+  getItem: jest.fn(() => null),
   getItemAsync: jest.fn(() => Promise.resolve(null)),
   setItemAsync: jest.fn(() => Promise.resolve()),
   deleteItemAsync: jest.fn(() => Promise.resolve()),
@@ -162,6 +204,16 @@ jest.mock(
   "@react-native-async-storage/async-storage",
   () => require("@react-native-async-storage/async-storage/jest/async-storage-mock"),
 );
+
+// The composer refreshes the Clerk session token ahead of a send. Screen tests
+// mock Clerk without one, so the refresh is a no-op for them; the hook's own
+// suite unmocks it.
+jest.mock("@/lib/use-session-token-warmup", () => ({ useSessionTokenWarmup: () => () => undefined }));
+
+// Dictation needs the microphone's native module and the computer's speech
+// routes. Screen tests get a composer without it; the hook's own suite and the
+// composer's speech tests unmock or pass it.
+jest.mock("@/lib/speech/use-composer-speech", () => ({ useComposerSpeech: () => undefined }));
 
 // PostHog pulls in optional native modules (expo-file-system/application/device,
 // the session-replay plugin) at import time. Stub it globally so screen tests that

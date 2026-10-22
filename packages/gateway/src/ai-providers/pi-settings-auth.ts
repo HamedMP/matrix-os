@@ -1,3 +1,4 @@
+import { NativeProviderWriteNotStartedError } from "./native-provider-profile-guard.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { lstat, realpath, readFile } from "node:fs/promises";
@@ -21,12 +22,19 @@ process.on("SIGTERM",()=>stop.abort());
 try {
   const sdk = await import(entry);
   if (typeof sdk.ModelRuntime?.create!=="function" || typeof sdk.ModelRuntime.prototype.login!=="function") throw new Error("unsupported");
-  if(mode==="probe") { send({type:"capability",supported:true}); }
+  if(mode==="probe") {
+    // Public read-only, empty credential store: capability discovery never opens
+    // the owner's auth.json or enables model-network refresh.
+    const credentials={read:async()=>undefined,list:async()=>[],modify:async()=>{throw new Error("read only");},delete:async()=>{throw new Error("read only");}};
+    const runtime=await sdk.ModelRuntime.create({credentials,refreshOnCreate:false,allowModelNetwork:false,modelsPath:null,signal:stop.signal});
+    if(!["openai","anthropic","openrouter"].every(id=>typeof runtime.getProvider(id)?.auth?.apiKey?.login==="function"))throw new Error("unsupported");
+    send({type:"capability",supported:true});
+  }
   else {
-    let key="";
-    if(mode==="key") { let input=""; for await(const chunk of process.stdin) {input+=chunk.toString("utf8");if(Buffer.byteLength(input)>8192)throw new Error("input");} key=JSON.parse(input).key;if(typeof key!=="string"||key.length>4096)throw new Error("input");input=""; }
+    let key=""; let provider="openai";
+    if(mode==="key") { let input=""; for await(const chunk of process.stdin) {input+=chunk.toString("utf8");if(Buffer.byteLength(input)>8192)throw new Error("input");} const supplied=JSON.parse(input);key=supplied.key;provider=supplied.provider??"openai";if(!["openai","anthropic","openrouter"].includes(provider))throw new Error("provider");if(typeof key!=="string"||key.length>4096)throw new Error("input");input=""; }
     const runtime=await sdk.ModelRuntime.create({refreshOnCreate:false,allowModelNetwork:false,modelsPath:null,signal:stop.signal});
-    await runtime.login(mode==="key"?"openai":"openai-codex",mode==="key"?"api_key":"oauth",{
+    await runtime.login(mode==="key"?provider:"openai-codex",mode==="key"?"api_key":"oauth",{
       signal:stop.signal,
       prompt: async prompt => {
         if(mode==="key"&&prompt.type==="secret")return key;
@@ -69,17 +77,23 @@ export async function discoverPiSettingsAuth(options: { homePath: string; runtim
 }
 export function createPiSettingsConnection(options: {
   discover: () => Promise<PiAuthDiscovery>;
-  enableConnected: (id: string, provider: "openai" | "openai-codex", key: string) => Promise<void>;
+  enableConnected: (id: string, provider: "openai" | "openai-codex" | "anthropic" | "openrouter", key: string) => Promise<void>;
   spawn?: OpenCodeSpawnFn; fetch?: typeof fetch;
 }) {
   const children = new Map<OpenCodeProcess, () => Promise<void>>(); // At most two; remove only after confirmed exit.
   let shutdown = false;
   let cached: { expiresAt: number; supported: boolean } | undefined;
   let probing: Promise<{ login: boolean; apiKey: boolean }> | undefined;
-  async function run(mode: "probe" | "oauth" | "key", publish: (record: z.infer<typeof recordSchema>) => void, key?: string, registerCleanup?: (cancel: () => Promise<void>) => void) {
-    if (shutdown || children.size >= 2) throw new ProviderWorkflowError("unavailable");
-    const config = await options.discover();
-    if (shutdown || children.size >= 2) throw new ProviderWorkflowError("unavailable");
+  async function run(mode: "probe" | "oauth" | "key", publish: (record: z.infer<typeof recordSchema>) => void, key?: string, registerCleanup?: (cancel: () => Promise<void>) => void, provider: "openai" | "anthropic" | "openrouter" = "openai") {
+    if (shutdown || children.size >= 2) throw new NativeProviderWriteNotStartedError();
+    let config: PiAuthDiscovery;
+    try { config = await options.discover(); }
+    catch (error) {
+      console.warn("[provider-workflow] Pi discovery unavailable:", error instanceof Error ? error.name : "UnknownError");
+      // Discovery inspects package metadata/version only; the key worker has not launched.
+      throw new NativeProviderWriteNotStartedError();
+    }
+    if (shutdown || children.size >= 2) throw new NativeProviderWriteNotStartedError();
     const launch = options.spawn ?? ((command, args, opts) => spawnIsolatedProviderProcess(command, args, { ...opts, stdio: ["pipe", "pipe", "pipe"] }));
     const cleanup: { close?: () => Promise<void> } = {};
     registerCleanup?.(async () => { if (!cleanup.close) throw new ProviderWorkflowError("unavailable"); await cleanup.close(); });
@@ -128,7 +142,7 @@ export function createPiSettingsConnection(options: {
     if (mode === "key") {
       const stdin = (child as OpenCodeProcess & { stdin?: { end(value: string): void; on(event: "error", callback: () => void): void } }).stdin;
       if (!stdin) { fail(); await close(); throw new ProviderWorkflowError("unavailable"); }
-      stdin.on("error", fail); stdin.end(JSON.stringify({ key }));
+      stdin.on("error", fail); stdin.end(JSON.stringify(provider === "openai" ? { key } : { key, provider }));
     }
     return { done, close, get expired() { return expired; } };
   }
@@ -142,6 +156,7 @@ export function createPiSettingsConnection(options: {
         try { await task.done; cached = { supported, expiresAt: Date.now() + 15000 }; return { login: supported, apiKey: supported }; } finally { await task.close(); } })();
       try { return await probing; } finally { probing = undefined; }
     },
+    async apiKeyProviders() { return (await this.capabilities()).apiKey ? ["openai", "anthropic", "openrouter"] as const : []; },
     async start({ request, publish, registerCleanup }: Parameters<ProviderWorkflowAdapter["start"]>[0]) {
       if (request.kind !== "login" || request.method !== "device_code") throw new ProviderWorkflowError("unavailable");
       let cancelled = false;
@@ -157,11 +172,10 @@ export function createPiSettingsConnection(options: {
       return { cancel };
     },
     async verifyKey(input: Parameters<NonNullable<ProviderWorkflowAdapter["verifyKey"]>>[0]) {
-      if (input.providerId !== "openai") throw new ProviderWorkflowError("rejected");
-      await createProviderKeyVerifier({ providerId: "openai", fetchFn: options.fetch, save: async key => {
-        const task = await run("key", () => {}, key); try { await task.done; } finally { await task.close(); }
+      await createProviderKeyVerifier({ providerId: input.providerId, fetchFn: options.fetch, save: async key => {
+        const task = await run("key", () => {}, key, undefined, input.providerId); try { await task.done; } finally { await task.close(); }
       } })(input);
-      await options.enableConnected(input.harnessInstanceId, "openai", `pi-key-${randomUUID()}`);
+      await options.enableConnected(input.harnessInstanceId, input.providerId, `pi-key-${randomUUID()}`);
     },
   };
 }

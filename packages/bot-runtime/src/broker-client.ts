@@ -3,6 +3,7 @@ import { connect, type Socket } from "node:net";
 import type { z } from "zod/v4";
 import {
   BOT_BROKER_MAX_FRAME_BYTES,
+  SHARED_BROWSER_ACTION_DEADLINE_MS,
   BotBrokerRequestSchema,
   BotBrokerResponseSchema,
   BotEventAcceptedSchema,
@@ -109,8 +110,11 @@ export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorke
     if (!frame.success) throw new BotBrokerError("invalid_arguments");
     const tool = frame.data.action === "bot.tool" ? frame.data.tool : undefined;
     const waitsForApproval = tool?.capability === "integration.call" || tool?.capability === "mcp.call";
-    const raw = await exchange(waitsForApproval && options.timeoutMs === undefined
-      ? { ...options, timeoutMs: 10 * 60_000 + 35_000 } : options, frame.data);
+    // Jev's paid classification and confirmed label readback use the gateway's bounded long-operation deadline.
+    const longJevOperation = tool?.capability === "jev.inbox" && ["evaluate", "batch_next"].includes(tool.args.operation);
+    const browserPause = tool?.capability === "browser.action";
+    const raw = await exchange(options.timeoutMs === undefined && (waitsForApproval || longJevOperation || browserPause)
+      ? { ...options, timeoutMs: browserPause ? SHARED_BROWSER_ACTION_DEADLINE_MS + 30_000 : 10 * 60_000 + 35_000 } : options, frame.data);
     const reply = BotBrokerResponseSchema.safeParse(raw);
     if (!reply.success || reply.data.requestId !== requestId) throw new BotBrokerError("unavailable");
     if (!reply.data.ok) throw new BotBrokerError(reply.data.code);

@@ -9,6 +9,11 @@ import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 import { useCodingAgentWorkspace } from "../../desktop/src/renderer/src/stores/coding-agent-workspace";
 import { mergeLiveThreadEvent } from "../../desktop/src/renderer/src/stores/coding-agent/thread-model";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import {
+  desktopProviderCatalogCache,
+  startDesktopProviderCatalogCoordinator,
+  stopDesktopProviderCatalogCoordinator,
+} from "../../desktop/src/renderer/src/features/chat/provider-catalog-coordinator";
 
 function snapshot(events: AgentThreadEvent[], threadOverrides: Record<string, unknown> = {}): AgentThreadSnapshot {
   return {
@@ -84,6 +89,8 @@ function userMessage(id: string, text: string, second: number): AgentThreadEvent
 
 describe("AgentConversationView transcript", () => {
   beforeEach(() => {
+    stopDesktopProviderCatalogCoordinator();
+    useConnection.setState(useConnection.getInitialState(), true);
     class MockResizeObserver {
       observe() {}
       unobserve() {}
@@ -101,7 +108,11 @@ describe("AgentConversationView transcript", () => {
     });
   });
 
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    stopDesktopProviderCatalogCoordinator();
+    useConnection.setState(useConnection.getInitialState(), true);
+  });
 
   it("renders the full assistant message as markdown, not a truncated preview", () => {
     const paragraph = "The migration needs three steps. ".repeat(30);
@@ -454,7 +465,17 @@ describe("AgentConversationView transcript", () => {
       size: file.size,
     }));
     useCodingAgentWorkspace.setState({ sendThreadMessage });
-    useConnection.setState({ api: { putBytes } as never });
+    const get = vi.fn(async (path: string) => {
+      if (path.startsWith("/api/chat-providers")) {
+        // This existing thread can accept turns without an ordinary picker
+        // route; its initial catalog observation must still finish.
+        return { revision: "existing-thread", drivers: [], instances: [] };
+      }
+      throw new Error(`unexpected GET ${path}`);
+    });
+    useConnection.setState({ api: { get, putBytes } as never });
+    startDesktopProviderCatalogCoordinator();
+    await waitFor(() => expect(desktopProviderCatalogCache.getSnapshot().lastSuccessAt).not.toBeNull());
     render(
       <AgentConversationView
         status="ready"

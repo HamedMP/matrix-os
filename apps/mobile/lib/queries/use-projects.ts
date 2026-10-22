@@ -36,5 +36,7 @@ export function useProjects() {
       || (Boolean(computer) && projects.isPending)
     ),
     isError: activeComputer.isError || projects.isError,
+    /** Reads the list again, as a screen does when it regains focus. */
+    refetch: () => projects.refetch(),
   };
 }

@@ -64,6 +64,13 @@ export const BridgeQueryBodySchema = z.discriminatedUnion("action", [
   }).strict(),
   z.object({
     ...AppTableSchema,
+    action: z.literal("compareAndSwap"),
+    id: IdSchema,
+    expectedPayload: z.record(z.string(), z.json()),
+    data: AppDataRecordSchema,
+  }).strict(),
+  z.object({
+    ...AppTableSchema,
     action: z.literal("bulkUpdate"),
     updates: z.array(z.object({
       id: IdSchema,

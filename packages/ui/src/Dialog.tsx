@@ -6,6 +6,8 @@ export interface DialogProps extends HTMLAttributes<HTMLDivElement> {
   open: boolean;
   onClose: () => void;
   children?: ReactNode;
+  /** Position an individual modal without changing the content surface. */
+  overlayStyle?: React.CSSProperties;
 }
 
 const overlayStyle: React.CSSProperties = {
@@ -30,7 +32,7 @@ const contentStyle: React.CSSProperties = {
   boxShadow: "0 20px 60px rgba(0, 0, 0, 0.15)",
 };
 
-export function Dialog({ open, onClose, className, style, children, "aria-label": ariaLabel, ...rest }: DialogProps) {
+export function Dialog({ open, onClose, className, style, overlayStyle: positionedOverlay, children, "aria-label": ariaLabel, ...rest }: DialogProps) {
   useGettingStartedBlocker(open);
   const dialogRef = useRef<HTMLDialogElement>(null);
 
@@ -76,7 +78,7 @@ export function Dialog({ open, onClose, className, style, children, "aria-label"
   }, []);
 
   return (
-    <dialog ref={dialogRef} className="matrix-dialog-overlay" style={overlayStyle} aria-label={ariaLabel}>
+    <dialog ref={dialogRef} className="matrix-dialog-overlay" style={{ ...overlayStyle, ...positionedOverlay }} aria-label={ariaLabel}>
       <div className={cn("matrix-dialog", className)} style={{ ...contentStyle, ...style }} {...rest}>
         {children}
       </div>

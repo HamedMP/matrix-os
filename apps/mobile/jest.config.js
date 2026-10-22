@@ -1,22 +1,32 @@
 const path = require("node:path");
+const expoTransform = require("jest-expo/jest-preset").transform;
 
 module.exports = {
   preset: "jest-expo",
+  // Shared browser-safe command policy is also consumed by the plain Node runner.
+  transform: { ...expoTransform, "\\.mjs$": expoTransform["\\.[jt]sx?$"] },
   // The workspace shares a global pnpm virtual store, so packages are linked from
   // content-addressed directories outside the repo and cannot see undeclared
   // dependencies of their own (expo-modules-core -> @babel/runtime, jest-expo ->
   // @react-native/assets-registry, ...). The hoisted root node_modules is flat and
   // complete, so add it as a fallback resolution root.
   modulePaths: [path.resolve(__dirname, "../../node_modules")],
+  // micromark and its helpers (character-entities,
+  // decode-named-character-reference, devlop) are ESM-only and reach every suite
+  // through the @matrix-os/contracts index, so they must be transformed too.
   transformIgnorePatterns: [
-    "node_modules/.pnpm/(?!(react-native|jest-react-native|@react-native\\+.*|expo(nent)?|expo-[^@]+|expo-modules-core|@expo(nent)?\\+.*|@expo-google-fonts\\+.*|react-navigation|@react-navigation\\+.*|@sentry\\+react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage\\+.*)@)",
-    "node_modules/(?!\\.pnpm|((jest-)?react-native|@react-native(-community)?)|expo(nent)?|expo-[^/]+|expo-modules-core|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage)",
+    "node_modules/.pnpm/(?!(react-native|jest-react-native|@react-native\\+.*|expo(nent)?|expo-[^@]+|expo-modules-core|@expo(nent)?\\+.*|@expo-google-fonts\\+.*|react-navigation|@react-navigation\\+.*|@sentry\\+react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage\\+.*|micromark[^@]*|character-entities|decode-named-character-reference|devlop)@)",
+    "node_modules/(?!\\.pnpm|((jest-)?react-native|@react-native(-community)?)|expo(nent)?|expo-[^/]+|expo-modules-core|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-unistyles|react-native-nitro-modules|react-native-edge-to-edge|nativewind|@react-native-async-storage|micromark|character-entities|decode-named-character-reference|devlop)",
   ],
   setupFiles: ["./jest.setup.js"],
+  setupFilesAfterEnv: ["./jest.after-env.js"],
   testMatch: ["**/__tests__/**/*.test.[jt]s?(x)"],
   moduleNameMapper: {
     "^\\./canonical-chat-api\\.js$": "<rootDir>/../../packages/contracts/src/canonical-chat-api.ts",
     "^\\./canonical-chat-inputs\\.js$": "<rootDir>/../../packages/contracts/src/canonical-chat-inputs.ts",
+    // The shared speech hook (@matrix-os/ui/speech) imports its siblings by their built names.
+    "^\\./use-platform-speech-draft\\.js$": "<rootDir>/../../packages/ui/src/speech/use-platform-speech-draft.ts",
+    "^\\./pcm\\.js$": "<rootDir>/../../packages/ui/src/speech/pcm.ts",
     "^react$": "<rootDir>/node_modules/react",
     "^@/(.*)$": "<rootDir>/$1",
   },

@@ -92,12 +92,31 @@ describe("owner runtime direct sessions", () => {
     await expect(fixture.service.create(body)).rejects.toMatchObject({ code: "replayed" });
     const path = `/api/collaboration/runtimes/vps%3A11111111-1111-4111-8111-111111111111/catalog/resolve`;
     await expect(fixture.service.authenticate(fixture.signedRequest(session.id, path))).resolves.toMatchObject({ actorId: ownerId, organizationId });
+    await expect(fixture.service.authenticate(fixture.signedRequest(session.id,
+      `/api/collaboration/runtimes/vps%3A11111111-1111-4111-8111-111111111111/catalog/lookup`)))
+      .resolves.toMatchObject({ actorId: ownerId, organizationId });
     await expect(fixture.service.authenticate(fixture.signedRequest(session.id, "/api/collaboration/scopes/10000000-0000-4000-8000-000000000001")))
       .rejects.toMatchObject({ code: "denied" });
     await expect(fixture.service.authenticate(fixture.signedRequest(session.id, `/api/collaboration/runtimes/vps%3A22222222-2222-4222-8222-222222222222/scopes`)))
       .rejects.toMatchObject({ code: "denied" });
     fixture.setMember(false);
     await expect(fixture.service.authenticate(fixture.signedRequest(session.id, path))).rejects.toMatchObject({ code: "denied" });
+    await fixture.service.shutdown();
+  });
+
+  it("admits only exact owner POST inspection/confirmation paths for existing resource IDs", async () => {
+    const fixture = makeFixture();
+    const session = await fixture.service.create(fixture.create());
+    const prefix = `/api/collaboration/runtimes/vps%3A11111111-1111-4111-8111-111111111111/catalog/10000000-0000-4000-8000-000000000001/reauthorization`;
+    for (const action of ["inspect", "confirm"]) {
+      await expect(fixture.service.authenticate(fixture.signedRequest(session.id, `${prefix}/${action}`)))
+        .resolves.toMatchObject({ actorId: ownerId, authorityGeneration: 1 });
+      await expect(fixture.service.authenticate(fixture.signedRequest(session.id, `${prefix}/${action}`, new Uint8Array(), "GET")))
+        .rejects.toMatchObject({ code: "denied" });
+    }
+    for (const path of [prefix, `${prefix}/delete`, `${prefix}/confirm/extra`, prefix.replace("10000000-0000-4000-8000-000000000001", "any") + "/confirm"]) {
+      await expect(fixture.service.authenticate(fixture.signedRequest(session.id, path))).rejects.toMatchObject({ code: "denied" });
+    }
     await fixture.service.shutdown();
   });
 

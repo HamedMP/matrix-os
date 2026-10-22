@@ -229,3 +229,16 @@ Native Mobile microphone capture is explicitly outside the initial recording sco
 ## Technical Design and Evidence
 
 See [research.md](research.md) for the current implementation inventory and provider feasibility, [plan.md](plan.md) for service boundaries and phases, and [implementation.md](implementation.md) for the self-review findings, concrete contracts, race handling and delivery gates.
+
+
+### Funded execution recovery (ENG-205)
+
+An operator may atomically recover a reviewed expired unknown speech reservation
+with an unknown usage reservation under the funded owner lock. The shared maximum
+is two unknown obligations totaling at most 500,000 microusd. Speech's saved
+`reserved_microusd` is its captured maximum provider liability. Recovery changes
+execution admission only; balances, allowance/monthly reserves, allocations and
+ledger stay intact. Admission/start/complete/cancel and funding transitions take
+the same owner lock before row locks, and cleanup skips audited unknown holds.
+See [the funded recovery contract](../536-conversational-bots/contracts/funded-priority.md#eng-205-durable-terminal-outcomes-and-bounded-automatic-recovery)
+for authenticated endpoints, proof, audit compatibility and deployment ordering.

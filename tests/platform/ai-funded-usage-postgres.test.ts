@@ -1,7 +1,12 @@
+import { initializeCustomerFundedStarterPolicy, lockCustomerFundedStarterActivation } from '../../packages/platform/src/customer-funded-starter-policy.js';
+import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
+import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
+import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
+import { createMockHetznerClient, createMockCustomerVpsSystemStore } from './customer-vps-fixtures.js';
 import { JEV_MODEL_ID } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { createPlatformDb, insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
 
@@ -30,6 +35,7 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
     url.searchParams.set("options", `-c search_path=${schema}`);
     db = createPlatformDb(url.toString());
     await db.ready;
+    url.searchParams.set("application_name", `${schema}_second`);
     secondDb = createPlatformDb(url.toString());
     await secondDb.ready;
     clock = new Date("2026-09-10T12:00:00Z");
@@ -58,10 +64,68 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await secondDb?.destroy();
     await db?.destroy();
     if (schema) await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
     await admin?.end();
+  });
+
+  const starterEnv = { MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: 'true',
+    MATRIX_FUNDED_AI_RUNTIME_ENABLED: 'true', AI_FUNDED_CREDENTIAL_HASH_SECRET: 'h'.repeat(32) };
+
+  it('starter registration waits for owner admission before taking the machine lock', async () => {
+    for (const [key, value] of Object.entries(starterEnv)) vi.stubEnv(key, value);
+    const machineId = randomUUID();
+    await insertUserMachine(db, { machineId, clerkUserId: 'shared_owner', handle: 'starter-alice', runtimeSlot: 'primary',
+      provisioningClass: 'customer', activationState: 'authorized', status: 'provisioning',
+      imageVersion: 'test', provisionedAt: clock.toISOString(), hetznerServerId: 123,
+      registrationTokenHash: hashRegistrationToken('registration'), registrationTokenExpiresAt: '2099-01-01T00:00:00.000Z' });
+    const service = createCustomerVpsService({ db: secondDb,
+      config: loadCustomerVpsConfig({ PLATFORM_SECRET: 'test-platform', HETZNER_API_TOKEN: 'test-hetzner',
+        S3_ACCESS_KEY_ID: 'test-r2', S3_SECRET_ACCESS_KEY: 'test-r2-secret', S3_ENDPOINT: 'https://r2.example', R2_BUCKET: 'test' }),
+      hetzner: createMockHetznerClient(), systemStore: createMockCustomerVpsSystemStore(), now: () => new Date(clock) });
+    let registration: ReturnType<typeof service.register> | undefined;
+    try {
+      await db.transaction(async trx => {
+        await lockCustomerFundedStarterActivation(trx, 'shared_owner', starterEnv);
+        registration = service.register('registration', { machineId, hetznerServerId: 123,
+          publicIPv4: '203.0.113.10', imageVersion: 'test' });
+        await vi.waitFor(async () => {
+          const waiting = await admin.query<{ count: number }>(`SELECT count(*)::int AS count
+            FROM pg_locks AS lock JOIN pg_stat_activity AS activity ON activity.pid = lock.pid
+            WHERE lock.locktype = 'advisory' AND NOT lock.granted AND activity.application_name = $1`, [`${schema}_second`]);
+          expect(waiting.rows[0].count).toBeGreaterThan(0);
+        }, { timeout: 3000, interval: 25 });
+        // An inverted caller would already own this row while waiting for our
+        // owner lock; NOWAIT detects that inversion on independent connections.
+        await trx.executor.selectFrom('user_machines').select('machine_id')
+          .where('machine_id', '=', machineId).forUpdate().noWait().executeTakeFirstOrThrow();
+      });
+      await expect(registration).resolves.toMatchObject({ registered: true });
+      expect(await db.executor.selectFrom('ai_funded_credit_ledger').select('entry_id')
+        .where('source_reference', '=', 'matrix-ai-lifetime-starter').execute()).toHaveLength(1);
+    } finally {
+      await registration?.catch(() => undefined);
+    }
+  });
+
+  it('starter retries on independent pools mint exactly one permanent owner entitlement', async () => {
+    const machineId = randomUUID();
+    await insertUserMachine(db, { machineId, clerkUserId: 'shared_owner', handle: 'starter-alice', runtimeSlot: 'primary',
+      provisioningClass: 'customer', activationState: 'authorized', status: 'running', imageVersion: 'test',
+      provisionedAt: clock.toISOString() });
+    const options = { now: clock.toISOString(), env: starterEnv };
+    await Promise.all([initializeCustomerFundedStarterPolicy(db, machineId, options),
+      initializeCustomerFundedStarterPolicy(secondDb, machineId, options)]);
+    const ledger = await db.executor.selectFrom('ai_funded_credit_ledger').selectAll()
+      .where('source_reference', '=', 'matrix-ai-lifetime-starter').execute();
+    expect(ledger).toHaveLength(1);
+    expect(Number(ledger[0].amount_microusd)).toBe(5000000);
+    expect(ledger[0].expires_at).toBeNull();
+    const balance = await db.executor.selectFrom('ai_funded_runtime_balances').select('credit_balance_microusd')
+      .where('machine_id', '=', machineId).executeTakeFirstOrThrow();
+    expect(Number(balance.credit_balance_microusd)).toBe(5000000);
   });
 
   it.each(["usage", "strict"] as const)("serializes usage against %s across two pools", async (otherMode) => {

@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { CanonicalChatIdSchema } from "#canonical-chat";
+import { CanonicalChatIdSchema, CanonicalChatRunIdSchema } from "#canonical-chat";
 import { IsoTimestampSchema } from "#contract-primitives";
 import { BotIdSchema, BotRevisionSchema, BotTaskIdSchema } from "#bots/ids";
 
@@ -29,6 +29,8 @@ export const BotBlockedReasonSchema = z.enum([
 
 export const BotTaskSummarySchema = z.object({
   taskId: BotTaskIdSchema,
+  /** Existing owner-bound execution identity; absent on older task projections. */
+  runId: CanonicalChatRunIdSchema.optional(),
   chatId: CanonicalChatIdSchema,
   agentId: BotIdSchema,
   status: BotTaskStatusSchema,

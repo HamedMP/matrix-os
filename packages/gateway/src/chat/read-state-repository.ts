@@ -14,13 +14,17 @@ export async function projectChatReadState(
       .where("chat_id", "=", chatId).where("role", "=", "assistant")
       .where("state", "=", "committed").executeTakeFirst(),
   ]);
-  const latestIncomingSeq = Number(incoming?.seq ?? 0);
+  return projectReadState(state, incoming?.seq);
+}
+
+/** Shared persisted read-state derivation for detail and bulk navigation reads. */
+export function projectReadState(state: { read_through_seq: number; marked_unread: boolean; read_state_version: number } | undefined,
+  incomingSeq: number | null | undefined): CanonicalChatReadState {
+  const latestIncomingSeq = Number(incomingSeq ?? 0);
   const readThroughSeq = Number(state?.read_through_seq ?? 0);
   const markedUnread = state?.marked_unread ?? false;
-  return {
-    unread: markedUnread || latestIncomingSeq > readThroughSeq,
-    markedUnread, version: Number(state?.read_state_version ?? 0), readThroughSeq, latestIncomingSeq,
-  };
+  return { unread: markedUnread || latestIncomingSeq > readThroughSeq,
+    markedUnread, version: Number(state?.read_state_version ?? 0), readThroughSeq, latestIncomingSeq };
 }
 
 // Caller holds the owned Chat row lock in the same transaction as the outbox write.

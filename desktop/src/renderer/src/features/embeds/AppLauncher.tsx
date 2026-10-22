@@ -1,8 +1,8 @@
+import { bundledDesktopIconForPath } from "../desktop-shell/bundled-app-icons";
 import { LayoutGrid, Monitor, Plus, Search } from "@renderer/lib/hugeicons";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button, EmptyState } from "../../design/primitives";
 import { appIconUrl, useAppsQuery, type MatrixApp } from "../apps/apps.api";
-import { DesktopResourceSharing } from "../files/DesktopResourceSharing";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
@@ -13,6 +13,7 @@ import {
   OS_VIEW_LABELS,
   clampOsViewContextMenuPoint,
   osViewFixedAppAppearanceForPath,
+  osViewUsesBundledArtworkForLegacyIcon,
   otherOsViewMode,
   type OsViewMode,
   type OsViewDesktopAddResult,
@@ -36,7 +37,7 @@ function AppIcon({ url, name, large = false }: { url: string | null; name: strin
       <img
         src={url}
         alt=""
-        className={`${large ? "h-16 w-16 rounded-[18px]" : "h-11 w-11 rounded-xl"} object-cover shadow-[var(--shadow-1)]`}
+        className={`${large ? "h-16 w-16" : "h-11 w-11"} object-contain drop-shadow-[0_5px_8px_rgba(0,0,0,0.15)]`}
         referrerPolicy="no-referrer"
         onError={() => setFailed(true)}
       />
@@ -45,14 +46,22 @@ function AppIcon({ url, name, large = false }: { url: string | null; name: strin
   return (
     <div
       className={`flex items-center justify-center font-semibold shadow-[var(--shadow-1)] ${large ? "h-16 w-16 rounded-[18px] text-xl" : "h-11 w-11 rounded-xl text-lg"}`}
-      style={{ background: "var(--accent-muted)", color: "var(--accent)" }}
+      style={{ background: "var(--accent-muted)", color: "var(--accent-text)" }}
     >
       {name.charAt(0).toUpperCase()}
     </div>
   );
 }
 
+function BundledIcon({ url, fallback }: { url?: string; fallback: ReactNode }) {
+  const [failedUrl, setFailedUrl] = useState<string>();
+  return url && failedUrl !== url
+    ? <img src={url} alt="" className="size-full object-contain" draggable={false} onError={() => setFailedUrl(url)} />
+    : <>{fallback}</>;
+}
+
 function OsViewDestinationIcon({ path }: { path: string }) {
+  const artwork = bundledDesktopIconForPath(path);
   const appearance = osViewFixedAppAppearanceForPath(path);
   const Icon = appearance?.icon === "monitor" ? Monitor : LayoutGrid;
   return (
@@ -60,15 +69,16 @@ function OsViewDestinationIcon({ path }: { path: string }) {
       data-launchpad-built-in-icon
       className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]"
       style={{
-        background: appearance?.background ?? "#0E3422",
+        background: artwork ? "transparent" : appearance?.background ?? "#0E3422",
         color: appearance?.foreground ?? "#BED77B",
       }}
     >
-      <Icon size={32} aria-hidden="true" />
+      <BundledIcon url={artwork} fallback={<Icon size={32} aria-hidden="true" />} />
     </span>
   );
 }
 
+// react-doctor-disable-next-line react-doctor/no-high-complexity-react-function -- The pre-existing launcher coordinates search, keyboard selection, placement and OS-view destinations; this change only removes a share row. Splitting it belongs in a focused refactor.
 export default function AppLauncher({
   presentation = "surface",
   launcherActive = true,
@@ -156,7 +166,7 @@ export default function AppLauncher({
           type: "fixed" as const,
           key: app.path,
           name: app.name,
-          app: installed && appearance?.iconSource === "app"
+          app: installed?.iconUrl && appearance?.iconSource === "app" && !osViewUsesBundledArtworkForLegacyIcon({ path: app.path, iconUrl: installed.iconUrl })
             ? { ...app, iconUrl: appIconUrl(platformHost, installed, runtimeSlot) ?? app.iconUrl }
             : app,
         };
@@ -224,7 +234,7 @@ export default function AppLauncher({
       <EmptyState
         icon={<LayoutGrid size={26} />}
         headline="Apps unavailable"
-        description="The app catalog could not be loaded. Try again once your computer is reachable."
+        description="Your installed apps could not be loaded. Try again once your computer is reachable."
         action={
           api ? (
             <Button variant="primary" disabled={isFetching} onClick={() => void refetch()}>
@@ -241,7 +251,7 @@ export default function AppLauncher({
       <EmptyState
         icon={<LayoutGrid size={26} />}
         headline="No apps installed"
-        description="Matrix OS apps you install appear here, ready to launch in this window."
+        description="Web apps in your Matrix workspace appear here. Ask Chat to create an app to get started."
       />
     );
   }
@@ -251,7 +261,7 @@ export default function AppLauncher({
       <EmptyState
         icon={<LayoutGrid size={26} />}
         headline="Loading apps"
-        description="The app catalog will appear here once your computer responds."
+        description="Your installed apps will appear here once your computer responds."
       />
     );
   }
@@ -294,12 +304,13 @@ export default function AppLauncher({
             style={{ color: "var(--text-primary)", boxShadow: "none", borderRadius: 0 }}
           />
         </div>
+        {presentation === "launchpad" ? (
+          <p className="mt-3 text-center text-sm" style={{ color: "var(--text-secondary)" }}>
+            Open an installed app, or choose Create app to start in Chat.
+          </p>
+        ) : null}
       </div>
       <div className={`flex flex-1 flex-col gap-4 overflow-y-auto px-6 pb-24 ${presentation === "launchpad" ? "mx-auto w-full max-w-6xl" : ""}`}>
-        {filtered[activeIndex]?.type === "installed" && filtered[activeIndex].app.slug ? <div className="flex items-center justify-end gap-2 text-xs">
-          <span className="truncate" style={{ color: "var(--text-tertiary)" }}>{filtered[activeIndex].name}</span>
-          <DesktopResourceSharing key={filtered[activeIndex].app.slug} kind="app" path={filtered[activeIndex].app.slug} />
-        </div> : null}
         {filtered.length === 0 ? (
           <p className="px-1 text-sm" style={{ color: "var(--text-tertiary)" }}>No apps match “{query}”.</p>
         ) : (
@@ -337,19 +348,17 @@ export default function AppLauncher({
                     <span
                       className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]"
                       style={{
-                        background: OS_VIEW_CREATE_APP_APPEARANCE.background,
+                        background: bundledDesktopIconForPath("__create-app__") ? "transparent" : OS_VIEW_CREATE_APP_APPEARANCE.background,
                         color: OS_VIEW_CREATE_APP_APPEARANCE.foreground,
                       }}
                     >
-                      <Plus size={40} aria-hidden="true" />
+                      <BundledIcon url={bundledDesktopIconForPath("__create-app__")} fallback={<Plus size={40} aria-hidden="true" />} />
                     </span>
                   ) : entry.type === "os-view" ? (
                     <OsViewDestinationIcon path={entry.key} />
                   ) : entry.type === "fixed" ? (
-                    <span className="flex size-16 items-center justify-center rounded-[18px] shadow-[var(--shadow-1)]" style={{ background: entry.app.color, color: entry.app.iconColor }}>
-                      {entry.app.iconUrl
-                        ? <img src={entry.app.iconUrl} alt="" className="size-full rounded-[18px] object-cover" draggable={false} />
-                        : <entry.app.icon size={32} aria-hidden="true" />}
+                    <span className="flex size-16 items-center justify-center rounded-[18px]" style={{ background: entry.app.iconUrl ? "transparent" : entry.app.color, color: entry.app.iconColor }}>
+                      <BundledIcon url={entry.app.iconUrl} fallback={<entry.app.icon size={32} aria-hidden="true" />} />
                     </span>
                   ) : (
                     <AppIcon url={appIconUrl(platformHost, entry.app, runtimeSlot)} name={entry.name} large={presentation === "launchpad"} />

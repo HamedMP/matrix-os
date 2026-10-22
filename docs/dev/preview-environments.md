@@ -116,16 +116,23 @@ blocks subsequent HTTP requests and new WebSocket handshakes after that deploy.
 An already-established WebSocket remains connected until it disconnects or is
 closed; active connection draining is intentionally deferred.
 
-Preview VPSes cannot use machine-proxied personal Integrations or Custom MCP
-accounts. A collaborator with a shared Terminal can read the machine credential,
+Preview VPSes cannot use machine credentials alone for personal Integrations or
+Custom MCP accounts. A collaborator with a shared Terminal can read the machine credential,
 so the platform rejects personal-account requests on both internal routes,
 including requests claiming the owner or another collaborator. An isolated
 platform-preview Custom MCP fixture uses a synthetic owner and remains available.
-Personal integrations remain
-available through the platform's Clerk-authenticated routes under each actor's own
-account. Use synthetic fixtures for in-VPS integration acceptance tests on a
-shared Preview VPS. To test a PR against your own connected accounts, use a
-[Private Preview](#private-preview--your-own-accounts-on-a-pr) instead.
+Personal integrations remain available through Platform's Clerk-authenticated
+routes under each actor's own account. A narrow shared Preview exception lets a
+fresh authenticated Claude Chat turn request one approved `google_drive.list_files`
+action, with an explicit account label and `maxResults` from 1 to 3. Platform
+binds the actor, Preview handle, run and exact action, atomically consumes a
+short-lived grant, and returns at most three file metadata records. The machine
+bearer alone cannot use this path; connect, sync, disconnect, other services and
+Custom MCP stay denied. Shared Terminal users may inspect returned metadata,
+so the owner must accept that visibility before a real-account test. Use
+synthetic fixtures for broader shared Preview integration tests. For full
+personal Integrations on an owner-only machine, use a
+[Private Preview](#private-preview--your-own-accounts-on-a-pr) when available.
 
 ### Shared preview Terminal authorization
 
@@ -271,6 +278,114 @@ release scripts from `main`. `preview-vps` builds carry it once the PR branch
 includes the provenance flags, so rebase an older branch or add
 `preview-bundle`.
 
+### Browser automation previews
+
+The Browser stack additionally needs Chrome and its remote-viewer services on
+the preview host. Updating the PR bundle alone does not install them. Bundles
+with the [Browser setup fix](../../specs/627-browser-vps-comparison/private-preview-setup.md)
+include an explicit operator command, run **on the selected preview computer**:
+
+```bash
+# Private Preview: all three values must match its host metadata.
+sudo /opt/matrix/bin/matrix-install-browser-preview <exact-pv-handle> <machine-uuid> <owner-user-id>
+# Legacy shared PR preview:
+sudo /opt/matrix/bin/matrix-install-browser-preview <exact-pr-handle>
+```
+
+Private `pv-*` previews require the exact handle, machine UUID and Clerk owner
+ID; legacy `pr-*` previews retain the single-handle form. Missing, mismatched or
+duplicate identity metadata is rejected before locks, temporary files or service
+changes. The command installs the bundled viewer/runtime, and enables Browser on that computer.
+Rerunning it on an existing installation updates the viewer without replacing
+the signed-in Chrome profile or restarting Chrome/VNC. An authorized operator
+must run this command; the preview owner's normal terminal has no new sudo grant.
+No source checkout is needed. Older bundles without this helper must first be
+updated to the cumulative Browser setup PR.
+
+Reopen **Browser** from the launcher, then check navigation, a fresh agent
+snapshot and Pause → Take over → Resume. Connect only your own agent accounts.
+Supervised permission cards require separate signed-authority activation;
+this setup does not change that gate or Matrix AI readiness. See the
+[current review guide](https://github.com/HamedMP/matrix-os/pull/2583#issuecomment-6232562723)
+for live evidence and validation limits.
+
+## One Chat against a production-data tagged Platform candidate
+
+When a Preview VPS needs a browser-authenticated Platform change before that
+change can receive default traffic, the production Edge Router can temporarily
+send one exact Preview Chat's turn and approval POSTs to a zero-traffic tagged
+revision of the production Platform service. This is an operator-reviewed
+production Edge Router deployment, even though the Platform traffic split does
+not change. The tagged revision must use the same production database, Clerk
+verification, Platform signing secret, and trusted Edge Router secret as the
+default service. The separate `matrix-platform-preview` service uses staging
+data and cannot test an existing production personal connection.
+
+The operator-label workflow runs on the current same-repository PR, after its
+exact-head Edge tests and the Production environment gate. Before labeling it
+`preview-chat-candidate-route`, an operator must review and store a fresh private
+payload in `preview-chat-candidate-pr-<N>` for that frozen PR number. Its strict
+fields are `prNumber`, `approvedHeadSha`, `approvedHeadRef`, `handle`, `chatId`,
+`candidateOrigin`, and `expiresAt`. The number, exact current SHA and branch must
+match the event; `handle` must be `pr-<N>` and the same-service candidate tag must
+start with `pr<N>-`. The old PR 2045 payload cannot authorize a replacement PR or
+branch. Refresh the payload after every head/branch change; do not reuse an old
+secret merely by relabeling a PR. This is an operator configuration precondition,
+not an instruction to deploy global Edge routing during owner Main testing.
+
+The workflow re-fetches the open PR and checks its current number, branch, SHA,
+same-repository head and label before reading selector secrets and immediately
+before Edge mutation. It rechecks the selector's two-hour expiry after the
+read-only Cloudflare gateway probe. Missing, stale or malformed payloads stop the
+workflow without installing a selector. Private values remain in owner-only
+workflow temporary files and are removed at exit.
+
+First create an otherwise empty Chat in the authenticated Preview browser and
+read its `chat_<id>` from that browser's Chat list response. Configure the
+Edge Router's four Wrangler secrets:
+`PREVIEW_CHAT_CANDIDATE_ORIGIN` (the tagged `pr<N>-...---matrix-platform-...run.app`
+origin of the existing production service),
+`PREVIEW_CHAT_CANDIDATE_HANDLE` (`pr-<N>`),
+`PREVIEW_CHAT_CANDIDATE_CHAT_ID` (that exact Chat ID), and
+`PREVIEW_CHAT_CANDIDATE_EXPIRES_AT` (UTC ISO timestamp no more than two hours
+ahead). Keep these values in the deployment secret store; do not commit them.
+Deploy the reviewed Edge Router code and verify the response header
+`x-matrix-preview-platform-route: candidate` on the selected turn and approval.
+Check that another Chat, handle, route and HTTP method still reach the default
+Platform. The selector is only a route choice: the candidate must verify the
+browser's Clerk session and Preview access before it can sign an actor proof.
+No client-supplied actor or forwarded host becomes an authorization source.
+
+The browser marker verifies only the Edge-to-Platform route. Gateway calls for
+Drive turn redemption, discovery, action grants and execution use the running
+Gateway's `PLATFORM_INTERNAL_URL` directly; they do not pass through this
+selector. Before production-account acceptance, separately verify that the
+selected Gateway process uses the reviewed production-data candidate origin.
+A Gateway still targeting `matrix-platform-preview` uses staging connections,
+even when browser requests return the candidate marker.
+
+Registered bundle installation does not change the internal target. Configure
+it separately through a reviewed, scoped host compare-and-swap that checks the
+expected installed bundle and current origin before changing only
+`PLATFORM_INTERNAL_URL`. Preserve the prior origin as a rollback target and
+preserve all other environment values, metadata and owner data. Restart the
+Gateway to load the change, then verify its actual process target, release and
+health. Confirm redemption, discovery, approval and execution reach that same
+candidate before reporting a Drive pass. After acceptance, restore the prior
+internal target with the same scoped checks and restart/verify the Gateway;
+removing the Edge selector alone does not restore internal routing. Keep
+private host identities, credentials and operator commands outside this public
+guide.
+
+The route stops selecting the candidate when its timestamp expires. To stop it
+immediately, delete `PREVIEW_CHAT_CANDIDATE_CHAT_ID` with Wrangler's secret
+delete command for `matrix-edge-router`; deleting that binding creates a new
+Worker version without the selector. Confirm the selected URL no longer returns
+the candidate marker, then delete the other three temporary secrets. Merely
+redeploying without `--secrets-file` does **not** remove them: Wrangler preserves
+omitted secrets. Keep the candidate tag at zero default traffic throughout the
+test.
+
 ## Platform preview revisions
 
 Add the **`preview-platform`** label. The workflow (bound to the GitHub
@@ -373,8 +488,9 @@ The label workflow assumes this is already provisioned in GCP/Cloudflare/Stripe
 The GitHub `Preview` environment may set `MATRIX_CARD_TRIALS_ENABLED` to
 `true` or `false`; it defaults to `true`. Disable it temporarily for an immediate-
 payment regression pass, then restore it after validation. `MATRIX_CARD_TRIAL_DAYS`
-controls new trial offers, defaults to `3`, and must be an integer from `1`
-through `30`. Each change
+controls new Builder/Max trial offers and defaults to `3`.
+`MATRIX_STARTER_TRIAL_DAYS` controls Starter and defaults to `14`. Both must be
+integers from `1` through `30`. Each change
 requires redeploying the preview revision. Existing Stripe trials and reserved
 Checkout attempts retain their original duration, and billing status continues
 to display that reserved duration until the attempt settles.

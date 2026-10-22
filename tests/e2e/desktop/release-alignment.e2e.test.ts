@@ -8,6 +8,7 @@ import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
 import { readBuildSource } from "../../../scripts/release/build-source.mjs";
 import { closeElectronApp } from "./fixtures/close-electron";
 import hostInfo from "../../fixtures/host-release-system-info.json";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 const root = resolve(__dirname, "../../..");
 const main = join(root, "desktop/out/main/index.js");
@@ -39,6 +40,7 @@ suite("Desktop release alignment through the built IPC and gateway", () => {
     app = await _electron.launch({ executablePath: requireDesktop("electron") as string, args: [main],
       env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: profile } });
     page = await app.firstWindow();
+    await dismissGettingStartedOnInteraction(page);
     page.setDefaultTimeout(8_000);
     // Authentication is confined to the loopback fixture's fake device flow.
     const initialInfo = page.waitForResponse((value) => value.url().endsWith("/api/system/info"));

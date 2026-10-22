@@ -63,6 +63,10 @@ export class SharedChatExecutionCoordinator {
 
   constructor(private readonly options: SharedChatExecutionCoordinatorOptions) {}
 
+  get pendingCount(): number {
+    return this.queueDispatches.size;
+  }
+
   async dispatchNextQueued(
     owner: ChatOwner,
     chatId: string,
@@ -120,6 +124,15 @@ export class SharedChatExecutionCoordinator {
           if (adapter.driverKind !== claimed.run.driverKind) {
             throw new Error("Shared adapter driver mismatch");
           }
+          this.options.startDispatch({
+            owner,
+            message: claimed.message,
+            run: claimed.run,
+            adapter,
+            scopeId,
+            onComplete: () => this.dispatchNextQueued(owner, chatId, scopeId, createAdapter),
+          });
+          return;
         } catch (error: unknown) {
           console.warn(
             "[chat/shared-execution] Shared Run preparation failed:",
@@ -141,16 +154,6 @@ export class SharedChatExecutionCoordinator {
           if (requestState === "unavailable") return;
           continue;
         }
-
-        this.options.startDispatch({
-          owner,
-          message: claimed.message,
-          run: claimed.run,
-          adapter,
-          scopeId,
-          onComplete: () => this.dispatchNextQueued(owner, chatId, scopeId, createAdapter),
-        });
-        return;
       }
     } finally {
       this.queueDispatches.delete(key);

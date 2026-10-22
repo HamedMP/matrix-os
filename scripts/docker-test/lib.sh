@@ -153,8 +153,17 @@ wait_for_healthy() {
   echo -e "  ${YELLOW}WAIT${NC} Waiting for $service to be healthy (timeout: ${timeout}s)..."
   while [ $elapsed -lt $timeout ]; do
     # Check if container is running and healthy
-    local health
-    health=$($COMPOSE ps "$service" --format json 2>/dev/null | jq -r '.[0].Health // .Health // "unknown"' 2>/dev/null) || health="unknown"
+    local snapshot state health
+    snapshot=$($COMPOSE ps --all "$service" --format json 2>/dev/null | jq -r 'if type == "array" then .[0] else . end | [(.State // "unknown"), (.Health // "unknown")] | join("|")' 2>/dev/null) || snapshot="unknown|unknown"
+    state="${snapshot%%|*}"
+    health="${snapshot#*|}"
+    case "$state" in
+      exited|dead|removing)
+        echo -e "  ${RED}FAIL${NC} $service stopped before becoming healthy ($state)"
+        collect_docker_diagnostics "$service" || true
+        return 1
+        ;;
+    esac
     if [ "$health" = "healthy" ]; then
       echo -e "  ${GREEN}READY${NC} $service is healthy (${elapsed}s)"
       return 0
@@ -168,10 +177,15 @@ wait_for_healthy() {
     ((elapsed+=2))
   done
   echo -e "  ${RED}TIMEOUT${NC} $service not healthy after ${timeout}s"
-  # Print container logs for debugging
-  echo -e "  ${YELLOW}DEBUG${NC} Container logs (last 20 lines):"
-  $COMPOSE logs --tail 20 "$service" 2>/dev/null || true
+  collect_docker_diagnostics "$service" || true
   return 1
+}
+
+collect_docker_diagnostics() {
+  local scenario="${0##*/}"
+  scenario="${scenario%.sh}"
+  node "$SCRIPT_DIR/diagnostics.mjs" "$COMPOSE_FILE" "${COMPOSE_OVERRIDE_FILE:-}" "$1" "${DOCKER_TEST_LOG_DIR:-/tmp/docker-test-logs}" "$scenario" || return $?
+  DOCKER_DIAGNOSTICS_CAPTURED=true
 }
 
 wait_for_url() {

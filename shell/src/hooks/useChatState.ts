@@ -1,4 +1,6 @@
 "use client";
+import type { BrowserPermissionClient } from "@matrix-os/ui";
+import type { BrowserPermissionChoice } from "@matrix-os/contracts";
 import type { CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 
 import type { ChatAgentClient, ChatCollaborationView } from "@matrix-os/ui";
@@ -25,6 +27,8 @@ interface QueuedMessage {
 const MAX_SEEN_REPLAY_EVENTS = 2_000;
 
 export interface ChatState {
+  navigationFresh?:boolean;
+  navigationClassifications?:readonly {chatId:string;classification:import("@matrix-os/contracts").CanonicalChatNavigationItem["classification"]}[];
   collaborationView?: ChatCollaborationView;
   openSharedChat?: (scopeId: string) => void;
   openSharedProject?: (scopeId: string) => void;
@@ -35,6 +39,11 @@ export interface ChatState {
   displayedThroughSeq?: number;
   updateReadState?: (chatId: string, input: import("@matrix-os/contracts").CanonicalUpdateChatReadStateRequest) => Promise<boolean>;
   agentClient?: ChatAgentClient;
+  browserPermissions?: BrowserPermissionClient;
+  agentSummaryClient?: ChatAgentClient;
+  authorityKey?: string;
+  composerIdentity?: object;
+  isCurrentAuthority?: () => boolean;
   botEventRevision?: number;
   queuedTurns?: CanonicalChatQueuedTurn[];
   cancelQueuedTurn?: (id: string) => Promise<boolean>;
@@ -49,6 +58,7 @@ export interface ChatState {
   connected: boolean;
   queue: QueuedMessage[];
   providerSelection?: CanonicalChatModelSelection;
+  executionControls?: import("@matrix-os/contracts").CanonicalChatExecutionControls;
   boundProviderInstanceId?: string;
   conversations: ReturnType<typeof useConversation>["conversations"];
   activeConversationTitle?: string;
@@ -70,6 +80,7 @@ export interface ChatState {
     runId: string,
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
+    browserChoice?: BrowserPermissionChoice,
   ) => Promise<boolean>;
 }
 

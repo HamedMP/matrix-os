@@ -95,7 +95,12 @@ describe("bot route resolver", () => {
     for (const value of refused) expect(() => resolveBotRoute(value, NOW)).toThrow(BotRouteError);
   });
 
-  it("tries sources in order: Matrix AI, own key, own profile", () => {
+  it("does not select a native Claude profile as a direct Pi Messages coordinator", () => {
+    expect(() => resolveBotRoute(snapshot({ active: { accessSourceId: "owner_anthropic_profile", modelId: SONNET },
+      sources: [{ id: "owner_anthropic_profile", models: [SONNET] }], models: [{ id: SONNET, vendor: "anthropic", sources: ["owner_anthropic_profile"] }], instances: [{ accessSourceId: "owner_anthropic_profile", defaultModelId: SONNET }] }), NOW)).toThrow(BotRouteError);
+  });
+
+  it("tries genuine API key after Matrix AI and skips native profile sources", () => {
     const resolved = resolveBotRoute(snapshot({
       sources: [{ id: "owner_anthropic_profile", models: [SONNET] }, { id: "owner_anthropic_key", models: [SONNET] }],
       models: [{ id: SONNET, vendor: "anthropic", sources: ["owner_anthropic_profile", "owner_anthropic_key"] }],

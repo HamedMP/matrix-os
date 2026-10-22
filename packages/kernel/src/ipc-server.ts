@@ -1,3 +1,4 @@
+import { ownerDataImportToolDefinitions } from "./tools/data-imports.js";
 import { z } from "zod/v4";
 import { readFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -90,6 +91,9 @@ export async function createIpcServer(
   return createSdkMcpServer({
     name: "matrix-os-ipc",
     tools: [
+      ...ownerDataImportToolDefinitions().map(definition => tool(
+        definition.name, definition.description, definition.schema.shape, definition.handler,
+      )),
       tool(
         "list_tasks",
         "List tasks, optionally filtered by status or assignee",

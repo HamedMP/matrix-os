@@ -78,6 +78,20 @@ beforeEach(() => {
 });
 
 describe("project lifecycle store", () => {
+  it("refreshes shared discovery only after project deletion commits", async () => {
+    const target = new EventTarget();
+    const dispatch = vi.spyOn(target, "dispatchEvent");
+    vi.stubGlobal("window", target);
+    try {
+      const pending = deferred<unknown>();
+      const deleting = useProjectLifecycle.getState().deleteProject(api({ post: vi.fn(() => pending.promise) }), "repo", "Repo");
+      expect(dispatch).not.toHaveBeenCalled();
+      pending.resolve({ ok: true, action: "delete", projectSlug: "repo" });
+      await expect(deleting).resolves.toBe(true);
+      expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "matrix:collaboration-discovery-changed" }));
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("loads the archived projection separately from active sidebar projects", async () => {
     const client = api({
       get: vi.fn(async () => ({

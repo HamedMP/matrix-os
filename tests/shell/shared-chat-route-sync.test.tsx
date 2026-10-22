@@ -1,3 +1,4 @@
+import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 // @vitest-environment jsdom
 
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
@@ -30,7 +31,7 @@ afterEach(() => {
 describe("shared Chat route synchronization", () => {
   it("keeps entering, leaving, and browser history synchronized with the Chat view", async () => {
     window.history.replaceState(null, "", "/shared");
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    stubLegacyChatFetch( vi.fn(async (url: string) => {
       if (url.includes("/events?")) return new Response(new ReadableStream());
       if (url.includes("/api/chats?")) return Response.json({ items: [record] });
       if (url.includes("/api/chats/chat_regular?")) {
@@ -76,7 +77,7 @@ describe("shared Chat route synchronization", () => {
 
   it("opens a shared project in the Chat view and keeps its address in browser history", async () => {
     window.history.replaceState(null, "", "/shared");
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    stubLegacyChatFetch( vi.fn(async (url: string) => {
       if (url.includes("/events?")) return new Response(new ReadableStream());
       if (url.includes("/api/chats?")) return Response.json({ items: [record] });
       throw new Error("UnexpectedRequest");

@@ -13,7 +13,11 @@ import {
   CollaborationIdSchema,
   CollaborationRevisionSchema,
 } from "#collaboration";
-import { CollaborationEffectiveSubmitModeSchema, type CollaborationEffectiveSubmitMode } from "#collaboration-capabilities";
+import {
+  CollaborationEffectiveSubmitModeSchema,
+  CollaborationSourceKindSchema,
+  type CollaborationEffectiveSubmitMode,
+} from "#collaboration-capabilities";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 
 /**
@@ -30,7 +34,11 @@ export function resolveCollaborationEffectiveSubmitMode(input: {
   organizationAiSubmission: CollaborationOrganizationAiSubmission;
   submitMode: CollaborationSubmitMode;
 }): CollaborationEffectiveSubmitMode {
-  return input.organizationAiSubmission === "members" && input.submitMode === "follow_organization" ? "members" : "owner_only";
+  // Both fields remain on the wire for compatibility with existing homes, but
+  // neither is an authorization switch. The current Viewer/Contributor grant
+  // decides whether a participant may submit; owner terms are checked below.
+  void input;
+  return "members";
 }
 
 export const CollaborationExecutionScopeRefSchema = z.discriminatedUnion("kind", [
@@ -65,9 +73,11 @@ export const CollaborationExecutionPolicySchema = z.object({
   revision: CollaborationRevisionSchema,
   updatedAt: IsoTimestampSchema,
 }).strict().superRefine((policy, ctx) => {
-  const expected = resolveCollaborationEffectiveSubmitMode(policy);
+  const expected = policy.providerTermsAcknowledgedAt === null
+    ? "owner_only"
+    : resolveCollaborationEffectiveSubmitMode(policy);
   if (policy.effectiveSubmitMode !== expected) {
-    ctx.addIssue({ code: "custom", path: ["effectiveSubmitMode"], message: "Effective submit mode must derive from organization metadata and policy" });
+    ctx.addIssue({ code: "custom", path: ["effectiveSubmitMode"], message: "Effective submit mode must derive from Contributor policy and owner acknowledgement" });
   }
   if (policy.effectiveSubmitMode === "members" && policy.providerTermsAcknowledgedAt === null) {
     ctx.addIssue({ code: "custom", path: ["providerTermsAcknowledgedAt"], message: "Member submission requires the owner's provider-terms acknowledgement" });
@@ -88,6 +98,28 @@ export const CollaborationExecutionPolicyPutRequestSchema = z.object({
   concurrency: z.number().int().min(1).max(8).optional(),
 }).strict();
 
+export const CollaborationExecutionPolicyOptionSchema = z.object({
+  source: CollaborationSourceSelectionSchema,
+  sourceLabel: canonicalSafeLabel(160, 640),
+  sourceKind: CollaborationSourceKindSchema,
+  available: z.boolean(),
+  modelIds: z.array(ProviderModelReferenceSchema).min(1).max(64),
+  defaultModelId: ProviderModelReferenceSchema.nullable(),
+}).strict().superRefine((option, ctx) => {
+  if (new Set(option.modelIds).size !== option.modelIds.length) {
+    ctx.addIssue({ code: "custom", path: ["modelIds"], message: "Duplicate model" });
+  }
+  if (option.defaultModelId !== null && !option.modelIds.includes(option.defaultModelId)) {
+    ctx.addIssue({ code: "custom", path: ["defaultModelId"], message: "Default model must be available" });
+  }
+});
+
+export const CollaborationExecutionPolicyOptionsSchema = z.object({
+  organizationAiSubmission: CollaborationOrganizationAiSubmissionSchema,
+  policy: CollaborationExecutionPolicySchema.nullable(),
+  options: z.array(CollaborationExecutionPolicyOptionSchema).max(64),
+}).strict();
+
 export const CollaborationRunSubmitRequestSchema = z.object({
   clientRequestId: CollaborationIdSchema,
   expectedRevision: CollaborationRevisionSchema,
@@ -96,6 +128,9 @@ export const CollaborationRunSubmitRequestSchema = z.object({
   modelId: ProviderModelReferenceSchema.optional(),
   executionRoot: CanonicalChatExecutionRootRefSchema.optional(),
 }).strict();
+
+export type CollaborationExecutionPolicyOption = z.infer<typeof CollaborationExecutionPolicyOptionSchema>;
+export type CollaborationExecutionPolicyOptions = z.infer<typeof CollaborationExecutionPolicyOptionsSchema>;
 
 const HEX_DIGEST = /^[a-f0-9]{64}$/;
 

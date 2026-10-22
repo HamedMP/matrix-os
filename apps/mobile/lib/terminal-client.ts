@@ -5,19 +5,22 @@ export { isSafeSessionId, parseTerminalSessions } from "@/lib/terminal-state";
 const WS_CONNECTING = 0;
 const WS_OPEN = 1;
 const TERMINAL_INPUT_CHUNK_CHARS = 32_768;
+const TERMINAL_GRID_LIMITS = { minCols: 20, maxCols: 500, minRows: 5, maxRows: 200 };
 
 export type TerminalClientFrame =
   | { type: "input"; terminalRef: TerminalRef; data: string }
   | { type: "binary"; terminalRef: TerminalRef; dataBase64: string }
-  | { type: "resize"; terminalRef: TerminalRef; mode: "soft"; size: { cols: number; rows: number } }
+  | { type: "resize"; terminalRef: TerminalRef; mode: "hard"; size: TerminalGridSize }
   | { type: "detach"; terminalRef: TerminalRef }
   | { type: "ping"; terminalRef: TerminalRef };
 
 type TerminalRef = { workspaceId: string; tabId: string };
+export type TerminalGridSize = { cols: number; rows: number };
 
 export type TerminalServerFrame =
-  | { type: "attached"; terminalRef: TerminalRef; canonicalSize: { cols: number; rows: number }; revision: number; nextSeq: number; capabilities?: string[]; ownership?: "writer" | "observer"; leaseEpoch?: number }
-  | { type: "snapshot"; terminalRef: TerminalRef; ansi: string; seq: number; revision: number }
+  | { type: "attached"; terminalRef: TerminalRef; canonicalSize: TerminalGridSize; revision: number; nextSeq: number; capabilities?: string[]; ownership?: "writer" | "observer"; leaseEpoch?: number }
+  | { type: "snapshot"; terminalRef: TerminalRef; ansi: string; seq: number; revision: number; canonicalSize?: TerminalGridSize }
+  | { type: "canonical-size"; canonicalSize: TerminalGridSize }
   | { type: "output"; terminalRef: TerminalRef; data: string; seq: number; revision: number }
   | { type: "replay-start"; fromSeq?: number; toSeq?: number }
   | { type: "replay-end"; nextSeq?: number }
@@ -28,6 +31,7 @@ export type TerminalServerFrame =
 export interface MobileTerminalConnectOptions {
   sessionId?: string;
   cwd?: string;
+  /** The grid that fits this screen; declared to the computer while this client holds the write lease. */
   cols?: number;
   rows?: number;
   fromSeq?: number;
@@ -78,6 +82,10 @@ export class MobileTerminalConnection {
   private binaryInputSupported = false;
   private hasWriteOwnership = false;
   private requestedOwnership: "exclusive" | "observe" = "exclusive";
+  private viewport: TerminalGridSize | null = null;
+  /** Null until the computer confirms this socket as the writer, and again once it stops being one. */
+  private declaredViewport: TerminalGridSize | null = null;
+  private canDeclareViewport = false;
 
   constructor(
     private ws: WebSocket,
@@ -90,6 +98,7 @@ export class MobileTerminalConnection {
     }
     this.terminalRef = { workspaceId: workspaceId!, tabId: tabId! };
     this.lastSeq = options.fromSeq ?? 0;
+    if (options.cols && options.rows) this.viewport = clampGridSize(options.cols, options.rows);
   }
 
   attach(): void {
@@ -100,16 +109,17 @@ export class MobileTerminalConnection {
   private bindSocket(ws: WebSocket): void {
     this.binaryInputSupported = false;
     this.hasWriteOwnership = false;
-    // The TerminalRef is supplied in the WS query; announce the viewport once open.
+    this.canDeclareViewport = false;
+    this.declaredViewport = null;
+    // The TerminalRef is supplied in the WS query. The viewport is declared
+    // once the computer confirms the write lease: only the writer may size the
+    // shared grid, and a resize sent by a follower is answered with an error.
     ws.onopen = () => {
       if (this.ws !== ws || this.disposed) return;
       this.attached = true;
       this.hasWriteOwnership = this.requestedOwnership === "exclusive";
       this.reconnectAttempt = 0;
       this.options.onStatus?.("open");
-      if (this.options.cols && this.options.rows) {
-        this.resize(this.options.cols, this.options.rows);
-      }
       this.scheduleHeartbeat();
     };
 
@@ -122,15 +132,23 @@ export class MobileTerminalConnection {
           this.hasWriteOwnership = frame.ownership !== "observer";
           if (frame.ownership === "observer") this.requestedOwnership = "observe";
           else if (frame.leaseEpoch !== undefined) this.requestedOwnership = "exclusive";
+          this.canDeclareViewport = this.hasWriteOwnership;
+          this.declaredViewport = null;
+          this.declareViewport();
         }
         if (frame.type === "lease-revoked") {
           this.hasWriteOwnership = false;
           this.requestedOwnership = "observe";
+          this.canDeclareViewport = false;
+          this.declaredViewport = null;
         }
         if ((frame.type === "snapshot" || frame.type === "output") && typeof frame.seq === "number") {
           this.lastSeq = Math.max(this.lastSeq, frame.seq);
         }
         this.options.onMessage(frame);
+        // An exited terminal has nothing left to attach to. Reconnecting would
+        // only be refused, and would replace the ended state with an error.
+        if (frame.type === "exit") this.close();
       }
     };
 
@@ -172,13 +190,22 @@ export class MobileTerminalConnection {
     return sent;
   }
 
+  /**
+   * Record the grid that fits this screen and, while this client is the
+   * writer, size the shared grid to it. Returns whether a resize was sent.
+   */
   resize(cols: number, rows: number): boolean {
-    return this.sendFrame({
-      type: "resize",
-      terminalRef: this.terminalRef,
-      mode: "soft",
-      size: { cols: clampInteger(cols, 20, 500), rows: clampInteger(rows, 5, 200) },
-    });
+    this.viewport = clampGridSize(cols, rows);
+    return this.declareViewport();
+  }
+
+  private declareViewport(): boolean {
+    const viewport = this.viewport;
+    if (!viewport || !this.canDeclareViewport) return false;
+    if (this.declaredViewport?.cols === viewport.cols && this.declaredViewport.rows === viewport.rows) return false;
+    const sent = this.sendFrame({ type: "resize", terminalRef: this.terminalRef, mode: "hard", size: viewport });
+    if (sent) this.declaredViewport = viewport;
+    return sent;
   }
 
   detach(): boolean {
@@ -294,13 +321,23 @@ function parseTerminalServerFrame(data: unknown): TerminalServerFrame | null {
     const frame = JSON.parse(data) as TerminalServerFrame;
     if (!frame || typeof frame !== "object" || typeof frame.type !== "string") return null;
     if (frame.type === "attached" && frame.terminalRef && typeof frame.nextSeq === "number") {
+      const canonicalSize = parseGridSize(frame.canonicalSize);
+      if (!canonicalSize) return null;
       const capabilities = Array.isArray(frame.capabilities)
         ? frame.capabilities.slice(0, 8)
           .filter((value): value is string => value === "binary-input-v1")
         : undefined;
-      return { ...frame, ...(capabilities ? { capabilities } : {}) };
+      return { ...frame, canonicalSize, ...(capabilities ? { capabilities } : {}) };
     }
-    if (frame.type === "snapshot" && typeof frame.ansi === "string") return frame;
+    if (frame.type === "snapshot" && typeof frame.ansi === "string") {
+      const { canonicalSize: rawSize, ...snapshot } = frame;
+      const canonicalSize = parseGridSize(rawSize);
+      return canonicalSize ? { ...snapshot, canonicalSize } : snapshot;
+    }
+    if (frame.type === "canonical-size") {
+      const canonicalSize = parseGridSize(frame.canonicalSize);
+      return canonicalSize ? { type: "canonical-size", canonicalSize } : null;
+    }
     if (frame.type === "output" && typeof frame.data === "string") return frame;
     if (frame.type === "replay-start" || frame.type === "replay-end" || frame.type === "exit") return frame;
     if (frame.type === "lease-revoked" && frame.terminalRef && (typeof frame.epoch === "number" || frame.epoch === null)) return frame;
@@ -310,6 +347,24 @@ function parseTerminalServerFrame(data: unknown): TerminalServerFrame | null {
     console.warn("[mobile] terminal websocket frame was not valid JSON", err instanceof Error ? err.name : typeof err);
     return null;
   }
+}
+
+function clampGridSize(cols: number, rows: number): TerminalGridSize {
+  return {
+    cols: clampInteger(cols, TERMINAL_GRID_LIMITS.minCols, TERMINAL_GRID_LIMITS.maxCols),
+    rows: clampInteger(rows, TERMINAL_GRID_LIMITS.minRows, TERMINAL_GRID_LIMITS.maxRows),
+  };
+}
+
+/** The emulator is resized to this, so anything outside the gateway's grid contract is refused. */
+function parseGridSize(value: unknown): TerminalGridSize | null {
+  if (!value || typeof value !== "object") return null;
+  const { cols, rows } = value as { cols?: unknown; rows?: unknown };
+  if (typeof cols !== "number" || typeof rows !== "number") return null;
+  if (!Number.isInteger(cols) || !Number.isInteger(rows)) return null;
+  if (cols < TERMINAL_GRID_LIMITS.minCols || cols > TERMINAL_GRID_LIMITS.maxCols) return null;
+  if (rows < TERMINAL_GRID_LIMITS.minRows || rows > TERMINAL_GRID_LIMITS.maxRows) return null;
+  return { cols, rows };
 }
 
 function clampInteger(value: number, min: number, max: number): number {

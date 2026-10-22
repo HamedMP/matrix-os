@@ -20,6 +20,40 @@ describe("cli/file-transfer-client", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
+  it.each([
+    ["https://app.matrix-os.com/vm/pr-2526", null],
+    ["https://app.matrix-os.com/vm/pr-2526/", null],
+    ["https://app.matrix-os.com/vm/pr-2526?runtime=review&irrelevant=discarded", "review"],
+  ])(
+    "keeps configured runtime %s for uploads, downloads, and remote completion",
+    async (gatewayUrl, expectedRuntime) => {
+      const client = { gatewayUrl, token: "test-token" };
+      const source = join(tempDir, "fixture.txt");
+      const destination = join(tempDir, "download.txt");
+      await writeFile(source, "fixture");
+      const fetchMock = vi.spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(Response.json({ ok: true, path: "lab/fixture.txt", size: 7 }))
+        .mockResolvedValueOnce(new Response("downloaded"))
+        .mockResolvedValueOnce(Response.json({ entries: [{ name: "fixture.txt", type: "file" }] }));
+
+      await uploadLocalFile(client, source, "~/lab/fixture.txt", { force: true });
+      await downloadRemoteFile(client, "~/lab/fixture.txt", destination);
+      expect(await completeRemotePaths(client, "~/lab/fi")).toEqual(["~/lab/fixture.txt"]);
+      const urls = fetchMock.mock.calls.map(([url]) => new URL(String(url)));
+      expect(urls.map((url) => url.pathname)).toEqual([
+        "/vm/pr-2526/api/files/blob", "/vm/pr-2526/api/files/blob", "/vm/pr-2526/api/files/list",
+      ]);
+      expect(urls.map((url) => url.searchParams.get("runtime"))).toEqual(Array(3).fill(expectedRuntime));
+      expect(urls.some((url) => url.searchParams.has("irrelevant"))).toBe(false);
+      expect(urls[0].searchParams.get("path")).toBe("lab/fixture.txt");
+      expect(urls[0].searchParams.get("filename")).toBe("fixture.txt");
+      expect(urls[0].searchParams.get("force")).toBe("true");
+      expect(urls[1].searchParams.get("path")).toBe("lab/fixture.txt");
+      expect(urls[2].searchParams.get("path")).toBe("lab");
+      expect(await readFile(destination, "utf8")).toBe("downloaded");
+    },
+  );
+
   it("uploads a local file with auth, force, and secret query flags", async () => {
     const local = join(tempDir, "auth.json");
     await writeFile(local, '{"token":"secret"}');

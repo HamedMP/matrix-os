@@ -2,8 +2,7 @@
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
-import { PencilEdit02Icon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { SquarePen } from "lucide-react";
 import { WorkRailProjectGroup } from "@desktop/renderer/src/features/work/work-rail/WorkRailProjectGroup";
 import { buildWorkRailModel } from "@desktop/renderer/src/features/work/work-rail-model";
 import { useBoard, parseProject } from "@desktop/renderer/src/stores/board";
@@ -16,28 +15,50 @@ import { useProjectActions } from "@desktop/renderer/src/features/work/work-rail
 import { advanceRuntimeGeneration } from "@desktop/renderer/src/stores/runtime-generation";
 
 const alpha = { id: "proj_alpha", slug: "alpha", name: "Alpha", kind: "folder" as const, description: "Old notes" };
-function setup(patch = vi.fn().mockResolvedValue({ project: { ...alpha, name: "Renamed", pinned: true } })) {
+function setup(
+  patch = vi.fn().mockResolvedValue({ project: { ...alpha, name: "Renamed", pinned: true } }),
+  shared = false,
+) {
   useConnection.setState({ api: { patch } as never });
   useBoard.setState({ projects: [alpha] });
   const onDeleteProject = vi.fn();
   const onNewChat = vi.fn();
+  const onToggle = vi.fn();
+  const onSelect = vi.fn();
   render(<WorkRailProjectGroup group={{ id: alpha.id, slug: alpha.slug, name: alpha.name, project: alpha, chats: [] }}
-    expanded={false} pinning={{}} onToggle={vi.fn()} onNewChat={onNewChat} onDeleteProject={onDeleteProject}
+    shared={shared}
+    expanded={false} pinning={{}} onToggle={onToggle} onSelect={onSelect} onNewChat={onNewChat} onDeleteProject={onDeleteProject}
     onSelectChat={vi.fn()} renamingChatId={null} renamePending={false} onRenameChat={vi.fn()}
     onRenameCommit={vi.fn()} onRenameCancel={vi.fn()} onPinChat={vi.fn()} onDeleteChat={vi.fn()} />);
-  return { patch, onDeleteProject, onNewChat };
+  return { patch, onDeleteProject, onNewChat, onToggle, onSelect };
 }
 function openMenu() {
   fireEvent.pointerDown(screen.getByRole("button", { name: "Actions for Alpha" }), { button: 0, ctrlKey: false, pointerType: "mouse" });
 }
 afterEach(() => { cleanup(); useConnection.setState({ api: null }); vi.restoreAllMocks(); });
 describe("project sidebar actions", () => {
+  it("keeps Project title navigation and tree disclosure independent with the shared title viewport", () => {
+    const { onSelect, onToggle } = setup();
+    const title = screen.getByRole("button", { name: "Alpha", exact: true });
+    expect(title.querySelector(".matrix-chat-title-text")?.getAttribute("title")).toBe("Alpha");
+    fireEvent.click(title);
+    expect(onSelect).toHaveBeenCalledWith(alpha);
+    expect(onToggle).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
+    expect(onToggle).toHaveBeenCalledOnce();
+    expect(onSelect).toHaveBeenCalledOnce();
+  });
+  it("marks the owner's canonical project as shared without creating another project row", () => {
+    setup(undefined, true);
+    expect(screen.getAllByRole("button", { name: "Alpha" })).toHaveLength(1);
+    expect(screen.getByRole("img", { name: "Shared project" })).toBeTruthy();
+  });
   it("replaces inline delete with ellipsis while preserving New Chat", () => {
     const { onNewChat } = setup();
     expect(screen.queryByRole("button", { name: "Delete Alpha project" })).toBeNull();
     expect(screen.getByRole("button", { name: "Actions for Alpha" })).toBeTruthy();
     const newChatButton = screen.getByRole("button", { name: "New chat in Alpha" });
-    const expectedIcon = render(<HugeiconsIcon icon={PencilEdit02Icon} size={15} aria-hidden />).container.querySelector("svg");
+    const expectedIcon = render(<SquarePen size={15} aria-hidden />).container.querySelector("svg");
     expect(newChatButton.querySelector("svg")?.innerHTML).toBe(expectedIcon?.innerHTML);
     fireEvent.click(newChatButton);
     expect(onNewChat).toHaveBeenCalledWith(alpha);

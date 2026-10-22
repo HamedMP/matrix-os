@@ -97,7 +97,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
   const runtimeProviderStatus = useCodingAgentWorkspace((state) => state.status);
   const refreshRuntimeProviderSummary = useCodingAgentWorkspace((state) => state.refresh);
   const [canonicalSelection, setCanonicalSelection] = useState<CanonicalComposerSelection | null>(
-    () => createCanonicalComposerSelection(fallbackCatalog, "hermes_default"),
+    () => createCanonicalComposerSelection(providerCatalog, "hermes_default"),
   );
   const handleProviderSetup = useProviderSetup(
     runtimeProviderSummary?.providers ?? EMPTY_PROVIDER_SUMMARIES,
@@ -109,8 +109,13 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
     void refreshRuntimeProviderSummary();
   }, [api, refreshRuntimeProviderSummary, runtimeProviderStatus]);
 
+  const observedProviderCatalog = useRef(false);
   useEffect(() => {
+    const hadObservedCatalog = observedProviderCatalog.current;
+    observedProviderCatalog.current = liveProviderCatalog.lastSuccessAt !== null;
     setCanonicalSelection((current) => {
+      if (current && hadObservedCatalog && !providerCatalog.instances.some(instance => instance.id === current.instanceId
+        && instance.availability === "available" && instance.models.some(model => model.id === current.model && model.availability === "available"))) return current;
       if (current && providerCatalog.instances.some((instance) => (
         instance.id === current.instanceId
         && instance.models.some((model) => model.id === current.model && model.availability === "available")
@@ -124,7 +129,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
         ? applyCanonicalComposerPreference(providerCatalog, next, composerSelections[next.instanceId])
         : null;
     });
-  }, [composerSelections, providerCatalog]);
+  }, [composerSelections, providerCatalog, liveProviderCatalog.lastSuccessAt]);
 
   useEffect(() => {
     void useProviderPreferences.getState().hydrate();
@@ -158,7 +163,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
     )) ?? false;
     if (
       uploadingAttachments
-      || liveProviderCatalog.status === "loading"
+      || liveProviderCatalog.initialLoading
       || !legacyGlobalSelectionExecutable(providerCatalog, canonicalSelection)
       || !canSubmitChatDraft(
         draft,
@@ -258,7 +263,7 @@ export function HermesPane({ active = true }: { active?: boolean } = {}) {
           disabled={uploadingAttachments}
           canSubmit={composerReady}
           catalog={providerCatalog}
-          providerCatalogLoading={liveProviderCatalog.status === "loading"}
+          providerCatalogLoading={liveProviderCatalog.initialLoading}
           selection={canonicalSelection}
           onSelectionChange={(selection) => {
             const instance = providerCatalog.instances.find((candidate) => candidate.id === selection.instanceId);

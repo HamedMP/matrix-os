@@ -4,6 +4,8 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ProviderSettingsStoreError } from './provider-settings-errors.js';
 const unavailable = () => new ProviderSettingsStoreError('lifecycle_unavailable', 503);
+export type NativeWriterProfile = 'codex' | 'claude' | 'pi' | 'opencode' | 'hermes' | 'openclaw';
+const profiles: readonly NativeWriterProfile[] = ['codex', 'claude', 'pi', 'opencode', 'hermes', 'openclaw'];
 export function createNativeProviderWriterLease(homePath: string) {
   const home = resolve(homePath);
   async function trustedParent() {
@@ -51,7 +53,8 @@ export function createNativeProviderWriterLease(homePath: string) {
     return { uid: trusted.uid, directory: join(trusted.parent, '.matrix-private', basename(trusted.canonicalHome), 'native-writers') };
   }
   return {
-    async assertAvailable(profile: 'codex' | 'claude') {
+    async assertAvailable(profile: NativeWriterProfile) {
+      if (!profiles.includes(profile)) throw unavailable();
       const { directory } = await prepare(false);
       try { await lstat(join(directory, `${profile}.json`)); }
       catch (error) {
@@ -61,7 +64,8 @@ export function createNativeProviderWriterLease(homePath: string) {
       // Gateway death/receipt expiry never proves a native child stopped.
       throw unavailable();
     },
-    async acquire(profile: 'codex' | 'claude'): Promise<() => Promise<void>> {
+    async acquire(profile: NativeWriterProfile): Promise<() => Promise<void>> {
+      if (!profiles.includes(profile)) throw unavailable();
       const { uid, directory } = await prepare(true);
       const marker = join(directory, `${profile}.json`);
       let file;

@@ -34,6 +34,12 @@ OS PR loop:
 - Use a semantic branch and PR title. Do not prefix the PR title with agent/tool tags.
 - Never stage unrelated changes. Inspect `git status --short --branch` before staging.
 - Do not merge unless explicitly asked.
+- For dependent PRs, always use GitHub native stacks and the official `gh stack`
+  extension under `docs/dev/stacked-prs.md`. Publish with `gh stack submit` rather
+  than the standalone push recipe below; link the shared ENG ticket and native
+  stack in each layer. Use `/monitor-stack-reviews` for stack-wide review fixes.
+  If merge is authorized, use `gh stack merge` after every included head passes
+  its gates; never loop `gh pr merge`.
 - If Greptile has reviewed the PR, GitHub mergeability alone is not enough. The loop is done only when the latest trusted Greptile result is `5/5`.
 - Treat human review, Codex review comments, and unresolved GitHub review threads as blockers until acknowledged or fixed.
 - If feedback conflicts with the task, reply with the rationale and ask before changing behavior.

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { Hono } from 'hono';
 import { type PlatformDB } from '../../packages/platform/src/db.js';
 import { insertApp } from '../../packages/platform/src/app-registry.js';

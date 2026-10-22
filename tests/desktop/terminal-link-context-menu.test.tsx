@@ -14,6 +14,26 @@ const LINK = {
 };
 
 describe("Desktop TerminalLinkContextMenu", () => {
+  it.each([null, LINK])("pastes without a selection, closes and restores terminal focus (link %s)", (link) => {
+    const onPaste = vi.fn();
+    const origin = document.createElement("textarea");
+    document.body.append(origin);
+    const onClose = vi.fn(() => origin.focus());
+    render(<TerminalLinkContextMenu
+      menu={{ x: 100, y: 120, link, selection: "" }}
+      onClose={onClose} onOpen={vi.fn()} onCopy={vi.fn()}
+      onCopySelection={vi.fn()} onSelectAll={vi.fn()} onPaste={onPaste}
+    />);
+    const paste = screen.getByRole("menuitem", { name: "Paste" }) as HTMLButtonElement;
+    expect(paste.disabled).toBe(false);
+    expect(document.activeElement).toBe(paste);
+    fireEvent.click(paste);
+    expect(onPaste).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(origin);
+    origin.remove();
+  });
+
   it("offers terminal and link actions without showing the full URL", () => {
     const onOpen = vi.fn();
     const onCopy = vi.fn();
@@ -26,6 +46,7 @@ describe("Desktop TerminalLinkContextMenu", () => {
         onOpen={onOpen}
         onCopy={onCopy}
         onCopySelection={onCopySelection}
+        onPaste={vi.fn()}
         onSelectAll={onSelectAll}
       />,
     );
@@ -62,6 +83,7 @@ describe("Desktop TerminalLinkContextMenu", () => {
         onOpen={vi.fn()}
         onCopy={vi.fn()}
         onCopySelection={vi.fn()}
+        onPaste={vi.fn()}
         onSelectAll={vi.fn()}
       />,
     );
@@ -78,6 +100,7 @@ describe("Desktop TerminalLinkContextMenu", () => {
         onOpen={vi.fn()}
         onCopy={vi.fn()}
         onCopySelection={vi.fn()}
+        onPaste={vi.fn()}
         onSelectAll={vi.fn()}
       />,
     );
@@ -98,6 +121,7 @@ describe("Desktop TerminalLinkContextMenu", () => {
         onOpen={vi.fn()}
         onCopy={vi.fn()}
         onCopySelection={onCopySelection}
+        onPaste={vi.fn()}
         onSelectAll={vi.fn()}
       />,
     );
@@ -120,6 +144,7 @@ describe("Desktop TerminalLinkContextMenu", () => {
         onOpen={vi.fn()}
         onCopy={vi.fn()}
         onCopySelection={vi.fn()}
+        onPaste={vi.fn()}
         onSelectAll={vi.fn()}
       />,
     );

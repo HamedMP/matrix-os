@@ -14,6 +14,33 @@ vi.mock("@clerk/nextjs", async (importOriginal) => ({
 
 afterEach(cleanup);
 
+it("hides Web Bot chrome and inline requests with its window while preserving the draft", async () => {
+  const client = { bots: {
+    directBot: vi.fn(async () => "bot_research1"),
+    interactions: vi.fn(async () => [{ interactionId: "in_abcdefgh", chatId: "chat_research", agentId: "bot_research1",
+      taskId: "task_abcdefgh", kind: "question", blocking: true, status: "pending", revision: 1,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      payload: { kind: "question", questions: [{ questionId: "target", header: "Target", question: "Which company?" }] } }]),
+    tasks: vi.fn(async () => []),
+    authority: vi.fn(async () => ({ agentId: "bot_research1", revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })),
+  }, list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1,
+    instructions: "Research", description: "Research", archived: false,
+    createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z",
+    selection: { instanceId: "matrix_bot_default", model: "auto" }, recipeRef: { recipeId: "research", version: "1" } }] })) } as unknown as ChatAgentClient;
+  const panel = (visible: boolean) => <ChatApp messages={[]} sessionId="chat_research" busy={false} connected conversations={[]}
+    visible={visible} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} agentClient={client} />;
+  const { rerender } = render(panel(true));
+  await screen.findByText("Which company?");
+  fireEvent.change(screen.getByRole("textbox", { name: /message/i }), { target: { value: "Unsent research draft" } });
+  rerender(panel(false));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "Bot controls" })).toBeNull());
+  expect(screen.queryByText("Which company?")).toBeNull();
+  expect(screen.getByRole("textbox", { name: /message/i })).toHaveProperty("value", "Unsent research draft");
+  rerender(panel(true));
+  expect(await screen.findByText("Which company?")).toBeTruthy();
+  expect(screen.getByRole("textbox", { name: /message/i })).toHaveProperty("value", "Unsent research draft");
+});
+
 it("renders a direct bot's identity, pending interaction and authority from its saved Chat", async () => {
   const client = { bots: {
     directBot: vi.fn(async () => "bot_research1"),
@@ -24,7 +51,7 @@ it("renders a direct bot's identity, pending interaction and authority from its 
       status: "waiting_person", revision: 1, updatedAt: "2026-09-28T12:00:00.000Z" }]),
     authority: vi.fn(async () => ({ agentId: "bot_research1", revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })),
     resolve: vi.fn(), revoke: vi.fn(), memory: vi.fn(),
-  }, list: vi.fn(async () => ({ agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "automatic" }, recipeRef: { recipeId: "research", version: "1" } }] })) };
+  }, list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "automatic" }, recipeRef: { recipeId: "research", version: "1" } }] })) };
   render(<BotChatPanel chatId="chat_research" client={client as never} />);
   expect((await screen.findAllByText("Research Rabbit")).length).toBeGreaterThan(0);
   expect(await screen.findByText("Which company?")).toBeTruthy();
@@ -39,7 +66,7 @@ it("keeps bot controls absent for a non-bot Chat", async () => {
   expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
 });
 
-it("keeps bot interactions visible when only the agent library request fails", async () => {
+it("keeps Bot identity fail closed when initial definition metadata fails", async () => {
   const client = { bots: {
     directBot: vi.fn(async () => "bot_research1"),
     interactions: vi.fn(async () => [{ interactionId: "in_abcdefgh", chatId: "chat_research", agentId: "bot_research1",
@@ -51,7 +78,9 @@ it("keeps bot interactions visible when only the agent library request fails", a
       pendingInteractions: [], memory: { items: [] } })),
   }, list: vi.fn(async () => { throw new Error("library unavailable"); }) };
   render(<BotChatPanel chatId="chat_research" client={client as never} />);
-  expect(await screen.findByText("Which company?")).toBeTruthy();
+  expect(await screen.findByRole("alert")).toBeTruthy();
+  expect(client.bots.interactions).not.toHaveBeenCalled();
+  expect(client.bots.authority).not.toHaveBeenCalled();
 });
 
 it("keeps the last valid bot controls visible when one status refresh fails", async () => {
@@ -65,7 +94,7 @@ it("keeps the last valid bot controls visible when one status refresh fails", as
     tasks: vi.fn(async () => []),
     authority: vi.fn(async () => ({ agentId: "bot_research1", revision: 1, grants: [], connections: [], routines: [],
       pendingInteractions: [], memory: { items: [] } })),
-  }, list: vi.fn(async () => ({ enabled: true, agents: [] })) };
+  }, list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "auto" }, recipeRef: { recipeId: "research", version: "1" } }] })) };
   const { rerender } = render(<BotChatPanel chatId="chat_research" client={client as never} refreshKey={0} />);
   expect(await screen.findByText("Which company?")).toBeTruthy();
   rerender(<BotChatPanel chatId="chat_research" client={client as never} refreshKey={1} />);
@@ -89,7 +118,7 @@ it("removes a consent link when its connection request is no longer pending", as
       pendingInteractions: [], memory: { items: [] } })),
     resolve: vi.fn(async () => ({ interaction: { interactionId: interaction.interactionId, status: "resolved", revision: 2 },
       connectUrl: "https://consent.example.test/start" })),
-  }, list: vi.fn(async () => ({ enabled: true, agents: [] })) };
+  }, list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "auto" }, recipeRef: { recipeId: "research", version: "1" } }] })) };
   const { rerender } = render(<BotChatPanel chatId="chat_research" client={client as never} refreshKey={0} />);
   fireEvent.click(await screen.findByRole("button", { name: "Connect" }));
   expect(await screen.findByRole("link", { name: "Continue connecting" })).toBeTruthy();
@@ -133,7 +162,7 @@ it("sends a verified direct bot Chat without an ordinary harness selection", asy
   const client = { bots: {
     directBot: vi.fn(async () => "bot_research1"), interactions: vi.fn(async () => []), tasks: vi.fn(async () => []),
     authority: vi.fn(async () => ({ agentId: "bot_research1", revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })),
-  }, list: vi.fn(async () => ({ enabled: true, agents: [] })) } as unknown as ChatAgentClient;
+  }, list: vi.fn(async () => ({ enabled: true, agents: [{ id: "bot_research1", name: "Research Rabbit", revision: 1, instructions: "Research source-backed briefs.", description: "Research", archived: false, createdAt: "2026-09-28T12:00:00.000Z", updatedAt: "2026-09-28T12:00:00.000Z", selection: { instanceId: "matrix_bot_default", model: "auto" }, recipeRef: { recipeId: "research", version: "1" } }] })) } as unknown as ChatAgentClient;
   render(<ChatApp messages={[]} sessionId="chat_research" busy={false} connected conversations={[]}
     onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit} agentClient={client} />);
   await screen.findByRole("button", { name: "Choose bot agent and model" });
@@ -152,7 +181,7 @@ it('retains authenticated access details when only Bot metadata cannot be read a
  },list:vi.fn(async()=>{throw new Error('metadata unavailable');})};
  render(<BotChatPanel chatId='chat_research' client={client as never}/>);
  await waitFor(()=>expect(client.list).toHaveBeenCalledOnce());fireEvent.click(screen.getByRole('button',{name:'Details'}));
- expect(await screen.findByText('Keep briefs concise')).toBeTruthy();expect(screen.getByText('Bot instructions are unavailable.')).toBeTruthy();
+ expect(client.bots.authority).not.toHaveBeenCalled();expect(screen.getByText('Bot instructions are unavailable.')).toBeTruthy();
  expect((screen.getByRole('button',{name:'Edit bot'}) as HTMLButtonElement).disabled).toBe(true);
  expect(screen.queryByRole('combobox',{name:'Bot model'})).toBeNull();fireEvent.click(screen.getByRole('button',{name:'Retry bot details'}));
  await waitFor(()=>expect(client.list).toHaveBeenCalledTimes(2));

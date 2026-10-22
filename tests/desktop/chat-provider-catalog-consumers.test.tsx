@@ -1,3 +1,4 @@
+import { stopDesktopProviderCatalogCoordinator, desktopProviderCatalogCache } from "../../desktop/src/renderer/src/features/chat/provider-catalog-coordinator";
 // @vitest-environment jsdom
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -48,9 +49,9 @@ beforeEach(() => {
     on: vi.fn(() => () => undefined),
   } });
 });
-afterEach(() => { cleanup(); useConnection.setState(useConnection.getInitialState(), true); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); stopDesktopProviderCatalogCoordinator(); useConnection.setState(useConnection.getInitialState(), true); vi.restoreAllMocks(); });
 describe("native catalog consumer wiring", () => {
-  it("keeps Project draft blocked after a failed read without refetching for summary presentation changes", async () => {
+  it("keeps Project draft usable after a failed background read without refetching for summary presentation changes", async () => {
     const pending = deferred<typeof providerCatalog>();
     const get = vi.fn().mockResolvedValueOnce(providerCatalog).mockRejectedValueOnce(new Error("read_failed")).mockReturnValue(pending.promise);
     useConnection.setState({ api: { get } as never });
@@ -58,14 +59,16 @@ describe("native catalog consumer wiring", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" }).getAttribute("data-model")).toBe("gpt-5.6-sol"));
     await setSharedComposerText(screen.getByRole("textbox", { name: "Message new chat" }), "Keep this draft");
     await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false));
-    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
-    fireEvent(window, new Event("focus"));
-    await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true));
+    act(() => desktopProviderCatalogCache.refresh());
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false);
     view.rerender(draft({ ...summary, projects: { ...summary.projects, items: [{ id: "new-project", label: "New project", status: "available", taskCount: 0, threadCount: 0, attentionCount: 0 }] } }));
     expect(get).toHaveBeenCalledTimes(2);
     fireEvent(window, new Event("focus"));
+    expect(get).toHaveBeenCalledTimes(2);
+    act(() => desktopProviderCatalogCache.refresh());
     await waitFor(() => expect(get).toHaveBeenCalledTimes(3));
-    expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false);
     await act(async () => pending.resolve(providerCatalog));
     await waitFor(() => expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false));
   });

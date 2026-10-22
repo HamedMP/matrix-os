@@ -1,0 +1,17 @@
+{
+  "classification": [
+    "MATRIX_HANDLE=pv-2687-22950040",
+    "MATRIX_RUNTIME_SLOT=pv-2687-22950040"
+  ],
+  "bundle": "v2026.10.17-pr2687-39024145844-1-cc96719",
+  "units": {
+    "matrix-browser-lab.service": "inactive",
+    "matrix-browser-lab-vnc.service": "inactive",
+    "matrix-browser-lab-wm.service": "inactive",
+    "matrix-browser-lab-desktop.service": "inactive",
+    "matrix-browser-lab-panel.service": "inactive",
+    "matrix-browser-lab-chrome.service": "inactive"
+  },
+  "completed": false,
+  "existingProfile": false
+}

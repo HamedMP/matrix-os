@@ -29,7 +29,7 @@ vi.mock("../../shell/src/components/settings/sections/AppearanceSection.js", () 
   AppearanceSection: () => <div>Appearance settings</div>,
 }));
 vi.mock("../../shell/src/components/settings/sections/AgentSection.js", () => ({
-  AgentSection: () => <div>Agents and providers settings</div>,
+  AgentSection: ({ automaticCreditRefreshEnabled }: { automaticCreditRefreshEnabled: boolean }) => <div data-testid="credit-refresh-scope" data-enabled={String(automaticCreditRefreshEnabled)}>Agents and providers settings</div>,
 }));
 vi.mock("../../shell/src/components/settings/sections/IdentityPersonalitySection.js", () => ({
   IdentityPersonalitySection: () => <div>Identity and personality settings</div>,
@@ -113,7 +113,7 @@ describe("Settings panel", () => {
 
     await waitFor(() => expect(screen.getByText("Integration settings").isConnected).toBe(true));
     expect(screen.queryByText("Appearance settings")).toBeNull();
-    expect(screen.getByRole("button", { name: "Services" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("button", { name: "Connect Apps" }).getAttribute("aria-current")).toBe("page");
   });
 
   it("keeps account controls available while billing is locked for provisioning", async () => {
@@ -190,7 +190,7 @@ describe("Settings panel", () => {
     const defaultInstallsTab = screen.getByRole("button", { name: "Default installs" });
     expect(defaultInstallsTab.getAttribute("aria-current")).toBe("page");
     expect((screen.getByRole("button", { name: "Billing Completed" }) as HTMLButtonElement).disabled).toBe(true);
-    for (const label of ["Appearance", "Services", "System"]) {
+    for (const label of ["Appearance", "Connect Apps", "System"]) {
       expect((screen.getByRole("button", { name: `${label} Unavailable until your VPS is ready` }) as HTMLButtonElement).disabled).toBe(true);
     }
 
@@ -229,4 +229,12 @@ describe("Settings panel", () => {
     expect(buildButton.querySelector(".animate-spin")).toBeTruthy();
     expect(screen.queryByText(/Starting|Preparing|Loading/i)).toBeNull();
   });
+});
+
+it("pauses credit renewal immediately while closed Settings retains its exit content", async () => {
+  const { Settings } = await import("../../shell/src/components/Settings.js");
+  const view = render(<Settings open defaultSection="agents-providers" onOpenChange={() => {}} />);
+  await waitFor(() => expect(screen.getByTestId("credit-refresh-scope").dataset.enabled).toBe("true"));
+  view.rerender(<Settings open={false} defaultSection="agents-providers" onOpenChange={() => {}} />);
+  expect(screen.getByTestId("credit-refresh-scope").dataset.enabled).toBe("false");
 });

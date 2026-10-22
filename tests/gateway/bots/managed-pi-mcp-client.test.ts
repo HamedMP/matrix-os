@@ -6,6 +6,8 @@ import { createManagedPiMcpClient } from "../../../packages/gateway/src/chat/man
 import { managedPiMcpDependencies } from "../../../packages/gateway/src/startup/managed-pi-tools.js";
 import type { PlatformDb } from "../../../packages/gateway/src/platform-db.js";
 import type { RemoteMcpClient } from "../../../packages/gateway/src/integrations/custom-mcp/client.js";
+import { MCP_TOOL_STREAM_TYPE } from "../../../packages/gateway/src/integrations/custom-mcp/tool-progress.js";
+import { toolProgressResponse } from "../../../packages/gateway/src/integrations/custom-mcp/tool-progress-response.js";
 const id = "123e4567-e89b-42d3-a456-426614174000";
 it("cancels a stalled MCP response body when the owning run stops", async () => {
   let stream!: ReadableStreamDefaultController<Uint8Array>;
@@ -42,13 +44,67 @@ it("uses actual broker/routes DTO and owner/policy/receipt enforcement over type
   expect(headers.at(-1)?.get("authorization")).toBe("Bearer machine-fixture");
   expect(bodies.at(-1)).toEqual({ tool: "qa_echo", arguments: { text: "QA" }, approvalGranted: false });
   tool.approval = "always_ask";
-  await expect(client.call("owner_qa", input, signal)).rejects.toThrow("MCP unavailable");
-  await client.call("owner_qa", { ...input, approvalReceipt: "a".repeat(64) }, signal);
+  await expect(client.call("owner_qa", input, signal, () => {})).rejects.toThrow("MCP unavailable");
+  await client.call("owner_qa", { ...input, approvalReceipt: "a".repeat(64) }, signal, () => {});
   expect(consume).toHaveBeenCalledWith(expect.objectContaining({ userId: "resource_qa", actorId: "owner_qa", runId: "run_qa", receipt: "a".repeat(64) }));
   row.enabled = false;
   await expect(client.call("owner_qa", input, signal)).rejects.toThrow();
   await expect(client.inventory("other", signal)).rejects.toThrow();
   expect(remote).toHaveBeenCalledTimes(2); await broker.shutdown();
+});
+
+it.each([
+  '{"type":"progress","progress":-1}\n',
+  '{"type":"error","message":"PRIVATE_ERROR"}\n',
+  '{"type":"progress","progress":1}\n',
+  '{"type":"result","result":1}\n{"type":"result","result":2}\n',
+  '{"type":"result","result":1}\n{"type":"progress","progress":1}\n',
+  '{"type":"result","result":1}',
+  '{"type":"result"}\n',
+  Array.from({ length: 4 }, (_, progress) => JSON.stringify({ type: "progress", progress })).join("\n") + '\n{"type":"result","result":1}\n',
+  'x'.repeat(192 * 1024 + 1),
+])("fails closed on invalid/truncated/oversized tool streams without re-execution (%#)", async body => {
+  const fetcher = vi.fn(async () => new Response(body, { headers: { "content-type": MCP_TOOL_STREAM_TYPE } }));
+  const client = createManagedPiMcpClient({ platformUrl: "https://platform.example.test", handle: "owner", token: "fixture", ownerId: "owner_qa", fetcher });
+  await expect(client.call("owner_qa", { serverId: id, tool: "qa_echo", arguments: {}, runId: "run_qa" }, new AbortController().signal, () => {})).rejects.toThrow("MCP unavailable");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it("retains JSON compatibility and decodes split UTF-8 live progress before a final result", async () => {
+  const encoder = new TextEncoder(); const progress: unknown[] = [];
+  let stream!: ReadableStreamDefaultController<Uint8Array>;
+  const fetcher = vi.fn(async () => new Response(new ReadableStream({ start(controller) { stream = controller; } }), { headers: { "content-type": MCP_TOOL_STREAM_TYPE } }));
+  const client = createManagedPiMcpClient({ platformUrl: "https://platform.example.test", handle: "owner", token: "fixture", ownerId: "owner_qa", fetcher });
+  const args = { serverId: id, tool: "qa_echo", arguments: {}, runId: "run_qa" };
+  const work = client.call("owner_qa", args, new AbortController().signal, value => progress.push(value));
+  await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+  const frame = encoder.encode('{"type":"progress","progress":1,"message":"进度"}\n');
+  for (const byte of frame) stream.enqueue(new Uint8Array([byte]));
+  await vi.waitFor(() => expect(progress).toEqual([{ progress: 1, message: "进度" }]));
+  stream.enqueue(encoder.encode('{"type":"result","result":{"content":[]}}\n')); stream.close();
+  await expect(work).resolves.toEqual({ content: [] });
+  fetcher.mockResolvedValueOnce(new Response('{"content":[]}'));
+  await expect(client.call("owner_qa", args, new AbortController().signal, () => {})).resolves.toEqual({ content: [] });
+});
+
+it("preserves the full existing result limit in addition to the separately bounded progress frames", async () => {
+  const shell = { content: [{ type: "text", text: "" }] };
+  const result = { content: [{ type: "text", text: "x".repeat(192 * 1024 - JSON.stringify(shell).length) }] };
+  const abort = new AbortController();
+  const fetcher = vi.fn(async () => new Response(JSON.stringify(result)));
+  const client = createManagedPiMcpClient({ platformUrl: "https://platform.example.test", handle: "owner", token: "fixture", ownerId: "owner_qa", fetcher });
+  const input = { serverId: id, tool: "qa_echo", arguments: {}, runId: "run_qa" };
+  await expect(client.call("owner_qa", input, abort.signal)).resolves.toEqual(result);
+  fetcher.mockImplementationOnce(async () => {
+    const frames = Array.from({ length: 3 }, (_, index) => JSON.stringify({ type: "progress", progress: index, message: "中".repeat(3000) }));
+    const response = toolProgressResponse(abort.signal, async progress => {
+      for (let index = 0; index < 3; index++) progress({ progress: index, message: "中".repeat(3000) });
+      return result;
+    });
+    response.headers.set("content-length", String(Buffer.byteLength([...frames, JSON.stringify({ type: "result", result }), ""].join("\n"))));
+    return response;
+  });
+  await expect(client.call("owner_qa", input, abort.signal, () => {})).resolves.toEqual(result);
 });
 it("reuses exact isolated Preview routing and never widens its configured owner guard", () => {
   const base = { platformUrl: "https://platform.example.test", handle: "pr-2117", token: "base", clerkOwnerId: "owner_qa", ownerId: "owner_qa" };

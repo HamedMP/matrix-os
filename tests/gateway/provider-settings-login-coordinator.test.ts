@@ -65,6 +65,20 @@ describe("provider terminal login coordinator", () => {
     await rm(homePath, { recursive: true, force: true });
   });
 
+  it('admits only the installed native Codex Terminal CLI through the durable coordinator', async () => {
+    const login = createProviderTerminalLoginCoordinator({ homePath, registry, enabledHarnesses: ['codex'], codexExecutable: '/synthetic/qualified/codex' });
+    const harness = { id: 'harness_codex', driverId: 'codex', harness: 'codex' as const, installState: 'installed' as const, providerId: 'openai', modelId: 'gpt-test' };
+    expect(login.supportedMethods(harness)).toEqual(['terminal']);
+    const input = { harness, mutation: { type: 'start_login' as const, harnessInstanceId: harness.id, accountId: null, method: 'terminal' as const, expectedRevision: 0, idempotencyKey: 'owner-codex-cli' } };
+    await login.startLogin(input);
+    expect(registry.create).toHaveBeenCalledWith(expect.objectContaining({ agent: 'codex', cmd: expect.stringContaining('device-auth') }));
+    expect(registry.create).toHaveBeenCalledWith(expect.objectContaining({ cmd: expect.stringContaining('/synthetic/qualified/codex') }));
+    await login.startLogin(input);
+    expect(registry.create).toHaveBeenCalledOnce();
+    await expect(login.startLogin({ ...input, harness: { ...harness, providerId: 'anthropic' }, mutation: { ...input.mutation, idempotencyKey: 'wrong-provider' } })).rejects.toMatchObject({ code: 'lifecycle_unavailable' });
+    expect(registry.create).toHaveBeenCalledOnce();
+  });
+
   function coordinator(enabledHarnesses: Array<"codex" | "claude"> = ["codex", "claude"]) {
     return createProviderTerminalLoginCoordinator({
       homePath,
@@ -75,12 +89,12 @@ describe("provider terminal login coordinator", () => {
     });
   }
 
-  it("creates a visible canonical session with the allowlisted Codex device-login command", async () => {
+  it("creates a visible canonical session with the allowlisted Claude login command", async () => {
     const login = coordinator();
     expect(login.supportedMethods({
-      id: "harness_codex",
-      driverId: "codex",
-      harness: "codex",
+      id: "harness_claude",
+      driverId: "claude_code",
+      harness: "claude",
       installState: "installed",
     })).toEqual(["terminal"]);
 
@@ -88,23 +102,23 @@ describe("provider terminal login coordinator", () => {
       mutation: {
         type: "start_login",
         expectedRevision: 0,
-        idempotencyKey: "login_codex_1",
-        harnessInstanceId: "harness_codex",
+        idempotencyKey: "login_claude_1",
+        harnessInstanceId: "harness_claude",
         accountId: null,
         method: "terminal",
       },
       harness: {
-        id: "harness_codex",
-        driverId: "codex",
-        harness: "codex",
-        providerId: "openai",
-        modelId: "gpt-5",
+        id: "harness_claude",
+        driverId: "claude_code",
+        harness: "claude",
+        providerId: "anthropic",
+        modelId: "claude-sonnet-5",
         installState: "installed",
       },
     });
 
     expect(attempt).toMatchObject({
-      harnessInstanceId: "harness_codex",
+      harnessInstanceId: "harness_claude",
       method: "terminal",
       state: "pending",
       action: { kind: "open_terminal" },
@@ -124,13 +138,13 @@ describe("provider terminal login coordinator", () => {
     expect(registry.create).toHaveBeenCalledWith(expect.objectContaining({
       name: attempt.action.kind === "open_terminal" ? attempt.action.terminalSessionId : "",
       cwd: "~",
-      agent: "codex",
+      agent: "claude",
       exclusive: false,
-      cmd: "sh -lc 'export MATRIX_NODE_PREFIX=\"${MATRIX_NODE_PREFIX:-/opt/matrix/runtime/node}\"; export PATH=\"$MATRIX_NODE_PREFIX/bin:$PATH\"; codex login --device-auth'",
+      cmd: expect.stringContaining("; exec "),
     }));
   });
 
-  it("supports only installed, server-enabled Codex and Claude terminal login", () => {
+  it("supports only installed, server-enabled native Claude terminal login", () => {
     const login = coordinator(["claude"]);
     expect(login.supportedMethods({
       id: "harness_kernel",

@@ -16,8 +16,8 @@ function response(status: number, body: unknown) {
   };
 }
 
-async function connect(fetcher: GatewayFetcher) {
-  const server = createIntegrationsMcpServer({ fetcher });
+async function connect(fetcher: GatewayFetcher, toolSurface?: "preview-drive-call") {
+  const server = createIntegrationsMcpServer({ fetcher, ...(toolSurface ? { toolSurface } : {}) });
   const client = new Client({ name: "matrix-integrations-test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -30,6 +30,23 @@ afterEach(() => {
 });
 
 describe("Matrix integrations MCP server", () => {
+  it("exposes only bounded Drive discovery and one read action on shared Preview", async () => {
+    const fetcher = vi.fn<GatewayFetcher>();
+    const { client, server } = await connect(fetcher, "preview-drive-call");
+    try {
+      expect((await client.listTools()).tools.map(tool => tool.name)).toEqual([
+        "list_integration_inventory", "describe_service", "call_service",
+      ]);
+      const invalid = await client.callTool({ name: "call_service", arguments: {
+        service: "google_drive", action: "list_files", label: "work", params: { maxResults: 4 },
+      } });
+      expect(invalid.isError).toBe(true);
+      expect(fetcher).not.toHaveBeenCalled();
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
   it("initializes the bundled stdio process and lists Custom MCP wrappers without model credentials", async () => {
     const client = new Client({ name: "canonical-claude-launch-fixture", version: "1.0.0" });
     const transport = new StdioClientTransport({

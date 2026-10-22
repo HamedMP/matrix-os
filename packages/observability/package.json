@@ -23,10 +23,15 @@
       "types": "./src/events.ts",
       "import": "./dist/events.js",
       "default": "./dist/events.js"
+    },
+    "./postgres": {
+      "types": "./src/postgres.ts",
+      "import": "./dist/postgres.js",
+      "default": "./dist/postgres.js"
     }
   },
   "scripts": {
-    "build": "tsc"
+    "build": "node ../../scripts/build-typescript.mjs"
   },
   "dependencies": {
     "hono": "^4.11.9",

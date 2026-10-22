@@ -3,7 +3,7 @@
   "description": "Numi-style calculator: evaluate expressions live with a history rail and scientific mode.",
   "runtime": "vite",
   "category": "utility",
-  "icon": "calculator",
+  "icon": "v3-calculator",
   "author": "system",
   "version": "1.0.0",
   "slug": "calculator",
@@ -18,7 +18,9 @@
           "result": "text",
           "created_at": "timestamptz"
         },
-        "indexes": ["created_at"]
+        "indexes": [
+          "created_at"
+        ]
       }
     }
   },
@@ -33,7 +35,8 @@
       "../../_shared/**",
       "index.html",
       "matrix.json",
-      "vite.config.ts"
+      "vite.config.ts",
+      "../../system/icons/v3-*.png"
     ]
   }
 }

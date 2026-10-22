@@ -15,3 +15,9 @@ PLATFORM_ORIGIN = "https://matrix-platform-jqxkjdhtkq-ey.a.run.app"
 # EDGE_ROUTER_SECRET must be provisioned as a Wrangler secret before deployment:
 #   wrangler secret put EDGE_ROUTER_SECRET
 # The Worker returns 503 for all requests until this secret is set.
+# Optional, temporary Preview Chat candidate routing requires four Wrangler
+# secrets: PREVIEW_CHAT_CANDIDATE_ORIGIN, PREVIEW_CHAT_CANDIDATE_HANDLE,
+# PREVIEW_CHAT_CANDIDATE_CHAT_ID, and PREVIEW_CHAT_CANDIDATE_EXPIRES_AT.
+# All four must validate together. They route only one Chat's POST turn and
+# approval requests on one Preview handle; the route expires within two hours.
+# Never put real Chat IDs or candidate URLs in this tracked file.

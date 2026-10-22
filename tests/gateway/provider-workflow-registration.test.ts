@@ -116,3 +116,12 @@ it("keeps an empty delivered adapter registry honest and bounded by owner author
   } finally { await lifecycle.close(); }
   expect((await app.request("/api/ai/provider-settings/workflows/capabilities")).status).toBe(503);
 });
+
+
+it("keeps native adapter construction out of the gateway composition entrypoint", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const server = await readFile(new URL("../../packages/gateway/src/server.ts", import.meta.url), "utf8");
+  expect(server).toContain("createNativeProviderWorkflowRuntime(");
+  expect(server).not.toContain("createNativeProviderWorkflowAdapters({");
+  expect(server).not.toContain("createProviderKeyVerifier({");
+});

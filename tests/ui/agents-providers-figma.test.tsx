@@ -291,7 +291,7 @@ it("wires Change account inside the authenticated shared account card", async ()
   const { fireEvent } = await import("@testing-library/react");
   const snapshot = {
     harnesses: [
-      harness("codex", {
+      harness("claude", {
         authState: "authenticated",
         accountIds: ["owner"],
         selectedAccountId: "owner",
@@ -309,6 +309,7 @@ it("wires Change account inside the authenticated shared account card", async ()
     accessSources: [
       {
         id: "profile",
+        kind: "provider_account", providerId: "anthropic", fundingKind: "owner_api_key",
         readiness: { state: "ready" },
         usage: { kind: "unavailable", reason: "unknown" },
       },
@@ -323,12 +324,12 @@ it("wires Change account inside the authenticated shared account card", async ()
   const workflowClient = {
     capabilities: vi.fn().mockResolvedValue([
       {
-        harnessInstanceId: "codex",
-        harness: "codex",
-        displayName: "Codex",
+        harnessInstanceId: "claude",
+        harness: "claude",
+        displayName: "Claude",
         installState: "installed",
         loginMethods: [],
-        apiKeyProviders: ["openai"],
+        apiKeyProviders: ["anthropic"],
         install: false,
         uninstall: false,
         logs: false,
@@ -343,7 +344,7 @@ it("wires Change account inside the authenticated shared account card", async ()
   render(
     <AgentsProvidersView
       snapshot={snapshot}
-      selectedHarnessId="codex"
+      selectedHarnessId="claude"
       onSelectHarness={vi.fn()}
       onMutate={vi.fn()}
       onRefresh={vi.fn()}
@@ -356,7 +357,7 @@ it("wires Change account inside the authenticated shared account card", async ()
   await import("@testing-library/react").then(({ waitFor }) =>
     waitFor(() => expect(workflowClient.capabilities).toHaveBeenCalled()),
   );
-  fireEvent.click(screen.getByRole("button", { name: /^codex/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^claude/ }));
   const action = await screen.findByRole("button", { name: "Change account" });
   expect(action.closest(".matrix-ap-account")).toBeVisible();
   expect(screen.queryByTestId("account-owner")).not.toBeInTheDocument();
@@ -399,11 +400,13 @@ it("recovers an owner-scoped active operation on a fresh Settings view and cance
           activeOperationId: operation.id,
         },
         { harnessInstanceId: "harness_codex", harness: "codex", displayName: "Codex", installState: "installed", loginMethods: ["device_code"], apiKeyProviders: [], install: false, uninstall: false, logs: false },
+        { harnessInstanceId: "harness_claude", harness: "claude", displayName: "Claude Code", installState: "installed", loginMethods: ["browser"], apiKeyProviders: [], install: false, uninstall: false, logs: false },
       ]),
     start: vi.fn(),
     get: vi.fn().mockResolvedValue(operation),
     cancel: vi.fn().mockResolvedValue({ ...operation, state: "cancelled" }),
     submitKey: vi.fn(),
+    submitCode: vi.fn(),
     logs: vi.fn(),
   };
   const snapshot = {
@@ -436,7 +439,10 @@ it("recovers an owner-scoped active operation on a fresh Settings view and cance
   );
   await screen.findByRole("button", { name: /Hermes.*Installing/ });
   fireEvent.click(screen.getByRole("button", { name: /Codex.*Not connected/ }));
-  await screen.findByRole("button", { name: /ChatGPT account/ });
+  // A stale hosted Codex advertisement must not restore an excluded subscription entry.
+  expect(screen.queryByRole("button", { name: /ChatGPT account/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /Claude Code.*Not connected/ }));
+  await screen.findByRole("button", { name: /Claude account/ });
   expect(screen.getByRole("button", { name: /Hermes.*Installing/ })).toHaveAttribute("aria-expanded", "false");
   fireEvent.click(screen.getByRole("button", { name: /Hermes.*Installing/ }));
   fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));

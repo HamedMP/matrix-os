@@ -1,0 +1,164 @@
+import { parseGalleryInventory } from "./generated-inventory";
+import {
+  GalleryAppSchema,
+  deriveGalleryReadiness,
+  filterGalleryApps,
+  type GalleryAppListing,
+  type GalleryConnection,
+  type GalleryInstallResult,
+  type GalleryReadinessStatus,
+} from "./generated-contract";
+export { deriveGalleryReadiness };
+export type { GalleryAppListing, GalleryConnection, GalleryReadinessStatus };
+export interface GalleryBridge {
+  generate?: (context: string) => void | Promise<unknown>;
+  gatewayFetch: (
+    url: string,
+    init?: { method?: string; headers?: Record<string, string>; body?: string },
+    timeoutMs?: number,
+  ) => Promise<unknown>;
+  integrations?: () => Promise<unknown>;
+  openApp?: (name: string, path: string) => void | Promise<unknown>;
+}
+export interface GalleryFilters {
+  collection: "personal" | "business";
+  query: string;
+  category: string;
+  readiness: GalleryReadinessStatus | "all" | "installed";
+}
+const safeId = /^[a-z][a-z0-9-]{0,47}$/;
+// Owner File API moves may change folder names without changing the manifest slug.
+// Keep the same bounded relative-app scope for listing, reconciliation and opening.
+const safePath = (value: unknown): value is string => {
+  if (typeof value !== "string" || !value.startsWith("apps/") || value.length > 4096 || /[\\\u0000-\u001f\u007f]/.test(value)) return false;
+  const segments = value.slice(5).split("/");
+  return segments.length <= 16 && segments.every(segment => !!segment && segment !== "." && segment !== ".." && segment.length <= 255);
+};
+export function parseListing(raw: unknown): GalleryAppListing[] {
+  if (!raw || typeof raw !== "object") throw new Error("Gallery unavailable");
+  const input = raw as { version?: unknown; apps?: unknown };
+  if (
+    input.version !== 1 ||
+    !Array.isArray(input.apps) ||
+    input.apps.length > 40
+  )
+    throw new Error("Gallery unavailable");
+  const apps = input.apps.map((value) => {
+    if (!value || typeof value !== "object")
+      throw new Error("Gallery unavailable");
+    const { installed, launchPath, installedName, ...definition } =
+      value as Record<string, unknown>;
+    const app = GalleryAppSchema.safeParse(definition);
+    if (!app.success || typeof installed !== "boolean")
+      throw new Error("Gallery unavailable");
+    if (
+      launchPath !== undefined &&
+      !safePath(launchPath)
+    )
+      throw new Error("Gallery unavailable");
+    if (
+      installedName !== undefined &&
+      (typeof installedName !== "string" ||
+        !installedName.trim() ||
+        installedName.length > 32768)
+    )
+      throw new Error("Gallery unavailable");
+    return {
+      ...app.data,
+      installed,
+      ...(safePath(launchPath) ? { launchPath } : {}),
+      ...(typeof installedName === "string" ? { installedName: installedName.slice(0, 200) } : {}),
+    };
+  });
+  if (new Set(apps.map((app) => app.id)).size !== apps.length)
+    throw new Error("Gallery unavailable");
+  return apps;
+}
+export function visibleApps(
+  apps: readonly GalleryAppListing[],
+  filter: GalleryFilters,
+  connections: GalleryConnection[] | null,
+) {
+  const catalogMatches = new Set(filterGalleryApps(apps, filter).map(app => app.id));
+  const query = filter.query.trim().toLocaleLowerCase();
+  return filterGalleryApps(apps, { ...filter, query: "" }).filter(app =>
+    catalogMatches.has(app.id) || (!!query && app.installedName?.toLocaleLowerCase().includes(query)),
+  ).filter(
+    (app) =>
+      filter.readiness === "all" ||
+      (filter.readiness === "installed"
+        ? app.installed
+        : deriveGalleryReadiness(app, connections).status === filter.readiness),
+  );
+}
+export async function loadGallery(bridge: GalleryBridge, onCatalog?: (apps: GalleryAppListing[]) => void) {
+  // Inventory settles independently; a slow optional service cannot hide the catalog.
+  const inventory = Promise.resolve().then(() => {
+    if (!bridge.integrations) throw new Error("Inventory unavailable");
+    return bridge.integrations();
+  }).then(knownInventory, () => { console.warn("Gallery connection inventory unavailable"); return null; });
+  let apps: GalleryAppListing[];
+  try { apps = parseListing(await bridge.gatewayFetch("/api/app-gallery")); }
+  catch (error) {
+    console.warn("Gallery catalog unavailable", error instanceof Error ? error.name : "Unknown error");
+    throw new Error("Gallery unavailable");
+  }
+  onCatalog?.(apps);
+  return { apps, connections: await inventory };
+}
+export async function installGalleryApp(
+  bridge: GalleryBridge,
+  id: string,
+): Promise<GalleryInstallResult> {
+  if (!safeId.test(id)) throw new Error("Installation unavailable");
+  try {
+    const raw = await bridge.gatewayFetch(
+      `/api/app-gallery/${id}/install`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      },
+      35000,
+    );
+    if (!raw || typeof raw !== "object")
+      throw new Error("Invalid installation");
+    const result = raw as GalleryInstallResult;
+    if (
+      !["installed", "already_installed"].includes(result.status) ||
+      result.slug !== id ||
+      !safePath(result.path) ||
+      (result.status === "installed" && result.path !== `apps/${id}`) ||
+      typeof result.name !== "string" ||
+      !result.name.trim() ||
+      result.name.length > 32768
+    )
+      throw new Error("Invalid installation");
+    return { ...result, name: result.name.slice(0, 200) };
+  } catch (error) {
+    console.warn(
+      "Gallery installation failed",
+      error instanceof Error ? error.name : "Unknown error",
+    );
+    throw new Error("Installation unavailable");
+  }
+}
+export async function openGalleryApp(
+  bridge: GalleryBridge,
+  app: GalleryAppListing,
+) {
+  if (!bridge.openApp || !app.installed || !safeId.test(app.id) || !safePath(app.launchPath))
+    throw new Error("App unavailable");
+  // Folder paths may change again after listing; hosts resolve the stable
+  // manifest identity against their current authenticated runtime catalog.
+  await bridge.openApp(app.installedName ?? app.name, `matrix-app:${app.id}`);
+}
+
+function knownInventory(raw: unknown): GalleryConnection[] | null {
+  try {
+    return parseGalleryInventory(raw);
+  } catch (cause) {
+    console.warn("Gallery connection inventory unavailable", cause);
+    return null;
+  }
+}

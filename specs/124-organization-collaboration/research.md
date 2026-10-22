@@ -1,6 +1,6 @@
 # Research and decisions — direct member-computer collaboration
 
-Inspected 2026-09-20 against main `94985f02e`. These are source findings and design decisions; no deployment or provider spike was run. The previous central-proxy/pooled-org-runtime delivery plan is superseded by this revision.
+This file preserves the 2026-09-20 implementation research behind the shipped collaboration architecture. The 2026-10-07 product boundary in `spec.md` is authoritative where this historical research differs: only projects create new live collaboration; product copy says Editor for wire preset `contributor`; all project-owned Chats inherit the project audience; and public Chat snapshots remain a separate read-only feature.
 
 ## R1 — Reuse authority; replace transport
 
@@ -28,7 +28,7 @@ Official guidance checked on 2026-09-20:
 - [Claude Code legal/authentication guidance](https://code.claude.com/docs/en/legal-and-compliance) distinguishes a user signing into an unmodified hosted binary from third-party credential intermediation, and discusses customer-controlled API credentials. Verify the applicable hosted/customer contract before enabling a funding mode.
 - [Claude Agent SDK plan update](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan) says the June usage-billing change was paused; it does not authorize pooling individual subscriptions.
 
-Decision (product owner, 2026-09-20): members may prompt the owner's AI on whatever source the owner configured, including personal subscriptions, when the organization enables member submission in Clerk organization public metadata and the owner has not restricted the project to owner-only. Matrix does not enforce provider eligibility; it shows the source kind to participants and records the owner's acknowledgement that the provider terms of the selected source are the owner's responsibility. Accepted risk: the provider documents above restrict sharing an individual account, and organization trust does not change those terms; if a provider objects, the mitigation is an API/business/Matrix AI source, which needs no code change. The submit-mode probes in T002 remain evidence, not release gates. No silent source fallback.
+Decision (product owner, amended 2026-10-07): members with the Contributor preset may prompt the owner's AI on whatever source the owner configured, including personal subscriptions; Viewers may not. Clerk organization metadata and the legacy stored submit-mode value are compatibility projections, not additional permission switches. Matrix does not enforce provider eligibility; it shows the source kind to participants and records the owner's acknowledgement that the provider terms of the selected source are the owner's responsibility. Accepted risk: the provider documents above restrict sharing an individual account, and organization trust does not change those terms; if a provider objects, the mitigation is an API/business/Matrix AI source, which needs no code change. The submit-mode probes in T002 remain evidence, not release gates. No silent source fallback.
 
 Evidence probes (not release gates): shared Codex/Claude project roots, owner source selection, effective submit mode, safe project session resume, cancellation, approvals and exhaustion. Participant native sign-in/multi-account routing is future work.
 
@@ -56,7 +56,7 @@ Use private service-only Matrix group text through fresh org/group authorization
 
 ## R10 — Group Chat and Git owner are opinionated defaults
 
-Idempotently create one default project group Chat and root. Join reuses both; per-Chat worktrees are deferred and joining creates no new root. Everyone has a named Matrix actor; read-only viewers cannot post, normal Contributor includes discussion. Human discussion is separate from AI submission. The project owner controls the selected source and Git identity. New local commits use configured owner author/committer; pushes and PRs use the owner's configured forge account. Imported commit history is untouched; requestor attribution lives in Matrix audit, not fabricated Git authorship.
+Every project-owned Chat is an inherited group Chat. Join reuses its canonical timeline and root; per-Chat worktrees are deferred and joining creates no new root. Everyone has a named Matrix actor; Viewers cannot post, while Editors (wire preset `contributor`) include discussion and may request AI when the project capability and runtime allow it. Human discussion is separate from AI submission. The project owner controls the selected source and Git identity. New local commits use configured owner author/committer; pushes and PRs use the owner's configured forge account. Imported commit history is untouched; requester attribution lives in Matrix audit, not fabricated Git authorship.
 
 V1 drops per-operation owner approval (product decision 2026-09-20): the credential-holding Git broker executes member commit/push/PR operations under the owner identity and audits the requesting member. Approval bound to an exact tree/ref remains the documented later policy. Collaborators contribute without GitHub/AI onboarding.
 

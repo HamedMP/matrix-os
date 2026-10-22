@@ -2,6 +2,7 @@ import { chatCatalogDiscoveryScope, CHAT_SYSTEM_DRIVERS as SYSTEM_DRIVERS, CHAT_
 import type { ProviderSnapshotReadOptions } from "../ai-providers/snapshot-read-options.js";
 import { isRetiredMatrixSdkInstance, matrixSdkRetirementError } from "./matrix-sdk-retirement.js";
 import {
+  botImageTotalMaximumForSelection, botAttachmentInputError, type BotAttachmentMetadata,
   CanonicalChatModelSelectionSchema,
   CanonicalChatSafeErrorSchema,
   CanonicalChatSkillDescriptorSchema,
@@ -137,8 +138,8 @@ function codingSupports(
     attachments: driverKind === "pi" || driverKind === "opencode"
       ? ["file", "structured_ref"]
       : ["file", "image", "structured_ref"],
-    tools: [],
-    approvals: isCodex,
+    tools: driverKind === "claude_code" ? ["integrations", "custom_mcp"] : [],
+    approvals: isCodex || driverKind === "claude_code",
     userInput: true,
     worktrees: "optional",
     resources: ["file", "folder", "project", "task", "app", "terminal_session", ],
@@ -227,6 +228,7 @@ function codingInstance(
     id,
     driverKind,
     displayName: provider.displayName,
+    ...(driverKind === "claude_code" ? { connectionLabel: "Claude subscription" } : {}),
     availability,
     workspaceRequirement: "project_optional",
     models: visibleModels,
@@ -503,6 +505,7 @@ function projectSkills(
 }
 
 export function createChatProviderCatalogService(options: {
+  observationScope?: (principal: RequestPrincipal) => "canonical_matrix" | undefined;
   codingProviders: Pick<CodingAgentProviderRegistry, "listProviders" | "invalidate">;
   agentRuntimeSource: AgentRuntimeSource;
   systemRuntimeSources?: Partial<Record<SystemDriverKind, AgentRuntimeSource>>;
@@ -525,41 +528,18 @@ export function createChatProviderCatalogService(options: {
   // Keep refresh mode local to this call; never cache owner/funding authority.
   async function readCatalog(principal: RequestPrincipal, readOptions?: ChatProviderCatalogReadOptions,
     refreshAiProvider = false, selection?: CanonicalChatModelSelection): Promise<CanonicalProviderCatalog> {
-    const scope = chatCatalogDiscoveryScope(selection);
-    const systemRuntimeReads = Promise.all(scope.systems.map(async (kind) => {
-      const source = options.systemRuntimeSources?.[kind];
-      if (!source) return [kind, null] as const;
-      try {
-        return [kind, await readRuntimeSnapshot(source, options.runtimeTimeoutMs)] as const;
-      } catch (_error) {
-        console.warn(`[chat-providers] ${driverDisplayName(kind)} Provider inventory unavailable`);
-        return [kind, null] as const;
-      }
-    }));
-    const [codingResult, runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
-      scope.coding.length > 0 ? options.codingProviders.listProviders(principal) : Promise.resolve([]),
-      scope.readRuntime ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs) : Promise.resolve(undefined),
-      scope.readAi ? options.aiProviderSource?.getSnapshot({ ...scope.snapshotOptions, refresh: refreshAiProvider }) ?? Promise.resolve(undefined) : Promise.resolve(undefined),
-      options.harnessSettingsSource?.getSnapshot(selection ? scope.snapshotOptions : undefined) ?? Promise.resolve(undefined),
-      systemRuntimeReads,
+    const observationScope = options.observationScope?.(principal);
+    const scope = chatCatalogDiscoveryScope(selection, observationScope);
+    const nativeCodexIdentityRequired = scope.coding.includes("codex");
+    // Coding CLI discovery can outlast the five-second native receipt. Finish
+    // it before observing runtime/Settings authority; never retimestamp a
+    // receipt or project it against an earlier clock to extend admission.
+    const [codingResult] = await Promise.allSettled([
+      scope.readCoding ? options.codingProviders.listProviders(principal) : Promise.resolve([]),
     ]);
     if (codingResult.status === "rejected") {
       console.warn("[chat-providers] Coding Provider inventory unavailable");
     }
-    if (runtimeResult.status === "rejected") {
-      console.warn("[chat-providers] System Provider inventory unavailable");
-    }
-    if (aiProviderResult.status === "rejected") {
-      console.warn("[chat-providers] AI Provider inventory unavailable");
-    }
-    if (settingsResult.status === "rejected") {
-      console.warn("[chat-providers] Harness settings unavailable");
-      if (selection || (settingsResult.reason instanceof ProviderSettingsStoreError
-        && settingsResult.reason.status === 503)) {
-        throw new ProviderCatalogUnavailableError(true);
-      }
-    }
-
     const coding = codingResult.status === "fulfilled" ? codingResult.value.filter(provider => {
       const kind = codingDriverKind(provider);
       return kind !== null && scope.coding.some(driver => driver === kind);
@@ -587,6 +567,42 @@ export function createChatProviderCatalogService(options: {
       }
       seenCodingDrivers.push(instance.driverKind);
       codingInstances.push(instance);
+    }
+
+    const systemRuntimeReads = Promise.all(scope.readSystems.map(async (kind) => {
+      const source = options.systemRuntimeSources?.[kind];
+      if (!source) return [kind, null] as const;
+      try {
+        return [kind, await readRuntimeSnapshot(source, options.runtimeTimeoutMs)] as const;
+      } catch (_error) {
+        console.warn(`[chat-providers] ${driverDisplayName(kind)} Provider inventory unavailable`);
+        return [kind, null] as const;
+      }
+    }));
+    const [runtimeResult, aiProviderResult, settingsResult, systemRuntimeResult] = await Promise.allSettled([
+      scope.readRuntime ? readRuntimeSnapshot(options.agentRuntimeSource, options.runtimeTimeoutMs) : Promise.resolve(undefined),
+      scope.readAi ? options.aiProviderSource?.getSnapshot({ ...scope.snapshotOptions, refresh: refreshAiProvider }) ?? Promise.resolve(undefined) : Promise.resolve(undefined),
+      options.harnessSettingsSource?.getSnapshot({
+        ...(selection || observationScope ? scope.snapshotOptions : {}),
+        ...(nativeCodexIdentityRequired ? {
+          includeNativeAccountMetadata: true,
+          includeNativeAccountUsage: false,
+        } : {}),
+      }) ?? Promise.resolve(undefined),
+      systemRuntimeReads,
+    ]);
+    if (runtimeResult.status === "rejected") {
+      console.warn("[chat-providers] System Provider inventory unavailable");
+    }
+    if (aiProviderResult.status === "rejected") {
+      console.warn("[chat-providers] AI Provider inventory unavailable");
+    }
+    if (settingsResult.status === "rejected") {
+      console.warn("[chat-providers] Harness settings unavailable");
+      if (selection || (settingsResult.reason instanceof ProviderSettingsStoreError
+        && settingsResult.reason.status === 503)) {
+        throw new ProviderCatalogUnavailableError(true);
+      }
     }
 
     const snapshot = runtimeResult.status === "fulfilled" ? runtimeResult.value : undefined;
@@ -674,15 +690,18 @@ export function createChatProviderCatalogService(options: {
       console.warn(`[chat-providers] Canonical Provider projection failed validation: ${safeIssuePaths.join(",")}`);
       throw new ProviderCatalogUnavailableError(false);
     }
+    options.observationScope?.(principal);
     return parsed.data;
   }
   const service: ChatProviderCatalogService = {
     async refresh(principal, readOptions) {
-      options.invalidateCodingModelCatalog?.(principal);
-      options.codingProviders.invalidate(principal.userId);
-      options.agentRuntimeSource.invalidate?.();
-      for (const source of Object.values(options.systemRuntimeSources ?? {})) {
-        source?.invalidate?.();
+      if (!options.observationScope?.(principal)) {
+        options.invalidateCodingModelCatalog?.(principal);
+        options.codingProviders.invalidate(principal.userId);
+        options.agentRuntimeSource.invalidate?.();
+        for (const source of Object.values(options.systemRuntimeSources ?? {})) {
+          source?.invalidate?.();
+        }
       }
       return readCatalog(principal, readOptions, true);
     },
@@ -695,6 +714,7 @@ export function createChatProviderCatalogService(options: {
 
 export interface ProviderSelectionRequirements {
   attachments?: CanonicalChatAttachmentKind[];
+  attachmentInputs?: BotAttachmentMetadata[];
   resources?: CanonicalChatResourceKind[];
   interactionMode?: string;
   permissionMode?: string;
@@ -770,6 +790,9 @@ export function validateChatProviderSelection(input: {
   if (isRetiredMatrixSdkInstance(selection.data.instanceId)) {
     return { ok: false, error: matrixSdkRetirementError() };
   }
+  if (selection.data.instanceId === "claude_code_matrix_included") {
+    return selectionError("provider_unavailable", "Choose Matrix AI or Claude subscription in a new Chat.", ["start_new_chat"]);
+  }
   const instance = input.catalog.instances.find((candidate) =>
     candidate.id === selection.data.instanceId
   );
@@ -790,6 +813,13 @@ export function validateChatProviderSelection(input: {
   const model = instance.models.find((candidate) => candidate.id === selection.data.model);
   if (model?.availability !== "available") {
     return selectionError("model_unavailable", "The selected model is not available.", ["select_provider"]);
+  }
+  if (["matrix_pi", "matrix_bot"].includes(instance.driverKind)) {
+    const inputError = botAttachmentInputError(input.requirements?.attachmentInputs ?? [], model.supportsVision === true, botImageTotalMaximumForSelection(instance.id, selection.data.options));
+    if (inputError) return selectionError("capability_mismatch", inputError);
+  }
+  if (["matrix_pi", "matrix_bot"].includes(instance.driverKind) && input.requirements?.attachments?.includes("image") && !model.supportsVision) {
+    return selectionError("capability_mismatch", "The selected model does not support images.");
   }
   if (!optionsMatch(selection.data, instance)
     || !supportsRequirements(instance.supports, input.requirements ?? {})) {

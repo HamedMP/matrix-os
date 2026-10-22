@@ -65,6 +65,52 @@ const run = (input: {
 });
 
 describe("bot agent loop", () => {
+  it.each(["unknown", "invalid", "truncated"])("bounds model calls when %s tools never consume an action", async kind => {
+    const replies = Array.from({ length: 8 }, (_, index) => fauxAssistantMessage(
+      fauxToolCall(kind === "unknown" ? "missing_tool" : "write_artifact", {}, { id: `bad_${index}` }),
+      { stopReason: kind === "truncated" ? "length" : "toolUse" },
+    ));
+    const { route } = scripted([...replies, fauxAssistantMessage(fauxText("Stopped."))]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    const { broker, tools } = memoryBroker();
+    const outcome = await run({ broker, route, command: command({ limits: { maxToolActions: 2, maxInferenceCalls: 63 } }) });
+    // Two tool rounds, a final response and at most two compaction requests.
+    expect(stream.mock.calls.length).toBeLessThanOrEqual(5);
+    expect(tools).toHaveLength(0);
+    expect(outcome.status).toBe("failed");
+  });
+
+  it("bounds the normal sixty-action run without replacing its tools or output route", async () => {
+    const { route } = scripted([
+      ...Array.from({ length: 70 }, (_, index) => fauxAssistantMessage(fauxToolCall("missing_tool", {}, { id: `missing_${index}` }), { stopReason: "toolUse" })),
+      fauxAssistantMessage(fauxText("Stopped.")),
+    ]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    const { broker } = memoryBroker();
+    expect((await run({ broker, route })).status).toBe("failed");
+    expect(stream).toHaveBeenCalledTimes(63);
+    expect(stream.mock.calls.every(([, , options]) => options?.maxRetries === 0)).toBe(true);
+  });
+
+  it.each([2, 12])("honors trusted generation cap %i while preserving tools, history and 8192 output", async maxInferenceCalls => {
+    const { route } = scripted([
+      fauxAssistantMessage(fauxToolCall("write_artifact", { path: "briefs/acme.md", content: "# Acme", mimeType: "text/markdown" }, { id: "call_write" }), { stopReason: "toolUse" }),
+      ...Array.from({ length: 14 }, (_, index) => fauxAssistantMessage(fauxToolCall("missing_tool", {}, { id: `missing_${index}` }), { stopReason: "toolUse" })),
+      fauxAssistantMessage(fauxText("Must not run.")),
+    ]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    const { broker, tools, saves } = memoryBroker({ messages: [{ role: "user", content: "Keep my earlier requirement.", timestamp: 1 }] });
+    const outcome = await run({ broker, route, command: command({
+      limits: { maxToolActions: 60, maxInferenceCalls },
+      route: { ...command().route, maxOutputTokens: 8192 },
+    }), onAgent: agent => expect(agent.state.tools.map(tool => tool.name)).toContain("write_artifact") });
+    expect(outcome).toMatchObject({ status: "failed", toolActions: 1 });
+    expect(stream).toHaveBeenCalledTimes(maxInferenceCalls);
+    expect(tools).toHaveLength(1);
+    expect(stream.mock.calls.every(([, , options]) => options?.maxRetries === 0 && options?.maxTokens === 8192)).toBe(true);
+    expect(JSON.stringify(saves[0]!.messages)).toContain("Keep my earlier requirement.");
+  });
+
   it("passes the bridge placeholder key to Pi for every model stream", async () => {
     const { route } = scripted([fauxAssistantMessage(fauxText("Ready."))]);
     const streamSimple = vi.spyOn(route.provider, "streamSimple");
@@ -81,15 +127,22 @@ describe("bot agent loop", () => {
       fauxAssistantMessage(fauxToolCall("write_artifact", { path: "briefs/acme.md", content: "# Acme", mimeType: "text/markdown" }, { id: "call_write" }), { stopReason: "toolUse" }),
       fauxAssistantMessage(fauxText("Saved the brief.")),
     ]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
     const { broker, events, tools, saves } = memoryBroker();
 
-    const outcome = await run({ broker, route });
+    const outcome = await run({ broker, route, command: command({ route: { ...command().route, maxOutputTokens: 8192 } }),
+      onAgent: agent => expect(agent.state.tools.map(tool => tool.name)).toContain("write_artifact"),
+    });
 
     expect(outcome).toEqual({ runId: "run_turn1", status: "completed", sessionRevision: 4, toolActions: 1 });
+    expect(stream).toHaveBeenCalledTimes(2);
+    for (const [, , options] of stream.mock.calls) {
+      expect(options).toMatchObject({ maxTokens: 8192, maxRetries: 0 });
+    }
     expect(tools).toEqual([{ toolCallId: "call_write", capability: "artifact.write", args: { relPath: "briefs/acme.md", content: "# Acme", mimeType: "text/markdown" } }]);
     expect(events.map((event) => event.seq)).toEqual(events.map((_event, index) => index));
     expect(events.filter((event) => event.event.type === "tool_progress").map((event) => event.event))
-      .toEqual([
+      .toMatchObject([
         { type: "tool_progress", toolCallId: "call_write", capability: "artifact.write", phase: "started" },
         { type: "tool_progress", toolCallId: "call_write", capability: "artifact.write", phase: "completed" },
       ]);
@@ -97,6 +150,41 @@ describe("bot agent loop", () => {
     expect(saves).toHaveLength(1);
     expect(saves[0]!.baseRevision).toBe(3);
     expect(saves[0]!.messages.map((message) => message.role)).toEqual(["system", "user", "assistant", "toolResult", "assistant"]);
+  });
+
+  it("advertises and forwards attachment chunk reads to the broker", async () => {
+    const chunk = { offset: 32768, length: 32768, sha256: "b".repeat(64) };
+    const { route } = scripted([
+      fauxAssistantMessage(fauxToolCall("read_artifact", { path: "gmail-attachment-00.bin", chunk }, { id: "call_chunk" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxText("Read the next part.")),
+    ]);
+    const { broker, tools } = memoryBroker();
+    expect(await run({ broker, route })).toMatchObject({ status: "completed", toolActions: 1 });
+    expect(tools).toEqual([{ toolCallId: "call_chunk", capability: "artifact.read", args: { relPath: "gmail-attachment-00.bin", chunk } }]);
+  });
+
+  it("joins composite Pi tool progress to broker receipts while keeping original transcript IDs", async () => {
+    const sdkId = "call_write|fc_item_1";
+    const bridgeId = "call_dccaeae1358650916bbee4bce1dcb6fa436cee72d8b4eacd222cc18e5c299a18";
+    const { route } = scripted([
+      fauxAssistantMessage(fauxToolCall("write_artifact", { path: "briefs/acme.md", content: "# Acme", mimeType: "text/markdown" }, { id: sdkId }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxText("Saved the brief.")),
+    ]);
+    const { broker, events, tools, saves } = memoryBroker();
+
+    expect(await run({ broker, route })).toMatchObject({ status: "completed", toolActions: 1 });
+
+    expect(tools[0]!.toolCallId).toBe(bridgeId);
+    expect(events.filter((event) => event.event.type === "tool_progress").map((event) => event.event))
+      .toMatchObject([
+        { type: "tool_progress", toolCallId: bridgeId, capability: "artifact.write", phase: "started" },
+        { type: "tool_progress", toolCallId: bridgeId, capability: "artifact.write", phase: "completed" },
+      ]);
+    expect(JSON.stringify({ events, tools })).not.toContain(sdkId);
+    expect(saves[0]!.messages.find((message) => message.role === "assistant"))
+      .toMatchObject({ content: [expect.objectContaining({ type: "toolCall", id: sdkId })] });
+    expect(saves[0]!.messages.find((message) => message.role === "toolResult"))
+      .toMatchObject({ toolCallId: sdkId });
   });
 
   it("ends the turn waiting for the person after a blocking question", async () => {
@@ -285,11 +373,12 @@ describe("bot agent loop", () => {
     expect(results[1]).toContain("Fix: action.");
   });
 
-  it("summarizes earlier turns instead of dropping them when a short session is too large to save", async () => {
+  it.each([512, 4096])("summarizes earlier turns within a %i-token route when the session is too large to save", async maxOutputTokens => {
     const { route } = scripted([
       fauxAssistantMessage(fauxText("Here is the fourth answer.")),
       fauxAssistantMessage(fauxText("Earlier: the person asked for three long Acme reports and prefers tables.")),
     ]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
     const history = [1, 2, 3].flatMap((turn) => [
       { role: "user", content: `Report ${turn}, please.`, timestamp: turn * 10 },
       // Just under the load cap, so the new turn pushes it past the storage target.
@@ -297,14 +386,41 @@ describe("bot agent loop", () => {
     ]);
     const { broker, saves } = memoryBroker({ messages: history as unknown as Record<string, unknown>[] });
 
-    const outcome = await run({ broker, route, command: command({ capabilities: [], turn: { kind: "prompt", text: "And a fourth?" } }) });
+    const outcome = await run({ broker, route, command: command({ capabilities: [], route: { ...command().route, maxOutputTokens }, turn: { kind: "prompt", text: "And a fourth?" } }) });
 
     expect(outcome).toMatchObject({ status: "completed", sessionRevision: 4 });
+    expect(stream).toHaveBeenCalledTimes(2);
+    expect(stream.mock.calls[1]?.[2]).toMatchObject({ maxTokens: Math.min(2048, maxOutputTokens), maxRetries: 0 });
     const saved = JSON.stringify(saves[0]!.messages);
     expect(saved).toContain("prefers tables");
     expect(saved).toContain("And a fourth?");
     expect(saved).not.toContain("removed to fit saved history");
     expect(saved.length).toBeLessThan(512 * 1024);
+  });
+
+  it.each([{ mainCalls: 4, limits: { maxToolActions: 2 }, expected: 5 }, { mainCalls: 5, limits: { maxToolActions: 2 }, expected: 5 }, { mainCalls: 11, limits: { maxToolActions: 60, maxInferenceCalls: 12 }, expected: 12 }, { mainCalls: 12, limits: { maxToolActions: 60, maxInferenceCalls: 12 }, expected: 12 }])("shares the remaining inference allowance with both compaction paths after $mainCalls main calls", async ({ mainCalls, limits, expected }) => {
+    const { route } = scripted([
+      ...Array.from({ length: mainCalls - 1 }, (_, index) => fauxAssistantMessage(
+        fauxToolCall("missing_tool", {}, { id: `missing_${index}` }), { stopReason: "toolUse" },
+      )),
+      fauxAssistantMessage(fauxText("Here is the fourth answer.")),
+      // An empty first summary leaves storage compaction necessary too.
+      fauxAssistantMessage(fauxText(""), { stopReason: "error", errorMessage: "provider overloaded" }),
+      fauxAssistantMessage(fauxText("This second summary must not be requested.")),
+    ]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    const history = [1, 2, 3].flatMap(turn => [
+      { role: "user", content: `Report ${turn}, please.`, timestamp: turn * 10 },
+      { ...fauxAssistantMessage(fauxText("r".repeat(166 * 1024))), timestamp: turn * 10 + 1 },
+    ]) as unknown as Record<string, unknown>[];
+    const { broker, saves, tools } = memoryBroker({ messages: history });
+    const outcome = await run({ broker, route, command: command({ limits, turn: { kind: "prompt", text: "And a fourth?" } }) });
+    expect(outcome).toMatchObject({ status: "completed", sessionRevision: 4 });
+    expect(stream).toHaveBeenCalledTimes(expected);
+    expect(stream.mock.calls.every(([, , options]) => options?.maxRetries === 0)).toBe(true);
+    expect(tools).toHaveLength(0);
+    expect(JSON.stringify(saves[0]!.messages)).toContain("And a fourth?");
+    expect(JSON.stringify(saves[0]!.messages)).not.toContain("second summary");
   });
 
   it("still saves the turn when the optional summary call fails or the run was cancelled", async () => {
@@ -361,4 +477,51 @@ describe("bot agent loop", () => {
     expect(saved).toContain("And a fourth?");
     expect(saved).not.toContain("removed to fit saved history");
   });
+});
+
+
+describe("server-issued isolated ordinary turn", () => {
+  const isolated = () => ({ ...command(), route: { ...command().route, maxOutputTokens: 256 },
+    limits: { maxToolActions: 1 }, isolatedTurn: { phaseId: "phase_one", maxInputBytes: 131072 } } as BotRunCommand);
+  it("exposes no tools, refuses steering and makes one explicit retry-free provider call", async () => {
+    const { route } = scripted([fauxAssistantMessage(fauxText("Ready."))]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    const { broker, tools } = memoryBroker();
+    let steered: boolean | undefined;
+    const result = await run({ command: isolated(), broker, route, onControl: control => { steered = control.steer("Again"); } });
+    expect(steered).toBe(false);
+    expect(result.status).toBe("completed");
+    expect(tools).toEqual([]);
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(stream.mock.calls[0]![1].tools ?? []).toEqual([]);
+    expect(stream).toHaveBeenCalledWith(route.model, expect.anything(),
+      expect.objectContaining({ maxTokens: 256, maxRetries: 0 }));
+  });
+  it("never executes a hallucinated tool or continues after its reply", async () => {
+    const { route } = scripted([fauxAssistantMessage(fauxToolCall("read_artifact", { path: "x" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxText("second forbidden"))]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    const { broker, tools } = memoryBroker();
+    await run({ command: isolated(), broker, route });
+    expect(tools).toEqual([]);
+    expect(stream).toHaveBeenCalledTimes(1);
+  });
+  it("rejects continuation and nonempty history before inference or summary", async () => {
+    const { route } = scripted([fauxAssistantMessage(fauxText("forbidden"))]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    expect((await run({ command: { ...isolated(), turn: { kind: "continue" } }, broker: memoryBroker().broker, route })).status).toBe("failed");
+    const history = [{ role: "user", content: "old".repeat(50000), timestamp: 1 }];
+    expect((await run({ command: isolated(), broker: memoryBroker({ messages: history }).broker, route })).status).toBe("failed");
+    expect(stream).not.toHaveBeenCalled();
+  });
+});
+
+
+it("preserves ordinary isolated empty-history behavior after removing invalidated derived summaries", async () => {
+  const { route } = scripted([fauxAssistantMessage(fauxText("Ready."))]);
+  const base = command(), broker = memoryBroker({ load: async () => ({ revision: 3, needsRecompaction: true,
+    messages: [{ role: "user", content: "Discard this derived summary", timestamp: 1, matrixBotSessionKind: "summary" }] }) }).broker;
+  const result = await run({ command: { ...base, route: { ...base.route, maxOutputTokens: 256 }, limits: { maxToolActions: 1 },
+    isolatedTurn: { phaseId: "phase_old_managed", maxInputBytes: 131072 } }, broker, route });
+  expect(result.status).toBe("completed");
 });

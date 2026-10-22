@@ -11,14 +11,33 @@ export type SharedChatAuthorizer = (
   action: "request_ai" | "control_execution",
 ) => Promise<AuthorizedCollaborationContext>;
 
+export type SharedChatAction = "read" | "discuss" | Parameters<SharedChatAuthorizer>[2];
+
 /** Locks the same scopes grant mutations advance, so a preflight cannot survive revocation. */
+export function fenceSharedChatAuthority(
+  trx: Transaction<OwnerCollaborationDatabase>,
+  scope: Selectable<CollaborationScopesTable>,
+  context: AuthorizedCollaborationContext,
+  actorId: string,
+  action: "read",
+  clock?: () => Date,
+): Promise<"owner" | "editor" | "viewer">;
+export function fenceSharedChatAuthority(
+  trx: Transaction<OwnerCollaborationDatabase>,
+  scope: Selectable<CollaborationScopesTable>,
+  context: AuthorizedCollaborationContext,
+  actorId: string,
+  action: Exclude<SharedChatAction, "read">,
+  clock?: () => Date,
+): Promise<"owner" | "editor">;
 export async function fenceSharedChatAuthority(
   trx: Transaction<OwnerCollaborationDatabase>,
   scope: Selectable<CollaborationScopesTable>,
   context: AuthorizedCollaborationContext,
   actorId: string,
-  action: "request_ai" | "control_execution",
-): Promise<"owner" | "editor"> {
+  action: SharedChatAction,
+  clock: () => Date = () => new Date(),
+): Promise<"owner" | "editor" | "viewer"> {
   if (scope.kind !== "chat" || scope.lifecycle !== "shared"
     || context.scopeId !== scope.id || context.resourceId !== scope.resource_id
     || context.ownerId !== scope.owner_id || context.actorId !== actorId
@@ -27,7 +46,7 @@ export async function fenceSharedChatAuthority(
     || context.authorityGeneration !== Number(scope.authority_generation)
     || (context.role === "owner" && actorId !== scope.owner_id)
     || (scope.membership_mode === "direct" && scope.parent_scope_id !== null)
-    || context.role === "viewer") {
+    || (action !== "read" && context.role === "viewer")) {
     throw new CollaborationAuthorizationError("forbidden", "Shared Chat authority changed");
   }
   const membershipScope = scope.membership_mode === "direct"
@@ -41,15 +60,13 @@ export async function fenceSharedChatAuthority(
     || membershipScope.owner_id !== scope.owner_id
     || membershipScope.organization_id !== scope.organization_id
     || membershipScope.authority_runtime_id !== scope.authority_runtime_id
-    || (scope.membership_mode === "inherited" && membershipScope.kind !== "project")
-    || Number(scope.auth_epoch) !== (context.resourceAuthEpoch ?? context.authEpoch)
-    || Number(membershipScope.auth_epoch) !== (context.membershipAuthEpoch ?? context.authEpoch)) {
+    || (scope.membership_mode === "inherited" && membershipScope.kind !== "project")) {
     throw new CollaborationAuthorizationError("unavailable", "Shared Chat authority changed");
   }
   const member = await trx.selectFrom("collaboration_members").selectAll()
     .where("scope_id", "=", membershipScope.id).where("actor_id", "=", actorId)
     .forUpdate().executeTakeFirst();
-  const now = Date.now();
+  const now = clock().getTime();
   const legacyRole = member?.status === "accepted" && member.dispositioned_at === null
     && (member.expires_at === null || new Date(member.expires_at).getTime() > now)
     && (actorId === membershipScope.owner_id || !await hasRetiredLegacyAuthority(trx, membershipScope.id))
@@ -79,6 +96,12 @@ export async function fenceSharedChatAuthority(
   }
   if (currentRole !== context.role) {
     throw new CollaborationAuthorizationError("forbidden", "Shared Chat authority changed");
+  }
+  // Revocation is a definitive denial; an otherwise still-authorized stale
+  // context must obtain fresh evidence before any effect can commit.
+  if (Number(scope.auth_epoch) !== (context.resourceAuthEpoch ?? context.authEpoch)
+    || Number(membershipScope.auth_epoch) !== (context.membershipAuthEpoch ?? context.authEpoch)) {
+    throw new CollaborationAuthorizationError("unavailable", "Shared Chat authority changed");
   }
   return context.role;
 }

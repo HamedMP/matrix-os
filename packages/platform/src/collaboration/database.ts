@@ -37,6 +37,8 @@ export interface CollaborationUserIndexTable {
   scope_id: string;
   status: "invited" | "accepted" | "revoked";
   invitation_id: string | null;
+  /** Opaque owner-home pointer to a pending grant addressed to this actor alone; null otherwise. */
+  grant_id: string | null;
   locator_generation: number;
   last_event_id: string;
   updated_at: Timestamp;
@@ -174,6 +176,8 @@ async function applyCollaborationSchema(trx: Transaction<CollaborationPlatformDa
     )
   `.execute(trx);
   await sql`ALTER TABLE collaboration_user_index ADD COLUMN IF NOT EXISTS invitation_id UUID`.execute(trx);
+  // A pending grant addressed to one member is listed and ticketed from this pointer alone.
+  await sql`ALTER TABLE collaboration_user_index ADD COLUMN IF NOT EXISTS grant_id UUID`.execute(trx);
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_collaboration_user_invitation
     ON collaboration_user_index(invitation_id)

@@ -5,7 +5,7 @@ import { AccountDeletionRepository } from '../../packages/platform/src/account-d
 import { projectAccountDeletionBillingCancellation } from '../../packages/platform/src/account-deletion/billing-projection.js';
 import { getBillingEntitlement, getBillingSubscriptionByStripeId, upsertBillingEntitlement, upsertBillingSubscription, insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { getRuntimeEntitlementDecisionForUser } from '../../packages/platform/src/runtime-entitlement.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const owner = 'user_cancellation_projection';
 const secret = 'billing-projection-secret-at-least-32';

@@ -10,7 +10,8 @@ import {
   type Transaction,
   type Updateable,
 } from 'kysely';
-import pg from 'pg';
+import type pg from 'pg';
+import { createPostgresPool } from './database/postgres-connections.js';
 import { wrapPlatformDb } from './database/transaction-scope.js';
 import { runPlatformStartupMigrations } from './database/run-migrations.js';
 import { parseStringArray } from './database/json.js';
@@ -149,6 +150,8 @@ export interface AiFundedPriorityClaimsTable {
 }
 
 export interface AiFundedUsageReservationsTable {
+  terminal_outcome: Generated<string | null>;
+  charge_waiver: Generated<string | null>;
   execution_admission_release: Generated<string | null>;
   execution_recovery_slot: Generated<0 | 1>;
   reservation_id: string;
@@ -804,7 +807,15 @@ export interface AccountDeletionJobsTable {
   completed_at: string | null;
 }
 
+import type { GooglePurchaseTable, GoogleCheckoutAttributionTable } from './billing/google-tracking-migration.js';
+
 export interface PlatformDatabase {
+  billing_google_purchases: GooglePurchaseTable;
+  billing_google_checkout_attribution: GoogleCheckoutAttributionTable;
+  preview_drive_grants: PreviewDriveGrantsTable;
+  public_sites: import('./sites/types.js').SitesTable;
+  public_site_versions: import('./sites/types.js').SiteVersionsTable;
+  public_site_aliases: import('./sites/types.js').SiteAliasesTable;
   account_deletion_jobs: AccountDeletionJobsTable;
   users: UsersTable;
   containers: ContainersTable;
@@ -857,6 +868,27 @@ export interface PlatformDatabase {
   social_comments: SocialCommentsTable;
   social_likes: SocialLikesTable;
   social_follows: SocialFollowsTable;
+}
+
+export interface PreviewDriveGrantsTable {
+  token_hash: string;
+  kind: 'run' | 'action';
+  proof_nonce_hash: string;
+  run_token_hash: string | null;
+  handle: string;
+  actor_id: string;
+  chat_id: string;
+  turn_id: string;
+  run_id: string;
+  client_request_id: string;
+  body_digest: string;
+  action_digest: string | null;
+  account_label: string | null;
+  connection_id: string | null;
+  provider_account_id: string | null;
+  max_results: number | null;
+  expires_at: string;
+  consumed_at: string | null;
 }
 
 export interface PlatformDB {
@@ -1284,10 +1316,7 @@ export function createPlatformDb(opts: string | { dialect: unknown } = DEFAULT_P
   let pool: pg.Pool | null = null;
   const kysely = typeof opts === 'string'
     ? (() => {
-        pool = new pg.Pool({ connectionString: opts, max: 10 });
-        pool.on('error', (err) => {
-          console.error('[platform-db] Idle pool client error:', err.message);
-        });
+        pool = createPostgresPool({ connectionString: opts, max: 10 }, 'platform-db');
         return new Kysely<PlatformDatabase>({ dialect: new PostgresDialect({ pool }) });
       })()
     : new Kysely<PlatformDatabase>({ dialect: opts.dialect as never });
@@ -1556,6 +1585,20 @@ export async function getPlatformUserByClerkId(
     .where('clerk_id', '=', clerkId)
     .executeTakeFirst();
   return row ? mapPlatformUser(row) : undefined;
+}
+
+export async function listPlatformUsersByClerkIds(
+  db: PlatformDB,
+  clerkIds: readonly string[],
+): Promise<PlatformUserRecord[]> {
+  if (clerkIds.length === 0) return [];
+  await db.ready;
+  const rows = await db.executor
+    .selectFrom('users')
+    .selectAll()
+    .where('clerk_id', 'in', [...new Set(clerkIds)])
+    .execute();
+  return rows.map(mapPlatformUser);
 }
 
 export async function getPlatformUserByHandle(

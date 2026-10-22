@@ -12,7 +12,7 @@ import {
 import { createOrganizationMembershipProjection } from '../../packages/platform/src/organizations/projection.js';
 import { PlatformOrganizationRepository } from '../../packages/platform/src/organizations/repository.js';
 import { membershipCheckFromProjection } from '../../packages/platform/src/private-preview-access.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { stubOrchestrator } from './proxy-routing-test-utils.js';
 
 const secret = 'platform-secret-123';

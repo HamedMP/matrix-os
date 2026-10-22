@@ -1,4 +1,8 @@
+import { readFundedRecoveryAudit } from "./ai-funded-recovery-audit.js";
+import { reconcileFundedTerminalAfterSettlement } from "./ai-funded-terminal-reconciliation.js";
 import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
+import { settleWaivedUsage } from './ai-funded-usage-waiver-settlement.js';
+import { readUnknownUsageWaivers } from './ai-funded-usage-waiver-admission.js';
 import { assertJevNoDispatchSettlement, type JevNoDispatchAttestation } from "./ai-funded-no-dispatch.js";
 import { createHmac, randomUUID } from "node:crypto";
 import { CleanupSchema, cleanupExpiredReservations as cleanupReservations } from "./ai-funded-reservation-cleanup.js";
@@ -125,6 +129,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     return options.db.transaction(async (trx) => {
       // Match admission lock order before machine, balance, and grant row locks.
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
+      await readUnknownUsageWaivers(trx.executor, identity.ownerId);
       const machine = await trx.executor.selectFrom("user_machines").select([
         "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at",
       ]).where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirst();
@@ -185,11 +190,12 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
   async function getCheckoutFundingSummary(
     identityInput: z.input<typeof IdentitySchema>,
     deadlineAtMs: number,
+    projection: { includeChatAvailability?: true; projectExpiredCredit?: true } = {},
   ) {
     const identity = IdentitySchema.parse(identityInput);
     return readCheckoutFundingSnapshot({
       db: options.db, identity, checked: options.now(),
-      policyFreshnessMs: options.policyFreshnessMs, deadlineAtMs,
+      policyFreshnessMs: options.policyFreshnessMs, deadlineAtMs, ...projection,
     });
   }
 
@@ -470,14 +476,20 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     const checkedAt = checked.toISOString();
     await options.db.ready;
     return options.db.transaction(async (trx) => {
+      const locator = await trx.executor.selectFrom("ai_funded_usage_reservations").select("owner_id")
+        .where("reservation_id", "=", request.reservationId).where("token_id", "=", request.tokenId).executeTakeFirst();
+      if (!locator) throw new AiFundedPolicyError("unauthorized");
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${locator.owner_id}`}, 0))`.execute(trx.executor);
       const reservation = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .selectAll().where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirst();
       if (!reservation) throw new AiFundedPolicyError("unauthorized");
-      if (reservation.execution_admission_release !== null) throw new AiFundedPolicyError("reservation_closed");
+      if (reservation.terminal_outcome !== null || reservation.execution_admission_release !== null || reservation.charge_waiver !== null) throw new AiFundedPolicyError("reservation_closed");
       if (reservation.status === "in_flight") {
         if (reservation.start_response === null) throw new Error("In-flight reservation is missing its response");
-        return FundedAiStartResponseSchema.parse(JSON.parse(reservation.start_response));
+        const saved = FundedAiStartResponseSchema.parse(JSON.parse(reservation.start_response));
+        if (saved.executionId !== request.executionId) throw new AiFundedPolicyError("idempotency_conflict");
+        return saved;
       }
       if (reservation.status !== "reserved") throw new AiFundedPolicyError("reservation_closed");
       if (Date.parse(reservation.expires_at) <= checked.getTime()) {
@@ -505,6 +517,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         startedAt: checkedAt,
         expiresAt,
         status: "in_flight",
+        ...(request.executionId ? { executionId: request.executionId } : {}),
       });
       const updated = await trx.executor.updateTable("ai_funded_usage_reservations").set({
         status: "in_flight",
@@ -549,15 +562,19 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     await options.db.ready;
     const result = await options.db.transaction(async (trx) => {
       const locator = await trx.executor.selectFrom("ai_funded_usage_reservations")
-        .select(["machine_id"]).where("reservation_id", "=", request.reservationId)
+        .select(["machine_id", "owner_id"]).where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).executeTakeFirst();
       if (!locator) throw new AiFundedPolicyError("unauthorized");
+      // Serialize with audited waiver/admission before locking the reservation.
+      // Machine FK checks during ledger insertion must not invert waiver's machine/row locks.
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${locator.owner_id}`}, 0))`.execute(trx.executor);
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .select(["monthly_budget_microusd"]).where("machine_id", "=", locator.machine_id)
         .executeTakeFirstOrThrow();
       const reservation = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .selectAll().where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).forUpdate().executeTakeFirstOrThrow();
+      if (reservation.execution_admission_release !== null) readFundedRecoveryAudit(reservation);
       const reserved = exactInteger(reservation.reserved_microusd);
       const usageLimit = usageReservationLimit(reservation.authorization_response);
       const storedJevPricingVersion = reservation.model_id === JEV_MODEL_ID
@@ -600,6 +617,11 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         throw new AiFundedPolicyError("unavailable");
       }
       const actualCostMicrousd = request.actualCostMicrousd ?? reserved;
+      if (reservation.charge_waiver !== null) {
+        const response = await settleWaivedUsage(trx.executor, reservation, actualCostMicrousd,
+          exactInteger(runtime.monthly_budget_microusd), checkedAt, request.jevProvenance, request.manualReview);
+        return { response, finalizationMode: "exact" } as const;
+      }
       if (reservation.status === "settled") {
         if (exactInteger(reservation.actual_microusd) !== actualCostMicrousd) {
           throw new AiFundedPolicyError("idempotency_conflict");
@@ -749,6 +771,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where("reservation_id", "=", reservation.reservation_id).execute();
       return { response, finalizationMode } as const;
     });
+    if (finalizationMode === "exact") await reconcileFundedTerminalAfterSettlement(options.db, request, options.now);
     return result;
   }
 

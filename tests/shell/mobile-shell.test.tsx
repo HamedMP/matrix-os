@@ -4,11 +4,15 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ChatProvider } from "../../shell/src/stores/chat-context.js";
+import { clientFixture, saved } from "../desktop/chat-agents-fixture.js";
+import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat.js";
 import { toast } from "sonner";
 import { useMobileViewport } from "../../shell/src/hooks/useMobileViewport.js";
 import { createShellSnapshotScope, saveShellSnapshot } from "../../shell/src/lib/shell-snapshot-cache.js";
 import { setDesktopViewport, setPhoneViewport } from "./mobile-shell-test-utils.js";
 
+const fileChangeHandlers: Array<(path: string, event: "add" | "change" | "unlink") => void> = [];
 let fileChangeHandler: ((path: string, event: "add" | "change" | "unlink") => void) | null = null;
 const settingsMock = vi.hoisted(() => ({
   onOpenAgentTerminal: undefined as undefined | ((action: "openclaw-install") => void),
@@ -17,6 +21,7 @@ const settingsMock = vi.hoisted(() => ({
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
   useFileWatcher: (handler: typeof fileChangeHandler) => {
     fileChangeHandler = handler;
+    if (handler) fileChangeHandlers.push(handler);
   },
 }));
 
@@ -66,11 +71,14 @@ vi.mock("../../shell/src/components/Settings.js", () => ({
   },
 }));
 
+vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({ ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
+
 vi.mock("sonner", () => ({
   toast: vi.fn(),
 }));
 
 vi.mock("@clerk/nextjs", () => ({
+  useOrganization: () => ({ organization: null }),
   PricingTable: () => <div data-testid="pricing-table" />,
   useAuth: () => ({
     isLoaded: true,
@@ -133,8 +141,23 @@ async function loadMobileShell() {
 }
 
 describe("mobile shell", () => {
+  it("resolves built-in artwork from the current preview even when the module was already loaded", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => [] })));
+    const MobileShell = await loadMobileShell();
+    const previous = window.location.href;
+    window.history.replaceState({}, "", "/vm/pr-2406?runtime=pr-2406");
+    try {
+      render(<MobileShell />);
+      const dock = screen.getByTestId("mobile-bottom-dock");
+      expect(within(dock).getByRole("button", { name: "Terminal" }).querySelector("img")?.getAttribute("src"))
+        .toBe(`${window.location.origin}/vm/pr-2406/~runtime/pr-2406/system-app-icons/v2/terminal.png`);
+      expect(within(dock).getByRole("button", { name: "Files" }).querySelector("img")?.getAttribute("src"))
+        .toBe(`${window.location.origin}/vm/pr-2406/~runtime/pr-2406/system-app-icons/v2/files.png`);
+    } finally { window.history.replaceState({}, "", previous); }
+  });
   beforeEach(() => {
     fileChangeHandler = null;
+    fileChangeHandlers.length = 0;
     const storage = createMemoryStorage();
     Object.defineProperty(window, "localStorage", {
       value: storage,
@@ -158,6 +181,7 @@ describe("mobile shell", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it("uses launcher-first mode on phone-sized browser viewports", async () => {
@@ -433,6 +457,50 @@ describe("mobile shell", () => {
     });
   });
 
+  it("keeps pending app requests alive through a theme-driven catalog refresh", async () => {
+    let finish: ((response: Response) => void) | undefined;
+    let requestSignal: AbortSignal | undefined;
+    let bootstrapCount = 0;
+    const fetcher = vi.fn((url: string, init?: RequestInit) => {
+      if (String(url).includes("/api/shell/bootstrap")) {
+        bootstrapCount++;
+        return Promise.resolve({ ok: true, json: async () => ({
+          layout: { windows: [] }, modules: [], icons: {},
+          apps: [{ name: "Subscriptions", path: "/files/apps/subscriptions/index.html", icon: "subscriptions" }],
+        }) });
+      }
+      if (String(url).includes("/api/bridge/capabilities")) {
+        requestSignal = init?.signal as AbortSignal;
+        return new Promise<Response>(resolve => { finish = resolve; });
+      }
+      return Promise.resolve(Response.json({}));
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const MobileShell = await loadMobileShell();
+    const view = render(<MobileShell launchAppPath="apps/subscriptions/index.html" />);
+    await waitFor(() => expect(view.container.querySelector("iframe")).toBeTruthy());
+    const iframe = view.container.querySelector("iframe")!;
+    await waitFor(() => expect(iframe.getAttribute("srcdoc")).toContain("os:bridge"));
+    const port = { postMessage: vi.fn(), close: vi.fn() };
+    act(() => window.dispatchEvent(new MessageEvent("message", {
+      source: iframe.contentWindow, origin: window.location.origin, ports: [port as unknown as MessagePort],
+      data: { type: "os:bridge-fetch", app: "subscriptions", payload: {
+        url: "/api/bridge/capabilities", init: { method: "POST", body: JSON.stringify({ kind: "integrations.list" }) },
+      } },
+    })));
+    await waitFor(() => expect(finish).toBeDefined());
+    await act(async () => {
+      for (const handler of [...fileChangeHandlers]) handler("system/theme.json", "change");
+      await Promise.resolve();
+    });
+    expect(bootstrapCount).toBeGreaterThan(1);
+    expect(requestSignal?.aborted).toBe(false);
+    expect(port.close).not.toHaveBeenCalled();
+    await act(async () => { finish?.(Response.json({ services: [] })); });
+    await waitFor(() => expect(port.postMessage).toHaveBeenCalledWith({ ok: true, status: 200, body: { services: [] } }));
+    expect(port.close).toHaveBeenCalledOnce();
+  });
+
   it("ignores an older bootstrap response after a newer theme refresh wins", async () => {
     let resolveInitial: ((response: Response) => void) | undefined;
     let resolveThemeRefresh: ((response: Response) => void) | undefined;
@@ -509,4 +577,39 @@ describe("mobile shell", () => {
 
     expect(renderToString(<MobileShell />)).toContain("--:--");
   });
+
+  it.each(["Apps", "Terminal"])("pauses retained Web Mobile Chat Bot reads behind %s and refreshes on return", async destination => {
+    const catalog = createCanonicalProviderCatalogFixture();
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => Response.json(String(url).includes("chat-providers") ? catalog : [])));
+    vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+    const MobileShell = await loadMobileShell();
+    const agent = { ...saved, recipeRef: { recipeId: "writer", version: "1" } };
+    const client = clientFixture();
+    client.list.mockResolvedValue({ enabled: true, agents: [agent] });
+    const tasks = vi.fn(async () => [{ taskId: "task_one", agentId: agent.id, chatId: "chat_bot",
+      revision: 1, status: "running" as const, updatedAt: "2026-10-07T00:00:00.000Z" }]);
+    const agentClient = { ...client, bots: { directChat: vi.fn(async () => "chat_bot"), tasks, interactions: vi.fn(async () => []) } };
+    const chat = { messages: [], sessionId: undefined, busy: false, connected: true, conversations: [],
+      newChat: vi.fn(), switchConversation: vi.fn(), submitMessage: vi.fn(), agentClient } as unknown as React.ComponentProps<typeof ChatProvider>["value"];
+    vi.useFakeTimers();
+    render(<ChatProvider value={chat}><MobileShell launchAppPath="__chat__"/></ChatProvider>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    fireEvent.click(screen.getByRole("button", { name: "Open Chat sidebar" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const expectWorkingAgent = () => {
+      const button = screen.getByRole("button", { name: `Chat with ${agent.name}` });
+      expect(button.closest("[data-agent-rail-state]")?.getAttribute("data-agent-rail-state")).toBe("working");
+      expect(button.querySelector('[data-slot="chat-agent-indicator"]')?.getAttribute("data-state")).toBe("working");
+    };
+    expectWorkingAgent();
+    const reads = tasks.mock.calls.length;
+    fireEvent.click(within(screen.getByTestId("mobile-bottom-dock")).getByRole("button", { name: destination, exact: true }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(tasks).toHaveBeenCalledTimes(reads);
+    fireEvent.click(within(screen.getByTestId("mobile-bottom-dock")).getByRole("button", { name: "Chat", exact: true }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(tasks.mock.calls.length).toBeGreaterThan(reads);
+    expectWorkingAgent();
+  });
+
 });

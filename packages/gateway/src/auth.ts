@@ -20,6 +20,7 @@ import {
   MissingRequestPrincipalError,
   SAFE_PRINCIPAL_USER_ID,
   markAuthContextReady,
+  markVerifiedRuntimeBearer,
   requireRequestPrincipal,
   setPlatformVerifiedPrincipal,
 } from "./request-principal.js";
@@ -98,6 +99,7 @@ const HMAC_WEBHOOK_PREFIXES = [
 const ROUTE_SCOPED_BEARER_PATHS = [
   "/api/internal/upgrade",
   "/api/internal/platform-speech/config",
+  "/api/internal/platform-funded-ai/config",
 ];
 const ROUTE_SCOPED_SIGNATURE_PATHS = [
   "/api/internal/terminal-acceptance/run",
@@ -248,6 +250,13 @@ export function authMiddleware(
     // not by bearer token. Exempt them here so the session middleware
     // (mounted separately) is the single verifier.
     if (APP_IFRAME_PREFIXES.some((p) => normalizedPath.startsWith(p))) {
+      return nextWithReady(c, next);
+    }
+
+    // Public site submission is authenticated by its narrowly scoped HMAC verifier.
+    if (c.req.method === "POST" && /^\/api\/internal\/sites\/[a-f0-9-]{36}\/submit$/.test(normalizedPath)
+      && c.req.header("x-matrix-site-signature") && c.req.header("x-matrix-site-timestamp")) {
+      if (!webhookRateLimiter.check(getTrustedProxyClientIp(c))) return tooManyRequests(c);
       return nextWithReady(c, next);
     }
 
@@ -402,6 +411,7 @@ export function authMiddleware(
         // Stash claims on the Hono context so downstream handlers can
         // resolve the authenticated Clerk userId through the request principal.
         c.set(JWT_CLAIMS_CONTEXT_KEY, claims);
+        markVerifiedRuntimeBearer(c);
         setTerminalAccess(claims.sub);
         return nextWithReady(c, next);
       } catch (err) {
@@ -427,6 +437,7 @@ export function authMiddleware(
       token && isWsUpgrade && queryToken && timingSafeCompare(queryToken, token);
 
     if (legacyHeaderOk) {
+      markVerifiedRuntimeBearer(c);
       const platformUserId = readPlatformVerifiedUserId(c, token);
       if (platformUserId) {
         setPlatformVerifiedPrincipal(c, platformUserId);

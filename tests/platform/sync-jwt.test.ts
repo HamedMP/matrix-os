@@ -84,6 +84,29 @@ describe("sync-jwt: issuance", () => {
   });
 });
 
+describe("sync-jwt: verified interactive session provenance", () => {
+  it.each(['clerk-device', 'clerk-browser'] as const)('roundtrips signed %s provenance', async sessionProvenance => {
+    const issued = await issueSyncJwt({ secret: SECRET, clerkUserId: 'user_abc', handle: 'alice',
+      gatewayUrl: 'https://alice.matrix-os.com', sessionProvenance });
+    expect((await verifySyncJwt(issued.token, { secret: SECRET })).session_provenance).toBe(sessionProvenance);
+  });
+  it.each(['machine', '', 42])('rejects invalid signed provenance %s', async session_provenance => {
+    const now = Math.floor(Date.now() / 1000);
+    const token = signHs256Jwt({ sub: 'user_abc', handle: 'alice', gateway_url: 'https://alice.matrix-os.com',
+      aud: SYNC_JWT_AUDIENCE, iss: SYNC_JWT_ISSUER, iat: now, exp: now + 60, session_provenance }, new TextEncoder().encode(SECRET));
+    await expect(verifySyncJwt(token, { secret: SECRET })).rejects.toThrow('Invalid sync JWT claims');
+  });
+  it('keeps legacy authentication unmarked and rejects tampered provenance', async () => {
+    const issued = await issueSyncJwt({ secret: SECRET, clerkUserId: 'user_abc', handle: 'alice', gatewayUrl: 'https://alice.matrix-os.com' });
+    expect((await verifySyncJwt(issued.token, { secret: SECRET })).session_provenance).toBeUndefined();
+    const parts = issued.token.split('.');
+    const payload = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString());
+    payload.session_provenance = 'clerk-device';
+    parts[1] = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    await expect(verifySyncJwt(parts.join('.'), { secret: SECRET })).rejects.toThrow();
+  });
+});
+
 describe("sync-jwt: verification", () => {
   it("verifies a valid token issued with the same secret", async () => {
     const issued = await issueSyncJwt({

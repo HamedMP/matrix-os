@@ -13,10 +13,11 @@
  * network call.
  */
 import { createHash } from "node:crypto";
+import { storeBotGmailAttachment } from "./integration-attachment.js";
 import type { BotEffect, BotToolRequest, BotToolResult } from "@matrix-os/contracts";
 import type { ChatAgentStore } from "../chat/agent-store.js";
 import { getAction, getService } from "../integrations/registry.js";
-import { BotBrokerActionError } from "./broker-actions.js";
+import { BotBrokerActionError, untilAborted } from "./broker-actions.js";
 import type { BotStateTransaction, BotStateTransactions } from "./events.js";
 import { BotIntegrationError, type BotIntegrationClient, type BotIntegrationConnection } from "./integration-client.js";
 import type { BotRecipeCatalog } from "./recipe-catalog.js";
@@ -33,6 +34,7 @@ const CONNECT_LIFETIME_MS = 15 * 60_000;
 const MAX_RESULT_CHARS = 60 * 1024;
 const MAX_PREVIEW_CHARS = 3_000;
 const MAX_ACCOUNT_OPTIONS = 10;
+const SOURCE_CHECK_TIMEOUT_MS = 5_000;
 
 type CallArgs = Extract<BotToolRequest, { capability: "integration.call" }>["args"];
 type InventoryArgs = Extract<BotToolRequest, { capability: "integration.inventory" }>["args"];
@@ -73,19 +75,37 @@ function serviceName(service: string): string {
 
 export function createBotIntegrationTools(deps: {
   client: BotIntegrationClient;
+  homePath?: string;
   transact: BotStateTransactions;
   recipes: BotRecipeCatalog;
+  resolveProcedure?(ownerId: string, agent: import("@matrix-os/contracts").ChatAgent): Promise<import("./recipe-catalog.js").BotRecipe>;
   agents: Pick<ChatAgentStore, "get">;
+  /** Live source check at the last local checkpoint before service invocation. */
+  assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>;
   now?: () => Date;
 }) {
   const now = () => deps.now?.() ?? new Date();
+
+  async function qualifySource(binding: BotRuntimeBinding, signal?: AbortSignal) {
+    if (!deps.assertSource) return;
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), SOURCE_CHECK_TIMEOUT_MS);
+    const bounded = AbortSignal.any([deadline.signal, ...(signal ? [signal] : [])]);
+    try {
+      if (bounded.aborted) throw new BotBrokerActionError("timeout");
+      await untilAborted(deps.assertSource(binding, bounded), bounded);
+    } catch (error: unknown) {
+      if (bounded.aborted) throw new BotBrokerActionError("timeout");
+      throw error;
+    } finally { clearTimeout(timer); }
+  }
 
   /** The effects the bot's recipe declares for a service; nothing for an undeclared service. */
   async function declaredEffects(ownerId: string, botId: string, service: string): Promise<readonly BotEffect[]> {
     const agent = await deps.agents.get({ type: "personal", ownerId }, botId);
     if (!agent?.recipeRef) return [];
     try {
-      return deps.recipes.resolve(agent.recipeRef).integrations.find((entry) => entry.service === service)?.effects ?? [];
+      return (deps.resolveProcedure ? await deps.resolveProcedure(ownerId, agent) : deps.recipes.resolve(agent.recipeRef)).integrations.find((entry) => entry.service === service)?.effects ?? [];
     } catch (error: unknown) {
       console.warn("[bots] recipe unavailable for grants:", error instanceof Error ? error.name : "UnknownError");
       return [];
@@ -108,7 +128,7 @@ export function createBotIntegrationTools(deps: {
   async function requestAccess(tx: BotStateTransaction, binding: BotRuntimeBinding, service: string, effects: readonly BotEffect[], connected: readonly BotIntegrationConnection[]): Promise<string> {
     const interactions = createBotInteractionsRepository(tx.db);
     const at = now();
-    const earlier = await tx.db.selectFrom("bot_interactions").select(["kind", "status", "blocking"])
+    const earlier = await tx.db.selectFrom("bot_interactions").select(["kind", "status", "expires_at"])
       .where("owner_id", "=", binding.ownerId).where("task_id", "=", binding.taskId)
       .where("kind", "in", ["account_choice", "connect_request"])
       .where(({ eb, ref }) => eb(ref("payload", "->>").key("service" as never), "=", service))
@@ -116,13 +136,13 @@ export function createBotIntegrationTools(deps: {
     if (earlier.some((row) => row.status === "resolved" || row.status === "cancelled")) {
       return `The owner did not give access to ${serviceName(service)} in this task. Continue without it and do not ask again.`;
     }
-    if (earlier.some((row) => row.status === "pending")) {
+    if (earlier.some((row) => row.status === "pending" && new Date(row.expires_at).getTime() > at.getTime())) {
       return `The owner has not answered the access request for ${serviceName(service)} yet. End your turn now.`;
     }
     const expiresAt = (lifetime: number) => new Date(at.getTime() + lifetime).toISOString();
     const options = connected.filter((connection) => connection.service === service).slice(0, MAX_ACCOUNT_OPTIONS);
     const payload = options.length >= 1
-      ? { kind: "account_choice" as const, service, options: options.map((option) => ({ connectionId: option.connectionId, label: option.label })) }
+      ? { kind: "account_choice" as const, service, access: [...effects], options: options.map((option) => ({ connectionId: option.connectionId, label: option.label })) }
       : {
         kind: "connect_request" as const, service, access: [...effects],
         benefit: `This bot needs ${effects.join(" and ")} access to ${serviceName(service)} to continue this task.`,
@@ -199,26 +219,63 @@ export function createBotIntegrationTools(deps: {
   }
 
   return {
+    /** Dedicated workflows ask for their exact declared effects without executing a phantom integration call. */
+    async ensureAccess(binding: BotRuntimeBinding, service: string, effects: readonly BotEffect[], signal?: AbortSignal): Promise<BotToolResult | null> {
+      const declared = await declaredEffects(binding.ownerId, binding.botId, service);
+      if (effects.some(effect => !declared.includes(effect))) throw new BotBrokerActionError("not_granted");
+      const connected = await inventory(binding.ownerId, signal);
+      const grants = await deps.transact(binding.ownerId, tx => createBotGrantsRepository(tx.db).listLive({
+        ownerId: binding.ownerId, botId: binding.botId, audience: AUDIENCE, now: now().toISOString(),
+      }, tx.db));
+      const usable = grants.filter(grant => grant.service === service && effects.every(effect => grant.effects.includes(effect))
+        && connected.filter(account => account.service === service && account.label === grant.accountLabel).length === 1
+        && connected.some(account => account.service === service && account.connectionId === grant.connectionId && account.label === grant.accountLabel));
+      if (usable.length === 1) return null;
+      return text(await deps.transact(binding.ownerId, tx => requestAccess(tx, binding, service, effects, connected)));
+    },
+
     /** `integration.inventory`: what the bot may use, per declared service. */
     async inventory(binding: BotRuntimeBinding, args: InventoryArgs, signal?: AbortSignal): Promise<BotToolResult> {
       const agent = await deps.agents.get({ type: "personal", ownerId: binding.ownerId }, binding.botId);
-      let services: string[] = [];
+      let integrations: ReadonlyArray<{ service: string; effects: readonly BotEffect[]; required: boolean }> = [];
       if (agent?.recipeRef) {
         try {
-          services = deps.recipes.resolve(agent.recipeRef).integrations.map((entry) => entry.service);
+          integrations = (deps.resolveProcedure ? await deps.resolveProcedure(binding.ownerId, agent) : deps.recipes.resolve(agent.recipeRef)).integrations;
         } catch (error: unknown) {
           console.warn("[bots] recipe unavailable for inventory:", error instanceof Error ? error.name : "UnknownError");
         }
       }
-      if (args.service) services = services.filter((service) => service === args.service);
-      if (services.length === 0) return text("This bot has no connected services for this task.");
+      if (args.service) integrations = integrations.filter((entry) => entry.service === args.service);
+      if (integrations.length === 0) return text("This bot has no connected services for this task.");
       const connected = await inventory(binding.ownerId, signal);
       const grants = await deps.transact(binding.ownerId, (tx) => createBotGrantsRepository(tx.db).listLive({
         ownerId: binding.ownerId, botId: binding.botId, audience: AUDIENCE, now: now().toISOString(),
       }, tx.db));
-      const lines = services.map((service) => {
+      const available: typeof integrations[number][] = [];
+      let skippedDeclined = false;
+      for (const entry of integrations) {
+        const { service, effects, required } = entry;
+        const usable = grants.some((grant) => grant.service === service && effects.every((effect) => grant.effects.includes(effect))
+          && connected.filter((connection) => connection.service === service && connection.label === grant.accountLabel).length === 1
+          && connected.some((connection) => connection.service === service && connection.connectionId === grant.connectionId && connection.label === grant.accountLabel));
+        if (!usable && !args.service) {
+          const declined = await deps.transact(binding.ownerId, async (tx) => Boolean(await tx.db.selectFrom("bot_interactions")
+            .select("interaction_id").where("owner_id", "=", binding.ownerId).where("task_id", "=", binding.taskId)
+            .where("kind", "in", ["account_choice", "connect_request"]).where("status", "in", ["resolved", "cancelled"])
+            .where(({ eb, ref }) => eb(ref("payload", "->>").key("service" as never), "=", service))
+            .executeTakeFirst()));
+          if (declined) { skippedDeclined = true; continue; }
+        }
+        if (!usable && (required || args.service)) {
+          return text(await deps.transact(binding.ownerId, (tx) => requestAccess(tx, binding, service, effects, connected)));
+        }
+        available.push(entry);
+      }
+      if (available.length === 0) return text("The owner did not give access to these services in this task. Continue without them and do not ask again.");
+      const lines = available.map(({ service }) => {
         const granted = grants.filter((grant) => grant.service === service
-          && connected.some((connection) => connection.connectionId === grant.connectionId));
+          && connected.filter((connection) => connection.service === service && connection.label === grant.accountLabel).length === 1
+          && connected.some((connection) => connection.service === service && connection.connectionId === grant.connectionId && connection.label === grant.accountLabel));
         if (granted.length > 0) {
           return `${serviceName(service)} (${service}): ${granted.map((grant) =>
             `account "${grant.accountLabel}", connection ${grant.connectionId}, allowed: ${grant.effects.join(", ")}`).join("; ")}`;
@@ -226,6 +283,7 @@ export function createBotIntegrationTools(deps: {
         const count = connected.filter((connection) => connection.service === service).length;
         return `${serviceName(service)} (${service}): ${count > 0 ? "connected, but this bot has no access yet" : "not connected"}`;
       });
+      if (skippedDeclined) lines.push("The owner did not give access to another service in this task. Continue without it and do not ask again.");
       return text(lines.join("\n"));
     },
 
@@ -252,19 +310,32 @@ export function createBotIntegrationTools(deps: {
         const decision = await approved(binding, args, grant, preview);
         if (!decision.approved) return text(decision.message);
       }
-      // A grant can change while the owner decides or while inventory is read.
-      // Check its identity and revision again at the last gateway checkpoint before dispatch.
-      const live = await deps.transact(binding.ownerId, (tx) => createBotGrantsRepository(tx.db).findUsable({
-        ownerId: binding.ownerId, botId: binding.botId, service: args.service, connectionId: args.connectionId,
-        audience: AUDIENCE, effect, now: now().toISOString(),
-      }, tx.db));
-      if (!live || live.grantId !== grant.grantId || live.revision !== grant.revision || live.accountLabel !== grant.accountLabel) {
-        throw new BotBrokerActionError("not_granted");
-      }
+      // A revoked grant must be reread after awaited source preparation.
+      await qualifySource(binding, signal);
+      await deps.transact(binding.ownerId, async (tx) => {
+        const live = await createBotGrantsRepository(tx.db).findUsable({
+          ownerId: binding.ownerId, botId: binding.botId, service: args.service, connectionId: args.connectionId,
+          audience: AUDIENCE, effect, now: now().toISOString(), lockForDispatch: true,
+        }, tx.db);
+        if (!live || live.grantId !== grant.grantId || live.revision !== grant.revision || live.accountLabel !== grant.accountLabel) {
+          throw new BotBrokerActionError("not_granted");
+        }
+        // Recheck source changes during the grant read while its row lock
+        // prevents revocation/revision updates. This is the joint authority
+        // checkpoint; commit/release precedes any network transport.
+        await qualifySource(binding, signal);
+        if (live.expiresAt && Date.parse(live.expiresAt) <= now().getTime()) {
+          throw new BotBrokerActionError("not_granted");
+        }
+      });
       try {
         const result = await deps.client.call(binding.ownerId, {
-          service: args.service, action: args.action, label: grant.accountLabel, params: args.params, read: effect === "read",
+          service: args.service, action: args.action, label: grant.accountLabel, connectionId: grant.connectionId, params: args.params, read: effect === "read",
         }, signal);
+        if (args.service === "gmail" && args.action === "get_attachment") {
+          const reference = await storeBotGmailAttachment(deps.homePath, binding, result.data, signal);
+          return text(JSON.stringify(reference));
+        }
         const body = JSON.stringify(result.data) ?? "null";
         const shown = body.length > MAX_RESULT_CHARS ? `${body.slice(0, MAX_RESULT_CHARS)}\n[${body.length - MAX_RESULT_CHARS} characters left out.]` : body;
         return text(result.summary ? `${result.summary}\n\n${shown}` : shown);

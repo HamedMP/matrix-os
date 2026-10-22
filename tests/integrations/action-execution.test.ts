@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   executeIntegrationAction,
-  IntegrationActionNotImplementedError,
+
 } from "../../packages/gateway/src/integrations/routes.js";
+import { BoundedManagedActionError } from "../../packages/gateway/src/integrations/bounded-managed-action.js";
 import { getAction, getService } from "../../packages/gateway/src/integrations/registry.js";
 import type { PipedreamConnectClient } from "../../packages/gateway/src/integrations/pipedream.js";
 
@@ -98,7 +99,6 @@ describe("executeIntegrationAction", () => {
       actionId: "search",
       params: {
         query: "roadmap",
-        headers: { Authorization: "attacker-controlled" },
       },
     });
 
@@ -106,12 +106,21 @@ describe("executeIntegrationAction", () => {
       externalUserId: "user-1",
       accountId: "acc-1",
       url: "https://api.notion.com/v1/search",
-      body: { query: "roadmap" },
+      body: { query: "roadmap", page_size: 25 },
       headers: { "Notion-Version": "2022-06-28" },
     });
   });
 
-  it("throws a not-implemented error instead of calling a fabricated fallback URL", async () => {
+  it("rejects caller-supplied provider headers before dispatch", async () => {
+    const pipedream = mockPipedream();
+    await expect(executeIntegrationAction({ pipedream, externalUserId: "user-1", connection: { pipedream_account_id: "acc-1" },
+      def: getService("notion")!, actionDef: getAction("notion", "search")!, serviceId: "notion", actionId: "search",
+      params: { query: "roadmap", headers: { Authorization: "attacker-controlled" } },
+    })).rejects.toThrow("Invalid action parameters");
+    expect(pipedream.proxyPost).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the bounded upload transport is unavailable", async () => {
     const pipedream = mockPipedream();
     const service = getService("google_drive")!;
     const action = getAction("google_drive", "upload_file")!;
@@ -127,7 +136,7 @@ describe("executeIntegrationAction", () => {
         actionId: "upload_file",
         params: { name: "notes.txt", content: "hello" },
       }),
-    ).rejects.toBeInstanceOf(IntegrationActionNotImplementedError);
+    ).rejects.toBeInstanceOf(BoundedManagedActionError);
 
     expect(pipedream.callAction).not.toHaveBeenCalled();
   });

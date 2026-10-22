@@ -236,6 +236,20 @@ describe("Electron Shared with me navigation", () => {
     expect(useTabs.getState().tabs).toEqual([]);
   });
 
+  it("hides Shared with me after a complete listing confirms no organizations", () => {
+    useConnection.setState({ organizationId: null, organizationStatus: "none" });
+    render(<SharedWithMeRailRow onOpen={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: "Shared with me" })).toBeNull();
+  });
+
+  it("guards an already-open Shared with me tab after organization access ends", () => {
+    useConnection.setState({ organizationId: null, organizationStatus: "none" });
+    render(<DesktopChatCollaboration />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Organization sharing is no longer available");
+  });
+
   it("refreshes the pending badge after an invitation mutation", async () => {
     render(<SharedWithMeRailRow onOpen={vi.fn()} />);
     expect(await screen.findByRole("button", { name: "Shared with me" })).toBeVisible();

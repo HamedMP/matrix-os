@@ -9,7 +9,7 @@ import {
 } from "../../packages/platform/src/billing-routes.js";
 import { loadAiCreditCheckoutConfig } from "../../packages/platform/src/ai-credit-checkout.js";
 import { getBillingWebhookEvent, insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 
 const checkoutEnv = {
   MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "true",
@@ -201,7 +201,7 @@ describe("funded AI add-on checkout", () => {
       priceId: "price_ai_5",
       amountMicrousd: 5_000_000,
       automaticTax: false,
-      successUrl: "https://app.matrix-os.com/?billing=success&checkout=success",
+      successUrl: "https://app.matrix-os.com/?billing=success&checkout=success&session_id={CHECKOUT_SESSION_ID}",
       cancelUrl: "https://app.matrix-os.com/?billing=canceled",
     });
   });

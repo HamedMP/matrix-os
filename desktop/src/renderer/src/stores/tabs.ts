@@ -66,7 +66,7 @@ export const FILES_WORKSPACE_TAB_SPEC = {
 const MAX_TABS = 24;
 
 function identityKey(
-  spec: Pick<Tab, "kind" | "projectSlug" | "taskId" | "sessionName" | "slug">,
+  spec: Pick<Tab, "kind" | "projectSlug" | "taskId" | "sessionName" | "slug" | "appIdentity">,
 ): string {
   if (spec.kind === "work") return "work";
   return [
@@ -75,6 +75,7 @@ function identityKey(
     spec.taskId ?? "",
     spec.sessionName ?? "",
     spec.slug ?? "",
+    spec.kind === "app" ? spec.appIdentity ?? spec.slug ?? "" : "",
   ].join("|");
 }
 
@@ -199,7 +200,9 @@ export const useTabs = create<TabsState>()((set, get) => ({
           ? normalizedSpec.sharedScopeId
           : existing.sharedScopeId;
         const nextChatTitle = nextChatId || nextSharedScopeId ? normalizedSpec.chatTitle : undefined;
+        const nextIcon = normalizedSpec.icon ?? existing.icon;
         const tabs = existing.title === normalizedSpec.title
+          && existing.icon === nextIcon
           && existing.chatId === nextChatId
           && existing.chatTitle === nextChatTitle
           && existing.chatView === nextChatView
@@ -211,6 +214,7 @@ export const useTabs = create<TabsState>()((set, get) => ({
             ? {
                 ...tab,
                 title: normalizedSpec.title,
+                icon: nextIcon,
                 projectSlug: normalizedSpec.projectSlug,
                 chatId: nextChatId,
                 chatTitle: nextChatTitle,

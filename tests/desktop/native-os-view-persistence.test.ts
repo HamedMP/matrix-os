@@ -5,11 +5,18 @@ import {
 } from "@desktop/renderer/src/features/desktop-shell/native-os-view-persistence";
 
 describe("Electron Desktop OS-view persistence projection", () => {
+  it.each([["matrix-browser", "__browser__"], ["matrix-cloud-desktop", "__cloud-desktop__"]])("persists product identity %s under its canonical destination", (appIdentity, path) => {
+    expect(nativeTabOsViewPath({ id: appIdentity, kind: "app", slug: "browser-lab", appIdentity, title: "Product", closable: true }, [])).toBe(path);
+  });
   it("uses the same canonical built-in paths as Web Desktop", () => {
     expect(nativeTabOsViewPath({ id: "chat", kind: "work", title: "Chat", closable: false }, [])).toBe("__chat__");
     expect(nativeTabOsViewPath({ id: "files", kind: "files", title: "Files", closable: false }, [])).toBe("__file-browser__");
     expect(nativeTabOsViewPath({ id: "term", kind: "terminal", title: "Terminal", sessionName: "calm-cedar", closable: true }, []))
       .toBe("__terminal__:calm-cedar");
+  });
+
+  it.each(["Plugins", "Connect Apps"])("preserves the canonical shortcut path for %s windows", title => {
+    expect(nativeTabOsViewPath({ id: "apps", kind: "settings", title, closable: false }, [])).toBe("__plugins__");
   });
 
   it("projects app state separately from Desktop geometry", () => {

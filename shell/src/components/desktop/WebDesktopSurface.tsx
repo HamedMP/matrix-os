@@ -1,14 +1,19 @@
 "use client";
 
+import { createCatalogAppPathResolver } from "@/lib/app-catalog-launch";
+
 import { useEffect, useLayoutEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import type { AppEntry, AppWindow } from "@/hooks/useWindowManager";
 import { useDesktopConfigStore, type DesktopIconPlacement } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import { buildWebDesktopIconApps } from "@/lib/web-desktop-app-launch";
+import { buildWebDesktopIconApps, webGalleryLauncherIconUrl } from "@/lib/web-desktop-app-launch";
 import {
+  DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
   createDefaultOsViewDesktopIcons,
   fitOsViewDesktopIconsToViewport,
   normalizeOsViewDesktopAppPath,
+  osViewIconUrlForApp,
+  osViewFixedAppAppearanceForPath,
 } from "@matrix-os/contracts";
 import {
   Blocks,
@@ -24,6 +29,8 @@ import {
   SquareTerminal,
   type LucideIcon,
 } from "@/lib/hugeicons";
+import { useIconWithFallback } from "@/hooks/useIconWithFallback";
+import { getGatewayUrl } from "@/lib/gateway";
 import { WebDesktopHeader } from "./WebDesktopHeader";
 import type { WebDesktopSettingsSection } from "./WebDesktopControls";
 
@@ -36,6 +43,7 @@ interface WebDesktopSurfaceProps {
   onOpenLauncher: () => void;
   onOpenSettings: (section: WebDesktopSettingsSection) => void;
   headerActions?: ReactNode;
+  headerLeadingAction?: ReactNode;
   onActivateWindow: (id: string) => void;
   onCloseWindow: (id: string) => void;
   onShowDesktop: () => void;
@@ -93,23 +101,24 @@ export function desktopAppearanceForApp(app: AppEntry): DesktopIconAppearance {
   return DEFAULT_APPEARANCE;
 }
 
-function DesktopAppIcon({ app, className = "" }: { app: AppEntry; className?: string }) {
+function DesktopAppIcon({ app, className = "", unframed = false }: { app: AppEntry; className?: string; unframed?: boolean }) {
   const appearance = desktopAppearanceForApp(app);
   const Glyph = appearance.icon;
-  const isCanonicalDesktopApp = app.path.startsWith("__");
+  const iconUrl = osViewIconUrlForApp(app, getGatewayUrl());
+  const { showImage, onError } = useIconWithFallback(iconUrl);
   return (
     <span
       data-desktop-app-icon
-      className={`flex items-center justify-center overflow-hidden border border-black/5 shadow-[0_5px_16px_rgba(0,0,0,0.16)] ${className}`}
-      style={{ background: appearance.color, color: appearance.iconColor }}
+      className={`flex items-center justify-center overflow-hidden ${showImage || unframed ? "border-0 shadow-none" : "border border-black/5 shadow-[0_5px_16px_rgba(0,0,0,0.16)]"} ${className}`}
+      style={{ background: showImage || unframed ? "transparent" : appearance.color, color: unframed ? "inherit" : appearance.iconColor }}
     >
-      {app.iconUrl && (!isCanonicalDesktopApp || app.path === "__vscode__") ? (
+      {showImage && iconUrl ? (
         // Gateway-owned app icons can change at runtime and are already
         // versioned by ETag, so Next/Image cannot statically optimize them.
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={app.iconUrl} alt="" className="size-full object-cover" draggable={false} />
+        <img src={iconUrl} alt="" className="size-full object-contain" draggable={false} onError={onError} />
       ) : (
-        <Glyph className="size-[48%]" aria-hidden="true" />
+        <Glyph className={unframed ? "size-full" : "size-[48%]"} aria-hidden="true" />
       )}
     </span>
   );
@@ -161,7 +170,7 @@ function DesktopDestination({
             target.removeEventListener("pointerup", up);
             const dx = upEvent.clientX - startX;
             const dy = upEvent.clientY - startY;
-            if (Math.abs(dx) + Math.abs(dy) > 3) onMove(app.path, Math.max(0, placement.x + dx), Math.max(0, placement.y + dy));
+            if (Math.abs(dx) + Math.abs(dy) > 3) onMove(placement.path, Math.max(0, placement.x + dx), Math.max(0, placement.y + dy));
           };
           target.addEventListener("pointermove", move);
           target.addEventListener("pointerup", up);
@@ -180,7 +189,7 @@ function DesktopDestination({
         className="max-w-full truncate text-[12px] font-medium text-white"
         style={{ textShadow: "0 1px 2px rgba(0,0,0,.95), 0 0 3px rgba(0,0,0,.8)" }}
       >
-        {app.name === "Hermes" ? "Chat" : app.name}
+        {app.name}
       </span>
       </button>
       {menu && onRemove ? (
@@ -190,11 +199,11 @@ function DesktopDestination({
             role="menuitem"
             className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-accent"
             onClick={() => {
-              onRemove(app.path);
+              onRemove(placement.path);
               setMenu(null);
             }}
           >
-            Remove {app.name === "Hermes" ? "Chat" : app.name} from Desktop
+            Remove {app.name} from Desktop
           </button>
         </div>
       ) : null}
@@ -250,6 +259,7 @@ export function WebDesktopSurface({
   onOpenLauncher,
   onOpenSettings,
   headerActions,
+  headerLeadingAction,
   onActivateWindow,
   onCloseWindow,
   onShowDesktop,
@@ -265,7 +275,10 @@ export function WebDesktopSurface({
     height: typeof window === "undefined" ? 594 : Math.max(1, window.innerHeight - 126),
   }));
   const primeDesktopIcons = useDesktopConfigStore((state) => state.primeDesktopIcons);
-  const desktopApps = useMemo(() => buildWebDesktopIconApps(apps).slice(0, 10), [apps]);
+  const desktopApps = useMemo(
+    () => buildWebDesktopIconApps(apps).slice(0, DEFAULT_OS_VIEW_DESKTOP_APP_PATHS.length),
+    [apps],
+  );
   const defaultPlacements = useMemo<DesktopIconPlacement[]>(createDefaultOsViewDesktopIcons, []);
   useLayoutEffect(() => {
     if (desktopIcons === undefined) primeDesktopIcons(defaultPlacements);
@@ -283,12 +296,16 @@ export function WebDesktopSurface({
     () => fitOsViewDesktopIconsToViewport(canonicalPlacements, viewport),
     [canonicalPlacements, viewport],
   );
-  const placedApps = useMemo(() => placements.flatMap((placement) => {
-    const app = desktopApps.find((candidate) => (
-      normalizeOsViewDesktopAppPath(candidate.path) === placement.path
-    )) ?? apps.find((candidate) => normalizeOsViewDesktopAppPath(candidate.path) === placement.path);
-    return app ? [{ app: { ...app, path: placement.path }, placement }] : [];
-  }), [apps, desktopApps, placements]);
+  const placedApps = useMemo(() => {
+    const resolvePath = createCatalogAppPathResolver(apps);
+    return placements.flatMap((placement) => {
+      const path = normalizeOsViewDesktopAppPath(resolvePath(placement.path));
+      const app = desktopApps.find((candidate) => (
+        normalizeOsViewDesktopAppPath(candidate.path) === path
+      )) ?? apps.find((candidate) => normalizeOsViewDesktopAppPath(candidate.path) === path);
+      return app ? [{ app: { ...app, path }, placement }] : [];
+    });
+  }, [apps, desktopApps, placements]);
   const filesApp = apps.find((app) => app.path === "__file-browser__");
   const filesWindow = windows.find((windowRecord) => windowRecord.path === "__file-browser__");
   const otherRunningWindows = windows.filter((windowRecord) => windowRecord.path !== "__file-browser__");
@@ -324,6 +341,7 @@ export function WebDesktopSurface({
         onCloseWindow={onCloseWindow}
         onShowDesktop={onShowDesktop}
         onToggleFullscreen={onToggleFullscreen}
+        leadingAction={headerLeadingAction}
         rightActions={headerActions}
       />
 
@@ -363,9 +381,7 @@ export function WebDesktopSurface({
           pressed={launcherOpen}
           onClick={onOpenLauncher}
         >
-          <span className="flex size-11 items-center justify-center rounded-[13px] bg-[#0D0C0C] text-[#FAFAF5]">
-            <LayoutGrid className="size-[21px]" aria-hidden="true" />
-          </span>
+          <img src={webGalleryLauncherIconUrl(apps)} alt="" width={44} height={44} className="size-11 object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.18)]" draggable={false} />
         </TaskbarButton>
 
         <TaskbarButton
@@ -381,7 +397,8 @@ export function WebDesktopSurface({
         >
           <DesktopAppIcon
             app={filesApp ?? { name: "Files", path: "__file-browser__" }}
-            className="relative size-11 rounded-[13px]"
+            unframed
+            className="relative size-11 drop-shadow-[0_2px_3px_rgba(0,0,0,0.18)]"
           />
         </TaskbarButton>
 
@@ -401,7 +418,11 @@ export function WebDesktopSurface({
                     running
                     onClick={() => onActivateWindow(windowRecord.id)}
                   >
-                    <DesktopAppIcon app={app} className="relative size-11 rounded-[13px]" />
+                    <DesktopAppIcon
+                      app={app}
+                      unframed
+                      className="relative size-11 drop-shadow-[0_2px_3px_rgba(0,0,0,0.18)]"
+                    />
                   </TaskbarButton>
                 );
               })}

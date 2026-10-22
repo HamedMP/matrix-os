@@ -46,6 +46,10 @@ export interface PrivateBotRunRequest {
   runId: string;
   route: BotModelRoute;
   accessSourceId: BotCredentialAccessSourceId;
+  managedDefinitionRevision?: number;
+  recipeRef?: import("@matrix-os/contracts").BotRecipeRef;
+  subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
+  anthropicApi?: import("@matrix-os/contracts").MatrixAnthropicBinding;
   capabilities: readonly BotToolCapability[];
   requestClass: "interactive" | "background";
   /** The fingerprint stored with the task; a drift blocks the run as `root_changed`. */
@@ -72,6 +76,7 @@ export function createPrivateBotAdmission(deps: {
       .where("binding.chat_id", "=", input.chatId).where("binding.kind", "=", "direct")
       .where("binding.removed_at", "is", null)
       .where("chat.owner_type", "=", "personal").where("chat.owner_id", "=", input.ownerId)
+      .where("chat.collaboration", "is", null).where("chat.lifecycle", "=", "active")
       .executeTakeFirst();
     return row !== undefined;
   }
@@ -131,6 +136,9 @@ export function createPrivateBotAdmission(deps: {
         throw error;
       }
       try {
+        // Provisioning awaits external work; authority may have changed since preflight.
+        // Refuse publication and stop the new workload through the existing cleanup path.
+        if (!await ownsDirectChat(input)) throw new BotAdmissionError("not_found");
         deps.registry.bind({
           runtimeHandle: runtime.runtimeHandle,
           executionGeneration: runtime.executionGeneration,
@@ -142,6 +150,10 @@ export function createPrivateBotAdmission(deps: {
           rootFingerprint: root.fingerprint,
           route: input.route,
           accessSourceId: input.accessSourceId,
+          ...(input.recipeRef ? { recipeRef: input.recipeRef } : {}),
+          ...(input.managedDefinitionRevision !== undefined ? { managedDefinitionRevision: input.managedDefinitionRevision } : {}),
+          ...(input.subscription ? { subscription: input.subscription } : {}),
+          ...(input.anthropicApi ? { anthropicApi: input.anthropicApi } : {}),
           capabilities: input.capabilities,
           requestClass: input.requestClass,
         });
@@ -155,6 +167,7 @@ export function createPrivateBotAdmission(deps: {
       return { ...runtime, rootFingerprint: root.fingerprint };
     },
     release,
+    ownsDirectChat,
   };
 }
 

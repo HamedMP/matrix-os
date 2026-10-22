@@ -1,24 +1,37 @@
 import { Children, Fragment, useState, type ReactNode } from "react";
 import ArrowRight01Icon from "@hugeicons/core-free-icons/ArrowRight01Icon";
-import Cancel01Icon from "@hugeicons/core-free-icons/Cancel01Icon";
 import CubeIcon from "@hugeicons/core-free-icons/CubeIcon";
-import Search01Icon from "@hugeicons/core-free-icons/Search01Icon";
-import { Pressable, Text, TextInput, View, type ColorValue } from "react-native";
+import { Text, TextInput, View, type ColorValue } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
-import { Icon, IconButton, Skeleton, Spacer, type IconData } from "@/components/ui";
-import type { SpacingSize } from "@/lib/theme-v2";
+import {
+  CloseIcon,
+  Icon,
+  IconButton,
+  PressableScale,
+  SearchIcon,
+  Skeleton,
+  Spacer,
+  type IconData,
+} from "@/components/ui";
+import { motion, size, type SpacingSize } from "@/lib/theme-v2";
+
+const CLEAR_BUTTON_SIZE = 32;
+const CLEAR_SLOP = (size.tapTarget - CLEAR_BUTTON_SIZE) / 2;
 
 interface SearchFieldProps {
   placeholder?: string;
   value?: string;
   onChangeText?: (value: string) => void;
+  /** False where the text is matched against names the keyboard would rewrite. */
+  autoCorrect?: boolean;
 }
 
 export function SearchField({
   placeholder = "Search",
   value,
   onChangeText,
+  autoCorrect,
 }: SearchFieldProps) {
   const [uncontrolledValue, setUncontrolledValue] = useState("");
   const { theme } = useUnistyles();
@@ -30,23 +43,23 @@ export function SearchField({
 
   return (
     <View style={styles.search}>
-      <Icon icon={Search01Icon} size={17} color={theme.v2.appColors.muted} />
+      <Icon icon={SearchIcon} size={16} color={theme.v2.colors.textSubtle} />
       <TextInput
         accessibilityLabel={placeholder}
         placeholder={placeholder}
-        placeholderTextColor={theme.v2.appColors.muted}
+        placeholderTextColor={theme.v2.colors.textTertiary}
         value={currentValue}
         onChangeText={updateValue}
+        autoCorrect={autoCorrect}
         style={styles.searchInput}
       />
       {currentValue ? (
         <IconButton
           accessibilityLabel={`Clear ${placeholder}`}
-          icon={Cancel01Icon}
-          iconColor={theme.v2.appColors.ink}
+          icon={CloseIcon}
           iconSize={18}
-          buttonSize={32}
-          pressedOpacity={0.65}
+          buttonSize={CLEAR_BUTTON_SIZE}
+          hitSlop={CLEAR_SLOP}
           onPress={() => updateValue("")}
         />
       ) : null}
@@ -89,17 +102,31 @@ export function FileTileSkeletonGrid() {
   return <GridTileSkeletonGrid testID="file-tile-skeleton" />;
 }
 
-export function GridTileSkeletonGrid({ testID = "grid-tile-skeleton" }: { testID?: string }) {
+export function GridTileSkeletonGrid({
+  testID = "grid-tile-skeleton",
+  variant = "card",
+}: {
+  testID?: string;
+  /** "icon" for centered tiles, which draw an icon over a label and no tile behind them. */
+  variant?: "card" | "icon";
+}) {
   return (
     <View style={styles.tileRow}>
-      {Array.from({ length: 3 }, (_, index) => (
+      {Array.from({ length: 3 }, (_, index) => (variant === "icon" ? (
+        <View key={index} testID={testID} style={styles.skeletonIconTile}>
+          <Spacer size="md" />
+          <Skeleton testID={`${testID}-icon`} style={styles.skeletonIcon} />
+          <Spacer size="md" />
+          <Skeleton testID={`${testID}-label`} style={styles.skeletonLabel} />
+        </View>
+      ) : (
         <Skeleton
           key={index}
           testID={testID}
           shimmerTestID={`${testID}-shimmer`}
           style={styles.skeletonTile}
         />
-      ))}
+      )))}
     </View>
   );
 }
@@ -117,17 +144,16 @@ export function GridTile({
 }: GridTileProps) {
   const { theme } = useUnistyles();
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole={onPress ? "button" : undefined}
       accessibilityLabel={accessibilityLabel ?? `Open ${label}`}
       accessibilityState={onPress ? undefined : { disabled: true }}
       disabled={!onPress}
       onPress={onPress}
-      style={({ pressed }) => [
+      style={[
         styles.tile,
         centered && styles.tileCentered,
         accent && styles.tileAccent,
-        pressed && styles.pressed,
       ]}
     >
       <Spacer size="md" />
@@ -147,7 +173,7 @@ export function GridTile({
         {label}
       </Text>
       <Spacer size="md" />
-    </Pressable>
+    </PressableScale>
   );
 }
 
@@ -162,21 +188,12 @@ interface ListRowProps {
   action?: ReactNode;
   accessibilityLabel?: string;
   onPress?: () => void;
+  onLongPress?: () => void;
 }
 
+/** Rows 12pt apart. The space is a gap rather than views between them, so a row that comes or goes moves alone. */
 export function ListRowStack({ children }: { children: ReactNode }) {
-  const rows = Children.toArray(children);
-
-  return (
-    <View>
-      {rows.map((row, index) => (
-        <Fragment key={index}>
-          {row}
-          {index < rows.length - 1 ? <Spacer size="md" /> : null}
-        </Fragment>
-      ))}
-    </View>
-  );
+  return <View style={styles.rowStack}>{children}</View>;
 }
 
 export function ListRowSkeletonStack({
@@ -211,6 +228,7 @@ export function ListRow({
   action,
   accessibilityLabel,
   onPress,
+  onLongPress,
 }: ListRowProps) {
   const { theme } = useUnistyles();
   const resolvedAccent = accent ?? theme.v2.appColors.soft;
@@ -256,34 +274,36 @@ export function ListRow({
   }
 
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel ?? `Open ${title}`}
       onPress={onPress}
-      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+      onLongPress={onLongPress}
+      pressedScale={motion.rowPressScale}
+      style={styles.row}
     >
       {content}
-    </Pressable>
+    </PressableScale>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
   search: {
-    minHeight: 46,
+    height: theme.v2.size.searchField,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    borderWidth: 1,
-    borderColor: theme.v2.appColors.line,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    backgroundColor: theme.v2.appColors.surface,
+    gap: theme.v2.space[8],
+    borderRadius: theme.v2.radius.field,
+    paddingHorizontal: theme.v2.space[14],
+    backgroundColor: theme.v2.colors.card,
   },
+  // A one-line input centres its own text, so it takes no line height.
   searchInput: {
     flex: 1,
-    fontFamily: theme.v2.fonts.body,
-    fontSize: 15,
-    color: theme.v2.appColors.ink,
+    alignSelf: "stretch",
+    fontFamily: theme.v2.text.callout.fontFamily,
+    fontSize: theme.v2.text.callout.fontSize,
+    color: theme.v2.colors.textDefault,
   },
   tile: {
     width: "31.5%",
@@ -297,6 +317,9 @@ const styles = StyleSheet.create((theme) => ({
   tileRow: {
     flexDirection: "row",
     columnGap: 10,
+  },
+  rowStack: {
+    gap: theme.v2.spacing.md,
   },
   tileCentered: {
     flexDirection: "column",
@@ -318,9 +341,23 @@ const styles = StyleSheet.create((theme) => ({
   skeletonTile: {
     width: "31.5%",
     aspectRatio: 0.9,
-    borderWidth: 1,
-    borderColor: theme.v2.appColors.line,
     borderRadius: 18,
+  },
+  skeletonIconTile: {
+    width: "31.5%",
+    aspectRatio: 0.9,
+    alignItems: "center",
+  },
+  // The size and corners of an app's icon, and of its one-line label.
+  skeletonIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 16,
+  },
+  skeletonLabel: {
+    width: "60%",
+    height: 11,
+    borderRadius: theme.v2.radius.full,
   },
   tileLabel: {
     fontFamily: theme.v2.fonts.semibold,
@@ -376,13 +413,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   skeletonRow: {
     height: 66,
-    borderWidth: 1,
-    borderColor: theme.v2.appColors.line,
     borderRadius: 16,
     paddingHorizontal: 13,
-  },
-  pressed: {
-    opacity: 0.7,
-    transform: [{ scale: 0.985 }],
   },
 }));

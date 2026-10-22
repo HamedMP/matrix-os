@@ -41,6 +41,7 @@ export function createProjectLifecycleService(options: {
   projectManager: ProjectManager;
   findBlockers: (project: ProjectConfig, principal: RequestPrincipal) => Promise<ProjectLifecycleBlocker[]>;
   cleanupRelatedState: (project: ProjectConfig, principal: RequestPrincipal) => Promise<void>;
+  canRecoverDeletion?: (project: ProjectConfig) => Promise<boolean>;
   now?: () => string;
 }) {
   const now = options.now ?? (() => new Date().toISOString());
@@ -65,6 +66,12 @@ export function createProjectLifecycleService(options: {
       let recovered = 0;
       let failed = 0;
       for (const tombstone of projects) {
+        // Shared tombstones belong to the collaboration journal. Ordinary restart
+        // recovery must not bypass its runtime-authority or maintenance checks.
+        if (options.canRecoverDeletion && !await options.canRecoverDeletion(tombstone)) {
+          failed += 1;
+          continue;
+        }
         const succeeded = await withProjectLock(`lifecycle:${tombstone.slug}`, async () => {
           const current = await options.projectManager.getProjectForLifecycle({
             slug: tombstone.slug,
@@ -86,6 +93,7 @@ export function createProjectLifecycleService(options: {
       principal: RequestPrincipal,
       projectSlug: string,
       rawAction: ProjectLifecycleAction,
+      expectedProjectId?: string,
     ): Promise<ProjectLifecycleResult> {
       if (!PROJECT_SLUG_REGEX.test(projectSlug)) {
         return failure(400, "invalid_slug", "Project slug is invalid");
@@ -104,6 +112,9 @@ export function createProjectLifecycleService(options: {
           const current = await options.projectManager.getProjectForLifecycle({ slug: projectSlug, ownerScope });
           if (!current.ok) return current;
           const project = current.project;
+          if (expectedProjectId !== undefined && project.id !== expectedProjectId) {
+            return failure(409, "project_identity_conflict", "Project identity changed");
+          }
 
           if (project.deletingAt && action.type !== "delete") {
             return failure(404, "not_found", "Project was not found");

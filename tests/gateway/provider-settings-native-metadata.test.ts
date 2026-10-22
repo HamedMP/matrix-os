@@ -1,11 +1,13 @@
 import { bindNativeAccountMetadata, verifyNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
 import { describe, expect, it, vi } from 'vitest';
 import { ProviderAccountSchema } from '@matrix-os/contracts';
+import { z } from 'zod/v4';
 import { createProviderSettingsRoutes } from '../../packages/gateway/src/ai-providers/provider-settings-routes.js';
 import { projectProviderSettings } from '../../packages/gateway/src/ai-providers/provider-settings-projector.js';
 import { initialProviderSettingsConfiguration } from '../../packages/gateway/src/ai-providers/provider-settings-persistence.js';
 import { providerSettingsCanonicalFixture, PROVIDER_SETTINGS_NOW as now } from './provider-settings-test-support.js';
 import { normalizeCodexNativeAccountMetadata } from '../../packages/gateway/src/ai-providers/codex-native-account-metadata.js';
+import { applyHarnessSettings } from '../../packages/gateway/src/chat/harness-catalog-admission.js';
 const metadata = normalizeCodexNativeAccountMetadata({ account: { type: 'chatgpt', email: 'owner@example.test', planType: 'pro' } }, { rateLimits: { primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: Math.floor(now.getTime() / 1000) + 3600 } } }, now)!;
 function codexFixture() {
   const canonical = providerSettingsCanonicalFixture();
@@ -60,7 +62,7 @@ describe('owner native account enrichment', () => {
     const after = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: metadata });
     expect(after.accounts.find(account => account.id === 'owner_openai')?.displayName).toBe('owner@example.test');
     expect(after.accounts.find(account => account.id === 'owner_openai')?.connectionDetails).toEqual({ email: 'owner@example.test', planName: 'ChatGPT Pro' });
-    expect(after.accessSources.find(source => source.id === 'owner_openai_profile')).toMatchObject({ readiness: { state: 'unknown' }, usage: { kind: 'subscription_allowance', usedBasisPoints: 2000 } });
+    expect(after.accessSources.find(source => source.id === 'owner_openai_profile')).toMatchObject({ readiness: { state: 'auth_required' }, usage: { kind: 'subscription_allowance', usedBasisPoints: 2000 } });
     const expired = await projectProviderSettings({ canonical, config, now: new Date(now.getTime() + 31_000), supportedActions: [], codexNativeAccountMetadata: metadata });
     expect(expired.accounts.find(account => account.id === 'owner_openai')?.displayName).toBe('Codex');
     expect(expired.accounts.find(account => account.id === 'owner_openai')?.connectionDetails).toBeUndefined();
@@ -69,8 +71,8 @@ describe('owner native account enrichment', () => {
     const { canonical, config } = codexFixture();
     const verified = await verifyNativeAccountMetadata(bindNativeAccountMetadata({ ...metadata }, async () => true));
     const snapshot = await projectProviderSettings({ canonical, config, now: new Date(now.getTime() + 6000), supportedActions: [], codexNativeAccountMetadata: verified });
-    expect(snapshot.harnesses.find(h => h.harness === 'codex')).toMatchObject({ authState: 'authenticated', enabled: true, configuredEnabled: true, connectivity: 'unknown', selectedAccountId: 'owner_openai', accessSourceId: 'owner_openai_profile' });
-    expect(snapshot.accessSources.find(s => s.id === 'owner_openai_profile')?.readiness.state).toBe('unknown');
+    expect(snapshot.harnesses.find(h => h.harness === 'codex')).toMatchObject({ authState: 'authenticated', enabled: false, configuredEnabled: true, connectivity: 'unknown', selectedAccountId: 'owner_openai', accessSourceId: 'owner_openai_profile' });
+    expect(snapshot.accessSources.find(s => s.id === 'owner_openai_profile')?.readiness.state).toBe('auth_required');
   });
   it('keeps an explicitly disabled Codex disabled with verified credentials', async () => {
     const { canonical, config } = codexFixture(); config.harnesses.find(h => h.harness === 'codex')!.enabled = false;
@@ -86,6 +88,35 @@ describe('owner native account enrichment', () => {
     const snapshot = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: metadata });
     const harness = snapshot.harnesses.find(h => h.harness === 'codex')!;
     expect(harness.authState).not.toBe('authenticated');
+  });
+  it.each(['missing', 'mismatched'])('keeps Chat closed when the saved Codex account binding is %s', async binding => {
+    const { canonical, config } = codexFixture();
+    const stored = config.harnesses.find(h => h.harness === 'codex')!;
+    stored.selectedAccountId = binding === 'missing' ? null : 'owner_anthropic';
+    const snapshot = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: metadata });
+    const harness = snapshot.harnesses.find(h => h.harness === 'codex')!;
+    expect(snapshot.accessSources.find(s => s.id === 'owner_openai_profile')?.readiness.state).toBe('auth_required');
+    expect(harness).toMatchObject({ configuredEnabled: true, enabled: false });
+
+    const [codex] = applyHarnessSettings({
+      systemRepairAction: () => ({ id: 'repair', kind: 'foreground_terminal', label: 'Repair', command: 'true' }),
+      now,
+      instances: [{
+        id: 'codex_default', driverKind: 'codex', displayName: 'Codex', availability: 'available',
+        workspaceRequirement: 'project_optional',
+        models: [{ id: 'codex-model', displayName: 'Codex', availability: 'available', capabilities: ['tools'], supportsVision: false, supportsToolUse: true }],
+        options: [], skills: [], commands: [], setupActions: [],
+        supports: { rootChat: true, resume: true, cancellation: true, attachments: [], tools: [], approvals: true,
+          userInput: false, worktrees: 'optional', resources: [], interactionModes: ['default'], permissionModes: ['supervised'] },
+        defaultSelection: { instanceId: 'codex_default', model: 'codex-model' },
+      }],
+      settings: snapshot,
+      settingsRequired: true,
+      settingsAvailable: true,
+      executableDriverKinds: ['codex'],
+    });
+    expect(codex).toMatchObject({ availability: 'unavailable', unavailabilityReason: 'authentication_required',
+      setupActions: [{ id: 'codex_settings', kind: 'open_settings' }] });
   });
   it('does not enrich a profile attributed only to another canonical driver', async () => {
     const { canonical, config } = codexFixture(); canonical.instances.find(i => i.id === 'codex_owner')!.driverId = 'kernel';
@@ -160,4 +191,33 @@ describe('owner native account enrichment', () => {
     const after = await projectProviderSettings({ canonical, config, now, supportedActions: [], codexNativeAccountMetadata: metadata });
     expect(after).toEqual(before);
   });
+});
+
+
+it("negotiates Claude plan names without breaking historical account details clients or leaking collaborator identity", async () => {
+  const canonical = providerSettingsCanonicalFixture();
+  const snapshot = await projectProviderSettings({ canonical, config: initialProviderSettingsConfiguration(canonical), now, supportedActions: [] });
+  const account = snapshot.accounts[0]!;
+  Object.assign(account, { id: "owner_claude_profile", accessSourceId: "owner_claude_profile", displayName: "synthetic@example.invalid", connectionDetails: { email: "synthetic@example.invalid", planName: "Claude Max" } });
+  const store = { getSnapshot: vi.fn(async () => ({ ...snapshot, accounts: snapshot.accounts.map(value => ({ ...value })) })), mutate: vi.fn() };
+  const owner = createProviderSettingsRoutes({ store, getPrincipal: () => true, canReadNativeAccountMetadata: () => true });
+  const legacy = ProviderAccountSchema.extend({ connectionDetails: z.object({ email: z.email().max(120).optional(), planName: z.enum(["ChatGPT Free", "ChatGPT Go", "ChatGPT Plus", "ChatGPT Pro", "ChatGPT Team", "ChatGPT Business", "ChatGPT Enterprise", "ChatGPT Edu"]).optional() }).strict().optional() });
+  const [oldResponse, currentResponse] = await Promise.all([
+    owner.request("/provider-settings?includeAccountDetails=true"),
+    owner.request("/provider-settings?includeAccountDetails=true&includeClaudeAccountDetails=true"),
+  ]);
+  const old = (await oldResponse.json()).accounts[0];
+  expect(old.connectionDetails).toEqual({ email: "synthetic@example.invalid" });
+  expect(legacy.safeParse(old).success).toBe(true);
+  const current = (await currentResponse.json()).accounts[0];
+  expect(current.connectionDetails).toEqual({ email: "synthetic@example.invalid", planName: "Claude Max" });
+  expect(account.connectionDetails).toEqual(current.connectionDetails);
+  expect(ProviderAccountSchema.safeParse(current).success).toBe(true);
+  const unrequested = (await (await owner.request("/provider-settings?includeClaudeAccountDetails=true")).json()).accounts[0];
+  expect(unrequested.connectionDetails).toBeUndefined();
+  expect((await owner.request("/provider-settings?includeClaudeAccountDetails=bogus")).status).toBe(400);
+  const collaborator = createProviderSettingsRoutes({ store, getPrincipal: () => true, canReadNativeAccountMetadata: () => false });
+  const hidden = (await (await collaborator.request("/provider-settings?includeAccountDetails=true&includeClaudeAccountDetails=true")).json()).accounts[0];
+  expect(hidden.connectionDetails).toBeUndefined();
+  expect(hidden.displayName).toBe("Claude account");
 });

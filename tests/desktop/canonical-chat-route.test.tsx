@@ -24,6 +24,19 @@ function api(get: ApiClient["get"]): ApiClient {
 }
 
 describe("CanonicalChatRoute", () => {
+  it("does not probe or reload the list when WorkRail owns navigation", async () => {
+    const get = vi.fn(async (path: string) => {
+      if (path.startsWith("/api/chats?")) throw new Error("duplicate list read");
+      if (path.startsWith("/api/chat-providers")) throw new Error("catalog unavailable");
+      return { items: [] };
+    });
+    const view = render(<CanonicalChatRoute api={api(get)} projectId={null} active
+      initialView="draft" externalNavigation fallback={<p>Legacy fallback</p>} />);
+    await waitFor(() => expect(view.container.querySelector('[data-slot="canonical-chat-workspace"]')).toBeTruthy());
+    expect(get.mock.calls.filter(([path]) => path.startsWith("/api/chats?"))).toEqual([]);
+  });
+
+
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
@@ -260,14 +273,14 @@ describe("CanonicalChatRoute", () => {
     }
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     await waitFor(() => expect(routeApi.post).toHaveBeenCalledWith(
-      `/api/chats/${chat.id}/runs/${activeRun!.runId}/cancel?readStateVersion=1`,
+      `/api/chats/${chat.id}/runs/${activeRun!.runId}/cancel?readStateVersion=1&importSourceVersion=1`,
       { clientRequestId: expect.any(String) },
     ));
     fireEvent.click(cancel);
 
     await waitFor(() => {
       expect(routeApi.delete).toHaveBeenCalledWith(
-        `/api/chats/${chat.id}/queued-turns/${queuedTurn.id}?readStateVersion=1`,
+        `/api/chats/${chat.id}/queued-turns/${queuedTurn.id}?readStateVersion=1&importSourceVersion=1`,
         expect.objectContaining({
           clientRequestId: expect.any(String),
           baseRevision: chat.revision,

@@ -5,17 +5,17 @@ import { join } from "node:path";
 import { createOpenClawSettingsConnection } from "../../packages/gateway/src/ai-providers/openclaw-settings-auth.js";
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
-async function fixture(version = "2026.7.1", exit = 0, delay = false) {
+async function fixture(version = "2026.7.1", exit = 0, delay = false, provider: "openai" | "anthropic" | "openrouter" = "openai") {
   const root = await mkdtemp(join(tmpdir(), "openclaw-settings-")); roots.push(root);
   const command = join(root, "openclaw");
   await writeFile(command, `#!/usr/bin/env node
 if (process.argv.includes('--version')) console.log('${version}');
 else if (process.argv.includes('--help')) console.log('paste-api-key --provider --profile-id');
-else { let key=''; for await (const chunk of process.stdin) key+=chunk; if (process.argv.slice(2).join(' ') !== 'models auth paste-api-key --provider openai --profile-id openai:manual') process.exit(3); if (key !== 'fixture-key\\n') process.exit(4); console.error('private-native-output'); ${delay ? "(await import('node:fs')).writeFileSync('started','yes'); setTimeout(() => process.exit(0), 60000);" : `process.exit(${exit});`} }
+else { let key=''; for await (const chunk of process.stdin) key+=chunk; if (process.argv.slice(2).join(' ') !== 'models auth paste-api-key --provider ${provider} --profile-id ${provider}:manual') process.exit(3); if (key !== 'fixture-key\\n') process.exit(4); console.error('private-native-output'); ${delay ? "(await import('node:fs')).writeFileSync('started','yes'); setTimeout(() => process.exit(0), 60000);" : `process.exit(${exit});`} }
 `); await chmod(command, 0o700);
   const enableConnected = vi.fn(async () => {});
   const fetchFn = vi.fn(async () => new Response(null, { status: 200 })) as unknown as typeof fetch;
-  return { root, connection: createOpenClawSettingsConnection({ command, cwd: root, env: { PATH: process.env.PATH }, enableConnected, fetchFn }), enableConnected, fetchFn };
+  return { root, connection: createOpenClawSettingsConnection({ command, cwd: root, env: { PATH: process.env.PATH }, enableConnected, ...(provider !== "openai" ? { enableProviderConnected: enableConnected } : {}), fetchFn }), enableConnected, fetchFn };
 }
 it("gates direct API-key capability to the pinned supported CLI", async () => {
   expect(await (await fixture()).connection.capabilities()).toEqual({ login: false, apiKey: true });
@@ -63,4 +63,12 @@ it("shutdown reaps an active native save and prevents success enablement", async
   }
   expect(started).toBe(true); await f.connection.close(); await assertion;
   expect(f.enableConnected).not.toHaveBeenCalled();
+});
+
+it.each(["anthropic", "openrouter"] as const)("uses the pinned native API-key profile protocol for %s", async provider => {
+  const f = await fixture("2026.7.1", 0, false, provider);
+  expect(await f.connection.apiKeyProviders()).toContain(provider);
+  await f.connection.verifyKey({ harnessInstanceId: "harness_openclaw", providerId: provider, apiKey: "fixture-key" });
+  expect(f.enableConnected).toHaveBeenCalledWith("harness_openclaw", provider, expect.stringMatching(/^openclaw-key-/));
+  await f.connection.close();
 });

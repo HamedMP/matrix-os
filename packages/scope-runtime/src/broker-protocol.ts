@@ -1,3 +1,4 @@
+import { validateBotImageInferenceBody } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { RuntimeHandleSchema } from "./protocol.js";
 
@@ -81,7 +82,7 @@ const BotInferenceBase = {
   runtimeHandle: RuntimeHandleSchema,
   executionGeneration: GenerationSchema,
   method: z.literal("POST"),
-  body: BoundedBodySchema,
+  body: z.string().refine(body => validateBotImageInferenceBody(body).valid, "Invalid Bot inference body"),
 };
 
 export const ScopeRuntimeBotInferenceRequestSchema = z.discriminatedUnion("action", [

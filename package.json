@@ -10,7 +10,7 @@
     "mos": "./bin/matrixos.mjs"
   },
   "engines": {
-    "node": ">=24 <25"
+    "node": ">=24"
   },
   "packageManager": "pnpm@10.33.4",
   "scripts": {
@@ -54,14 +54,19 @@
     "observability:posthog-alerts": "node scripts/observability/setup-posthog-alerts.mjs",
     "spike:agent-sdk": "node scripts/spikes/agent-sdk-gateway/run.mjs",
     "release:enqueue-golden-snapshot": "node scripts/enqueue-golden-snapshot.mjs",
-    "test": "sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && pnpm --filter @matrix-os/integrations-mcp build && vitest run \"$@\"' --",
-    "test:golden-snapshots": "bun run test -- --maxWorkers=1 --no-file-parallelism tests/platform/golden-snapshot-*.test.ts tests/platform/host-bundle-snapshot-workflow.test.ts tests/platform/host-bundle-route.test.ts tests/platform/r2-client.test.ts tests/platform/ci-workflows.test.ts tests/platform/customer-vps.test.ts tests/platform/customer-vps-cloud-init.test.ts tests/platform/customer-vps-hetzner.test.ts tests/platform/customer-vps-host-bundle.test.ts",
-    "test:watch": "sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && vitest \"$@\"' --",
-    "test:integration": "vitest run --config vitest.integration.config.ts",
-    "test:coverage": "sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && pnpm --filter @matrix-os/integrations-mcp build && vitest run --coverage \"$@\"' --",
-    "test:e2e": "sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && vitest run --config vitest.e2e.config.ts \"$@\"' --",
+    "test": "node packages/gateway/native/build.mjs && sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && pnpm --filter @matrix-os/integrations-mcp build && vitest run \"$@\"' --",
+    "test:isolated": "node scripts/dev/isolated-test-job.mjs -- bun run test -- --maxWorkers=1",
+    "test:prepare": "node packages/gateway/native/build.mjs && pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/brand build && pnpm --filter @matrix-os/kernel build && pnpm --filter @matrix-os/integrations-mcp build",
+    "test:golden-snapshots": "bun run test -- --maxWorkers=1 --no-file-parallelism tests/platform/golden-snapshot-*.test.ts tests/platform/host-bundle-snapshot-workflow.test.ts tests/platform/host-bundle-route.test.ts tests/platform/r2-client.test.ts tests/platform/ci-workflows.test.ts tests/platform/customer-vps.test.ts tests/platform/customer-vps-cloud-init.test.ts tests/platform/customer-vps-hetzner.test.ts tests/platform/customer-vps-host-bundle.test.ts tests/platform/customer-vps-config-contracts.test.ts tests/platform/customer-vps-preview-slots.test.ts tests/platform/customer-vps-resize.test.ts tests/platform/customer-vps-bundle-provisioning.test.ts tests/platform/customer-vps-deploy.test.ts tests/platform/customer-vps-registration-delete.test.ts tests/platform/customer-vps-recovery.test.ts tests/platform/customer-vps-reconcile-billing.test.ts",
+    "test:watch": "node packages/gateway/native/build.mjs && sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && vitest \"$@\"' --",
+    "test:integration": "node packages/gateway/native/build.mjs && vitest run --config vitest.integration.config.ts",
+    "test:coverage": "node packages/gateway/native/build.mjs && sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/kernel build && pnpm --filter @matrix-os/integrations-mcp build && vitest run --coverage \"$@\"' --",
+    "test:e2e": "node packages/gateway/native/build.mjs && sh -c 'pnpm --filter @matrix-os/observability build && pnpm --filter @matrix-os/brand build && pnpm --filter @matrix-os/kernel build && vitest run --config vitest.e2e.config.ts \"$@\"' --",
+    "test:e2e:run": "vitest run --config vitest.e2e.config.ts",
     "typecheck:build-kernel": "pnpm --filter '@matrix-os/observability' build && pnpm --filter '@matrix-os/kernel' build && pnpm --filter '@matrix-os/integrations-mcp' build",
-    "typecheck": "bun run typecheck:build-kernel && pnpm --filter '@matrix-os/observability' exec tsc --noEmit && pnpm --filter '@matrix-os/integrations-mcp' exec tsc --noEmit && pnpm --filter '@matrix-os/gateway' exec tsc --noEmit && pnpm --filter '@matrix-os/platform' exec tsc --noEmit -p tsconfig.typecheck.json && pnpm --filter '@matrix-os/proxy' exec tsc --noEmit && pnpm --filter '@matrix-os/edge-router' exec tsc --noEmit && pnpm --filter desktop run typecheck",
+    "typecheck": "bun run typecheck:build-kernel && bun run typecheck:run",
+    "typecheck:run": "node scripts/typecheck.mjs",
+    "typecheck:legacy": "node scripts/typecheck.mjs legacy",
     "check:patterns": "./scripts/review/check-patterns.sh",
     "check:patterns:diff": "./scripts/review/check-patterns.sh --diff main",
     "lint": "bun run --filter './shell' lint"
@@ -100,7 +105,7 @@
       },
       "@react-native/jest-preset@*": {
         "dependencies": {
-          "react-native": "0.86.0",
+          "react-native": "0.86.3",
           "@babel/runtime": "^7.29.0"
         }
       },
@@ -112,7 +117,7 @@
       },
       "react-native-edge-to-edge@*": {
         "dependencies": {
-          "@expo/config-plugins": "57.0.2"
+          "@expo/config-plugins": "57.0.9"
         }
       },
       "langium@4.2.1": {
@@ -130,7 +135,8 @@
     "overrides": {
       "@earendil-works/pi-ai": "1.0.0",
       "@earendil-works/chord": "1.0.0",
-      "@earendil-works/pi-telemetry": "1.0.0"
+      "@earendil-works/pi-telemetry": "1.0.0",
+      "electron-vite>vite": "npm:rolldown-vite@7.3.1"
     }
   },
   "devDependencies": {
@@ -140,9 +146,11 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@typescript/native": "npm:typescript@7.0.2",
     "@vitejs/plugin-react": "^4.4.1",
     "@vitest/coverage-v8": "^4.0.18",
     "better-sqlite3": "^12.10.0",
+    "chess.js": "1.4.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.11.9",
     "lexical": "0.41.0",
@@ -150,6 +158,7 @@
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "tsx": "^4.21.0",
+    "typescript": "5.9.3",
     "vite": "^6.3.2",
     "vitest": "^4.0.18"
   },

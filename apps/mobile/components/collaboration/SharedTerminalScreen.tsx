@@ -356,7 +356,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.v2.appColors.ink, fontFamily: theme.v2.fonts.mono, textAlignVertical: "top" },
   actionRow: { flexDirection: "row", gap: 8 },
   action: { flex: 1, alignItems: "center", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11,
-    backgroundColor: theme.v2.palette.green[800] },
-  actionText: { fontFamily: theme.v2.fonts.semibold, color: theme.v2.colors.textInverse },
+    backgroundColor: theme.v2.colors.controlPrimary },
+  actionText: { fontFamily: theme.v2.fonts.semibold, color: theme.v2.colors.onControlPrimary },
   disabled: { opacity: 0.55 },
 }));

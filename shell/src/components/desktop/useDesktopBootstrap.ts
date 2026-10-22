@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useWindowManager, type LayoutWindow, type AppWindow } from "@/hooks/useWindowManager";
 import { useDesktopMode } from "@/stores/desktop-mode";
 import { useCanvasTransform } from "@/hooks/useCanvasTransform";
+import { catalogAppLaunchPath, createCatalogAppPathResolver } from "@/lib/app-catalog-launch";
 import { getGatewayUrl } from "@/lib/gateway";
 import { isPreVpsBillingSetupRoute } from "@/lib/pre-vps-shell";
 import { loadWebOsViewPresentation } from "@/lib/os-view-state-client";
@@ -78,14 +79,15 @@ export function useDesktopBootstrap({ cacheScope, entryKey, openWindow }: {
       // Legacy bootstrap/cache reads do not pass through the canonical OS-view schema.
       // Reject malformed batches at its 512-window limit, never truncate owner layout.
       if (!Array.isArray(rawWindows) || rawWindows.length > 512) throw new Error("Invalid desktop restore batch");
-      const savedWindows = rawWindows.map(normalizeBuiltInLayoutWindow);
+      const resolveCatalogPath = createCatalogAppPathResolver(bootstrap.apps);
+      const savedWindows = rawWindows.map(window => normalizeBuiltInLayoutWindow({ ...window, path: resolveCatalogPath(window.path) }));
       const savedLayoutForPath = (path: string) => savedWindows.findLast((window) => window.path === path);
 
       // Both local arrays are bounded by that validated batch and released after this load.
       const layoutToLoad: LayoutWindow[] = [];
       const queueSavedLayout = (saved: LayoutWindow | undefined) => {
-        if (!mayRestore() || !saved || initialWindowsRef.current?.some((window) => window.path === saved.path)
-          || layoutToLoad.some((window) => window.path === saved.path)) return;
+        if (!mayRestore() || !saved || initialWindowsRef.current?.some((window) => resolveCatalogPath(window.path) === saved.path)
+          || layoutToLoad.some((window) => resolveCatalogPath(window.path) === saved.path)) return;
         layoutToLoad.push(saved);
       };
 
@@ -98,7 +100,9 @@ export function useDesktopBootstrap({ cacheScope, entryKey, openWindow }: {
       if (Array.isArray(bootstrap.apps)) {
         for (const app of bootstrap.apps) {
           if (isLoadAborted()) return;
-          const relativePath = normalizeBuiltInAppPath(app.path.replace(/^\/files\//, ""));
+          const launchPath = catalogAppLaunchPath(app);
+          if (!launchPath) continue;
+          const relativePath = normalizeBuiltInAppPath(launchPath);
           const saved = savedLayoutForPath(relativePath);
           queueSavedLayout(saved);
           // Don't auto-open pre-installed apps - let users open from dock/store

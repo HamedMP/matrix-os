@@ -48,8 +48,36 @@ describe("native app database bridge", () => {
     expect(NativeAppQuerySchema.safeParse({
       action: "insert",
       table: "notes",
-      data: { content: "x".repeat(300_000) },
+      data: { content: "x".repeat(1_000_001) },
     }).success).toBe(false);
+  });
+
+  it("preserves database writes over the ordinary integration budget through the shared page and trusted host", async () => {
+    const fetchFn = vi.fn(async () => Response.json({ id: "note-1" }));
+    const request = createNativeAppQueryRequester({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "synthetic", fetchFn });
+    const bridge = new NativeAppBridge({ authGeneration: () => 0, generate: vi.fn(), aiRequest: vi.fn(), gatewayRequest: vi.fn(), request, gatewayOrigin: () => "https://gateway.test" });
+    bridge.register(1, "games/chess", "chess");
+    const db = createNativeAppDatabase(query => bridge.query({ id: 1, url: "https://gateway.test/apps/chess/" }, query));
+    const content = "é".repeat(180_000);
+    await expect(db.insert("notes", { content })).resolves.toEqual({ id: "note-1" });
+    const sent = (fetchFn.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(JSON.parse(sent.body as string)).toEqual({ app: "games/chess", action: "insert", table: "notes", data: { content } });
+    expect(new TextEncoder().encode(sent.body as string).byteLength).toBeGreaterThan(256 * 1024);
+  });
+
+  it("bounds UTF-8 bytes of the complete trusted identity-stamped database request", async () => {
+    const fetchFn = vi.fn(async () => Response.json({ id: "note-1" }));
+    const request = createNativeAppQueryRequester({ getGatewayOrigin: () => "https://gateway.test", getToken: () => "synthetic", fetchFn });
+    const envelope = { app: "games/chess", action: "insert" as const, table: "notes", data: { content: "" } };
+    const overhead = new TextEncoder().encode(JSON.stringify(envelope)).byteLength;
+    const content = "x".repeat(1_000_000 - overhead);
+    const query = { action: "insert" as const, table: "notes", data: { content } };
+    await expect(request("games/chess", query)).resolves.toEqual({ id: "note-1" });
+    expect(new TextEncoder().encode((fetchFn.mock.calls[0] as unknown as [string, RequestInit])[1].body as string).byteLength).toBe(1_000_000);
+    const overflowing = { ...query, data: { content: content + "é" } };
+    expect(NativeAppQuerySchema.safeParse(overflowing).success).toBe(true);
+    await expect(request("games/chess", overflowing)).rejects.toThrow();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
   it("binds each sender to its registered app slug and current app URL", async () => {

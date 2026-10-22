@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@source "../../../../../packages/ui/src/desktop-top-bar.tsx";
+@source "../../../../../packages/ui/src/integrations";
 @source "../../../../../packages/ui/src/chat-import";
 @source "../../../../../packages/ui/src/organization-drive";
 @source "../../../../../packages/ui/src/chat";
@@ -13,7 +15,11 @@
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
 @import "./tokens.css";
+@import "@matrix-os/ui/onboarding-widget.css";
+@import "./brand-fonts.css";
 @import "@matrix-os/ui/chat-agents.css";
+@import "@matrix-os/ui/styles.css";
+@import "@matrix-os/ui/chat-import.css";
 
 @keyframes native-desktop-window-hide {
   from { opacity: 1; transform: translate3d(0, 0, 0); }
@@ -25,10 +31,6 @@
   to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 
-@keyframes chat-title-scroll {
-  from { transform: translateX(0); }
-  to { transform: translateX(calc(-1 * var(--chat-title-scroll-distance))); }
-}
 @import "./chat.css";
 
 /* Map tokens into Tailwind v4 theme so utilities like bg-surface work. */
@@ -90,6 +92,10 @@ body {
   user-select: none;
 }
 
+/* Product headings share the brand display family; editable/code content
+   keeps its own purpose-specific font and the owner's theme colors. */
+h1, h2, h3 { font-family: var(--font-editorial); }
+
 /* Inputs and content areas re-enable selection. */
 input,
 textarea,
@@ -116,7 +122,8 @@ textarea,
 }
 
 /* ── Focus visibility (keyboard-first, US6) ───────────────────── */
-:focus-visible {
+/* The onboarding widget (.mxo-root) ships its own focus treatment. */
+:focus-visible:where(:not(.mxo-root *)) {
   outline: none;
   box-shadow: var(--focus-ring);
   border-radius: var(--radius-sm);

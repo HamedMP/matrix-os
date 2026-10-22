@@ -16,7 +16,7 @@ export function resolveWithinHome(
   return null;
 }
 
-const DENIED_FILE_API_PREFIXES = ["data/browser-profiles"];
+const DENIED_FILE_API_PREFIXES = ["data/browser-profiles", "data/app-gallery-staging"];
 
 // OS-owned subtrees that must never receive user-created folders. Mirrors
 // project-manager.ts's folder-project guard: the home root itself, every
@@ -46,6 +46,12 @@ export function containsDeniedFileApiPath(homePath: string, resolvedPath: string
   const rel = relative(resolve(homePath), resolvedPath).split(sep).join("/");
   if (rel === "") return true;
   return DENIED_FILE_API_PREFIXES.some((prefix) => prefix === rel || prefix.startsWith(`${rel}/`));
+}
+
+/** Recursive mutations must not relocate or expose a private subtree through its ancestor. */
+export function isDeniedFileApiMutationPath(homePath: string, requestedPath: string): boolean {
+  const resolved = resolveWithinHome(homePath, requestedPath);
+  return !resolved || isDeniedFileApiPath(homePath, requestedPath) || containsDeniedFileApiPath(homePath, resolved);
 }
 
 function isWithinRealPath(baseReal: string, candidateReal: string): boolean {

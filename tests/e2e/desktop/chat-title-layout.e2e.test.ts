@@ -2,10 +2,12 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { _electron, type ElectronApplication, type Page } from "playwright";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { _electron, type ElectronApplication, type Locator, type Page } from "playwright";
 import { startChatTitleGateway, LONG_CHAT_TITLE, SHORT_CHAT_TITLE, FAILED_CHAT_TITLE } from "./fixtures/chat-title-gateway";
 import { closeElectronApp } from "./fixtures/close-electron";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
+
 const root = resolve(__dirname, "../../..");
 const main = join(root, "desktop/out/main/index.js");
 const evidence = join(root, "output/mat524");
@@ -19,6 +21,24 @@ suite("long Chat titles in the built Electron header", () => {
   let page: Page;
   let gateway: Awaited<ReturnType<typeof startChatTitleGateway>>;
   let profile: string;
+  const resizeWindow = async (width: number) => {
+    const contentWidth = await app.evaluate(({ BrowserWindow }, width) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      window.setSize(width, 850);
+      return window.getContentSize()[0];
+    }, width);
+    // Match the actual content area, excluding native window decorations.
+    await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(contentWidth);
+  };
+  const hoverRow = async (row: Locator) => {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].focus());
+    // Native resize/focus events can clear an injected hover after it returns.
+    // Observe the actual pseudo-class before asserting the hover animation.
+    await expect.poll(async () => {
+      await row.hover();
+      return row.evaluate(element => element.matches(":hover"));
+    }).toBe(true);
+  };
   beforeAll(async () => {
     gateway = await startChatTitleGateway();
     profile = mkdtempSync(join(tmpdir(), "mat524-"));
@@ -34,23 +54,31 @@ suite("long Chat titles in the built Electron header", () => {
     app = await _electron.launch({ executablePath: requireDesktop("electron") as string,
       args: [resolve(__dirname, "fixtures/canonical-input-electron.mjs")],
       env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: profile } });
-    page = await app.firstWindow(); page.setDefaultTimeout(8000);
+    page = await app.firstWindow();
+    await dismissGettingStartedOnInteraction(page);
+    page.setDefaultTimeout(8000);
     await page.getByRole("button", { name: "Chat", exact: true }).dblclick();
+    const done = page.getByRole("button", { name: "Done", exact: true });
+    if (await done.getAttribute("aria-expanded") === "false") await done.click();
     await page.getByRole("button", { name: LONG_CHAT_TITLE, exact: true }).click();
     await page.getByRole("button", { name: `Rename ${LONG_CHAT_TITLE}`, exact: true }).waitFor();
-    if (await page.getByRole("dialog", { name: "Getting started", exact: true }).isVisible()) {
-      await page.getByRole("button", { name: /Getting started/ }).click();
-      await page.getByRole("dialog", { name: "Getting started", exact: true }).waitFor({ state: "hidden" });
-    }
     await page.getByRole("button", { name: "Maximize", exact: true }).click();
     mkdirSync(evidence, { recursive: true });
   }, 60000);
   afterAll(async () => {
     try { if (app) await closeElectronApp(app); } finally { await gateway?.close(); if (profile) rmSync(profile, { recursive: true, force: true }); }
   });
-  it("clips history titles and scrolls them on hover/focus, respecting reduced motion", async () => {
+  afterEach(async (context) => {
+    if (context.task.result?.state !== "fail") return;
+    try {
+      await page.screenshot({ path: join(evidence, "failure.png"), timeout: 2_000 });
+    } catch (error) {
+      console.warn("Chat title failure evidence unavailable", error instanceof Error ? error.name : "UnknownError");
+    }
+  });
+  it("scrolls overflowing history titles on hover/focus and keeps reduced motion quiet", async () => {
     const row = page.getByRole("button", { name: LONG_CHAT_TITLE, exact: true });
-    await row.hover();
+    await hoverRow(row);
     const clipped = await row.evaluate((element) => {
       const title = element.querySelector("span[title]")!;
       let node: Element | null = title;
@@ -64,52 +92,55 @@ suite("long Chat titles in the built Electron header", () => {
     });
     expect(clipped).toBe(true);
     const title = row.locator("span[title]");
-    await expect.poll(() => title.evaluate(el => el.getAnimations().length)).toBeGreaterThan(0);
-    const start = await title.evaluate(el => el.getBoundingClientRect().x);
-    await expect.poll(() => title.evaluate(el => el.getBoundingClientRect().x)).toBeLessThan(start - 2);
+    await expect.poll(() => title.evaluate(el => el.getAnimations().length)).toBe(1);
+    const viewport = row.locator(".matrix-chat-title-viewport");
+    const start = await viewport.boundingBox();
+    await title.evaluate(el => { const animation = el.getAnimations()[0]; animation.pause(); animation.currentTime = 2000; });
+    expect(await title.evaluate(el => new DOMMatrix(getComputedStyle(el).transform).m41)).toBeLessThan(0);
+    expect(await viewport.boundingBox()).toEqual(start);
+    await title.evaluate(el => el.getAnimations().forEach(animation => animation.cancel()));
     await page.mouse.move(0, 0);
     await row.focus();
-    await expect.poll(() => title.evaluate(el => el.getAnimations().length)).toBeGreaterThan(0);
+    await expect.poll(() => title.evaluate(el => el.getAnimations().length)).toBe(1);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await expect.poll(() => title.evaluate(el => el.getAnimations().length)).toBe(0);
     expect(await title.getAttribute("title")).toBe(LONG_CHAT_TITLE);
     await page.screenshot({ path: join(evidence, "history-reduced-motion.png") });
     await page.emulateMedia({ reducedMotion: "no-preference" });
+    await expect.poll(() => page.evaluate(() => matchMedia("(prefers-reduced-motion: no-preference)").matches)).toBe(true);
   });
   it("keeps short titles still and separates pinned unread/error indicators from long titles", async () => {
     const short = page.getByRole("button", { name: SHORT_CHAT_TITLE, exact: true });
-    await short.hover();
+    await hoverRow(short);
     expect(await short.locator("span[title]").evaluate(el => el.getAnimations().length)).toBe(0);
     const row = page.getByRole("button", { name: FAILED_CHAT_TITLE, exact: true });
     for (const width of [1280, 900]) {
-      await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0].setSize(width, 850), width);
-      await row.hover();
+      await resizeWindow(width);
+      await hoverRow(row);
       const title = row.locator("span[title]");
-      await expect.poll(() => title.evaluate(el => el.getAnimations().length)).toBeGreaterThan(0);
+      await expect.poll(() => title.evaluate(el => el.getAnimations().length)).toBe(1);
       const bounds = await row.evaluate(element => {
         const text = element.querySelector("span[title]")!;
-        const viewport = text.parentElement!;
+        const viewport = element.querySelector(".matrix-chat-title-viewport")!;
         const unread = element.querySelector('[aria-label^="Unread "]')!;
         const error = element.querySelector('[aria-label^="Agent failed"]')!;
-        const animation = text.getAnimations()[0];
-        animation.pause();
-        animation.currentTime = Number(animation.effect!.getTiming().duration);
         const actions = element.parentElement!.querySelector('button[title^="Unpin "]')!;
         return { viewportRight: viewport.getBoundingClientRect().right,
           unreadLeft: unread.getBoundingClientRect().left, errorLeft: error.getBoundingClientRect().left,
-          textRight: text.getBoundingClientRect().right, actionLeft: actions.getBoundingClientRect().left };
+          clipping: getComputedStyle(viewport).overflowX, actionLeft: actions.getBoundingClientRect().left };
       });
       expect(bounds.viewportRight).toBeLessThanOrEqual(bounds.unreadLeft);
       expect(bounds.viewportRight).toBeLessThanOrEqual(bounds.errorLeft);
-      expect(bounds.textRight).toBeLessThanOrEqual(Math.min(bounds.actionLeft, bounds.viewportRight) + 1);
+      expect(bounds.viewportRight).toBeLessThanOrEqual(bounds.actionLeft);
+      expect(bounds.clipping).toBe("hidden");
       await page.getByRole("button", { name: `Unpin ${FAILED_CHAT_TITLE}`, exact: true }).click({ trial: true });
-      await page.getByRole("button", { name: `Delete ${FAILED_CHAT_TITLE}`, exact: true }).click({ trial: true });
+      await page.getByRole("button", { name: `Actions for ${FAILED_CHAT_TITLE}`, exact: true }).click({ trial: true });
       await page.screenshot({ path: join(evidence, `history-${width}.png`) });
     }
   });
   it("contains the full stored title and keeps header actions reachable at both sizes", async () => {
     for (const width of [1280, 900]) {
-      await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0].setSize(width, 850), width);
+      await resizeWindow(width);
       const button = page.getByRole("button", { name: `Rename ${LONG_CHAT_TITLE}`, exact: true });
       await page.screenshot({ path: join(evidence, `header-${width}.png`) });
       const bounds = await button.evaluate((element) => {

@@ -148,6 +148,18 @@ describe("UserButton", () => {
     expect(screen.queryByText("Organization")).toBeNull();
   });
 
+  it("hides Shared with me when the membership list confirms no organizations", async () => {
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+    const { OrganizationStateProvider } = await import("../../shell/src/lib/collaboration-organization-state.js");
+
+    render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}>
+      <UserButton variant="dock" />
+    </OrganizationStateProvider>);
+    await openAccountMenu();
+
+    expect(screen.queryByRole("menuitem", { name: "Shared with me" })).toBeNull();
+  });
+
   it("shows no organization section until Clerk has loaded memberships", async () => {
     clerkState.organizationsLoaded = false;
     clerkState.memberships = [{ organization: { id: "org_a", name: "Finna" } }];
@@ -162,7 +174,7 @@ describe("UserButton", () => {
 
   it("lists the member's organizations and activates the one they choose", async () => {
     // Sharing reads the *active* organization, and nothing else in the shell sets
-    // one -- without this the share control stays "Join an organization to share"
+    // one -- without this the share control stays in its loading state
     // for a user who already belongs to an organization.
     clerkState.memberships = [
       { organization: { id: "org_a", name: "Finna" } },
@@ -292,20 +304,18 @@ describe("UserButton", () => {
     expect(screen.getByRole("menuitem", { name: "Get another computer" }).getAttribute("href")).toBe("/?billing=setup&handoff=add-computer");
   });
 
-  it("preserves desktop account Help and Billing navigation", async () => {
+  it("matches the top-bar account menu and keeps billing functional", async () => {
     const onOpenSettings = vi.fn();
     const { UserButton } = await import("../../shell/src/components/UserButton.js");
-
     render(<UserButton variant="menubar" onOpenSettings={onOpenSettings} />);
-    await openAccountMenu();
-
-    const help = screen.getByRole("menuitem", { name: "Get help" });
-    expect(help.getAttribute("href")).toBe("https://matrix-os.com/docs");
-    expect(help.getAttribute("target")).toBe("_blank");
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), { button: 0, ctrlKey: false });
+    await screen.findByRole("menuitem", { name: "Log out" });
+    expect(screen.getByText("PERSONAL ACCOUNT")).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: "Get help" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Switch computer" })).toBeNull();
     fireEvent.click(screen.getByRole("menuitem", { name: "View plans" }));
     expect(onOpenSettings).toHaveBeenCalledWith("billing");
   });
-
   it("excludes hosted computer actions in self-hosted mode", async () => {
     document.documentElement.dataset.matrixSelfHosted = "1";
     const { UserButton } = await import("../../shell/src/components/UserButton.js");

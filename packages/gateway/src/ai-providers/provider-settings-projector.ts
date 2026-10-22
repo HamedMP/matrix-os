@@ -1,3 +1,8 @@
+import { projectManagedCreditUsage } from "./provider-managed-credit-usage.js";
+import { nativeAccountPrincipalFingerprint } from "./native-account-metadata-binding.js";
+import { readLifecycleAccountDependencies } from "./provider-lifecycle-account-dependencies.js";
+import { projectClaudeNativeAccount } from "./claude-native-account-projection.js";
+import type { ClaudeNativeAccountMetadata } from "./claude-native-account-metadata.js";
 import { projectMatrixModelInventory } from "./provider-matrix-model-inventory.js";
 import type { CodexNativeAccountMetadata } from "./codex-native-account-metadata.js";
 import { projectHermesNativeRouteObservation } from "./hermes-native-route-observation.js";
@@ -173,39 +178,7 @@ function projectAccessSources(
       eligibleModelIds: fundedModelIds
         ? [...new Set(fundedModelIds)]
         : [...source.eligibleModelIds],
-      usage: matrix && fundingSummary ? {
-        kind: "managed_credit" as const,
-        authority: "matrix_ledger" as const,
-        state: fundingState(fundingSummary.asOf, now),
-        scope: "owner_entitlement" as const,
-        currency: "USD",
-        usedMicrousd: fundingSummary.settledThisMonthMicrousd,
-        remainingMicrousd: Math.min(
-          fundingSummary.remainingBalanceMicrousd,
-          fundingSummary.remainingBudgetMicrousd,
-        ),
-        limitMicrousd: fundingSummary.monthlyBudgetMicrousd,
-        periodStartedAt: fundingSummary.periodStart,
-        resetsAt: nextUtcMonth(fundingSummary.periodStart),
-        asOf: fundingSummary.asOf,
-        ...(chatAvailability ? { chatAvailability } : {}),
-        credit: {
-          promotionalBalanceMicrousd: fundingSummary.promotionalBalanceMicrousd,
-          addonBalanceMicrousd: fundingSummary.addonBalanceMicrousd,
-          creditBalanceMicrousd: fundingSummary.creditBalanceMicrousd,
-          reservedMicrousd: fundingSummary.reservedMicrousd,
-          ...(fundingSummary.fundingShortfallMicrousd === undefined
-            ? {}
-            : { fundingShortfallMicrousd: fundingSummary.fundingShortfallMicrousd }),
-          remainingBalanceMicrousd: fundingSummary.remainingBalanceMicrousd,
-        },
-        budget: {
-          monthlyBudgetMicrousd: fundingSummary.monthlyBudgetMicrousd,
-          settledThisMonthMicrousd: fundingSummary.settledThisMonthMicrousd,
-          reservedThisMonthMicrousd: fundingSummary.reservedThisMonthMicrousd,
-          remainingBudgetMicrousd: fundingSummary.remainingBudgetMicrousd,
-        },
-      } : {
+      usage: matrix && fundingSummary ? projectManagedCreditUsage(fundingSummary, chatAvailability, now) : {
         kind: "unavailable" as const,
         authority: "unavailable" as const,
         state: "unavailable" as const,
@@ -217,16 +190,6 @@ function projectAccessSources(
     };
   });
   return { sources, sourceByAccount };
-}
-
-function nextUtcMonth(periodStart: string): string {
-  const start = new Date(periodStart);
-  return new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1)).toISOString();
-}
-
-function fundingState(asOf: string, now: Date): "current" | "stale" {
-  const age = now.getTime() - Date.parse(asOf);
-  return Number.isFinite(age) && age >= -60_000 && age <= 5 * 60_000 ? "current" : "stale";
 }
 
 function fallbackRouteLabel(reference: string, fallback: string): string {
@@ -295,13 +258,7 @@ async function projectAccounts(input: {
     const accessSourceId = input.sourceByAccount.get(account.id);
     const stored = input.config.accountProfiles.find((profile) => profile.id === account.id);
     if (!accessSourceId || !input.sourceIds.has(accessSourceId) || (account.authMethod === null && !stored)) return null;
-    const selectedHarnesses = input.config.harnesses.filter((harness) => harness.selectedAccountId === account.id);
-    const dependencies = input.dependencies
-      ? await input.dependencies.getAccountDependencies({
-          accountId: account.id,
-          harnessInstanceIds: selectedHarnesses.map((harness) => harness.id),
-        })
-      : { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: selectedHarnesses.length };
+    const dependencies = await readLifecycleAccountDependencies({ accountId: account.id, config: input.config, reader: input.dependencies });
     return {
       id: account.id,
       providerId: account.vendor,
@@ -320,6 +277,7 @@ async function projectAccounts(input: {
 
 function projectHarness(input: {
   nativeAuthenticatedAccountId?: string;
+  claudeAuthenticatedAccountId?: string;
   stored: HarnessConfiguration;
   canonical: AiProviderSnapshotV3;
   modelProviders: ProviderSettingsSnapshot["modelProviders"];
@@ -387,6 +345,31 @@ function projectHarness(input: {
     && routeSourceEligible && source?.id === "owner_openai_profile" && source.kind === "provider_account"
     && source.accountId === input.nativeAuthenticatedAccountId
     && input.stored.selectedAccountId === input.nativeAuthenticatedAccountId;
+  const claudeCredentialAuthenticated = input.claudeAuthenticatedAccountId !== undefined
+    && input.stored.harness === "claude" && driverId === "claude_code" && driver?.installState === "installed"
+    && routeSourceEligible && source?.id === "owner_claude_profile" && source.kind === "provider_account"
+    && source.accountId === input.claudeAuthenticatedAccountId
+    && input.stored.selectedAccountId === input.claudeAuthenticatedAccountId;
+  // The owner's explicitly selected, saved Anthropic key is a connection for
+  // fixed Claude, under the same strict binding Chat uses to launch with it.
+  const claudeKeyAuthenticated = input.stored.harness === "claude" && driverId === "claude_code"
+    && driver?.installState === "installed" && routeSourceEligible
+    && source?.id === "owner_anthropic_key" && source.kind === "provider_account" && source.fundingKind === "owner_api_key"
+    && source.accountId !== null && input.stored.selectedAccountId === source.accountId
+    && ["ready", "unknown", "stale"].includes(source.readiness.state)
+    && input.accounts.some(account => account.id === source.accountId && account.providerId === "anthropic"
+      && account.authMethod === "api_key" && account.accessSourceId === source.id);
+  const codexNativeAccount = source?.kind === "provider_account" && source.accountId
+    ? input.accounts.find((account) => account.id === source.accountId)
+    : undefined;
+  const codexNativeOwnerRoute = input.stored.harness === "codex" && driverId === "codex"
+    && source?.id === "owner_openai_profile" && source.kind === "provider_account"
+    && source.fundingKind === "owner_account" && codexNativeAccount?.authMethod === "terminal";
+  // A discovered terminal login is not execution authority. Keep the route
+  // closed until the projected native identity matches the saved account and
+  // its explicit consent is current.
+  const codexNativeOwnerRouteRunnable = !codexNativeOwnerRoute
+    || (nativeCredentialAuthenticated && source.readiness.state === "ready");
   const visibleMethods = input.loginMethods === undefined
     ? defaultLoginMethods(input.stored.harness)
     : input.loginMethods(input.stored);
@@ -396,6 +379,7 @@ function projectHarness(input: {
     displayName: input.stored.displayName,
     accentColor: input.stored.accentColor,
     enabled: Boolean(executionRouteAvailable
+      && codexNativeOwnerRouteRunnable
       && input.stored.enabled && driver?.installState === "installed"),
     configuredEnabled: generatedNative ? true : input.stored.enabled,
     configuredAccessSourceId: input.stored.accessSourceId,
@@ -403,7 +387,7 @@ function projectHarness(input: {
     version: null,
     installState: driver?.installState ?? "missing",
     ...projectHermesNativeRouteObservation({ driver, stored: input.stored, source, accounts: input.accounts, now: input.now }),
-    authState: nativeCredentialAuthenticated ? "authenticated"
+    authState: nativeCredentialAuthenticated || claudeCredentialAuthenticated || claudeKeyAuthenticated ? "authenticated"
       : projectMissingCredentialAuth({ canonical: input.canonical, stored: input.stored, source, driver, now: input.now }) ?? authState(readiness),
     loginMethods: [...visibleMethods],
     recommendedLoginMethod: visibleMethods[0] ?? null,
@@ -420,6 +404,7 @@ function projectHarness(input: {
 }
 
 export async function projectProviderSettings(input: {
+  claudeNativeAccountMetadata?: ClaudeNativeAccountMetadata | null;
   codexNativeAccountMetadata?: CodexNativeAccountMetadata | null;
   hermesNativeAccountMetadata?: CodexNativeAccountMetadata | null;
   canonical: AiProviderSnapshotV3;
@@ -469,6 +454,7 @@ export async function projectProviderSettings(input: {
     sourceIds: new Set(sources.map((source) => source.id)),
     dependencies: input.dependencies,
   });
+  const claudeAuthenticatedAccountId = projectClaudeNativeAccount({ canonical: input.canonical, accounts, sources, metadata: input.claudeNativeAccountMetadata, now: input.now });
   const metadata = input.codexNativeAccountMetadata;
   const nativeSource = sources.find(source => source.id === "owner_openai_profile");
   const nativeAccount = accounts.find(account => account.accessSourceId === "owner_openai_profile");
@@ -493,10 +479,22 @@ export async function projectProviderSettings(input: {
       delete nativeAccount.connectionDetails;
     } else if (metadata.connectionDetails) nativeAccount.connectionDetails = metadata.connectionDetails;
     if (metadata.authMethod === "terminal") {
+      nativeAccount.authMethod = "terminal";
       nativeAccount.authState = "authenticated";
       nativeAccount.lastCheckedAt = metadata.checkedAt;
     }
     if (metadata.authMethod === "terminal" && metadata.usage) nativeSource.usage = metadata.usage;
+  }
+  if (nativeAuthenticatedAccountId && nativeSource?.kind === "provider_account" && nativeSource.fundingKind === "owner_account") {
+    const saved = input.config.harnesses.find(row => row.harness === "codex" && row.accessSourceId === nativeSource.id);
+    const fingerprint = metadataFresh && metadata?.authMethod === "terminal" ? nativeAccountPrincipalFingerprint(metadata) : null;
+    const missingConsent = !saved?.nativeAccountGeneration || saved.nativeAccountConsentRevision === undefined;
+    const changedPrincipal = fingerprint !== null && saved?.nativeAccountGeneration !== fingerprint;
+    if (missingConsent || changedPrincipal) {
+      nativeSource.readiness = { state: "auth_required", action: "connect", safeReason: "auth", checkedAt: metadata?.checkedAt ?? null, staleAfter: metadata?.staleAfter ?? null };
+    } else if (fingerprint !== null && nativeAuthenticatedAccountId) {
+      nativeSource.readiness = { state: "ready", action: "none", safeReason: null, checkedAt: metadata!.checkedAt, staleAfter: metadata!.staleAfter };
+    }
   }
   const hermesMetadata = input.hermesNativeAccountMetadata;
   const hermesSource = sources.find(source => source.kind === "harness_profile" && source.harness === "hermes" && source.providerId === "openai-codex");
@@ -569,6 +567,7 @@ export async function projectProviderSettings(input: {
   const harnesses = input.config.harnesses.flatMap((stored) => {
     const harness = projectHarness({
       nativeAuthenticatedAccountId,
+      claudeAuthenticatedAccountId,
       stored,
       canonical: input.canonical,
       modelProviders,
@@ -583,6 +582,7 @@ export async function projectProviderSettings(input: {
   });
   return ProviderSettingsSnapshotSchema.parse({
     contractVersion: 1,
+    ...(input.canonical.matrixAnthropicConnection ? { matrixAnthropicConnection: input.canonical.matrixAnthropicConnection } : {}),
     projectionOf: {
       contract: "AiProviderSnapshotV3",
       contractVersion: 3,

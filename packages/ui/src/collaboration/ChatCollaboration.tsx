@@ -24,6 +24,7 @@ import { SessionAccessControl } from "./SessionAccessControl.js";
 import { SessionDiscussionLayer, type CollaborationOverlayLayers } from "./SessionDiscussionLayer.js";
 import { useSessionDiscussion } from "./useSessionDiscussion.js";
 import { notifyCollaborationDiscoveryChanged } from "./discovery-events.js";
+import { isAcceptedProjectOwnedByRail } from "./discovery-visibility.js";
 
 type DiscoveryItem = z.infer<typeof CollaborationDiscoveryItemSchema>;
 type SharedMessage = z.infer<typeof CollaborationSharedChatMessageSchema>;
@@ -103,7 +104,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
   const [organizationPending, setOrganizationPending] = useState<string | null>(null);
   const [organizationError, setOrganizationError] = useState<string | null>(null);
   const visibleItems = useMemo(() => hideAcceptedProjects
-    ? items.filter((item) => item.kind !== "project" || item.status !== "accepted")
+    ? items.filter((item) => !isAcceptedProjectOwnedByRail(item))
     : items, [hideAcceptedProjects, items]);
   useEffect(() => {
     let active = true;
@@ -230,7 +231,7 @@ function CollaborationHome({ api, openInvitation, openChat, openTerminal, openPr
       {visibleItems.map((item) => item.status === "organization_pending"
         ? <article key={`org:${item.scopeId}`} className="flex flex-wrap items-center gap-4 rounded-2xl border p-4">
           <div className="min-w-0 flex-1">
-            <p className="font-medium">Shared with your organization</p>
+            <p className="font-medium">Shared with you</p>
             <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Shared {kindLabel(item.kind)} · opens when you join</p>
             {organizationError === item.scopeId ? <p role="alert" className="mt-1 text-sm">Share could not be opened. Try again.</p> : null}
           </div>

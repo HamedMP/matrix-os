@@ -1,6 +1,10 @@
+import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 import { z } from "zod/v4";
+import { MANAGED_WORKERS_AI_MODEL_IDS } from "#funded-ai";
 import { canonicalEncodedByteLength } from "#canonical-chat-primitives";
 import { BOT_IMAGE_MAX_BASE64_CHARS, BotToolCapabilitySchema, BotToolErrorCodeSchema } from "#bots/broker";
+import { BotIdSchema } from "#bots/ids";
+import { BotRecipeRefSchema } from "#bots/bot";
 import { BotBlockedReasonSchema } from "#bots/tasks";
 
 /** Model route resolved by the gateway from Provider V3; the worker never chooses one. */
@@ -19,8 +23,58 @@ export const BotImageInputSchema = z.object({
   data: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/).max(BOT_IMAGE_MAX_BASE64_CHARS),
 }).strict();
 
+const CanonicalIsolatedBotTargetSchema = z.object({
+  kind: z.literal("canonical_bot"), botId: BotIdSchema, recipeRef: BotRecipeRefSchema,
+}).strict();
+
+/** Server composition only; never a Chat selection option or owner profile. */
+export const IsolatedChatEnvelopeSchema = z.object({
+  target: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("managed_chat") }).strict(), CanonicalIsolatedBotTargetSchema,
+  ]).optional(),
+  phaseId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/),
+  ownerId: z.string().min(1).max(160), machineId: z.string().min(1).max(160),
+  runtimeSlot: MatrixComputerRuntimeSlotSchema,
+  runtimeTokenEpoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  runtimeCredentialSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  chatId: z.string().regex(/^chat_[A-Za-z0-9_-]{1,128}$/),
+  modelId: z.enum([...MANAGED_WORKERS_AI_MODEL_IDS, "anthropic/claude-sonnet-5"]),
+  sourceSha: z.string().regex(/^[a-f0-9]{40}$/),
+  startsAt: z.iso.datetime(), expiresAt: z.iso.datetime(),
+}).strict().refine(value => Date.parse(value.expiresAt) > Date.parse(value.startsAt)
+  && Date.parse(value.expiresAt) - Date.parse(value.startsAt) <= 60 * 60_000,
+{ message: "Invalid isolated phase lifetime" });
+/** Only server composition calls this; partial configuration never enables a fallback. */
+export function parseIsolatedChatEnvelope(raw: string | undefined): IsolatedChatEnvelope | undefined {
+  if (raw === undefined) return undefined;
+  try {
+    if (raw.length > 4096) throw new Error("Too large");
+    return IsolatedChatEnvelopeSchema.parse(JSON.parse(raw));
+  } catch (error: unknown) {
+    console.warn("[isolated-chat] Invalid server configuration:", error instanceof Error ? error.name : "UnknownError");
+    throw new Error("Isolated Chat server configuration is invalid");
+  }
+}
+export type IsolatedChatEnvelope = z.infer<typeof IsolatedChatEnvelopeSchema>;
+export function isolatedChatModelMatches(expected: IsolatedChatEnvelope["modelId"], candidate: string): boolean {
+  return expected === candidate || (expected === "anthropic/claude-sonnet-5" && candidate === "claude-sonnet-5");
+}
+
+/** Worker instruction only. Gateway retains the authoritative phase/run fence. */
+export const IsolatedBotTurnSchema = z.object({
+  phaseId: IsolatedChatEnvelopeSchema.shape.phaseId,
+  maxInputBytes: z.literal(131072),
+  target: CanonicalIsolatedBotTargetSchema.extend({
+    chatId: IsolatedChatEnvelopeSchema.shape.chatId,
+    taskId: z.string().regex(/^task_[A-Za-z0-9_-]{1,128}$/),
+    runId: z.string().regex(/^run_[A-Za-z0-9_-]{1,128}$/),
+  }).strict().optional(),
+}).strict();
+
 export const BotRunLimitsSchema = z.object({
   maxToolActions: z.number().int().min(1).max(60),
+  /** Gateway-owned downward ceiling; includes generation and compaction calls. */
+  maxInferenceCalls: z.number().int().min(1).max(63).optional(),
 }).strict();
 
 const RunIdSchema = z.string().regex(/^run_[A-Za-z0-9_-]{1,128}$/);
@@ -39,6 +93,7 @@ export const BotRunSpecSchema = z.object({
   systemPrompt: SystemPromptSchema,
   capabilities: CapabilitiesSchema,
   limits: BotRunLimitsSchema,
+  isolatedTurn: IsolatedBotTurnSchema.optional(),
   turn: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("prompt"), text: PromptTextSchema, imageCount: z.number().int().min(0).max(4).optional() }).strict(),
     z.object({ kind: z.literal("continue") }).strict(),
@@ -54,6 +109,7 @@ export const BotWorkerCommandSchema = z.discriminatedUnion("kind", [
     systemPrompt: SystemPromptSchema,
     capabilities: CapabilitiesSchema,
     limits: BotRunLimitsSchema,
+  isolatedTurn: IsolatedBotTurnSchema.optional(),
     turn: z.discriminatedUnion("kind", [
       z.object({
         kind: z.literal("prompt"),

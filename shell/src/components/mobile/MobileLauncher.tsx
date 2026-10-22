@@ -58,6 +58,9 @@ export function MobileLauncher({ apps, onOpen, onOpenSettings, openStackCount, o
           onCloseAll={onCloseAll}
         />
       </div>
+      <p className="px-5 pb-3 text-xs text-muted-foreground">
+        Open the apps in your Matrix workspace.
+      </p>
       <motion.div
         className="flex-1 overflow-y-auto"
         variants={staggerContainer()}
@@ -86,7 +89,7 @@ export function MobileLauncher({ apps, onOpen, onOpenSettings, openStackCount, o
             {...tapScale}
             style={LAUNCHER_APP_BUTTON_STYLE}
           >
-            <MobileAppIcon slug={app.iconSlug} size={56} />
+            <MobileAppIcon slug={app.iconSlug} iconUrl={app.iconUrl} size={56} />
             <span style={LAUNCHER_APP_LABEL_STYLE}>{app.name}</span>
           </motion.button>
         ))}
@@ -94,4 +97,3 @@ export function MobileLauncher({ apps, onOpen, onOpenSettings, openStackCount, o
     </div>
   );
 }
-

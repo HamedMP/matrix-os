@@ -9,6 +9,7 @@ import { EDITOR_WORKSPACE_TAB_SPEC } from "../editor/desktop-editor-store";
 import { openChatIndex, openTerminalIndex } from "../mission-control/navigation-roots";
 import DesktopIconGrid, { type DesktopDestination } from "./DesktopIconGrid";
 import { FIXED_DESKTOP_APPS, type DesktopAppId } from "./desktop-apps";
+import { bundledDesktopIconForPath, desktopTabsWithLiveAppArtwork } from "./bundled-app-icons";
 import DesktopSurfaceFrame from "./DesktopSurfaceFrame";
 import DesktopTaskbar from "./DesktopTaskbar";
 import { NATIVE_DESKTOP_LAYOUT } from "../../design/layering";
@@ -25,6 +26,7 @@ import { useDesktopIcons } from "../../stores/desktop-icons";
 import {
   createDefaultOsViewDesktopIcons,
   fitOsViewDesktopIconsToViewport,
+  osViewUsesBundledArtworkForLegacyIcon,
   type OsViewDesktopBounds,
 } from "@matrix-os/contracts";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
@@ -38,6 +40,8 @@ import {
 import { useNativeChatStartup, useNativeStartupNavigation } from "./use-native-chat-startup";
 import { useNativeOsViewPersistence } from "./use-native-os-view-persistence";
 import { analyticsKindForTab, FIXED_APP_ANALYTICS_KINDS } from "./desktop-app-analytics";
+import { reconcileNativeProductSurfaces } from "./browser-product-surfaces";
+import { nativeBrowserProduct } from "../../../../shared/browser-products";
 
 function currentViewport(): DesktopViewport {
   if (typeof window === "undefined") return { width: 1280, height: 720 };
@@ -60,7 +64,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const focusTab = useTabs((state) => state.focusTab);
   const closeTab = useTabs((state) => state.closeTab);
   const surfaces = useDesktopSurfaces((state) => state.surfaces);
-  const reconcileTabs = useDesktopSurfaces((state) => state.reconcileTabs);
+  const reconcileTabs = reconcileNativeProductSurfaces;
   const activateSurface = useDesktopSurfaces((state) => state.activateSurface);
   const minimizeSurface = useDesktopSurfaces((state) => state.minimizeSurface);
   const maximizeToTab = useDesktopSurfaces((state) => state.maximizeToTab);
@@ -86,6 +90,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   const platformHost = useConnection((state) => state.platformHost);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const { data: installedApps = [], refetch: refetchInstalledApps, isPending: appsLoading } = useAppsQuery();
+  const displayTabs = useMemo(
+    () => desktopTabsWithLiveAppArtwork(tabs, installedApps, platformHost, runtimeSlot),
+    [tabs, installedApps, platformHost, runtimeSlot],
+  );
   const desktopIcons = useDesktopIcons((state) => state.icons);
   const primeDesktopIcons = useDesktopIcons((state) => state.prime);
   const moveDesktopIcon = useDesktopIcons((state) => state.move);
@@ -251,6 +259,13 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   }, [closeTab, tabs]);
 
   const destinations = useMemo<DesktopDestination[]>(() => {
+    const fixedApps = FIXED_DESKTOP_APPS.map((app) => {
+      if (app.id !== "notes" && app.id !== "whiteboard") return app;
+      const installed = installedApps.find((candidate) => candidate.path === app.path);
+      return installed?.iconUrl && !osViewUsesBundledArtworkForLegacyIcon({ path: app.path, iconUrl: installed.iconUrl })
+        ? { ...app, iconUrl: appIconUrl(platformHost, installed, runtimeSlot) ?? app.iconUrl }
+        : app;
+    });
     const openers: Record<DesktopAppId, () => void> = {
       work: () => openRoot(openChatIndex),
       terminal: () => openRoot(openTerminalIndex),
@@ -268,13 +283,14 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       }),
       plugins: () => openRoot(() => {
         useUi.getState().requestSettingsSection("services");
-        openTab({ kind: "settings", title: "Plugins" });
+        openTab({ kind: "settings", title: "Connect Apps" });
       }),
-      browser: () => openRoot(() => openTab({ kind: "browser", title: "Browser" })),
-      notes: () => openRoot(() => openTab({ kind: "notes", title: "Notes" })),
-      whiteboard: () => openRoot(() => openTab({ kind: "app", slug: "whiteboard", title: "Whiteboard" })),
+      browser: () => openRoot(() => openTab({ kind: "app", slug: "browser-lab", appIdentity: "matrix-browser", title: "Browser", icon: fixedApps.find(app => app.id === "browser")?.iconUrl })),
+      "cloud-desktop": () => openRoot(() => openTab({ kind: "app", slug: "browser-lab", appIdentity: "matrix-cloud-desktop", title: "Cloud desktop", icon: fixedApps.find(app => app.id === "cloud-desktop")?.iconUrl })),
+      notes: () => openRoot(() => openTab({ kind: "notes", title: "Notes", icon: fixedApps.find((app) => app.id === "notes")?.iconUrl })),
+      whiteboard: () => openRoot(() => openTab({ kind: "app", slug: "whiteboard", title: "Whiteboard", icon: fixedApps.find((app) => app.id === "whiteboard")?.iconUrl })),
     };
-    const fixed = FIXED_DESKTOP_APPS.map((app) => ({
+    const fixed = fixedApps.map((app) => ({
       ...app,
       open: () => {
         trackDesktopEvent({ name: "desktop_app_opened", appKind: FIXED_APP_ANALYTICS_KINDS[app.id] });
@@ -294,7 +310,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
         color: "var(--bg-surface)",
         open: () => {
           trackDesktopEvent({ name: "desktop_app_opened", appKind: "installed_app" });
-          openRoot(() => openTab({ kind: "app", slug: app.slug, title: app.name, ...(app.appIdentity ? { appIdentity: app.appIdentity } : {}) }));
+          openRoot(() => openTab({ kind: "app", slug: app.slug, title: app.name, icon: appIconUrl(platformHost, app, runtimeSlot) ?? undefined, ...(app.appIdentity ? { appIdentity: app.appIdentity } : {}) }));
         },
       }];
     });
@@ -352,7 +368,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     const minimizedTab = useTabs.getState().tabs.find((tab) => tab.id === tabId);
     minimizeSurface(tabId);
     if (useTabs.getState().activeTabId === tabId) focusFallback(tabId);
-    if (minimizedTab?.kind === "home" || minimizedTab?.kind === "browser") {
+    if (minimizedTab?.kind === "home" || minimizedTab?.kind === "browser" || nativeBrowserProduct(minimizedTab?.appIdentity ?? "", minimizedTab?.slug ?? "")) {
       requestBackgroundRefresh();
     }
     trackDesktopEvent({ name: "desktop_app_minimized", appKind: analyticsKindForTab(minimizedTab) });
@@ -364,7 +380,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     if (tab.closable) closeTab(tab.id);
     else closeSurface(tab.id);
     if (wasActive) focusFallback(tab.id);
-    if (tab.kind === "home" || tab.kind === "browser") requestBackgroundRefresh();
+    if (tab.kind === "home" || tab.kind === "browser" || nativeBrowserProduct(tab.appIdentity ?? "", tab.slug ?? "")) requestBackgroundRefresh();
     trackDesktopEvent({ name: "desktop_app_closed", appKind: analyticsKindForTab(tab) });
     scheduleDurablePersist();
   }, [closeSurface, closeTab, focusFallback, requestBackgroundRefresh, scheduleDurablePersist]);
@@ -391,7 +407,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       <DesktopBackground />
       <DesktopAppDrawer
         open={drawerOpen}
-        tabs={tabs}
+        tabs={displayTabs}
         surfaces={surfaces}
         onClose={() => setDrawerOpen(false)}
         onActivate={activateFromDrawer}
@@ -405,7 +421,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       <DesktopBackgroundMenu>
         <DesktopWorkspacePlane mode={desktopMode} onBackgroundClick={showDesktopWithRefresh}>
           {desktopMode === "canvas" ? <DesktopIconGrid destinations={destinations} placements={effectiveDesktopIcons} onMove={moveIcon} onRemove={removeIcon} /> : null}
-          {tabs.map((tab) => {
+          {displayTabs.map((tab) => {
           const surface = surfaces[tab.id];
           if (!surface) return null;
           return (
@@ -454,7 +470,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       ) : null}
       {!tabWorkspaceActive ? (
         <DesktopTaskbar
-          tabs={tabs}
+          tabs={displayTabs}
           surfaces={surfaces}
           activeTabId={activeTabId}
           onOpenApps={toggleApps}

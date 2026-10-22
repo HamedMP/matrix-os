@@ -1,3 +1,4 @@
+import { MANAGED_INTEGRATIONS, managedToolWriteRequirements } from "@matrix-os/contracts/managed-integrations";
 import { randomUUID } from "node:crypto";
 import type { PlatformDb } from "../../platform-db.js";
 import {
@@ -6,7 +7,9 @@ import {
 } from "./crypto.js";
 import { MAX_CUSTOM_MCP_TOOLS, RemoteMcpClient } from "./client.js";
 import { customMcpArgumentsDigest } from "./approval-digest.js";
+import type { McpProgressListener } from "./tool-progress.js";
 import { validateCustomMcpUrl } from "./security.js";
+import { hasManagedSettingsClaim } from "./managed-settings-claim.js";
 import type {
   CustomMcpApproval,
   CustomMcpAuthMode,
@@ -17,6 +20,7 @@ import type {
 } from "./types.js";
 
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
+const REFRESH_LEASE_MS = 30_000;
 
 export interface CustomMcpCredential {
   authorization?: string;
@@ -33,8 +37,20 @@ export interface CustomMcpCredential {
     revocationEndpoint?: string;
     clientId?: string;
     clientIssuer?: string;
+    /** Retained only in the owner/server encrypted credential envelope. */
+    clientSecret?: string;
+    clientSecretExpiresAt?: number;
+    tokenEndpointAuthMethod?: "none" | "client_secret_basic" | "client_secret_post";
     redirectUri?: string;
     scopes?: string[];
+    grantedScopes?: string[];
+    /** Fresh owner consent for curated managed writes; absent legacy grants stay read-only. */
+    managedWriteAccess?: boolean;
+    /** Credential refresh lease; does not change the projection policy revision. */
+    refreshing?: boolean;
+    refreshStartedAt?: string;
+    /** Removal owns this grant until revocation and deletion succeed. */
+    removing?: boolean;
   };
 }
 
@@ -64,12 +80,26 @@ export interface PatchCustomMcpInput {
 
 export class CustomMcpBrokerError extends Error {
   constructor(
-    readonly code: "not_found" | "conflict" | "invalid" | "forbidden" | "upstream" | "action_required",
+    readonly code: "not_found" | "conflict" | "invalid" | "forbidden" | "upstream" | "action_required" | "oauth_client_setup_required",
     message = "Custom MCP operation failed",
   ) {
     super(message);
     this.name = "CustomMcpBrokerError";
   }
+}
+
+/** Shared lease semantics for OAuth authorization and connection removal. */
+export function isCustomMcpRefreshClaimActive(oauth: CustomMcpCredential["oauth"], now: Date): boolean {
+  if (!oauth?.refreshing) return false;
+  const startedAt = typeof oauth.refreshStartedAt === "string" ? Date.parse(oauth.refreshStartedAt) : NaN;
+  return Number.isFinite(startedAt) && startedAt <= now.getTime() && now.getTime() - startedAt < REFRESH_LEASE_MS;
+}
+
+/** Contention is transient; no caller may retry the rotating token itself. */
+export class CustomMcpRefreshPendingError extends CustomMcpBrokerError {
+  readonly refreshPending = true;
+  readonly retryAfterMs = 1_000;
+  constructor() { super("upstream"); this.name = "CustomMcpRefreshPendingError"; }
 }
 
 function toProjection(server: CustomMcpServer): CustomMcpServerProjection {
@@ -112,6 +142,8 @@ export class CustomMcpBroker {
     now?: () => Date;
     validateUrl?: typeof validateCustomMcpUrl;
     revokeOAuth?: (credential: CustomMcpCredential) => Promise<void>;
+    /** Provider-specific REST presets must revoke their own grant before deletion. */
+    removeManagedPreset?: (userId: string, row: NonNullable<Awaited<ReturnType<PlatformDb["getCustomMcpServerForBroker"]>>>, runtimeDestroyed: boolean) => Promise<boolean>;
     resolveOAuthAuthorization?: (
       userId: string,
       row: NonNullable<Awaited<ReturnType<PlatformDb["getCustomMcpServerForBroker"]>>>,
@@ -136,6 +168,27 @@ export class CustomMcpBroker {
     return this.options.db.getCustomMcpPresetForBroker(presetId, userId);
   }
 
+  async getPresetWriteAuthorization(userId: string, presetId: string): Promise<{ enabled: boolean; scopes: string[] }> {
+    const denied = { enabled: false, scopes: [] };
+    const row = await this.options.db.getCustomMcpPresetForBroker(presetId, userId);
+    return row ? this.presetWriteAuthorization(userId, row, presetId) : denied;
+  }
+
+  private presetWriteAuthorization(userId: string, row: NonNullable<Awaited<ReturnType<PlatformDb["getCustomMcpServerForBroker"]>>>, presetId: string): { enabled: boolean; scopes: string[] } {
+    const denied = { enabled: false, scopes: [] };
+    if (row.user_id !== userId || row.preset_id !== presetId || !row.enabled || row.status !== "ready" || !row.encrypted_credentials) return denied;
+    try {
+      const { oauth } = decryptCustomMcpCredential<CustomMcpCredential>(row.encrypted_credentials, this.options.encryptionKey, { userId, serverId: row.id });
+      if (!oauth || oauth.state || oauth.removing || oauth.refreshing || !oauth.accessToken
+        || !Array.isArray(oauth.grantedScopes) || oauth.grantedScopes.length > 100
+        || !oauth.grantedScopes.every(scope => typeof scope === "string" && scope.length > 0 && scope.length <= 256 && !/[\s\x00-\x1f\x7f]/.test(scope))) return denied;
+      return { enabled: oauth.managedWriteAccess === true, scopes: [...oauth.grantedScopes] };
+    } catch (error: unknown) {
+      console.warn("[custom-mcp] managed write grant unreadable", { errorName: error instanceof Error ? error.name : "UnknownError" });
+      return denied;
+    }
+  }
+
   async ensurePreset(input: {
     userId: string;
     presetId: string;
@@ -143,7 +196,18 @@ export class CustomMcpBroker {
     url: string;
   }): Promise<NonNullable<Awaited<ReturnType<PlatformDb["getCustomMcpServerForBroker"]>>>> {
     const existing = await this.options.db.getCustomMcpPresetForBroker(input.presetId, input.userId);
-    if (existing) return existing;
+    if (existing) {
+      const preset = Object.hasOwn(MANAGED_INTEGRATIONS, input.presetId) ? MANAGED_INTEGRATIONS[input.presetId] : undefined;
+      if (!preset || input.url !== preset.url || existing.url === preset.url) return existing;
+      if (hasManagedSettingsClaim(existing, this.options.encryptionKey)) throw new CustomMcpBrokerError("action_required");
+      await this.validateRemoteUrl(preset.url);
+      const updated = await this.options.db.updateCustomMcpServer(existing.id, input.userId, existing.revision, {
+        url: preset.url, enabled: false, status: "auth_required",
+      });
+      if (!updated) throw new CustomMcpBrokerError("conflict");
+      await this.projectOrMarkActionRequired(input.userId, updated);
+      return this.requirePrivate(input.userId, existing.id);
+    }
     await this.validateRemoteUrl(input.url);
     const id = randomUUID();
     const now = this.options.now?.() ?? new Date();
@@ -156,6 +220,8 @@ export class CustomMcpBroker {
       authMode: "oauth",
       pendingExpiresAt: new Date(now.getTime() + PENDING_TTL_MS),
     });
+    // A concurrent request may have created the owner-scoped singleton.
+    if (pending.id !== id) return this.requirePrivate(input.userId, pending.id);
     await this.options.projection.upsert(input.userId, toProjection(pending));
     const activated = await this.options.db.updateCustomMcpServer(id, input.userId, pending.revision, {
       status: "auth_required",
@@ -171,9 +237,12 @@ export class CustomMcpBroker {
     presetId: string;
     allowedTools: readonly string[];
     requiredTools?: readonly string[];
+    expectedRevision?: number;
   }): Promise<NonNullable<Awaited<ReturnType<PlatformDb["getCustomMcpServerForBroker"]>>>> {
     let row = await this.options.db.getCustomMcpPresetForBroker(input.presetId, input.userId);
     if (!row) throw new CustomMcpBrokerError("not_found");
+    if (input.expectedRevision !== undefined && row.revision !== input.expectedRevision) throw new CustomMcpBrokerError("conflict");
+    if (hasManagedSettingsClaim(row, this.options.encryptionKey)) throw new CustomMcpBrokerError("action_required");
     if (row.status === "ready" && row.enabled) return row;
     if (row.status === "auth_required") return row;
     const discovered = await this.client.discover({
@@ -255,6 +324,7 @@ export class CustomMcpBroker {
 
   async discover(userId: string, serverId: string): Promise<CustomMcpServer> {
     const row = await this.requirePrivate(userId, serverId);
+    if (hasManagedSettingsClaim(row, this.options.encryptionKey)) throw new CustomMcpBrokerError("action_required");
     if (row.tools.length > MAX_CUSTOM_MCP_TOOLS) throw new CustomMcpBrokerError("invalid");
     const discovered = await this.client.discover({
       serverId,
@@ -287,6 +357,18 @@ export class CustomMcpBroker {
   async patch(userId: string, serverId: string, input: PatchCustomMcpInput): Promise<CustomMcpServer> {
     const row = await this.requirePrivate(userId, serverId);
     if (row.revision !== input.revision) throw new CustomMcpBrokerError("conflict");
+    if (hasManagedSettingsClaim(row, this.options.encryptionKey)) throw new CustomMcpBrokerError("action_required");
+    if (row.preset_id === "bokio") {
+      // Bokio is a fixed REST integration, not an MCP server. Its OAuth state
+      // owns readiness; the false MCP-enabled flag deliberately exposes no tools.
+      if (input.enabled !== undefined || input.tools !== undefined) throw new CustomMcpBrokerError("invalid");
+      const renamed = await this.options.db.updateCustomMcpServer(serverId, userId, input.revision, {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+      });
+      if (!renamed) throw new CustomMcpBrokerError("conflict");
+      // Native REST reads use the platform row directly, never an MCP projection.
+      return renamed;
+    }
     if (row.tools.length > MAX_CUSTOM_MCP_TOOLS || (input.tools?.length ?? 0) > MAX_CUSTOM_MCP_TOOLS) {
       throw new CustomMcpBrokerError("invalid");
     }
@@ -332,6 +414,8 @@ export class CustomMcpBroker {
   }
 
   async callTool(input: {
+    onProgress?: McpProgressListener;
+    signal?: AbortSignal;
     userId: string;
     serverId: string;
     toolName: string;
@@ -342,9 +426,32 @@ export class CustomMcpBroker {
     actorId?: string;
     runId?: string;
   }): Promise<unknown> {
+    return this.executeTool(input);
+  }
+
+  private async executeTool(input: {
+    onProgress?: McpProgressListener; signal?: AbortSignal;
+    userId: string; serverId: string; toolName: string;
+    arguments?: Record<string, unknown>; localProjection: CustomMcpServerProjection | null;
+    approvalGranted?: boolean; approvalReceipt?: string; actorId?: string; runId?: string;
+  }, managedPresetId?: string): Promise<unknown> {
     if (input.approvalGranted === true) throw new CustomMcpBrokerError("forbidden");
     const row = await this.requirePrivate(input.userId, input.serverId);
+    // Managed meta-tools may reach write APIs. Only the reviewed action planner
+    // can invoke these rows; raw Custom MCP endpoints cannot bypass that planner.
+    if (row.preset_id ? row.preset_id !== managedPresetId : managedPresetId !== undefined) {
+      throw new CustomMcpBrokerError("forbidden");
+    }
     if (!row.enabled || row.status !== "ready") throw new CustomMcpBrokerError("forbidden");
+    const requirements = managedPresetId ? managedToolWriteRequirements(managedPresetId, input.toolName, input.arguments) : { write: false, requiredScopes: [] };
+    const enforceWriteGrant = (snapshot: typeof row) => {
+      if (!requirements.write || !managedPresetId) return;
+      const grant = this.presetWriteAuthorization(input.userId, snapshot, managedPresetId);
+      if (!grant.enabled || !requirements.requiredScopes.every(scope => grant.scopes.includes(scope))) {
+        throw new CustomMcpBrokerError("forbidden");
+      }
+    };
+    enforceWriteGrant(row);
     const tool = row.enforcement_projection.find((candidate) => candidate.name === input.toolName);
     const localTool = input.localProjection?.tools.find((candidate) => candidate.name === input.toolName);
     if (!tool?.enabled
@@ -369,16 +476,29 @@ export class CustomMcpBroker {
       });
       if (!consumed) throw new CustomMcpBrokerError("forbidden", "Tool approval is required");
     }
+    const authorization = await this.readAuthorization(input.userId, row);
+    // Authorization may rotate a token and await remote I/O. Owner policy is
+    // authoritative again at dispatch, independently of credential settlement.
+    const current = await this.requirePrivate(input.userId, row.id);
+    if (current.revision !== row.revision || !current.enabled || current.status !== "ready") {
+      throw new CustomMcpBrokerError("forbidden");
+    }
+    enforceWriteGrant(current);
+    input.signal?.throwIfAborted();
     return this.client.callTool({
       serverId: row.id,
       url: row.url,
-      authorization: await this.readAuthorization(input.userId, row),
+      authorization,
       toolName: input.toolName,
       arguments: input.arguments,
+      ...(input.onProgress ? { onProgress: input.onProgress } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
     });
   }
 
   async callSelectedTool(input: {
+    onProgress?: McpProgressListener;
+    signal?: AbortSignal;
     userId: string;
     serverId: string;
     toolName: string;
@@ -392,6 +512,15 @@ export class CustomMcpBroker {
       ? await this.options.projection.read(input.userId, input.serverId)
       : null;
     return this.callTool({ ...input, localProjection });
+  }
+
+  async callManagedPresetTool(input: {
+    userId: string; serverId: string; presetId: string; toolName: string;
+    arguments?: Record<string, unknown>;
+  }): Promise<unknown> {
+    const localProjection = this.options.projection.read
+      ? await this.options.projection.read(input.userId, input.serverId) : null;
+    return this.executeTool({ ...input, localProjection }, input.presetId);
   }
 
   async prepareToolApproval(input: {
@@ -441,15 +570,24 @@ export class CustomMcpBroker {
 
   private async removeConnection(userId: string, serverId: string, runtimeDestroyed: boolean): Promise<void> {
     const row = await this.requirePrivate(userId, serverId);
-    const disabled = await this.options.db.updateCustomMcpServer(serverId, userId, row.revision, {
-      enabled: false,
-      status: "disabled",
-    });
-    if (!disabled) throw new CustomMcpBrokerError("conflict");
+    if (row.user_id !== userId) throw new CustomMcpBrokerError("forbidden");
+    if (row.preset_id && await this.options.removeManagedPreset?.(userId, row, runtimeDestroyed)) return;
+    const credential = this.readCredential(userId, row);
+    if (row.auth_mode === "oauth" && !credential.oauth?.removing
+      && isCustomMcpRefreshClaimActive(credential.oauth, this.options.now?.() ?? new Date())) throw new CustomMcpRefreshPendingError();
+    // Expired/crashed claims are never exchanged again here. Preserve their
+    // stored grant for revocation, and retain it for an explicit retry on failure.
+    const removalEncrypted = row.auth_mode === "oauth"
+      ? encryptCustomMcpCredential({ ...credential, oauth: { ...credential.oauth, removing: true,
+        refreshing: undefined, refreshStartedAt: undefined } }, this.options.encryptionKey, { userId, serverId })
+      : row.encrypted_credentials;
+    if (!await this.options.db.claimCustomMcpRemovalIfCurrent(serverId, userId, row.revision, row.encrypted_credentials, removalEncrypted)) {
+      throw new CustomMcpBrokerError("conflict");
+    }
+    const disabledRevision = row.revision + 1;
     try {
       if (!runtimeDestroyed) await this.options.projection.remove(userId, serverId);
       if (row.auth_mode === "oauth") {
-        const credential = this.readCredential(userId, row);
         const hasGrant = Boolean(credential.oauth?.refreshToken || credential.oauth?.accessToken);
         if (runtimeDestroyed && hasGrant && (!credential.oauth?.revocationEndpoint || !this.options.revokeOAuth)) {
           throw new CustomMcpBrokerError('action_required');
@@ -458,13 +596,13 @@ export class CustomMcpBroker {
       }
     } catch (error) {
       console.error("[custom-mcp] removal requires action:", error instanceof Error ? error.message : String(error));
-      await this.options.db.updateCustomMcpServer(serverId, userId, disabled.revision, {
+      await this.options.db.updateCustomMcpServer(serverId, userId, disabledRevision, {
         status: "action_required",
         actionRequiredReason: "credential_revocation_failed",
       });
       throw new CustomMcpBrokerError("action_required");
     }
-    if (!await this.options.db.deleteCustomMcpServer(serverId, userId)) {
+    if (!await this.options.db.deleteCustomMcpServerIfRevision(serverId, userId, disabledRevision)) {
       throw new CustomMcpBrokerError("conflict");
     }
   }
@@ -507,6 +645,7 @@ export class CustomMcpBroker {
       return this.options.resolveOAuthAuthorization(userId, row);
     }
     const credential = this.readCredential(userId, row);
+    if (credential.oauth?.removing) throw new CustomMcpBrokerError("action_required");
     if (credential.oauth?.accessToken) return `Bearer ${credential.oauth.accessToken}`;
     if (!credential.authorization) return undefined;
     if (credential.authorization.startsWith("X-API-Key ")) {

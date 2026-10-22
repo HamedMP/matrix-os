@@ -28,7 +28,7 @@ FR-013 requires a validated launch set before launch. The owner confirmed these 
 
 | Entry | Family | Why it is in the launch set |
 |---|---|---|
-| Jev Inbox Triage | Connected operations | Already ships an owner-bound, read-only Gmail capability; proves migration without widening authority |
+| Jev Inbox Triage | Connected operations | Dedicated Pi Jev tool with owner-bound Gmail read and explicit label-only grant; reuse verified evidence and batches |
 | Personal Daily Brief skill | Connected operations | Story 1 independent test; exercises Gmail plus Calendar progressive connection and account choice |
 | Competitor Watch | Research and monitoring | Spike's Research Rabbit; dated evidence from public pages |
 | Account Research Desk | Research and monitoring | Research brief from public web and pasted notes; optional connectors requested progressively |
@@ -117,7 +117,7 @@ FR-013 requires a validated launch set before launch. The owner confirmed these 
 
 | Entry | Minimum acceptance | Pi status |
 |---|---|---|
-| Jev Inbox Triage | Use the owner-bound Gmail preview capability; preserve its existing restricted authority and admission gates; no send or label mutation | Not tested |
+| Jev Inbox Triage | Use dedicated Pi Jev capability, explicit read and label-only consent, verified additive labels and full-Inbox resumable batches; no archive/send/delete/mark read | Not tested |
 | Personal Daily Brief skill | Gmail plus Calendar, conversational timezone/account selection, linked sources, explicit gaps; no implicit scheduling | Not tested |
 | Website: market-research | Produce a dated sourced comparison brief from authorized inputs | Not tested |
 | Website: weekly-report | Produce a source-linked report without inventing metrics or scheduling itself | Not tested |

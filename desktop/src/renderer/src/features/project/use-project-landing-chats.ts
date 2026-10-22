@@ -1,43 +1,83 @@
 import { useEffect, useMemo, useState } from "react";
-import { useBotConversationSummaries, mergeCanonicalChatRecord, compareCanonicalChatActivity } from "@matrix-os/ui";
+import { useBotConversationSummaries, mergeCanonicalChatRecord, mergeChatNavigationRecord, compareCanonicalChatActivity, type ChatNavigationRecord } from "@matrix-os/ui";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { CanonicalChatClient, CanonicalChatEventSource } from "../../lib/canonical-chat-client";
+import { AppError } from "../../../../shared/app-error";
 import { useUi } from "../../stores/ui";
 import type { Project } from "../../stores/board";
 import { loadWorkRailChats } from "../work/work-rail-data";
+import { useWorkNavigation } from "../work/use-work-navigation";
 
-/** Retain the same authority's loaded cards during background refreshes. */
+/** Project selection filters the shared owner/runtime snapshot without reloading it. */
 export function useProjectLandingChats(project: Project, client?: CanonicalChatClient | null, eventSource?: Pick<CanonicalChatEventSource, "subscribe">, active = true) {
+  const navigation = useWorkNavigation(client ?? null, eventSource, active);
   const refreshRequest = useUi(state => state.projectChatMoveRefreshRequest);
-  const [snapshot, setSnapshot] = useState<{client: CanonicalChatClient; records: CanonicalChatRecord[]; error: boolean} | null>(null);
+  // A bounded global window cannot establish that an older Project has no Chats.
+  // Only that case needs the existing scoped history and binding reads.
+  const scoped = Boolean(client && navigation.store && navigation.truncated);
+  const scope = navigation.store;
+  const authorityEpoch = scope?.getAuthorityEpoch() ?? 0;
+  const botAuthority = useMemo(() => ({
+    epoch: authorityEpoch,
+    client: scope && client?.agents ? { ...client.agents } : undefined,
+  }), [client, scope, authorityEpoch]);
+  const projectKey = JSON.stringify([project.id, project.slug]);
+  const [snapshot, setSnapshot] = useState<{
+    client: CanonicalChatClient;
+    scope: typeof scope;
+    authorityEpoch: number;
+    projectKey: string;
+    records: CanonicalChatRecord[];
+    error: boolean;
+  } | null>(null);
+  // Discard old authority synchronously before children can retain its cards.
+  if (snapshot && (snapshot.client !== client || snapshot.scope !== scope
+    || snapshot.authorityEpoch !== authorityEpoch || snapshot.projectKey !== projectKey)) {
+    setSnapshot(null);
+  }
   useEffect(() => {
-    if (!client || !active) return;
+    if (!client || !active || !scoped) return;
     let current = true;
+    const isCurrent = () => current && scope?.getAuthorityEpoch() === authorityEpoch;
     let pending = false;
     let again = false;
     const refresh = async () => {
+      if (!isCurrent()) return;
       if (pending) { again = true; return; }
       pending = true;
       do {
         again = false;
         try {
-          // Query the Project rather than the newest global page, retaining
-          // both persisted stable-ID and older slug associations.
-          const references = [...new Set([project.id,project.slug].filter((value): value is string => Boolean(value)))];
-          const pages = await Promise.all(references.map(reference => loadWorkRailChats(client,false,reference)));
-          const unique = new Map<string,CanonicalChatRecord>();
-          for (const record of pages.flat()) unique.set(record.chat.id,record);
-          const loaded = [...unique.values()].sort(compareCanonicalChatActivity).slice(0,1000);
-          if (!current) return;
-          setSnapshot(previous => ({client, error:false, records:loaded.map(record => {
-            const known = previous?.client === client ? previous.records.find(item => item.chat.id === record.chat.id) : undefined;
-            return known ? mergeCanonicalChatRecord(known, record) : record;
-          })}));
+          const references = [...new Set([project.id, project.slug].filter((value): value is string => Boolean(value)))];
+          const pages = await Promise.all(references.map(reference => loadWorkRailChats(client, false, reference)));
+          const unique = new Map<string, CanonicalChatRecord>(); // at most two bounded 1,000-row pages
+          for (const record of pages.flat()) unique.set(record.chat.id, record);
+          const loaded = [...unique.values()].sort(compareCanonicalChatActivity).slice(0, 1000);
+          if (!isCurrent()) return;
+          setSnapshot(previous => {
+            if (!isCurrent()) return previous;
+            const known = previous?.client === client && previous.scope === scope
+              && previous.authorityEpoch === authorityEpoch && previous.projectKey === projectKey ? previous.records : [];
+            return { client, scope, authorityEpoch, projectKey, error: false, records: loaded.map(record => {
+              const existing = known.find(item => item.chat.id === record.chat.id);
+              return existing ? mergeCanonicalChatRecord(existing, record) : record;
+            }) };
+          });
         } catch (error: unknown) {
           console.warn("[project] Chat cards unavailable:", error instanceof Error ? error.name : "UnknownError");
-          if (current) setSnapshot(previous => ({client, records:previous?.client === client ? previous.records : [], error:true}));
+          if (!isCurrent()) return;
+          if (error instanceof AppError && error.category === "unauthorized") {
+            scope?.revoke();
+            setSnapshot(null);
+            return;
+          }
+          setSnapshot(previous => !isCurrent() ? previous : ({ client, scope, authorityEpoch, projectKey,
+            records: previous?.client === client && previous.scope === scope
+              && previous.authorityEpoch === authorityEpoch && previous.projectKey === projectKey ? previous.records : [],
+            error: true,
+          }));
         }
-      } while (current && again);
+      } while (isCurrent() && again);
       pending = false;
     };
     void refresh();
@@ -46,14 +86,42 @@ export function useProjectLandingChats(project: Project, client?: CanonicalChatC
       void refresh();
     });
     return () => { current = false; subscription?.dispose(); };
-  }, [client, active, eventSource, project.id, project.slug, refreshRequest]);
-  const records = useMemo(() => snapshot && snapshot.client === client ? snapshot.records : [], [snapshot,client]);
+  }, [client, active, scoped, scope, authorityEpoch, eventSource, project.id, project.slug, projectKey, refreshRequest]);
+  const records = useMemo(() => scoped && snapshot && snapshot.client === client && snapshot.scope === scope && snapshot.authorityEpoch === authorityEpoch && snapshot.projectKey === projectKey ? snapshot.records : [], [scoped, snapshot, client, scope, authorityEpoch, projectKey]);
   const ids = useMemo(() => records.map(record => record.chat.id), [records]);
-  const bots = useBotConversationSummaries(client?.agents, ids, active);
-  const chats = useMemo(() => records.filter(record => (
-    (record.projectId === project.id || record.projectId === project.slug)
-    && !bots.unresolvedChatIds.includes(record.chat.id)
-    && !bots.conversations.some(bot => bot.chatId === record.chat.id)
-  )), [records, project.id, project.slug, bots.unresolvedChatIds, bots.conversations]);
-  return {chats, error:Boolean(snapshot && snapshot.client === client && snapshot.error)};
+  const authoritative = useMemo(() => navigation.items.map(item => ({ chatId: item.chat.id, classification: item.classification })), [navigation.items]);
+  const bots = useBotConversationSummaries(botAuthority.client, ids, active && scoped && ids.length > 0, undefined, authoritative);
+  const chats = useMemo<ChatNavigationRecord[]>(() => {
+    if (!client) return [];
+    const matchesProject = (record: ChatNavigationRecord) => (Boolean(project.id) && record.projectId === project.id) || record.projectId === project.slug;
+    if (!scoped) return navigation.items.filter(item => item.classification.kind === "ordinary" && matchesProject(item));
+    // An inactive identity hook carries no classification; do not expose its Bot rows.
+    if (!active) return [];
+    // Retain confirmed cards while scoped history loads. Known Bot classification
+    // remains authoritative; ordinary membership follows canonical revisions,
+    // with the global projection winning equal-revision conflicts.
+    const known = new Map(navigation.items.map(item => [item.chat.id, item]));
+    const cohort = new Map<string, ChatNavigationRecord>(navigation.items
+      .filter(item => item.classification.kind === "ordinary" && matchesProject(item))
+      .map(item => [item.chat.id, item])); // at most 1,000 global + 1,000 scoped rows
+    for (const record of records) {
+      const authoritative = known.get(record.chat.id);
+      if (authoritative) {
+        if (authoritative.classification.kind === "bot") continue;
+        const merged = record.chat.revision > authoritative.chat.revision
+          ? mergeChatNavigationRecord(authoritative, record)
+          : mergeChatNavigationRecord(record, authoritative);
+        if (matchesProject(merged)) cohort.set(record.chat.id, merged);
+        else cohort.delete(record.chat.id);
+        continue;
+      }
+      if (!client.agents?.bots || !matchesProject(record)
+        || bots.unresolvedChatIds.includes(record.chat.id)
+        || bots.conversations.some(bot => bot.chatId === record.chat.id)) continue;
+      cohort.set(record.chat.id, record);
+    }
+    return [...cohort.values()].sort(compareCanonicalChatActivity).slice(0, 1000);
+  }, [client, scoped, active, navigation.items, records, project.id, project.slug, bots.unresolvedChatIds, bots.conversations]);
+  const scopedError = scoped && snapshot && snapshot.client === client && snapshot.scope === scope && snapshot.authorityEpoch === authorityEpoch && snapshot.projectKey === projectKey && snapshot.error;
+  return { chats, error: Boolean(navigation.error || scopedError) };
 }

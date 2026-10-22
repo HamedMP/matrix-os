@@ -52,3 +52,37 @@ describe("Chat picker presentation groups", () => {
     expect(chatPickerEntryForSelection(entries, descriptor.id)).toBe(descriptor.id);
   });
 });
+
+describe("unimplemented plan catalog placeholders", () => {
+  const placeholder: CanonicalProviderInstanceDescriptor = {
+    ...base, id: "matrix_chatgpt_plan", driverKind: "matrix_bot", displayName: "Matrix_bot",
+    availability: "unavailable", models: [], setupActions: [],
+  };
+  const withBot = (instance: CanonicalProviderInstanceDescriptor): CanonicalProviderCatalog => ({
+    ...catalog, drivers: [...catalog.drivers, { kind: instance.driverKind, displayName: "Matrix bot", adapterVersion: "1", capabilityClass: "system_agent" }],
+    instances: [...catalog.instances, instance],
+  });
+  it("omits only the empty unavailable plan placeholder from the shared source rail", () => {
+    const input = withBot(placeholder);
+    const entries = deriveChatPickerEntries(input);
+    expect(entries.some(entry => entry.id === placeholder.id)).toBe(false);
+    expect(entries.some(entry => entry.id === "pi_owner")).toBe(true);
+    expect(input.instances).toContain(placeholder);
+  });
+  it.each([
+    { ...placeholder, availability: "available" as const },
+    { ...placeholder, models: [{ id: "personal-model", displayName: "Personal model", availability: "available" as const, capabilities: [], supportsVision: false, supportsToolUse: true }] },
+    { ...placeholder, setupActions: [{ id: "connect", kind: "open_settings" as const, label: "Connect bot" }] },
+  ])("omits a Bot-only subscription route from ordinary Chat even with models or setup", instance => {
+    const botOnly = { ...instance, supports: { ...instance.supports, rootChat: false } };
+    expect(deriveChatPickerEntries(withBot(botOnly)).flatMap(entry => entry.instances).some(candidate => candidate.id === botOnly.id)).toBe(false);
+  });
+  it.each([
+    { ...placeholder, availability: "available" as const },
+    { ...placeholder, driverKind: "openclaw" as const },
+    { ...placeholder, models: [{ id: "auto", displayName: "Automatic", availability: "unavailable" as const, capabilities: [], supportsVision: false, supportsToolUse: true }] },
+    { ...placeholder, setupActions: [{ id: "connect", kind: "open_settings" as const, label: "Connect bot" }] },
+  ])("retains actual runtime, setup, and other provider descriptors ($availability)", (instance) => {
+    expect(deriveChatPickerEntries(withBot(instance)).some(entry => entry.id === instance.id)).toBe(true);
+  });
+});

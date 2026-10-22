@@ -3,6 +3,8 @@ import type { useDirectBotBinding } from "@matrix-os/ui";
 
 export interface SurfaceChromeSpec {
   title?: ReactNode;
+  /** A rich identity row needs the compact window width rather than a fixed pane offset. */
+  titleLayout?: "identity";
   hideTitle?: boolean;
   /** A content view may opt into the shared toolbar even when its app owns sidebar chrome. */
   showTitle?: boolean;
@@ -17,6 +19,9 @@ export interface SurfaceChromeHost {
 }
 
 export const SurfaceChromeContext = createContext<SurfaceChromeHost | null>(null);
+
+/** Full app content target lets Details span the Chat toolbar without viewport offsets. */
+export const BotDetailsContext = createContext<HTMLElement | null>(null);
 
 /** Only the verified Bot route supplies a target in the existing Chat toolbar. */
 export const BotHeaderContext = createContext<HTMLElement | null>(null);

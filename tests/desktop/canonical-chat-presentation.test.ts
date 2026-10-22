@@ -77,7 +77,7 @@ describe("canonical Chat presentation adapter", () => {
 
     expect(presented[0]?.final).toMatchObject({
       tone: "failed",
-      markdown: "The agent could not complete its reply. Try again or check Agents & providers.",
+      markdown: "The agent could not finish. Try again.",
     });
     expect(presented[0]?.final).not.toHaveProperty("actions");
     expect(presented[1]?.final).toMatchObject({ markdown: "continued" });
@@ -1043,7 +1043,7 @@ describe("canonical Chat presentation adapter", () => {
       kind: "notice",
       tone: "failed",
       label: "Agent work failed",
-      markdown: "The agent could not complete its reply. Try again or check Agents & providers.",
+      markdown: "The agent could not finish. Try again.",
     });
   });
 

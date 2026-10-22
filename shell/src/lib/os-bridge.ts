@@ -1,3 +1,6 @@
+import { isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
+import { MAX_APP_CAPABILITY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES } from "@matrix-os/contracts";
+
 export type BridgeMessage =
   | { type: "os:generate"; app: string; payload: { context: string } }
   | { type: "os:navigate"; app: string; payload: { route: string; context?: string } }
@@ -128,6 +131,9 @@ export function getThemeVariables(style: CSSStyleDeclaration): ThemeVars {
   for (const [sourceVar, aliasVar] of Object.entries(THEME_VAR_ALIASES)) {
     vars[aliasVar] = vars[sourceVar] ?? "";
   }
+  if (style.colorScheme === "light" || style.colorScheme === "dark") {
+    vars["--matrix-color-scheme"] = style.colorScheme;
+  }
   return vars;
 }
 
@@ -226,6 +232,8 @@ function sanitizeDesignId(design: string | undefined): string {
 }
 
 export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design?: string): string {
+  const inventoryIdentity = appName.replace(/^apps\//, "");
+  const useOwnerInventory = isAppGalleryInventoryIdentity(inventoryIdentity);
   const designId = sanitizeDesignId(design);
   const themeJson = JSON.stringify(themeVars ?? {});
   const initialCss = themeVars
@@ -238,6 +246,9 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
   var currentTheme = ${themeJson};
   var currentDesign = ${JSON.stringify(designId)};
   var storedValuePrefix = ${JSON.stringify(BRIDGE_STORED_VALUE_PREFIX)};
+
+  var pendingFetches = [];
+  window.addEventListener("pagehide", function() { pendingFetches.slice().forEach(function(cancel) { cancel(); }); post("os:bridge-dispose", {}); });
 
   function encodeStoredValue(value) {
     var envelope = value === undefined ? { undefined: true } : { value: value };
@@ -268,13 +279,22 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
 
 	  function parentFetch(url, init, timeoutMs) {
 	    return new Promise(function(resolve, reject) {
-	      var channel = new MessageChannel();
+        var dataLimit = url === "/api/bridge/query" ? ${MAX_APP_DATABASE_REQUEST_BYTES} : url === "/api/bridge/data" ? ${MAX_APP_KV_REQUEST_BYTES} : 0;
+        var frame = JSON.stringify({url:url, init:init || {}});
+	      if (pendingFetches.length >= 32 || (dataLimit
+          ? !init || typeof init.body !== "string" || utf8Bytes(init.body) > dataLimit || utf8Bytes(frame) > dataLimit * 2 + ${MAX_APP_CAPABILITY_BYTES}
+          : utf8Bytes(frame) > ${MAX_APP_CAPABILITY_BYTES})) {
+          reject(new Error("MatrixOS bridge request unavailable")); return;
+        }
+        var channel = new MessageChannel();
+        var cancel = function() { clearTimeout(timer); channel.port1.close(); var idx = pendingFetches.indexOf(cancel); if (idx >= 0) pendingFetches.splice(idx, 1); reject(new Error("MatrixOS bridge request unavailable")); };
+        pendingFetches.push(cancel);
 	      var timer = setTimeout(function() {
-	        channel.port1.close();
-	        reject(new Error("MatrixOS bridge fetch timed out"));
+	        cancel();
 	      }, timeoutMs || 10000);
 	      channel.port1.onmessage = function(e) {
 	        clearTimeout(timer);
+        var idx = pendingFetches.indexOf(cancel); if (idx >= 0) pendingFetches.splice(idx, 1);
 	        channel.port1.close();
 	        if (e.data && e.data.ok) {
 	          resolve({
@@ -291,6 +311,10 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
 	      );
 	    });
 	  }
+
+  function utf8Bytes(value) {
+    return encodeURIComponent(value).replace(/%[A-F0-9]{2}/gi, "x").length;
+  }
 
   // Inject theme style tag
   var themeStyle = document.createElement("style");
@@ -360,6 +384,10 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
 
     writeData: function(key, value) {
       return new Promise(function(resolve, reject) {
+        var stored = encodeStoredValue(value);
+        if (utf8Bytes(JSON.stringify({action:"write", app:app, key:key, value:stored})) > ${MAX_APP_KV_REQUEST_BYTES}) {
+          reject(new Error("MatrixOS bridge data request failed")); return;
+        }
         var channel = new MessageChannel();
         channel.port1.onmessage = function(e) {
           channel.port1.close();
@@ -372,7 +400,7 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
             app: app,
             payload: {
               key: key,
-              value: encodeStoredValue(value)
+              value: stored
             }
           },
           "*",
@@ -400,6 +428,10 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
     app: { name: app },
 
     ai: {
+      routes: function() {
+        return parentFetch("/api/bridge/ai/routes", {}, 35000).then(function(r) { return r.json(); })
+          .catch(function() { throw new Error("App AI is unavailable"); });
+      },
       generate: function(input) {
         return parentFetch("/api/bridge/ai", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -409,19 +441,30 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
       }
     },
 
+    capabilities: function() {
+      return parentFetch("/api/bridge/capabilities", { method: "POST", body: JSON.stringify({ kind: "capabilities" }) }, 35000).then(function(r) { return r.json(); });
+    },
+
     integrations: function() {
-	      return parentFetch("/api/bridge/service", {}, 10000)
+      if (${useOwnerInventory}) {
+	      return parentFetch("/api/integrations", {}, 10000)
 	        .then(function(r) { return r.json(); })
-	        .then(function(d) { return d.services || []; });
-	    },
+	        .then(function(d) {
+          if (!Array.isArray(d) || d.length > 2000) throw new Error("Connection inventory unavailable");
+          return d;
+        });
+      }
+      return parentFetch("/api/bridge/capabilities", { method: "POST", body: JSON.stringify({ kind: "integrations.list" }) }, 35000)
+        .then(function(r) { return r.json(); }).then(function(d) { return d.services || []; });
+    },
+
+    describeService: function(service) {
+      return parentFetch("/api/bridge/capabilities", { method: "POST", body: JSON.stringify({ kind: "integrations.describe", service: service }) }, 35000).then(function(r) { return r.json(); });
+    },
 
     service: function(service, action, params, label) {
-	      return parentFetch("/api/bridge/service", {
-	        method: "POST",
-	        headers: { "Content-Type": "application/json" },
-	        body: JSON.stringify({ service: service, action: action, params: params || {}, label: label })
-	      }, 35000).then(function(r) { return r.json(); });
-	    },
+      return parentFetch("/api/bridge/capabilities", { method: "POST", body: JSON.stringify({ kind: "integrations.call", service: service, action: action, params: params || {}, label: label }) }, 35000).then(function(r) { return r.json(); });
+    },
 
 	    gatewayFetch: function(url, init, timeoutMs) {
 	      return parentFetch(url, init || {}, timeoutMs || 10000).then(function(r) { return r.json(); });
@@ -491,6 +534,14 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
 	          body: JSON.stringify({ app: app, action: "update", table: table, id: id, data: data })
 	        }, 10000).then(function(r) { return r.json(); });
 	      },
+
+      compareAndSwap: function(table, id, expectedPayload, data) {
+        return parentFetch("/api/bridge/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ app: app, action: "compareAndSwap", table: table, id: id, expectedPayload: expectedPayload, data: data })
+        }, 10000).then(function(r) { return r.json(); });
+      },
 
 	      bulkUpdate: function(table, updates) {
 	        return parentFetch("/api/bridge/query", {

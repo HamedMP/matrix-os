@@ -9,7 +9,7 @@ import { createOrganizationMembershipProjection } from '../../packages/platform/
 import { PlatformOrganizationRepository } from '../../packages/platform/src/organizations/repository.js';
 import { membershipLookupFromOrganizations } from '../../packages/platform/src/private-preview-access.js';
 import { createPrivatePreviewSweep } from '../../packages/platform/src/private-preview-sweep.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const org = 'org_internal';
 const now = new Date('2026-09-30T00:00:00.000Z');

@@ -8,6 +8,7 @@ import type {
 } from "@desktop/renderer/src/lib/canonical-chat-client";
 import { useCanonicalChatRouteController } from "@desktop/renderer/src/features/chat/use-canonical-chat-route-controller";
 import { AppError } from "@desktop/shared/app-error";
+import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 import { describe, expect, it, vi } from "vitest";
 
 const globalRecord = {
@@ -120,6 +121,24 @@ function chatChanged(
 }
 
 describe("canonical Chat route controller", () => {
+  it("keeps external navigation selection and detail refresh independent of list reads", async () => {
+    const events = eventHarness();
+    const second = { ...detail, record: { ...globalRecord, chat: { ...globalRecord.chat, id: "chat_second" } } };
+    const source = client({ getDetail: vi.fn(async (id) => id === "chat_second" ? second : detail) });
+    const hook = renderHook(({ chatId }) => useCanonicalChatRouteController({
+      client: source, projectId: null, active: true, initialChatId: chatId,
+      autoSelectFirst: false, externalNavigation: true, eventSource: events.eventSource,
+    }), { initialProps: { chatId: globalRecord.chat.id } });
+    await waitFor(() => expect(hook.result.current.detail?.record.chat.id).toBe(globalRecord.chat.id));
+    hook.rerender({ chatId: "chat_second" });
+    await waitFor(() => expect(hook.result.current.detail?.record.chat.id).toBe("chat_second"));
+    act(() => events.emit({ type: "chat.full_refresh", cursor: 2 }));
+    await waitFor(() => expect(source.getDetail).toHaveBeenCalledTimes(3));
+    expect(source.list).not.toHaveBeenCalled();
+    expect(hook.result.current.status).toBe("ready");
+  });
+
+
   it("bounds simulated stream listeners like the production event source", () => {
     const events = eventHarness();
     const subscriptions = Array.from(
@@ -502,6 +521,29 @@ describe("canonical Chat route controller", () => {
     });
     expect(getDetail).toHaveBeenCalledTimes(2);
     expect(result.current.detail?.record.activeRun).toBeUndefined();
+  });
+
+  it("forwards the digest from the active pending approval in Electron Desktop", async () => {
+    const actionDigest = "d".repeat(64);
+    const { snapshot } = createCanonicalChatFixture("approval_required");
+    const run = snapshot.runs[0]!;
+    const { project: _project, providerBinding: _binding, activeRun, ...chat } = snapshot.chat;
+    const waitingDetail = { record: { chat, activeRun }, messages: snapshot.messages, turns: snapshot.turns,
+      runs: snapshot.runs, activities: [...snapshot.activities, { id: "evt_drive_approval", chatId: snapshot.chat.id,
+        runId: run.id, occurredAt: run.updatedAt, type: "approval.requested" as const,
+        approvalId: "approval_drive", title: "List three files", risk: "low" as const,
+        allowedDecisions: ["approve" as const, "decline" as const], actionDigest }] };
+    const getDetail = vi.fn().mockResolvedValue(waitingDetail);
+    const submitApproval = vi.fn(async () => ({ approvalId: "approval_drive", decision: "approve" as const, submission: "accepted" as const }));
+    const sharedClient = client({ list: vi.fn(async () => ({ items: [waitingDetail.record] })), getDetail, submitApproval });
+    const { result } = renderHook(() => useCanonicalChatRouteController({
+      client: sharedClient,
+      projectId: null, active: true, initialChatId: snapshot.chat.id,
+    }));
+    await waitFor(() => expect(result.current.detail?.record.activeRun?.runId).toBe(run.id));
+    await act(async () => { await result.current.submitApproval("approval_drive", "approve"); });
+    expect(submitApproval).toHaveBeenCalledWith(snapshot.chat.id, run.id, "approval_drive",
+      expect.objectContaining({ decision: "approve", actionDigest }));
   });
 
   it("uses one scoped search identity instead of a second Project index", async () => {

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAccountDeletionBillingWebhookGuard } from '../../packages/platform/src/account-deletion/billing-webhook-guard.js';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
 import { upsertBillingCustomer, type PlatformDB } from '../../packages/platform/src/db.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import type { StripeWebhookEvent } from '../../packages/platform/src/billing/stripe-client.js';
 
 const owner = 'user_billingguard123';

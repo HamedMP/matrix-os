@@ -1,3 +1,5 @@
+import { BOKIO_ACTIONS } from "@matrix-os/contracts/bokio-integration";
+import { MANAGED_INTEGRATIONS } from "@matrix-os/contracts/managed-integrations";
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -213,7 +215,12 @@ export function createApprovalHook(
 }
 
 export const MANAGED_WRITE_ACTIONS = new Set([
+  ...Object.entries(BOKIO_ACTIONS).filter(([, action]) => action.risk === "write")
+    .map(([action]) => `bokio/${action}`),
+  ...Object.values(MANAGED_INTEGRATIONS).flatMap(service => Object.entries(service.actions)
+    .filter(([, action]) => action.risk === "write").map(([action]) => `${service.id}/${action}`)),
   "gmail/send_email",
+  "gmail/create_draft",
   "gmail/create_label",
   "gmail/modify_message",
   "google_calendar/create_event",
@@ -230,6 +237,10 @@ export const MANAGED_WRITE_ACTIONS = new Set([
   "discord/send_message",
   "google_docs/create_document",
   "google_docs/batch_update_document",
+  "google_sheets/add_sheet",
+  "google_sheets/append_values",
+  "google_sheets/create_spreadsheet",
+  "google_sheets/update_values",
   "notion/create_page",
   "notion/update_page",
   "notion/append_blocks",
@@ -237,7 +248,44 @@ export const MANAGED_WRITE_ACTIONS = new Set([
   "jira/create_issue",
   "jira/update_issue",
   "jira/add_comment",
+  "todoist/complete_task",
+  "todoist/create_task",
+  "todoist/update_task",
   "twitter/create_post",
+  "zendesk/update_ticket",
+  "airtable/create_record",
+  "airtable/update_record",
+  "asana/create_task",
+  "asana/update_task",
+  "box/create_folder",
+  "clickup/create_task",
+  "clickup/update_task",
+  "dropbox/create_folder",
+  "google_contacts/create_contact",
+  "google_slides/add_slide",
+  "google_slides/create_presentation",
+  "google_slides/replace_slide_text",
+  "hubspot/create_company",
+  "hubspot/create_contact",
+  "hubspot/create_deal",
+  "hubspot/update_company",
+  "hubspot/update_contact",
+  "hubspot/update_deal",
+  "intercom/create_contact",
+  "intercom/update_contact",
+  "microsoft_onedrive/create_folder",
+  "microsoft_outlook/create_draft",
+  "microsoft_outlook_calendar/create_event",
+  "microsoft_teams/create_channel",
+  "posthog/create_insight",
+  "posthog/update_insight",
+  "quickbooks/create_customer",
+  "quickbooks/update_customer",
+  "stripe/create_customer",
+  "stripe/update_customer",
+  "xero_accounting_api/create_contact",
+  "xero_accounting_api/update_contact",
+  "zoom/create_meeting",
 ]);
 
 interface CustomMcpProjectionFile {

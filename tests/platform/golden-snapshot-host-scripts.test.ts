@@ -13,6 +13,7 @@ const activatePath = 'distro/customer-vps/host-bin/matrix-golden-snapshot-activa
 const fastPathPath = 'distro/customer-vps/host-bin/matrix-golden-snapshot-fast-path';
 const awsCliSmokePath = 'distro/customer-vps/host-bin/matrix-aws-cli-smoke';
 const prerequisitesPath = 'distro/customer-vps/host-bin/matrix-prepare-host-prerequisites';
+const sitesNginxHelperPath = 'distro/customer-vps/host-bin/matrix-configure-sites-nginx';
 const serviceDiagnosticsPath = 'distro/customer-vps/host-bin/matrix-golden-service-diagnostics';
 const bootstrapAttestationPath = 'distro/customer-vps/host-bin/matrix-write-bootstrap-attestation';
 
@@ -285,7 +286,9 @@ describe('golden snapshot host scripts', () => {
     await writeFile(join(appDir, 'BUNDLE_VERSION'), 'v2026.08.20-test\n');
     await writeFile(join(appDir, 'BUNDLE_SHA256'), `${'d'.repeat(64)}\n`);
     await commands.copyPrerequisiteFixture(prerequisitesPath, join(binDir, 'matrix-prepare-host-prerequisites'));
+    await copyFile(sitesNginxHelperPath, join(binDir, 'matrix-configure-sites-nginx'));
     await chmod(join(binDir, 'matrix-prepare-host-prerequisites'), 0o755);
+    await chmod(join(binDir, 'matrix-configure-sites-nginx'), 0o755);
     // Image certification has no Matrix account yet; NSS itself is still available.
     await writeFile(join(fakeBin, 'getent'), '#!/bin/sh\nexit 2\n');
     await chmod(join(fakeBin, 'getent'), 0o755);
@@ -689,6 +692,7 @@ for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secr
     expect(prerequisites).toContain('timeout --kill-after=30 120 add-apt-repository -y universe');
     expect(prerequisites).toContain('https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip');
     expect(prerequisites).toContain('--connect-timeout 10 --max-time 120');
+    expect(prerequisites).not.toContain('$(dirname');
     expect(activationSource).toContain('/opt/matrix/HOST_PREREQUISITES_READY');
     expect(activationSource).toContain('matrix host prerequisites are not ready');
     expect(service).toContain("'host_prerequisites'");
@@ -760,7 +764,9 @@ for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secr
     }
     const fixturePath = join(root, 'matrix-prepare-host-prerequisites');
     await commands.copyPrerequisiteFixture(prerequisitesPath, fixturePath);
+    await copyFile(sitesNginxHelperPath, join(root, 'matrix-configure-sites-nginx'));
     await chmod(fixturePath, 0o755);
+    await chmod(join(root, 'matrix-configure-sites-nginx'), 0o755);
 
     await execFileAsync(fixturePath, ['--certify-only'], {
       env: {

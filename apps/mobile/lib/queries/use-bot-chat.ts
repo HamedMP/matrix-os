@@ -1,12 +1,30 @@
 import { useAuth } from "@clerk/clerk-expo";
 import { useQuery } from "@tanstack/react-query";
-import { updateNativeBotModel, fetchNativeBotChat, mutateNativeBotMemory, resolveNativeBotInteraction, revokeNativeBotGrant } from "@/lib/requests/bots";
+import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
+import { updateNativeBotModel, fetchNativeBotChat, mutateNativeBotMemory, resolveNativeBotInteraction, revokeNativeBotGrant, type NativeBotChatSnapshot } from "@/lib/requests/bots";
 import type { CanonicalChatModelSelection, BotMemoryMutationRequest, ResolveBotInteractionRequest } from "@matrix-os/contracts";
 import { mobileQueryKeys } from "@/lib/requests";
 
 const REFRESH_INTERVAL_MS = 15_000;
+// The event stream reports a bot's interactions, tasks and access as they
+// change, so while it is up polling only has to catch what it might miss.
+const LIVE_STREAM_REFRESH_INTERVAL_MS = 60_000;
+
+/**
+ * Only a bot's own chat has status worth polling. Most chats have no bot
+ * (`null`), and one whose status failed to load is retried by the next chat
+ * event or refresh rather than on a timer.
+ */
+export function botChatRefetchInterval(
+  snapshot: NativeBotChatSnapshot | null | undefined,
+  streamLive: boolean,
+): number | false {
+  if (!snapshot) return false;
+  return streamLive ? LIVE_STREAM_REFRESH_INTERVAL_MS : REFRESH_INTERVAL_MS;
+}
 
 export function useBotChat(chatId: string | null, gatewayUrl: string | null) {
+  const { streamLive } = useCanonicalChatSession();
   const { getToken, isLoaded, isSignedIn, userId } = useAuth();
   const enabled = Boolean(isLoaded && isSignedIn && userId && chatId && gatewayUrl);
   const query = useQuery({
@@ -17,7 +35,7 @@ export function useBotChat(chatId: string | null, gatewayUrl: string | null) {
       if (!token || !chatId || !gatewayUrl) throw new Error("Bot status could not be loaded. Try again.");
       return fetchNativeBotChat(token, gatewayUrl, chatId);
     },
-    refetchInterval: REFRESH_INTERVAL_MS,
+    refetchInterval: ({ state }) => botChatRefetchInterval(state.data, streamLive),
     refetchIntervalInBackground: false,
   });
   const requireAuth = async () => {

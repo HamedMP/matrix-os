@@ -2,7 +2,8 @@ import {
   CanonicalProviderCatalogSchema,
   type CanonicalProviderCatalog,
 } from "@matrix-os/contracts";
-import { KyselyPGlite } from "kysely-pglite";
+import type { KyselyPGlite } from "kysely-pglite";
+import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatExecutionRootResolver } from "../../packages/gateway/src/chat/execution-root.js";
 import { CanonicalChatOrchestrator } from "../../packages/gateway/src/chat/orchestrator.js";
@@ -83,7 +84,7 @@ describe("CanonicalChatOrchestrator", () => {
   let repository: ChatRepository;
 
   beforeEach(async () => {
-    pglite = await KyselyPGlite.create();
+    pglite = await createTestPGlite();
     repository = new ChatRepository(pglite.dialect);
     await repository.bootstrap();
   });
@@ -91,6 +92,7 @@ describe("CanonicalChatOrchestrator", () => {
   afterEach(async () => {
     await repository.kysely.destroy();
   });
+
 
   it("commits admission before Provider work, revalidates the root, and replays normalized output", async () => {
     await repository.create(owner, {

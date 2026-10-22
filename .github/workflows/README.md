@@ -4,6 +4,10 @@ This directory owns the GitHub Actions workflows for Matrix OS. Keep workflow
 changes small and explicit: PR checks optimize for actionable signal, while
 main, release, and scheduled workflows preserve comprehensive validation.
 
+Automatic Claude Code Review is removed from CI. The separate `claude.yml`
+workflow remains available for explicit `@claude` requests. Codex automatic
+reviews are managed in Codex repository settings, outside GitHub Actions.
+
 ## Required Checks
 
 The branch protection rule should require `CI Results` from `ci.yml` as the stable
@@ -14,34 +18,79 @@ protection is also updated when the shard list changes.
 
 - `Detect CI-relevant changes`
 - `Type Check`
+- `Shell Production Build`
 - `Pattern Scan`
 - `React Doctor`
 - `Sync Client Package (Node 20)`
+- `Agent SDK Compatibility`
 - `Unit Tests`
+- `Funded Settlement PostgreSQL`
+- `Protected Funded Host Root Contracts`
 - `Docs Contract Tests`
-- `E2E Tests`
+- `OS View Parity`
+- `E2E Tests` (general and Electron lanes)
 
 The aggregate job writes a summary table and fails when any required internal
 job fails or is cancelled. Internal jobs may still be inspected directly for
 logs and artifacts.
 
 Docs-only changes still run targeted docs contract tests through `Docs Contract Tests`.
+Source-only jobs (including the unit-test matrix) are skipped before runner allocation for docs-only changes. Documentation and OS-view parity jobs run only when their respective path planners select them; `CI Results` accepts intentional skips and still fails on a selected check's failure.
 Expensive jobs remain path-aware.
 
 ### Main CI queue and coverage frontier
 
-Main pushes enter GitHub's FIFO concurrency queue in `ci.yml` (up to the
-platform's 100-run `queue: max` limit). A non-doc push also starts
-`ci-supersede.yml`, whose only write permission is cancelling older active CI
-runs whose heads are ancestors of the new commit. Docs-only successors
-queue behind broader runs instead of cancelling them.
+Every main push runs CI to completion in its own concurrency group
+(`ci-refs/heads/main-<sha>`), so a newer merge never cancels or delays an
+older commit's run and each main commit keeps its own green or red result.
+Ordinary manual dispatches on `main` share one FIFO queue. Exact-source refreshes
+with a PR number, head SHA, base SHA, and source SHA use an independent queue per
+tuple; duplicates share that queue across execution modes. Each queue retains
+the platform's 100-run `queue: max` limit. This changes scheduling only: trusted
+source validation, receipts, and runner admission remain unchanged. Runs already
+queued under an older workflow keep their original group; a fresh dispatch after
+this workflow lands uses the new grouping.
 
-When a queued run is admitted, `scripts/ci/main-ci-coverage.mjs` finds the latest
+When a main run starts, `scripts/ci/main-ci-coverage.mjs` finds the latest
 successful `CI coverage-v1` ancestor and treats it as the coverage frontier. The
 run plans against the complete frontier-to-head diff, not only the newest commit.
 Consequently, a failed or cancelled predecessor is automatically absorbed into
 the successor's source, docs-contract, pattern-scan, and React Doctor scope. If
 no trusted frontier exists, the run bootstraps from Git's empty tree.
+
+### Parallel validation and profiling
+
+Unit tests, sync-client validation, shell production builds and E2E lanes start
+independently after change classification. `CI Results` still waits for every
+selected check; this removes scheduling dependencies without removing coverage.
+General E2E and explicit Electron Desktop regressions run in separate lanes.
+Each E2E and funded PostgreSQL job builds shared prerequisites once with
+`bun run test:prepare`; subsequent invocations use direct Vitest execution.
+Local `bun run test:e2e` retains its prerequisite build for convenience.
+
+Next incremental compilation and Playwright browser revisions are cached by
+OS, architecture, Node/pnpm toolchain and the frozen lockfile. The shell bundle
+is rebuilt on every run. Both Playwright workspace installs still run on cache
+hits so different browser revisions and system dependencies stay complete.
+Caches are accelerators, never a substitute for validation.
+
+Every unit shard uploads `unit-profile-<shard>` with Vitest JSON, including on
+test failure, retained for seven days. Profile timings describe execution;
+measure runner queue and installation separately when assessing the five-minute
+target. Duration-based shard balancing, a timing manifest and profile-refresh
+tooling are planned in a separate follow-up; they are not included in this
+hosted-workflow layer.
+
+`ci-pr-supersede.yml` cancels obsolete CI heads for an admitted PR. It runs only
+trusted base-branch code with no checkout, validates the current live PR head,
+and cannot cancel main or another PR. Main per-commit runs and the coverage frontier
+remain unchanged. A denied or failed cancellation does not remove validation.
+
+Core workflows stay GitHub-hosted. An isolated Linux benchmark bridge is planned
+in a separate follow-up; this layer includes no dedicated dispatch workflow or
+runner tools. A public repository must not expose a reusable self-hosted runner
+label to PR workflow code. An 8-vCPU/32-GB host has been provisioned in Falkenstein;
+Linux validation and any automatic dedicated dispatch remain pending.
 
 ## Release Artifacts
 
@@ -61,7 +110,7 @@ Registry, not a Matrix customer-runtime package.
 | Platform | Platform service image | Google Artifact Registry, then Cloud Run | `platform-cloud-run.yml` |
 | Funded AI relay | Dedicated relay service image | Google Artifact Registry, then Cloud Run | `ai-relay-cloud-run.yml` |
 | Mobile native | Mobile native builds | EAS Build, then App Store Connect/TestFlight or Google Play | EAS operator flow in `docs/dev/mobile-shell.md` |
-| Mobile OTA | Mobile OTA update | EAS Update branch/channel | EAS operator flow in `docs/dev/mobile-shell.md` |
+| Mobile OTA | Mobile OTA update | EAS Update `preview` channel, promoted to `production` | `mobile-ota-update.yml` |
 | Desktop | Desktop installers and OTA metadata | GitHub Releases | `desktop-release.yml` and `desktop-release-canary.yml` |
 | CLI | `@finnaai/matrix` CLI plus standalone binaries | npm, GitHub Releases, and Homebrew | `release.yml` and `cli-release.yml` |
 
@@ -73,21 +122,25 @@ OTA payloads.
 
 | Workflow | Owner | When it runs | Required? |
 | --- | --- | --- | --- |
-| `ci.yml` | Core code validation | `ready-for-ci`, ready PRs, merge queue, `main`, manual | Yes, via `CI Results` |
-| `ci-supersede.yml` | Safe main-CI supersession | Non-doc pushes to `main` | No; optimization only, queueing remains safe if it fails |
-| `docker-test.yml` | Legacy/local Docker scenario validation | Docker/local-runtime changes on `ready-for-ci`, ready PRs, and `main`; every merge queue, nightly, and manual run | Required when Docker/local-runtime paths are touched |
+| `ci.yml` | Core code validation | Every non-draft PR head, merge queue, `main`, manual | Yes, via `CI Results` |
+| `codeql.yml` | CodeQL code scanning (TypeScript and workflow definitions) | Weekly (Sunday 03:17 UTC), manual | No; findings land in Security → Code scanning |
+| `ci-pr-supersede.yml` | Safe PR-CI supersession | New heads on admitted PRs; trusted base workflow only | No; optimization only |
+| `docker-test.yml` | Legacy/local Docker scenario validation | Docker/local-runtime changes on every non-draft PR head and `main`; every merge queue, nightly, and manual run | Required when Docker/local-runtime paths are touched |
 | `host-bundle-release.yml` | VPS-native customer runtime release | `main`, `v*` tags, manual | Required for host bundle publishing |
 | `platform-cloud-run.yml` | Platform/app-shell Cloud Run deployment | `main` when platform/auth-shell inputs change, manual | Required for app.matrix-os.com platform changes |
 | `ai-relay-cloud-run.yml` | Dedicated Matrix-funded AI relay deployment | Manual preview deployment | Required before funded AI can be enabled in a preview platform |
 | `release.yml` / `cli-release.yml` | Installable `@finnaai/matrix` CLI release plus standalone binaries | Manual CLI release | Required for CLI publishing |
+| `mobile-ota-update.yml` | Mobile app tests and EAS Update releases | Mobile-app PRs (tests and bundle check), `main` when the mobile app changes (publish to `preview`), manual (promote to `production` or roll back) | Required for mobile OTA publishing; path-filtered, so not a required PR check |
 | `pr-title.yml` | Conventional Commit PR title policy | PR title changes | Yes |
+| `review-receipt.yml` | Records the base each Greptile-reviewed commit forked from, for `scripts/review/review-carryover.mjs` | Greptile summary comments on PRs | No; merge-readiness tooling reads it |
 
-The `ready-for-ci` label is sticky: applying it starts full PR validation, and every later PR
-head or label event reruns core CI while the label remains; each later head also reruns Docker
-classification. Reviewers must use
-the checks attached to the exact head SHA rather than an earlier green commit. Until CI is
-explicitly requested, the aggregate `CI Results` check stays red so skipped shards cannot be
-mistaken for validated source changes.
+Full PR validation runs on every non-draft PR head: opening a ready PR, marking a draft ready
+for review, pushing and reopening run core CI and Docker classification; retargeting the base
+reruns core CI only. Labels never start or gate it. Keep a PR as a draft while it is still being
+reviewed to avoid CI on every intermediate push. Drafts and title or body edits publish no
+`CI Results` check at all, so the required check shows as expected rather than red; a draft
+cannot be merged. Reviewers must use the checks attached to the exact head SHA rather than an
+earlier green commit.
 
 ## Delivery Lane Router
 
@@ -113,12 +166,20 @@ contract.
 ## Docker Relevance Router
 
 Use `scripts/ci/docker-relevance.mjs` as the source of truth for whether a PR or
-`main` push needs the legacy/local Docker validation. It includes the dev image,
-Compose and startup configuration, Docker scenario harness, root workspace
-metadata, gateway/kernel/shell dependencies, home templates, and the shared
-sync-client protocol and package export manifest imported by the gateway.
+`main` push needs the legacy/local Docker validation. It has two scopes:
+
+- `--scope full` (pushes to `main`): the dev image, Compose and startup
+  configuration, Docker scenario harness, root workspace metadata,
+  gateway/kernel/shell dependencies, home templates, and the shared sync-client
+  protocol and package export manifest imported by the gateway.
+- `--scope pr` (pull requests): Docker build inputs only — Dockerfiles, root
+  workspace/lock manifests, Compose files, the Docker scenario harness and
+  observability config. App source (gateway, kernel, shell, home, ui, skills)
+  is covered on `main` and nightly instead, because production is VPS-native and
+  the dev image is local-only.
+
 Platform-only, proxy-only, installable CLI, desktop/mobile, docs/specs, and
-unrelated workflow changes do not spend a Docker runner.
+unrelated workflow changes do not spend a Docker runner in either scope.
 
 The PR and `main` paths are relevance-filtered for cost and signal. The merge
 queue, nightly, and manual runs remain comprehensive so an incomplete path rule

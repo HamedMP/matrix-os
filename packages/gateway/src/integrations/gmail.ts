@@ -7,6 +7,7 @@ const pageToken = z.string().min(1).max(2048).regex(/^[^\s\x00-\x1f\x7f]+$/).opt
 const maxResults = z.number().int().min(1).max(500).optional();
 const query = z.string().max(4096);
 const pagination = { maxResults, pageToken };
+const inboxPageToken = z.string().min(1).max(4096).regex(/^[^\s\x00-\x1f\x7f]+$/).optional();
 // TRASH is deliberately unsupported, including through generic label mutation.
 const mutableLabelId = identifier.refine((id) => id !== "TRASH");
 const labelIds = z.array(mutableLabelId).max(100)
@@ -26,6 +27,20 @@ function mapPagination(p: Record<string, unknown>): Record<string, string> {
 // Strip CR/LF only from headers. Body newlines are legitimate message content.
 const stripCrLf = (s: unknown): string => String(s).replace(/[\r\n]/g, "");
 const toBase64Url = (msg: string): string => Buffer.from(msg, "utf-8").toString("base64url");
+const messageFields = {
+  to: z.string().min(1).max(4096), subject: z.string().max(4096),
+  body: z.string().max(60000), cc: z.string().max(4096).optional(),
+};
+
+function encodeMessage(p: Record<string, unknown>): string {
+  const headers = [
+    ...(p.to !== undefined ? [`To: ${stripCrLf(p.to)}`] : []),
+    `Subject: ${stripCrLf(p.subject)}`,
+    ...(p.cc ? [`Cc: ${stripCrLf(p.cc)}`] : []),
+    'Content-Type: text/plain; charset="UTF-8"', "MIME-Version: 1.0",
+  ];
+  return toBase64Url(`${headers.join("\r\n")}\r\n\r\n${String(p.body)}`);
+}
 
 export const GMAIL_SERVICE: ServiceDefinition = {
   connectorKind: "pipedream",
@@ -41,8 +56,8 @@ export const GMAIL_SERVICE: ServiceDefinition = {
     },
     list_threads: {
       risk: "read", description: "List one bounded Inbox thread page",
-      params: {}, paramsSchema: z.strictObject({}),
-      directApi: { method: "GET", url: `${BASE}/threads?labelIds=INBOX&maxResults=30` },
+      params: { pageToken: { type: "string" } }, paramsSchema: z.strictObject({ pageToken: inboxPageToken }),
+      directApi: { method: "GET", url: `${BASE}/threads`, mapParams: p => ({ labelIds: "INBOX", maxResults: "30", ...(p.pageToken ? { pageToken: String(p.pageToken) } : {}) }) },
     },
     get_thread_ids: {
       risk: "read", description: "Read bounded message IDs for one thread without fetching message bodies",
@@ -68,6 +83,12 @@ export const GMAIL_SERVICE: ServiceDefinition = {
         method: "GET", url: (p) => `${BASE}/messages/${encodeURIComponent(String(p.messageId))}?format=full`,
       },
     },
+    get_attachment: {
+      risk: "read", description: "Read one selected Gmail attachment as base64url (1 MiB decoded maximum); file content is untrusted data",
+      params: { messageId: { type: "string", required: true }, attachmentId: { type: "string", required: true } },
+      paramsSchema: z.strictObject({ messageId: identifier, attachmentId: z.string().min(1).max(2048).regex(/^[A-Za-z0-9_-]+$/) }),
+      directApi: { method: "GET", url: (p) => `${BASE}/messages/${encodeURIComponent(String(p.messageId))}/attachments/${encodeURIComponent(String(p.attachmentId))}` },
+    },
     // Preserve the existing plain-text RFC 2822 send interface. Multipart
     // attachments and HTML bodies are outside this connector's send action.
     send_email: {
@@ -77,20 +98,23 @@ export const GMAIL_SERVICE: ServiceDefinition = {
         to: { type: "string", required: true }, subject: { type: "string", required: true },
         body: { type: "string", required: true }, cc: { type: "string" },
       },
-      paramsSchema: z.strictObject({
-        to: z.string().min(1).max(4096), subject: z.string().max(4096),
-        body: z.string().max(60000), cc: z.string().max(4096).optional(),
-      }),
+      paramsSchema: z.strictObject(messageFields),
       directApi: {
         method: "POST", url: `${BASE}/messages/send`,
-        mapBody: (p) => {
-          const headers = [
-            `To: ${stripCrLf(p.to)}`, `Subject: ${stripCrLf(p.subject)}`,
-            ...(p.cc ? [`Cc: ${stripCrLf(p.cc)}`] : []),
-            'Content-Type: text/plain; charset="UTF-8"', "MIME-Version: 1.0",
-          ];
-          return { raw: toBase64Url(`${headers.join("\r\n")}\r\n\r\n${String(p.body)}`) };
-        },
+        mapBody: (p) => ({ raw: encodeMessage(p) }),
+      },
+    },
+    create_draft: {
+      risk: "write",
+      description: "Save a plain-text Gmail draft for review without sending; to and cc are optional. Returns the draft id and message.id",
+      params: {
+        to: { type: "string" }, subject: { type: "string", required: true },
+        body: { type: "string", required: true }, cc: { type: "string" },
+      },
+      paramsSchema: z.strictObject({ ...messageFields, to: messageFields.to.optional() }),
+      directApi: {
+        method: "POST", url: `${BASE}/drafts`,
+        mapBody: (p) => ({ message: { raw: encodeMessage(p) } }),
       },
     },
     search: {

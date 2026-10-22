@@ -560,3 +560,18 @@
     -webkit-text-fill-color: currentColor;
   }
 }
+
+/* Figma Chat geometry, scoped so legacy coding-agent composer presentation stays intact. */
+.matrix-chat-composer [data-slot="composer-context-row"]:empty { display: none; }
+.matrix-chat-composer .prompt-card { min-height: 114px; border-radius: 12px; }
+.matrix-chat-composer [data-slot="prompt-input-content"] { min-height: 64px; padding-top: 16px; padding-bottom: 12px; }
+.matrix-chat-composer [data-slot="prompt-input-placeholder"] { top: 16px; font-weight: 400; }
+.matrix-chat-composer [data-slot="prompt-input-toolbar"] { min-height: 48px; padding: 0 15px 16px; gap: 8px; }
+.matrix-chat-composer [data-slot="prompt-input-send"] { width: 32px; height: 28px; border-radius: 8px; border: 1px solid var(--border-subtle); }
+.matrix-chat-composer [data-slot="prompt-input-send"]:disabled { background: transparent !important; }
+.matrix-chat-composer .prompt-card[data-layout="narrow"] { min-height: 114px; }
+/* Portal Details includes the toolbar; its reserved width also shortens the app toolbar. */
+[data-os-window-clip]:has([data-testid^="desktop-surface-content-"][data-bot-details-reserved="true"]) > [data-os-window-top-bar-overlay] { width: calc(100% - 360px); }
+/* Only a narrow Electron Chat host overlays its own toolbar. The app frame
+   contains this layer; shared Details and unrelated shell chrome keep theirs. */
+[data-bot-details-host][data-bot-details-reserved="false"] > .matrix-bot-details--hosted { z-index: var(--matrix-bot-details-overlay-layer); }

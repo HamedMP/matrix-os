@@ -1,3 +1,6 @@
+import { BrowserApprovalLifecycleSchema, BrowserGrantViewSchema } from "#browser-chat-approval";
+import { CanonicalChatCommandPreviewSchema } from "#command-preview";
+export { CanonicalChatCommandPreviewSchema } from "#command-preview";
 import { ImportedChatProvenancePartSchema, ImportedChatReferencePartSchema } from "#canonical-chat-import-parts";
 import { z } from "zod/v4";
 import { OrganizationDriveContextReferenceSchema } from "#organization-drive-context";
@@ -35,6 +38,8 @@ export const CanonicalChatTurnIdSchema = prefixedId("cturn_");
 export const CanonicalChatRunIdSchema = prefixedId("run_");
 export const CanonicalChatMessageIdSchema = prefixedId("msg_");
 export const CanonicalChatRequestIdSchema = prefixedId("req_");
+/** Lowercase SHA-256 digest of one normalized integration action. */
+export const CanonicalChatActionDigestSchema = z.string().regex(/^[0-9a-f]{64}$/);
 export const CanonicalProviderInstanceIdSchema = canonicalReferenceId(128);
 export const CanonicalChatAttachmentKindSchema = z.enum(["file", "image", "diff", "structured_ref"]);
 export const CanonicalChatModelReferenceSchema = ProviderModelReferenceSchema;
@@ -307,6 +312,7 @@ export const CanonicalChatMessagePartSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("approval_request"),
     approvalId: canonicalReferenceId(128),
+    actionDigest: CanonicalChatActionDigestSchema.optional(),
     title: canonicalSafeLabel(160, 640),
     description: canonicalSafeLabel(1_000, 4_000),
     risk: z.enum(["low", "medium", "high"]),
@@ -472,7 +478,8 @@ export const CanonicalChatAgentActivityPayloadSchema = z.object({
   label: canonicalSafeLabel(240, 960),
   status: CanonicalChatAgentActivityStatusSchema,
   summary: canonicalSafeLabel(1_000, 4_000).optional(),
-  preview: canonicalSafeLabel(1_000, 4_000).optional(),
+  preview: CanonicalChatCommandPreviewSchema.optional(),
+  protectedPreview: ProtectedToolOutputSchema.optional(),
   previewKind: z.enum(["command", "path", "text"]).optional(),
   detail: canonicalSafeLabel(2_000, 8_000).optional(),
 }).strict().superRefine((activity, context) => {
@@ -552,15 +559,20 @@ export const CanonicalChatRunActivitySchema = z.discriminatedUnion("type", [
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("approval.requested"),
     approvalId: canonicalReferenceId(128),
+    actionDigest: CanonicalChatActionDigestSchema.optional(),
     title: canonicalSafeLabel(160, 640),
     risk: z.enum(["low", "medium", "high"]),
     safeDescription: z.string().min(1).max(4_000).optional(),
     allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
+    browserApproval: BrowserApprovalLifecycleSchema.optional(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("approval.resolved"),
     approvalId: canonicalReferenceId(128),
     decision: CanonicalChatApprovalDecisionSchema,
+    browserApproval: BrowserApprovalLifecycleSchema.optional(),
+    browserGrant: BrowserGrantViewSchema.optional(),
+    reason: z.enum(["expired"]).optional(),
   }).strict(),
   CanonicalChatRunActivityBaseSchema.extend({
     type: z.literal("input.requested"),
@@ -616,4 +628,4 @@ export type CanonicalChatAgentActivityKind = z.infer<typeof CanonicalChatAgentAc
 export type CanonicalChatAgentActivityStatus = z.infer<typeof CanonicalChatAgentActivityStatusSchema>;
 
 export { canonicalChatToolDetail } from "#canonical-chat-tool-details";
-export { canonicalChatToolActivities, type CanonicalToolActivity } from "#canonical-chat-tool-activities";
+export { canonicalChatToolActivities, canonicalChatToolActivityState, type CanonicalToolActivity } from "#canonical-chat-tool-activities";

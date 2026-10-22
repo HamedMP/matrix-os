@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { appKeys, appsQueryOptions, hydrateAppIconUrls, type ApiAppEntry } from "@/api/apps";
+import { useCatalogAppShortcuts } from "@/hooks/useCatalogAppShortcuts";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCommandStore } from "@/stores/commands";
@@ -21,7 +22,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { SettingsIcon, LayoutGridIcon } from "@/lib/hugeicons";
+import { SettingsIcon } from "@/lib/hugeicons";
 import { UserButton } from "./UserButton";
 import { ConnectionIndicator } from "./ConnectionIndicator";
 import { WindowsTaskbar } from "./taskbar/WindowsTaskbar";
@@ -33,14 +34,18 @@ import { VocalPanel } from "./VocalPanel";
 import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
+import { DesktopOnboardingWidget } from "./onboarding-widget/DesktopOnboardingWidget";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import { versionedIconUrl } from "@/lib/icon-url";
 import { VOICE_HIDDEN, getCodeEditorUrl } from "@/lib/feature-flags";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import {
+  showWebDesktop,
   buildWebDesktopLauncherApps,
   buildWebDesktopIconApps,
+  webShellIconUrlForApp,
+  webGalleryLauncherIconUrl,
   resolveWebDesktopBuiltInLaunch,
 } from "@/lib/web-desktop-app-launch";
 import {
@@ -85,11 +90,6 @@ import { openShellSupport } from "@/lib/posthog-client";
 import { Reorder } from "framer-motion";
 
 const GATEWAY_URL = getGatewayUrl();
-// Stable fallback so `pinnedApps` keeps a constant reference when the store
-// value is absent — an inline `?? []` would allocate a fresh array each render
-// and destabilize every memo/callback that depends on `pinnedApps`. Treated as
-// read-only by convention; consumers always build new arrays rather than mutate.
-const EMPTY_PINNED_APPS: string[] = [];
 
 interface DesktopProps {
   launchAppPath?: string | null;
@@ -128,8 +128,10 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   const installedApps = useMemo(
     () => apiApps.map((app) => ({
       name: app.name,
+      slug: app.slug,
+      ownerPath: app.ownerPath,
       path: normalizeBuiltInAppPath(app.path.replace(/^\/files\//, "")),
-      iconUrl: app.iconUrl ?? iconUrlForSlug(app.icon ?? app.slug),
+      iconUrl: webShellIconUrlForApp({ ...app, path: normalizeBuiltInAppPath(app.path.replace(/^\/files\//, "")) }),
     })),
     [apiApps],
   );
@@ -146,14 +148,11 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   // account → journey → Desktop handoff cannot visually swap designs.
 
   const dock = useDesktopConfigStore((s) => s.dock);
-  const pinnedApps = useDesktopConfigStore((s) => s.pinnedApps) ?? EMPTY_PINNED_APPS;
-  const togglePin = useDesktopConfigStore((s) => s.togglePin);
-  const dockOrder = useDesktopConfigStore((s) => s.dockOrder);
+  const { pinnedApps, togglePin, dockOrder, addDesktopIcon } = useCatalogAppShortcuts(apiApps);
   const reorderDockSection = useDesktopConfigStore((s) => s.reorderDockSection);
   const desktopIcons = useDesktopConfigStore((s) => s.desktopIcons);
   const moveDesktopIcon = useDesktopConfigStore((s) => s.moveDesktopIcon);
   const removeDesktopIcon = useDesktopConfigStore((s) => s.removeDesktopIcon);
-  const addDesktopIcon = useDesktopConfigStore((s) => s.addDesktopIcon);
   const appLaunchTimes = useWindowManager((s) => s.appLaunchTimes);
   const isHorizontal = dock.position === "bottom";
   const tooltipSide: "left" | "right" | "top" = dock.position === "left" ? "right" : dock.position === "right" ? "left" : "top";
@@ -834,6 +833,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     <CanvasToolbar
       onOpenSettings={openWebSettings}
       onOpenFirstWork={openGettingStartedWork}
+      onOpenCommandPalette={onOpenCommandPalette}
     />
   ) : null;
 
@@ -1115,7 +1115,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
                         }`}
                         style={{ width: dock.iconSize, height: dock.iconSize }}
                       >
-                        <LayoutGridIcon className="size-4" />
+                        <img src={webGalleryLauncherIconUrl(apps)} alt="" className="size-full object-contain" />
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side={tooltipSide} sideOffset={8}>
@@ -1137,7 +1137,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
                       onClick={() => focusOrOpen("Terminal", "__terminal__")}
                       iconSize={dock.iconSize}
                       tooltipSide={tooltipSide}
-                      iconUrl={terminalApp?.iconUrl ?? iconUrlForSlug("terminal")}
+                      iconUrl={terminalApp?.iconUrl ?? webShellIconUrlForApp({ path: "__terminal__" })}
                     />
                   );
                 })()}
@@ -1214,7 +1214,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
                     : "bg-card border-border/60"
                 }`}
               >
-                <LayoutGridIcon className="size-4" />
+                <img src={webGalleryLauncherIconUrl(apps)} alt="" className="size-full object-contain" />
               </button>
             )}            <button
               type="button"
@@ -1285,12 +1285,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
               }}
               onActivateWindow={(id) => wmRestoreAndFocusWindow(id)}
               onCloseWindow={wmCloseWindow}
-              onShowDesktop={() => {
-                wmExitFullscreen();
-                for (const windowRecord of windows) {
-                  if (!windowRecord.minimized) animateMinimize(windowRecord.id);
-                }
-              }}
+              onShowDesktop={() => showWebDesktop(animateMinimize)}
               onToggleFullscreen={wmToggleFullscreen}
               desktopIcons={desktopIcons}
               onMoveDesktopIcon={moveDesktopIcon}
@@ -1370,6 +1365,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
         </div>
       </div>
 
+      <DesktopOnboardingWidget accountId={cacheScope?.userId ?? null} chat={chat} openApp={openAppOrFocus} onOpenSettings={openWebSettings} />
       <Settings
         open={settingsOpen}
         onOpenChange={setSettingsOpen}

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   requestDeviceCode,
   pollForToken,
@@ -50,6 +50,54 @@ describe("requestDeviceCode", () => {
 });
 
 describe("pollForToken", () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  function timedResponse(delayMs: number) {
+    vi.useFakeTimers();
+    // Model the native AbortSignal deadline with the same deterministic clock
+    // as delayed HTTP completion, instead of inspecting a configured number.
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(new DOMException("timed out", "TimeoutError")), ms);
+      return controller.signal;
+    });
+    return vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); reject(init?.signal?.reason); };
+      const timer = setTimeout(() => {
+        init?.signal?.removeEventListener("abort", abort);
+        resolve(jsonResponse(200, { accessToken: "tok", expiresAt: 1, userId: "u", handle: "h" }));
+      }, delayMs);
+      init?.signal?.addEventListener("abort", abort, { once: true });
+    }));
+  }
+
+  it("waits for bounded token issuance plus network latency without re-polling a consumed code", async () => {
+    const fetchFn = timedResponse(35_000);
+    const result = pollForToken({ ...base, fetchFn, intervalSeconds: 5, expiresInSeconds: 600, sleep: async () => {} });
+    const outcome = result.then(value => ({ value }), error => ({ error }));
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(await outcome).toMatchObject({ value: { accessToken: "tok" } });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds a stalled issuance request and never retries an ambiguous transport failure", async () => {
+    const fetchFn = timedResponse(60_000);
+    const result = pollForToken({ ...base, fetchFn, intervalSeconds: 5, expiresInSeconds: 600, sleep: async () => {} });
+    const outcome = result.then(value => ({ value }), error => ({ error }));
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(await outcome).toMatchObject({ error: { category: "timeout" } });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not authorize beyond the remaining device code lifetime", async () => {
+    const fetchFn = timedResponse(35_000);
+    const result = pollForToken({ ...base, fetchFn, intervalSeconds: 5, expiresInSeconds: 20, sleep: async () => {} });
+    const outcome = result.then(value => ({ value }), error => ({ error }));
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(await outcome).toMatchObject({ error: { code: "expired" } });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
   const base = { baseUrl: "https://app.matrix-os.com", deviceCode: "dc1" };
 
   it("polls at the given interval until authorized", async () => {

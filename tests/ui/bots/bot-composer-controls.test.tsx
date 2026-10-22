@@ -7,7 +7,7 @@ import { createCanonicalProviderCatalogFixture } from '../../contracts/fixtures/
 const catalog=createCanonicalProviderCatalogFixture();
 const base=catalog.instances[0]!;
 catalog.instances=[{...base,id:'matrix_pi_default',driverKind:'matrix_pi',displayName:'Pi',connectionLabel:'Matrix AI',models:[{...base.models[0]!,id:'sonnet',displayName:'Sonnet'}]}];
-const bot={id:'bot_writer01',revision:3,name:'Writer Rabbit',selection:{instanceId:'matrix_pi_default',model:'sonnet'}};
+const bot={recipeRef:{recipeId:'writer',version:'1'},id:'bot_writer01',revision:3,name:'Writer Rabbit',selection:{instanceId:'matrix_pi_default',model:'sonnet'}};
 const makeClient=()=>({list:vi.fn(async()=>({enabled:true,agents:[bot]})),update:vi.fn(async(_id:string,input:unknown)=>({...bot,revision:4,selection:(input as {selection:unknown}).selection}))});
 afterEach(cleanup);
 it('opens the upward model menu from the keyboard and returns focus on Escape',async()=>{
@@ -72,4 +72,16 @@ it('keeps an unsupported saved Bot route distinct from Automatic',async()=>{
  expect(trigger.textContent).toContain('gpt-old · unavailable');
  expect(trigger.textContent).not.toContain('Automatic');
  expect(client.update).not.toHaveBeenCalled();
+});
+
+it('keeps Bot-only subscription models out of a custom Bot harness selector',async()=>{
+ const plan={...base,id:'matrix_chatgpt_plan',driverKind:'matrix_bot' as const,displayName:'ChatGPT subscription',connectionLabel:'ChatGPT subscription',supports:{...base.supports,rootChat:false,permissionModes:['default']},models:[{...base.models[0]!,id:'personal-model',displayName:'Personal model'}]};
+ const customCatalog={...catalog,instances:[...catalog.instances,plan]};
+ const custom={...bot,recipeRef:undefined};const client={...makeClient(),list:vi.fn(async()=>({enabled:true,agents:[custom]}))};
+ render(<BotComposerControls agentId={custom.id} client={client as never} catalog={customCatalog}/>);
+ const trigger=screen.getByRole('button',{name:'Choose bot agent and model'});
+ await waitFor(()=>expect(trigger.textContent).toContain('Writer Rabbit'));
+ fireEvent.click(trigger);
+ const select=screen.getByRole('combobox',{name:'Model'});
+ expect(within(select).queryByRole('option',{name:/Personal model|ChatGPT subscription/})).toBeNull();
 });

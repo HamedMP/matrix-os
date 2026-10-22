@@ -4,12 +4,13 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DesktopModeControls from "@desktop/renderer/src/features/desktop-shell/DesktopModeControls";
-import DesktopSupportWidget, { openDesktopSupport } from "@desktop/renderer/src/features/support/DesktopSupportWidget";
+import DesktopSupportWidget, { closeDesktopSupport, openDesktopSupport } from "@desktop/renderer/src/features/support/DesktopSupportWidget";
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useBrowserNavigation } from "@desktop/renderer/src/stores/browser-navigation";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-desktop-mode";
+import { DesktopHelpMenu } from "@matrix-os/ui";
 
 const operatorEventListeners = vi.hoisted(() => ({
   analyticsCapture: null as null | ((payload: unknown) => void),
@@ -64,8 +65,14 @@ vi.mock("@desktop/renderer/src/features/runtime/RuntimeComputerMenu", () => ({
   default: () => <button type="button">Main computer</button>,
 }));
 vi.mock("@desktop/renderer/src/features/onboarding/GettingStartedPopover", () => ({
-  default: () => null,
+  default: ({ helpMenu }: { helpMenu?: { onSupport(): void; discordIcon: React.ReactNode } }) =>
+    helpMenu ? <DesktopHelpMenu {...helpMenu} incomplete={false} gettingStarted={null} /> : null,
 }));
+
+function openSupportFromHelp() {
+  fireEvent.click(screen.getByRole("button", { name: "Help", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Support chat", exact: true }));
+}
 vi.mock("@desktop/renderer/src/features/mission-control/AccountMenu", () => ({
   default: () => <button type="button" aria-label="Open account menu">Avatar</button>,
 }));
@@ -176,12 +183,11 @@ describe("Desktop support widget", () => {
     );
   });
 
-  it("keeps Support visible without redirecting an unconfigured chat button to docs", async () => {
+  it("keeps Support available through Help without redirecting an unconfigured chat action to docs", async () => {
     vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "");
 
     render(<DesktopModeControls />);
-    expect(screen.getByRole("button", { name: "Support" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Support" }));
+    openSupportFromHelp();
 
     await act(async () => Promise.resolve());
     expect(useTabs.getState().tabs).toEqual([]);
@@ -269,6 +275,63 @@ describe("Desktop support widget", () => {
       posthogClient.reset.mock.invocationCallOrder[0]!,
     );
     expect(posthogClient.reset).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports the open support panel so the onboarding widget can step aside", async () => {
+    posthogClient.conversations.show.mockImplementation(() => {
+      renderPostHogLauncher();
+    });
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+
+    await act(async () => {
+      await openDesktopSupport();
+    });
+    await waitFor(() => expect(useUi.getState().supportPanelOpen).toBe(true));
+
+    act(() => closeDesktopSupport());
+    await waitFor(() => expect(useUi.getState().supportPanelOpen).toBe(false));
+  });
+
+  it("closes the open support panel on Escape without leaking the key to surfaces below", async () => {
+    posthogClient.conversations.show.mockImplementation(() => {
+      renderPostHogLauncher();
+    });
+    const below = vi.fn();
+    window.addEventListener("keydown", below);
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(below).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await openDesktopSupport();
+    });
+    await waitFor(() => expect(useUi.getState().supportPanelOpen).toBe(true));
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Close" }), { key: "Escape" });
+
+    await waitFor(() => expect(useUi.getState().supportPanelOpen).toBe(false));
+    expect(below).toHaveBeenCalledTimes(1);
+    window.removeEventListener("keydown", below);
+  });
+
+  it("keeps the PostHog launcher visible and leases the overlay when the preview flag is on", async () => {
+    vi.stubEnv("VITE_POSTHOG_SHOW_LAUNCHER", "1");
+    render(<DesktopSupportWidget />);
+
+    await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalled());
+    expect(posthogClient.conversations.hide).not.toHaveBeenCalled();
+
+    renderPostHogLauncher();
+    fireEvent.click(screen.getByRole("button", { name: "Open chat" }));
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(1));
+    expect(useUi.getState().supportPanelOpen).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
+    expect(useUi.getState().supportPanelOpen).toBe(false);
   });
 
   it("keeps Support available when verified identity is transiently unavailable", async () => {
@@ -369,11 +432,9 @@ describe("Desktop support widget", () => {
 
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label") ?? button.textContent))
       .toEqual([
-        "Web Desktop",
-        "Web Canvas",
         "Search",
-        "Support",
-        "Join Discord",
+        "Inbox",
+        "Help",
         "Main computer",
         "Open account menu",
       ]);
@@ -386,7 +447,7 @@ describe("Desktop support widget", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(useUi.getState().paletteOpen).toBe(true);
 
-    fireEvent.click(screen.getByRole("button", { name: "Support" }));
+    openSupportFromHelp();
 
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(1));
     expect(useUi.getState().rendererOverlayCount).toBe(1);
@@ -418,7 +479,7 @@ describe("Desktop support widget", () => {
     });
     expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Support" }));
+    openSupportFromHelp();
 
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(2));
     expect(useUi.getState().rendererOverlayCount).toBe(1);
@@ -684,7 +745,7 @@ describe("Desktop support widget", () => {
       </>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Support" }));
+    openSupportFromHelp();
     await waitFor(() => expect(posthogClient.conversations.show).toHaveBeenCalledTimes(1));
     const resetCallsBeforeSignOut = posthogClient.reset.mock.calls.length;
 

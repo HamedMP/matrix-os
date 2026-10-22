@@ -1,0 +1,113 @@
+// Data-only decisions. The privileged controller loads this file only from its
+// authenticated default-branch SHA; never load it from a PR or parent checkout.
+import {readCurrentBranchSha} from './dedicated-branch.mjs';
+import {verifyMainSource} from './dedicated-main.mjs';
+import {resolveDedicatedMergeParents} from './dedicated-merge.mjs';
+import {admitRefreshController} from './dedicated-refresh.mjs';
+import {verifiedSourceController,isolatedTrigger} from './dedicated-isolated.mjs';
+import {verifyMainPrSnapshot,resolveMainPrSnapshot} from './dedicated-main-pr.mjs';
+const shaPattern = /^[a-f0-9]{40}$/;
+const request = {timeout: 10_000};
+const sameRepo = (value, repo) => typeof value === 'string' && value.toLowerCase() === repo.toLowerCase();
+const branchRef = value => typeof value === 'string' && value.length > 0 && value.length <= 1024 && !/[\x00-\x1f\x7f]/.test(value);
+const repository = repo => `${repo.owner}/${repo.repo}`;
+const admittedPull = (pull, fullName) => pull?.state === 'open' && pull.draft === false &&
+  sameRepo(pull.head?.repo?.full_name, fullName) && sameRepo(pull.base?.repo?.full_name, fullName) &&
+  ['ready-for-ci','fast-ci'].every(name => pull.labels?.some(label => label.name === name));
+const validSnapshot = value => Number.isSafeInteger(value?.prNumber) && value.prNumber > 0 &&
+  [value.headSha, value.baseSha, value.sourceSha].every(sha => shaPattern.test(sha || '')) && branchRef(value.baseRef);
+
+export async function liveParentRefSha(github,repo,baseRef) {
+  if(!branchRef(baseRef))throw new Error('Invalid live parent ref');
+  return readCurrentBranchSha(github,repo,baseRef,request);
+}
+
+export function selectDedicatedRoute({repository: fullName, eventName, enabled, shouldRun, pull,ref}) {
+  if(eventName==='push')return enabled==='true'&&shouldRun==='true'&&ref==='refs/heads/main'&&fullName?.toLowerCase()==='hamedmp/matrix-os';
+  return enabled === 'true' && shouldRun === 'true' && eventName === 'pull_request' &&
+    typeof fullName === 'string' && admittedPull(pull, fullName) === true && branchRef(pull.base.ref);
+}
+
+export function assertDefaultController(repo, controller) {
+  const expected = `${repository(repo)}/.github/workflows/ci-dedicated.yml@refs/heads/main`;
+  if (controller?.ref !== 'refs/heads/main' || !shaPattern.test(controller.sha || '') ||
+      controller.workflowRef?.toLowerCase() !== expected.toLowerCase()) {
+    throw new Error('Dedicated controller must originate from the reviewed default branch');
+  }
+}
+
+function eventRequested(payload) {
+  if (payload.action === 'edited') return Boolean(payload.changes?.base);
+  return ['opened', 'reopened', 'labeled', 'ready_for_review', 'synchronize'].includes(payload.action);
+}
+
+export async function admitDedicatedSource(github, input) {
+  const {repo, controller, eventName, payload, inputSha} = input;
+  if(eventName==='workflow_dispatch'&&payload.inputs?.controller_mode){
+    await verifiedSourceController(github,repo,controller,input.executionContext);
+    if(payload.inputs.controller_mode!=='qualification')throw new Error('Maintenance cannot execute a qualification lease');
+    return admitRefreshController(github,repo,await isolatedTrigger(github,repo,payload.inputs,'qualification'));
+  }
+  assertDefaultController(repo, controller);
+  if(eventName==='workflow_run')return admitRefreshController(github,repo,payload);
+  if (eventName === 'workflow_dispatch') {
+    const sourceSha = inputSha || controller.sha;
+    if (!shaPattern.test(sourceSha)) throw new Error('Exact commit SHA required');
+    const {data: commit} = await github.rest.repos.getCommit({...repo, ref: sourceSha, request});
+    if (commit.sha !== sourceSha) throw new Error('Exact commit unavailable');
+    return {sourceSha, headSha: sourceSha, baseSha: '', baseRef: '', prNumber: 0};
+  }
+  if (eventName !== 'pull_request_target') throw new Error('Unsupported controller event');
+  if (!eventRequested(payload)) return null;
+  const eventPull = payload.pull_request;
+  if (!Number.isSafeInteger(eventPull?.number) || eventPull.number < 1 ||
+      ![eventPull.head?.sha, eventPull.base?.sha].every(sha => shaPattern.test(sha || '')) ||
+      !branchRef(eventPull.base?.ref)) throw new Error('Invalid PR revision snapshot');
+  const {data: pull} = await github.rest.pulls.get({...repo, pull_number: eventPull.number, request});
+  if (pull.number !== eventPull.number || !admittedPull(pull, repository(repo)) ||
+      pull.head.sha !== eventPull.head.sha || (eventPull.base.ref!=='main'&&pull.base.sha !== eventPull.base.sha) ||
+      pull.base.ref !== eventPull.base.ref) return null;
+  if(eventPull.base.ref==='main'){
+    if(!shaPattern.test(eventPull.merge_commit_sha||''))throw new Error('Current merge commit unavailable');
+    return resolveMainPrSnapshot(github,repo,pull,{eventPull});
+  }
+  if(await liveParentRefSha(github,repo,pull.base.ref)!==pull.base.sha)throw new Error('Current parent ref has changed');
+  const snapshot = {sourceSha: pull.merge_commit_sha, headSha: pull.head.sha,
+    baseSha: pull.base.sha, baseRef: pull.base.ref, prNumber: pull.number,...(typeof pull.head.ref==='string'?{headRef:pull.head.ref}:{})};
+  if (!validSnapshot(snapshot)) throw new Error('Current merge commit unavailable');
+  snapshot.mergeParents=await resolveDedicatedMergeParents(github,repo,pull);
+  return snapshot;
+}
+
+// Revalidate before dispatch, settlement and waiter acceptance. Main advances
+// preserve the tested source for an unchanged head; stack-parent moves do not.
+export async function verifyCurrentDedicatedSource(github,repo,snapshot){return verifyCurrentSource(github,repo,snapshot,true);}
+export async function verifyCurrentHostedSource(github,repo,snapshot){return verifyCurrentSource(github,repo,snapshot,false);}
+async function verifyCurrentSource(github, repo, snapshot,requireLabels) {
+  if(snapshot?.sourceKind==='main')return verifyMainSource(github,repo,snapshot);
+  if(snapshot?.sourceKind!==undefined)throw new Error('Unsupported source kind');
+  if (!validSnapshot(snapshot)) throw new Error('Invalid dedicated qualification revision');
+  const {data: pull} = await github.rest.pulls.get({...repo, pull_number: snapshot.prNumber, request});
+  if(snapshot.baseRef==='main'){
+    if(requireLabels&&!admittedPull(pull,repository(repo)))throw new Error('Dedicated qualification revision or admission is stale');
+    return verifyMainPrSnapshot(github,repo,pull,snapshot);
+  }
+  if (pull.number !== snapshot.prNumber || pull.state!=='open'||pull.draft!==false||!sameRepo(pull.head?.repo?.full_name,repository(repo))||!sameRepo(pull.base?.repo?.full_name,repository(repo))||(requireLabels&&!admittedPull(pull,repository(repo))) ||
+      pull.head.sha !== snapshot.headSha || (snapshot.headRef !== undefined && pull.head.ref !== snapshot.headRef) ||
+      pull.base.sha !== snapshot.baseSha ||
+      pull.base.ref !== snapshot.baseRef || pull.merge_commit_sha !== snapshot.sourceSha) {
+    throw new Error('Dedicated qualification revision or admission is stale');
+  }
+  if(await liveParentRefSha(github,repo,snapshot.baseRef)!==snapshot.baseSha)throw new Error('Current parent ref has changed');
+  const mergeParents=await resolveDedicatedMergeParents(github,repo,pull);
+  if(snapshot.mergeParents!==undefined&&JSON.stringify(snapshot.mergeParents)!==JSON.stringify(mergeParents))throw new Error('Current ordered merge parents are stale');
+  return {...pull,mergeParents};
+}
+
+export {reconcileDedicatedChildren} from './dedicated-reconcile.mjs';
+export {verifyDedicatedLeaseGrant,newestRequestingCiRun} from './dedicated-lease.mjs';
+export {runDedicatedLeaseSession,dispatchDedicatedLease,validateLeaseRequest,canonicalRequest,verifyLeaseReceipt} from './dedicated-ssh.mjs';
+
+export {reconcileSourceQualification} from './dedicated-source-gate.mjs';
+
+export {assertMainPrIdentity,waitForCurrentMainSource} from './dedicated-main-pr.mjs';

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderSettingsSnapshotSchema } from "@matrix-os/contracts";
 
@@ -101,10 +102,10 @@ describe("provider settings shell transport", () => {
 
     await expect(transport.getSnapshot()).resolves.toEqual(snapshot);
     expect(fetcher).toHaveBeenCalledWith(
-      `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true`,
+      `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true&includeMatrixAnthropicConnection=true&includeClaudeAccountDetails=true`,
       expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
     );
-    expect(timeout).toHaveBeenCalledWith(15_000);
+    expect(timeout).toHaveBeenCalledWith(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs);
   });
 
   it("invalidates the shared Provider catalog only after a successful mutation", async () => {
@@ -130,7 +131,7 @@ describe("provider settings shell transport", () => {
     const fetcher = vi.fn(async () => Response.json(snapshot));
     await createProviderSettingsTransport({ fetcher }).getSnapshot(undefined, { refresh: true });
     expect(fetcher).toHaveBeenCalledWith(
-      `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true&refresh=true`, expect.any(Object),
+      `${window.location.origin}/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true&includeMatrixAnthropicConnection=true&includeClaudeAccountDetails=true&refresh=true`, expect.any(Object),
     );
   });
 
@@ -189,5 +190,31 @@ describe("provider settings shell transport", () => {
     }, { status: 500 }));
     await expect(createProviderSettingsTransport({ fetcher: unknown }).getSnapshot())
       .rejects.toEqual(expect.objectContaining({ code: "unavailable" }));
+  });
+});
+
+describe("scoped managed credit transport", () => {
+  it.each([404, 405, 401, 403])("classifies HTTP%s without a full-read fallback or error-body dependence", async status => {
+    const response = new Response("old gateway or forbidden", { status });
+    const cancel = vi.spyOn(response.body!, "cancel");
+    const fetcher = vi.fn().mockResolvedValue(response);
+    const transport = createProviderSettingsTransport({ fetcher });
+    await expect(transport.getManagedCredit(new AbortController().signal)).rejects.toMatchObject({ code: status === 404 || status === 405 ? "managed_credit_unsupported" : "managed_credit_unauthorized" });
+    expect(fetcher).toHaveBeenCalledTimes(1); expect(cancel).toHaveBeenCalledOnce();
+    expect(fetcher.mock.calls[0]?.[0]).toContain("/api/ai/provider-settings/managed-credit");
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ cache: "no-store" });
+  });
+  it("validates and bounds quiet responses without broadcasting provider changes", async () => {
+    const { observation } = await import("../ui/provider-managed-credit-fixture");
+    const changed = vi.fn(); window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, changed);
+    try {
+      const response = observation(); const fetcher = vi.fn().mockResolvedValueOnce(Response.json(response)).mockResolvedValueOnce(new Response(" ".repeat(16 * 1024 + 1)))
+        .mockResolvedValueOnce(new Response("{}", { headers: { "content-length": String(16 * 1024 + 1) } }));
+      const transport = createProviderSettingsTransport({ fetcher });
+      expect(await transport.getManagedCredit(new AbortController().signal)).toEqual(response);
+      await expect(transport.getManagedCredit()).rejects.toMatchObject({ code: "invalid_response" });
+      await expect(transport.getManagedCredit()).rejects.toMatchObject({ code: "invalid_response" });
+      expect(changed).not.toHaveBeenCalled();
+    } finally { window.removeEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, changed); }
   });
 });

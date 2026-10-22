@@ -250,7 +250,7 @@ h2 {
 
 .chip:hover {
   border-color: var(--app-accent);
-  color: var(--app-accent);
+  color: var(--app-text-accent);
 }
 
 .banner {
@@ -616,7 +616,7 @@ h2 {
 .day--on {
   background: var(--app-accent);
   border-color: var(--app-accent);
-  color: #fff;
+  color: var(--app-primary-fg);
 }
 
 .edit-actions {
@@ -754,7 +754,7 @@ h2 {
 }
 
 .timer-ring-core em {
-  color: var(--app-accent);
+  color: var(--app-text-accent);
   font-style: normal;
   font-weight: 800;
   font-size: 12px;
@@ -854,4 +854,33 @@ h2 {
     animation-duration: 0.001ms !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* Quiet time cards; each mode retains its own scale and layout. */
+.clock-app .topbar { flex-shrink: 0; border-bottom: 1px solid var(--app-border); background: color-mix(in srgb, var(--app-card) 55%, transparent); }
+.clock-app :is(.zone-row, .alarm-row, .timer-card) { background: var(--family-surface); border: 1px solid var(--app-border); border-radius: var(--family-radius); box-shadow: var(--family-lift); padding: 20px; }
+.clock-app :is(.zone-list, .alarm-list) { gap: 12px; }
+.clock-app .zone-meta { min-width: 0; }
+.clock-app .zone-meta span { overflow-wrap: anywhere; }
+.clock-app .zone-time { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.clock-app .alarm-meta { min-width: 0; overflow-wrap: anywhere; }
+.clock-app .sw-readout { font-variant-numeric: tabular-nums; font-size: clamp(40px, 11vw, 112px); }
+.clock-app .custom-row { flex-wrap: wrap; }
+.clock-app .label-input { min-width: 0; }
+.clock-app .timer-setup { border: 1px solid var(--app-border); border-radius: var(--family-radius); padding: 20px; background: var(--family-surface); }
+.clock-app :is(.field input, .duration-input, .label-input) { min-height: 44px; background: var(--app-muted); box-shadow: var(--family-inset); }
+@media (max-width: 640px) {
+ .clock-app :is(.zone-row, .alarm-row, .timer-card, .timer-setup) { padding: 16px; }
+ .clock-app .zone-row { display: grid; grid-template-columns: 48px minmax(0, 1fr) 44px; gap: 10px; }
+ .clock-app .analog { grid-column: 1; grid-row: 1; }
+ .clock-app .zone-meta { grid-column: 2; grid-row: 1; }
+ .clock-app .zone-time { grid-column: 1 / 3; grid-row: 2; justify-self: start; }
+ .clock-app .zone-row > .ghost-btn { grid-column: 3; grid-row: 1 / 3; }
+ .clock-app .zone-row--invalid .zone-meta { grid-column: 1 / 3; }
+ .clock-app .zone-time strong { font-size: 40px; }
+ .clock-app .alarm-meta strong { font-size: 40px; }
+ .clock-app .duration-input { flex: 1 1 120px; }
+ .clock-app .label-input { flex: 1 1 160px; }
+ .clock-app .overlay { padding: 12px; }
+ .clock-app :is(.search-card, .edit-card, .ring-card) { max-height: calc(100dvh - 24px); overflow-y: auto; }
 }

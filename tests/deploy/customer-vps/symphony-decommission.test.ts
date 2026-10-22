@@ -57,7 +57,12 @@ describe("retiring the legacy Symphony runtime", () => {
     expect(syncAgent).toContain('preserve_host_rollback_transaction');
     expect(recovery).toContain('preserve_host_rollback_transaction');
     expect(syncAgent).toContain('if ! retire_legacy_symphony; then');
-    expect(syncAgent).toContain('if resume_symphony_after_update; then\n      cleanup_update_transaction');
+    expect(syncAgent).toContain('resume_unmutated_update_transaction ||');
+    const abort = recovery.match(/resume_unmutated_update_transaction\(\) \{\n[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(abort).toContain('resume_symphony_after_update || return 1');
+    expect(abort.indexOf('resume_symphony_after_update || return 1')).toBeLessThan(
+      abort.indexOf('finish_unmutated_update_transaction'),
+    );
   });
 
   it("keeps the legacy unit backup across later update transactions", () => {

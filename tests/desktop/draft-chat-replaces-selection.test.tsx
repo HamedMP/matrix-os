@@ -16,6 +16,13 @@ import { clearDraftChats, useDraftChat } from "../../desktop/src/renderer/src/st
 import { codingAgentRuntimeScope } from "../../desktop/src/shared/coding-agent-project-workspace";
 import { setSharedComposerText } from "./shared-chat-composer-test-utils";
 import { resetProviderPreferences } from "./provider-preferences-test-utils";
+import { disconnectedSnapshot } from "../ui/chat-provider-settings-fixture";
+import { createLegacyProjectProviderCatalog } from "../../desktop/src/renderer/src/features/chat/canonical-composer-adapter";
+import {
+  desktopProviderCatalogCache,
+  startDesktopProviderCatalogCoordinator,
+  stopDesktopProviderCatalogCoordinator,
+} from "../../desktop/src/renderer/src/features/chat/provider-catalog-coordinator";
 
 const NOW = "2026-07-12T12:00:00.000Z";
 const RUNTIME_SCOPE = codingAgentRuntimeScope({
@@ -200,6 +207,19 @@ function mockOperator() {
     configurable: true,
     value: { invoke, on: vi.fn(() => () => undefined) },
   });
+  const providerSettings = disconnectedSnapshot();
+  providerSettings.harnesses.forEach((harness) => { harness.authState = "authenticated"; });
+  const api = {
+    baseUrl: "https://matrix.test",
+    forRuntime: vi.fn(() => api),
+    get: vi.fn(async (path: string) => {
+      if (path.startsWith("/api/chat-providers")) return createLegacyProjectProviderCatalog(summaryFixture());
+      if (path.startsWith("/api/ai/provider-settings?")) return providerSettings;
+      throw new Error(`unexpected GET ${path}`);
+    }),
+  };
+  useConnection.setState({ api: api as never });
+  startDesktopProviderCatalogCoordinator();
   return { invoke };
 }
 
@@ -210,6 +230,8 @@ class MockResizeObserver {
 }
 
 function resetStores() {
+  stopDesktopProviderCatalogCoordinator();
+  useConnection.setState(useConnection.getInitialState(), true);
   clearDraftChats();
   useProjectView.setState({ entries: {}, runtimeScope: null });
   useProjectWorkspaces.setState({ entries: {}, resolveNewChatTarget: defaultResolveNewChatTarget });
@@ -254,6 +276,7 @@ async function renderWithSelectedThread() {
   render(<ProjectChatsView projectId="matrix-os" active />);
   // The first listed chat auto-selects, so the conversation is visible.
   await screen.findByRole("region", { name: "Conversation Plan the auth work" });
+  await waitFor(() => expect(desktopProviderCatalogCache.getSnapshot().lastSuccessAt).not.toBeNull());
   await waitFor(() => {
     expect(useProjectView.getState().selectedThreadFor("matrix-os")).toBe("thread_plan");
   });
@@ -267,6 +290,8 @@ describe("draft chat replaces the selected thread", () => {
 
   afterEach(() => {
     cleanup();
+    stopDesktopProviderCatalogCoordinator();
+    useConnection.setState(useConnection.getInitialState(), true);
     vi.restoreAllMocks();
   });
 

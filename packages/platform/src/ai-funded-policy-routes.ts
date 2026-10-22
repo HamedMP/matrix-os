@@ -1,5 +1,6 @@
 import {
   FundedAiAuthorizationRequestSchema,
+  FundedAiTerminalOutcomeRequestSchema, FundedAiExecutionRecoveryBatchRequestSchema,
   FundedAiExecutionRecoveryRequestSchema,
   FundedAiOperatorGlobalPolicyResponseSchema,
   FundedAiOperatorGlobalPolicyUpdateRequestSchema,
@@ -22,8 +23,9 @@ import {
   IsoTimestampSchema,
   FundedAiRuntimeCredentialIssueRequestSchema,
   type FundedAiSafeError,
+  IsolatedChatEnvelopeSchema, type IsolatedChatEnvelope,
 } from "@matrix-os/contracts";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
@@ -32,6 +34,9 @@ import { getRunningUserMachineByHandle, type PlatformDB } from "./db.js";
 import { AiFundedPolicyError, type AiFundedPolicyRepository } from "./ai-funded-policy-repository.js";
 import { buildPlatformRuntimeVerificationToken, timingSafeTokenEquals } from "./platform-token.js";
 import { FUNDED_PROBE_MODELS, type FundedModelProbeService } from "./ai-funded-model-probes.js";
+import { observeFundedModelRoutes } from "./ai-funded-route-observations.js";
+
+import { fundedReadinessPhase } from "./ai-funded-readiness-phase.js";
 
 const RUNTIME_BODY_LIMIT = 1024;
 const RELAY_BODY_LIMIT = 4 * 1024;
@@ -212,11 +217,13 @@ export function createAiFundedRuntimeRoutes(options: {
   topUpEnabled?: boolean;
   promotionalGrant?: AiFundedPromotionalGrantConfig;
   routeProbes?: FundedModelProbeService;
+  isolatedChat?: IsolatedChatEnvelope;
   now?: () => Date;
 }) {
   if (!options.repository || !options.db) throw new Error("Funded AI runtime dependencies are missing");
   if (options.platformSecret.length < 32) throw new Error("Funded AI runtime authentication is misconfigured");
   const now = options.now ?? (() => new Date());
+  const isolatedChat = options.isolatedChat ? IsolatedChatEnvelopeSchema.parse(options.isolatedChat) : undefined;
   const app = new Hono();
   app.use("*", async (c, next) => {
     noStore(c);
@@ -271,8 +278,14 @@ export function createAiFundedRuntimeRoutes(options: {
       // Verify live policy before allocating promotion credit. The grant itself
       // is owner/campaign idempotent, so refreshes and multiple runtimes cannot
       // mint it more than once.
-      let summary = await options.repository.getRuntimeFundingSummary(identity, body.data);
-      if (options.promotionalGrant?.enabled
+      const readOnly = fundedReadinessPhase({ phase: isolatedChat?.target?.kind === "canonical_bot" ? isolatedChat : undefined, identity,
+        runtimeTokenEpoch: machine.runtimeTokenEpoch,
+        runtimeToken: buildPlatformRuntimeVerificationToken({ handle: machine.handle, machineId: machine.machineId,
+          runtimeSlot: machine.runtimeSlot }, options.platformSecret, machine.runtimeTokenEpoch),
+        phaseHint: c.req.header("x-matrix-isolated-chat-phase"), configDigest: c.req.header("x-matrix-isolated-chat-config"), now: now() });
+      let summary = readOnly ? await options.repository.getCheckoutFundingSummary(identity,
+        Date.now() + 5000, { ...body.data, projectExpiredCredit: true }) : await options.repository.getRuntimeFundingSummary(identity, body.data);
+      if (!readOnly && options.promotionalGrant?.enabled
         && summary.policy.enabled
         && summary.policy.allowedModelIds.length > 0
         && options.promotionalGrant.expiresAt > now().toISOString()) {
@@ -300,6 +313,13 @@ export function createAiFundedRuntimeRoutes(options: {
     if (!machine) return c.json(safeError("unauthorized"), 401);
     const body = FundedAiRouteReadinessRequestSchema.safeParse(await readStrictJson(c));
     if (!body.success) return c.json(safeError("invalid_request"), 400);
+    const receiptId = randomUUID();
+    const trace = c.req.header("x-cloud-trace-context")?.split("/")[0];
+    const traceId = /^[a-f0-9]{32}$/.test(trace ?? "") ? trace : undefined;
+    let stage = "phase_binding", mode = "probe";
+    const recordReceipt = (outcome: string, readyModelIds: string[] = []) => console.info(JSON.stringify({
+      event: "funded_readiness_route_receipt", receiptId, ...(traceId ? { traceId } : {}), stage, mode, outcome, readyModelIds,
+    }));
     const timeoutMs = body.data.modelId === JEV_MODEL_ID
       ? FUNDED_AI_READINESS_TIMEOUTS.jevRouteMs : FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs;
     const deadlineAtMs = Date.now() + timeoutMs;
@@ -320,25 +340,38 @@ export function createAiFundedRuntimeRoutes(options: {
           () => { pendingRouteFundingReads.delete(pending); });
         return beforeDeadline(pending, deadlineAtMs);
       };
+      const phase = isolatedChat;
+      const cacheOnly = fundedReadinessPhase({ phase, identity, runtimeTokenEpoch: machine.runtimeTokenEpoch,
+        runtimeToken: buildPlatformRuntimeVerificationToken({ handle: machine.handle,
+          machineId: machine.machineId, runtimeSlot: machine.runtimeSlot }, options.platformSecret, machine.runtimeTokenEpoch),
+        modelId: body.data.modelId, phaseHint: c.req.header("x-matrix-isolated-chat-phase"),
+        configDigest: c.req.header("x-matrix-isolated-chat-config"), now: now() });
+      mode = cacheOnly ? "cache_only" : "probe";
+      stage = "funding_read";
       const first = await read();
       const firstNow = now().getTime();
       const eligible = first.policy.enabled && Date.parse(first.policy.checkedAt) <= firstNow
         && Date.parse(first.policy.staleAfter) > firstNow && first.funding.remainingBudgetMicrousd > 0
         ? (body.data.modelId === JEV_MODEL_ID ? [JEV_MODEL_ID] : FUNDED_PROBE_MODELS)
-          .filter((model) => first.policy.allowedModelIds.includes(model)) : [];
+          .filter((model) => first.policy.allowedModelIds.includes(model) && (!cacheOnly || model === phase!.modelId)) : [];
       if (Date.now() >= deadlineAtMs) throw new Error("Funded route readiness timed out");
+      stage = "model_health";
       const observations = options.routeProbes
-        ? await beforeDeadline(Promise.all(eligible.map(async (model) => ({ model, result: await options.routeProbes!.probe(model, {
-          signal: controller.signal, deadlineAtMs,
+        ? await observeFundedModelRoutes(eligible, (model, call) => (cacheOnly
+          ? options.routeProbes!.readCached?.bind(options.routeProbes)
+            ?? (() => Promise.resolve({ ready: false, checkedAt: now().toISOString(), staleAfter: new Date(now().getTime() + 5000).toISOString() }))
+          : options.routeProbes!.probe.bind(options.routeProbes))(model, {
+          ...call, receiptId,
           ...(model === JEV_MODEL_ID ? { runtime: { identity, globalRevision: first.policy.globalRevision, runtimeRevision: first.policy.runtimeRevision } } : {}),
-        }) }))), deadlineAtMs)
+        }), { signal: controller.signal, deadlineAtMs })
         : [];
       // An upstream probe is asynchronous. Re-read exact owner policy and ledger
       // before returning any model as ready; do not reuse an old authorization.
+      stage = "fresh_funding_read";
       const latest = await read();
       const checked = now();
       const current = checked.getTime();
-      const unchanged = latest.policy.enabled && latest.funding.remainingBudgetMicrousd > 0
+      const unchanged = (!cacheOnly || (current >= Date.parse(phase!.startsAt) && current < Date.parse(phase!.expiresAt))) && latest.policy.enabled && latest.funding.remainingBudgetMicrousd > 0
         && latest.policy.globalRevision === first.policy.globalRevision
         && latest.policy.runtimeRevision === first.policy.runtimeRevision
         && latest.policy.allowedModelIds.length === first.policy.allowedModelIds.length
@@ -353,15 +386,18 @@ export function createAiFundedRuntimeRoutes(options: {
       // constrain its validity; empty receipts retain a short retry horizon.
       const earliestObservation = readyObservations.length > 0
         ? Math.min(...readyObservations.map(({ result }) => Date.parse(result.staleAfter))) : current + 5_000;
-      const staleAfter = Math.min(current + 30_000, Date.parse(latest.policy.staleAfter), earliestObservation);
-      if (staleAfter <= current) return c.json(safeError("unavailable"), 503);
+      const staleAfter = Math.min(current + 30_000, Date.parse(latest.policy.staleAfter), earliestObservation, cacheOnly ? Date.parse(phase!.expiresAt) : Infinity);
+      stage = "receipt";
+      if (staleAfter <= current) { recordReceipt("expired_receipt"); return c.json(safeError("unavailable"), 503); }
+      recordReceipt(readyModelIds.length > 0 ? "ready" : eligible.length === 0 ? "empty_no_eligible_models"
+        : !unchanged ? "empty_current_owner_guard" : "empty_no_current_health", readyModelIds);
       return c.json(FundedAiRouteReadinessReceiptSchema.parse({
         contractVersion: 1,
         globalRevision: latest.policy.globalRevision,
         runtimeRevision: latest.policy.runtimeRevision,
         checkedAt: checked.toISOString(), staleAfter: new Date(staleAfter).toISOString(), readyModelIds,
       }), 200);
-    } catch (error) { return policyErrorResponse(c, error); }
+    } catch (error) { recordReceipt("error"); return policyErrorResponse(c, error); }
     finally {
       clearTimeout(deadlineTimer);
       c.req.raw.signal.removeEventListener("abort", onRequestAbort);
@@ -486,6 +522,13 @@ export function createAiFundedOperatorRoutes(options: {
     }
   });
 
+  app.post("/execution-recovery/batch", bodyLimit({ maxSize: 16 * 1024 }), async (c) => {
+    const request = FundedAiExecutionRecoveryBatchRequestSchema.safeParse(await readStrictJson(c));
+    if (!request.success || !EmptyQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams)).success) return c.json(safeError("invalid_request"), 400);
+    try { return c.json(await options.repository.releaseExecutionAdmissionBatch(request.data), 200); }
+    catch (error) { return policyErrorResponse(c, error); }
+  });
+
   app.post("/runtimes/:handle/policy-execution-release", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
     const handle = HandleSchema.safeParse(c.req.param("handle"));
     const query = EmptyQuerySchema.safeParse(Object.fromEntries(new URL(c.req.url).searchParams));
@@ -581,6 +624,12 @@ export function createAiFundedRelayRoutes(options: {
     } catch (error) {
       return policyErrorResponse(c, error);
     }
+  });
+  app.post("/terminal", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
+    const request = FundedAiTerminalOutcomeRequestSchema.safeParse(await readStrictJson(c));
+    if (!request.success) return c.json(safeError("invalid_request"), 400);
+    try { return c.json(await options.repository.recordTerminalOutcome(request.data), 200); }
+    catch (error) { return policyErrorResponse(c, error); }
   });
   app.post("/finalize", bodyLimit({ maxSize: RELAY_BODY_LIMIT }), async (c) => {
     const request = FundedAiFinalizationRequestSchema.safeParse(await readStrictJson(c));

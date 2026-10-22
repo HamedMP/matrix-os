@@ -1,0 +1,59 @@
+@import "../../_shared/app-foundation.css";
+@import "../../_shared/gallery-family.css";
+
+/* Game Center is a shelf of small sculpted objects, in the gallery's family. */
+.default-app--games { background: transparent; }
+.game-library { max-width: 1120px; margin: 8px auto; }
+.library-head { padding: 20px 0 36px; }
+.library-head h1 { font-size: clamp(34px, 5vw, 56px); font-weight: 600; }
+.library-head p { font-size: 15px; }
+.game-shelf { gap: 20px; }
+.game-cover {
+  --cover-accent: #6c50aa;
+  padding: 14px 14px 20px;
+  border: 1px solid var(--app-border);
+  border-radius: 26px;
+  background: var(--family-surface, var(--app-card));
+  box-shadow: var(--family-lift, 0 4px 12px rgba(38, 35, 70, .05), 0 16px 36px rgba(38, 35, 70, .06));
+}
+/* Artwork colors and relief are owned by the shared Matrix brand stylesheet. */
+.game-art {
+  height: 176px;
+  border-radius: 19px;
+}
+.game-cover--2048 { --cover-accent: #a45b24; }
+.game-cover--chess { --cover-accent: #4e627f; }
+.game-cover--solitaire { --cover-accent: #267466; }
+.game-cover--snake { --cover-accent: #467337; }
+.game-cover--minesweeper { --cover-accent: #4565a5; }
+.game-cover--backgammon { --cover-accent: #9a5931; }
+.game-caption { padding: 20px 0 0; }
+.game-caption h2 { font-size: 22px; font-weight: 600; }
+.game-caption p { min-height: 40px; line-height: 1.5; }
+.play-button {
+  position: static;
+  margin-top: 16px;
+  min-height: 44px;
+  min-width: 74px;
+  padding: 10px 20px;
+  border: 1px solid color-mix(in srgb, var(--cover-accent) 80%, #ffffff);
+  color: #ffffff;
+  background: var(--cover-accent);
+  box-shadow: inset 0 1px 1px #ffffff59, 0 4px 8px color-mix(in srgb, var(--cover-accent) 15%, transparent);
+  font-weight: 600;
+}
+.play-button:hover:not(:disabled) { filter: brightness(1.06); }
+.play-button:focus-visible { outline: 2px solid var(--app-fg); outline-offset: 3px; }
+@media (max-width: 760px) {
+  .game-shelf { gap: 16px; }
+  .game-art { height: 140px; }
+  .game-cover { padding: 10px 10px 16px; border-radius: 22px; }
+  .game-caption { padding-top: 16px; }
+  .game-caption h2 { font-size: 20px; }
+}
+@media (max-width: 420px) {
+  .library-head { padding-top: 12px; padding-bottom: 24px; }
+  .game-shelf { grid-template-columns: minmax(0, 1fr); }
+  .game-art { height: 160px; }
+  .game-caption p { min-height: 0; }
+}

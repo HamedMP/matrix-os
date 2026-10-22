@@ -2,7 +2,9 @@ import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { AiProviderLocalObservationSchema } from "#ai-provider";
-import { FundedAiChatAvailabilitySchema } from "#funded-ai";
+import { FundedAiChatAvailabilitySchema, isManagedWorkersAiModel } from "#funded-ai";
+import { MatrixAnthropicConnectionSchema } from "#matrix-anthropic-connection";
+import { MATRIX_CHATGPT_PLAN_INSTANCE_ID } from "#bots/model-choice";
 
 function unique(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -228,8 +230,8 @@ export const ProviderAccessSourceSchema = z.object({
   }
   if (source.kind === "harness_profile"
     && (matrixFunded || source.accountId !== null
-      || (source.harness !== "pi" && source.harness !== "opencode" && source.harness !== "hermes")
-      || (source.harness === "hermes" && (source.providerId !== "openai-codex" || source.fundingKind !== "owner_account")))) {
+      || (source.harness !== "pi" && source.harness !== "opencode" && source.harness !== "hermes" && source.harness !== "openclaw")
+      || (source.harness === "hermes" && (!["openai-codex", "openai-api", "anthropic", "openrouter"].includes(source.providerId) || !["owner_account", "owner_api_key"].includes(source.fundingKind))))) {
     ctx.addIssue({ code: "custom", message: "Harness profiles require one exact harness and no Matrix funding or provider account" });
   }
   if (source.kind !== "harness_profile" && source.harness !== undefined) {
@@ -249,7 +251,7 @@ export const ProviderDependencyCountsSchema = z.object({
 /** Owner-only native identity, emitted only after explicit GET negotiation. */
 export const ProviderConnectionDetailsSchema = z.object({
   email: z.email().max(120).optional(),
-  planName: z.enum(["ChatGPT Free", "ChatGPT Go", "ChatGPT Plus", "ChatGPT Pro", "ChatGPT Team", "ChatGPT Business", "ChatGPT Enterprise", "ChatGPT Edu"]).optional(),
+  planName: z.enum(["ChatGPT Free", "ChatGPT Go", "ChatGPT Plus", "ChatGPT Pro", "ChatGPT Team", "ChatGPT Business", "ChatGPT Enterprise", "ChatGPT Edu", "Claude Pro", "Claude Max", "Claude Team", "Claude Enterprise"]).optional(),
 }).strict();
 export const ProviderAccountSchema = z.object({
   connectionDetails: ProviderConnectionDetailsSchema.optional(),
@@ -360,10 +362,17 @@ export const ProviderGatewayPolicySchema = z.object({
   accessSourceId: ReferenceIdSchema,
   monthlyBudgetMicrousd: MicrousdSchema.nullable(),
   allowedModelIds: z.array(ProviderModelReferenceSchema).max(256),
+  /** Quiet observations may narrow runtime choices without deleting saved routes. */
+  effectiveAllowedModelIds: z.array(ProviderModelReferenceSchema).max(256).optional(),
   topUpEnabled: z.boolean(),
 }).strict().superRefine((policy, ctx) => {
   if (!unique(policy.allowedModelIds)) {
     ctx.addIssue({ code: "custom", path: ["allowedModelIds"], message: "Duplicate allowed model" });
+  }
+  if (policy.effectiveAllowedModelIds !== undefined
+    && (!unique(policy.effectiveAllowedModelIds)
+      || policy.effectiveAllowedModelIds.some(model => !policy.allowedModelIds.includes(model)))) {
+    ctx.addIssue({ code: "custom", path: ["effectiveAllowedModelIds"], message: "Effective models must narrow configured models" });
   }
 });
 
@@ -395,6 +404,7 @@ export const ProviderSettingsSnapshotSchema = z.object({
   contractVersion: z.literal(1),
   /** Returned only to clients opting into extended runtime capabilities. */
   atomicConnectSupported: z.boolean().optional(),
+  matrixAnthropicConnection: MatrixAnthropicConnectionSchema.optional(),
   projectionOf: z.object({
     contract: z.literal("AiProviderSnapshotV3"),
     contractVersion: z.literal(3),
@@ -572,7 +582,7 @@ export const ProviderSettingsMutationSchema = z.discriminatedUnion("type", [
     route: ProviderConfigurableRouteSchema, accessSourceId: ReferenceIdSchema,
     accountId: ReferenceIdSchema.nullable(), enableHarness: z.boolean().optional() }).strict(),
   z.object({ type: z.literal("select_account"), ...MutationBase, harnessInstanceId: ReferenceIdSchema, accountId: ReferenceIdSchema }).strict(),
-  z.object({ type: z.literal("select_access_source"), ...MutationBase, harnessInstanceId: ReferenceIdSchema, accessSourceId: ReferenceIdSchema }).strict(),
+  z.object({ type: z.literal("select_access_source"), ...MutationBase, harnessInstanceId: ReferenceIdSchema, accessSourceId: ReferenceIdSchema, enableHarness: z.boolean().optional() }).strict(),
   z.object({ type: z.literal("start_login"), ...MutationBase, harnessInstanceId: ReferenceIdSchema,
     accountId: ReferenceIdSchema.nullable(), method: ProviderLoginMethodSchema }).strict(),
   z.object({ type: z.literal("logout_account"), ...MutationBase, accountId: ReferenceIdSchema }).strict(),
@@ -679,7 +689,7 @@ export function isPortableGenericHarnessCredentialRoute(
   if (source.kind === "matrix_gateway") {
     return ((source.id === "matrix_included" && source.providerId === "anthropic")
       || (source.id === "matrix_cloudflare" && source.providerId === "cloudflare"
-        && harness.route.modelId === "@cf/zai-org/glm-5.3-flash"))
+        && isManagedWorkersAiModel(harness.route.modelId)))
       && source.accountId === null
       && (source.fundingKind === "matrix_included" || source.fundingKind === "matrix_addon");
   }
@@ -699,7 +709,8 @@ export function isNativeGenericHarnessCredentialRoute(
   > | null | undefined,
 ): boolean {
   return (harness.harness === "pi" || harness.harness === "opencode"
-      || (harness.harness === "hermes" && source?.providerId === "openai-codex"))
+      || (harness.harness === "hermes" && ["openai-codex", "openai-api", "anthropic", "openrouter"].includes(source?.providerId ?? ""))
+      || (harness.harness === "openclaw" && ["openai", "anthropic", "openrouter"].includes(source?.providerId ?? "")))
     && harness.route.kind === "configurable"
     && harness.accessSourceId !== null
     && source?.kind === "harness_profile"
@@ -726,9 +737,11 @@ export function isSupportedGenericHarnessCredentialRoute(
   harness: Pick<ProviderHarnessInstance, "harness" | "accessSourceId" | "route">,
   source: ProviderAccessSource | null | undefined,
 ): boolean {
+  // Paired-device authority is executable only through its managed route adapter.
+  if (source?.id === MATRIX_CHATGPT_PLAN_INSTANCE_ID) return false;
   if (harness.harness === "hermes" || harness.harness === "openclaw") {
     return source?.kind === "provider_account"
-      || (harness.harness === "hermes" && isNativeGenericHarnessCredentialRoute(harness, source));
+      || isNativeGenericHarnessCredentialRoute(harness, source);
   }
   if (harness.harness === "pi" || harness.harness === "opencode") {
     return isRunnableGenericHarnessCredentialRoute(harness, source);

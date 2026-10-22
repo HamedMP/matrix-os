@@ -6,6 +6,7 @@ import {
   FundedAiGlobalPolicySchema,
   FundedAiRuntimeCredentialIssueResponseSchema,
   IsoTimestampSchema,
+  isManagedWorkersAiModel,
   type FundedAiGlobalPolicy,
   type FundedAiIdentity,
   type FundedAiRuntimeCredentialIssueResponse,
@@ -16,11 +17,14 @@ import { sql } from "kysely";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { createAiFundedMeteringRepository } from "./ai-funded-metering-repository.js";
+import { createFundedTerminalOutcome } from "./ai-funded-terminal-outcome.js";
+import { createFundedExecutionBatch } from "./ai-funded-execution-batch.js";
 import { createFundedExecutionRecovery } from "./ai-funded-execution-recovery.js";
 
 export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
 
-const ModelIdsSchema = z.array(z.string().min(3).max(200).regex(/^(?:[A-Za-z0-9][A-Za-z0-9._:/-]*|@cf\/zai-org\/glm-5\.3-flash)$/))
+const ModelIdsSchema = z.array(z.string().min(3).max(200).refine(value =>
+  /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value) || isManagedWorkersAiModel(value)))
   .max(64).refine((values) => new Set(values).size === values.length);
 const IdentitySchema = z.object({
   ownerId: z.string().min(1).max(160),
@@ -384,6 +388,8 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     issueJevProbeCredential: (identity: FundedAiIdentity) => issueCredential(identity, true),
     revokeRuntimeCredential,
     releaseExecutionAdmission: createFundedExecutionRecovery({ db: options.db, now }),
+    releaseExecutionAdmissionBatch: createFundedExecutionBatch({ db: options.db, now }),
+    recordTerminalOutcome: createFundedTerminalOutcome({ db: options.db, now }),
     ...metering,
   };
 }

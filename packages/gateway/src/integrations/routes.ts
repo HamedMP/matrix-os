@@ -1,13 +1,13 @@
 import { executeIntegrationAction } from "./action-execution.js";
 import { getErrorStatusCode, integrationActionFailure, integrationActionSuccess } from "./call-outcome.js";
 import { formatActionParamValidationError, validateActionParams } from "./parameter-validation.js";
-import { AMBIGUOUS_CONNECTION_ERROR, resolveIntegrationConnection } from "./connection-selection.js";
+import { AMBIGUOUS_CONNECTION_ERROR, resolveIntegrationConnection, resolveManagedIntegrationCall } from "./connection-selection.js";
 import { Hono, type Context } from "hono";
 import type { ServiceDefinition } from "./types.js";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { registerConnectedIntegrationWebhook, type VerifiedConnectedWebhookAdmission } from "./connected-webhook.js";
-import { listServices, getService, getAction } from "./registry.js";
+import { listServices, getService, getServiceByPipedreamApp, getAction } from "./registry.js";
 import type { PipedreamConnectClient } from "./pipedream.js";
 import type { PlatformDb } from "../platform-db.js";
 import { isScopedReadCatalogRequest, projectIntegrationCatalog } from "./catalog-projection.js";
@@ -43,6 +43,7 @@ const CallBodySchema = z.object({
   service: z.string().min(1),
   action: z.string().min(1),
   label: LabelField.optional(),
+  connectionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
@@ -89,11 +90,7 @@ const PROFILE_ENDPOINTS: Record<string, {
     // the verified primary if we want fuller coverage.)
     extract: (d) => d?.email ?? undefined,
   },
-  slack: {
-    url: "https://slack.com/api/auth.test",
-    // auth.test yields a username/display identifier, not an email address.
-    extract: () => undefined,
-  },
+  // Slack auth.test cannot return an email; do not spend a proxy credit on it.
   discord: {
     url: "https://discord.com/api/v10/users/@me",
     extract: (d) => d?.email ?? d?.username,
@@ -158,18 +155,13 @@ export interface IntegrationRoutesOpts {
       service: ServiceDefinition;
       actionId: string;
       params?: Record<string, unknown>;
+      connectionId?: string;
     }): Promise<unknown>;
     disconnect(userId: string, connectionId: string): Promise<boolean>;
   };
 }
 
-export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
-  const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker } = opts;
-  const emit = broadcast ?? (() => {});
-  const app = new Hono();
-  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId }));
-  app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
-
+function createPendingLabelQueue() {
   // Pending labels from /connect that need to survive the OAuth round-trip.
   // Queued per "externalUserId:appSlug", TTL 10 minutes, capped at 1000 entries.
   const pendingLabels = new Map<string, Array<{ label: string; ts: number }>>();
@@ -242,6 +234,18 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     }
   }, 5 * 60 * 1000);
   pendingLabelCleanup.unref();
+
+  return { enqueuePendingLabel, consumePendingLabel };
+}
+
+export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
+  const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker } = opts;
+  const emit = broadcast ?? (() => {});
+  const app = new Hono();
+  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId, presetBroker: mcpPresetBroker }));
+  app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
+
+  const { enqueuePendingLabel, consumePendingLabel } = createPendingLabelQueue();
 
   // -----------------------------------------------------------------------
   // Auth helper -- returns userId or sends 401
@@ -421,16 +425,16 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       const existing = await db.listConnectedServices(uid);
       const existingPdIds = new Set(existing.map((s) => s.pipedream_account_id));
 
-      const newAccounts = pdAccounts.filter((acc) => {
-        const service = getService(acc.app);
-        return !existingPdIds.has(acc.id) && service?.connectorKind === "pipedream";
+      const newAccounts = pdAccounts.flatMap(acc => {
+        const service = getServiceByPipedreamApp(acc.app);
+        return !existingPdIds.has(acc.id) && service ? [{ ...acc, serviceId: service.id }] : [];
       });
 
       // Resolve emails for new accounts missing them
       const resolvedEmails = await Promise.all(
         newAccounts.map(async (acc) => {
           if (acc.email) return acc.email;
-          return resolveAccountEmail(pipedream, externalId, acc.id, acc.app);
+          return resolveAccountEmail(pipedream, externalId, acc.id, acc.serviceId);
         }),
       );
 
@@ -446,10 +450,10 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         newAccounts.map(async (acc, i) => {
           const pendingKey = `${externalId}:${acc.app}`;
           const explicitLabel = consumePendingLabel(pendingKey);
-          const label = explicitLabel ?? acc.app;
+          const label = explicitLabel ?? acc.serviceId;
           const row = await db.connectService({
             userId: uid,
-            service: acc.app,
+            service: acc.serviceId,
             pipedreamAccountId: acc.id,
             accountLabel: label,
             accountEmail: resolvedEmails[i],
@@ -466,14 +470,15 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       }
       const synced = upserted.filter((u) => u.row.inserted).length;
 
-      // Also backfill emails for existing connections missing them
+      // Consent polling must stay credit-free for existing accounts. Backfill
+      // only actual emails from the management inventory, never paid profiles.
       const missingEmail = existing.filter((s) => !s.account_email);
       await Promise.all(
         missingEmail.map(async (s) => {
           const conn = pdAccounts.find((a) => a.id === s.pipedream_account_id);
           if (!conn) return;
-          const email = await resolveAccountEmail(pipedream, externalId, conn.id, s.service);
-          if (email) await db.updateAccountEmail(s.id, email);
+          const email = z.email().safeParse(conn.email);
+          if (email.success) await db.updateAccountEmail(s.id, email.data);
         }),
       );
 
@@ -515,7 +520,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: `Unknown service: ${service}` }, 400);
     }
 
-    if (def.connectorKind === "mcp_preset") {
+    if (def.connectorKind === "mcp_preset" || def.connectorKind === "managed_oauth") {
       if (!mcpPresetBroker) return c.json({ error: "Service connection unavailable" }, 503);
       try {
         const result = await mcpPresetBroker.connect(uid, def);
@@ -580,7 +585,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
     }
 
-    const { service, action, label, params } = parsed.data;
+    const { service, action, label, params, connectionId } = parsed.data;
 
     const def = getService(service);
     if (!def) {
@@ -603,14 +608,19 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       }, 400);
     }
 
-    if (def.connectorKind === "mcp_preset") {
+    if (def.connectorKind === "mcp_preset" || def.connectorKind === "managed_oauth") {
       if (!mcpPresetBroker) return c.json({ error: "Integration service unavailable" }, 503);
       try {
+        const selected = await resolveManagedIntegrationCall({ service, label, connectionId,
+          listConnections: () => mcpPresetBroker.listConnections(uid) });
+        if (selected.kind === "ambiguous") return c.json({ error: AMBIGUOUS_CONNECTION_ERROR }, 409);
+        if (selected.kind === "denied") return c.json({ error: "Action not permitted" }, 403);
         const data = await mcpPresetBroker.call({
           userId: uid,
           service: def,
           actionId: action,
           params,
+          ...(selected.kind === "found" ? { connectionId: selected.connectionId } : {}),
         });
         return c.json({ data, service, action });
       } catch (err) {
@@ -641,26 +651,30 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     let selection = resolveIntegrationConnection(connections, service, label);
     if (selection.kind === "ambiguous") return c.json({ error: AMBIGUOUS_CONNECTION_ERROR }, 409);
     let connection = selection.kind === "found" ? selection.connection : undefined;
+    // A bot's saved grant names a specific row. Never sync/reselect a missing
+    // row, because the same label may now belong to a different account.
+    if (connectionId && connection?.id !== connectionId) return c.json({ error: "Action not permitted" }, 403);
 
     if (!connection) {
       try {
         const extId = await getOrCreateExternalId(uid);
         const pdAccounts = await pipedream.listAccounts(extId);
         const existingPdIds = new Set(connections.map((s) => s.pipedream_account_id));
-        const newAccounts = pdAccounts.filter(
-          (acc) => !existingPdIds.has(acc.id) && getService(acc.app),
-        );
+        const newAccounts = pdAccounts.flatMap(acc => {
+          const matchedService = getServiceByPipedreamApp(acc.app);
+          return !existingPdIds.has(acc.id) && matchedService ? [{ ...acc, serviceId: matchedService.id }] : [];
+        });
         if (newAccounts.length > 0) {
           await Promise.all(
             newAccounts.map(async (acc) => {
               const pendingKey = `${extId}:${acc.app}`;
               const explicitLabel = consumePendingLabel(pendingKey);
-              const lbl = explicitLabel ?? acc.app;
+              const lbl = explicitLabel ?? acc.serviceId;
               const resolvedEmail = acc.email
-                ?? (await resolveAccountEmail(pipedream, extId, acc.id, acc.app));
+                ?? (await resolveAccountEmail(pipedream, extId, acc.id, acc.serviceId));
               const row = await db.connectService({
                 userId: uid,
-                service: acc.app,
+                service: acc.serviceId,
                 pipedreamAccountId: acc.id,
                 accountLabel: lbl,
                 accountEmail: resolvedEmail,

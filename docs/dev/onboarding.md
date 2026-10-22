@@ -216,9 +216,9 @@ Use `bun run dev:infra` when you only need ready PostgreSQL and object storage.
 The narrower `bun run dev` command still starts exactly three source processes:
 gateway, proxy, and shell; it assumes any required infrastructure is already
 running. The shell uses Next.js's default Turbopack development server. pnpm's
-content-addressed package cache remains shared, while each checkout
-keeps its own virtual store and builds approved native addons locally so a
-project running another Node ABI cannot replace them.
+dependency-graph-addressed virtual store remains shared across host worktrees.
+Docker dependency installs explicitly disable the global virtual store so their
+native addons stay isolated from host projects.
 
 Host source development does not launch the production Linux user-systemd
 terminal runtime and therefore cannot reproduce production Terminal lifecycle,
@@ -303,8 +303,8 @@ fix: resolve WebSocket reconnection bug
 test: add kernel integration tests
 ```
 
-Use Graphite stacked PRs for multi-slice work that would otherwise exceed the
-normal review size. See [Stacked PR Workflow](stacked-prs.md) for the `gt`
+Use GitHub native stacks for multi-slice work that would otherwise exceed the
+normal review size. See [Stacked PR Workflow](stacked-prs.md) for the `gh stack`
 commands and Matrix OS stack rules.
 
 When your PR changes `shell/` files, the Screenshots CI runs Playwright and commits updated snapshots to your branch. Review the image diffs.
@@ -332,7 +332,7 @@ Never run `docker compose down -v` unless you want to destroy all data.
 - [Docker Development Guide](docker-development.md) -- volumes, HMR, troubleshooting, branch isolation
 - [Release Process](releases.md) -- host-bundle versioning and tagging
 - [CLI Release Process](cli-release.md) -- npm, Homebrew, and MatrixSync installer releases
-- [Stacked PR Workflow](stacked-prs.md) -- Graphite stacks for multi-slice features
+- [Stacked PR Workflow](stacked-prs.md) -- GitHub native stacks for multi-slice features
 - [VPS Deployment](vps-deployment.md) -- production server
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) -- code style, CI/CD, PR process
 - [CLAUDE.md](../../CLAUDE.md) -- development rules, mandatory code patterns

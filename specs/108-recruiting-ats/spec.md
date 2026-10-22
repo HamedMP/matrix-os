@@ -110,6 +110,7 @@ Limits:
 - Candidate detail with structured answers, links, CV preview/download, notes, scorecards, interviews, tasks, and chronological activity.
 - Atomic stage/disposition transitions with conflict feedback.
 - Assignment, tags, next action, and due date.
+- Role/position reassignment through the existing admin metadata update, validated against open roles, revision-checked and recorded in the same transaction. Website intake retains its advertised role; email review assigns a position before promotion. Role-filtered lists reflect reassignment immediately. Omitting the optional role preserves existing and closed positions.
 - Interview creation and candidate-specific booking URL.
 - Scorecard submission with an explicit recommendation; no automated decision score.
 - Candidate data export, withdrawal, archival, anonymization/deletion, and retention visibility.

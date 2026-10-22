@@ -84,6 +84,15 @@ it("advances one canonical revision across disable and logout and rejects pre-lo
   expect(await read()).toEqual(loggedOut);
 });
 
+it("projects the exact owner-native Claude profile for inline login", async () => {
+  gateway = await startProviderAuthGateway({ inlineClaude: true });
+  gateway.setAuthenticated(true);
+  const snapshot = ProviderSettingsSnapshotSchema.parse(await (await fetch(`${gateway.url}/api/ai/provider-settings`, { signal: AbortSignal.timeout(1000) })).json());
+  expect(snapshot.accessSources[0]).toMatchObject({ id: "owner_claude_profile", accountId: "owner_claude_profile", providerId: "anthropic", kind: "provider_account" });
+  expect(snapshot.accounts[0]).toMatchObject({ id: "owner_claude_profile", accessSourceId: "owner_claude_profile", authMethod: "terminal", authState: "authenticated" });
+  expect(snapshot.harnesses[0]).toMatchObject({ selectedAccountId: "owner_claude_profile", accessSourceId: "owner_claude_profile", enabled: false });
+});
+
 it("starts inline Claude disabled and uses native login completion to enable only that harness", async () => {
   gateway = await startProviderAuthGateway({ inlineClaude: true });
   const read = async () => ProviderSettingsSnapshotSchema.parse(await (await fetch(`${gateway!.url}/api/ai/provider-settings`, { signal: AbortSignal.timeout(1000) })).json());
@@ -95,7 +104,8 @@ it("starts inline Claude disabled and uses native login completion to enable onl
   const operation = await started.json();
   expect((await post(`/api/ai/provider-settings/workflows/${operation.id}/code`, { code: "synthetic-fixture-code" })).status).toBe(200);
   const connected = await read();
-  expect(connected.harnesses[0]).toMatchObject({ enabled: true, configuredEnabled: true, authState: "authenticated" });
+  expect(connected.harnesses[0]).toMatchObject({ enabled: true, configuredEnabled: true, authState: "authenticated", selectedAccountId: "owner_claude_profile", accessSourceId: "owner_claude_profile" });
+  expect(connected.harnesses[0].route).toEqual(before.harnesses[0].route);
   expect(connected.revision).toBe(before.revision + 2);
   expect(gateway.workflowEvents).toEqual(["browser-login", "code-completed", "agent-enabled"]);
   expect(gateway.commands).toHaveLength(0);

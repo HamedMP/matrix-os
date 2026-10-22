@@ -17,10 +17,19 @@ export function useWorkSharedDiscovery(active: boolean) {
   const actorId = useConnection(state => state.userId);
   const platformHost = useConnection(state => state.platformHost);
   const authGeneration = useConnection(state => state.authGeneration);
+  const organizationStatus = useConnection(state => state.organizationStatus);
+  const enabled = active && organizationStatus !== "none";
   const key = `${actorId ?? ""}\0${platformHost}\0${authGeneration}`;
   const [snapshot, setSnapshot] = useState<{ key: string; items: WorkSharedItem[]; loading: boolean; error: string | null } | null>(null);
   useEffect(() => {
-    if (!active || !actorId || !platformHost) return;
+    if (!actorId || !platformHost || organizationStatus === "none") {
+      // Membership loss invalidates organization-owned discovery. Keeping the
+      // snapshot would briefly restore stale shares if the same account rejoins.
+      setSnapshot(current => current === null ? current : null);
+      return;
+    }
+    // Closing search pauses discovery without discarding already loaded results.
+    if (!active) return;
     const api = createDesktopCollaborationApi(platformHost);
     if (!api) { setSnapshot({ key, items: [], loading: false, error: "Shared items could not be loaded. Try again." }); return; }
     let current = true;
@@ -45,9 +54,9 @@ export function useWorkSharedDiscovery(active: boolean) {
     void refresh();
     const unsubscribe = subscribeCollaborationDiscoveryChanged(() => { void refresh(); });
     return () => { current = false; unsubscribe(); releaseDesktopCollaborationApi(api); };
-  }, [active, actorId, platformHost, authGeneration, key]);
-  const available = Boolean(actorId && platformHost);
-  return snapshot?.key === key && active
+  }, [active, actorId, platformHost, authGeneration, key, organizationStatus]);
+  const available = Boolean(actorId && platformHost && organizationStatus !== "none");
+  return snapshot?.key === key && enabled
     ? { ...snapshot, available }
-    : { items: [] as WorkSharedItem[], loading: active && available, error: null, available };
+    : { items: [] as WorkSharedItem[], loading: enabled && available, error: null, available };
 }

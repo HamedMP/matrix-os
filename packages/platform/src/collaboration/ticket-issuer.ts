@@ -182,7 +182,7 @@ export class CollaborationTicketIssuer {
 
   constructor(private readonly options: {
     keyring: TicketSigningKeyring;
-    repository: Pick<PlatformCollaborationRepository, "getDirectoryRoute" | "getScopeActorStatus">;
+    repository: Pick<PlatformCollaborationRepository, "getDirectoryRoute" | "getScopeActorEntry" | "getScopeActorStatus">;
     endpoints: Pick<CollaborationRuntimeEndpointRegistry, "resolveEnrolled">;
     /** Resolves the owning organization of a shared scope; null denies. */
     resolveOrganization(scopeId: string): Promise<string | null>;
@@ -242,11 +242,12 @@ export class CollaborationTicketIssuer {
     const request = CollaborationConnectionRequestSchema.safeParse(input.request);
     if (!request.success) throw new CollaborationTicketIssuerError("invalid_request", "Connection request is invalid");
     const { scopeId, purpose, proofPublicKey } = request.data;
-    const [directory, status, organizationId] = await Promise.all([
+    const [directory, entry, organizationId] = await Promise.all([
       this.options.repository.getDirectoryRoute(scopeId),
-      this.options.repository.getScopeActorStatus(scopeId, input.actorId),
+      this.options.repository.getScopeActorEntry(scopeId, input.actorId),
       this.options.resolveOrganization(scopeId),
     ]);
+    const status = entry?.status ?? null;
     // Existence is never disclosed: every denial is the same not-found.
     if (!directory || !organizationId) throw denied();
     // A shared project's Chat has no members of its own: only someone who accepted the project
@@ -257,8 +258,14 @@ export class CollaborationTicketIssuer {
     }
     const effectiveStatus = directory.parentScopeId ? "accepted" : status;
     if (effectiveStatus === "revoked") throw denied();
-    const pendingGrantId = !effectiveStatus && directory.audience === "organization"
-      ? directory.organizationGrantId : null;
+    // An accept-only pointer (never for a project Chat, which opens only through its accepted
+    // project): the actor's own pending member grant, or else the organization-wide grant of a
+    // share the actor has never opened. The home re-checks the grant either way. An open
+    // invitation is settled first, through its own invitation session (which a grant-only
+    // session cannot use); the grant is offered again once the invitation is decided.
+    const pendingGrantId = directory.parentScopeId ? null
+      : effectiveStatus === "invited" && entry?.grantId && !entry.invitationId ? entry.grantId
+      : !effectiveStatus && directory.audience === "organization" ? directory.organizationGrantId : null;
     if (!effectiveStatus && (!pendingGrantId || purpose !== "direct_session")) throw denied();
     if (effectiveStatus === "invited" && purpose !== "direct_session") throw denied();
     if (purpose === "terminal" && directory.kind !== "terminal") throw denied();

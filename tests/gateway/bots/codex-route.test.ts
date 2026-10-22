@@ -3,12 +3,10 @@ import { createBotModelRouteResolver } from "../../../packages/gateway/src/bots/
 import { BotRouteError } from "../../../packages/gateway/src/bots/route-resolver.js";
 const url = "https://chatgpt.com/backend-api/codex/responses";
 describe("explicit owner Codex subscription bot route", () => {
-  it("uses native owner subscription without consulting ordinary harness or funded catalogs", async () => {
-    const getSnapshot = vi.fn(async () => { throw new Error("ordinary catalog unavailable"); });
-    const resolve = createBotModelRouteResolver({ codexModel: "gpt-5.6-luna", providers: { getSnapshot },
-      resolveCodexIdentity: async () => ({ url, headers: {} }), lifetime: new AbortController().signal });
-    expect(await resolve()).toMatchObject({ accessSourceId: "owner_openai_profile", route: { api: "openai-responses", modelId: "gpt-5.6-luna" } });
-    expect(getSnapshot).not.toHaveBeenCalled();
+  it("blocks an operator Codex pin without consulting native identity or silently falling back", async () => {
+    const getSnapshot = vi.fn(); const resolveCodexIdentity = vi.fn(async () => ({ url, headers: {} }));
+    const resolve = createBotModelRouteResolver({ codexModel: "gpt-5.6-luna", providers: { getSnapshot }, resolveCodexIdentity, lifetime: new AbortController().signal });
+    await expect(resolve()).rejects.toBeInstanceOf(BotRouteError); expect(getSnapshot).not.toHaveBeenCalled(); expect(resolveCodexIdentity).not.toHaveBeenCalled();
   });
   it.each(["https://api.openai.com/v1/responses", "https://example.com"])("rejects non-subscription identity %s without fallback", async (identityUrl) => {
     const getSnapshot = vi.fn();
@@ -34,4 +32,17 @@ it("an explicit managed model bypasses an operator Codex pin and never acquires 
   }) as never }, resolveCodexIdentity: identity, lifetime: new AbortController().signal });
   expect(await resolve({ instanceId: "matrix_pi_default", model: "@cf/zai-org/glm-5.3-flash" })).toMatchObject({ route: { api: "openai-completions", modelId: "@cf/zai-org/glm-5.3-flash" } });
   expect(identity).not.toHaveBeenCalled();
+});
+
+it("resolves a concrete Bot managed model without unrelated native discovery", async () => {
+  const getSnapshot = vi.fn(async (options?: { admissionScope?: string }) => {
+    if (options?.admissionScope !== "managed_matrix") throw new Error("Native inventory unavailable");
+    return {
+      accessSources: [{ id: "matrix_cloudflare", state: "ready", staleAfter: null, eligibleModelIds: ["@cf/zai-org/glm-5.3-flash"] }],
+      models: [{ id: "@cf/zai-org/glm-5.3-flash", vendor: "cloudflare", capabilities: ["tools"], status: "current", eligibleAccessSourceIds: ["matrix_cloudflare"] }],
+    } as never;
+  });
+  const resolve = createBotModelRouteResolver({ providers: { getSnapshot } });
+  await expect(resolve({ instanceId: "matrix_pi_default", model: "@cf/zai-org/glm-5.3-flash" }))
+    .resolves.toMatchObject({ accessSourceId: "matrix_included", route: { modelId: "@cf/zai-org/glm-5.3-flash" } });
 });

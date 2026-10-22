@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startAgentsProvidersWorkflowGateway } from "./fixtures/agents-providers-workflows";
+import { dismissGettingStartedOnInteraction } from "./fixtures/getting-started";
 
 import { createEvidenceDirectory } from "./fixtures/evidence-directory";
 
@@ -32,11 +33,11 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
     });
     await app.evaluate(({ shell }) => { shell.openExternal = async () => {}; });
     page = await app.firstWindow();
+    await dismissGettingStartedOnInteraction(page);
     await page.getByRole("button", { name: /create account/i }).waitFor();
     await page.evaluate(() => window.operator.invoke("auth:start-device-flow", {}));
     await page.getByRole("button", { name: "Terminal", exact: true }).first().waitFor({ timeout: 15_000 });
-    const checklist = page.getByRole("button", { name: /^Getting started —/ });
-    if (await checklist.getAttribute("aria-expanded") === "true") await checklist.click();
+
     await page.getByRole("button", { name: "Open account menu", exact: true }).click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: "Agents & providers", exact: true }).click();
@@ -50,7 +51,16 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
   async function select(name: string) {
     const row = feature().locator(".matrix-ap-rail-item").filter({ hasText: name }).first();
     if (await row.getAttribute("aria-expanded") !== "true") await row.click();
-    await expect.poll(() => row.getAttribute("aria-expanded"), { timeout: 5_000 }).toBe("true");
+    await expect.poll(() => row.evaluate(trigger => {
+      const id = trigger.getAttribute("aria-controls");
+      const details = id ? document.getElementById(id) : null;
+      // Lazy disclosure exposes the button before its clipping transition ends.
+      // Wait for the actual interaction surface, rather than just the toggle state.
+      return trigger.getAttribute("aria-expanded") === "true" && details !== null
+        && details.getBoundingClientRect().height > 0
+        && getComputedStyle(details).opacity === "1"
+        && !details.getAnimations().some(animation => animation.playState === "running");
+    }), { timeout: 5_000 }).toBe(true);
   }
   it("animates the first lazy disclosure, reverses without jumping, and respects reduced motion", async () => {
     await page.emulateMedia({ reducedMotion: "no-preference" });
@@ -79,20 +89,44 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
       const body = document.getElementById(detailsId)!;
       const trigger = document.getElementById(`${detailsId}-trigger`)!;
       const fullHeight = body.getBoundingClientRect().height;
+      const observeHeight = async (accept: (height: number) => boolean) => {
+        const start = performance.now();
+        while (performance.now() - start < 280) {
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+          const height = body.getBoundingClientRect().height;
+          if (accept(height)) return height;
+        }
+        throw new Error("Disclosure did not reach the observed transition state");
+      };
       trigger.click();
-      await new Promise(resolve => setTimeout(resolve, 60));
-      const closingHeight = body.getBoundingClientRect().height;
+      // React's commit/style update can start after the click. Measure 60ms of
+      // the actual CSS transition rather than assuming 60ms of wall time did so.
+      const closingHeight = await observeHeight(height => {
+        const transition = body.getAnimations().find(animation =>
+          animation instanceof CSSTransition && animation.transitionProperty === "grid-template-rows");
+        return body.dataset.expanded === "false" && height > 0 && height < fullHeight
+          && transition?.playState === "running" && typeof transition.currentTime === "number"
+          && transition.currentTime >= 60;
+      });
       trigger.click();
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
       const reversingHeight = body.getBoundingClientRect().height;
-      await new Promise(resolve => setTimeout(resolve, 250));
-      return { fullHeight, closingHeight, reversingHeight, restoredHeight: body.getBoundingClientRect().height };
+      const settled = (expanded: string) => body.dataset.expanded === expanded
+        && !body.getAnimations().some(animation => animation.playState === "running");
+      const restoredHeight = await observeHeight(() => settled("true"));
+      trigger.click();
+      const closedHeight = await observeHeight(height => height === 0 && settled("false"));
+      trigger.click();
+      const reopenedHeight = await observeHeight(() => settled("true"));
+      return { fullHeight, closingHeight, reversingHeight, restoredHeight, closedHeight, reopenedHeight };
     }, id);
     expect(reversal.closingHeight).toBeGreaterThan(0);
     expect(reversal.closingHeight).toBeLessThan(reversal.fullHeight);
     expect(reversal.reversingHeight).toBeGreaterThan(0);
     expect(reversal.reversingHeight).toBeLessThan(reversal.fullHeight);
     expect(reversal.restoredHeight).toBeCloseTo(reversal.fullHeight, 0);
+    expect(reversal.closedHeight).toBe(0);
+    expect(reversal.reopenedHeight).toBeCloseTo(reversal.fullHeight, 0);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await row.click();
     const collapsed = await page.locator(`[id="${id}"]`).evaluate(body => ({
@@ -107,7 +141,7 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
     expect(gateway.events).not.toContain("login");
     await page.emulateMedia({ reducedMotion: "no-preference" });
   }, 15_000);
-  it("executes grouped inventory, history, device-code recovery, key validation, install cancellation, and disconnect", async () => {
+  it("executes grouped inventory, history, key validation, install cancellation, and scoped Codex logout without restricted managed login", async () => {
     try {
       expect(await app.evaluate(({ app }) => app.getAppPath())).toBe(join(root, "desktop/out/main"));
       expect(await feature().getByRole("region", { name: "Coding agents" }).locator(".matrix-ap-rail-item").count()).toBe(4);
@@ -147,64 +181,46 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
 
       await select("Codex");
       const codex = feature().getByRole("region", { name: "Codex connection", exact: true });
-      await codex.getByRole("button", { name: /ChatGPT account/ }).waitFor();
-      await codex.getByRole("button", { name: /ChatGPT account/ }).scrollIntoViewIfNeeded();
+      const apiKey = codex.getByRole("button", { name: /^API key/ });
+      await apiKey.waitFor();
+      await apiKey.scrollIntoViewIfNeeded();
+      // A legacy fixture advertisement cannot restore excluded managed Codex login.
+      // Personal-device Matrix plan authorization is a separate native flow.
+      expect(await codex.getByRole("button", { name: /ChatGPT account/ }).count()).toBe(0);
+      expect(await codex.getByRole("button", { name: /Log in in Terminal/ }).count()).toBe(0);
+      expect(gateway.events.filter(event => event === "login")).toHaveLength(0);
       await capture("03-connect-chooser");
-      await codex.getByRole("button", { name: /ChatGPT account/ }).click();
-      await codex.getByText("TEST-CODE", { exact: true }).waitFor();
-      await codex.getByRole("button", { name: "Copy", exact: true }).click();
-      await codex.getByRole("button", { name: "Copied", exact: true }).waitFor();
-      expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe("TEST-CODE");
-      await capture("04-device-code");
-      await select("Claude");
-      expect(await feature().locator(".matrix-ap-rail-item").filter({ hasText: "Codex" }).first().innerText()).toContain("Connecting");
-      await select("Codex");
-      await codex.getByText("TEST-CODE", { exact: true }).waitFor();
-      expect(gateway.events.filter(event => event === "login")).toHaveLength(1);
-      await page.getByRole("dialog", { name: "Settings window", exact: true }).getByRole("button", { name: "Close", exact: true }).click();
-      await feature().waitFor({ state: "hidden" });
-      await page.getByRole("button", { name: "Open account menu", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-      await page.getByRole("button", { name: "Agents & providers", exact: true }).click();
-      await select("Codex");
-      await codex.getByText("TEST-CODE", { exact: true }).waitFor();
-      await codex.getByText("TEST-CODE", { exact: true }).scrollIntoViewIfNeeded();
-      expect(gateway.events.filter(event => event === "login")).toHaveLength(1);
-      await capture("04-device-code-reopened");
-      gateway.expireLogin();
-      await codex.getByText("The sign-in code expired.", { exact: true }).waitFor({ timeout: 10_000 });
-      await capture("05-device-expired");
-      await codex.getByRole("button", { name: "Try again", exact: true }).click();
-      await codex.getByText("TEST-CODE", { exact: true }).waitFor();
-      expect(gateway.events.filter(event => event === "login")).toHaveLength(2);
-      await codex.getByRole("button", { name: "Cancel", exact: true }).click();
-      await codex.getByRole("button", { name: /^API key/ }).click();
+      await apiKey.click();
       const key = codex.getByLabel("Paste your OpenAI API key", { exact: true });
       expect(await key.getAttribute("type")).toBe("password");
       await key.fill("invalid-key-for-fixture");
       await codex.getByRole("button", { name: "Connect", exact: true }).click();
-      await codex.getByRole("alert").getByText("The key could not be verified. Check it and try again.", { exact: true }).waitFor();
+      await codex.getByRole("alert").getByText("OpenAI didn't accept this key. Check that you copied all of it, or create a new key in your OpenAI account.", { exact: true }).waitFor();
       expect(await key.getAttribute("aria-invalid")).toBe("true");
       await capture("06-key-rejected");
       await key.fill("sk-safe-fixture-valid");
       await codex.getByRole("button", { name: "Try again", exact: true }).click();
-      await codex.getByRole("button", { name: "Disconnect", exact: true }).waitFor();
+      const logout = codex.getByRole("button", { name: "Log out Fixture API account", exact: true });
+      await logout.waitFor();
+      expect(await codex.getByRole("button", { name: "Disconnect", exact: true }).count()).toBe(0);
       expect(gateway.events.filter(event => event === "key-check")).toHaveLength(2);
       await capture("07-key-connected");
 
       expect(await codex.getByRole("button", { name: "View logs", exact: true }).count()).toBe(0);
-      await codex.getByRole("button", { name: "Disconnect", exact: true }).click();
-      const disconnect = page.getByRole("dialog", { name: "Disconnect Codex?", exact: true });
-      await disconnect.waitFor();
-      const uninstall = disconnect.getByRole("checkbox");
-      expect(await uninstall.isChecked()).toBe(false);
-      await capture("08-disconnect-confirm");
-      await disconnect.getByRole("button", { name: "Cancel", exact: true }).click();
+      await logout.click();
+      const confirmation = page.getByRole("dialog", { name: "Log out of Codex?", exact: true });
+      await confirmation.waitFor();
+      expect(await confirmation.getByRole("checkbox").count()).toBe(0);
+      await capture("08-codex-logout-confirm");
+      await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
+      expect(gateway.events).not.toContain("logout");
+      await logout.waitFor();
+      await logout.click();
+      await confirmation.getByRole("button", { name: "Log out", exact: true }).click();
+      await apiKey.waitFor();
+      expect(await codex.getByRole("button", { name: /ChatGPT account/ }).count()).toBe(0);
+      expect(gateway.events.filter(event => event === "logout")).toHaveLength(1);
       expect(gateway.events).not.toContain("disconnect");
-      await codex.getByRole("button", { name: "Disconnect", exact: true }).click();
-      await disconnect.getByRole("button", { name: "Disconnect", exact: true }).click();
-      await codex.getByRole("button", { name: /ChatGPT account/ }).waitFor();
-      expect(gateway.events).toContain("disconnect");
 
       await select("Hermes");
       const hermes = feature().getByRole("region", { name: "Hermes connection", exact: true });
@@ -220,7 +236,9 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
       await capture("09-install-indeterminate");
       await hermes.getByRole("button", { name: "Cancel", exact: true }).click();
       await hermes.getByRole("button", { name: "Install", exact: true }).waitFor();
-      expect(gateway.events.filter(event => event === "cancel")).toHaveLength(2);
+      expect(gateway.events.filter(event => event === "cancel")).toHaveLength(1);
+      expect(gateway.events.filter(event => event === "install")).toHaveLength(1);
+      expect(gateway.events.filter(event => event === "login")).toHaveLength(0);
     } catch (error) { await capture("agents-providers-figma-failure"); throw error; }
   }, 90_000);
 });

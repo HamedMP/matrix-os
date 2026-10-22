@@ -1,5 +1,7 @@
+import { observePostgresPoolErrors } from "@matrix-os/observability/postgres";
 import { Kysely, PostgresDialect, sql, type InsertObject } from "kysely";
 import pg from "pg";
+import { createCustomMcpCredentialMutations } from "./integrations/custom-mcp/credential-mutations.js";
 import { randomUUID } from "node:crypto";
 import {
   createCustomMcpApprovalStore,
@@ -160,6 +162,8 @@ export interface CreateCustomMcpServerInput {
 }
 
 export interface UpdateCustomMcpServerInput {
+  /** Internal preset migration only; routes do not accept arbitrary URL patches. */
+  url?: string;
   name?: string;
   enabled?: boolean;
   status?: CustomMcpStatus;
@@ -223,6 +227,13 @@ export interface PlatformDb extends CustomMcpApprovalStore {
     advanceRevision?: boolean,
   ): Promise<boolean>;
   deleteCustomMcpServer(id: string, userId: string): Promise<boolean>;
+  deleteCustomMcpServerIfRevision(id: string, userId: string, revision: number): Promise<boolean>;
+  updateCustomMcpCredentialsIfCurrent(id: string, userId: string, revision: number,
+    expectedEncrypted: string | null, encryptedCredentials: string, status: CustomMcpStatus, advanceRevision?: boolean): Promise<boolean>;
+  settleCustomMcpRefreshIfCurrent(id: string, userId: string, expectedEncrypted: string,
+    encryptedCredentials: string, authorizationRequired?: boolean): Promise<boolean>;
+  claimCustomMcpRemovalIfCurrent(id: string, userId: string, revision: number,
+    expectedEncrypted: string | null, removalEncrypted: string | null): Promise<boolean>;
   sweepPendingCustomMcpServers(now: Date): Promise<number>;
 
   // Escape hatch for queries that Kysely's builder doesn't express cleanly
@@ -247,8 +258,8 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
   if (typeof opts === "string") {
     pool = new pg.Pool({ connectionString: opts, max: 10,
       connectionTimeoutMillis: 5_000, statement_timeout: 5_000 });
-    pool.on("error", (err) => {
-      console.error("[platform-db] Idle pool client error:", err.message);
+    observePostgresPoolErrors(pool, (err) => {
+      console.error("[platform-db] Postgres connection error:", err.message);
     });
     kysely = new Kysely<PlatformDatabase>({ dialect: new PostgresDialect({ pool }) });
   } else {
@@ -709,8 +720,8 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
           .where("user_id", "=", input.userId)
           .where("preset_id", "is", null)
           .executeTakeFirstOrThrow();
-        if (Number(count.count) >= 20) throw new Error("Custom MCP server limit reached");
-        return trx
+        if (!input.presetId && Number(count.count) >= 20) throw new Error("Custom MCP server limit reached");
+        let insert = trx
           .insertInto("custom_mcp_servers")
           .values({
             id: input.id ?? randomUUID(),
@@ -731,8 +742,15 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
             created_at: sql`now()`,
             updated_at: sql`now()`,
           })
-          .returningAll()
-          .executeTakeFirstOrThrow();
+          .returningAll();
+        if (input.presetId) {
+          insert = insert.onConflict(oc => oc.columns(["user_id", "preset_id"]).where("preset_id", "is not", null).doNothing());
+        }
+        const created = await insert.executeTakeFirst();
+        if (created) return created;
+        if (!input.presetId) throw new Error("Custom MCP create failed");
+        return trx.selectFrom("custom_mcp_servers").selectAll()
+          .where("user_id", "=", input.userId).where("preset_id", "=", input.presetId).executeTakeFirstOrThrow();
       });
       return publicCustomMcpServer(row);
     },
@@ -788,6 +806,7 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
         revision: sql`revision + 1`,
         updated_at: sql`now()`,
       };
+      if (update.url !== undefined) values.url = update.url;
       if (update.name !== undefined) values.name = update.name;
       if (update.enabled !== undefined) values.enabled = update.enabled;
       if (update.status !== undefined) values.status = update.status;
@@ -820,6 +839,8 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
         .execute();
       return rows.length === 1;
     },
+
+    ...createCustomMcpCredentialMutations(kysely),
 
     async updateCustomMcpCredentials(
       id: string,

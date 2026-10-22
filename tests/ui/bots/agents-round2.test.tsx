@@ -25,8 +25,11 @@ it("creates a new agent with a concrete Matrix AI choice, without coding or Auto
   const client = clientFixture(); client.catalog.mockResolvedValue(matrixCatalog());
   render(<ChatAgentsPanel client={client} onClose={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
   const dialog = within(screen.getByRole("dialog", { name: "New Agent" }));
   const picker = dialog.getByRole("combobox", { name: "Model" });
+  await waitFor(() => expect(picker).toHaveProperty("disabled", false));
+  expect(client.catalog).toHaveBeenCalledWith({ refresh: true });
   expect(within(picker).getAllByRole("option").map(option => option.textContent)).toEqual(["Sonnet · Matrix AI"]);
   fireEvent.change(dialog.getByRole("textbox", { name: "Name" }), { target: { value: "Writer" } });
   fireEvent.change(dialog.getByRole("textbox", { name: "Instructions" }), { target: { value: "Write." } });
@@ -37,11 +40,13 @@ it("does not fall back to an available coding agent when Matrix AI is disabled",
   const client = clientFixture(), setup = vi.fn(); client.catalog.mockResolvedValue(matrixCatalog(false));
   render(<ChatAgentsPanel client={client} onClose={vi.fn()} onSetup={setup}/>);
   fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
   const dialog = within(screen.getByRole("dialog", { name: "New Agent" }));
   const picker = dialog.getByRole("combobox", { name: "Model" });
   expect(picker).toHaveProperty("disabled", true);
   expect(within(picker).queryByRole("option", { name: /undefined/ })).toBeNull();
-  expect(dialog.getByText(/Disabled in Settings/)).toBeTruthy();
+  expect(await dialog.findByText(/Disabled in Settings/)).toBeTruthy();
+  expect(client.catalog).toHaveBeenCalledWith({ refresh: true });
   fireEvent.change(dialog.getByRole("textbox", { name: "Name" }), { target: { value: "Writer" } });
   fireEvent.change(dialog.getByRole("textbox", { name: "Instructions" }), { target: { value: "Write." } });
   expect(dialog.getByRole("button", { name: "Create Agent" })).toHaveProperty("disabled", true);
@@ -59,13 +64,17 @@ it("uses accurate scoped host titles and removes Back to Chat", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Open team" }));
   await waitFor(() => expect(screen.getByTestId("host-title").textContent).toBe("Your AI team"));
   fireEvent.click(await screen.findByRole("button", { name: "New Agent" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Start from scratch" }));
   await waitFor(() => expect(screen.getByTestId("host-title").textContent).toBe("New agent"));
   expect(screen.queryByRole("button", { name: "Back to Chat" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.getByRole("button", { name: "Start from scratch" })).toBeTruthy();
+  expect(screen.getByTestId("host-title").textContent).toBe("New agent");
+  fireEvent.click(screen.getByRole("button", { name: "Open team" }));
   await waitFor(() => expect(screen.getByTestId("host-title").textContent).toBe("Your AI team"));
 });
 it("does not duplicate transcript model failures and retains task history in Details", async () => {
-  const client = clientFixture(), bot = { ...saved, selection: { instanceId: "matrix_bot_default", model: "auto" } };
+  const client = clientFixture(), bot = { ...saved, recipeRef: { recipeId: "writer", version: "1" }, selection: { instanceId: "matrix_bot_default", model: "auto" } };
   const tasks: BotTaskSummary[] = [1, 2, 3].map(n => ({ taskId: `task_${n}`, chatId: "chat_bot", agentId: bot.id, revision: 1, status: "blocked", blockedReason: "model_unavailable", updatedAt: `2026-10-03T00:00:0${n}.000Z` }));
   client.list.mockResolvedValue({ enabled: true, agents: [bot] });
   client.bots = { interactions: vi.fn(async () => []), tasks: vi.fn(async () => tasks), authority: vi.fn(async () => ({ grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })) } as never;
@@ -81,7 +90,7 @@ it("does not duplicate transcript model failures and retains task history in Det
 });
 it("keeps Automatic truthful while offering safe catalog refresh and settings actions", async () => {
   const client = clientFixture(), setup = vi.fn(), refresh = vi.fn();
-  client.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, selection: { instanceId: "matrix_bot_default", model: "auto" } }] });
+  client.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, recipeRef: { recipeId: "writer", version: "1" }, selection: { instanceId: "matrix_bot_default", model: "auto" } }] });
   render(<BotComposerControls agentId={saved.id} client={client} catalog={matrixCatalog(false)} onSetup={setup} onRefreshCatalog={refresh}/>);
   const trigger = screen.getByRole("button", { name: "Choose bot agent and model" });
   await waitFor(() => expect(trigger.textContent).toContain("Automatic"));

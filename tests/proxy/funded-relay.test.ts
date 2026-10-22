@@ -22,6 +22,7 @@ const CLAUDE_CODE_BETAS = [
   "context-management-2025-06-27",
   "prompt-caching-scope-2026-01-05",
   "mid-conversation-system-2026-04-07",
+  "advisor-tool-2026-03-01",
   "effort-2025-11-24",
 ] as const;
 const RESERVED_MICROUSD = 6_000;
@@ -216,8 +217,9 @@ describe("Cloudflare funded relay control-plane ordering", () => {
           return json(authorized);
         }
         if (action === "start") {
-          expect(body).toEqual({ reservationId: "reservation_123", tokenId: "credential_123" });
-          return json(startResponse("request_123"));
+          expect(body).toEqual({ reservationId: "reservation_123", tokenId: "credential_123",
+            ...(reservationMode === "usage" ? { executionId: expect.any(String) } : {}) });
+          return json({ ...startResponse("request_123"), executionId: JSON.parse(String(init?.body)).executionId });
         }
         if (action === "finalize") {
           expect(body).toEqual({
@@ -249,6 +251,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       expect(JSON.stringify(metadata)).not.toContain("machine_123");
       const forwarded = JSON.parse(String(init?.body));
       expect(forwarded).not.toHaveProperty("metadata");
+      expect(forwarded.messages.map((message: { role: string }) => message.role)).toEqual(["user", "system"]);
       if (url.endsWith("/v1/messages/count_tokens")) {
         expect(forwarded).not.toHaveProperty("max_tokens");
         expect(forwarded).not.toHaveProperty("stream");
@@ -279,6 +282,10 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     relay.register(app);
     const bodyWithCallerMetadata = JSON.stringify({
       ...JSON.parse(requestBody()),
+      messages: [
+        { role: "user", content: "hello" },
+        { role: "system", content: "SDK mid-conversation instruction" },
+      ],
       metadata: { user_id: "raw-caller-id" },
       tools: [{
         name: "read",
@@ -412,6 +419,25 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     await relay.close();
   });
 
+  it("requires the reviewed beta before forwarding an SDK mid-conversation system message", async () => {
+    const fetchMock = vi.fn();
+    const relay = configuredRelay(fetchMock as typeof fetch, {
+      allowedBetas: new Set(CLAUDE_CODE_BETAS),
+    });
+    const app = new Hono();
+    relay.register(app);
+    const body = JSON.stringify({
+      ...JSON.parse(requestBody()),
+      messages: [{ role: "user", content: "hello" }, { role: "system", content: "SDK instruction" }],
+    });
+    expect((await app.request("/v1/messages?beta=true", fundedRequest(body))).status).toBe(400);
+    expect((await app.request("/v1/messages?beta=true", fundedRequest(body, {
+      "anthropic-beta": "claude-code-20250219",
+    }))).status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+    await relay.close();
+  });
+
   it("logs bounded field-only diagnostics for invalid request schemas", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const fetchMock = vi.fn();
@@ -501,7 +527,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       if (url.endsWith("/start")) {
         const body = JSON.parse(String(init?.body));
         events.push(`start:${body.reservationId}`);
-        return json(startResponse("request_1", body.reservationId));
+        return json({ ...startResponse("request_1", body.reservationId), executionId: body.executionId });
       }
       if (url.endsWith("/release")) {
         const body = JSON.parse(String(init?.body));
@@ -590,6 +616,48 @@ describe("Cloudflare funded relay control-plane ordering", () => {
     await relay.close();
   });
 
+  it("settles an upstream 429 with zero usage after a usage-mode start", async () => {
+    const events: string[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/check")) return json(checkResponse());
+      if (url.endsWith("/authorize")) {
+        events.push("authorize");
+        const authorized = authorizationResponse("request_123");
+        return json({ ...authorized, reservation: {
+          ...authorized.reservation, billingMode: "usage", maxCostMicrousd: 4_801_200,
+          reservedMicrousd: 4_801_200,
+        } });
+      }
+      if (url.endsWith("/start")) { events.push("start"); return json({ ...startResponse("request_123"), executionId: JSON.parse(String(init?.body)).executionId }); }
+      if (url.endsWith("/release")) { events.push("release"); return json({}); }
+      if (url.endsWith("/finalize")) {
+        const body = JSON.parse(String(init?.body));
+        events.push(`finalize:${body.mode}:${body.actualCostMicrousd}`);
+        return json(finalizationResponse({
+          requestId: "request_123", actualCostMicrousd: 0, finalizationMode: "exact",
+        }));
+      }
+      events.push("upstream_429");
+      return new Response(JSON.stringify({ type: "error", error: {
+        type: "rate_limit_error", message: "private provider context",
+      } }), { status: 429, headers: { "content-type": "application/json", "retry-after": "60", "anthropic-ratelimit-input-tokens-remaining": "0" } });
+    });
+    const relay = configuredRelay(fetchMock as typeof fetch, { reservationMode: "usage" });
+    const app = new Hono();
+    relay.register(app);
+    expect((await app.request("/v1/messages", fundedRequest())).status).toBe(429);
+    await vi.waitFor(() => expect(events).toContain("finalize:exact:0"));
+    expect(events).toEqual(["authorize", "start", "upstream_429", "finalize:exact:0"]);
+    expect(warn).toHaveBeenCalledWith("[proxy] Funded AI upstream rate limited", {
+      retryAfterSeconds: 60, inputTokensRemaining: 0,
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("private provider context");
+    warn.mockRestore();
+    await relay.close();
+  });
+
   it("forwards only an allowlisted priority reason on an authorization 429", async () => {
     const responses = [
       { error: { code: "rate_limited", message: "Try again later", reason: "slot_busy" } },
@@ -647,7 +715,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       if (url.endsWith("/check")) return json(checkResponse());
       if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
       if (url.endsWith("/authorize")) return json(authorizationResponse("request_123"));
-      if (url.endsWith("/start")) return json(startResponse("request_123"));
+      if (url.endsWith("/start")) return json({ ...startResponse("request_123"), executionId: JSON.parse(String(init?.body)).executionId });
       if (url.endsWith("/finalize")) {
         return json(finalizationResponse({ requestId: "request_123", actualCostMicrousd: RESERVED_MICROUSD, finalizationMode: "conservative" }));
       }
@@ -699,7 +767,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       if (url.endsWith("/check")) return json(checkResponse());
       if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
       if (url.endsWith("/authorize")) return json(authorizationResponse("request_123"));
-      if (url.endsWith("/start")) { events.push("start"); return json(startResponse("request_123")); }
+      if (url.endsWith("/start")) { events.push("start"); return json({ ...startResponse("request_123"), executionId: JSON.parse(String(init?.body)).executionId }); }
       if (url.endsWith("/release")) events.push("release");
       if (url.endsWith("/finalize")) {
         const body = JSON.parse(String(init?.body));
@@ -732,7 +800,7 @@ describe("Cloudflare funded relay control-plane ordering", () => {
       if (url.endsWith("/check")) return json(checkResponse());
       if (url.endsWith("/v1/messages/count_tokens")) return json({ input_tokens: 1_000 });
       if (url.endsWith("/authorize")) return json(authorizationResponse("request_123"));
-      if (url.endsWith("/start")) { events.push("start"); return json(startResponse("request_123")); }
+      if (url.endsWith("/start")) { events.push("start"); return json({ ...startResponse("request_123"), executionId: JSON.parse(String(init?.body)).executionId }); }
       if (url.endsWith("/release")) { events.push("release"); return json({}); }
       if (url.endsWith("/finalize")) {
         const body = JSON.parse(String(init?.body));

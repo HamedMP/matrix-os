@@ -8,7 +8,7 @@ import {
   recordGoldenSnapshotProviderImage,
   revokeGoldenSnapshot,
 } from '../../packages/platform/src/golden-snapshot-repository.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const compatibility = {
   provider: 'hetzner' as const,

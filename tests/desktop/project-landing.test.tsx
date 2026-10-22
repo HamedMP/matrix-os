@@ -3,14 +3,18 @@ import React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectLanding } from "@desktop/renderer/src/features/project/ProjectLanding";
+import { CanonicalNewChatContent } from "@desktop/renderer/src/features/chat/CanonicalNewChatContent";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { Project } from "@desktop/renderer/src/stores/board";
 const actions = vi.hoisted(() => ({ showInFiles: vi.fn(), setDialog: vi.fn(), update: vi.fn(), dialog: null as null | "edit", pending: false, error: null, available: true }));
 vi.mock("@desktop/renderer/src/features/work/work-rail/use-project-actions", () => ({ useProjectActions: () => actions }));
+vi.mock("@desktop/renderer/src/features/chat/ChatProviderOnboarding", () => ({
+  ChatProviderOnboarding: () => <button type="button">Connect provider</button>,
+}));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const project: Project = { id: "project_alpha_id", slug: "alpha", name: "Alpha", kind: "folder", description: "Build the customer portal" };
 describe("ProjectLanding", () => {
-  it.each([true, false])("passes remaining height to the Chat workspace with metadata visible=%s", (showMetadata) => {
+  it.each([true, false])("bounds the canonical workspace with metadata visible=%s", (showMetadata) => {
     const { container } = render(<ProjectLanding project={project} showMetadata={showMetadata}>
       <section aria-label="Canonical workspace" className="flex min-h-0 flex-1 flex-col">
         <div className="min-h-0 flex-1 overflow-y-auto">Connection guidance</div>
@@ -24,7 +28,8 @@ describe("ProjectLanding", () => {
     expect(remainingSpace.classList.contains("flex")).toBe(true);
     expect(remainingSpace.classList.contains("flex-col")).toBe(true);
     expect(remainingSpace.classList.contains("min-h-0")).toBe(true);
-    expect(remainingSpace.classList.contains("flex-1")).toBe(true);
+    expect(remainingSpace.classList.contains("flex-1")).toBe(!showMetadata);
+    expect(remainingSpace.classList.contains("shrink")).toBe(showMetadata);
     expect(remainingSpace.classList.contains("overflow-hidden")).toBe(true);
     expect(container.firstElementChild?.classList.contains("overflow-hidden")).toBe(true);
   });
@@ -36,7 +41,8 @@ describe("ProjectLanding", () => {
     const { container } = render(<ProjectLanding project={project} records={records} onSelectChat={vi.fn()}><textarea aria-label="Bottom composer" /></ProjectLanding>);
     const metadata = container.querySelector("header")!;
     expect(metadata.classList.contains("min-h-0")).toBe(true);
-    expect(metadata.classList.contains("max-h-[60%]")).toBe(true);
+    expect(metadata.classList.contains("flex-1")).toBe(true);
+    expect(metadata.classList.contains("max-h-[60%]")).toBe(false);
     expect(metadata.classList.contains("overflow-y-auto")).toBe(true);
     // One metadata scroll surface contains both description/files and cards.
     expect(screen.getByLabelText("Alpha chats").classList.contains("overflow-y-auto")).toBe(false);
@@ -49,6 +55,19 @@ describe("ProjectLanding", () => {
     render(<ProjectLanding project={project} records={[record]} onSelectChat={onSelectChat}><textarea aria-label="Draft" /></ProjectLanding>);
     fireEvent.click(screen.getByRole("button",{name:"Open Implementation plan"}));
     expect(onSelectChat).toHaveBeenCalledWith(record);
+  });
+
+  it("retains provider recovery and the unsent Project input while metadata changes", () => {
+    const content = <CanonicalNewChatContent projectId={project.id} workspaceLayout="wide" onSelect={vi.fn()}
+      composer={<textarea aria-label="Project draft" defaultValue="Unsaved Project draft" />} />;
+    const { rerender } = render(<ProjectLanding project={project}>{content}</ProjectLanding>);
+    const draft = screen.getByRole("textbox", { name: "Project draft" });
+    expect(screen.getByRole("button", { name: "Connect provider" }).closest('[data-slot="chat-project-draft-scroll"]')).toBeTruthy();
+    rerender(<ProjectLanding project={project} showMetadata={false}>{content}</ProjectLanding>);
+    expect(screen.queryByRole("heading", { name: "Alpha" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Project draft" })).toBe(draft);
+    expect((draft as HTMLTextAreaElement).value).toBe("Unsaved Project draft");
+    expect(screen.getByRole("button", { name: "Connect provider" })).toBeTruthy();
   });
 
   it("shows real Project metadata and keeps the existing composer mounted", () => {

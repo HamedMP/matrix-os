@@ -7,7 +7,9 @@ import { runPlatformMigration } from '../../packages/platform/src/migration-runn
 import { migratePlatformSchema } from '../../packages/platform/src/database/migrate.js';
 import { PLATFORM_SCHEMA_REVISION } from '../../packages/platform/src/database/migration-revision.js';
 import { runPlatformStartupMigrations } from '../../packages/platform/src/database/run-migrations.js';
+import { FUNDED_PROBE_CACHE_REVISION } from '../../packages/platform/src/database/funded-probe-cache-revision.js';
 import { WHATSAPP_SCHEMA_REVISION } from '../../packages/platform/src/database/whatsapp-migration-revision.js';
+import { GOOGLE_TRACKING_REVISION } from '../../packages/platform/src/billing/google-tracking-revision.js';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
@@ -61,7 +63,10 @@ describe('WhatsApp schema startup', () => {
         SELECT scope, generation, fingerprint FROM platform_schema_revisions ORDER BY scope
       `.execute(db);
       expect(revisions.rows).toEqual([
+        { scope: 'billing-google-purchases', ...GOOGLE_TRACKING_REVISION },
         { scope: 'core', ...PLATFORM_SCHEMA_REVISION },
+        { scope: 'funded-probe-cache', ...FUNDED_PROBE_CACHE_REVISION },
+        { scope: 'sites', generation: 1, fingerprint: 'public-app-sites-v1' },
         { scope: 'whatsapp', ...WHATSAPP_SCHEMA_REVISION },
       ]);
       await runPlatformStartupMigrations(db);
@@ -70,6 +75,9 @@ describe('WhatsApp schema startup', () => {
   });
   it('creates required channel tables even when a newer core revision already exists', async () => {
     const instance = await KyselyPGlite.create();
+    // A deployed newer core has its existing tables, including the checkout
+    // table referenced by the independently versioned billing migration.
+    await migratePlatformSchema(new Kysely<PlatformDatabase>({ dialect: instance.dialect }));
     await instance.client.exec(`CREATE TABLE platform_schema_revisions (
       scope TEXT PRIMARY KEY, generation INTEGER NOT NULL,
       fingerprint TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

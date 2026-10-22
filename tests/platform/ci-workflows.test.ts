@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from 'yaml';
+import { sourceChangeScript } from '../../scripts/ci/dedicated-changes.mjs';
 
 function readWorkflowStepRun(
   root: string,
@@ -79,6 +80,8 @@ function runCiResults(ciResultsRun: string, triggerRequested: boolean): number |
         DOCS_CONTRACT_RESULT: 'success',
         E2E_RESULT: 'success',
         FUNDED_POSTGRES_RESULT: 'success',
+        COLLABORATION_POSTGRES_RESULT: 'success',
+        FUNDED_HOST_ROOT_RESULT: 'success',
         GITHUB_STEP_SUMMARY: summary,
         OS_VIEW_PARITY_RESULT: 'success',
         PATTERNS_RESULT: 'success',
@@ -176,8 +179,8 @@ fi
 function runPullRequestChangeDetection(
   root: string,
   workflowPath: string,
-  hasReadyForCi: boolean,
-  options: { action?: string; labelName?: string } = {},
+  draft: boolean,
+  options: { action?: string; baseEdit?: boolean } = {},
 ): {
   output: string;
   status: number | null;
@@ -234,8 +237,8 @@ exit 64
         GITHUB_SHA: '0123456789012345678901234567890123456789',
         GITHUB_TOKEN: 'test-token',
         PR_ACTION: options.action ?? 'synchronize',
-        PR_HAS_READY_FOR_CI: String(hasReadyForCi),
-        PR_LABEL_NAME: options.labelName ?? '',
+        PR_BASE_EDIT: String(options.baseEdit ?? false),
+        PR_DRAFT: String(draft),
       },
     });
 
@@ -275,74 +278,61 @@ describe('CI workflows', () => {
   it.each([
     ['core CI', '.github/workflows/ci.yml'],
     ['Docker CI', '.github/workflows/docker-test.yml'],
-  ])('reruns %s for each new head while ready-for-ci remains applied', (_name, path) => {
+  ])('runs %s for every non-draft PR head without a label', (_name, path) => {
     const workflow = readFileSync(join(process.cwd(), path), 'utf8');
+    expect(workflow).toMatch(/types:\s*\[opened, ready_for_review, synchronize, reopened[^\]]*\]/);
+    expect(workflow).not.toMatch(/types:\s*\[[^\]]*labeled/);
+    expect(workflow).not.toContain('ready-for-ci');
+    expect(workflow).toContain('PR_DRAFT: ${{ github.event.pull_request.draft == true }}');
 
-    expect(workflow).toMatch(/types:\s*\[[^\]]*synchronize[^\]]*\]/);
-    expect(workflow).toContain(
-      "PR_HAS_READY_FOR_CI: ${{ contains(github.event.pull_request.labels.*.name, 'ready-for-ci') }}",
-    );
-    expect(workflow).toContain(
-      '[ "$PR_ACTION" = "synchronize" ] && [ "$PR_HAS_READY_FOR_CI" = "true" ]',
-    );
+    const actions = path.endsWith('ci.yml')
+      ? ['opened', 'ready_for_review', 'synchronize', 'reopened']
+      : ['opened', 'ready_for_review', 'synchronize', 'reopened'];
+    for (const action of actions) {
+      const ready = runPullRequestChangeDetection(process.cwd(), path, false, { action });
+      expect(ready.status, ready.stderr).toBe(0);
+      expect(ready.output, action).toContain('should_run=true');
+      if (path.endsWith('ci.yml')) expect(ready.output, action).toContain('trigger_requested=true');
 
-    const unlabeled = runPullRequestChangeDetection(process.cwd(), path, false);
-    expect(unlabeled.status, unlabeled.stderr).toBe(0);
-    expect(unlabeled.output).toContain('should_run=false');
-    if (path.endsWith('ci.yml')) {
-      expect(unlabeled.output).toContain('trigger_requested=false');
-    }
-
-    const labeled = runPullRequestChangeDetection(process.cwd(), path, true);
-    expect(labeled.status, labeled.stderr).toBe(0);
-    expect(labeled.output).toContain('should_run=true');
-    if (path.endsWith('ci.yml')) {
-      expect(labeled.output).toContain('trigger_requested=true');
+      const draft = runPullRequestChangeDetection(process.cwd(), path, true, { action });
+      expect(draft.status, draft.stderr).toBe(0);
+      expect(draft.output, action).toContain('should_run=false');
+      if (path.endsWith('ci.yml')) expect(draft.output, action).toContain('trigger_requested=false');
     }
   });
 
-  it('keeps unrelated label events admitted after ready-for-ci is applied', () => {
+  it('reruns core CI on a base retarget but not on title or body edits', () => {
     const path = '.github/workflows/ci.yml';
-    const unadmitted = runPullRequestChangeDetection(process.cwd(), path, false, {
-      action: 'labeled',
-      labelName: 'documentation',
-    });
-    expect(unadmitted.status, unadmitted.stderr).toBe(0);
-    expect(unadmitted.output).toContain('trigger_requested=false');
-    expect(unadmitted.output).toContain('should_run=false');
-
-    const admitted = runPullRequestChangeDetection(process.cwd(), path, true, {
-      action: 'labeled',
-      labelName: 'documentation',
-    });
-    expect(admitted.status, admitted.stderr).toBe(0);
-    expect(admitted.output).toContain('trigger_requested=true');
-    expect(admitted.output).toContain('should_run=true');
+    const retarget = runPullRequestChangeDetection(process.cwd(), path, false, { action: 'edited', baseEdit: true });
+    expect(retarget.output).toContain('trigger_requested=true');
+    const metadata = runPullRequestChangeDetection(process.cwd(), path, false, { action: 'edited' });
+    expect(metadata.output).toContain('trigger_requested=false');
+    const unknown = runPullRequestChangeDetection(process.cwd(), path, false, { action: 'labeled' });
+    expect(unknown.output).toContain('trigger_requested=false');
   });
 
-  it('queues main CI runs and delegates only full-plan supersession to a narrow workflow', () => {
+  it('omits the required check only for drafts and executes authenticated metadata verification', () => {
+    // A draft cannot merge; leaving the required check absent shows "expected", never red.
+    const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
+    const results = workflow.jobs['ci-results'];
+    const ignored = "(github.event_name == 'pull_request' && github.event.pull_request.draft == true)";
+    expect(results.name).toBe(`\${{ ${ignored} && 'CI Draft (ignored)' || 'CI Results' }}`);
+    expect(results.if).toBe(`always() && !${ignored}`);
+    expect(results.steps.find(step => step.name === 'Verify exact-source coverage after metadata edit')?.with.script).toContain('verifyMetadataCoverage');
+    expect(results.steps.find(step => step.name === 'Summarize required CI jobs')?.if).toContain("github.event.action == 'edited'");
+  });
+
+  it('runs every main commit to completion in its own concurrency group', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
-    const superseder = readFileSync(join(root, '.github/workflows/ci-supersede.yml'), 'utf8');
 
-    expect(workflow).toContain('run-name: CI coverage-v1');
+    expect(workflow).toContain("format('CI coverage-v1 · {0}', github.sha)");
+    expect(workflow).toContain('CI refresh-v1 pr={0} head={1} base={2} merge={3}');
     expect(workflow).toContain('queue: max');
     expect(workflow).not.toContain('cancel-in-progress:');
-    expect(workflow).toContain(
-      "github.event.action == 'labeled' && github.event.label.name != 'ready-for-ci' && !contains(github.event.pull_request.labels.*.name, 'ready-for-ci') && github.run_id || 'shared'",
-    );
-    expect(superseder).toContain('actions: write');
-    expect(superseder).toContain('paths-ignore:');
-    expect(superseder).toContain("- 'docs/**'");
-    expect(superseder).toContain("- 'specs/**'");
-    expect(superseder).toContain("- '**/*.md'");
-    expect(superseder).toContain(
-      'uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6',
-    );
-    expect(superseder).toContain(
-      'uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6',
-    );
-    expect(superseder).toContain('node scripts/ci/supersede-main-ci.mjs');
+    expect(parse(workflow).concurrency.group).toContain("github.event_name == 'push' && github.sha");
+    expect(existsSync(join(root, '.github/workflows/ci-supersede.yml'))).toBe(false);
+    expect(existsSync(join(root, 'scripts/ci/supersede-main-ci.mjs'))).toBe(false);
   });
 
   it('exposes a stable aggregate CI result job for branch protection', () => {
@@ -350,9 +340,11 @@ describe('CI workflows', () => {
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
 
     expect(workflow).toContain('ci-results:');
-    expect(workflow).toContain('name: CI Results');
+    const aggregate = parse(workflow).jobs['ci-results'];
+    const name = aggregate.name.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
+    expect(Function('github', `return (${name});`)({ event_name: 'push', event: {} })).toBe('CI Results');
     expect(workflow).toContain('if: always()');
-    expect(workflow).toContain('needs: [changes, typecheck, shell-production-build, patterns, react-doctor, sync-client, agent-sdk-compatibility, unit, funded-postgres, docs-contract, os-view-parity, e2e]');
+    expect(aggregate.needs).toEqual(['redirect', 'changes', 'isolated-ci-backend', 'ci-backend', 'typecheck', 'shell-production-build', 'patterns', 'react-doctor', 'sync-client', 'agent-sdk-compatibility', 'unit', 'funded-postgres', 'collaboration-postgres', 'funded-host-root', 'docs-contract', 'os-view-parity', 'e2e', 'dedicated-linux', 'completion-handoff']);
     expect(workflow).toContain('### CI Results');
     expect(workflow).toContain('needs.typecheck.result');
     expect(workflow).toContain('needs.shell-production-build.result');
@@ -366,7 +358,7 @@ describe('CI workflows', () => {
     expect(workflow).toContain('needs.docs-contract.result');
     expect(workflow).toContain('needs.os-view-parity.result');
     expect(workflow).toContain('needs.e2e.result');
-    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
+    expect(workflow).toContain('"$PATTERNS_RESULT" "$REACT_DOCTOR_RESULT" "$SYNC_CLIENT_RESULT" "$AGENT_SDK_COMPATIBILITY_RESULT" "$UNIT_RESULT" "$FUNDED_POSTGRES_RESULT" "$COLLABORATION_POSTGRES_RESULT" "$FUNDED_HOST_ROOT_RESULT" "$DOCS_CONTRACT_RESULT" "$OS_VIEW_PARITY_RESULT"');
 
     const ciResultsRun = readCiResultsRun(root);
     expect(ciResultsRun).toBeDefined();
@@ -380,7 +372,7 @@ describe('CI workflows', () => {
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
     const changesJob = workflow.slice(
       workflow.indexOf('  changes:'),
-      workflow.indexOf('  # ── Gate 1: Mechanical checks'),
+      workflow.indexOf('\n  typecheck:'),
     );
 
     expect(changesJob).toContain('timeout-minutes: 3');
@@ -391,10 +383,10 @@ describe('CI workflows', () => {
     expect(changesJob).toContain('timeout --foreground --kill-after=5s');
     expect(changesJob).toContain('for attempt in $(seq 1 "$CHECKOUT_MAX_ATTEMPTS")');
     expect(changesJob).toContain('Checkout fetch failed after $CHECKOUT_MAX_ATTEMPTS attempts');
-    expect(changesJob).toContain('git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"');
+    expect(sourceChangeScript).toContain('git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"');
     expect(changesJob).not.toContain('uses: actions/checkout@v6');
     expect(changesJob).not.toContain('fetch-depth: 0');
-    expect(changesJob).toContain('node scripts/ci/main-ci-coverage.mjs >> "$GITHUB_OUTPUT"');
+    expect(sourceChangeScript).toContain('node scripts/ci/main-ci-coverage.mjs >> "$GITHUB_OUTPUT"');
     expect(workflow).toContain('base_sha: ${{ steps.changed.outputs.base_sha }}');
     expect(workflow).toContain('COVERAGE_BASE_SHA: ${{ needs.changes.outputs.base_sha }}');
     expect(workflow).toContain('COVERAGE_BOOTSTRAP: ${{ needs.changes.outputs.bootstrap }}');
@@ -437,7 +429,7 @@ describe('CI workflows', () => {
 
     expect(workflow).toContain('docs-contract:');
     expect(workflow).toContain('name: Docs Contract Tests');
-    expect(workflow).toContain('docs_contract_tests: ${{ steps.changed.outputs.docs_contract_tests }}');
+    expect(workflow).toContain("docs_contract_tests: ${{ needs.redirect.outputs.routed == 'true' && 'false' || (steps.superseded.outputs.stale == 'true' && 'false' || steps.changed.outputs.docs_contract_tests) }}");
     expect(workflow).toContain("if: needs.changes.outputs.docs_contract_tests == 'true'");
     expect(workflow).toContain('pnpm exec vitest run tests/repository/site-extraction.test.ts');
     expect(workflow).toContain('| Docs Contract Tests | $DOCS_CONTRACT_RESULT |');
@@ -450,11 +442,11 @@ describe('CI workflows', () => {
     const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8');
 
     expect(workflow).toContain('name: Build Desktop for Electron E2E');
-    expect(workflow).toContain('run: bun run build:desktop');
+    expect(workflow).toContain('run: GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop');
     expect(workflow).toContain('name: Run required MAT-335 Desktop regression');
     expect(workflow).toContain('MATRIX_DESKTOP_E2E_REQUIRED: "1"');
     expect(workflow).toContain(
-      'xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts',
+      'xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts',
     );
   });
 
@@ -465,14 +457,14 @@ describe('CI workflows', () => {
     const input = steps.findIndex((step: { name?: string }) => step.name === 'Run required Desktop Chat input regression');
     expect(input).toBeGreaterThan(build);
     expect(steps[input].env.MATRIX_DESKTOP_E2E_REQUIRED).toBe('1');
-    expect(steps[input].run).toBe('xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/canonical-input.e2e.test.ts');
+    expect(steps[input].run).toBe('xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/canonical-input.e2e.test.ts');
   });
 
   it('requires download E2E after the Electron build under a virtual display', () => {
     const workflow = parse(readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8'));
     const steps = workflow.jobs.e2e.steps;
-    const build = steps.findIndex((step: { run?: string }) => step.run === 'bun run build:desktop');
-    const download = steps.findIndex((step: { run?: string }) => step.run === 'xvfb-run --auto-servernum bun run test:e2e -- tests/e2e/desktop/file-download.e2e.test.ts');
+    const build = steps.findIndex((step: { run?: string }) => step.run === 'GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop');
+    const download = steps.findIndex((step: { run?: string }) => step.run === 'xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/file-download.e2e.test.ts');
     expect(build).toBeGreaterThanOrEqual(0);
     expect(download).toBeGreaterThan(build);
     expect(steps[download].env.MATRIX_DESKTOP_E2E_REQUIRED).toBe('1');
@@ -490,8 +482,8 @@ describe('CI workflows', () => {
     expect(readme).toContain('React Doctor');
     expect(readme).toContain('Docs Contract Tests');
     expect(readme).toContain('coverage frontier');
-    expect(readme).toContain('ci-supersede.yml');
-    expect(readme).toMatch(/Docs-only successors\s+queue behind broader runs/);
+    expect(readme).not.toContain('ci-supersede.yml');
+    expect(readme).toMatch(/newer merge never cancels or delays an\s+older commit's run/);
     expect(readme).toContain('Screenshot workflow removed');
   });
 
@@ -572,8 +564,8 @@ describe('CI workflows', () => {
 
     expect(workflow).toContain('name: Upload Docker image artifact');
     expect(workflow).toContain('name: Download Docker image artifact');
-    expect(workflow).toContain('uses: actions/download-artifact@v7');
-    expect(workflow).not.toContain('uses: actions/download-artifact@v8');
+    expect(workflow).toMatch(/^\s+uses: actions\/download-artifact@v[78]\s*$/m);
+    expect(workflow).not.toMatch(/uses: actions\/download-artifact@v[123](?:\s|$)/);
     expect(workflow).toContain('outputs: type=docker,dest=/tmp/matrix-os-dev-ci.tar');
     expect(workflow).toContain('gzip -1 < /tmp/matrix-os-dev-ci.tar > /tmp/matrix-os-dev-ci.tar.gz');
     expect(workflow).toContain('rm /tmp/matrix-os-dev-ci.tar');
@@ -676,7 +668,7 @@ describe('CI workflows', () => {
     expect(packageJob).toContain('uses: actions/upload-artifact@v7');
     expect(packageJob).toContain('path: ${{ steps.pack.outputs.tarball }}');
     expect(publishJob).toContain('permissions:\n      contents: read\n      id-token: write');
-    expect(publishJob).toContain('uses: actions/download-artifact@v7');
+    expect(publishJob).toMatch(/^\s+uses: actions\/download-artifact@v[78]\s*$/m);
     expect(publishJob).toContain('uses: actions/setup-node@v7');
     expect(publishJob).toContain('node-version: 24');
     expect(publishJob).toContain('package-manager-cache: false');
@@ -726,9 +718,9 @@ describe('CI workflows', () => {
 
     for (const workflow of [cliReleaseWorkflow, releaseWorkflow]) {
       expect(workflow).toContain('uses: actions/upload-artifact@v7');
-      expect(workflow).toContain('uses: actions/download-artifact@v7');
+      expect(workflow).toMatch(/^\s+uses: actions\/download-artifact@v[78]\s*$/m);
       expect(workflow).not.toContain('uses: actions/upload-artifact@v4');
-      expect(workflow).not.toContain('uses: actions/download-artifact@v8');
+      expect(workflow).not.toMatch(/uses: actions\/download-artifact@v[123](?:\s|$)/);
     }
   });
 
@@ -1046,6 +1038,11 @@ describe('CI workflows', () => {
     expect(workflow).toContain('- ".github/workflows/platform-cloud-run.yml"');
   });
 
+  it('redeploys platform-owned integration validation when its gateway source changes', () => {
+    const workflow = readFileSync(join(process.cwd(), '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    expect(workflow).toContain('- "packages/gateway/src/integrations/**"');
+  });
+
   it('verifies platform Cloud Run promotion sends all traffic to the production-role revision', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
@@ -1128,7 +1125,7 @@ describe('CI workflows', () => {
     expect(targetedJob).toContain('inputs.skip_dev_bundle && inputs.target_unhealthy_customer');
     expect(targetedJob).toContain('^v[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}-[0-9]+$');
     expect(targetedJob).toContain(".version == $version");
-    expect(targetedJob).toContain('uses: actions/checkout@v4');
+    expect(targetedJob).toMatch(/^\s+- uses: actions\/checkout@v[47]\s*$/m);
     expect(targetedJob).toContain('node scripts/ci/targeted-fleet-maintenance.mjs select-target');
     expect(targetedJob).toContain('for attempt in $(seq 1 5); do');
     expect(targetedJob).toContain('for attempt in $(seq 1 30); do');
@@ -1137,8 +1134,116 @@ describe('CI workflows', () => {
     expect(targetedJob).toContain('.healthy == true and .runtimeVersion == $version');
     expect(targetedJob).toContain('{handle: $handle}');
     expect(targetedJob).toContain('.activated == 1 and .failed == 0 and .complete == true');
-    expect(targetedJob).toContain('node scripts/ci/targeted-fleet-maintenance.mjs activate-fleet');
+    expect(targetedJob).toContain('node scripts/ci/targeted-fleet-maintenance.mjs activate-managed-features');
     expect(targetedJob).toContain('::add-mask::$TARGET_HANDLE');
     expect(targetedJob).not.toContain('printf \'%s\\n\' "$FLEET_RESPONSE"');
+  });
+
+  it('publishes mobile OTA updates to preview and reaches production only by a gated promote', () => {
+    const root = process.cwd();
+    const source = readFileSync(join(root, '.github/workflows/mobile-ota-update.yml'), 'utf8');
+    type Job = {
+      if?: string;
+      needs?: string | string[];
+      environment?: string;
+      concurrency?: { 'cancel-in-progress'?: boolean | string };
+      steps?: Array<{ run?: string; uses?: string; with?: Record<string, unknown> }>;
+    };
+    const workflow = parse(source) as {
+      on?: {
+        push?: { branches?: string[]; paths?: string[] };
+        pull_request?: { paths?: string[] };
+      };
+      permissions?: Record<string, string>;
+      env?: Record<string, string>;
+      jobs?: Record<string, Job>;
+    };
+    const jobs = workflow.jobs ?? {};
+    const runs = (job: Job | undefined) => (job?.steps ?? []).map((step) => step.run ?? '').join('\n');
+
+    expect(workflow.permissions).toEqual({ contents: 'read' });
+    expect(workflow.on?.push?.branches).toEqual(['main']);
+
+    // The PR job proves tests and bundling without any credential in reach.
+    expect(jobs.test?.environment).toBeUndefined();
+    expect(JSON.stringify(jobs.test)).not.toContain('secrets.');
+
+    // Native code must not change within one app version, because an update is
+    // delivered to every build of that version. The guard runs in the job every
+    // publish depends on, needs full history to find where the version began,
+    // and also runs for lockfile-only pull requests, which can change native
+    // code without touching the app. A lockfile-only push must not publish.
+    const guardStep = jobs.test?.steps?.findIndex((step) =>
+      step.run?.includes('node scripts/ci/mobile-ota-native-guard.mjs'),
+    );
+    expect(guardStep).toBeGreaterThan(-1);
+    const testCheckout = jobs.test?.steps?.find((step) => step.uses?.startsWith('actions/checkout@'));
+    expect(testCheckout?.with?.['fetch-depth']).toBe(0);
+    expect(workflow.on?.pull_request?.paths).toContain('pnpm-lock.yaml');
+    expect(workflow.on?.push?.paths).not.toContain('pnpm-lock.yaml');
+
+    // A push can only ever publish to preview, bundled with the production EAS
+    // environment so the promoted bundle is identical to what was tested.
+    const publish = jobs['publish-preview'];
+    expect(publish?.needs).toBe('test');
+    expect(publish?.environment).toBe('mobile-ota-preview');
+    expect(publish?.if).toContain("github.ref == 'refs/heads/main'");
+    expect(publish?.concurrency?.['cancel-in-progress']).toBe(false);
+    expect(runs(publish)).toContain('--channel preview');
+    expect(runs(publish)).toContain('--environment production');
+    expect(source).not.toContain('--channel production');
+
+    // Preview only moves forward. Manual publishes share the push queue, and a
+    // run whose commit is older than what preview already carries (a re-run of
+    // an old job, say) is refused before anything is published.
+    expect(source).toContain(
+      "(github.event_name == 'push' || inputs.action == 'publish-preview') && 'preview-publish'",
+    );
+    const publishCheckout = publish?.steps?.find((step) => step.uses?.startsWith('actions/checkout@'));
+    expect(publishCheckout?.with?.['fetch-depth']).toBe(0);
+    const publishScript = runs(publish);
+    const publishCommand = publishScript.indexOf('--channel preview');
+    const orderCheck = publishScript.indexOf('git merge-base --is-ancestor "$GITHUB_SHA" "$LAST_COMMIT"');
+    expect(orderCheck).toBeGreaterThan(-1);
+    expect(orderCheck).toBeLessThan(publishCommand);
+
+    // An update bundled without the Clerk key renders only the "missing
+    // configuration" screen, so the key must be readable before publishing.
+    const configCheck = publishScript.indexOf('EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY');
+    expect(configCheck).toBeGreaterThan(-1);
+    expect(configCheck).toBeLessThan(publishCommand);
+
+    // Jobs that hold EXPO_TOKEN must not run action code a tag can repoint.
+    const actionRefs = Object.values(jobs).flatMap((job) =>
+      (job.steps ?? []).flatMap((step) => (step.uses ? [step.uses] : [])),
+    );
+    expect(actionRefs.length).toBeGreaterThan(0);
+    for (const ref of actionRefs) {
+      expect(ref).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
+    }
+
+    // Production moves only through the manual, reviewer-gated promote job.
+    const production = jobs.production;
+    expect(production?.environment).toBe('mobile-ota-production');
+    expect(production?.if).toContain("github.event_name == 'workflow_dispatch'");
+    expect(production?.if).toContain("github.ref == 'refs/heads/main'");
+    expect(production?.if).not.toContain("'push'");
+    expect(production?.concurrency?.['cancel-in-progress']).toBe(false);
+    expect(runs(production)).toContain('--destination-channel production');
+    expect(source.split('--destination-channel production')).toHaveLength(2);
+
+    // The EAS CLI is an exact pin fetched through pnpm, and no expression is
+    // interpolated into a shell script.
+    expect(workflow.env?.EAS_CLI_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(source).not.toContain('eas-cli@latest');
+    expect(source).not.toMatch(/\bnpx\b|\bnpm (install|i|exec)\b/);
+    for (const job of Object.values(jobs)) {
+      expect(runs(job)).not.toContain('${{');
+    }
+
+    const workflowReadme = readFileSync(join(root, '.github/workflows/README.md'), 'utf8');
+    const releaseDocs = readFileSync(join(root, 'docs/dev/releases.md'), 'utf8');
+    expect(workflowReadme).toContain('`mobile-ota-update.yml`');
+    expect(releaseDocs).toContain('.github/workflows/mobile-ota-update.yml');
   });
 });

@@ -6,6 +6,7 @@ import {
   PLATFORM_MIGRATION_STEPS,
   migratePlatformSchema,
 } from '../../packages/platform/src/database/migrate.js';
+import { runPlatformStartupMigrations } from '../../packages/platform/src/database/run-migrations.js';
 import * as userMachineRecords from '../../packages/platform/src/database/user-machine-records.js';
 import * as userMachines from '../../packages/platform/src/database/user-machines.js';
 import * as userMachineLifecycle from '../../packages/platform/src/database/user-machine-lifecycle.js';
@@ -87,6 +88,7 @@ describe('platform schema registration (S01 foundation)', () => {
       'golden-snapshots',
       'provider-deletion',
       'directory-and-social',
+      'preview-drive',
       'account-deletion',
     ]);
     expect(PLATFORM_MIGRATION_STEPS.every((step) => typeof step.run === 'function')).toBe(true);
@@ -103,6 +105,9 @@ describe('platform schema registration (S01 foundation)', () => {
   it('re-runs idempotently through the extracted entrypoint', async () => {
     await migratePlatformSchema(fixture.db.executor);
     await migratePlatformSchema(fixture.db.executor);
+    // Independently versioned additive scopes must also remain idempotent.
+    await runPlatformStartupMigrations(fixture.db.kysely);
+    await runPlatformStartupMigrations(fixture.db.kysely);
     expect(await capturePublicSchema(fixture.db)).toEqual(baseline);
   });
 });
@@ -242,7 +247,7 @@ describe('personal billing seams (S01 foundation)', () => {
       null,
     )).toBe(true);
     expect(checkoutSupport.resolveBillingReturnUrl({ MATRIX_APP_ORIGIN: 'https://app.example.test' } as NodeJS.ProcessEnv, 'success'))
-      .toBe('https://app.example.test/?billing=success&checkout=success');
+      .toBe('https://app.example.test/?billing=success&checkout=success&session_id={CHECKOUT_SESSION_ID}');
     // Off-allowlist return paths collapse to "/" through resolveReturnPath (guard preserved).
     expect(checkoutSupport.resolveBillingReturnUrl({ MATRIX_APP_ORIGIN: 'https://app.example.test' } as NodeJS.ProcessEnv, 'canceled', '/settings'))
       .toBe('https://app.example.test/?billing=canceled');

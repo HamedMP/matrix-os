@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
+import type { MatrixAnthropicConnectionClient } from "../../packages/ui/src/agents-providers/matrix-anthropic-connection-client.js";
 
 const mocks = vi.hoisted(() => ({
   controller: vi.fn(),
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@matrix-os/ui", async () => ({
   ...await import("../../packages/ui/src/agents-providers/provider-workflow-client.js"),
+  ...await import("../../packages/ui/src/agents-providers/matrix-anthropic-connection-client.js"),
   AgentsProvidersView: mocks.view,
   useProviderSettingsController: mocks.controller,
 }));
@@ -39,6 +41,7 @@ describe("desktop shared agents and providers adapter", () => {
     useConnection.setState({
       status: "signed-in",
       handle: "alice",
+      userId: "user_alice",
       platformHost: "https://app.matrix-os.com",
       runtimeSlot: "vm-2",
       authGeneration: 7,
@@ -53,7 +56,7 @@ describe("desktop shared agents and providers adapter", () => {
     useConnection.setState(useConnection.getInitialState(), true);
   });
 
-  it.each(["runtime", "owner", "credential", "unmount"])(
+  it.each(["runtime", "owner", "user ID", "credential", "unmount"])(
     "cancels checkout and rejects a late URL after %s changes in the rendered caller",
     async (change) => {
       let release!: (value: unknown) => void;
@@ -75,7 +78,8 @@ describe("desktop shared agents and providers adapter", () => {
       });
       if (change === "unmount") view.unmount();
       else act(() => useConnection.setState(change === "runtime" ? { runtimeSlot: "other" }
-        : change === "owner" ? { handle: "bob" } : { authGeneration: 8 }));
+        : change === "owner" ? { handle: "bob" }
+        : change === "user ID" ? { userId: "user_other" } : { authGeneration: 8 }));
       release({ url: "https://checkout.stripe.com/c/pay/cs_previous" });
       let completed!: boolean;
       await act(async () => { completed = await pending; });
@@ -141,12 +145,12 @@ describe("desktop shared agents and providers adapter", () => {
     expect(openExternal).not.toHaveBeenCalled();
   });
 
-  it("renders the shared view with a runtime- and credential-scoped controller", () => {
+  it("renders the shared view with an owner-, runtime-, and credential-scoped controller", () => {
     render(<AgentsProvidersAdapter />);
 
     expect(screen.getByTestId("shared-agents-providers-view").textContent).toBe("ready");
     expect(mocks.controller).toHaveBeenCalledWith(expect.objectContaining({
-      identityKey: "signed-in|alice|https://app.matrix-os.com|vm-2|7",
+      identityKey: "signed-in|alice|user_alice|https://app.matrix-os.com|vm-2|7",
       transport: expect.objectContaining({
         getSnapshot: expect.any(Function),
         mutate: expect.any(Function),
@@ -155,29 +159,77 @@ describe("desktop shared agents and providers adapter", () => {
     expect(useConnection.getState().api?.forRuntime).toHaveBeenCalledWith("vm-2");
   });
 
+  it("revalidates Chat once when Settings first observes provider state changed outside Electron", () => {
+    const view = render(<AgentsProvidersAdapter />);
+
+    expect(useConnection.getState().providerCatalogGeneration).toBe(1);
+
+    view.rerender(<AgentsProvidersAdapter />);
+    expect(useConnection.getState().providerCatalogGeneration).toBe(1);
+  });
+
+  it.each(["runtime", "owner", "credential"])("passes the real Matrix connection client and rejects stale calls after %s changes", async change => {
+    const observation = { connectionId: "matrix_anthropic_api", providerId: "anthropic", executionKind: "direct_pi", billingKind: "api_key",
+      revision: 0, enabled: false, credentialGeneration: null, sourceCredentialGeneration: null,
+      state: "disconnected", models: [], actions: ["connect"], checkedAt: null, staleAfter: null,
+      supports: { rootChat: true, recipeBots: true } };
+    const get = vi.fn().mockResolvedValue(observation);
+    const forRuntime = vi.fn(() => ({ get, post: vi.fn() }));
+    useConnection.setState({ api: { forRuntime } as never });
+    render(<AgentsProvidersAdapter />);
+    const props = mocks.view.mock.calls.at(-1)![0] as unknown as { matrixAnthropicClient: MatrixAnthropicConnectionClient };
+    const signal = new AbortController().signal;
+    await expect(props.matrixAnthropicClient.status(signal)).resolves.toEqual(observation);
+    expect(get).toHaveBeenCalledExactlyOnceWith("/api/ai/matrix-connections/anthropic",
+      expect.objectContaining({ signal, maxBytes: 65536, timeoutMs: 15000 }));
+    act(() => useConnection.setState(change === "runtime" ? { runtimeSlot: "other" }
+      : change === "owner" ? { handle: "bob" } : { authGeneration: 8 }));
+    await expect(props.matrixAnthropicClient.status(signal)).rejects.toThrow("Provider action is unavailable.");
+    expect(get).toHaveBeenCalledOnce();
+    const current = mocks.view.mock.calls.at(-1)![0] as unknown as { matrixAnthropicClient: MatrixAnthropicConnectionClient };
+    expect(current.matrixAnthropicClient).not.toBe(props.matrixAnthropicClient);
+    await expect(current.matrixAnthropicClient.status(signal)).resolves.toEqual(observation);
+    expect(forRuntime).toHaveBeenLastCalledWith(change === "runtime" ? "other" : "vm-2");
+  });
+
   it("invalidates Chat only from accepted Settings callbacks for the current scope", () => {
     render(<AgentsProvidersAdapter />);
     const accepted = mocks.controller.mock.calls.at(-1)![0].onCatalogChanged;
-    expect(useConnection.getState().providerCatalogGeneration).toBe(0);
-    act(() => accepted());
     expect(useConnection.getState().providerCatalogGeneration).toBe(1);
+    act(() => accepted());
+    expect(useConnection.getState().providerCatalogGeneration).toBe(2);
     act(() => useConnection.setState({ authGeneration: 8 }));
+    expect(useConnection.getState().providerCatalogGeneration).toBe(3);
     act(() => accepted());
-    expect(useConnection.getState().providerCatalogGeneration).toBe(1);
+    expect(useConnection.getState().providerCatalogGeneration).toBe(3);
     const current = mocks.controller.mock.calls.at(-1)![0].onCatalogChanged;
     act(() => current());
-    expect(useConnection.getState().providerCatalogGeneration).toBe(2);
+    expect(useConnection.getState().providerCatalogGeneration).toBe(4);
     act(() => useConnection.setState({ runtimeSlot: "other" }));
+    expect(useConnection.getState().providerCatalogGeneration).toBe(5);
     act(() => current());
-    expect(useConnection.getState().providerCatalogGeneration).toBe(2);
+    expect(useConnection.getState().providerCatalogGeneration).toBe(5);
+    const previousUser = mocks.controller.mock.calls.at(-1)![0].onCatalogChanged;
+    act(() => useConnection.setState({ userId: "user_other" }));
+    expect(useConnection.getState().providerCatalogGeneration).toBe(6);
+    act(() => previousUser());
+    expect(useConnection.getState().providerCatalogGeneration).toBe(6);
+    const currentUser = mocks.controller.mock.calls.at(-1)![0].onCatalogChanged;
+    act(() => currentUser());
+    expect(useConnection.getState().providerCatalogGeneration).toBe(7);
   });
 
-  it("changes controller identity when the trusted credential generation changes", () => {
+  it.each([
+    { boundary: "trusted credential generation", change: { authGeneration: 8 },
+      identityKey: "signed-in|alice|user_alice|https://app.matrix-os.com|vm-2|8" },
+    { boundary: "owner user ID with the same handle", change: { userId: "user_other" },
+      identityKey: "signed-in|alice|user_other|https://app.matrix-os.com|vm-2|7" },
+  ])("changes controller identity when the $boundary changes", ({ change, identityKey }) => {
     render(<AgentsProvidersAdapter />);
-    act(() => useConnection.setState({ authGeneration: 8 }));
+    act(() => useConnection.setState(change));
 
     expect(mocks.controller).toHaveBeenLastCalledWith(expect.objectContaining({
-      identityKey: "signed-in|alice|https://app.matrix-os.com|vm-2|8",
+      identityKey,
     }));
   });
 

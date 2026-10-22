@@ -2,7 +2,7 @@
   "name": "Todo",
   "description": "Fast personal task manager with inbox capture, smart lists, and recurring tasks.",
   "category": "productivity",
-  "icon": "todo",
+  "icon": "v3-todo",
   "author": "system",
   "version": "2.0.0",
   "scope": "personal",
@@ -44,7 +44,8 @@
       "../../_shared/**",
       "index.html",
       "matrix.json",
-      "vite.config.ts"
+      "vite.config.ts",
+      "../../system/icons/v3-*.png"
     ]
   }
 }

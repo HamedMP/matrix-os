@@ -1,7 +1,7 @@
 import { useLocalObservationExpiry } from "../local-observation-expiry.js";
 import { resolvedWorkflowRowStatus } from "./workflow-row-status.js";
 import { ProviderAccordion } from "./ProviderAccordion.js";
-import { hasConfiguredConnection, resolveHarnessConnection } from "./harness-connection.js";
+import { resolveHarnessConnection } from "./harness-connection.js";
 import type { ReactNode } from "react";
 import type {
   ProviderAccessSource,
@@ -12,19 +12,21 @@ import type {
   ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
 import {
-  codingAgentArtworkSrc, CODING_AGENT_ARTWORK,
+  codingAgentArtworkSrc, settingsHarnessArtworkSrc, CODING_AGENT_ARTWORK,
 } from "../coding-agent-artwork.js";
 /** Settings retains the shipped upstream artwork, per the reviewed design override. */
 export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
-  const src = harness === "claude" ? "/agents/settings/claude.svg" : harness === "codex" ? "/agents/settings/openai.svg" : CODING_AGENT_ARTWORK[harness].src;
+  const src = harness === "claude" || harness === "codex" ? settingsHarnessArtworkSrc(harness) : codingAgentArtworkSrc(CODING_AGENT_ARTWORK[harness].src);
   const size = harness === "claude" ? 22 : harness === "codex" ? 20 : 24;
   return (
     <span
       className="matrix-ap-agent-logo"
+      // White upstream marks retain the canonical artwork background in both appearances.
+      style={harness === "opencode" || harness === "pi" ? { background: CODING_AGENT_ARTWORK[harness].background } : undefined}
       aria-hidden="true"
     >
       <img
-        src={codingAgentArtworkSrc(src)}
+        src={src}
         alt=""
         className={harness === "claude" ? "matrix-ap-claude-logo" : harness === "codex" ? "matrix-ap-openai-logo" : "matrix-ap-upstream-logo"}
         width={size}
@@ -34,17 +36,6 @@ export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
       />
     </span>
   );
-}
-
-/** Connection means a configured account/credential, not a successful model call.
- * Canonical auth/readiness remains untouched for Chat admission and account details. */
-export function rowStatus(harness: ProviderHarnessInstance, source: ProviderAccessSource | undefined): string {
-  if (harness.installState === "missing") return "Not installed";
-  if (harness.installState === "installing") return "Installing";
-  if (harness.installState === "unknown") return "Checking installation";
-  if (harness.installState === "failed") return "Install failed";
-  if (harness.authState === "authenticating") return "Connecting";
-  return hasConfiguredConnection(harness, source) ? "Connected" : "Not connected";
 }
 
 function installationWorkflowStatus(installState: string, override: string | undefined) {

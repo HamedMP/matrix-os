@@ -13,10 +13,20 @@ import {
 } from "./build-cache.js";
 import { parseManifest, type AppManifest } from "./manifest-schema.js";
 import { safeBuildEnv } from "./safe-env.js";
+import { withAppBuildLock } from "./build-lock.js";
 
 export type BuildResult =
   | { ok: true; stamp: BuildStamp }
   | { ok: false; error: BuildError };
+
+export type BuildSnapshotResult<T> =
+  | { ok: true; stamp: BuildStamp; snapshot: T }
+  | Extract<BuildResult, { ok: false }>;
+
+export interface BuildOptions {
+  timeoutMs?: number;
+  deadlineAt?: number;
+}
 
 interface BuildOrchestratorOptions {
   concurrency: number;
@@ -45,7 +55,7 @@ export class BuildOrchestrator {
   async build(
     slug: string,
     appDir: string,
-    opts?: { timeoutMs?: number },
+    opts?: BuildOptions,
   ): Promise<BuildResult> {
     // Per-slug mutex: serialize concurrent builds for the same slug
     const existing = this.slugMutex.get(slug);
@@ -53,7 +63,11 @@ export class BuildOrchestrator {
       return existing;
     }
 
-    const promise = this.doBuild(slug, appDir, opts);
+    const promise = withAppBuildLock(appDir, (canonicalDir) => this.doBuild(slug, canonicalDir, opts), { deadlineAt: opts?.deadlineAt })
+      .catch((error: unknown): BuildResult => {
+        if (error instanceof BuildError) return { ok: false, error };
+        throw error;
+      });
     this.slugMutex.set(slug, promise);
     try {
       return await promise;
@@ -62,10 +76,31 @@ export class BuildOrchestrator {
     }
   }
 
+  /** Retain shared app ownership until immutable artifact bytes have been captured. */
+  async buildWithSnapshot<T>(
+    slug: string,
+    appDir: string,
+    opts: BuildOptions,
+    collect: (result: Extract<BuildResult, { ok: true }>) => Promise<T>,
+  ): Promise<BuildSnapshotResult<T>> {
+    return withAppBuildLock(appDir, async (canonicalDir) => {
+      const result = await this.doBuild(slug, canonicalDir, opts);
+      if (!result.ok) return result;
+      const beforeCapture = this.deadlineFailure(opts, 'build');
+      if (beforeCapture) return beforeCapture;
+      const snapshot = await collect(result);
+      const afterCapture = this.deadlineFailure(opts, 'build');
+      return afterCapture ?? { ...result, snapshot };
+    }, { deadlineAt: opts.deadlineAt }).catch((error: unknown): BuildSnapshotResult<T> => {
+      if (error instanceof BuildError) return { ok: false, error };
+      throw error;
+    });
+  }
+
   private async doBuild(
     slug: string,
     appDir: string,
-    opts?: { timeoutMs?: number },
+    opts?: BuildOptions,
   ): Promise<BuildResult> {
     // Read manifest to get build config
     let manifest: AppManifest;
@@ -101,11 +136,15 @@ export class BuildOrchestrator {
 
     const sourceGlobs = manifest.build.sourceGlobs;
     const timeoutMs = opts?.timeoutMs ?? manifest.build.timeout * 1000;
+    const prepareFailure = this.deadlineFailure(opts, 'prepare');
+    if (prepareFailure) return prepareFailure;
 
     // Check if build is stale
     if (!(await isBuildStale(appDir, sourceGlobs))) {
       const stamp = await readBuildStamp(appDir);
       if (stamp) {
+        const cacheFailure = this.deadlineFailure(opts, 'prepare');
+        if (cacheFailure) return cacheFailure;
         return { ok: true, stamp };
       }
     }
@@ -114,31 +153,41 @@ export class BuildOrchestrator {
     await this.acquireSemaphore();
 
     try {
+      const queuedFailure = this.deadlineFailure(opts, 'prepare');
+      if (queuedFailure) return queuedFailure;
       // Run install
+      const installTimeout = this.stageTimeout(timeoutMs, opts);
+      if (installTimeout === null) return this.timeoutResult('install');
       const installResult = await this.runCommand(
         manifest.build.install,
         appDir,
         "install",
-        timeoutMs,
+        installTimeout,
       );
       if (!installResult.ok) {
         return installResult;
       }
 
       // Run build
+      const buildTimeout = this.stageTimeout(timeoutMs, opts);
+      if (buildTimeout === null) return this.timeoutResult('build');
       const buildResult = await this.runCommand(
         manifest.build.command,
         appDir,
         "build",
-        timeoutMs,
+        buildTimeout,
       );
       if (!buildResult.ok) {
         return buildResult;
       }
 
+      const commandFailure = this.deadlineFailure(opts, 'build');
+      if (commandFailure) return commandFailure;
       // Write stamp on success
       const sourceHash = await hashSources(appDir, sourceGlobs);
       const lockHash = await hashLockfile(appDir);
+      const hashFailure = this.deadlineFailure(opts, 'build');
+      if (hashFailure) return hashFailure;
       const stamp: BuildStamp = {
         sourceHash,
         lockfileHash: lockHash,
@@ -151,6 +200,20 @@ export class BuildOrchestrator {
     } finally {
       this.releaseSemaphore();
     }
+  }
+
+  private timeoutResult(stage: 'install' | 'build' | 'prepare'): Extract<BuildResult, { ok: false }> {
+    return { ok: false, error: new BuildError('timeout', stage, null, 'Build deadline expired') };
+  }
+
+  private deadlineFailure(opts: BuildOptions | undefined, stage: 'install' | 'build' | 'prepare'): Extract<BuildResult, { ok: false }> | null {
+    return opts?.deadlineAt !== undefined && Date.now() >= opts.deadlineAt ? this.timeoutResult(stage) : null;
+  }
+
+  private stageTimeout(timeoutMs: number, opts: BuildOptions | undefined): number | null {
+    if (opts?.deadlineAt === undefined) return timeoutMs;
+    const remaining = opts.deadlineAt - Date.now();
+    return remaining > 0 ? Math.min(timeoutMs, remaining) : null;
   }
 
   private async runCommand(

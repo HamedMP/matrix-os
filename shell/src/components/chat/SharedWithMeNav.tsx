@@ -2,20 +2,23 @@
 
 import { CollaborationDiscoveryResponseSchema } from "@matrix-os/contracts";
 import { subscribeCollaborationDiscoveryChanged } from "@matrix-os/ui";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useBrowserOrigin } from "@/hooks/useBrowserOrigin";
-import { collaborationRuntimeFromSystemInfo, createShellCollaborationApi } from "@/lib/collaboration";
+import { collaborationRuntimeFromSystemInfo } from "@/lib/collaboration";
+import { useShellCollaborationApi } from "@/lib/collaboration-organization";
 import { getGatewayUrl } from "@/lib/gateway";
 import { MessageSquareIcon } from "@/lib/hugeicons";
+import { useCollaborationOrganization } from "@/lib/collaboration-organization-state";
 
 export function SharedWithMeNav({ active, onOpen }: { active: boolean; onOpen(): void }) {
   const origin = useBrowserOrigin();
+  const { status: organizationStatus } = useCollaborationOrganization();
   const [collaborationEnabled, setCollaborationEnabled] = useState(false);
-  const api = useMemo(() => origin && collaborationEnabled ? createShellCollaborationApi(origin) : null,
-    [collaborationEnabled, origin]);
+  const api = useShellCollaborationApi(origin, collaborationEnabled && organizationStatus !== "none");
   const [pending, setPending] = useState(0);
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- the capability belongs to the currently routed VPS; this bounded, cancellable runtime probe cannot be resolved by the platform-rendered shell or shared across explicit VM routes.
   useEffect(() => {
+    if (organizationStatus === "none") return;
     let current = true;
     void fetch(`${getGatewayUrl()}/api/system/info`, { signal: AbortSignal.timeout(10_000) })
       .then(async (response) => {
@@ -28,7 +31,7 @@ export function SharedWithMeNav({ active, onOpen }: { active: boolean; onOpen():
         if (current) setCollaborationEnabled(false);
       });
     return () => { current = false; };
-  }, []);
+  }, [organizationStatus]);
   const loadPendingCount = useCallback(async () => {
     if (!api) return null;
     const page = CollaborationDiscoveryResponseSchema.parse(await api.get("/api/collaboration/inbox?limit=100"));
@@ -47,7 +50,7 @@ export function SharedWithMeNav({ active, onOpen }: { active: boolean; onOpen():
     const unsubscribe = subscribeCollaborationDiscoveryChanged(load);
     return () => { current = false; unsubscribe(); };
   }, [api, loadPendingCount]);
-  if (!api) return null;
+  if (organizationStatus === "none" || !api) return null;
   return <button type="button" aria-current={active ? "page" : undefined} onClick={onOpen}
     className="mx-2 mb-1 flex min-h-10 w-[calc(100%-1rem)] items-center gap-2 rounded-lg px-2.5 text-left text-xs hover:bg-accent aria-[current=page]:bg-accent">
     <MessageSquareIcon className="size-4 text-muted-foreground" aria-hidden="true" />

@@ -1,3 +1,6 @@
+import { createRelayTerminalRecorder } from "./funded-relay-terminal-outcome.js";
+import { createRelayRequestDrain } from "./funded-relay-lifecycle.js";
+import { isManagedWorkersAiModel } from "@matrix-os/contracts";
 import { createHmac, randomUUID } from "node:crypto";
 import {
   FundedAiClaimKeySchema,
@@ -19,7 +22,7 @@ import {
   serializeFundedJevEvaluationRequest,
 } from "./funded-relay-evaluation.js";
 import { JEV_READINESS_PATH, jevProbeControlAuthorized, fixedJevProbeRequest, assertJevProbeSettlement } from "./funded-relay-jev-probe.js";
-import { estimateWorstCaseMicrousd, FUNDED_GLM_FLASH, isFundedModelPriceCurrent, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
+import { estimateWorstCaseMicrousd, isFundedModelPriceCurrent, mapFundedModel, maximumFundedInputTokens } from "./funded-relay-model.js";
 import { serializeFundedOpenAiRequest, workersAiTarget } from "./funded-relay-openai-request.js";
 import { normalizeWorkersAiResponse } from "./funded-relay-workers-response.js";
 import {
@@ -28,6 +31,7 @@ import {
   type FundedPlatformClient,
 } from "./funded-relay-platform-client.js";
 import {
+  assertFundedSystemMessageBeta,
   resolveRequestedBetas,
   serializeCountTokensRequest,
   serializeFundedRequest,
@@ -230,6 +234,11 @@ function cloudflareHeaders(input: {
   return headers;
 }
 
+function rateLimitHeader(response: Response, name: string): number | undefined {
+  const value = response.headers.get(name);
+  return value && /^\d{1,12}$/.test(value) ? Number(value) : undefined;
+}
+
 function identitiesMatch(left: VerifiedFundedIdentity, right: VerifiedFundedIdentity): boolean {
   return left.tokenId === right.tokenId && left.ownerId === right.ownerId
     && left.machineId === right.machineId && left.runtimeSlot === right.runtimeSlot
@@ -272,8 +281,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     retryIntervalMs: config.settlementRetryIntervalMs,
     now: () => now().getTime(),
     finalize: (task) => platform.finalize(task, AbortSignal.timeout(config.platformTimeoutMs)),
+    terminal: (task) => platform.terminal(task, AbortSignal.timeout(config.platformTimeoutMs)),
   });
-  const activeRequests = new Set<AbortController>();
+  const activeRequests = createRelayRequestDrain();
   const requestStates = new WeakMap<Context, ActiveRequestState>();
 
   async function releaseBeforeStart(
@@ -338,8 +348,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       parsedBody = serialized.request;
       requestBody = serialized.body;
       anthropicBeta = resolveRequestedBetas(c.req.header("anthropic-beta"), config.allowedBetas);
+      if (!isOpenAi) assertFundedSystemMessageBeta(parsedBody as FundedRequest, anthropicBeta);
       model = mapFundedModel(parsedBody.model);
-      if ((model.nativeModelId === FUNDED_GLM_FLASH) !== isOpenAi) throw new Error("Unsupported funded AI model");
+      if (isManagedWorkersAiModel(model.nativeModelId) !== isOpenAi) throw new Error("Unsupported funded AI model");
     } catch (error) {
       if (error instanceof Error && error.name === "BodyLimitError") throw error;
       if (error instanceof Error && error.message === "Unsupported funded AI model") {
@@ -487,8 +498,12 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       reservationId: reservation.reservationId,
       tokenId: authorization.identity.tokenId,
     };
-    const enqueueFinalization = (result: FundedFinalization): void => {
-      if (result.mode === "exact" && (reservation.billingMode === "usage" || result.actualCostMicrousd <= reservation.reservedMicrousd)) {
+    const terminal = createRelayTerminalRecorder({ identity: authorization.identity, reservationId: reservation.reservationId,
+      requestId, now, queue: settlementQueue, acknowledgementTimeoutMs: Math.min(10_000, 2 * config.platformTimeoutMs) });
+    const enqueueFinalization = async (result: FundedFinalization, terminalState: "completed" | "failed" | "cancelled" = "completed"): Promise<void> => {
+      if (result.mode === "conservative" && reservation.billingMode === "usage") {
+        await terminal.unknown(terminalState);
+      } else if (result.mode === "exact" && (reservation.billingMode === "usage" || result.actualCostMicrousd <= reservation.reservedMicrousd)) {
         settlementQueue.enqueue({ ...finalizationLocator, ...result });
       } else {
         settlementQueue.enqueue({ ...finalizationLocator, mode: "conservative" });
@@ -501,7 +516,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }, config.firstResponseTimeoutMs);
     const generationSignal = AbortSignal.any([state.lifetimeSignal, firstResponseController.signal]);
     const generationUrl = isOpenAi
-      ? workersAiTarget(config.gatewayBaseUrl).url
+      ? workersAiTarget(config.gatewayBaseUrl, model.nativeModelId).url
       : `${config.gatewayBaseUrl}${MESSAGES_PATH}${requestSearch}`;
     // Retain pseudonymous generation receipts even when gateway collection is
     // disabled. Payload suppression/ZDR remain set; counting and probes keep
@@ -518,23 +533,32 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     let dispatched = false;
     try {
       const started = await platform.start(
-        { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId },
+        { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId,
+          ...(reservation.billingMode === "usage" ? { executionId: terminal.executionId } : {}) },
         state.lifetimeSignal,
       );
       if (started.reservationId !== reservation.reservationId
-        || started.requestId !== requestId || started.tokenId !== authorization.identity.tokenId) {
+        || started.requestId !== requestId || started.tokenId !== authorization.identity.tokenId
+        || reservation.billingMode === "usage" && started.executionId !== terminal.executionId) {
         throw new Error("Funded AI start response did not match its reservation");
       }
+      terminal.started(started);
       dispatched = true;
-      const fetched = await fetchImpl(generationUrl, generationInit);
+      const fetched = terminal.response(await fetchImpl(generationUrl, generationInit));
       const upstream = isOpenAi && fetched.ok
         ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
       clearTimeout(firstResponseTimer);
       if (!upstream.ok) {
-        enqueueFinalization(await classifyFundedUpstreamRejection({
+        await enqueueFinalization(await classifyFundedUpstreamRejection({
           upstream, canonicalModelId: model.canonicalModelId,
           requestPath: c.req.path, signal: state.lifetimeSignal,
         }));
+        if (upstream.status === 429) {
+          console.warn("[proxy] Funded AI upstream rate limited", {
+            retryAfterSeconds: rateLimitHeader(upstream, "retry-after"),
+            inputTokensRemaining: rateLimitHeader(upstream, "anthropic-ratelimit-input-tokens-remaining"),
+          });
+        }
         resourceLease.release();
         state.resourceLease = null;
         if (upstream.status === 429) {
@@ -544,7 +568,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         return errorResponse(c, 502, "api_error", "AI access is temporarily unavailable");
       }
       if (!upstream.body) {
-        enqueueFinalization({ mode: "conservative" });
+        await enqueueFinalization({ mode: "conservative" });
         resourceLease.release();
         state.resourceLease = null;
         return new Response(null, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
@@ -566,9 +590,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           return {
             push: (chunk: Uint8Array) => tracker.push(chunk),
             complete: () => enqueueFinalization(tracker.complete()),
-            ambiguous: () => enqueueFinalization({ mode: "conservative" }),
+            ambiguous: () => enqueueFinalization({ mode: "conservative" }, "cancelled"),
           };
         })(),
+        Math.min(10_000, 2 * config.platformTimeoutMs),
       );
       state.handedOff = true;
       return new Response(responseBody, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
@@ -582,7 +607,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         refundFundedCapacityAttempt(runtimeAttempt, error);
         return controlPlaneError(c, error);
       }
-      enqueueFinalization({ mode: "conservative" });
+      await enqueueFinalization({ mode: "conservative" }, "failed");
       resourceLease.release();
       state.resourceLease = null;
       const errorName = error instanceof Error ? error.name : "UnknownError";
@@ -676,22 +701,17 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       reservationId: reservation.reservationId,
       tokenId: authorization.identity.tokenId,
     };
-    const enqueueFinalization = (result: FundedFinalization | {
+    const terminal = createRelayTerminalRecorder({ identity: authorization.identity, reservationId: reservation.reservationId,
+      requestId, now, queue: settlementQueue, acknowledgementTimeoutMs: Math.min(10_000, 2 * config.platformTimeoutMs) });
+    const enqueueFinalization = async (result: FundedFinalization | {
       mode: "exact";
       actualCostMicrousd: number;
       jevProvenance: { resolvedModel: string; pricingVersion: string };
-    }): void => {
+    }): Promise<void> => {
       if (result.mode === "exact" && result.actualCostMicrousd <= config.jevMaxCostMicrousd) {
         settlementQueue.enqueue({ ...finalizationLocator, ...result });
       } else {
-        // Platform deliberately refuses conservative settlement for usage
-        // billing. Keep the durable in-flight hold for operator review rather
-        // than retrying a request that can never succeed or charging without
-        // verified provider usage.
-        console.warn("[proxy] Jev usage requires manual reconciliation", {
-          reservationId: reservation.reservationId,
-          requestId,
-        });
+        await terminal.unknown("failed");
       }
     };
 
@@ -704,13 +724,15 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       // Keep the admitted review; a new deployment attestation cannot renew this request.
       reviewedJevPricing(now(), pricing);
       const startResult = await platform.start(
-        { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId },
+        { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId, executionId: terminal.executionId },
         state.lifetimeSignal,
       );
       if (startResult.reservationId !== reservation.reservationId
-        || startResult.requestId !== requestId || startResult.tokenId !== authorization.identity.tokenId) {
+        || startResult.requestId !== requestId || startResult.tokenId !== authorization.identity.tokenId
+        || startResult.executionId !== terminal.executionId) {
         throw new Error("Funded AI start response did not match its reservation");
       }
+      terminal.started(startResult);
       started = true;
       // A successful platform start is not evidence of an upstream call.
       reviewedJevPricing(now(), pricing);
@@ -729,9 +751,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         redirect: "error",
         signal: evaluationSignal,
       });
-      const text = await readBoundedText(upstream, config.maxControlResponseBytes);
+      const text = await readBoundedText(terminal.response(upstream), config.maxControlResponseBytes);
       if (!upstream.ok) {
-        enqueueFinalization({ mode: "conservative" });
+        await enqueueFinalization({ mode: "conservative" });
         resourceLease.release();
         state.resourceLease = null;
         if (upstream.status === 429) {
@@ -776,10 +798,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
             || checked.policy.runtimeRevision !== latest.policy.runtimeRevision) throw new Error("Jev probe authorization changed");
           reviewedJevPricing(now(), pricing); state.lifetimeSignal.throwIfAborted();
         } catch (error) {
-          enqueueFinalization(finalization);
+          await enqueueFinalization(finalization);
           throw error;
         }
-      } else enqueueFinalization(finalization);
+      } else await enqueueFinalization(finalization);
       resourceLease.release();
       state.resourceLease = null;
       return probe ? c.json({ ready: true, priceValidThrough: pricing.validThrough }, 200) : c.json(normalized.result, 200);
@@ -799,7 +821,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           settlementQueue.enqueue(task);
         }
       } else {
-        enqueueFinalization({ mode: "conservative" });
+        await enqueueFinalization({ mode: "conservative" });
       }
       resourceLease.release();
       state.resourceLease = null;
@@ -901,9 +923,8 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       });
     },
     async close() {
-      for (const controller of activeRequests) controller.abort("relay shutting down");
-      activeRequests.clear();
       admission.close();
+      await activeRequests.close(Math.min(10_000, 2 * config.platformTimeoutMs));
       await settlementQueue.close();
     },
   };

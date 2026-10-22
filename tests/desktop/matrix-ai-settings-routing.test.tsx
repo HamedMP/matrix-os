@@ -11,6 +11,9 @@ import { useProviderSetup } from "../../desktop/src/renderer/src/features/chat/u
 import { executeCatalogProviderSetupAction } from "../../desktop/src/renderer/src/features/coding-agents/provider-setup-terminal";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
+import { isDesktopSurfaceVisible, useDesktopSurfaces } from "../../desktop/src/renderer/src/stores/desktop-surfaces";
+import { ordinaryPlanCatalog, planBinding, planId } from "../ui/ordinary-chatgpt-plan-fixture";
+import { ordinaryApiCatalog, apiBinding, apiId } from "../ui/ordinary-anthropic-api-fixture";
 
 function heldCatalog(driverKind: "matrix_pi" | "kernel") {
   const catalog = createCanonicalProviderCatalogFixture();
@@ -26,7 +29,8 @@ function heldCatalog(driverKind: "matrix_pi" | "kernel") {
 
 beforeEach(() => {
   useTabs.setState(useTabs.getInitialState(), true);
-  useUi.setState({ requestedSettingsSection: null });
+  useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
+  useUi.setState(useUi.getInitialState(), true);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -56,6 +60,115 @@ it.each(["matrix_pi"] as const)("opens Agents & providers from the held %s picke
   expect(error).not.toHaveBeenCalled();
 });
 
+it("navigates once to canonical Settings with both unavailable Matrix payment sources and usable GPT", async () => {
+  const catalog = ordinaryPlanCatalog();
+  catalog.instances.push(heldCatalog("matrix_pi").instances[0]!);
+  const api = ordinaryApiCatalog().instances[1]!;
+  api.availability = "unavailable";
+  api.setupActions = [{ id: "matrix_anthropic_settings", kind: "open_settings", label: "Agents & providers" }];
+  catalog.instances.push(api);
+  const refresh = vi.fn(), change = vi.fn();
+  const requestSettings = vi.spyOn(useUi.getState(), "requestSettingsSection");
+  function Picker() {
+    const setup = useProviderSetup([], refresh, null);
+    return <ProviderModelPicker catalog={catalog} instanceLocked={false} onChange={change} onSetupAction={setup}
+      selection={{ instanceId: planId, model: "gpt-owner", options: planBinding, interactionMode: "default", permissionMode: "supervised" }} />;
+  }
+  render(<Picker />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+  expect(screen.getAllByRole("button", { name: "Agents & providers" })).toHaveLength(1);
+  expect(screen.getByRole("option", { name: /Owner GPT/ })).toBeEnabled();
+  expect(screen.getByRole("option", { name: /Claude Sonnet 5/ })).toBeDisabled();
+  expect(screen.getByRole("option", { name: /Owner Claude/ })).toBeDisabled();
+  expect(screen.getByRole("searchbox")).not.toHaveFocus();
+  fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
+  await waitFor(() => expect(useUi.getState().requestedSettingsSection).toBe("agents-providers"));
+  expect(requestSettings).toHaveBeenCalledExactlyOnceWith("agents-providers");
+  expect(useTabs.getState().tabs.filter(tab => tab.kind === "settings")).toHaveLength(1);
+  expect(useTabs.getState().tabs.some(tab => tab.kind === "terminals")).toBe(false);
+  expect(screen.queryByRole("searchbox")).toBeNull();
+  expect(change).not.toHaveBeenCalled(); expect(refresh).not.toHaveBeenCalled();
+});
+
+
+it.each(["minimized window", "minimized tab", "closed", "hidden"] as const)("the sole Matrix AI footer restores and foregrounds existing %s Settings", async mode => {
+  const catalog = ordinaryPlanCatalog();
+  catalog.instances.push(heldCatalog("matrix_pi").instances[0]!);
+  const api = ordinaryApiCatalog().instances[1]!;
+  api.availability = "unavailable";
+  api.setupActions = [{ id: "matrix_anthropic_settings", kind: "open_settings", label: "Agents & providers" }];
+  catalog.instances.push(api);
+  const settingsId = useTabs.getState().openTab({ kind: "settings", title: "Settings" });
+  const chatId = useTabs.getState().openTab({ kind: "chat", title: "Chat" });
+  useDesktopSurfaces.getState().reconcileTabs([settingsId, chatId], { width: 1280, height: 800 });
+  if (mode === "minimized tab") useDesktopSurfaces.getState().maximizeToTab(settingsId);
+  if (mode.startsWith("minimized")) useDesktopSurfaces.getState().minimizeSurface(settingsId);
+  if (mode === "closed") useDesktopSurfaces.getState().closeSurface(settingsId);
+  if (mode === "hidden") useDesktopSurfaces.getState().showDesktop();
+  useDesktopSurfaces.getState().activateSurface(chatId);
+  const bounds = useDesktopSurfaces.getState().surfaces[settingsId]!.bounds;
+  expect(isDesktopSurfaceVisible(settingsId, useDesktopSurfaces.getState())).toBe(false);
+  const refresh = vi.fn(), change = vi.fn(), request = vi.fn(), error = vi.spyOn(toast, "error");
+  const requestSettings = vi.spyOn(useUi.getState(), "requestSettingsSection");
+  function Picker() {
+    const setup = useProviderSetup([], refresh, { get: request, post: request } as never);
+    return <ProviderModelPicker catalog={catalog} instanceLocked={false} onChange={change} onSetupAction={setup}
+      selection={{ instanceId: planId, model: "gpt-owner", options: planBinding, interactionMode: "default", permissionMode: "supervised" }}/>;
+  }
+  render(<Picker/>);
+  fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+  expect(screen.getAllByRole("button", { name: "Agents & providers" })).toHaveLength(1);
+  expect(screen.getByRole("option", { name: /Owner GPT/ })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
+  await waitFor(() => expect(isDesktopSurfaceVisible(settingsId, useDesktopSurfaces.getState())).toBe(true));
+  expect(useTabs.getState().activeTabId).toBe(settingsId);
+  expect(useTabs.getState().tabs.filter(tab => tab.kind === "settings").map(tab => tab.id)).toEqual([settingsId]);
+  const surfaces = useDesktopSurfaces.getState();
+  expect(surfaces.surfaces[settingsId]!.mode).toBe(mode === "minimized tab" ? "tab" : "window");
+  expect(surfaces.workspaceView).toBe(mode === "minimized tab" ? "tabs" : "desktop");
+  expect(surfaces.surfaces[settingsId]!.bounds).toEqual(bounds);
+  expect(surfaces.surfaces[settingsId]!.zIndex).toBeGreaterThan(surfaces.surfaces[chatId]!.zIndex);
+  expect(requestSettings).toHaveBeenCalledExactlyOnceWith("agents-providers");
+  expect(screen.queryByRole("searchbox")).toBeNull();
+  expect(request).not.toHaveBeenCalled(); expect(refresh).not.toHaveBeenCalled();
+  expect(change).not.toHaveBeenCalled(); expect(error).not.toHaveBeenCalled();
+});
+
+it.each(["available GPT", "unavailable API"] as const)("routes the API recovery footer to canonical Settings beside healthy funded models when selected is %s", async selected => {
+  const catalog = ordinaryPlanCatalog(), funded = heldCatalog("matrix_pi").instances[0]!;
+  funded.availability = "available"; funded.connectionState = "ready";
+  funded.models[0]!.availability = "available"; funded.setupActions = [];
+  funded.defaultSelection = { instanceId: funded.id, model: funded.models[0]!.id };
+  catalog.instances.push(funded);
+  const api = ordinaryApiCatalog().instances[1]!;
+  api.availability = "unavailable";
+  api.setupActions = [{ id: "matrix_anthropic_settings", kind: "open_settings", label: "Agents & providers" }];
+  catalog.instances.push(api);
+  const refresh = vi.fn(), change = vi.fn(), error = vi.spyOn(toast, "error");
+  const requestSettings = vi.spyOn(useUi.getState(), "requestSettingsSection");
+  const request = vi.fn();
+  function Picker() {
+    const setup = useProviderSetup([], refresh, { get: request, post: request } as never);
+    return <ProviderModelPicker catalog={catalog} instanceLocked={false} onChange={change} onSetupAction={setup}
+      selection={{ instanceId: selected === "available GPT" ? planId : apiId,
+        model: selected === "available GPT" ? "gpt-owner" : "claude-owner",
+        options: selected === "available GPT" ? planBinding : apiBinding, interactionMode: "default", permissionMode: "supervised" }} />;
+  }
+  render(<Picker />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+  expect(screen.getByRole("option", { name: /Owner GPT/ })).toBeEnabled();
+  expect(screen.getByRole("option", { name: /Claude Sonnet 5/ })).toBeEnabled();
+  expect(screen.getByRole("option", { name: /Owner Claude/ })).toBeDisabled();
+  expect(screen.getAllByRole("button", { name: "Agents & providers" })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
+  await waitFor(() => expect(useUi.getState().requestedSettingsSection).toBe("agents-providers"));
+  expect(requestSettings).toHaveBeenCalledExactlyOnceWith("agents-providers");
+  expect(useTabs.getState().tabs.filter(tab => tab.kind === "settings")).toHaveLength(1);
+  expect(useTabs.getState().tabs.some(tab => tab.kind === "terminals")).toBe(false);
+  expect(request).not.toHaveBeenCalled(); expect(refresh).not.toHaveBeenCalled();
+  expect(change).not.toHaveBeenCalled(); expect(error).not.toHaveBeenCalled();
+});
+
 it.each([
   { driverKind: "matrix_pi", id: "matrix_pi_custom", actionId: "matrix_ai_settings" },
   { driverKind: "kernel", id: "kernel_custom", actionId: "matrix_ai_settings" },
@@ -64,6 +177,13 @@ it.each([
   { driverKind: "kernel", id: "kernel_matrix_included", actionId: "kernel_settings" },
   { driverKind: "hermes", id: "hermes_default", actionId: "matrix_ai_settings" },
   { driverKind: "openclaw", id: "openclaw_default", actionId: "matrix_ai_settings" },
+  { driverKind: "kernel", id: apiId, actionId: "matrix_anthropic_settings" },
+  { driverKind: "matrix_bot", id: "matrix_anthropic_api", actionId: "matrix_anthropic_settings" },
+  { driverKind: "matrix_pi", id: "matrix_pi_custom", actionId: "matrix_anthropic_settings" },
+  { driverKind: "matrix_pi", id: "matrix_pi_default", actionId: "matrix_anthropic_settings" },
+  { driverKind: "matrix_pi", id: apiId, actionId: "matrix_ai_settings" },
+  { driverKind: "matrix_pi", id: apiId, actionId: "settings" },
+  { driverKind: "matrix_pi", id: planId, actionId: "settings" },
 ] satisfies Array<{ driverKind: CanonicalProviderDriverKind; id: string; actionId: string }>)("keeps unrelated/retired Settings actions rejected ($driverKind/$id/$actionId)", async ({ driverKind, id, actionId }) => {
   const base = heldCatalog("matrix_pi").instances[0]!;
   const action = { id: actionId, kind: "open_settings" as const, label: "Agents & providers" };
@@ -83,4 +203,12 @@ it("rejects an action absent from the actual managed catalog descriptor", async 
   expect(opened).toBe(false);
   expect(useUi.getState().requestedSettingsSection).toBeNull();
   expect(useTabs.getState().tabs).toHaveLength(0);
+});
+
+it.each(["absent", "changed label"])("rejects an API Settings action %s from its advertised descriptor", async mismatch => {
+  const instance = ordinaryApiCatalog().instances[1]!;
+  const action = { id: "matrix_anthropic_settings", kind: "open_settings" as const, label: "Agents & providers" };
+  instance.setupActions = mismatch === "absent" ? [] : [{ ...action, label: "Different action" }];
+  expect(await executeCatalogProviderSetupAction({ instance, action, api: null, openTab: useTabs.getState().openTab })).toBe(false);
+  expect(useUi.getState().requestedSettingsSection).toBeNull(); expect(useTabs.getState().tabs).toHaveLength(0);
 });

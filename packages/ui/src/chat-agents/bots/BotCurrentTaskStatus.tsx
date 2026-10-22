@@ -1,9 +1,14 @@
 import type { BotTaskSummary } from "@matrix-os/contracts";
+import { latestBotTask } from "./bot-rail-status.js";
 import { BotTaskStatus } from "./BotTaskStatus.js";
 
-/** Historical attempts live in Details; terminal failures are rendered once by the transcript. */
+/** Running progress lives in the canonical transcript; this body retains waits requiring attention. */
+export function currentBotAttentionTask(tasks: readonly BotTaskSummary[]) {
+  const task = latestBotTask(tasks);
+  return task && ["waiting_person", "waiting_capacity"].includes(task.status) ? task : null;
+}
+
 export function BotCurrentTaskStatus({ tasks }: { tasks: readonly BotTaskSummary[] }) {
-  const task = tasks.reduce<BotTaskSummary | undefined>((latest, candidate) =>
-    !latest || candidate.updatedAt > latest.updatedAt || candidate.updatedAt === latest.updatedAt && candidate.taskId > latest.taskId ? candidate : latest, undefined);
-  return task && ["queued", "running", "waiting_person", "waiting_capacity"].includes(task.status) ? <BotTaskStatus task={task}/> : null;
+  const task = currentBotAttentionTask(tasks);
+  return task ? <BotTaskStatus task={task}/> : null;
 }

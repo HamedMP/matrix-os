@@ -3,7 +3,7 @@
  * Provider V3 snapshot (spec 536, research R3). The owner's active choice
  * wins when bots can use it; otherwise the first ready access source bots
  * can use, in the order Matrix AI (GLM Flash, the managed default), Matrix
- * AI (Anthropic models), own Anthropic key, own Anthropic profile, with that
+ * AI (Anthropic models), own Anthropic key, with that
  * source's default model. A bot never picks its own model.
  *
  * Anthropic models run on the Messages API. Matrix AI's other models run on
@@ -12,7 +12,7 @@
  * are never selected.
  */
 import type { AiProviderSnapshotV3, BotModelRoute, CanonicalChatModelSelection } from "@matrix-os/contracts";
-import { BotModelRouteSchema } from "@matrix-os/contracts";
+import { BotModelRouteSchema, MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
 import type { BotCredentialAccessSourceId } from "./credentials.js";
 import { MATRIX_DEFAULT_MODEL_ID } from "../ai-providers/model-catalog.js";
 
@@ -21,7 +21,6 @@ const SOURCES_IN_ORDER: ReadonlyArray<{ id: string; credential: BotCredentialAcc
   { id: "matrix_cloudflare", credential: "matrix_included", anthropicOnly: false },
   { id: "matrix_included", credential: "matrix_included", anthropicOnly: true },
   { id: "owner_anthropic_key", credential: "owner_anthropic_key", anthropicOnly: true },
-  { id: "owner_anthropic_profile", credential: "owner_anthropic_profile", anthropicOnly: true },
 ];
 const DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
 const ANTHROPIC_CONTEXT_WINDOW = 200_000;
@@ -30,6 +29,8 @@ const OTHER_CONTEXT_WINDOW = 128_000;
 export interface ResolvedBotRoute {
   route: BotModelRoute;
   accessSourceId: BotCredentialAccessSourceId;
+  subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
+  anthropicApi?: import("@matrix-os/contracts").MatrixAnthropicBinding;
 }
 
 export class BotRouteError extends Error {
@@ -71,12 +72,14 @@ export function resolveBotRoute(snapshot: AiProviderSnapshotV3, now = Date.now()
   const active = activeSource ? routeFor(snapshot, activeSource, snapshot.active.modelId, now) : undefined;
   if (active) return active;
   for (const entry of SOURCES_IN_ORDER) {
-    // Provider V3 exposes managed GLM as an access source, without an
-    // Anthropic kernel instance. Pi can use that source directly, subject
-    // to the same readiness, freshness, eligibility and tool checks.
+    // Managed Workers models have no kernel instance. Keep Flash first, then
+    // consider only reviewed peers passing the same exact route checks.
     if (entry.id === "matrix_cloudflare") {
-      const managed = routeFor(snapshot, entry, MATRIX_DEFAULT_MODEL_ID, now);
-      if (managed) return managed;
+      for (const modelId of [MATRIX_DEFAULT_MODEL_ID,
+        ...MANAGED_WORKERS_AI_MODEL_IDS.filter(id => id !== MATRIX_DEFAULT_MODEL_ID)]) {
+        const managed = routeFor(snapshot, entry, modelId, now);
+        if (managed) return managed;
+      }
     }
     const instances = snapshot.instances.filter((instance) => instance.accessSourceId === entry.id
       && instance.readiness.state === "ready" && fresh(instance.readiness.staleAfter, now));

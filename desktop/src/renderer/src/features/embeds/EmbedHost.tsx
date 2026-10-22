@@ -4,6 +4,8 @@ import { invoke, onEvent } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
 import { readNativeEmbedBounds } from "./embed-bounds";
+import { nativeBrowserProduct } from "../../../../shared/browser-products";
+import { DesktopAppSiteButton } from "../app-sites/DesktopAppSiteButton";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
 // The remote content renders in an isolated partition with no IPC access.
@@ -12,6 +14,7 @@ import { readNativeEmbedBounds } from "./embed-bounds";
 // (embed:set-active false) rather than moved off-screen (lesson L14).
 interface EmbedHostCommonProps {
   active?: boolean;
+  visible?: boolean;
   refreshRequest?: number;
   layoutRevision?: string;
   visualScale?: number;
@@ -30,6 +33,7 @@ export default function EmbedHost({
   const {
     kind,
   active: requestedActive = true,
+  visible = requestedActive,
   refreshRequest,
   layoutRevision,
   visualScale = 1,
@@ -42,6 +46,8 @@ export default function EmbedHost({
   const appIdentity = props.kind === "app" ? props.appIdentity : undefined;
   const url = props.kind === "browser" ? props.url : undefined;
   const runtimeSlot = useConnection((connection) => connection.runtimeSlot);
+  const product = nativeBrowserProduct(appIdentity ?? "", slug ?? "");
+  const authGeneration = useConnection((connection) => product ? connection.authGeneration : 0);
   const hostRef = useRef<HTMLDivElement>(null);
   const embedIdRef = useRef<string | null>(null);
   const activeRef = useRef(active);
@@ -130,7 +136,7 @@ export default function EmbedHost({
       if (id) void invoke("embed:close", { embedId: id });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appIdentity, kind, retryRevision, runtimeSlot, slug, url]);
+  }, [appIdentity, kind, retryRevision, runtimeSlot, slug, url, authGeneration]);
 
   // Native views always paint above renderer windows. Keep a bounded local
   // frame under the detached view so obscured Matrix windows do not go blank.
@@ -195,6 +201,8 @@ export default function EmbedHost({
   }, [active, openedEmbedRevision, refreshRequest]);
 
   return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      {slug && visible ? <div className="flex shrink-0 justify-end border-b px-3 py-1.5"><DesktopAppSiteButton key={slug} appSlug={slug} /></div> : null}
     <div ref={hostRef} className="ph-no-capture relative min-h-0 flex-1" style={{ background: "var(--bg-app)" }}>
       {snapshotDataUrl ? (
         <img
@@ -243,7 +251,7 @@ export default function EmbedHost({
       {state === "failed" ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
           <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
-            Couldn't load this surface.
+            {product ? `${product.name} is unavailable on this computer.` : "Couldn't load this surface."}
           </span>
           <Button
             variant="primary"
@@ -256,6 +264,7 @@ export default function EmbedHost({
           </Button>
         </div>
       ) : null}
+    </div>
     </div>
   );
 }

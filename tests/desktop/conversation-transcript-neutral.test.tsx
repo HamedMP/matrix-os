@@ -125,7 +125,8 @@ describe("provider-neutral conversation transcript", () => {
     expect(receiptMarker.className).not.toContain("pb-2");
     expect(receiptMarker.className).toContain("border-[var(--border-xsoft)]");
     expect(receiptMarker.className).not.toContain("border-[var(--border-subtle)]");
-    expect(receiptRow.className).toContain("-mb-1");
+    expect(receiptRow.className).toContain("mb-3");
+    expect(receiptRow.className).not.toContain("-mb-1");
     expect(screen.getByText("Inspect the workspace")).toBeTruthy();
     const assistantText = screen.getByText("The workspace is clean.");
     expect(assistantText).toBeTruthy();
@@ -142,13 +143,17 @@ describe("provider-neutral conversation transcript", () => {
     expect(assistantBubble.className).toContain("*:data-[slot=bubble-content]:py-px");
     expect(assistantBubble.className).not.toContain("*:data-[slot=bubble-content]:p-0");
     expect(assistantMessageContent.className).toContain("gap-0");
-    expect(assistantRow.className).toContain("mt-4");
-    expect(assistantRow.className).not.toContain("mt-2");
+    expect(assistantRow.className).toContain("min-w-0");
+    // The receipt owns the gap; response wrappers must not add another top margin.
+    expect(assistantRow.className).not.toMatch(/(?:^|\s)-?mt-/);
+    expect(receiptRow.compareDocumentPosition(assistantRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText("I’ll inspect the repository first.")).toBeNull();
     expect(screen.queryByRole("button", { name: "Ran command: git status --short" })).toBeNull();
 
     fireEvent.click(receipt);
 
+    expect(receipt.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("The workspace is clean.")).toBeTruthy();
     expect(screen.getByText("I’ll inspect the repository first.")).toBeTruthy();
     const activity = screen.getByRole("button", { name: "Ran command: git status --short" });
     expect(activity.className).toContain("w-fit");

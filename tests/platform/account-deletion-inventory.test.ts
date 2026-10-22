@@ -2,7 +2,7 @@ import { sql, type KyselyPlugin } from 'kysely';
 import { describe, expect, it } from 'vitest';
 import { eraseOwnerPlatformData } from '../../packages/platform/src/account-deletion/cleanup-data.js';
 import { wrapPlatformDb } from '../../packages/platform/src/database/transaction-scope.js';
-import { createTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb } from './native-platform-db-test-helper.js';
 
 describe('owner cleanup without JavaScript runtime inventories', () => {
   it('erases every historical runtime handle and queue row while preserving neighbors and social counts', async () => {

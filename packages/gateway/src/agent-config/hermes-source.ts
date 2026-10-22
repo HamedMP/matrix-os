@@ -9,6 +9,8 @@ import type {
   AgentRuntimeSource,
 } from "./service.js";
 
+import type { HermesNativeCredentialKind } from "./hermes-native-credential-kind.js";
+
 export type HermesJsonReader = (
   path: string,
   signal: AbortSignal,
@@ -103,7 +105,7 @@ function normalizeProvider(
   const name = DisplayNameSchema.safeParse(parsed.data.name);
   const authenticated = parsed.data.authenticated === true;
   const authKind = authKindForProvider(
-    parsed.data.auth_type ?? undefined,
+    parsed.data.auth_type ?? (parsed.data.is_user_defined === false && ["openai-api", "openrouter"].includes(id.data) ? "api_key" : undefined),
     parsed.data.is_user_defined === true,
   );
   const models = parseModelIds(
@@ -227,8 +229,6 @@ export function normalizeHermesRuntimeSnapshot(input: {
   // native model/options contract omits auth_type for this built-in entry.
   // Custom, duplicate, or explicitly different credential records stay closed.
   const selectedCredentialKind = nativeCredentialKind(currentProvider, nativeProvider);
-  const codexProvider = nativeProviderRecord(options.providers, "openai-codex");
-  const codexCredentialKind = nativeCredentialKind("openai-codex", codexProvider);
   const localObservation = (authenticated: boolean | undefined) => ({
     state: authenticated === true ? "present_unverified" as const
       : authenticated === false ? "absent" as const : "unknown" as const,
@@ -276,10 +276,11 @@ export function normalizeHermesRuntimeSnapshot(input: {
       transition: null,
     },
     providers,
-    ...(codexProvider && codexCredentialKind && input.observedAt !== undefined ? {
-      nativeProfileObservations: [{ providerId: "openai-codex", credentialKind: codexCredentialKind,
-        localObservation: localObservation(codexProvider.authenticated) }],
-    } : {}),
+    ...(input.observedAt !== undefined ? { nativeProfileObservations: ["openai-codex", "openai-api", "anthropic", "openrouter"].flatMap(providerId => {
+      const raw = nativeProviderRecord(options.providers, providerId);
+      const credentialKind = nativeCredentialKind(providerId, raw);
+      return raw && credentialKind ? [{ providerId, credentialKind, localObservation: localObservation(raw.authenticated) }] : [];
+    }) } : {}),
     messaging: {
       runtime: "hermes",
       provider: configured ? currentProvider : null,
@@ -296,6 +297,7 @@ export function createHermesRuntimeSource(
     cacheTtlMs?: number;
     now?: () => number;
     logWarning?: (errorName: string) => void;
+    readNativeCredentialKind?: (signal: AbortSignal) => Promise<HermesNativeCredentialKind | null>;
   } = {},
 ) {
   const cacheTtlMs = options.cacheTtlMs ?? 5_000;
@@ -318,11 +320,13 @@ export function createHermesRuntimeSource(
     if (cached !== null && cached.expiresAt > now()) return cached.value;
     if (inFlight === null || inFlight.generation !== generation) {
       const requestGeneration = generation;
-      const observedAt = now();
+      // Credential evidence is observed when model/options actually arrives,
+      // not when the RPC starts. A slow status call must not retimestamp it.
+      let observedAt: number | undefined;
       const promise = Promise.allSettled([
         readJson("/api/status", signal),
-        readJson("/api/model/options", signal),
-      ]).then(([statusResult, modelOptionsResult]) => {
+        readJson("/api/model/options", signal).then(value => { observedAt = now(); return value; }),
+      ]).then(async ([statusResult, modelOptionsResult]) => {
         signal.throwIfAborted();
         if (statusResult.status === "rejected") throw statusResult.reason;
         let modelOptions: unknown = { providers: [] };
@@ -334,6 +338,24 @@ export function createHermesRuntimeSource(
               ? modelOptionsResult.reason.name
               : "UnknownError",
           );
+        }
+        const raw = HermesOptionsSchema.safeParse(modelOptions);
+        const candidates = raw.success ? raw.data.providers.filter(value => {
+          const row = HermesProviderSchema.safeParse(value);
+          return row.success && row.data.slug === "anthropic";
+        }) : [];
+        const candidate = candidates.length === 1 ? HermesProviderSchema.safeParse(candidates[0]) : undefined;
+        if (raw.success && raw.data.provider === "anthropic" && candidate?.success
+          && candidate.data.authenticated === true && candidate.data.is_user_defined === false
+          && candidate.data.auth_type === undefined && options.readNativeCredentialKind) {
+          const proof = await options.readNativeCredentialKind(signal);
+          signal.throwIfAborted();
+          if (proof?.providerId === "anthropic" && proof.credentialKind === "api_key" && proof.modelId === raw.data.model
+            && candidate.data.models?.includes(proof.modelId)) {
+            modelOptions = { ...raw.data, providers: raw.data.providers.map(value => value === candidates[0]
+              ? { ...(value as Record<string, unknown>), auth_type: "api_key" } : value) };
+            observedAt = now();
+          }
         }
         return normalizeHermesRuntimeSnapshot({
           status: statusResult.value,

@@ -6,9 +6,9 @@ import { stubOrchestrator } from './proxy-routing-test-utils.js';
 import { createConfiguredAccountDeletionRuntime } from '../../packages/platform/src/account-deletion/wiring.js';
 import { createApp } from '../../packages/platform/src/main.js';
 import { createPlatformDb as createGatewayDb } from '../../packages/gateway/src/platform-db.js';
-import { CustomMcpBroker } from '../../packages/gateway/src/integrations/custom-mcp/broker.js';
+import { CustomMcpBroker, type CustomMcpCredential } from '../../packages/gateway/src/integrations/custom-mcp/broker.js';
 import { CustomMcpOAuthManager } from '../../packages/gateway/src/integrations/custom-mcp/oauth.js';
-import { encryptCustomMcpCredential } from '../../packages/gateway/src/integrations/custom-mcp/crypto.js';
+import { encryptCustomMcpCredential, decryptCustomMcpCredential } from '../../packages/gateway/src/integrations/custom-mcp/crypto.js';
 
 const store=vi.hoisted(()=>({listObjects:vi.fn(async()=>({keys:[],nextCursor:null})),deleteObject:vi.fn(),abortOwnerMultipartUploads:vi.fn(),destroy:vi.fn(),getPresignedGetUrl:vi.fn()}));
 vi.mock('../../packages/platform/src/account-deletion/storage.js',async importOriginal=>({...await importOriginal<object>(),createAccountDeletionObjectStore:()=>store}));
@@ -18,7 +18,7 @@ describe('production deletion composition',()=>{
    const {db,instance}=await createTestPlatformDb();
    const gatewayDb=createGatewayDb({dialect:instance.dialect});
    await gatewayDb.migrate();
-   const env={ACCOUNT_DELETION_ENABLED:'true',ACCOUNT_DELETION_SECRET:'s'.repeat(32),CLERK_SECRET_KEY:'test',R2_ACCESS_KEY_ID:'test',R2_SECRET_ACCESS_KEY:'test'};
+   const env={ACCOUNT_DELETION_CONFIGURED:'true',ACCOUNT_DELETION_ENABLED:'true',ACCOUNT_DELETION_SECRET:'s'.repeat(32),CLERK_SECRET_KEY:'test',R2_ACCESS_KEY_ID:'test',R2_SECRET_ACCESS_KEY:'test'};
    const ownerUuid='11111111-1111-4111-8111-111111111111';
    const foreignUuid='22222222-2222-4222-8222-222222222222';
    await sql`INSERT INTO users (id,clerk_id,handle,display_name,email,container_id)
@@ -51,13 +51,17 @@ describe('production deletion composition',()=>{
      await sql`UPDATE account_deletion_jobs SET due_at='2020-01-01',next_attempt_at='2020-01-01'`.execute(db.executor);
      await runtime!.service.reconcile();
      expect((await runtime!.service.get('user_mcp'))?.status).not.toBe('completed');
-     expect((await sql`SELECT encrypted_credentials FROM custom_mcp_servers WHERE id=${ownerServerId}`.execute(db.executor)).rows)
-       .toEqual([{encrypted_credentials:encrypted}]);
+     const retained=await gatewayDb.getCustomMcpServerForBroker(ownerServerId,ownerUuid);
+     expect(retained).toMatchObject({enabled:false,status:'action_required',revision:3,action_required_reason:'credential_revocation_failed'});
+     expect(retained?.encrypted_credentials).toBeTruthy();
+     expect(decryptCustomMcpCredential<CustomMcpCredential>(retained!.encrypted_credentials!,encryptionKey,
+       {userId:ownerUuid,serverId:ownerServerId}).oauth).toEqual({...credential.oauth,removing:true});
      await sql`UPDATE account_deletion_jobs SET next_attempt_at='2020-01-01'`.execute(db.executor);
      await runtime!.service.reconcile();
      expect(await runtime!.service.get('user_mcp')).toMatchObject({status:'completed'});
      expect(remove).toHaveBeenCalledTimes(2);
      expect(remove).toHaveBeenLastCalledWith(ownerUuid,ownerServerId);
+     expect(revokeRequest).toHaveBeenCalledTimes(2);
      expect(revokeRequest).toHaveBeenLastCalledWith({method:'POST',url:'https://oauth.example.test/revoke',
        headers:{'content-type':'application/x-www-form-urlencoded'},body:'token=owner_grant&client_id=fixture_client'});
      expect(projectionRemove).not.toHaveBeenCalled();
@@ -68,7 +72,7 @@ describe('production deletion composition',()=>{
  it('reaches durable cleanup through real app auth and signed webhook without requiring a VPS or payment',async()=>{
    const {db}=await createTestPlatformDb();
    const key=Buffer.from('s'.repeat(32));
-   const env={ACCOUNT_DELETION_ENABLED:'true',ACCOUNT_DELETION_SECRET:'s'.repeat(32),CLERK_SECRET_KEY:'test',R2_ACCESS_KEY_ID:'test',R2_SECRET_ACCESS_KEY:'test',CLERK_USER_WEBHOOK_SIGNING_SECRET:'whsec_'+key.toString('base64')};
+   const env={ACCOUNT_DELETION_CONFIGURED:'true',ACCOUNT_DELETION_ENABLED:'true',ACCOUNT_DELETION_SECRET:'s'.repeat(32),CLERK_SECRET_KEY:'test',R2_ACCESS_KEY_ID:'test',R2_SECRET_ACCESS_KEY:'test',CLERK_USER_WEBHOOK_SIGNING_SECRET:'whsec_'+key.toString('base64')};
    vi.spyOn(globalThis,'fetch').mockImplementation(async(url,init)=>{
      if(String(url).includes('organization_memberships'))return Response.json({data:[],total_count:0});
      if(String(url).includes('/users/'))return init?.method==='DELETE'?Response.json({deleted:true}):Response.json({external_accounts:[]});
@@ -92,5 +96,12 @@ describe('production deletion composition',()=>{
      expect(store.listObjects).toHaveBeenCalledWith('matrixos-sync/user_wiring/');
      expect((await app.request('/api/account/delete/export/platform',{headers:{authorization:'Bearer valid'}})).status).toBe(409);
    }finally{runtime?.stop();await runtime?.drain();runtime?.close();await db.destroy();}
+ });
+ it('keeps the runtime available when new deletion requests are disabled',async()=>{
+   const {db}=await createTestPlatformDb();
+   const env={ACCOUNT_DELETION_CONFIGURED:'true',ACCOUNT_DELETION_ENABLED:'false',ACCOUNT_DELETION_SECRET:'s'.repeat(32),CLERK_SECRET_KEY:'test',R2_ACCESS_KEY_ID:'test',R2_SECRET_ACCESS_KEY:'test'};
+   const runtime=await createConfiguredAccountDeletionRuntime({db,env,backgroundWorkersEnabled:false});
+   try{expect(runtime).toBeDefined();}
+   finally{runtime?.close();await db.destroy();}
  });
 });

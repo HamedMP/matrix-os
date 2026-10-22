@@ -110,6 +110,14 @@ describe("CollaborationChatScopeService", () => {
       recipient_actor_ids: [{ actorId: collaborationActors.owner }],
       discovery_state: "accepted",
     }]);
+    await expect(service.preflight({
+      ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
+      chatId: collaborationIds.chat,
+    })).resolves.toMatchObject({
+      existingScopeId: collaborationIds.scope,
+      existingLifecycle: "shared",
+    });
   });
 
   it("atomically clears persisted credential reveal choices when converting to live collaboration", async () => {
@@ -156,6 +164,15 @@ describe("CollaborationChatScopeService", () => {
       payloadHash: "a".repeat(64),
       expectedChatRevision: 0,
       confirmationToken: preflight.confirmationToken!,
+    });
+    await expect(service.preflight({
+      ownerId: collaborationActors.owner,
+      organizationId: "org_matrix_team",
+      chatId: collaborationIds.chat,
+    })).resolves.toMatchObject({
+      eligible: true,
+      existingScopeId: first.id,
+      existingLifecycle: "shared",
     });
     const repeated = await service.shareChat({
       ownerId: collaborationActors.owner,

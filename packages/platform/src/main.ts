@@ -1,3 +1,7 @@
+import { registerFundedHostConfigRoutes } from "./funded-host-config-registration.js";
+import { registerBrowserChatApprovalRoutes } from "./browser-chat-approval-registration.js";
+import type { BrowserApprovalMachineLookup } from "./browser-approval-machine-lookup.js";
+import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './preview-drive-routes.js';
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
@@ -71,6 +75,7 @@ import {
   createUnavailableStripeBillingClient,
 } from './stripe-billing.js';
 import type { CustomerVpsObjectStore } from './customer-vps-r2.js';
+import { registerSiteRoutes } from './sites/registration.js';
 import { recordPlatformHttpRequest } from './metrics.js';
 import {
   createLaunchReadinessService,
@@ -110,6 +115,7 @@ import {
 } from './runtime-probes.js';
 import { createPlatformMetricsRoutes } from './platform-metrics-routes.js';
 import { createAtsRoutes } from './ats-routes.js';
+import { ATS_OPEN_ROLE_SLUGS } from './ats-roles.js';
 import type { AtsDB } from './ats-db.js';
 import { shouldVerifyCustomerVpsTls } from './customer-vps-tls.js';
 import {
@@ -256,8 +262,10 @@ export function createApp(deps: {
   clerkAuth?: ClerkAuth;
   matrixProvisioner?: MatrixProvisioner;
   platformSecret?: string;
+  browserApprovalMachineLookup?: BrowserApprovalMachineLookup;
   integrationRoutes?: Hono<any>;
   internalIntegrationRoutes?: Hono<any>;
+  previewDriveIntegration?: PreviewDriveIntegration;
   customMcpRoutes?: Hono<any>;
   internalCustomMcpRoutes?: Hono<any>;
   internalCustomMcpApprovalRoutes?: Hono<any>;
@@ -272,12 +280,14 @@ export function createApp(deps: {
   collaboration?: PlatformCollaborationComposition;
   accountDeletion?: AccountDeletionRuntime;
   customerVpsService?: CustomerVpsService;
+  activateManagedFeatures?: import('./managed-feature-activation.js').ManagedFeatureActivator;
   /** Overrides the collaboration organization projection for Private Preview membership. */
   privatePreviewMembership?: PrivatePreviewMembershipCheck;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
   customerVpsObjectStore?: CustomerVpsObjectStore;
   hostBundleObjectStore?: CustomerVpsObjectStore;
+  sitesObjectStore?: CustomerVpsObjectStore;
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   env?: NodeJS.ProcessEnv;
 }) {
@@ -391,7 +401,8 @@ export function createApp(deps: {
     verify:async(token)=>{const result=await clerkAuth?.verify(token);return result?.authenticated?result.userId??null:null;},
     webhookSecret:appEnv.CLERK_USER_WEBHOOK_SIGNING_SECRET, publishableKey:appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
     exportData:deps.accountDeletion?.exportData,exportPlatformData:deps.accountDeletion?.exportPlatformData,
-    registerAppleAuthorization:deps.accountDeletion?.registerAppleAuthorization}));
+    registerAppleAuthorization:deps.accountDeletion?.registerAppleAuthorization,
+    newRequestsEnabled:appEnv.ACCOUNT_DELETION_ENABLED==='true'}));
 
   // Health check (unauthenticated)
   app.get('/health', (c) => c.json({ status: 'ok' }));
@@ -631,10 +642,8 @@ export function createApp(deps: {
       db: deps.atsDb,
       ingestSecret: appEnv.ATS_INGEST_SECRET ?? '',
       adminSecret: appEnv.ATS_ADMIN_SECRET ?? '',
-      allowedRoleSlugs: [
-        'founders-associate-gtm-operations',
-        'founding-engineer',
-      ],
+      mailSecret: appEnv.ATS_MAIL_INGEST_SECRET ?? '',
+      allowedRoleSlugs: ATS_OPEN_ROLE_SLUGS,
       bookingBaseUrl: appEnv.ATS_BOOKING_BASE_URL,
       publicSiteUrl: appEnv.MATRIX_PUBLIC_SITE_URL ?? 'https://matrix-os.com',
     }));
@@ -655,6 +664,9 @@ export function createApp(deps: {
   // without a provisioned computer reach the owner's registered authority.
   deps.collaboration?.register(app);
 
+  registerFundedHostConfigRoutes(app, { db, platformSecret, env: appEnv });
+  app.shutdownBrowserApprovals = registerBrowserChatApprovalRoutes(app, { platformSecret, env: appEnv, lookup: deps.browserApprovalMachineLookup });
+
   // Runtime speech uses its own runtime-bound credential and must never fall
   // through to Clerk session routing or the tenant proxy.
   if (deps.internalSpeechRuntimeRoutes) {
@@ -673,6 +685,9 @@ export function createApp(deps: {
   if (deps.internalFundedAiOperatorRoutes) {
     app.route('/api/operator/ai/funded', deps.internalFundedAiOperatorRoutes);
   }
+
+  registerSiteRoutes(app, { db, platformSecret, storage: deps.sitesObjectStore,
+    edgeSecret: appEnv.SITES_EDGE_SECRET, dispatcher: customerVpsProxyDispatcher, env: appEnv });
 
   // Sync object uploads authenticate with their own machine credential and
   // allow up to 100 MiB. Mount them before the generic 10 MiB session-proxy
@@ -710,6 +725,9 @@ export function createApp(deps: {
   app.use('/api/integrations/*',(c,next)=>c.req.path==='/api/integrations/webhook/connected'
     || (c.req.method==='GET' && c.req.path==='/api/integrations/available') ? next() : integrationDeletionGuard(c,next));
   app.route('/api/integrations', deps.integrationRoutes ?? createUnavailableIntegrationRoutes());
+  app.route('/internal/containers/:handle/preview-drive', createPreviewDriveRoutes({
+    db, platformSecret, integration: deps.previewDriveIntegration, env: appEnv,
+  }));
   registerCustomMcpRoutes(app, {
     db,
     platformSecret,
@@ -777,6 +795,7 @@ export function createApp(deps: {
 
     app.route('/vps', createCustomerVpsRoutes({
       service: deps.customerVpsService,
+      activateManagedFeatures: deps.activateManagedFeatures,
       platformSecret,
       goldenSnapshotOperatorSecret,
       probeMachineHealth,

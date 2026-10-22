@@ -1,11 +1,11 @@
 import { ChatCollaboration, type ChatCollaborationView } from "@matrix-os/ui";
 import { X } from "@renderer/lib/hugeicons";
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { Dialog } from "../../design/primitives";
-import { createDesktopCollaborationApi, releaseDesktopCollaborationApi } from "../../lib/collaboration";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
+import { useDesktopCollaborationApi } from "../collaboration/DesktopCollaborationOrganization";
 
 const COLLABORATION_LAYERS = {
   dialog: DESKTOP_Z_INDEX.dialog,
@@ -23,12 +23,13 @@ export default function DesktopChatCollaboration({
 } = {}) {
   const actorId = useConnection((state) => state.userId);
   const platformHost = useConnection((state) => state.platformHost);
-  const api = useMemo(() => createDesktopCollaborationApi(platformHost), [platformHost]);
+  const organizationStatus = useConnection((state) => state.organizationStatus);
+  const api = useDesktopCollaborationApi(platformHost, organizationStatus !== "none");
   const [view, setView] = useState<ChatCollaborationView>({ kind: "home" });
   const openTab = useTabs((state) => state.openTab);
-  useEffect(() => () => {
-    if (api) releaseDesktopCollaborationApi(api);
-  }, [api]);
+  if (organizationStatus === "none") return <div role="alert" className="m-auto max-w-lg rounded-xl border p-8 text-center">
+    Organization sharing is no longer available for this account.
+  </div>;
   if (!actorId || !api) return <div role="alert" className="m-auto max-w-lg rounded-xl border p-8 text-center">
     Shared Chats are unavailable. Reconnect your Matrix account and try again.
   </div>;

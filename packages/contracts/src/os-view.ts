@@ -59,6 +59,7 @@ export const OS_VIEW_FIXED_APP_APPEARANCES = {
     background: "var(--surface-info-emphasis, #3B85BA)",
     foreground: "white",
   },
+  "cloud-desktop": { icon: "monitor", iconSource: "fixed", background: "#0E3422", foreground: "#BED77B" },
   notes: {
     icon: "notebook",
     iconSource: "app",
@@ -87,6 +88,7 @@ const OS_VIEW_FIXED_APP_ID_BY_PATH: Readonly<Record<string, OsViewFixedAppId>> =
   __settings__: "settings",
   __plugins__: "plugins",
   __browser__: "browser",
+  "__cloud-desktop__": "cloud-desktop",
   __notes__: "notes",
   "apps/browser/index.html": "browser",
   "apps/browser/dist/index.html": "browser",
@@ -101,6 +103,32 @@ export function osViewFixedAppAppearanceForPath(path: string) {
   return id ? OS_VIEW_FIXED_APP_APPEARANCES[id] : undefined;
 }
 
+/** Bundled artwork is independent of runtime reachability and owner icon files. */
+export function osViewBundledIconUrlForPath(path: string): string | undefined {
+  if (path === "__cloud-desktop__") return "/system-app-icons/v3/desktop.png";
+  if (path === "__create-app__") return "/system-app-icons/v2/create-app.png";
+  const id = OS_VIEW_FIXED_APP_ID_BY_PATH[path];
+  if (!id || id === "vscode") return undefined;
+  return `/system-app-icons/v2/${id}.png`;
+}
+
+/** Explicit owner artwork is authoritative; bundled artwork fills missing selections. */
+export function osViewUsesBundledArtworkForLegacyIcon(app: { path: string; iconUrl?: string }): boolean {
+  // Filenames cannot distinguish replaced owner artwork from shipped bytes.
+  return false;
+}
+
+export function osViewIconUrlForApp(
+  app: { path: string; iconUrl?: string },
+  bundledAssetBaseUrl?: string,
+): string | undefined {
+  if (app.iconUrl != null && !osViewUsesBundledArtworkForLegacyIcon(app)) return app.iconUrl;
+  const bundledIconUrl = osViewBundledIconUrlForPath(app.path);
+  return bundledIconUrl && bundledAssetBaseUrl
+    ? `${bundledAssetBaseUrl.replace(/\/+$/, "")}${bundledIconUrl}`
+    : bundledIconUrl;
+}
+
 export const DEFAULT_OS_VIEW_DESKTOP_APP_PATHS = Object.freeze([
   "__chat__",
   "__terminal__",
@@ -110,6 +138,7 @@ export const DEFAULT_OS_VIEW_DESKTOP_APP_PATHS = Object.freeze([
   "__settings__",
   "__plugins__",
   "__browser__",
+  "__cloud-desktop__",
   "apps/notes/index.html",
   "apps/whiteboard/index.html",
 ] as const);
@@ -122,10 +151,11 @@ export const OS_VIEW_PLACEABLE_BUILTIN_APPS = Object.freeze([
   { appId: "editor", name: "Editor", path: "__editor__" },
   { appId: "vscode", name: "VS Code", path: "__vscode__" },
   { appId: "settings", name: "Settings", path: "__settings__" },
-  { appId: "plugins", name: "Plugins", path: "__plugins__" },
+  { appId: "plugins", name: "Connect Apps", path: "__plugins__" },
   { appId: "browser", name: "Browser", path: "__browser__" },
   { appId: "notes", name: "Notes", path: "apps/notes/index.html" },
   { appId: "whiteboard", name: "Whiteboard", path: "apps/whiteboard/index.html" },
+  { appId: "cloud-desktop", name: "Cloud desktop", path: "__cloud-desktop__" },
 ] as const);
 
 const DEFAULT_DESKTOP_GRID = Object.freeze({

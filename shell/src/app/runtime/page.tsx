@@ -3,6 +3,8 @@ import type { Metadata } from "next";
 import { RuntimeManager } from "@/components/runtime/RuntimeManager";
 
 export const metadata: Metadata = {
+  robots: { index: false, follow: true },
+  alternates: { canonical: "https://app.matrix-os.com/runtime" },
   title: "Your computers | Matrix OS",
   description: "Open, build, and manage the Matrix OS computers on your account.",
 };

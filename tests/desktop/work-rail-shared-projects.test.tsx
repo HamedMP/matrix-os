@@ -1,10 +1,14 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import type { CollaborationProjectOverview } from "@matrix-os/contracts";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SharedWorkRailProjects } from "../../desktop/src/renderer/src/features/work/work-rail/SharedWorkRailProjects";
+import {
+  partitionSharedProjects,
+  SharedWorkRailProjects,
+} from "../../desktop/src/renderer/src/features/work/work-rail/SharedWorkRailProjects";
 import { notifyCollaborationDiscoveryChanged } from "../../packages/ui/src/collaboration/discovery-events";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
@@ -87,6 +91,14 @@ describe("Electron Work rail shared projects", () => {
 
   afterEach(cleanup);
 
+  it("coalesces a project already present in the owner's canonical project list", () => {
+    const overview = (sharedProject() as { resource: { overview: CollaborationProjectOverview } }).resource.overview;
+    const partition = partitionSharedProjects([overview], new Set(["proj_542a8126"]));
+
+    expect(partition.ownedSharedProjectIds).toEqual(new Set(["proj_542a8126"]));
+    expect(partition.receivedProjects).toEqual([]);
+  });
+
   it("lists an accepted shared project like an own project, marked as shared, with no owner actions", async () => {
     render(<SharedWorkRailProjects />);
     const project = await screen.findByRole("button", { name: "collab testing 12PMOct3" });
@@ -101,7 +113,10 @@ describe("Electron Work rail shared projects", () => {
   it("expands to its Chats and opens a Chat as a shared Chat tab", async () => {
     render(<SharedWorkRailProjects />);
     fireEvent.click(await screen.findByRole("button", { name: "collab testing 12PMOct3" }));
-    fireEvent.click(screen.getByRole("button", { name: "Release plan" }));
+    const chat = screen.getByRole("button", { name: "Release plan" });
+    expect(chat.querySelector("svg")).toBeNull();
+    expect(screen.getByRole("button", { name: "collab testing 12PMOct3" }).querySelector("svg")).not.toBeNull();
+    fireEvent.click(chat);
     const tab = useTabs.getState().tabs.find((candidate) => candidate.sharedScopeId === chatScope);
     // Shared Chats open in the Work tab, as they do from Shared with me.
     expect(tab).toMatchObject({ kind: "work", workRoute: "chat", chatId: "chat_release", chatTitle: "Release plan", sharedScopeId: chatScope });

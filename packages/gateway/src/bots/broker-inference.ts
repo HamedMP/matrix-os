@@ -1,3 +1,4 @@
+import { validateBotImageInferenceBody } from "@matrix-os/contracts";
 /**
  * Model calls from bot workloads (spec 536, contracts/bot-broker-protocol.md).
  * The worker's loopback bridge sends each provider request as a broker frame;
@@ -12,6 +13,7 @@ import {
   type ScopeRuntimeBrokerResponse,
 } from "@matrix-os/scope-runtime/broker-protocol";
 import { z } from "zod/v4";
+import { forwardChatGptPlanInference } from "./chatgpt-plan-inference.js";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { FundedAiCredentialError, type MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import {
@@ -20,39 +22,41 @@ import {
   type KernelCredentialLaunch,
   type KernelFundingContext,
 } from "../kernel-credentials.js";
-import { createCodexOwnerIdentityResolver, type ResolveCodexOwnerIdentity } from "../collaboration/codex-owner-identity.js";
-import { forwardCodexBotInference } from "./codex-inference.js";
+import type { ResolveCodexOwnerIdentity } from "../collaboration/codex-owner-identity.js";
 import type { BotInferenceAuthorization } from "./credentials.js";
 import {
   discard,
   readBoundedBody,
   safeResponseHeaders,
 } from "../collaboration/scope-runtime-broker.js";
-import type { PiRuntimeBinding } from "./runtime-registry.js";
+import { isManagedPiBinding, type PiRuntimeBinding } from "./runtime-registry.js";
 
 const INFERENCE_TIMEOUT_MS = 30_000;
 /** Funded relay generation may buffer the full reply; the worker bridge and
  * turn retain independent bounds and lifetime cancellation still applies. */
 const FUNDED_INFERENCE_TIMEOUT_MS = 120_000;
-/** Codex tool continuations can outlast one short provider call; the worker
- * and broker still bound the whole turn independently. */
-const CODEX_INFERENCE_TIMEOUT_MS = 120_000;
 export const MAX_BOT_TOOLS = 64;
 
 const BotInferenceBodySchema = z.object({
   model: z.string().min(1).max(256),
   stream: z.literal(true),
   tools: z.array(z.unknown()).max(MAX_BOT_TOOLS).optional(),
+  max_tokens: z.number().int().positive().optional(),
+  max_completion_tokens: z.number().int().positive().optional(),
 }).passthrough();
 
 export interface BotInferenceDependencies {
+  isolatedChat?: import("../chat/isolated-chat-envelope.js").IsolatedChatAuthority;
   homePath: string;
+  chatgptPlan?: import("./chatgpt-plan.js").ChatGptPlanAuthority;
+  matrixAnthropic?: import("./matrix-anthropic-api.js").MatrixAnthropicAuthority;
   lifetime: AbortSignal;
   /** Exact registry-owned run lifetime; combined with subsystem shutdown. */
   runSignal?: AbortSignal;
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
   resolveCredentials?: typeof buildKernelCredentialLaunch;
+  /** Deprecated compatibility seam; it is never invoked by Bot inference. */
   resolveCodexIdentity?: ResolveCodexOwnerIdentity;
   fetchImpl?: typeof fetch;
   /** Canonical owner/run/workspace authority is rechecked after funded queue waits. */
@@ -102,29 +106,60 @@ export async function forwardBotInference(
   deps: BotInferenceDependencies,
 ): Promise<ScopeRuntimeBrokerResponse> {
   let modelId: string;
+  let parsedBody: z.infer<typeof BotInferenceBodySchema>;
   try {
-    modelId = BotInferenceBodySchema.parse(JSON.parse(request.body)).model;
+    parsedBody = BotInferenceBodySchema.parse(JSON.parse(request.body));
+    modelId = parsedBody.model;
   } catch (error: unknown) {
     if (!(error instanceof SyntaxError) && !(error instanceof z.ZodError)) {
       console.warn("[bots] inference validation failed:", error instanceof Error ? error.name : "UnknownError");
     }
     return failure(request.requestId, "invalid_request");
   }
+  const imageInput = validateBotImageInferenceBody(request.body);
+  if (!imageInput.valid || (imageInput.imageCount > 0 && !binding.route.input.includes("image"))) return failure(request.requestId, "invalid_request");
+  const isolated = deps.isolatedChat?.targets(binding) === true;
+  if (isolated && !validIsolatedInference(request, binding)) return failure(request.requestId, "invalid_request");
   const lifecycle = deps.runSignal ? AbortSignal.any([deps.lifetime, deps.runSignal]) : deps.lifetime;
   if (lifecycle.aborted) return failure(request.requestId, "action_denied");
   if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return failure(request.requestId, "action_denied");
   if (lifecycle.aborted) return failure(request.requestId, "action_denied");
   const authorization = authorize(modelId);
+  if (binding.anthropicApi && (!deps.matrixAnthropic || binding.accessSourceId !== "owner_anthropic_key"
+    || !await deps.matrixAnthropic.revalidate(binding, lifecycle))) return failure(request.requestId, "action_denied");
   if (!authorization.allowed || !authorization.accessSourceId || !authorization.allowedModelIds.includes(modelId)) {
     return failure(request.requestId, "action_denied");
   }
-  if ((request.action === "inference.responses") !== (authorization.accessSourceId === "owner_openai_profile")) {
-    return failure(request.requestId, "provider_unavailable");
+  if (authorization.accessSourceId === "matrix_chatgpt_plan") {
+    if (!deps.chatgptPlan) return failure(request.requestId, "provider_unavailable");
+    const authority = deps.chatgptPlan;
+    return forwardChatGptPlanInference(request, binding, { authority: {
+      ...authority,
+      infer: (candidate, body, signal) => authority.infer(candidate, body, signal),
+      revalidate: async (candidate, signal) => (!deps.revalidateBinding || await deps.revalidateBinding(candidate))
+        && !signal.aborted && await authority.revalidate(candidate, signal),
+    }, signal: lifecycle,
+      stillAuthorized: () => { const current = authorize(modelId); return !lifecycle.aborted && current.allowed && current.accessSourceId === "matrix_chatgpt_plan" && current.allowedModelIds.includes(modelId); } });
   }
+  // Borrowed native profiles remain task-executor-only; never substitute them for the explicit paired-device source.
+  if (authorization.accessSourceId === "owner_openai_profile" || authorization.accessSourceId === "owner_anthropic_profile"
+    || request.action === "inference.responses") return failure(request.requestId, "provider_unavailable");
   // Chat completions exist only on Matrix's managed route (the funded relay).
   if (request.action === "inference.chat_completions" && authorization.accessSourceId !== "matrix_included") {
     return failure(request.requestId, "provider_unavailable");
   }
+
+  // The registry's resolved route is the output authority. Omission must not
+  // let an upstream default widen it; preserve smaller explicit limits (for
+  // example session summaries) and reject conflicting/oversized limits.
+  if ((parsedBody.max_tokens !== undefined && parsedBody.max_completion_tokens !== undefined)
+    || (request.action === "inference.messages" && parsedBody.max_completion_tokens !== undefined)) {
+    return failure(request.requestId, "invalid_request");
+  }
+  const outputTokens = parsedBody.max_tokens ?? parsedBody.max_completion_tokens ?? binding.route.maxOutputTokens;
+  if (outputTokens > binding.route.maxOutputTokens) return failure(request.requestId, "invalid_request");
+  const inferenceBody = parsedBody.max_tokens === undefined && parsedBody.max_completion_tokens === undefined
+    ? JSON.stringify({ ...parsedBody, max_tokens: outputTokens }) : request.body;
 
   const accessSourceId = authorization.accessSourceId;
   const stillAuthorized = () => {
@@ -132,19 +167,12 @@ export async function forwardBotInference(
     const current = authorize(modelId);
     return current.allowed && current.accessSourceId === accessSourceId && current.allowedModelIds.includes(modelId);
   };
-  const funded = accessSourceId === "matrix_included" ? deps.fundedAdmission : undefined;
+  const funded = !isolated && accessSourceId === "matrix_included" ? deps.fundedAdmission : undefined;
   const fetchImpl = deps.fetchImpl ?? fetch;
 
   try {
-    if (accessSourceId === "owner_openai_profile") {
-      return await forwardCodexBotInference(request, {
-        resolveIdentity: deps.resolveCodexIdentity ?? createCodexOwnerIdentityResolver({ homePath: deps.homePath, fetchImpl }),
-        stillAuthorized,
-        signal: AbortSignal.any([lifecycle, AbortSignal.timeout(CODEX_INFERENCE_TIMEOUT_MS)]),
-        fetchImpl,
-      });
-    }
-    const launch = await resolveInferenceCredentials(
+    if (isolated && (await deps.isolatedChat!.validate?.(binding) === false || lifecycle.aborted || !stillAuthorized())) return failure(request.requestId, "action_denied");
+    const launch = binding.anthropicApi ? { env: { ANTHROPIC_API_KEY: await deps.matrixAnthropic!.credential(binding, lifecycle) } } : await resolveInferenceCredentials(
       accessSourceId,
       { requestClass: binding.requestClass, claimKey: request.runtimeHandle },
       lifecycle,
@@ -167,13 +195,15 @@ export async function forwardBotInference(
     if (accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);
     // Returns "denied" instead of sending when the run lost its authorization.
     const send = async (): Promise<Response | "denied"> => {
+      if (binding.anthropicApi && !await deps.matrixAnthropic!.revalidate(binding, lifecycle)) return "denied";
       if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return "denied";
       if (lifecycle.aborted) return "denied";
       if (!stillAuthorized()) return "denied";
+      if (isolated && (!await deps.isolatedChat!.consume(binding) || lifecycle.aborted || !stillAuthorized())) return "denied";
       return fetchImpl(`${baseUrl}${request.path}`, {
         method: "POST",
         headers,
-        body: request.body,
+        body: inferenceBody,
         redirect: "error",
         signal: AbortSignal.any([lifecycle, AbortSignal.timeout(
           accessSourceId === "matrix_included" ? FUNDED_INFERENCE_TIMEOUT_MS : INFERENCE_TIMEOUT_MS,
@@ -204,6 +234,8 @@ export async function forwardBotInference(
       return failure(request.requestId, "provider_unavailable");
     }
     const body = await readBoundedBody(response);
+    if (binding.anthropicApi && (lifecycle.aborted || !await deps.matrixAnthropic!.revalidate(binding, lifecycle)
+      || deps.revalidateBinding && !await deps.revalidateBinding(binding) || !stillAuthorized())) return failure(request.requestId, "action_denied");
     const result = ScopeRuntimeBrokerResponseSchema.parse({
       version: 1,
       requestId: request.requestId,
@@ -219,5 +251,45 @@ export async function forwardBotInference(
     if (error instanceof RangeError && error.message === "response_too_large") return failure(request.requestId, "response_too_large");
     console.warn("[bots] inference forward failed:", error instanceof Error ? error.name : "UnknownError");
     return failure(request.requestId, "provider_unavailable");
+  }
+}
+
+
+const IsolatedTextBlock = z.object({ type: z.literal("text"), text: z.string(),
+  cache_control: z.object({ type: z.literal("ephemeral"), ttl: z.enum(["5m", "1h"]).optional() }).strict().optional() }).strict();
+const IsolatedText = z.union([z.string(), z.array(IsolatedTextBlock).min(1).max(8)]);
+const IsolatedInferenceSchema = z.object({
+  model: z.string(), stream: z.literal(true),
+  messages: z.array(z.object({ role: z.enum(["system", "developer", "user"]), content: IsolatedText }).strict()).min(1).max(4),
+  system: IsolatedText.optional(),
+  max_tokens: z.literal(256).optional(), max_completion_tokens: z.literal(256).optional(),
+  tools: z.array(z.never()).max(0).optional(), tool_choice: z.literal("none").optional(),
+  stream_options: z.object({ include_usage: z.literal(true) }).strict().optional(),
+  reasoning_effort: z.literal("low").optional(), thinking: z.object({ type: z.literal("disabled") }).strict().optional(),
+  temperature: z.number().min(0).max(2).optional(), top_p: z.number().min(0).max(1).optional(),
+  n: z.literal(1).optional(), store: z.literal(false).optional(),
+}).strict();
+// Canonical Bot phases may reuse bounded text history. Ordinary managed phases
+// retain the original empty-session wire contract.
+const CanonicalIsolatedInferenceSchema = IsolatedInferenceSchema.extend({
+  messages: z.array(z.object({ role: z.enum(["system", "developer", "user", "assistant"]), content: IsolatedText }).strict()).min(1).max(32),
+});
+function validIsolatedInference(request: ScopeRuntimeBotInferenceRequest, binding: PiRuntimeBinding): boolean {
+  if (Buffer.byteLength(request.body, "utf8") > 131072 || binding.accessSourceId !== "matrix_included"
+    || binding.route.maxOutputTokens !== 256) return false;
+  try {
+    const value = (isManagedPiBinding(binding) ? IsolatedInferenceSchema : CanonicalIsolatedInferenceSchema).safeParse(JSON.parse(request.body));
+    if (!value.success || value.data.model !== binding.route.modelId
+      || (value.data.max_tokens === undefined) === (value.data.max_completion_tokens === undefined)
+      || value.data.messages.at(-1)?.role !== "user") return false;
+    return binding.route.api === "anthropic-messages"
+      ? request.action === "inference.messages" && request.path === "/v1/messages?beta=true"
+        && value.data.max_tokens === 256 && value.data.max_completion_tokens === undefined
+        && !value.data.stream_options && !value.data.reasoning_effort
+      : binding.route.api === "openai-completions" && request.action === "inference.chat_completions"
+        && request.path === "/v1/chat/completions" && value.data.system === undefined && value.data.thinking === undefined;
+  } catch (error: unknown) {
+    console.warn("[bots] Isolated inference refused:", error instanceof Error ? error.name : "UnknownError");
+    return false;
   }
 }

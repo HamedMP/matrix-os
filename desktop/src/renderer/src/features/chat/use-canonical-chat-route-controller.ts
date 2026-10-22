@@ -1,5 +1,6 @@
+import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
 import { useChatReadState, mergeChatReadState } from "@matrix-os/ui";
-import type { CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
+import { canonicalChatApprovals, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { useCanonicalInputSubmission } from "./use-canonical-input-submission";
 import type {
   CanonicalChatDetailResponse,
@@ -63,6 +64,7 @@ export function useCanonicalChatRouteController({
   active,
   initialChatId = null,
   autoSelectFirst = true,
+  externalNavigation = false,
   eventSource,
   onInvalidation,
 }: {
@@ -71,6 +73,7 @@ export function useCanonicalChatRouteController({
   active: boolean;
   initialChatId?: string | null;
   autoSelectFirst?: boolean;
+  externalNavigation?: boolean;
   eventSource?: CanonicalChatEventConsumer;
   onInvalidation?: (event: CanonicalChatInvalidation) => void;
 }) {
@@ -148,6 +151,12 @@ export function useCanonicalChatRouteController({
 
   const load = useCallback(async (query = "", options: { background?: boolean } = {}) => {
     const sequence = ++listRequestSequence.current;
+    // WorkRail owns the complete navigation cohort. Detail reads and replay
+    // still run here; a selection must not restart its legacy list loader.
+    if (externalNavigation && !query.trim()) {
+      setStatus("ready");
+      return;
+    }
     if (!options.background) setStatus("loading");
     try {
       const page = query.trim()
@@ -177,7 +186,7 @@ export function useCanonicalChatRouteController({
       if (!options.background) setStatus("error");
       if (!options.background) setError("Chats could not be loaded. Try again.");
     }
-  }, [autoSelectFirst, client, projectId]);
+  }, [autoSelectFirst, client, externalNavigation, projectId]);
 
   useLayoutEffect(() => {
     const previousScope = routeScopeRef.current;
@@ -798,6 +807,7 @@ export function useCanonicalChatRouteController({
   const submitApproval = useCallback(async (
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
+    browserChoice?: BrowserPermissionChoice,
   ) => {
     const current = detailRef.current;
     const activeRun = current?.record.activeRun;
@@ -805,9 +815,13 @@ export function useCanonicalChatRouteController({
     const routeScope = routeScopeRef.current;
     const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
     try {
-      await client.submitApproval(current.record.chat.id, activeRun.runId, approvalId, {
+      const approval = canonicalChatApprovals(current).find(item =>
+        item.pending && item.runId === activeRun.runId && item.approvalId === approvalId);
+      if (approval?.browserApproval && !browserChoice) throw new Error("Browser scope required");
+      await client.submitApproval(current.record.chat.id, activeRun.runId, approvalId, browserChoice ? browserPermissionRequest(approval, browserChoice, canonicalChatRequestId()) : {
         clientRequestId: canonicalChatRequestId(),
         decision,
+        ...(approval?.actionDigest !== undefined ? { actionDigest: approval.actionDigest } : {}),
       });
       if (!isCurrentScope()) return false;
       await loadDetail(current.record.chat.id);

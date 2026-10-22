@@ -103,19 +103,23 @@ function readJson(path: string): Record<string, unknown> {
 }
 
 describe("local development contracts", () => {
-  it("pins the workspace and native addons to Node 24", () => {
+  it("keeps shared host dependencies while excluding private build inputs", () => {
     const pkg = readJson("package.json") as {
       engines: { node: string };
     };
     const workspace = parse(readFileSync(resolve(root, "pnpm-workspace.yaml"), "utf8")) as {
+      enableGlobalVirtualStore?: boolean;
+      sideEffectsCache?: boolean;
       useNodeVersion?: string;
     };
 
-    expect(pkg.engines.node).toBe(">=24 <25");
-    expect(workspace.useNodeVersion).toBe("24.18.0");
+    expect(pkg.engines.node).toBe(">=24");
+    expect(workspace.enableGlobalVirtualStore).toBe(true);
+    expect(workspace.sideEffectsCache).toBeUndefined();
+    expect(workspace.useNodeVersion).toBeUndefined();
     expect(readFileSync(resolve(root, ".nvmrc"), "utf8").trim()).toBe("24.18.0");
     expect(readFileSync(resolve(root, "Dockerfile.platform"), "utf8"))
-      .toContain("RUN sed -i '/^useNodeVersion:/d' pnpm-workspace.yaml");
+      .not.toContain("useNodeVersion");
     const dockerIgnore = readFileSync(resolve(root, ".dockerignore"), "utf8");
     expect(dockerIgnore).toContain("**/.env*");
     expect(dockerIgnore).toMatch(/^\.amp$/m);

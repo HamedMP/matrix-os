@@ -1,4 +1,6 @@
 :root {
+  --game-accent: #267466;
+  --game-wash: #e7f4ee;
   --app-bg: var(--matrix-bg, #fafaf5);
   --app-fg: var(--matrix-fg, #32352e);
   --app-card: var(--matrix-card, #ffffff);
@@ -467,4 +469,27 @@ body {
     animation: none;
     display: none;
   }
+}
+
+.sol-bar { gap: 16px; }
+.sol-brand { font-size: 19px; letter-spacing: -.035em; }
+.sol-controls { gap: 8px; }
+.sol-table { border: 1px solid rgba(255, 255, 255, .15); }
+.sol-empty-mark { color: rgba(255, 255, 255, .65); }
+.sol-recycle { color: rgba(255, 255, 255, .8); }
+.sol-win-card { max-width: calc(100vw - 24px); }
+@media (max-width: 760px) {
+  :root { --card-w: min(86px, calc((100vw - 78px) / 7)); }
+  .sol-bar { gap: 12px; padding-inline: max(12px, env(safe-area-inset-left)); }
+  .sol-stats { margin-left: auto; gap: 6px; }
+  .sol-stat { min-width: 50px; padding: 6px 8px; }
+  .sol-controls { margin-left: 0; width: 100%; }
+  .sol-table { margin-inline: 10px; padding: 10px; }
+  .sol-tableau, .sol-deal, .sol-foundations { gap: 6px; }
+  .sol-top { gap: 8px; }
+  .sol-corner--tl { top: 3px; left: 3px; }
+  .sol-corner--br { bottom: 3px; right: 3px; }
+  .sol-corner em { font-size: clamp(9px, 2.4vw, 17px); }
+  .sol-corner i { font-size: clamp(8px, 2vw, 14px); }
+  .sol-hint { margin-left: 0; }
 }

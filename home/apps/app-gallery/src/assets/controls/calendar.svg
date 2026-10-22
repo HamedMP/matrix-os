@@ -1,0 +1,10 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Lucide Icons / calendar-days" clip-path="url(#clip0_0_1072)">
+<path id="Vector" d="M4 1V3M8 1V3M1.5 5H10.5M4 7H4.005M6 7H6.005M8 7H8.005M4 9H4.005M6 9H6.005M8 9H8.005M2.5 2H9.5C10.0523 2 10.5 2.44772 10.5 3V10C10.5 10.5523 10.0523 11 9.5 11H2.5C1.94772 11 1.5 10.5523 1.5 10V3C1.5 2.44772 1.94772 2 2.5 2Z" stroke="#242323" stroke-width="1.33" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<defs>
+<clipPath id="clip0_0_1072">
+<rect width="12" height="12" fill="white"/>
+</clipPath>
+</defs>
+</svg>

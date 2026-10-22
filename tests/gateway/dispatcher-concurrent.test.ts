@@ -27,10 +27,13 @@ describe("T054: Concurrent dispatch", () => {
   });
 
   it("runs dispatches in parallel by default", async () => {
-    const startTimes: number[] = [];
+    let started = 0;
+    let releaseAll: () => void = () => {};
+    const allStarted = new Promise<void>((resolve) => { releaseAll = resolve; });
     const spawn = vi.fn<SpawnFn>(async function* (_message, _config) {
-      startTimes.push(Date.now());
-      await new Promise((r) => setTimeout(r, 50));
+      started += 1;
+      if (started === 3) releaseAll();
+      await allStarted;
       yield resultEvent("s");
     });
 
@@ -43,8 +46,6 @@ describe("T054: Concurrent dispatch", () => {
     ]);
 
     expect(spawn).toHaveBeenCalledTimes(3);
-    const spread = Math.max(...startTimes) - Math.min(...startTimes);
-    expect(spread).toBeLessThan(30);
   });
 
   it("each dispatch gets independent events", async () => {

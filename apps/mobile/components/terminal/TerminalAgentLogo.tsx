@@ -5,7 +5,7 @@ export type MobileTerminalAgent = "claude" | "codex";
 
 const AGENT_COLORS: Record<MobileTerminalAgent, string> = {
   claude: "#D8792C",
-  codex: "#465243",
+  codex: "#171717",
 };
 
 const AGENT_LOGOS = {

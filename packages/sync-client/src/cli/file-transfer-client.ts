@@ -62,13 +62,25 @@ export function normalizeMatrixPath(remotePath: string): string {
   return normalized;
 }
 
+// Gateway URLs may select a test runtime through /vm/<handle>. An absolute
+// URL reference would silently discard that selection and target the primary.
+function fileApiUrl(client: FileTransferClient, route: "blob" | "list"): URL {
+  const url = new URL(client.gatewayUrl);
+  const runtime = url.searchParams.get("runtime");
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/api/files/${route}`;
+  url.search = "";
+  if (runtime !== null) url.searchParams.set("runtime", runtime);
+  url.hash = "";
+  return url;
+}
+
 function blobUrl(
   client: FileTransferClient,
   remotePath: string,
   options: UploadOptions = {},
   localFilename?: string,
 ): string {
-  const url = new URL("/api/files/blob", client.gatewayUrl);
+  const url = fileApiUrl(client, "blob");
   url.searchParams.set("path", normalizeMatrixPath(remotePath));
   if (localFilename) url.searchParams.set("filename", localFilename);
   if (options.force) url.searchParams.set("force", "true");
@@ -103,7 +115,7 @@ export async function completeRemotePaths(
     return [];
   }
 
-  const url = new URL("/api/files/list", client.gatewayUrl);
+  const url = fileApiUrl(client, "list");
   url.searchParams.set("path", parentPath);
   try {
     const res = await fetch(url, {

@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 import { createWhatsAppRepository } from '../../packages/platform/src/whatsapp/repository.js';
 import { readWhatsAppConfig } from '../../packages/platform/src/whatsapp/config.js';
 import { createWhatsAppService } from '../../packages/platform/src/whatsapp/service.js';

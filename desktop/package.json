@@ -70,7 +70,8 @@
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0",
     "zod": "^4.4.3",
-    "zustand": "^5.0.13"
+    "zustand": "^5.0.13",
+    "jose": "^6.2.3"
   },
   "devDependencies": {
     "@expo-google-fonts/bricolage-grotesque": "^0.4.1",
@@ -87,6 +88,6 @@
     "electron-vite": "^5.0.0",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",
-    "vite": "^7.2.6"
+    "vite": "npm:rolldown-vite@7.3.1"
   }
 }

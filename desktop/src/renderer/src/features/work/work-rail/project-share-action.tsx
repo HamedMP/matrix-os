@@ -12,7 +12,7 @@ export function projectShareMenuItems(
   const projectId = group.project.id;
   if (!sharing || !projectId || !onShare) return [];
   return [{
-    label: sharing.organizationId ? "Share project" : "Join an organization to share",
+    label: sharing.organizationId ? "Share project" : "Loading sharing…",
     icon: <UsersIcon size={16} aria-hidden />,
     disabled: !sharing.organizationId,
     onSelect: () => onShare(group.project),

@@ -135,6 +135,10 @@ describe("ProviderSettingsController", () => {
     expect(onCatalogChanged).not.toHaveBeenCalled();
     await controller.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_one", enabled: false });
     expect(onCatalogChanged).toHaveBeenCalledTimes(1);
+    expect(onCatalogChanged).toHaveBeenLastCalledWith(
+      { type: "set_harness_enabled", harnessInstanceId: "harness_one", enabled: false },
+      expect.objectContaining({ harnesses: expect.any(Array) }),
+    );
     await controller.mutate({ type: "set_harness_enabled", harnessInstanceId: "harness_one", enabled: true });
     expect(onCatalogChanged).toHaveBeenCalledTimes(2);
     await controller.refresh();

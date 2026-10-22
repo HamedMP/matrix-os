@@ -68,6 +68,8 @@ export class CollaborationChatScopeService {
     reason?: "active_work" | "unsupported";
     chatRevision: number;
     confirmationToken?: string;
+    existingScopeId?: string;
+    existingLifecycle?: CollaborationScopeRecord["lifecycle"];
   }> {
     const chat = await this.db.selectFrom("chats")
       .select(["revision", "collaboration"])
@@ -78,9 +80,24 @@ export class CollaborationChatScopeService {
       .executeTakeFirst();
     if (!chat) throw new CollaborationChatScopeError("not_found", "Chat not found");
     const chatRevision = Number(chat.revision);
-    if (await hasCompanyDriveMaterial(this.db, input.chatId)) return {eligible:false,reason:"unsupported",chatRevision};
+    const existing = await this.db.selectFrom("collaboration_scopes")
+      .select(["id", "organization_id", "lifecycle"])
+      .where("owner_type", "=", "personal")
+      .where("owner_id", "=", input.ownerId)
+      .where("kind", "=", "chat")
+      .where("resource_id", "=", input.chatId)
+      .where("membership_mode", "=", "direct")
+      .where("deleted_at", "is", null)
+      .where("lifecycle", "!=", "deleted")
+      .executeTakeFirst();
+    const existingScope = existing?.organization_id === input.organizationId
+      ? { existingScopeId: existing.id, existingLifecycle: existing.lifecycle }
+      : {};
+    if (await hasCompanyDriveMaterial(this.db, input.chatId)) {
+      return { eligible: false, reason: "unsupported", chatRevision, ...existingScope };
+    }
     if (await hasActiveWork(this.db, input.chatId)) {
-      return { eligible: false, reason: "active_work", chatRevision };
+      return { eligible: false, reason: "active_work", chatRevision, ...existingScope };
     }
     const payload = PreflightPayloadSchema.parse({
       version: 1,
@@ -94,6 +111,7 @@ export class CollaborationChatScopeService {
       eligible: true,
       chatRevision,
       confirmationToken: signPreflight(payload, this.options.preflightSecret),
+      ...existingScope,
     };
   }
 

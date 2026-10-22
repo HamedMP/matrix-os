@@ -76,7 +76,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     history = decodeSession(snapshot.messages).filter((message) => message.role !== "system");
     // Never summarize an invalidated summary: its original source turns may
     // already be compacted away, so discard derived context before inference.
-    if (snapshot.needsRecompaction) history = withoutDerivedSummaries(history);
+    if (snapshot.needsRecompaction && !command.isolatedTurn?.target) history = withoutDerivedSummaries(history);
   } catch (error: unknown) {
     return outcome(command, { status: "failed", failureCode: failureCodeOf(error, "session load"), toolActions: 0 });
   }
@@ -85,7 +85,18 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   if (input.signal?.aborted) {
     return outcome(command, { status: "cancelled", sessionRevision: snapshot.revision, toolActions: 0 });
   }
+  const isolated = command.isolatedTurn !== undefined;
+  const canonical = command.isolatedTurn?.target;
+  if (isolated && (command.turn.kind !== "prompt" || command.turn.images?.length || (!canonical && history.length)
+    || (canonical && (canonical.runId !== command.runId || command.capabilities.length || snapshot.needsRecompaction))
+    || command.route.maxOutputTokens !== 256 || command.limits.maxToolActions !== 1)) {
+    return outcome(command, { status: "failed", failureCode: "denied", toolActions: 0 });
+  }
   const { provider, model } = input.route ?? createBridgeModel(command.route, input.bridgeOrigin, input.bridgeSocket);
+  // Unknown/invalid/truncated tools bypass beforeToolCall. Bound model work
+  // itself: tool rounds, a final response and at most two session summaries.
+  const maxInferenceCalls = isolated ? 1 : Math.min(command.limits.maxToolActions + 3, command.limits.maxInferenceCalls ?? 63);
+  let inferenceCalls = 0;
   const tools: BotToolsState = { waitingForPerson: false, effectUnknown: false };
   let toolActions = 0;
   let budgetExhausted = false;
@@ -98,22 +109,27 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
       systemPrompt: command.systemPrompt,
       model,
       thinkingLevel: "off",
-      tools: createBotTools({ capabilities: command.capabilities, broker, state: tools }),
+      tools: isolated ? [] : createBotTools({ capabilities: command.capabilities, broker, state: tools }),
       messages: history,
     },
-    streamFn: (streamModel, context, options) => provider.streamSimple(streamModel, context, {
+    streamFn: (streamModel, context, options) => {
+      if (inferenceCalls >= maxInferenceCalls) throw new Error("Model action budget ended");
+      inferenceCalls += 1;
+      return provider.streamSimple(streamModel, context, {
       ...options,
       // A Provider does not resolve auth itself. The worker only carries this
       // inert value; the loopback broker owns the funded credential.
       apiKey: BROKER_PLACEHOLDER_KEY,
       maxTokens: command.route.maxOutputTokens,
-    }),
+      maxRetries: 0,
+      ...(isolated ? { reasoning: undefined } : {}),
+    }); },
     toolExecution: "sequential",
     // A blocking question or a spent budget ends the turn even if a steer is queued; the steer is saved instead.
-    finishTurn: () => tools.waitingForPerson || budgetExhausted ? { action: "end" } : undefined,
+    finishTurn: () => isolated || tools.waitingForPerson || budgetExhausted ? { action: "end" } : undefined,
     // Fail closed: the hook cannot throw, and anything past the budget is blocked.
     beforeToolCall: async () => {
-      if (toolActions >= command.limits.maxToolActions) {
+      if (isolated || toolActions >= command.limits.maxToolActions) {
         budgetExhausted = true;
         return { block: true, reason: BUDGET_REASON, terminate: true };
       }
@@ -123,7 +139,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   });
   input.onAgent?.(agent);
 
-  const project = createEventProjector({ send: (event) => broker.event(event), capabilityForTool: capabilityForToolName });
+  const project = createEventProjector({ send: (event) => broker.event(event), capabilityForTool: capabilityForToolName, signal: input.signal });
   const unsubscribe = agent.subscribe(async (event) => {
     if (event.type === "tool_execution_start") toolInFlight = true;
     if (event.type === "tool_execution_end") toolInFlight = false;
@@ -143,7 +159,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   let steeringOpen = true;
   input.onControl?.({
     steer(text) {
-      if (!steeringOpen) return false;
+      if (isolated || !steeringOpen) return false;
       const message: AgentMessage = { role: "user", content: text, timestamp: now() };
       steered.push(message);
       agent.steer(message);
@@ -162,7 +178,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     }
     await agent.waitForIdle();
     // A steer can land after Pi's last poll; answer it before closing the turn.
-    while (!stopped() && agent.hasQueuedMessages()) {
+    while (!isolated && !stopped() && agent.hasQueuedMessages()) {
       await agent.continue();
       await agent.waitForIdle();
     }
@@ -201,12 +217,13 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     // Summaries are best effort: a cancelled run skips them, and a failed call
     // falls back to storage fitting so the turn is still saved.
     const summarize = async (transcript: string) => {
-      if (input.signal?.aborted) return "";
+      if (input.signal?.aborted || inferenceCalls >= maxInferenceCalls) return "";
       try {
+        inferenceCalls += 1;
         const reply = await provider.streamSimple(model, normalizeContext({
           systemPrompt: SUMMARY_PROMPT,
           messages: [{ role: "user", content: transcript, timestamp: now() }],
-        }), { apiKey: BROKER_PLACEHOLDER_KEY, maxTokens: SUMMARY_MAX_TOKENS,
+        }), { apiKey: BROKER_PLACEHOLDER_KEY, maxTokens: Math.min(SUMMARY_MAX_TOKENS, command.route.maxOutputTokens), maxRetries: 0,
           ...(input.signal ? { signal: input.signal } : {}) }).result();
         return reply.stopReason === "error" || reply.stopReason === "aborted" ? "" : textOf(reply);
       } catch (error: unknown) {
@@ -214,18 +231,18 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
         return "";
       }
     };
-    if (needsCompaction(messages, command.route.contextWindow)) {
+    if (!isolated && needsCompaction(messages, command.route.contextWindow)) {
       messages = await compactSession({ messages, now, summarize });
     }
     // Summarize down to the latest turn before storage would have to drop earlier turns.
     // A cancelled run never drops turns: if it cannot save whole, the previous session stays.
-    if (!fitsWithToolPayloadCaps(messages)) {
+    if (!isolated && !fitsWithToolPayloadCaps(messages)) {
       messages = await compactSession({ messages, now, summarize, keepRecentUserTurns: 1 });
     }
     const saved = await broker.saveSession({
       baseRevision: snapshot.revision,
       ...(snapshot.needsRecompaction ? { recompactionHandled: true as const } : {}),
-      messages: encodeSession(fitForStorage(messages, undefined, now, { allowDroppingTurns: input.signal?.aborted !== true })),
+      messages: encodeSession(fitForStorage(messages, undefined, now, { allowDroppingTurns: !isolated && input.signal?.aborted !== true })),
     });
     return outcome(command, { ...status, sessionRevision: saved.revision, toolActions });
   } catch (error: unknown) {

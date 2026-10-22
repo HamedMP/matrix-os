@@ -9,6 +9,16 @@ import { ProviderSettingsStoreError } from './provider-settings-errors.js';
 
 /** Saver proves rejection preceded any native writer or profile mutation. */
 export class NativeProviderWriteNotStartedError extends ProviderWorkflowError { constructor() { super('unavailable'); } }
+/** Admission failed before a writer lease, or its exact acquired lease was released.
+ * No caller received admission, so no native child can have been launched.
+ */
+export class NativeProviderAdmissionNotStartedError extends ProviderSettingsStoreError {
+  constructor(readonly reason: 'busy' | 'unavailable' = 'unavailable') { super('lifecycle_unavailable', 503); }
+}
+/** A managed operation has positively observed running liveness. */
+class NativeProviderProfileBusyError extends ProviderSettingsStoreError {
+  constructor() { super('lifecycle_unavailable', 503); }
+}
 /** Native writer drained and exact previous profile bytes/absence were restored. */
 export class NativeProviderWriteRestoredError extends ProviderWorkflowError { constructor() { super('unavailable'); } }
 export type NativeProviderProfile = 'codex' | 'claude';
@@ -16,8 +26,15 @@ type Admission = { kind: 'write'; durable?: boolean } | { kind: 'login'; recover
   /** Trusted coordinator proof: no create requested, or its exact writer drained. */
   confirmDrained?: () => Promise<boolean> };
 export interface NativeProviderProfileGuard {
+  assertReadable(profile: NativeProviderProfile): Promise<void>;
   acquire(profile: NativeProviderProfile, admission: Admission): Promise<() => void | Promise<void>>;
   run<T>(profile: NativeProviderProfile, admission: Admission, operation: () => Promise<T>): Promise<T>;
+}
+/** Connecting to the terminal service found no socket or no listener: the service is not running. */
+function terminalServiceDown(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const { code, syscall } = error as NodeJS.ErrnoException;
+  return syscall === 'connect' && (code === 'ENOENT' || code === 'ECONNREFUSED');
 }
 const ReceiptDocument = z.object({ version: z.literal(1), receipts: z.array(z.object({ key: z.string().min(1).max(128).optional(), payloadHash: z.string().regex(/^[a-f0-9]{64}$/).optional(), recoveryHash: z.string().regex(/^[a-f0-9]{64}$/).optional(), superseded: z.boolean().optional(), archivedSessionName: z.string().min(1).max(128).optional(), attempt: ProviderConnectionAttemptSchema }).passthrough()).max(256) }).strict();
 
@@ -35,6 +52,15 @@ export function createNativeProviderProfileGuard(options: {
   if (!options.homePath || !options.registry?.get || !options.registry.observeAgentLiveness) throw new Error('Native profile admission dependencies required');
   const leases = createNativeProviderWriterLease(options.homePath);
   const slots = { codex: { queued: 0 }, claude: { queued: 0 } };
+  async function managedProfileSessions() {
+    try { return await options.registry.listProfileSessions?.() ?? []; }
+    catch (error) {
+      // No terminal service means no provider login or install tab can be running.
+      // Any other failure still refuses, because a live session may be hidden.
+      if (terminalServiceDown(error)) return [];
+      throw error;
+    }
+  }
   async function assertAvailable(profile: NativeProviderProfile, admission: Admission, checkLease = true) {
     if (checkLease) await leases.assertAvailable(profile);
     const documents = await Promise.all(['login-receipts.json', 'login-recovery.json'].map(async name => {
@@ -42,7 +68,7 @@ export function createNativeProviderProfileGuard(options: {
       return document ? ReceiptDocument.parse(document.value).receipts : [];
     }));
     const config = await readSavedProviderSettingsConfiguration(join(options.homePath, 'system/ai-providers/settings.json'));
-    const managed = await options.registry.listProfileSessions?.() ?? [];
+    const managed = await managedProfileSessions();
     if (managed.length > 64) throw new ProviderSettingsStoreError('lifecycle_unavailable', 503);
     const recoverable = new Set<string>(); // bounded to validated receipts plus one canonical name
     if (admission.kind === 'login') recoverable.add(`provider-auth-${BigInt(`0x${admission.recoveryKey}`).toString(36).padStart(50, '0')}`);
@@ -66,24 +92,32 @@ export function createNativeProviderProfileGuard(options: {
       // Exact canonical replay/adoption may read the already-running session.
       // No generic writer and no different instance/account may replace it.
       if (identity === profile && admission.kind === 'login' && (receipt.recoveryHash === admission.recoveryKey || receipt.recoveryHash === undefined && receipt.key && receipt.payloadHash && name === `provider-login-${profile}-${receipt.payloadHash.slice(0, 16)}` && admission.matchesLegacyReceipt?.(receipt.key, receipt.payloadHash))) { recoverable.add(name); continue; }
+      if (liveness === 'running') throw new NativeProviderProfileBusyError();
       throw new ProviderSettingsStoreError('lifecycle_unavailable', 503);
     }
     // Registry discovery also protects receipt-evicted historical sessions.
     for (const session of managed) {
       if (session.agent && session.agent !== profile) continue;
-      if (await options.registry.observeAgentLiveness(session.name, profile) === 'stopped') continue;
+      const liveness = await options.registry.observeAgentLiveness(session.name, profile);
+      if (liveness === 'stopped') continue;
       if (admission.kind === 'login' && recoverable.has(session.name)) continue;
+      if (liveness === 'running') throw new NativeProviderProfileBusyError();
       throw new ProviderSettingsStoreError('lifecycle_unavailable', 503);
     }
   }
   async function acquire(profile: NativeProviderProfile, admission: Admission): Promise<() => void | Promise<void>> {
     const slot = slots[profile];
-    if (!slot || slot.queued > 0) throw new ProviderSettingsStoreError('lifecycle_unavailable', 503);
+    if (!slot) throw new ProviderSettingsStoreError('lifecycle_unavailable', 503);
+    // This caller has not acquired admission or a lease. The existing in-process
+    // operation remains protected; this rejected attempt has nothing to drain.
+    if (slot.queued > 0) throw new NativeProviderAdmissionNotStartedError('busy');
     slot.queued = 1;
     let releaseLease: (() => Promise<void>) | undefined;
+    let leaseMayExist = false;
     try {
       await assertAvailable(profile, admission);
       if (admission.kind === "login" || admission.durable) {
+        leaseMayExist = true;
         releaseLease = await leases.acquire(profile);
         // A prior admission can finish between the idle preflight and this
         // exclusive create. Recheck live receipts/registry under our own lease.
@@ -91,8 +125,12 @@ export function createNativeProviderProfileGuard(options: {
       }
     } catch (error) {
       // The caller has not received admission, so no writer started here.
-      try { await releaseLease?.(); }
-      finally { slot.queued = 0; }
+      console.warn('[provider-settings] Native profile admission refused:', error instanceof Error ? error.name : 'UnknownError', error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined);
+      let drained = !leaseMayExist;
+      try {
+        if (releaseLease) { await releaseLease(); drained = true; }
+      } finally { slot.queued = 0; }
+      if (drained) throw new NativeProviderAdmissionNotStartedError(error instanceof NativeProviderProfileBusyError ? 'busy' : 'unavailable');
       throw error;
     }
     let released = false;
@@ -103,6 +141,7 @@ export function createNativeProviderProfileGuard(options: {
     };
   }
   return {
+    assertReadable: profile => assertAvailable(profile, { kind: "write" }),
     acquire,
     async run<T>(profile: NativeProviderProfile, admission: Admission, operation: () => Promise<T>): Promise<T> {
       const release = await acquire(profile, admission.kind === "write" ? { ...admission, durable: true } : admission);

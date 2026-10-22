@@ -10,6 +10,7 @@ import type {
 } from "@matrix-os/contracts";
 import { isSupportedGenericHarnessCredentialRoute } from "@matrix-os/contracts";
 import type { ProviderSettingsMutationIntent } from "./types.js";
+import { gatewayPolicyAllowsModel } from "./utils.js";
 
 const ACCENTS: ProviderAccentColor[] = ["blue", "green", "orange", "red", "purple", "cyan", "teal"];
 
@@ -36,7 +37,7 @@ function sourceSupportsModel(
       route: { kind: "configurable", providerId: source.providerId, modelId },
     }, source)) return false;
   if (source.kind !== "matrix_gateway") return true;
-  return snapshot.gatewayPolicy?.allowedModelIds.includes(modelId) === true;
+  return gatewayPolicyAllowsModel(snapshot.gatewayPolicy, modelId);
 }
 
 function routeTargetForProvider(snapshot: ProviderSettingsSnapshot, provider: ProviderModelProvider, harness: ProviderHarnessInstance) {

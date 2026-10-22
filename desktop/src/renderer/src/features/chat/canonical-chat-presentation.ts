@@ -112,7 +112,8 @@ export function canonicalChatPresentation(input: {
       if (seenApprovals.has(item.requestId)) return [];
       seenApprovals.add(item.requestId);
       const approval = approvalViews.find(view => view.runId === run?.id && view.approvalId === item.requestId);
-      return [{ ...item, label: approval?.title ?? item.label, detail: approval?.description, decision: approval?.decision,
+      return [{ ...item, ...(approval?.browserApproval ? { browserApproval: approval } : {}), label: approval?.title ?? item.label, detail: approval?.description, decision: approval?.decision,
+        ...(approval?.reason ? { reason: approval.reason } : {}),
         state: approval?.pending ? "waiting" : "resolved", actions: approval?.pending ? item.actions : undefined }];
     });
     const timeline = [
@@ -138,6 +139,7 @@ export function canonicalChatPresentation(input: {
     const endedAt = Date.parse(run?.completedAt ?? run?.updatedAt ?? turn.updatedAt);
     return {
       id: turn.id,
+      runIds: runs.map(run => run.id),
       ...(run?.context ? { runContext: run.context } : {}),
       ...(run?.executionRoot ? { executionRoot: run.executionRoot } : {}),
       ...(chatAgentAttribution(run) ? { agentLabel: chatAgentAttribution(run) } : {}),

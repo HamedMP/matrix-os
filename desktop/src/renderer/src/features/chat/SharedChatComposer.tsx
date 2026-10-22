@@ -1,5 +1,5 @@
 import {CompanyDriveContextControl} from "./CompanyDriveContextControl";
-import { chatResourceKey, canAddChatMention, isChatMention, orderChatResources } from "@matrix-os/ui";
+import { chatResourceKey, canAddChatMention, isChatMention, orderChatResources, chatSlashStatusMessage, filterCanonicalSlashEntries, matchChatSlashToken } from "@matrix-os/ui";
 import type {
   CanonicalChatResourceReference,
   CanonicalProviderCatalog,
@@ -7,11 +7,10 @@ import type {
   CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
 import * as Popover from "@radix-ui/react-popover";
-import { Box, ChevronDown, Paperclip, SlidersHorizontalIcon, SquareTerminal } from "@renderer/lib/hugeicons";
+import { Box, ChevronDown, Plus, SlidersHorizontalIcon, SquareTerminal } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { PromptInput } from "./elements/prompt-input";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
-import { MessageResponse } from "../../components/conversation/message";
 import { ResourceRows } from "./ComposerResourceRows";
 import {
   listCanonicalSlashEntries,
@@ -50,12 +49,14 @@ function permissionModeLabel(mode: string): string {
 }
 
 function CompactSelect({
+  openRequest = 0,
   label,
   value,
   options,
   menuSide,
   onChange,
 }: {
+  openRequest?: number;
   label: string;
   value: string;
   options: Array<{ value: string; label: string }>;
@@ -63,6 +64,8 @@ function CompactSelect({
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (openRequest > 0 && trigger.current?.getClientRects().length) setOpen(true); }, [openRequest]);
   if (options.length <= 1) return null;
   const selected = options.find((option) => option.value === value) ?? options[0]!;
   return (
@@ -70,6 +73,7 @@ function CompactSelect({
       <Popover.Trigger asChild>
         <button
           type="button"
+          ref={trigger}
           aria-label={label}
           aria-haspopup="menu"
           aria-expanded={open}
@@ -150,6 +154,7 @@ function SuggestionMenu({
 }
 
 export function SharedChatComposer({
+  permissionModeRequest = 0,
   value,
   onChange,
   draftScopeKey,
@@ -171,7 +176,7 @@ export function SharedChatComposer({
   botControls,
   resources = [],
   resourceSearch,
-  onAttach,
+  onAttach, attachmentsEnabled,
   onProviderSetup,
   providerCatalogLoading = false,
   onNewChat,
@@ -188,6 +193,7 @@ export function SharedChatComposer({
   layout = "default",
   speech,
 }: {
+  permissionModeRequest?: number;
   value: string;
   onChange: (value: string) => void;
   draftScopeKey?: string;
@@ -210,6 +216,7 @@ export function SharedChatComposer({
   resources?: CanonicalChatResourceReference[];
   resourceSearch?: (query: string) => Promise<CanonicalChatResourceReference[]>;
   onAttach?: () => void;
+  attachmentsEnabled?: boolean;
   onProviderSetup?: (
     instance: CanonicalProviderInstanceDescriptor,
     action: CanonicalProviderSetupAction,
@@ -230,14 +237,13 @@ export function SharedChatComposer({
   speech?: { scopeKey: string; onDraft: (text: string) => void };
 }) {
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (permissionModeRequest > 0 && settingsTrigger.current?.getClientRects().length) setSettingsMenuOpen(true); }, [permissionModeRequest]);
   const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string | null>(null);
   const suggestionMenuRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [cursor, setCursor] = useState(value.length);
   const [speechActive, setSpeechActive] = useState(false);
-  const [previewState, setPreviewState] = useState({ scopeKey: draftScopeKey, active: false });
-  const markdownPreview = previewState.scopeKey === draftScopeKey && previewState.active;
-  const restoreEditorFocus = useRef(false);
   const lastEditorValueRef = useRef(value);
   const lastObservedValueRef = useRef(value);
   useEffect(() => {
@@ -245,22 +251,17 @@ export function SharedChatComposer({
     if (value !== lastEditorValueRef.current) setCursor(value.length);
     lastObservedValueRef.current = value;
   }, [value]);
-  useEffect(() => {
-    if (markdownPreview || !restoreEditorFocus.current) return;
-    restoreEditorFocus.current = false;
-    editorRef.current?.focus();
-  }, [markdownPreview]);
   const instance = catalog.instances.find((candidate) => candidate.id === selection?.instanceId);
   const driveContextEnabled = !automaticRouting && instance?.supports.resources.includes("organization_drive") === true;
   const selectedResources = referenceTokens.flatMap(token => token.type === "resource" ? [token.resource] : []);
   const blockedDriveContext = selectedResources.some(resource => resource.kind === "organization_drive") && !driveContextEnabled;
   const valueBeforeCursor = value.slice(0, cursor);
-  const slashMatch = valueBeforeCursor.match(/(?:^|\s)(\/[a-z0-9_-]*)$/i);
+  const slashMatch = matchChatSlashToken(value, cursor);
   const resourceMatch = valueBeforeCursor.match(/(?:^|\s)@([^\s]*)$/);
-  const slashQuery = slashMatch?.[1]?.slice(1).toLocaleLowerCase() ?? null;
+  const slashQuery = slashMatch?.query ?? null;
   const resourceQuery = resourceMatch?.[1]?.toLocaleLowerCase() ?? null;
   const suggestionKey = slashQuery !== null
-    ? `slash:${slashMatch?.index ?? 0}:${slashMatch?.[1] ?? ""}`
+    ? `slash:${draftScopeKey ?? ""}:${selection?.instanceId ?? ""}:${slashMatch?.start ?? 0}:${slashMatch?.token ?? ""}`
     : resourceQuery !== null
       ? `resource:${resourceMatch?.index ?? 0}:${resourceMatch?.[0] ?? ""}`
       : null;
@@ -271,7 +272,7 @@ export function SharedChatComposer({
     if (suggestionKey === null) setDismissedSuggestionKey(null);
   }, [suggestionKey]);
   const slashEntries = useMemo(() => listCanonicalSlashEntries(instance), [instance]);
-  const canAttach = Boolean(onAttach && supportsNativeFileAttachments(instance));
+  const canAttach = Boolean(onAttach && (attachmentsEnabled ?? supportsNativeFileAttachments(instance)));
   const [remoteResources, setRemoteResources] = useState<CanonicalChatResourceReference[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -290,10 +291,7 @@ export function SharedChatComposer({
     });
     return () => { cancelled = true; };
   }, [resourceMenuOpen, resourceQuery, resourceSearch]);
-  const filteredSlashEntries = slashQuery === null ? [] : slashEntries.filter((entry) => (
-    entry.invocation.slice(1).toLocaleLowerCase().includes(slashQuery)
-    || entry.displayName.toLocaleLowerCase().includes(slashQuery)
-  ));
+  const filteredSlashEntries = slashQuery === null || providerCatalogLoading ? [] : filterCanonicalSlashEntries(slashEntries, slashQuery);
   const availableResources = orderChatResources([...resources, ...remoteResources])
     .filter((resource, index, all) => all.findIndex((candidate) => (
       chatResourceKey(candidate) === chatResourceKey(resource)
@@ -307,7 +305,8 @@ export function SharedChatComposer({
       ? filteredResources.length + (canAttach ? 1 : 0)
       : 0;
   const [suggestionIndex, setSuggestionIndex] = useState(0);
-  useEffect(() => setSuggestionIndex(0), [resourceQuery, slashQuery]);
+  const activeSuggestionIndex = Math.min(suggestionIndex, Math.max(0, suggestionCount - 1));
+  useEffect(() => setSuggestionIndex(0), [resourceQuery, slashQuery, selection?.instanceId, draftScopeKey]);
   const currentSubmission = () => {
     const editorValue = editorRef.current?.readValue();
     return buildSharedChatComposerSubmission(
@@ -331,7 +330,7 @@ export function SharedChatComposer({
             descriptorId: entry.id,
             invocation: entry.invocation,
           },
-        }, slashMatch?.[1] ?? "", cursor);
+        }, slashMatch?.token ?? "", cursor);
       }
       return;
     }
@@ -379,12 +378,12 @@ export function SharedChatComposer({
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const direction = event.key === "ArrowDown" ? 1 : -1;
-      setSuggestionIndex((current) => (current + direction + suggestionCount) % suggestionCount);
+      setSuggestionIndex((activeSuggestionIndex + direction + suggestionCount) % suggestionCount);
       return true;
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      applySuggestion(suggestionIndex);
+      applySuggestion(activeSuggestionIndex);
       return true;
     }
     return false;
@@ -416,18 +415,19 @@ export function SharedChatComposer({
     return () => document.removeEventListener("pointerdown", dismissOutside);
   }, [resourceMenuOpen, slashMenuOpen, suggestionKey]);
   return (
-    <div className="relative @container/chat-composer" data-slot="shared-chat-composer">
-      {slashMenuOpen && filteredSlashEntries.length > 0 ? (
+    <div className="matrix-chat-composer relative @container/chat-composer" data-slot="shared-chat-composer">
+      {slashMenuOpen ? (
         <SuggestionMenu label="Skills and commands" menuSide={menuSide} menuRef={suggestionMenuRef}>
           <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: "var(--text-tertiary)" }}>
             Skills &amp; commands
           </p>
+          {!filteredSlashEntries.length ? <p role="status" className="px-2 py-2 text-xs" style={{color:"var(--text-secondary)"}}>{chatSlashStatusMessage({loading:providerCatalogLoading,instance,entryCount:slashEntries.length})}</p> : null}
           {filteredSlashEntries.map((entry, index) => (
             <button
               key={`${entry.kind}:${entry.id}`}
               type="button"
               role="option"
-              aria-selected={suggestionIndex === index}
+              aria-selected={activeSuggestionIndex === index}
               className="grid min-h-10 w-full grid-cols-[1rem_minmax(12rem,16rem)_minmax(0,1fr)] items-center gap-2 rounded-lg px-2 text-left hover:bg-[var(--bg-hover)] aria-selected:bg-[var(--bg-hover)]"
               onClick={() => applySuggestion(index)}
             >
@@ -446,7 +446,7 @@ export function SharedChatComposer({
             role="option"
             canAttach={canAttach}
             resources={filteredResources}
-            selectedIndex={suggestionIndex}
+            selectedIndex={activeSuggestionIndex}
             onAttach={() => onAttach?.()}
             onResource={insertResource}
           />
@@ -459,8 +459,6 @@ export function SharedChatComposer({
         onSubmit={() => {
           if (!blockedDriveContext && !speechActive) {
             const submission = currentSubmission();
-            if (markdownPreview) restoreEditorFocus.current = true;
-            setPreviewState({ scopeKey: draftScopeKey, active: false });
             if (!providerCatalogLoading) onSubmit(submission);
           }
         }}
@@ -475,11 +473,7 @@ export function SharedChatComposer({
         maxLength={maxLength}
         placeholder={placeholder}
         ariaLabel={ariaLabel}
-        editor={markdownPreview ? (
-          <div role="region" aria-label="Markdown preview" className="max-h-[220px] min-h-9 overflow-y-auto break-words px-4 pb-1 pt-1">
-            <MessageResponse className="pointer-events-none [&_p:first-child]:mt-0 [&_p:last-child]:mb-0" copyText={async () => undefined}>{value}</MessageResponse>
-          </div>
-        ) : (
+        editor={(
           <ComposerPromptEditor
             ref={editorRef}
             value={value}
@@ -514,28 +508,14 @@ export function SharedChatComposer({
                 aria-label="Attach files"
                 title="Attach files"
                 disabled={disabled}
-                className="flex h-8 w-8 items-center justify-center rounded-lg outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                style={{ color: "var(--text-secondary)" }}
+                className="flex h-7 w-8 items-center justify-center rounded-[8px] border outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                style={{ color: "var(--text-secondary)", borderColor: "var(--border-subtle)" }}
                 onClick={onAttach}
               >
-                <Paperclip data-slot="attachment-paperclip-icon" size={15} aria-hidden />
+                <Plus data-slot="attachment-plus-icon" size={15} aria-hidden />
               </button>
             ) : null}
             {leadingControls}
-            <button
-              type="button"
-              aria-label={markdownPreview ? "Edit Markdown" : "Preview Markdown"}
-              aria-pressed={markdownPreview}
-              disabled={!markdownPreview && value.trim().length === 0}
-              className="h-8 rounded-lg px-2 text-xs font-medium outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
-              style={{ color: "var(--text-secondary)" }}
-              onClick={() => {
-                if (markdownPreview) restoreEditorFocus.current = true;
-                setPreviewState({ scopeKey: draftScopeKey, active: !markdownPreview });
-              }}
-            >
-              {markdownPreview ? "Edit" : "Preview"}
-            </button>
           </>
         )}
         trailingControls={(
@@ -574,6 +554,7 @@ export function SharedChatComposer({
               ) : null) : null}
               {selection && (instance?.supports.permissionModes.length ?? 0) > 1 ? (
                 <CompactSelect
+                  openRequest={permissionModeRequest}
                   label="Permission mode"
                   value={selection.permissionMode}
                   options={permissionModeOptions}
@@ -587,6 +568,7 @@ export function SharedChatComposer({
                 <Popover.Trigger asChild>
                   <button
                     type="button"
+                    ref={settingsTrigger}
                     aria-label="Chat settings"
                     aria-haspopup="dialog"
                     aria-expanded={settingsMenuOpen}
@@ -623,7 +605,8 @@ export function SharedChatComposer({
                       ) : null)}
                       {(instance?.supports.permissionModes.length ?? 0) > 1 ? (
                         <CompactSelect
-                          label="Permission mode"
+                          openRequest={permissionModeRequest}
+                  label="Permission mode"
                           value={selection.permissionMode}
                           options={permissionModeOptions}
                           menuSide={menuSide}

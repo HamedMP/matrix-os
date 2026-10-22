@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import type { z } from "zod/v4";
 import { Dialog } from "../Dialog.js";
 import { AudienceGrantPicker } from "./AudienceGrantPicker.js";
+import { ContributorAiSettings } from "./ContributorAiSettings.js";
 import { ReadinessSummary } from "./ReadinessSummary.js";
 import { projectAwaitingShare } from "./project-state.js";
 
@@ -19,6 +20,7 @@ export interface CollaborationApi {
   baseUrl: string;
   get(path: string): Promise<unknown>;
   post(path: string, body: unknown): Promise<unknown>;
+  put?(path: string, body: unknown): Promise<unknown>;
   patch?(path: string, body: unknown): Promise<unknown>;
   delete(path: string, body?: unknown): Promise<unknown>;
   subscribe?(
@@ -51,13 +53,13 @@ function accessCoverage(kind: Scope["kind"], resourceLabel: string): string {
 }
 
 function presetMeaning(kind: Scope["kind"]): string {
-  if (kind === "terminal") return "Viewers watch only. Contributors may request input control. Owners may take over control.";
-  if (kind === "file" || kind === "folder" || kind === "app") return "Viewers can read this resource. Contributors may make changes within its exact scope.";
-  if (kind === "project") return "Contributors can work across shared project contents. Viewers have read-only access. Owners manage membership and AI approvals.";
-  return "Contributors can read, discuss, and request AI when shared AI is available. Viewers can read only. Owners decide AI approvals.";
+  if (kind === "terminal") return "Viewers watch only. Editors may request input control. Owners may take over control.";
+  if (kind === "file" || kind === "folder" || kind === "app") return "Viewers can read this resource. Editors may make changes within its exact scope.";
+  if (kind === "project") return "Editors can work across shared project contents. Viewers have read-only access. Owners manage membership and AI approvals.";
+  return "Editors can read, discuss, and request AI when shared AI is available. Viewers can read only. Owners decide AI approvals.";
 }
 
-function useScopeReadiness(api: CollaborationApi, scope: Scope): CollaborationReadiness | null {
+function useScopeReadiness(api: CollaborationApi, scope: Scope, refreshVersion: number): CollaborationReadiness | null {
   const [readiness, setReadiness] = useState<CollaborationReadiness | null>(null);
   const awaitingShare = projectAwaitingShare(scope);
   useEffect(() => {
@@ -72,40 +74,50 @@ function useScopeReadiness(api: CollaborationApi, scope: Scope): CollaborationRe
         console.warn("[collaboration-access] readiness unavailable", failure instanceof Error ? failure.name : "UnknownError");
       });
     return () => { active = false; };
-  }, [api, scope.id, scope.kind, awaitingShare]);
+  }, [api, scope.id, scope.kind, awaitingShare, refreshVersion]);
   return readiness;
 }
 
-function ScopeAccess({ api, scope, onRefresh }: { api: CollaborationApi; scope: Scope; onRefresh: () => Promise<unknown> }) {
-  if (projectAwaitingShare(scope)) {
+function ScopeAccess({ api, scope, onRefresh, allowNewGrants }: {
+  api: CollaborationApi;
+  scope: Scope;
+  onRefresh: () => Promise<unknown>;
+  allowNewGrants: boolean;
+}) {
+  // A private project's owner chooses its audience before sharing; the grants take effect when it is shared.
+  // While the share is being published there is nothing to change until it finishes.
+  if (projectAwaitingShare(scope) && scope.lifecycle !== "private") {
     return <p className="rounded-xl border px-3 py-2 text-sm" style={{ color: "var(--text-secondary)" }}>
-      Share the whole project to manage access. Sharing gives everyone in your organization contributor access by default.
+      Access can be changed once sharing finishes.
     </p>;
   }
-  return <AudienceGrantPicker api={api} scope={scope} onRefresh={onRefresh} />;
+  return <AudienceGrantPicker api={api} scope={scope} onRefresh={onRefresh} allowNewGrants={allowNewGrants} />;
 }
 
-export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClose }: {
+export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClose, allowNewGrants = true }: {
   api: CollaborationApi;
   scope: Scope;
   members: Member[];
   onRefresh: () => Promise<{ scope: Scope; members: Member[] }>;
   onClose: () => void;
+  allowNewGrants?: boolean;
 }) {
   const resourceLabel = scope.kind === "chat" ? "Chat" : scope.kind === "terminal" ? "terminal" : scope.kind === "app" ? "app" : scope.kind;
   const [currentMembers, setCurrentMembers] = useState(members);
-  const readiness = useScopeReadiness(api, scope);
+  const [readinessVersion, setReadinessVersion] = useState(0);
+  const readiness = useScopeReadiness(api, scope, readinessVersion);
   const refresh = async () => {
     const next = await onRefresh();
     setCurrentMembers(next.members);
   };
-  return <Dialog open onClose={onClose} aria-label="Invite collaborators"
+  const dialogLabel = allowNewGrants ? "Invite collaborators" : "Manage legacy live access";
+  return <Dialog open onClose={onClose} aria-label={dialogLabel}
     className="ph-no-capture flex max-h-[85vh] w-[min(92vw,640px)] flex-col gap-5 overflow-y-auto rounded-2xl border p-6"
     style={{ background: "var(--bg-surface, var(--matrix-card, #FCFCF8))", color: "var(--text-primary, var(--matrix-card-fg, #32352E))",
       borderColor: "var(--border-default, var(--matrix-border, #D8D6C7))" }}>
     <div className="flex items-start justify-between gap-4">
       <div>
-        <h2 className="text-lg font-semibold">Invite collaborators</h2>
+        <h2 className="text-lg font-semibold">{dialogLabel}</h2>
         <p className="mt-1 text-sm" style={{ color: "var(--text-secondary)" }}>
           {accessCoverage(scope.kind, resourceLabel)}
         </p>
@@ -113,7 +125,9 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
       <button type="button" className={buttonClass} onClick={onClose}>Close</button>
     </div>
     {readiness ? <ReadinessSummary readiness={readiness} /> : null}
-    <ScopeAccess api={api} scope={scope} onRefresh={refresh} />
+    {!projectAwaitingShare(scope) ? <ContributorAiSettings api={api} scope={scope}
+      onPolicyUpdated={() => setReadinessVersion((version) => version + 1)} /> : null}
+    <ScopeAccess api={api} scope={scope} onRefresh={refresh} allowNewGrants={allowNewGrants} />
     <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
       {presetMeaning(scope.kind)}
     </p>
@@ -123,12 +137,12 @@ export function ChatCollaboratorsDialog({ api, scope, members, onRefresh, onClos
         {currentMembers.length === 0 ? <div className="rounded-xl border p-5 text-center">
           <div aria-hidden className="text-xl">◇</div>
           <p className="mt-1 font-medium">No collaborators yet</p>
-          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Choose Viewer or Contributor above.</p>
+          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Choose Viewer or Editor above.</p>
         </div> : currentMembers.map((member) => <div key={member.actor.actorId} className="flex flex-wrap items-center gap-3 rounded-xl border px-3 py-2">
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{member.actor.displayName}</p>
             <p className="truncate text-xs" style={{ color: "var(--text-secondary)" }}>{member.status === "pending"
-              ? "Access pending" : member.role === "editor" ? "Contributor" : member.role === "viewer" ? "Viewer" : "Owner"}</p>
+              ? "Access pending" : member.role === "editor" ? "Editor" : member.role === "viewer" ? "Viewer" : "Owner"}</p>
           </div>
         </div>)}
       </div>

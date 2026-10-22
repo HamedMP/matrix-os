@@ -30,7 +30,7 @@ export function managedChatInstances(
     const available = selectable.length > 0;
     const efforts = [...new Set(selectable.flatMap((model) => model.effortControls))];
     const defaultModel = selectable.find((model) => model.id === instance.defaultModelId)?.id;
-    return [{
+    const kernelInstance: Omit<CanonicalProviderInstanceDescriptor, "catalogRevision"> = {
       id: instance.id,
       driverKind: "kernel" as const,
       displayName: "Matrix AI",
@@ -64,10 +64,18 @@ export function managedChatInstances(
         resources: ["file", "folder", "project", "task", "app", "terminal_session"],
         interactionModes: ["default"], permissionModes: ["full_access"],
       },
-      ...(defaultModel ? { defaultSelection: { instanceId: instance.id, model: defaultModel } } : {}),
-    }];
+      ...(available && defaultModel ? { defaultSelection: { instanceId: instance.id, model: defaultModel } } : {}),
+    };
+    return [kernelInstance];
   });
 }
+
+/** Both managed Pi sources use the same Chat permission and workspace policy. */
+export const MANAGED_PI_CHAT_SUPPORTS: CanonicalProviderInstanceDescriptor["supports"] = {
+  rootChat: true, resume: false, cancellation: true, steering: "same_run", attachments: ["file", "image"], tools: [],
+  approvals: true, userInput: false, worktrees: "optional", resources: [], interactionModes: ["default"],
+  permissionModes: ["supervised", "full_access"],
+};
 
 /** The owned Pi worker has its own identity; old kernel checkpoints remain unchanged. */
 export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefined, now = Date.now()): Array<Omit<CanonicalProviderInstanceDescriptor, "catalogRevision">> {
@@ -97,14 +105,12 @@ export function managedPiChatInstances(snapshot: AiProviderSnapshotV3 | undefine
     availability: available ? "available" : "unavailable", connectionState: available ? "ready" : fundingState,
     workspaceRequirement: "project_optional",
     models: [...eligible.map((model) => ({ id: model.id, displayName: model.displayName, availability: "available" as const,
-      capabilities: ["tools" as const], supportsVision: false, supportsToolUse: true })), ...unavailableModels.map(model => ({
+      capabilities: model.capabilities, supportsVision: model.capabilities.includes("vision"), supportsToolUse: true })), ...unavailableModels.map(model => ({
         id: model.id, displayName: model.displayName, availability: "unavailable" as const,
-        capabilities: ["tools" as const], supportsVision: false, supportsToolUse: true }))],
+        capabilities: model.capabilities, supportsVision: model.capabilities.includes("vision"), supportsToolUse: true }))],
     options: [], skills: [], commands: [],
     setupActions: available ? [] : [{ id: "matrix_ai_settings", kind: "open_settings" as const, label: "Agents & providers" }],
-    supports: { rootChat: true, resume: false, cancellation: true, steering: "same_run", attachments: [], tools: [],
-      approvals: true, userInput: false, worktrees: "optional", resources: [], interactionModes: ["default"],
-      permissionModes: ["supervised", "full_access"] },
+    supports: MANAGED_PI_CHAT_SUPPORTS,
     ...(available ? { defaultSelection: { instanceId: MANAGED_PI_INSTANCE_ID, model: eligible[0]!.id } } : {}),
   }];
 }

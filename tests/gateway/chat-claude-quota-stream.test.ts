@@ -25,7 +25,7 @@ it.each(["assistant", "result"])("publishes one safe %s quota failure over live 
       .filter((activity) => activity.type === "run.error");
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatchObject({ error: {
-      code: "run_failed", safeMessage: "Your usage limit has been reached. Try again after your allowance resets.",
+      code: "run_failed", safeMessage: "Usage limit reached. Wait for reset.",
       retryable: false,
     } });
     expect(JSON.stringify(h.frames)).not.toMatch(/Check its connection|Reconnecting|\/opt\/private|token=private|unverified timezone/);

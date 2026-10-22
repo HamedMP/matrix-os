@@ -105,9 +105,32 @@ describe("owner-bound integration read-call authority", () => {
     } finally {
       action.risk = originalRisk;
     }
-    expect((await readCall({ service: "granola", action: "list_folders", label: "Work", params: {} })).status).toBe(403);
+    expect((await readCall({ service: "granola", action: "list_folders", label: "Work", params: {} })).status).toBe(503);
     expect(proxyGet).not.toHaveBeenCalled();
     expect(proxyPost).not.toHaveBeenCalled();
+  });
+
+  it("pins a saved source to its connection ID even if its label is reused", async () => {
+    const connection = await db.connectService({ userId: ownerId, service: "gmail", pipedreamAccountId: "replacement",
+      accountLabel: "Work", scopes: ["read"] });
+    expect((await readCall({ service: "gmail", action: "list_labels", label: "Work", connectionId: "deleted-source" })).status).toBe(403);
+    expect(proxyGet).not.toHaveBeenCalled();
+    expect((await readCall({ service: "gmail", action: "list_labels", label: "Work", connectionId: connection.id })).status).toBe(200);
+  });
+
+  it("routes managed reads through their exact selected connection without Pipedream", async () => {
+    const call = vi.fn(async () => ({ folders: [] }));
+    const managed = createIntegrationRoutes({ db, pipedream: provider, webhookSecret: "test",
+      resolveUserId: async () => ownerId, mcpPresetBroker: {
+        listConnections: async () => [{ id: "managed-one", service: "granola", account_label: "Work", status: "active" }], call,
+      } as never });
+    const request = (connectionId: string) => managed.request("/read-call", { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ service: "granola", action: "list_folders", label: "Work", connectionId }) });
+    expect((await request("old-managed")).status).toBe(403);
+    expect(call).not.toHaveBeenCalled();
+    expect((await request("managed-one")).status).toBe(200);
+    expect(call).toHaveBeenCalledWith(expect.objectContaining({ userId: ownerId, connectionId: "managed-one" }));
+    expect(proxyGet).not.toHaveBeenCalled(); expect(proxyPost).not.toHaveBeenCalled();
   });
 
   it("rejects oversized scoped calls before parsing or provider invocation", async () => {

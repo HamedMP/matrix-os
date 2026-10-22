@@ -106,3 +106,13 @@ describe("bot interaction cards", () => {
     expect(link.getAttribute("href")).toBe("https://consent.example.test/start");
   });
 });
+
+it("discloses label-only Gmail consent before choosing an account", () => {
+  const card: BotInteraction = { ...base, kind: "account_choice", payload: { kind: "account_choice", service: "gmail",
+    access: ["read", "label"], options: [{ connectionId: "conn_private", label: "Work" }] } };
+  render(<InteractionCard interaction={card} onResolve={vi.fn()} />);
+  expect(screen.getByText(/add Jev classification labels/i)).toBeTruthy();
+  expect(screen.getByText(/preserve existing labels/i)).toBeTruthy();
+  expect(screen.getByText(/no archive, send, delete, or mark read/i)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Work" })).toBeTruthy();
+});

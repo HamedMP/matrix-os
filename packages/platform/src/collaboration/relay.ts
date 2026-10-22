@@ -26,7 +26,9 @@ const SESSION_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
   ["POST", new RegExp(`^/api/collaboration/direct-sessions/(${UUID})/renew$`)],
   ["DELETE", new RegExp(`^/api/collaboration/direct-sessions/(${UUID})$`)],
 ];
+const RECOVERY_RESOURCE_ID = "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const RUNTIME_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
+  ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/catalog/${RECOVERY_RESOURCE_ID}/reauthorization/(?:inspect|confirm)$`)],
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/catalog/resolve$`)],
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes/preflight$`)],
   ["POST", new RegExp(`^/api/collaboration/runtimes/(${RUNTIME})/scopes$`)],
@@ -38,8 +40,12 @@ const SCOPE_PATH = new RegExp(`^/api/collaboration/scopes/(${UUID})(?:/|$)`);
  * only scope requests that may be routed by the owner's runtime instead.
  */
 const OWNER_PROJECT_ROUTES: ReadonlyArray<readonly [string, RegExp]> = [
-  ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}(?:/members|/project/inventory)?$`)],
+  ["GET", new RegExp(`^/api/collaboration/scopes/${UUID}(?:/members|/project/inventory|/grants)?$`)],
   ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/project/confirm$`)],
+  // Choosing who gets access before sharing: the grants stay unpublished until the project is shared.
+  ["POST", new RegExp(`^/api/collaboration/scopes/${UUID}/grants$`)],
+  ["PATCH", new RegExp(`^/api/collaboration/scopes/${UUID}/grants/${UUID}$`)],
+  ["DELETE", new RegExp(`^/api/collaboration/scopes/${UUID}/grants/${UUID}$`)],
 ];
 const INVITATION_PATH = new RegExp(`^/api/collaboration/invitations/(${UUID})(?:/|$)`);
 const DIRECT_SOCKET_PATH = new RegExp(`^/ws/collaboration/direct/scopes/(${UUID})/(events|terminal)$`);

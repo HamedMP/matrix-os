@@ -686,6 +686,9 @@ describe("Clock app", () => {
   });
 
   it("renders alarms in bridge order by time", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    // Keep sorting independent of the one-shot alarm scheduler and runner time.
+    vi.setSystemTime(new Date(2026, 5, 1, 12, 0, 0));
     installMatrixDb({
       zones: [],
       alarms: [

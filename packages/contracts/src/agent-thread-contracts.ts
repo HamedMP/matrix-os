@@ -197,6 +197,7 @@ const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
     toolCallId: referenceId(128),
     displayName: SafeDisplayStringSchema,
     kind: SafeDisplayStringSchema,
+    protectedPreview: ProtectedToolOutputSchema.optional(),
     preview: AgentToolPreviewSchema.optional(),
     previewKind: z.enum(["command", "path", "text"]).optional(),
     detail: AgentToolDetailSchema.optional(),
@@ -206,7 +207,16 @@ const CoreAgentThreadEventSchema = z.discriminatedUnion("type", [
     }
   }),
   BaseThreadEventSchema.extend({ type: z.literal("tool.output"), toolCallId: referenceId(128), text: boundedText(4_000, 16 * 1024), protectedOutput: ProtectedToolOutputSchema.optional(), truncated: z.boolean().optional() }).strict(),
-  BaseThreadEventSchema.extend({ type: z.literal("tool.completed"), toolCallId: referenceId(128), outcome: z.enum(["success", "failed", "cancelled"]) }).strict(),
+  BaseThreadEventSchema.extend({
+    type: z.literal("tool.completed"), toolCallId: referenceId(128), outcome: z.enum(["success", "failed", "cancelled"]),
+    // Completion can contain details unavailable at start; it never restarts the tool.
+    preview: AgentToolPreviewSchema.optional(), previewKind: z.enum(["command", "path", "text"]).optional(),
+    detail: AgentToolDetailSchema.optional(), protectedPreview: ProtectedToolOutputSchema.optional(),
+  }).strict().superRefine((activity, context) => {
+    if ((activity.preview === undefined) !== (activity.previewKind === undefined)) {
+      context.addIssue({ code: "custom", message: "Tool preview and kind must be provided together" });
+    }
+  }),
   BaseThreadEventSchema.extend({ type: z.literal("approval.requested"), approval: AgentApprovalRequestSchema }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("approval.resolved"), approvalId: ApprovalIdSchema, decision: ApprovalDecisionSchema }).strict(),
   BaseThreadEventSchema.extend({ type: z.literal("user_input.requested"), request: UserInputRequestSchema }).strict(),

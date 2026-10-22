@@ -31,7 +31,7 @@ function fixture(reservationMode: "usage" | "cloudflare-count" = "usage") {
         ...(reservationMode === "usage" ? { billingMode: "usage" } : {}),
       },
     })),
-    start: vi.fn(async () => ({ reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId })),
+    start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId, reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId })),
     release: vi.fn(), finalize: vi.fn(async () => ({})),
   };
   const dispatches: Array<{ url: string; headers: Headers }> = [];

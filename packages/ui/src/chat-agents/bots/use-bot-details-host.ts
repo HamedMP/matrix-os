@@ -6,11 +6,15 @@ export function useBotDetailsHost(container: HTMLElement | null | undefined, ope
     if (!container || !opened) return;
     const property = "--matrix-bot-details-reserve";
     const previous = container.style.getPropertyValue(property);
+    const reserveAttribute = "data-bot-details-reserved";
+    const previousAttribute = container.getAttribute(reserveAttribute);
     let active = true;
     const measure = () => {
       if (!active) return;
       // Read the border box: reserving padding must not change the decision itself.
-      const reserve = container.getBoundingClientRect().width >= 720 ? "360px" : "0px";
+      const reserved = container.getBoundingClientRect().width >= 720;
+      const reserve = reserved ? "360px" : "0px";
+      container.setAttribute(reserveAttribute, String(reserved));
       if (container.style.getPropertyValue(property) !== reserve) container.style.setProperty(property, reserve);
     };
     measure();
@@ -21,6 +25,8 @@ export function useBotDetailsHost(container: HTMLElement | null | undefined, ope
       observer?.disconnect();
       if (previous) container.style.setProperty(property, previous);
       else container.style.removeProperty(property);
+      if (previousAttribute !== null) container.setAttribute(reserveAttribute, previousAttribute);
+      else container.removeAttribute(reserveAttribute);
     };
   }, [container, opened]);
 }

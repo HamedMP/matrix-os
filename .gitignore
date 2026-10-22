@@ -50,6 +50,12 @@ packages/platform/data/
 /.local/production-parity/
 
 # Test artifacts
+/output/chat-dock-badge/
+/output/chat-subagent-activity/
+/output/chat-tool-details/
+/output/eng203/
+/output/mat524/
+/output/ci/
 shell/test-results/
 shell/e2e/test-results/
 shell/e2e/playwright-report/
@@ -118,6 +124,10 @@ skills-lock.json
 !.agents/skills/worktree-pr-monitor/**
 !.agents/skills/matrix-handoff/
 !.agents/skills/matrix-handoff/**
+# Team-only macOS demo recorder; never part of the shipped skills/matrix pack
+!.agents/skills/product-demo-video/
+!.agents/skills/product-demo-video/**
+!.claude/skills/product-demo-video
 # Matrix OS seeds its own skills under home/ -- track them explicitly
 !home/agents/skills/
 !home/agents/skills/**
@@ -154,3 +164,6 @@ paper/*.pdf
 .gstack/
 /output/playwright/
 distro/observability/logs-edge/logs-edge.env
+
+# Local shared-package compiler state (never included in bundles)
+.matrix-build-cache/

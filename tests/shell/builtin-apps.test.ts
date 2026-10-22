@@ -13,6 +13,14 @@ describe("built-in app helpers", () => {
     expect(DEFAULT_PINNED_APPS).toEqual([]);
   });
 
+  it("restores Browser and Cloud desktop with canonical saved identities", () => {
+    for (const [path, title] of [["__browser__", "Browser"], ["__cloud-desktop__", "Cloud desktop"]]) {
+      expect(isRestorableBuiltInAppPath(path)).toBe(true);
+      expect(normalizeBuiltInLayoutWindow({ path, title: "old", x: 10, y: 20, width: 900, height: 640, state: "minimized" })).toMatchObject({ path, title, state: "minimized" });
+    }
+    expect(normalizeBuiltInAppPath("apps/browser/index.html")).toBe("__browser__");
+  });
+
   it("normalizes stale Workspace paths only to a non-restorable tombstone", () => {
     expect(normalizeBuiltInAppPath("workspace")).toBe("__workspace__");
     expect(normalizeBuiltInAppPath("apps/workspace/index.html")).toBe("__workspace__");

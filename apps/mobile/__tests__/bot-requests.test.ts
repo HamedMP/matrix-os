@@ -67,3 +67,19 @@ it("updates only the exact saved bot model under its loaded revision", async () 
   expect(fetchMock.mock.calls[0]![1]!.method).toBe("PATCH");
   expect(JSON.parse(fetchMock.mock.calls[0]![1]!.body as string)).toEqual({ baseRevision: 2, selection });
 });
+
+it("treats a gateway that has no bot route as a chat without a bot", async () => {
+  const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
+    ok: false, status: 404, json: async () => ({ error: "Not found" }),
+  } as Response);
+  await expect(fetchNativeBotChat(token, gatewayUrl, "chat_research")).resolves.toBeNull();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it("still reports a failing bot status request as an error", async () => {
+  jest.spyOn(global, "fetch").mockResolvedValue({
+    ok: false, status: 503, json: async () => ({ code: "unavailable" }),
+  } as Response);
+  await expect(fetchNativeBotChat(token, gatewayUrl, "chat_research"))
+    .rejects.toThrow("Bot status could not be loaded. Try again.");
+});

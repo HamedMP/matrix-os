@@ -1,5 +1,5 @@
 import { compareCanonicalChatActivity, resolveCanonicalChatLifecycleGroup, resolveCanonicalChatAttention as resolveWorkRailAgentState } from "@matrix-os/ui";
-import type { CanonicalChatRecord } from "@matrix-os/contracts";
+import type { ChatNavigationRecord } from "@matrix-os/ui";
 import type { Project } from "../../stores/board";
 
 export interface WorkRailProjectGroup {
@@ -7,23 +7,23 @@ export interface WorkRailProjectGroup {
   slug: string;
   name: string;
   project: Project;
-  chats: CanonicalChatRecord[];
+  chats: ChatNavigationRecord[];
 }
 
 export interface WorkRailModel {
-  pinned: CanonicalChatRecord[];
+  pinned: ChatNavigationRecord[];
   pinnedProjects: WorkRailProjectGroup[];
   projects: WorkRailProjectGroup[];
-  needsYou: CanonicalChatRecord[];
-  working: CanonicalChatRecord[];
-  done: CanonicalChatRecord[];
-  recents: CanonicalChatRecord[];
+  needsYou: ChatNavigationRecord[];
+  working: ChatNavigationRecord[];
+  done: ChatNavigationRecord[];
+  recents: ChatNavigationRecord[];
   /** Inactive display entries; does not change canonical completion or attention. */
-  doneDisplay: CanonicalChatRecord[];
+  doneDisplay: ChatNavigationRecord[];
 }
 
 export interface WorkRailSearchResult {
-  record: CanonicalChatRecord;
+  record: ChatNavigationRecord;
   project?: Project;
   contextLabel: string;
 }
@@ -38,7 +38,7 @@ function providerLabel(driverKind: string): string {
 }
 
 export function buildWorkRailSearchResults(
-  records: readonly CanonicalChatRecord[],
+  records: readonly ChatNavigationRecord[],
   projects: readonly Project[],
   query: string,
 ): WorkRailSearchResult[] {
@@ -99,7 +99,7 @@ export { resolveWorkRailAgentState };
 export type WorkRailAgentState = import('@matrix-os/ui').CanonicalChatAttentionState;
 
 export function buildWorkRailModel(
-  records: readonly CanonicalChatRecord[],
+  records: readonly ChatNavigationRecord[],
   projects: readonly Project[],
   excludedChatIds: readonly string[] = [],
 ): WorkRailModel {
@@ -108,7 +108,7 @@ export function buildWorkRailModel(
     slug: project.slug,
     name: project.name,
     project,
-    chats: [] as CanonicalChatRecord[],
+    chats: [] as ChatNavigationRecord[],
   }));
   const groupByProjectReference = new Map<string, WorkRailProjectGroup>();
   for (const group of groups) {
@@ -116,13 +116,13 @@ export function buildWorkRailModel(
     groupByProjectReference.set(group.slug, group);
   }
 
-  const pinned: CanonicalChatRecord[] = [];
-  const recents: CanonicalChatRecord[] = [];
+  const pinned: ChatNavigationRecord[] = [];
+  const recents: ChatNavigationRecord[] = [];
   const excluded = new Set(excludedChatIds);
-  const needsYou: CanonicalChatRecord[] = [];
-  const working: CanonicalChatRecord[] = [];
-  const done: CanonicalChatRecord[] = [];
-  const doneDisplay: CanonicalChatRecord[] = [];
+  const needsYou: ChatNavigationRecord[] = [];
+  const working: ChatNavigationRecord[] = [];
+  const done: ChatNavigationRecord[] = [];
+  const doneDisplay: ChatNavigationRecord[] = [];
   const placed = new Set<string>();
   for (const record of records) {
     if (placed.has(record.chat.id) || excluded.has(record.chat.id)) continue;

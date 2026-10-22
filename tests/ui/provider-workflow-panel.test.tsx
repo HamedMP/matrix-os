@@ -9,14 +9,17 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
+  ProviderAccessSource,
+  ProviderAccount,
   ProviderHarnessInstance,
   ProviderWorkflowCapability,
 } from "@matrix-os/contracts";
 import { HarnessWorkflowPanel } from "../../packages/ui/src/agents-providers/HarnessWorkflowPanel";
 import type { ProviderWorkflowClient } from "../../packages/ui/src/agents-providers/types";
 import { ProviderWorkflowClientError } from "../../packages/ui/src/agents-providers/provider-workflow-client";
+import { ConnectedAccountCard } from "../../packages/ui/src/agents-providers/ConnectedAccountCard.js";
 afterEach(cleanup);
 const harness = {
   id: "codex",
@@ -36,6 +39,9 @@ const capability: ProviderWorkflowCapability = {
   uninstall: true,
   logs: true,
 };
+// Synthetic protocol receipts exercise the shared controller, not provider qualification.
+const claudeHarness = {...harness, id:"claude", harness:"claude", displayName:"Claude Code"} as ProviderHarnessInstance;
+const claudeCapability = {...capability, harnessInstanceId:"claude", harness:"claude", displayName:"Claude Code"} as ProviderWorkflowCapability;
 const client = (): ProviderWorkflowClient => ({
   capabilities: vi.fn().mockResolvedValue([capability]),
   start: vi.fn(),
@@ -66,7 +72,7 @@ it("keeps keys transient and presents safe rejection with retry", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Connect" }));
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "The key could not be verified",
+      "OpenAI didn't accept this key",
     ),
   );
   expect(document.body.textContent).not.toContain("sk-secret");
@@ -167,7 +173,7 @@ it("resumes the same operation handle after an accordion reopens", async () => {
   const api = client();
   const operation = {
     id: "wf_saved",
-    harnessInstanceId: "codex",
+    harnessInstanceId: "claude",
     kind: "login",
     state: "running",
     expiresAt: new Date(Date.now() + 60000).toISOString(),
@@ -181,8 +187,8 @@ it("resumes the same operation handle after an accordion reopens", async () => {
   const refresh = vi.fn();
   render(
     <HarnessWorkflowPanel
-      harness={harness}
-      capability={capability}
+      harness={claudeHarness}
+      capability={claudeCapability}
       client={api}
       operationId="wf_saved"
       onOperationId={vi.fn()}
@@ -226,7 +232,7 @@ it("contains a blocked sign-in popup as a safe actionable failure", async () => 
   const api = client();
   api.get = vi.fn().mockResolvedValue({
     id: "wf",
-    harnessInstanceId: "codex",
+    harnessInstanceId: "claude",
     kind: "login",
     state: "running",
     expiresAt: new Date(Date.now() + 60000).toISOString(),
@@ -237,8 +243,8 @@ it("contains a blocked sign-in popup as a safe actionable failure", async () => 
   });
   render(
     <HarnessWorkflowPanel
-      harness={harness}
-      capability={capability}
+      harness={claudeHarness}
+      capability={claudeCapability}
       client={api}
       operationId="wf"
       disabled={false}
@@ -263,8 +269,8 @@ it("contains a blocked sign-in popup as a safe actionable failure", async () => 
 it("places the single change-account action inside the connected card slot", () => {
   render(
     <HarnessWorkflowPanel
-      harness={{ ...harness, authState: "authenticated" }}
-      capability={capability}
+      harness={{ ...claudeHarness, authState: "authenticated" }}
+      capability={claudeCapability}
       client={client()}
       disabled={false}
       onRefresh={vi.fn()}
@@ -332,24 +338,20 @@ it("reuses a pending start receipt key after a lost response", async () => {
 
 it("keeps device-code startup in Settings while waiting for the native code", async () => {
   const api = client();
-  api.start = vi.fn().mockResolvedValue({ id: "wf", harnessInstanceId: "codex", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_1:tt_1", deviceCode: null, authorizationUrl: null, safeFailure: null });
+  api.start = vi.fn().mockResolvedValue({ id: "wf", harnessInstanceId: "claude", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_1:tt_1", deviceCode: null, authorizationUrl: null, safeFailure: null });
   const openTerminal = vi.fn();
-  render(<HarnessWorkflowPanel harness={harness} capability={capability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={openTerminal} />);
-  fireEvent.click(screen.getByRole("button", { name: /ChatGPT account/ }));
-  await screen.findByText(/Waiting for sign-in/);
+  render(<HarnessWorkflowPanel harness={claudeHarness} capability={claudeCapability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={openTerminal} />);
+  fireEvent.click(screen.getByRole("button", { name: /Claude account/ }));
+  await screen.findByRole("status", {name: "Preparing sign-in page"});
   expect(openTerminal).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", { name: "Continue in Terminal" })).not.toBeInTheDocument();
 });
 
-it("reuses the connected Codex account in Settings and refreshes immediate completion", async () => {
-  const api = client();
-  api.start = vi.fn().mockResolvedValue({ id: "wf", harnessInstanceId: "hermes", kind: "login", state: "succeeded", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null });
-  const refresh = vi.fn(); const terminal = vi.fn();
-  render(<HarnessWorkflowPanel harness={{...harness, id: "hermes", harness: "hermes", displayName: "Hermes"}} capability={{...capability, harnessInstanceId: "hermes", harness: "hermes", displayName: "Hermes", loginMethods: ["existing_codex"], apiKeyProviders: []}} client={api} disabled={false} onRefresh={refresh} onOpenTerminal={terminal} />);
-  fireEvent.click(screen.getByRole("button", { name: /Use existing Codex account/ }));
-  await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-  expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ harnessInstanceId: "hermes", method: "existing_codex" }), expect.any(AbortSignal));
-  expect(terminal).not.toHaveBeenCalled();
+it("does not reuse a Codex subscription through a generic harness", () => {
+  const api=client();
+  render(<HarnessWorkflowPanel harness={{...harness,id:"hermes",harness:"hermes",displayName:"Hermes"}} capability={{...capability,harnessInstanceId:"hermes",harness:"hermes",displayName:"Hermes",loginMethods:["existing_codex"],apiKeyProviders:[]}} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()}/>);
+  expect(screen.queryByRole("button",{name:/Use existing Codex account/})).toBeNull();
+  expect(api.start).not.toHaveBeenCalled();
 });
 it("finishes Claude browser sign-in inside Settings without exposing or retaining the code", async () => {
   const api = client(); api.submitCode = vi.fn().mockResolvedValue({accepted: true});
@@ -367,16 +369,16 @@ it("finishes Claude browser sign-in inside Settings without exposing or retainin
 it("offers explicit Connect for a saved Off account instead of silently restoring enablement on read", () => {
   const api = client();
   render(<HarnessWorkflowPanel harness={{...harness, authState: "authenticated", enabled: false}} capability={capability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} />);
-  expect(screen.getByRole("button", {name: /ChatGPT account/})).toBeEnabled();
+  expect(screen.getByRole("button", {name: /API key/})).toBeEnabled();
   expect(api.start).not.toHaveBeenCalled();
   expect(screen.queryByRole("button", {name: "Disconnect"})).not.toBeInTheDocument();
 });
 it("shows account actions for a configured native connection without claiming remote readiness", () => {
   const api = client();
-  render(<HarnessWorkflowPanel harness={{...harness, authState: "unknown", enabled: true, localObservation: {state: "present_unverified", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 60000).toISOString()}}} capability={capability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} renderConnection={action => <article>Current account{action}</article>} />);
+  render(<HarnessWorkflowPanel harness={{...claudeHarness, authState: "unknown", enabled: true, localObservation: {state: "present_unverified", checkedAt: new Date().toISOString(), staleAfter: new Date(Date.now() + 60000).toISOString()}}} capability={claudeCapability} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} renderConnection={action => <article>Current account{action}</article>} />);
   expect(screen.getByText("Current account")).toBeInTheDocument();
   expect(screen.getByRole("button", {name: "Change account"})).toBeInTheDocument();
-  expect(screen.queryByText("Connect Codex with")).not.toBeInTheDocument();
+  expect(screen.queryByText("Connect Claude Code with")).not.toBeInTheDocument();
   expect(api.start).not.toHaveBeenCalled();
 });
 it("omits unsupported Disconnect without a Matrix disconnection callback", () => {
@@ -397,11 +399,11 @@ it("omits View logs when only workflow activity is available", () => {
 
 it("shows login after a retained install receipt completes and refreshed inventory confirms installation", async () => {
   const api = client();
-  api.get = vi.fn().mockResolvedValue({ id: "installed", harnessInstanceId: "codex", kind: "install", state: "succeeded", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null });
+  api.get = vi.fn().mockResolvedValue({ id: "installed", harnessInstanceId: "claude", kind: "install", state: "succeeded", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null });
   const onRefresh = vi.fn();
-  render(<HarnessWorkflowPanel harness={harness} capability={{...capability, install: true}} client={api} operationId="installed" disabled={false} onRefresh={onRefresh} onOpenTerminal={vi.fn()} />);
+  render(<HarnessWorkflowPanel harness={claudeHarness} capability={{...claudeCapability, install: true}} client={api} operationId="installed" disabled={false} onRefresh={onRefresh} onOpenTerminal={vi.fn()} />);
   await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce());
-  expect(await screen.findByRole("button", {name: /ChatGPT account/})).toBeEnabled();
+  expect(await screen.findByRole("button", {name: /Claude account/})).toBeEnabled();
   expect(screen.queryByRole("button", {name: "Install"})).not.toBeInTheDocument();
   expect(screen.queryByText(/Not on this computer yet/)).not.toBeInTheDocument();
   expect(api.start).not.toHaveBeenCalled();
@@ -410,36 +412,36 @@ it("shows login after a retained install receipt completes and refreshed invento
 
 it.each([false, true])("reconciles confirmed initial login but preserves replacement failure (initial connected=%s)", async initialConnected => {
   const api = client();
-  const operation = { id: "late-login", harnessInstanceId: "codex", kind: "login", state: "failed", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: "unavailable" };
+  const operation = { id: "late-login", harnessInstanceId: "claude", kind: "login", state: "failed", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: "unavailable" };
   api.get = vi.fn().mockResolvedValue(operation);
   const onStateChange = vi.fn();
   const onOperationId = vi.fn();
   const props = { capability, client: api, operationId: "late-login", disabled: false, onRefresh: vi.fn(), onOpenTerminal: vi.fn(), onStateChange, onOperationId };
-  const { rerender } = render(<HarnessWorkflowPanel {...props} harness={{...harness, authState: initialConnected ? "authenticated" : "unauthenticated"}} />);
+  const { rerender } = render(<HarnessWorkflowPanel {...props} harness={{...claudeHarness, authState: initialConnected ? "authenticated" : "unauthenticated"}} />);
   await waitFor(() => expect(onStateChange).toHaveBeenLastCalledWith("Couldn't connect"));
   if (!initialConnected) {
-    rerender(<HarnessWorkflowPanel {...props} harness={{...harness, authState: "unknown"}} />);
+    rerender(<HarnessWorkflowPanel {...props} harness={{...claudeHarness, authState: "unknown"}} />);
     expect(onStateChange).toHaveBeenLastCalledWith("Couldn't connect");
     expect(onOperationId).not.toHaveBeenCalled();
   }
-  rerender(<HarnessWorkflowPanel {...props} harness={{...harness, authState: "authenticated"}} />);
+  rerender(<HarnessWorkflowPanel {...props} harness={{...claudeHarness, authState: "authenticated"}} />);
   if (initialConnected) {
     expect(onStateChange).toHaveBeenLastCalledWith("Couldn't connect");
     expect(onOperationId).not.toHaveBeenCalled();
   } else {
     await waitFor(() => expect(onStateChange).toHaveBeenLastCalledWith(null));
     expect(onOperationId).toHaveBeenCalledWith(null);
-    expect(screen.queryByRole("button", {name: /ChatGPT account/})).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", {name: /Claude account/})).not.toBeInTheDocument();
   }
 });
 
 it('keeps account changes and disconnect unavailable until an active replacement login finishes', async () => {
   const api = client();
-  api.get = vi.fn().mockResolvedValue({ id: 'replacement', harnessInstanceId: 'codex', kind: 'login', state: 'running', expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null });
-  api.cancel = vi.fn().mockResolvedValue({ id: 'replacement', harnessInstanceId: 'codex', kind: 'login', state: 'cancelled', expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null });
+  api.get = vi.fn().mockResolvedValue({ id: 'replacement', harnessInstanceId: 'claude', kind: 'login', state: 'running', expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null });
+  api.cancel = vi.fn().mockResolvedValue({ id: 'replacement', harnessInstanceId: 'claude', kind: 'login', state: 'cancelled', expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null });
   const disconnect = vi.fn();
-  render(<HarnessWorkflowPanel harness={{...harness, authState: 'authenticated'}} capability={capability} client={api} operationId="replacement" disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} onDisconnect={disconnect} advancedConfiguration={<button>Choose model</button>} />);
-  await screen.findByText('Finish signing in to ChatGPT');
+  render(<HarnessWorkflowPanel harness={{...claudeHarness, authState: 'authenticated'}} capability={claudeCapability} client={api} operationId="replacement" disabled={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()} onDisconnect={disconnect} advancedConfiguration={<button>Choose model</button>} />);
+  await screen.findByText('Finish signing in to Claude');
   expect(screen.getByRole('button', {name: 'Change account'})).toBeDisabled();
   expect(screen.getByRole('button', {name: 'Disconnect'})).toBeDisabled();
   fireEvent.click(screen.getByRole('button', {name: 'Disconnect'}));
@@ -454,27 +456,25 @@ it('keeps account changes and disconnect unavailable until an active replacement
   expect(api.cancel).toHaveBeenCalledWith('replacement', expect.any(AbortSignal));
 });
 
-it("offers terminal-only supported login behind collapsed Advanced configuration", async () => {
+it("offers terminal-only supported login on the primary connection path", async () => {
   const api = client();
-  api.start = vi.fn().mockResolvedValue({ id: "terminal", harnessInstanceId: "codex", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_1:tt_1", deviceCode: null, authorizationUrl: null, safeFailure: null });
+  api.start = vi.fn().mockResolvedValue({ id: "terminal", harnessInstanceId: "claude", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_1:tt_1", deviceCode: null, authorizationUrl: null, safeFailure: null });
   const openTerminal = vi.fn();
-  render(<HarnessWorkflowPanel harness={harness} capability={{ ...capability, loginMethods: ["terminal"], apiKeyProviders: [] }} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={openTerminal} />);
-  const summary = screen.getByText("Advanced configuration");
-  expect(summary.closest("details")).not.toHaveAttribute("open");
-  fireEvent.click(summary);
-  fireEvent.click(screen.getByRole("button", { name: "Sign in in Terminal" }));
+  render(<HarnessWorkflowPanel harness={claudeHarness} capability={{ ...claudeCapability, loginMethods: ["terminal"], apiKeyProviders: [] }} client={api} disabled={false} onRefresh={vi.fn()} onOpenTerminal={openTerminal} />);
+  expect(screen.queryByText("Advanced configuration")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Log in in Terminal" }));
   await waitFor(() => expect(openTerminal).toHaveBeenCalledWith("tws_1:tt_1"));
-  expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ method: "terminal", harnessInstanceId: "codex" }), expect.any(AbortSignal));
+  expect(api.start).toHaveBeenCalledWith(expect.objectContaining({ method: "terminal", harnessInstanceId: "claude" }), expect.any(AbortSignal));
 });
 
 it("continues mounted login status after a transient read failure", async () => {
   vi.useFakeTimers();
   const api = client();
-  const operation = { id: "poll", harnessInstanceId: "codex", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null };
+  const operation = { id: "poll", harnessInstanceId: "claude", kind: "login", state: "running", expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: null, deviceCode: null, authorizationUrl: null, safeFailure: null };
   api.get = vi.fn().mockResolvedValueOnce(operation).mockRejectedValueOnce(new ProviderWorkflowClientError()).mockResolvedValue({ ...operation, state: "succeeded" });
   const refresh = vi.fn();
   try {
-    render(<HarnessWorkflowPanel harness={harness} capability={capability} client={api} disabled={false} onRefresh={refresh} onOpenTerminal={vi.fn()} operationId="poll" />);
+    render(<HarnessWorkflowPanel harness={claudeHarness} capability={claudeCapability} client={api} disabled={false} onRefresh={refresh} onOpenTerminal={vi.fn()} operationId="poll" />);
     await act(async () => {});
     await act(() => vi.advanceTimersByTimeAsync(2000));
     expect(screen.getByRole("alert")).toHaveTextContent("Connection status is unavailable");
@@ -506,3 +506,28 @@ it("rearms bounded status polling after an explicit check following failed cance
     expect(api.cancel).toHaveBeenCalledOnce();
   } finally { cleanup(); vi.useRealTimers(); }
 });
+
+// Connection card for an owner API key.
+{
+const unavailableUsage = { kind: "unavailable", authority: "unavailable", state: "not_applicable", scope: "account", reason: "unknown", asOf: null };
+const claude = { id: "harness_claude_code", harness: "claude", displayName: "Claude Code" } as unknown as ProviderHarnessInstance;
+const keySource = { id: "owner_anthropic_key", providerId: "anthropic", fundingKind: "owner_api_key", displayName: "Anthropic API key", usage: unavailableUsage } as unknown as ProviderAccessSource;
+const keyAccount = { id: "owner_anthropic", providerId: "anthropic", authMethod: "api_key", displayName: "anthropic account" } as unknown as ProviderAccount;
+
+describe("connection card for an owner API key", () => {
+  it("names the billing provider instead of a raw account id or a usage reading the provider never shares", () => {
+    render(<ConnectedAccountCard harness={claude} account={keyAccount} source={keySource} disabled={false} onRefresh={vi.fn()} />);
+    expect(screen.getByText("API key")).toBeVisible();
+    expect(screen.getByText("Billed per request by Anthropic")).toBeVisible();
+    expect(screen.queryByText("Usage unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText("anthropic account")).not.toBeInTheDocument();
+  });
+
+  it("keeps the usage line for a subscription account", () => {
+    const profile = { ...keySource, id: "owner_claude_profile", fundingKind: "owner_account" } as unknown as ProviderAccessSource;
+    const account = { ...keyAccount, id: "owner_claude_profile", authMethod: "terminal", displayName: "Claude account" } as unknown as ProviderAccount;
+    render(<ConnectedAccountCard harness={claude} account={account} source={profile} disabled={false} onRefresh={vi.fn()} />);
+    expect(screen.getByText("Usage unavailable")).toBeVisible();
+  });
+});
+}

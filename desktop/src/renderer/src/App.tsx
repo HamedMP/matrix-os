@@ -1,3 +1,4 @@
+import { startDesktopProviderCatalogCoordinator } from "./features/chat/provider-catalog-coordinator";
 import { NativeChatBadge } from "./features/chat/NativeChatBadge";
 import RuntimeCompatibilityGate from "./features/updates/RuntimeCompatibilityGate";
 import { MatrixBootScreen } from "@matrix-os/brand";
@@ -8,6 +9,7 @@ import { Toaster } from "sonner";
 import SignIn from "./features/signin/SignIn";
 import MissionControl from "./features/mission-control/MissionControl";
 import DesktopUpdateExperience from "./features/updates/DesktopUpdateExperience";
+import OnboardingWidgetHost from "./features/onboarding-widget/OnboardingWidgetHost";
 import DesktopSupportWidget from "./features/support/DesktopSupportWidget";
 import { DesktopDefaultOrganization } from "./features/collaboration/DesktopDefaultOrganization";
 import { useAppearance } from "./stores/appearance";
@@ -21,6 +23,7 @@ export default function App() {
   const loadAppearance = useAppearance((s) => s.load);
 
   useEffect(() => wireNativeAppOpening(), []);
+  useEffect(() => startDesktopProviderCatalogCoordinator(), []);
 
   useEffect(() => {
     wireConnectionEvents();
@@ -47,6 +50,7 @@ export default function App() {
         )}
       </div>
       <NativeChatBadge />
+      <OnboardingWidgetHost />
       <DesktopSupportWidget />
       <DesktopUpdateExperience />
       <Toaster

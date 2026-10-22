@@ -10,6 +10,8 @@ import { setSharedComposerText, appendSharedComposerText } from "./shared-chat-c
 import { createCanonicalChatWorkspaceClient, canonicalChatRecord, providerCatalog, snapshot } from "./canonical-chat-workspace-test-utils";
 import type { CanonicalChatInvalidation, CanonicalChatEventSource } from "@desktop/renderer/src/lib/canonical-chat-client";
 import type { ChatAgentClient } from "../../packages/ui/src/chat-agents/client";
+import { createBotClient } from "../../packages/ui/src/chat-agents/bots/client";
+import { clientFixture, saved } from "./chat-agents-fixture";
 const agent = { kind: "agent" as const, id: "bot_meeting01", label: "Meeting helper" };
 const contextChat = { kind: "chat" as const, id: "chat_notes", label: "Meeting notes" };
 beforeEach(() => {
@@ -57,7 +59,68 @@ it("resets optional Full access when the same Agent replaces a draft, while reta
   expect(client.create).not.toHaveBeenCalled();
 });
 
-it("extends the existing picker, sends typed references in Supervised mode, and retains a failed draft", async () => {
+it("opens a mentioned saved Bot's dedicated Chat before admitting its own executor request", async () => {
+  const client = createCanonicalChatWorkspaceClient();
+  const botChatId = "chat_meeting_bot";
+  const sourceChatId = canonicalChatRecord.chat.id;
+  const botRequest = vi.fn(async (path: string, method: string) => {
+    if (path === `/api/chat-agents/${saved.id}/direct-chat` && (method === "GET" || method === "POST")) {
+      return { chatId: botChatId };
+    }
+    if (path === `/api/chats/${botChatId}/bot` && method === "GET") return { agentId: saved.id };
+    if (path === `/api/chats/${sourceChatId}/bot` && method === "GET") return { agentId: null };
+    throw new Error(`Unexpected Bot request: ${method} ${path}`);
+  });
+  const agents = { ...clientFixture(), bots: createBotClient(botRequest) };
+  agents.list.mockResolvedValue({ enabled: true, agents: [saved] });
+  agents.search.mockResolvedValue({ enabled: true, resources: [agent, contextChat] });
+  client.agents = agents;
+  const catalog = await agents.catalog();
+  const hermes = catalog.instances.find(instance => instance.id === saved.selection.instanceId)!;
+  hermes.supports = { ...hermes.supports, permissionModes: ["full_access"] };
+  const sourceDetail = await client.getDetail(sourceChatId);
+  vi.mocked(client.getDetail).mockImplementation(async chatId => chatId === botChatId ? {
+    record: { ...canonicalChatRecord, providerBinding: undefined,
+      chat: { ...canonicalChatRecord.chat, id: botChatId, title: saved.name, currentSelection: saved.selection } },
+    messages: [], turns: [], runs: [], activities: [],
+  } : sourceDetail);
+  vi.mocked(client.admitTurn).mockRejectedValue(new Error("Service unavailable"));
+  const onActiveChatChanged = vi.fn();
+  render(<CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={sourceChatId}
+    initialView="conversation" active catalog={catalog} onActiveChatChanged={onActiveChatChanged} />);
+  const sourceEditor = await screen.findByRole("textbox", { name: "Reply to chat" });
+  await setSharedComposerText(sourceEditor, "Review this meeting @mee");
+  fireEvent.click(await screen.findByRole("option", { name: /Meeting helper/ }));
+  await waitFor(() => expect(botRequest).toHaveBeenCalledWith(`/api/chat-agents/${saved.id}/direct-chat`, "POST", {}));
+  await waitFor(() => expect(onActiveChatChanged.mock.calls.some(([chatId]) => chatId === botChatId)).toBe(true));
+  await waitFor(() => expect(client.getDetail).toHaveBeenCalledWith(botChatId, expect.anything()));
+  const consent = await screen.findByRole("checkbox", { name: "Allow Full access on this computer for this Bot request." });
+  const editor = screen.getByRole("textbox", { name: "Reply to chat" });
+  await waitFor(() => expect(editor.textContent).toBe("Review this meeting"));
+  expect(client.create).not.toHaveBeenCalled();
+  expect(client.admitTurn).not.toHaveBeenCalled();
+  expect(client.queueTurn).not.toHaveBeenCalled();
+  expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", true);
+  fireEvent.click(consent);
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(client.admitTurn).toHaveBeenCalledWith(botChatId, expect.objectContaining({
+    selection: saved.selection, permissionMode: "full_access",
+    parts: expect.arrayContaining([{ type: "text", text: "Review this meeting" },
+      { type: "resource_reference", resource: { ...agent, revision: String(saved.revision) } }]),
+  }), expect.anything()));
+  expect(editor.textContent).toBe("Review this meeting");
+  const firstRequest = vi.mocked(client.admitTurn).mock.calls[0]![1];
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", false));
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(client.admitTurn).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(client.admitTurn).mock.calls.every(([chatId]) => chatId === botChatId)).toBe(true);
+  expect(vi.mocked(client.admitTurn).mock.calls[1]![1].clientRequestId).toBe(firstRequest.clientRequestId);
+  expect(client.create).not.toHaveBeenCalled();
+  expect(client.queueTurn).not.toHaveBeenCalled();
+  expect(botRequest.mock.calls.some(([path]) => /\/(authority|interactions|bot-tasks)$/.test(path))).toBe(false);
+});
+
+it("extends the existing picker, sends typed Chat context in Supervised mode, and retains a failed draft", async () => {
   const client = createCanonicalChatWorkspaceClient();
   client.agents = { search: vi.fn(async () => ({ enabled: true, resources: [agent, contextChat] })) } as unknown as ChatAgentClient;
   vi.mocked(client.admitTurn).mockRejectedValue(new Error("Service unavailable"));
@@ -66,7 +129,7 @@ it("extends the existing picker, sends typed references in Supervised mode, and 
   const transcript = screen.getByRole("log");
   const originalContent = transcript.textContent;
   await setSharedComposerText(editor, "@mee");
-  fireEvent.click(await screen.findByRole("option", { name: /Meeting helper/ }));
+  fireEvent.click(await screen.findByRole("option", { name: /Meeting notes/ }));
   expect(client.admitTurn).not.toHaveBeenCalled();
   await appendSharedComposerText(editor, " Review this meeting");
   expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(false);
@@ -74,7 +137,7 @@ it("extends the existing picker, sends typed references in Supervised mode, and 
   await waitFor(() => expect(client.admitTurn).toHaveBeenCalled());
   expect(vi.mocked(client.admitTurn).mock.calls[0]![1]).toMatchObject({
     selection: { instanceId: canonicalChatRecord.chat.currentSelection!.instanceId }, permissionMode: "supervised",
-    parts: expect.arrayContaining([{ type: "resource_reference", resource: agent }]),
+    parts: expect.arrayContaining([{ type: "resource_reference", resource: contextChat }]),
   });
   expect(screen.getByRole("log")).toBe(transcript);
   expect(transcript.textContent).toBe(originalContent);

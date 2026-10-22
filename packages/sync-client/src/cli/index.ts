@@ -12,6 +12,7 @@ import { whoamiCommand } from "./commands/whoami.js";
 import { statusCommand } from "./commands/status.js";
 import { completionCommand } from "./commands/completion.js";
 import { mcpCommand } from "./commands/mcp.js";
+import { updateCommand } from "./commands/update.js";
 import { previewCommand } from "./commands/preview.js";
 import { runCommand } from "./commands/run.js";
 import { uploadCommand } from "./commands/upload.js";
@@ -49,6 +50,7 @@ const subCommands = {
   completion: completionCommand,
   mcp: mcpCommand,
   preview: previewCommand,
+  update: updateCommand,
 };
 
 const main = defineCommand({
@@ -70,7 +72,7 @@ if (shouldRunStandaloneDaemon(rawArgs)) {
   // MATRIX_NO_TELEMETRY). Only the resolved command name and an argument count
   // are captured -- never argument values or paths. Unknown first tokens are
   // reported as "unknown" so typos cannot leak file names.
-  const telemetry = getCliTelemetry();
+  const telemetry = getCliTelemetry({ machineOutput: rawArgs.includes("--json") });
   const firstPositional = rawArgs.find((arg) => !arg.startsWith("-"));
   const commandName = firstPositional
     ? Object.hasOwn(subCommands, firstPositional)

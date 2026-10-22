@@ -29,14 +29,47 @@ describe("funded generation readiness timeout budgets", () => {
   });
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
-  it("leaves two seconds after upstream generation within the unchanged outer relay budget", () => {
-    expect(FUNDED_AI_READINESS_TIMEOUTS.relayUpstreamProbeMs).toBe(8_000);
-    expect(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs).toBe(10_000);
+  it("logs only bounded model/correlation/outcome metadata without retaining upstream bodies", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(new Response("private upstream response", { status: 429 }));
+    expect(await probeFundedModel(config(), FUNDED_GLM_FLASH, fetchFn, {
+      probeId: "12345678-1234-4123-8123-123456789abc", traceId: "a".repeat(32),
+    })).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    const entry = JSON.parse(String(info.mock.calls[0]?.[0]));
+    expect(entry).toEqual({ event: "funded_readiness_upstream", modelId: FUNDED_GLM_FLASH,
+      probeId: "12345678-1234-4123-8123-123456789abc", traceId: "a".repeat(32),
+      outcome: "upstream_http", upstreamStatus: 429, elapsedMs: expect.any(Number) });
+    expect(JSON.stringify([info.mock.calls, warn.mock.calls])).not.toContain("private upstream response");
+    expect(JSON.stringify(info.mock.calls)).not.toContain(config().workersAiToken);
+  });
+
+  it("replaces untrusted correlation text and classifies an unknown error without logging its contents", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const error = new Error("private failure message"); error.name = "private_failure_name";
+    const fetchFn = vi.fn<typeof fetch>().mockRejectedValue(error);
+    expect(await probeFundedModel(config(), FUNDED_GLM_FLASH, fetchFn, {
+      probeId: "private-header", traceId: "private-trace",
+    })).toBe(false);
+    const entry = JSON.parse(String(info.mock.calls[0]?.[0]));
+    expect(entry.probeId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(entry.traceId).toBeUndefined();
+    expect(entry.outcome).toBe("transport_error");
+    expect(entry.upstreamStatus).toBeUndefined();
+    expect(JSON.stringify([info.mock.calls, warn.mock.calls])).not.toContain("private");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves two seconds after upstream generation within each bounded outer readiness budget", () => {
+    expect(FUNDED_AI_READINESS_TIMEOUTS.relayUpstreamProbeMs).toBe(25_000);
+    expect(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs).toBe(27_000);
     expect(FUNDED_AI_READINESS_TIMEOUTS.relayProbeMs - FUNDED_AI_READINESS_TIMEOUTS.relayUpstreamProbeMs).toBe(2_000);
-    expect(FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs).toBe(12_000);
-    expect(FUNDED_AI_READINESS_TIMEOUTS.gatewayRequestMs).toBe(13_000);
-    expect(FUNDED_AI_READINESS_TIMEOUTS.gatewayObservationMs).toBe(14_000);
-    expect(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs).toBe(15_000);
+    expect(FUNDED_AI_READINESS_TIMEOUTS.platformRouteMs).toBe(29_000);
+    expect(FUNDED_AI_READINESS_TIMEOUTS.gatewayRequestMs).toBe(30_000);
+    expect(FUNDED_AI_READINESS_TIMEOUTS.gatewayObservationMs).toBe(31_000);
+    expect(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs).toBe(32_000);
   });
 
   it.each([FUNDED_GLM_FLASH, FUNDED_SONNET])("accepts a valid %s response after 6.29 seconds", async (model) => {
@@ -56,6 +89,27 @@ describe("funded generation readiness timeout budgets", () => {
     await vi.advanceTimersByTimeAsync(1_289);
     await expect(pending).resolves.toBe(true);
     expect(signal.aborted).toBe(false);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts successful GLM inference after 21.4 seconds without retrying", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let signal!: AbortSignal;
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
+      signal = init!.signal!;
+      return await new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(() => resolve(reply(FUNDED_GLM_FLASH)), 21_400);
+        signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+      });
+    });
+    let result: boolean | undefined;
+    const pending = probeFundedModel(config(), FUNDED_GLM_FLASH, fetchFn).then((value) => { result = value; return value; });
+    await vi.advanceTimersByTimeAsync(8_001);
+    expect(result).toBeUndefined();
+    expect(signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(13_399);
+    await expect(pending).resolves.toBe(true);
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
@@ -81,7 +135,8 @@ describe("funded generation readiness timeout budgets", () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
-  it("aborts a stalled upstream at eight seconds and returns unavailable", async () => {
+  it("aborts a stalled upstream at twenty-five seconds and returns unavailable", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     let signal!: AbortSignal;
     const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
@@ -92,13 +147,14 @@ describe("funded generation readiness timeout budgets", () => {
     });
     let result: boolean | undefined;
     const pending = probeFundedModel(config(), FUNDED_GLM_FLASH, fetchFn).then((value) => { result = value; return value; });
-    await vi.advanceTimersByTimeAsync(7_999);
+    await vi.advanceTimersByTimeAsync(24_999);
     expect(result).toBeUndefined();
     expect(signal.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     await expect(pending).resolves.toBe(false);
     expect(signal.aborted).toBe(true);
     expect(warn).toHaveBeenCalledWith("[funded-ai] Model readiness probe unavailable:", "TimeoutError");
+    expect(JSON.parse(String(info.mock.calls[0]?.[0]))).toMatchObject({ modelId: FUNDED_GLM_FLASH, outcome: "timeout", elapsedMs: 25_000 });
     expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 });

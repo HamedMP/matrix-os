@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { createNativeProviderProfileGuard } from '../../packages/gateway/src/ai-providers/native-provider-profile-guard.js';
+import { bindNativeAccountMetadata } from '../../packages/gateway/src/ai-providers/native-account-metadata-binding.js';
+import { normalizeCodexNativeAccountMetadata } from '../../packages/gateway/src/ai-providers/codex-native-account-metadata.js';
+vi.mock('../../packages/gateway/src/ai-providers/codex-native-terminal-command.js', () => ({ resolveCodexNativeExecutable: () => '/fixture/bin/codex' }));
 let home = ''; let root = '';
 afterEach(async () => { if (root) await rm(root, { recursive: true, force: true }); });
 async function fixture() { root = await mkdtemp(join(tmpdir(), 'profile-guard-')); home = join(root, 'home'); await mkdir(join(home, 'system/ai-providers'), { recursive: true }); }
@@ -37,31 +40,31 @@ it('coordinates actual canonical login, logout and key endpoints, including rest
   await fixture(); let state: 'running' | 'stopped' = 'running';
   const sessions = new Set<string>();
   const registry = {
-    get: async (name: string) => { if (!sessions.has(name)) throw Object.assign(new Error('missing'), { code: 'session_not_found' }); return { name, agent: 'codex' }; },
+    get: async (name: string) => { if (!sessions.has(name)) throw Object.assign(new Error('missing'), { code: 'session_not_found' }); return { name, agent: 'claude' }; },
     create: vi.fn(async ({ name }: { name: string }) => { sessions.add(name); return { name }; }),
     delete: async (name: string) => { sessions.delete(name); },
     rename: async (name: string, next: string) => { sessions.delete(name); sessions.add(next); return { name: next }; },
     observeAgentLiveness: async () => state,
   };
   const guard = createNativeProviderProfileGuard({ homePath: home, registry });
-  const input = { mutation: { type: 'start_login' as const, expectedRevision: 0, idempotencyKey: 'login_shared', harnessInstanceId: 'harness_codex', accountId: null, method: 'terminal' as const }, harness: { id: 'harness_codex', driverId: 'codex', harness: 'codex' as const, providerId: 'openai', modelId: 'gpt-5', installState: 'installed' as const } };
-  const coordinator = () => createProviderTerminalLoginCoordinator({ homePath: home, registry, enabledHarnesses: ['codex'], profileGuard: guard });
+  const input = { mutation: { type: 'start_login' as const, expectedRevision: 0, idempotencyKey: 'login_shared', harnessInstanceId: 'harness_claude_code', accountId: null, method: 'terminal' as const }, harness: { id: 'harness_claude_code', driverId: 'claude_code', harness: 'claude' as const, providerId: 'anthropic', modelId: 'claude-sonnet-5', installState: 'installed' as const } };
+  const coordinator = () => createProviderTerminalLoginCoordinator({ homePath: home, registry, enabledHarnesses: ['claude'], profileGuard: guard });
   let release!: () => void; const gate = new Promise<void>(r => { release = r; });
   const save = vi.fn(async () => { await gate; });
-  const key = createProviderKeyVerifier({ providerId: 'openai', profile: 'codex', profileGuard: guard, fetchFn: async () => new Response('{}'), save });
-  const saving = key({ harnessInstanceId: 'harness_codex', providerId: 'openai', apiKey: 'sk-fixture' });
+  const key = createProviderKeyVerifier({ providerId: 'anthropic', profile: 'claude', profileGuard: guard, fetchFn: async () => new Response('{}'), save });
+  const saving = key({ harnessInstanceId: 'harness_claude_code', providerId: 'anthropic', apiKey: 'sk-fixture' });
   await vi.waitFor(() => expect(save).toHaveBeenCalledOnce());
   await expect(coordinator().startLogin(input)).rejects.toThrow(); expect(registry.create).not.toHaveBeenCalled();
-  const account: ProviderLifecycleAccount = { id: 'owner_codex', providerId: 'openai', authMethod: 'api_key', accessSourceId: 'owner_openai_profile', driverId: 'codex', harness: 'codex', installState: 'installed', authenticated: true, driverAccountCount: 1 };
+  const account: ProviderLifecycleAccount = { id: 'owner_claude', providerId: 'anthropic', authMethod: 'terminal', accessSourceId: 'owner_anthropic_profile', driverId: 'claude_code', harness: 'claude', installState: 'installed', authenticated: true, driverAccountCount: 1 };
   const run = vi.fn(async () => ({ stdout: '', stderr: '' }));
-  const lifecycle = createProviderCliAccountLifecycleCoordinator({ homePath: home, enabledDriverIds: ['codex'], profileGuard: guard, run });
+  const lifecycle = createProviderCliAccountLifecycleCoordinator({ homePath: home, enabledDriverIds: ['claude_code'], profileGuard: guard, run });
   await expect(lifecycle.logout({ account, idempotencyKey: 'logout_shared' })).rejects.toThrow(); expect(run).not.toHaveBeenCalled();
   release(); await saving;
   const attempt = await coordinator().startLogin(input);
   expect(await coordinator().startLogin(input)).toEqual(attempt); expect(registry.create).toHaveBeenCalledOnce();
   const restarted = createNativeProviderProfileGuard({ homePath: home, registry });
-  const restartedKey = createProviderKeyVerifier({ providerId: 'openai', profile: 'codex', profileGuard: restarted, fetchFn: async () => new Response('{}'), save });
-  await expect(restartedKey({ harnessInstanceId: 'second_codex', providerId: 'openai', apiKey: 'sk-fixture' })).rejects.toThrow();
+  const restartedKey = createProviderKeyVerifier({ providerId: 'anthropic', profile: 'claude', profileGuard: restarted, fetchFn: async () => new Response('{}'), save });
+  await expect(restartedKey({ harnessInstanceId: 'second_claude', providerId: 'anthropic', apiKey: 'sk-fixture' })).rejects.toThrow();
   state = 'stopped'; await lifecycle.logout({ account, idempotencyKey: 'logout_shared' }); expect(run).toHaveBeenCalledOnce();
   state = 'running'; await lifecycle.logout({ account, idempotencyKey: 'logout_shared' }); expect(run).toHaveBeenCalledOnce(); // durable completed replay is read-only
 });
@@ -76,8 +79,9 @@ it('holds the shared native profile while historical logout waits for process co
   await fixture(); let release!: () => void; const gate = new Promise<void>(r => { release = r; });
   const guard = createNativeProviderProfileGuard({ homePath: home, registry: { get: vi.fn(), observeAgentLiveness: vi.fn() } });
   const run = vi.fn(async () => { await gate; return { stdout: '', stderr: '' }; });
-  const lifecycle = createProviderCliAccountLifecycleCoordinator({ homePath: home, enabledDriverIds: ['codex'], profileGuard: guard, run });
-  const logout = lifecycle.logout({ account: { id: 'owner_codex', providerId: 'openai', authMethod: 'api_key', accessSourceId: 'owner_openai_profile', driverId: 'codex', harness: 'codex', installState: 'installed', authenticated: true, driverAccountCount: 1 }, idempotencyKey: 'logout_gate' });
+  const metadata = bindNativeAccountMetadata(normalizeCodexNativeAccountMetadata({ account: { type: 'apiKey' } }, {}, new Date())!, async () => true, 'synthetic-key-identity', { credentialIdentityBound: true });
+  const lifecycle = createProviderCliAccountLifecycleCoordinator({ homePath: home, enabledDriverIds: ['codex'], profileGuard: guard, run, readCodexAccountUnderLease: async () => metadata });
+  const logout = lifecycle.logout({ account: { id: 'owner_codex', providerId: 'openai', authMethod: 'api_key', accessSourceId: 'owner_openai_profile', driverId: 'codex', harness: 'codex', installState: 'installed', authenticated: true, driverAccountCount: 1, nativeCodexAccount: metadata }, idempotencyKey: 'logout_gate' });
   await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
   const save = vi.fn(); const fetchFn = vi.fn(async () => new Response('{}'));
   const verify = createProviderKeyVerifier({ providerId: 'openai', profile: 'codex', profileGuard: guard, fetchFn, save });
@@ -90,4 +94,14 @@ it('discovers a receipt-evicted historical native login and permits only its can
   const guard = createNativeProviderProfileGuard({ homePath: home, registry: { get: vi.fn(), listProfileSessions: async () => [{ name, agent: 'codex' }], observeAgentLiveness: async () => 'running' } });
   await expect(guard.run('codex', { kind: 'write' }, async () => 'key')).rejects.toThrow();
   expect(await guard.run('codex', { kind: 'login', recoveryKey }, async () => 'replay')).toBe('replay');
+});
+it('denies read admission during a live native login even after handoff released its writer marker', async () => {
+  await fixture();
+  let state: 'running' | 'stopped' = 'running';
+  const guard = createNativeProviderProfileGuard({ homePath: home, registry: {
+    listProfileSessions: async () => [{ name: 'native-login', agent: 'codex' }],
+    get: async () => ({ name: 'native-login', agent: 'codex' }), observeAgentLiveness: async () => state,
+  } });
+  await expect(guard.assertReadable('codex')).rejects.toBeDefined();
+  state = 'stopped'; await expect(guard.assertReadable('codex')).resolves.toBeUndefined();
 });

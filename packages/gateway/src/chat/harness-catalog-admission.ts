@@ -7,6 +7,11 @@ type InstanceDraft = Omit<CanonicalProviderInstanceDescriptor, "catalogRevision"
 
 const GENERIC_DRIVERS = ["hermes", "openclaw", "pi", "opencode"] as const;
 type GenericDriverKind = typeof GENERIC_DRIVERS[number];
+const CODEX_SETTINGS_ACTION = {
+  id: "codex_settings",
+  kind: "open_settings",
+  label: "Agents & providers",
+} satisfies CanonicalProviderSetupAction;
 
 function genericHarnessKind(kind: CanonicalProviderDriverKind): GenericDriverKind | null {
   return GENERIC_DRIVERS.includes(kind as GenericDriverKind) ? kind as GenericDriverKind : null;
@@ -29,7 +34,7 @@ export function configuredSystemModel(settings: ProviderSettingsSnapshot | null,
   const harness = enabled[0]!;
   const source = settings?.accessSources.find(candidate => candidate.id === harness.accessSourceId);
   if (!isSupportedGenericHarnessCredentialRoute(harness, source)) return null;
-  const native = source?.kind === "harness_profile" && kind === "hermes"
+  const native = source?.kind === "harness_profile" && (kind === "hermes" || kind === "openclaw")
     ? hermesNativeModelId(harness, source) : undefined;
   return native === null ? null : `${harness.route.providerId}:${native ?? harness.route.modelId}`;
 }
@@ -43,7 +48,7 @@ function configuredSystemInstance(
   if (instance.availability !== "available") {
     return unavailableInstance(instance, unavailableReasonFor(instance));
   }
-  const nativeModel = source?.kind === "harness_profile" && harness.harness === "hermes"
+  const nativeModel = source?.kind === "harness_profile" && (harness.harness === "hermes" || harness.harness === "openclaw")
     ? hermesNativeModelId(harness, source) : undefined;
   if (nativeModel === null) return unavailableInstance(instance, "runtime_not_runnable");
   const modelId = `${harness.route.providerId}:${nativeModel ?? harness.route.modelId}`;
@@ -81,11 +86,53 @@ export function applyHarnessSettings(input: {
       if (input.settingsRequired && !input.settingsAvailable && instance.availability !== "setup_required") {
         return unavailableInstance(instance, "settings_unavailable");
       }
-      const saved = input.settings?.harnesses.filter((harness) => harness.harness === harnessKind) ?? [];
+      const saved = input.settings?.harnesses.filter((harness) => harness.harness === harnessKind
+        && !(harnessKind === "claude" && harness.id === "harness_kernel")) ?? [];
       const enabled = saved.filter((harness) => harness.configuredEnabled ?? harness.enabled);
       if (input.settingsAvailable && saved.length > 0 && enabled.length === 0) {
         return unavailableInstance(instance, "disabled_in_settings");
       }
+      // Native Claude runs only on an explicitly selected owner credential:
+      // the Claude subscription or the owner's own Anthropic API key, never Matrix AI.
+      const ownerKey = instance.driverKind === "claude_code" && enabled.length === 1
+        && enabled[0]!.accessSourceId === "owner_anthropic_key" && enabled[0]!.selectedAccountId === "owner_anthropic"
+        && (enabled[0]!.configuredAccessSourceId === undefined || enabled[0]!.configuredAccessSourceId === "owner_anthropic_key");
+      if (instance.driverKind === "codex" && input.settingsAvailable && enabled.length === 1) {
+        const source = input.settings?.accessSources.find((candidate) => candidate.id === enabled[0]!.accessSourceId);
+        const staleNativeBinding = source?.id === "owner_openai_profile"
+          && source.kind === "provider_account"
+          && (source.accountId === null || enabled[0]!.selectedAccountId !== source.accountId);
+        if (staleNativeBinding) {
+          return {
+            ...unavailableInstance(instance, "authentication_required"),
+            setupActions: [CODEX_SETTINGS_ACTION],
+          };
+        }
+      }
+      if (instance.driverKind === "codex" && input.settingsAvailable && enabled.length === 1
+        && enabled[0]!.enabled === false) {
+        const source = input.settings?.accessSources.find((candidate) => candidate.id === enabled[0]!.accessSourceId);
+        const authenticationRequired = source?.readiness.state === "auth_required"
+          || source?.readiness.state === "expired";
+        const unavailable = unavailableInstance(
+          instance,
+          authenticationRequired ? "authentication_required" : "runtime_unavailable",
+        );
+        return authenticationRequired
+          ? {
+              ...unavailable,
+              setupActions: [CODEX_SETTINGS_ACTION],
+            }
+          : unavailable;
+      }
+      if (instance.driverKind === "claude_code" && saved.length > 0 && !ownerKey
+        && (enabled.length !== 1 || enabled[0]!.accessSourceId !== "owner_claude_profile"
+          || enabled[0]!.selectedAccountId !== "owner_claude_profile"
+          || (enabled[0]!.configuredAccessSourceId !== undefined
+            && enabled[0]!.configuredAccessSourceId !== "owner_claude_profile"))) {
+        return unavailableInstance(instance, "runtime_not_runnable");
+      }
+      if (ownerKey) return { ...instance, connectionLabel: "Anthropic API key" };
       const selectedSourceMatches = instance.driverKind === "codex" && input.settingsAvailable
         && enabled.length === 1
         && enabled[0]!.accessSourceId === "owner_openai_profile";
@@ -254,7 +301,8 @@ export function applyHarnessSettings(input: {
     return unavailableInstance(configuredInstance, "runtime_not_runnable");
   });
   return projected.map(instance => {
-    const kind = instance.driverKind === "claude_code" ? "claude" : instance.driverKind;
+    if (instance.driverKind === "claude_code") return instance;
+    const kind = instance.driverKind;
     const harnesses = input.settings?.harnesses.filter(harness => harness.harness === kind) ?? [];
     if (harnesses.length !== 1) return instance;
     const source = input.settings?.accessSources.find(candidate => candidate.id === harnesses[0]!.accessSourceId);

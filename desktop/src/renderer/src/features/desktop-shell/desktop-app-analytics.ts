@@ -11,6 +11,7 @@ export const FIXED_APP_ANALYTICS_KINDS: Record<DesktopAppId, DesktopAppKind> = {
   settings: "settings",
   plugins: "plugins",
   browser: "browser",
+  "cloud-desktop": "installed_app",
   notes: "notes",
   whiteboard: "whiteboard",
 };
@@ -33,9 +34,12 @@ const TAB_ANALYTICS_KINDS: Partial<Record<TabKind, DesktopAppKind>> = {
 };
 
 export function analyticsKindForTab(
-  tab: Pick<Tab, "kind" | "slug"> | undefined,
+  tab: Pick<Tab, "kind" | "slug" | "appIdentity"> | undefined,
 ): DesktopAppKind | undefined {
   if (!tab) return undefined;
-  if (tab.kind === "app") return tab.slug === "whiteboard" ? "whiteboard" : "installed_app";
+  if (tab.kind === "app") {
+    if (tab.appIdentity === "matrix-browser" || tab.slug === "matrix-browser") return "browser";
+    return tab.slug === "whiteboard" ? "whiteboard" : "installed_app";
+  }
   return TAB_ANALYTICS_KINDS[tab.kind];
 }

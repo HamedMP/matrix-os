@@ -5,19 +5,23 @@ import {
   type CollaborationDirectApi,
 } from "@matrix-os/ui";
 import { useEffect, useImperativeHandle, useMemo, useRef, type Ref } from "react";
-import { createDesktopCollaborationApi } from "../../lib/collaboration";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
-import { DesktopCollaborationOrganization } from "../collaboration/DesktopCollaborationOrganization";
+import { DesktopCollaborationOrganization, useDesktopCollaborationApi } from "../collaboration/DesktopCollaborationOrganization";
 import { useCollaborationRuntimeId } from "../collaboration/useCollaborationRuntime";
+
+const PROJECT_SHARING_LAYERS = { popover: DESKTOP_Z_INDEX.popover };
 
 export function DesktopProjectSharing({ projectId, projectName }: { projectId: string; projectName: string }) {
   const gatewayApi = useConnection((state) => state.api);
   const platformHost = useConnection((state) => state.platformHost);
-  const collaborationApi = useMemo(() => createDesktopCollaborationApi(platformHost), [platformHost]);
-  const runtimeId = useCollaborationRuntimeId(gatewayApi);
+  const organizationStatus = useConnection((state) => state.organizationStatus);
+  const collaborationApi = useDesktopCollaborationApi(platformHost, organizationStatus !== "none");
+  const runtimeId = useCollaborationRuntimeId(organizationStatus !== "none" ? gatewayApi : null);
   return collaborationApi && runtimeId
     ? <DesktopCollaborationOrganization>{(organizationId) => <ProjectSharingButton api={collaborationApi}
-      runtimeId={runtimeId} organizationId={organizationId} projectId={projectId} projectName={projectName} />}</DesktopCollaborationOrganization>
+      runtimeId={runtimeId} organizationId={organizationId} projectId={projectId} projectName={projectName}
+      layers={PROJECT_SHARING_LAYERS} />}</DesktopCollaborationOrganization>
     : null;
 }
 
@@ -25,6 +29,7 @@ export interface DesktopProjectSharingContext {
   api: CollaborationDirectApi;
   runtimeId: string;
   organizationId: string | null;
+  organizationStatus: "loading" | "member" | "unavailable";
 }
 
 /** Resolve collaboration once for a project list or project-creation flow. */
@@ -32,11 +37,15 @@ export function useDesktopProjectSharingContext(enabled = true): DesktopProjectS
   const gatewayApi = useConnection((state) => state.api);
   const platformHost = useConnection((state) => state.platformHost);
   const organizationId = useConnection((state) => state.organizationId);
-  const api = useMemo(() => createDesktopCollaborationApi(platformHost), [platformHost]);
-  const runtimeId = useCollaborationRuntimeId(enabled ? gatewayApi : null);
+  const organizationStatus = useConnection((state) => state.organizationStatus);
+  const verifiedOrganizationId = organizationStatus === "member" ? organizationId : null;
+  const api = useDesktopCollaborationApi(platformHost, organizationStatus !== "none");
+  const runtimeId = useCollaborationRuntimeId(enabled && organizationStatus !== "none" ? gatewayApi : null);
   return useMemo(
-    () => enabled && api && runtimeId ? { api, runtimeId, organizationId } : null,
-    [api, enabled, organizationId, runtimeId],
+    () => enabled && organizationStatus !== "none" && api && runtimeId
+      ? { api, runtimeId, organizationId: verifiedOrganizationId, organizationStatus }
+      : null,
+    [api, enabled, organizationStatus, runtimeId, verifiedOrganizationId],
   );
 }
 
@@ -62,6 +71,7 @@ export function DesktopProjectSharingHost({ ref, sharing, projectId, projectName
     organizationId: sharing.organizationId,
     projectId,
     projectName,
+    layers: PROJECT_SHARING_LAYERS,
     onClose,
   });
   useImperativeHandle(ref, () => ({ start: flow.start }));

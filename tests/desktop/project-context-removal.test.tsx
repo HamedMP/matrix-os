@@ -78,15 +78,13 @@ it('opens a same-Project ordinary draft, preserves text, and admits no Project a
  await waitFor(() => expect(client.create).toHaveBeenCalledWith(expect.not.objectContaining({projectId:expect.anything()})));
 });
 
-it('focuses explicit Project draft after asynchronous canonical loading settles', async () => {
+it('focuses explicit Project draft without waiting for an unrelated navigation list', async () => {
  const client = createCanonicalChatWorkspaceClient();
- let resolveList!: (value: {items:[]}) => void;
- vi.mocked(client.list).mockImplementation(() => new Promise(resolve => {resolveList=resolve;}));
+ vi.mocked(client.list).mockImplementation(() => new Promise(() => {}));
  useCodingAgentWorkspace.setState({composerFocusRequestId:42});
  render(<CanonicalChatWorkspace client={client} projectId="matrix-os" initialView="draft" externalNavigation active catalog={providerCatalog}/>);
  const editor=await screen.findByRole('textbox',{name:'Start a chat'});
- await waitFor(() => expect(editor.getAttribute('contenteditable')).toBe('false'));
- await act(async () => {resolveList({items:[]});});
+ expect(client.list).not.toHaveBeenCalled();
  await waitFor(() => expect(editor.getAttribute('contenteditable')).toBe('true'));
  await waitFor(() => expect(document.activeElement).toBe(editor));
 });

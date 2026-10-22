@@ -623,8 +623,10 @@ const CollaborationDirectoryBaseSchema = z.object({
  * S06 / T032: discovery is a platform metadata projection. `resource` is filled by
  * the client from the resource's home; when that home is unreachable or denies the
  * caller, or the platform no longer recognizes the caller (`unauthenticated`), the
- * client marks the item with `home` instead. Organization-wide shares that
- * this member has not opened yet appear as `organization_pending` (S04 activation).
+ * client marks the item with `home` instead. A pending grant this member has not
+ * opened yet appears as `organization_pending` (S04 activation): an organization-wide
+ * grant, or one addressed to this member alone. Both open the same way, by accepting
+ * `grantId` on the home, so every client handles them identically.
  */
 export const CollaborationDiscoveryHomeStateSchema = z.enum(["offline", "denied", "unauthenticated"]);
 
@@ -833,6 +835,11 @@ export const CollaborationDirectoryEventSchema = z.object({
     actorId: CollaborationActorIdSchema,
     status: z.enum(["invited", "accepted", "revoked"]),
     invitationId: CollaborationIdSchema.optional(),
+    /**
+     * Opaque owner-home pointer to a pending grant addressed to this one member, so the
+     * platform can list it and sign an accept-only ticket for it; never an authorization claim.
+     */
+    grantId: CollaborationIdSchema.optional(),
   }).strict()).max(8),
   /**
    * A shared project's Chat: the platform routes it to the same home and admits its tickets from

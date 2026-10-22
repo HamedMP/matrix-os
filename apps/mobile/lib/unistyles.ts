@@ -1,4 +1,6 @@
 import { StyleSheet } from "react-native-unistyles";
+
+import { initialMobileTheme } from "@/lib/initial-theme";
 import {
   colors,
   designShadows,
@@ -15,11 +17,15 @@ import {
 import {
   appColors as v2AppColors,
   appFonts as v2Fonts,
+  borderWidth as v2BorderWidth,
   designShadows as v2DesignShadows,
   palette as v2Palette,
   radius as v2Radius,
   semanticColorsByMode as v2SemanticColorsByMode,
+  size as v2Size,
+  space as v2Space,
   spacing as v2Spacing,
+  text as v2Text,
   typography as v2Typography,
 } from "@/lib/theme-v2";
 
@@ -49,8 +55,12 @@ const shared = {
 const v2Shared = {
   fonts: v2Fonts,
   spacing: v2Spacing,
+  space: v2Space,
+  size: v2Size,
+  borderWidth: v2BorderWidth,
   radius: v2Radius,
   typography: v2Typography,
+  text: v2Text,
   designShadows: v2DesignShadows,
   palette: v2Palette,
 } as const;
@@ -131,8 +141,8 @@ StyleSheet.configure({
   themes: appThemes,
   breakpoints,
   settings: {
-    // The mobile shell is light-first today; keep it deterministic. Flip to
-    // `adaptiveThemes: true` to follow the system color scheme.
-    initialTheme: "light",
+    // The saved theme, or the device's, from the very first frame. The theme
+    // controller in lib/theme-preference takes over from there.
+    initialTheme: initialMobileTheme,
   },
 });

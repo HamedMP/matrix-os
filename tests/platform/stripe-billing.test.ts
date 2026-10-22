@@ -6,6 +6,39 @@ import {
 } from '../../packages/platform/src/stripe-billing.js';
 
 describe('platform/stripe-billing', () => {
+  it('persists the consented Google identity and plan on Checkout and its subscription', async () => {
+    const create = vi.fn().mockResolvedValue({ id: 'cs_google', url: 'https://checkout.stripe.test/session' });
+    const client = createStripeBillingClient({ secretKey: 'sk_test_123', stripe: fakeStripe({ checkout: { sessions: { create } } }) });
+    await client.createCheckoutSession({
+      clerkUserId: 'user_123', idempotencyKey: 'attempt_google', priceId: 'price_builder_monthly',
+      mode: 'subscription', automaticTax: true, allowPromotionCodes: true,
+      successUrl: 'https://app.matrix-os.com/?checkout=success', cancelUrl: 'https://app.matrix-os.com/',
+      planSlug: 'matrix_builder', interval: 'monthly', trialPeriodDays: 7,
+      googleAnalytics: { clientId: '123.456', analyticsConsent: 'granted', adUserData: 'denied',
+        adPersonalization: 'denied', expiresAt: 1900000000000 },
+    });
+    const request = create.mock.calls[0][0];
+    const expected = { matrix_plan_slug: 'matrix_builder', matrix_billing_interval: 'monthly', matrix_trial_days: '7',
+      matrix_google_client_id: '123.456', matrix_google_analytics_consent: 'granted',
+      matrix_google_ad_user_data: 'denied', matrix_google_ad_personalization: 'denied', matrix_google_expires_at: '1900000000000' };
+    expect(request.metadata).toMatchObject(expected);
+    expect(request.subscription_data.metadata).toMatchObject(expected);
+  });
+
+  it('expands final checkout status and invoice presentment through the Stripe adapter', async () => {
+    const checkout = { id: 'cs_tracking' };
+    const invoice = { id: 'in_tracking' };
+    const retrieveCheckout = vi.fn().mockResolvedValue(checkout);
+    const retrieveInvoice = vi.fn().mockResolvedValue(invoice);
+    const client = createStripeBillingClient({ secretKey: 'sk_test_123', stripe: fakeStripe({
+      checkout: { sessions: { retrieve: retrieveCheckout } }, invoices: { retrieve: retrieveInvoice },
+    }) });
+    await expect(client.retrieveTrackingCheckout?.('cs_tracking')).resolves.toBe(checkout);
+    await expect(client.retrieveTrackingInvoice?.('in_tracking')).resolves.toBe(invoice);
+    expect(retrieveCheckout).toHaveBeenCalledWith('cs_tracking', { expand: ['line_items.data.price', 'subscription'] });
+    expect(retrieveInvoice).toHaveBeenCalledWith('in_tracking', { expand: ['payments.data.payment.payment_intent'] });
+  });
+
   it('creates subscription checkout sessions with tax and promotion-code support', async () => {
     const sessionsCreate = vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.test/session', id: 'cs_123' });
     const stripe = fakeStripe({
@@ -213,6 +246,48 @@ describe('platform/stripe-billing', () => {
     expect(sessionsRetrieve).toHaveBeenCalledWith('cs_legacy', {
       expand: ['line_items.data.price'],
     });
+  });
+
+  it('expires a checkout session and returns only the authoritative lifecycle projection', async () => {
+    const sessionsExpire = vi.fn().mockResolvedValue({
+      status: 'expired',
+      url: null,
+      client_reference_id: 'user_123',
+      metadata: { matrix_region_slug: 'region_nbg1' },
+    });
+    const client = createStripeBillingClient({
+      secretKey: 'sk_test_123',
+      stripe: fakeStripe({ checkout: { sessions: { expire: sessionsExpire } } }),
+    });
+
+    await expect(client.expireCheckoutSession?.('cs_open')).resolves.toEqual({
+      status: 'expired',
+      url: null,
+      clerkUserId: 'user_123',
+      priceId: null,
+      regionSlug: 'region_nbg1',
+    });
+    expect(sessionsExpire).toHaveBeenCalledWith('cs_open');
+  });
+
+  it('reconciles an ambiguous expiry against Stripe before releasing local state', async () => {
+    const sessionsExpire = vi.fn().mockRejectedValue(new Error('timeout'));
+    const sessionsRetrieve = vi.fn().mockResolvedValue({
+      status: 'complete',
+      url: null,
+      client_reference_id: 'user_123',
+      metadata: { matrix_region_slug: 'region_fsn1' },
+    });
+    const client = createStripeBillingClient({
+      secretKey: 'sk_test_123',
+      stripe: fakeStripe({ checkout: { sessions: { expire: sessionsExpire, retrieve: sessionsRetrieve } } }),
+    });
+
+    await expect(client.expireCheckoutSession?.('cs_raced')).resolves.toMatchObject({
+      status: 'complete',
+      clerkUserId: 'user_123',
+    });
+    expect(sessionsRetrieve).toHaveBeenCalledWith('cs_raced');
   });
 
   it('retrieves the authoritative recurring amount for legacy subscriptions', async () => {

@@ -34,6 +34,17 @@ import {
   writeOperation,
 } from "./repository-shared.js";
 
+/** `CollaborationDirectoryEventSchema` carries at most eight recipients per event. */
+const DIRECTORY_EVENT_RECIPIENT_LIMIT = 8;
+/** Scopes handled per expiry sweep call; the periodic sweep picks up the rest. */
+const EXPIRY_BATCH_SIZE = 100;
+/**
+ * A project the owner has not shared yet (or whose share is still being published) is not in the
+ * platform directory. Grants chosen then are recorded and audited but not published: activation
+ * publishes the ones still live, so nobody learns of a project before it is shared.
+ */
+const UNPUBLISHED_LIFECYCLES: ReadonlySet<ScopeRow["lifecycle"]> = new Set(["private", "preparing", "recovering"]);
+
 /** Contract limit: grants 100 per scope. */
 export const MAX_GRANTS_PER_SCOPE = 100;
 /** Bound on any in-memory participant/activation enumeration; larger audiences page through listActivations. */
@@ -176,8 +187,10 @@ export class CollaborationCapabilityRepository {
         scope: { ...scope, revision: nextRevision, auth_epoch: Number(scope.auth_epoch) + 1 },
         actorId: input.actorId,
         action: "grant.created",
-        recipients: input.audience.kind === "member" ? [{ actorId: input.audience.actorId }] : [],
+        // A member grant names its grant so the platform can list it and sign an accept-only ticket for it.
+        recipients: input.audience.kind === "member" ? [{ actorId: input.audience.actorId, grantId }] : [],
         discoveryState: "invited",
+        publishDirectory: !UNPUBLISHED_LIFECYCLES.has(scope.lifecycle),
         now,
         reasonCode: `${input.audience.kind}:${input.preset}`,
       });
@@ -250,15 +263,19 @@ export class CollaborationCapabilityRepository {
         grantId: grant.id, scopeId: input.scopeId, state: applied.state, scopeRevision: nextRevision, grantRevision: applied.grantRevision,
       };
       await writeOperation(trx, input, operationKind, scope, result, now, operationExpiresAt);
+      // A member grant the member has not accepted yet stays an invitation in discovery: a preset
+      // change must not tell the platform it was accepted, or the member could never open it.
+      const pendingMember = grant.audience_kind === "member" && applied.state === "pending";
       const recipients = grant.audience_kind === "member" && grant.audience_actor_id
-        ? [{ actorId: grant.audience_actor_id }]
+        ? [{ actorId: grant.audience_actor_id, ...(pendingMember ? { grantId: grant.id } : {}) }]
         : (await this.activeActors(trx, grant.id)).map((actorId) => ({ actorId }));
       await appendMutationRecords(trx, {
         scope: { ...scope, revision: nextRevision, auth_epoch: Number(scope.auth_epoch) + 1 },
         actorId: input.actorId,
         action: auditAction,
         recipients,
-        discoveryState: applied.state === "revoked" ? "revoked" : "accepted",
+        discoveryState: applied.state === "revoked" ? "revoked" : pendingMember ? "invited" : "accepted",
+        publishDirectory: !UNPUBLISHED_LIFECYCLES.has(scope.lifecycle),
         now,
         ...(applied.reasonCode ? { reasonCode: applied.reasonCode } : {}),
       });
@@ -445,16 +462,61 @@ export class CollaborationCapabilityRepository {
     }
   }
 
-  /** Lazily marks expired grants; effective access treats expiry by timestamp regardless. */
-  async expireGrants(): Promise<number> {
+  /**
+   * Marks lapsed grants expired. Effective access already treats expiry by timestamp; this is
+   * what tells the platform, so a member grant that lapsed is withdrawn from its addressee's
+   * `Shared with me` instead of staying listed as pending. One transaction per scope, scope row
+   * first (home lock order), bounded per call; the gateway sweep calls it periodically.
+   */
+  async expireGrants(input: { limit?: number } = {}): Promise<number> {
     const now = this.options.now().toISOString();
-    const rows = await this.db.updateTable("collaboration_grants").set({ state: "expired", updated_at: now })
+    const limit = Math.max(1, Math.min(input.limit ?? EXPIRY_BATCH_SIZE, EXPIRY_BATCH_SIZE));
+    const due = await this.db.selectFrom("collaboration_grants").select("scope_id").distinct()
       .where("state", "in", ["pending", "active"])
       .where("expires_at", "is not", null)
       .where("expires_at", "<=", now)
-      .returning("id")
-      .execute();
-    return rows.length;
+      .orderBy("scope_id").limit(limit).execute();
+    let expired = 0;
+    for (const { scope_id: scopeId } of due) {
+      expired += await this.db.transaction().execute(async (trx) => {
+        const scope = await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", scopeId).forUpdate().executeTakeFirst();
+        if (!scope) return 0;
+        const rows = await trx.updateTable("collaboration_grants")
+          .set({ state: "expired", updated_at: now, revision: sql<number>`revision + 1` })
+          .where("scope_id", "=", scopeId)
+          .where("state", "in", ["pending", "active"])
+          .where("expires_at", "is not", null)
+          .where("expires_at", "<=", now)
+          .returning(["audience_kind", "audience_actor_id"])
+          .execute();
+        const members = rows.flatMap((row) => row.audience_kind === "member" && row.audience_actor_id ? [row.audience_actor_id] : []);
+        if (members.length > 0) {
+          // One discovery row per member and scope: a member who still has other access keeps it listed.
+          const { retaining, invitations } = await actorsWithOtherAccess(trx, scopeId, members, now);
+          const recipientsByState: Array<readonly ["revoked" | "accepted" | "invited", Array<{ actorId: string; invitationId?: string }>]> = [
+            ["revoked", members.filter((actorId) => !retaining.has(actorId) && !invitations.has(actorId)).map((actorId) => ({ actorId }))],
+            ["accepted", members.filter((actorId) => retaining.has(actorId)).map((actorId) => ({ actorId }))],
+            // An invitation the member has not answered stays listed as that invitation.
+            ["invited", members.filter((actorId) => !retaining.has(actorId) && invitations.has(actorId))
+              .map((actorId) => ({ actorId, invitationId: invitations.get(actorId)! }))],
+          ];
+          let current = scope;
+          for (const [state, recipients] of recipientsByState) {
+            // The directory contract carries eight recipients per event, and each event needs its own revision.
+            for (let offset = 0; offset < recipients.length; offset += DIRECTORY_EVENT_RECIPIENT_LIMIT) {
+              current = await advanceScopeAccessRevision(trx, current, now);
+              await appendMutationRecords(trx, {
+                scope: current, actorId: scope.owner_id, action: "grant.expired",
+                recipients: recipients.slice(offset, offset + DIRECTORY_EVENT_RECIPIENT_LIMIT),
+                discoveryState: state, publishDirectory: !UNPUBLISHED_LIFECYCLES.has(scope.lifecycle), now,
+              });
+            }
+          }
+        }
+        return rows.length;
+      });
+    }
+    return expired;
   }
 
   async getGrant(grantId: string): Promise<GrantRecord | null> {
@@ -556,6 +618,39 @@ export class CollaborationCapabilityRepository {
       .where("grant_id", "=", grantId).where("state", "=", "active").limit(MAX_LISTED_PARTICIPANTS).execute();
     return rows.map((row) => row.actor_id);
   }
+}
+
+/**
+ * What else each member still has on the scope: access another way (an active activation of a
+ * live organization grant, or an accepted legacy membership), or an open invitation to answer.
+ * The home still re-checks membership evidence on every request; this only decides what
+ * discovery lists.
+ */
+async function actorsWithOtherAccess(
+  trx: Transaction<OwnerCollaborationDatabase>, scopeId: string, actorIds: readonly string[], now: string,
+): Promise<{ retaining: Set<string>; invitations: Map<string, string> }> {
+  const viaOrganization = await trx.selectFrom("collaboration_grant_activations as a")
+    .innerJoin("collaboration_grants as g", "g.id", "a.grant_id")
+    .select("a.actor_id")
+    .where("g.scope_id", "=", scopeId).where("g.audience_kind", "=", "organization").where("g.state", "=", "active")
+    .where((eb) => eb.or([eb("g.expires_at", "is", null), eb("g.expires_at", ">", now)]))
+    .where("a.state", "=", "active").where("a.actor_id", "in", actorIds)
+    .execute();
+  const viaMembership = await trx.selectFrom("collaboration_members").select("actor_id")
+    .where("scope_id", "=", scopeId).where("status", "=", "accepted").where("dispositioned_at", "is", null)
+    .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", now)]))
+    .where("actor_id", "in", actorIds)
+    .execute();
+  const pendingInvitations = await trx.selectFrom("collaboration_members").select(["actor_id", "invitation_id"])
+    .where("scope_id", "=", scopeId).where("status", "=", "pending").where("dispositioned_at", "is", null)
+    .where("invitation_id", "is not", null)
+    .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", now)]))
+    .where("actor_id", "in", actorIds)
+    .execute();
+  return {
+    retaining: new Set([...viaOrganization, ...viaMembership].map((row) => row.actor_id)),
+    invitations: new Map(pendingInvitations.map((row) => [row.actor_id, row.invitation_id!])),
+  };
 }
 
 /** A changed access decision advances discovery and authorization under the scope lock. */

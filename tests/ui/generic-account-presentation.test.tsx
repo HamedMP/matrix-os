@@ -19,7 +19,7 @@ describe("harness-owned account presentation", () => {
       gatewayPolicy={null} attempt={null} disabled={false} canLogin={false} canLogout={false} canRemove={false} canReassign={false}
       onMutate={vi.fn()} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()} />);
     const card = within(screen.getByTestId(`native-account-${selected.id}`));
-    expect(card.getByText(`${usedBasisPoints / 100}% used`)).toBeVisible();
+    expect(card.getByText(`${Math.round(remainingBasisPoints / 100)}% left`)).toBeVisible();
     expect(card.getByRole("progressbar", { name: "pi account remaining allowance" })).toHaveAttribute("value", String(remainingBasisPoints));
   });
   it.each(["pi", "opencode"] as const)("describes %s native authentication without inventing a connected Matrix account", async (harness) => {

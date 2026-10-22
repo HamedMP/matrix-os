@@ -34,6 +34,10 @@ export function canonicalChatSafeError(
 }
 
 export function mapChatAgentContextError(error: ChatAgentContextError): CanonicalChatOrchestrationError {
+  if (error.code === "model_unavailable") {
+    return new CanonicalChatOrchestrationError(canonicalChatSafeError(
+      "model_unavailable", "The selected model is not available.", false, ["select_provider"]), 400);
+  }
   if (error.code === "workflow_setup_required" || error.code === "workflow_funding_required") {
     return new CanonicalChatOrchestrationError(canonicalChatSafeError(
       error.code === "workflow_setup_required" ? "capability_mismatch" : "service_unavailable",

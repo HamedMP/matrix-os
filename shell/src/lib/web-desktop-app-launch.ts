@@ -1,13 +1,32 @@
-import type { AppEntry } from "@/hooks/useWindowManager";
-import type { DesktopMode } from "@/stores/desktop-mode";
+import { useWindowManager, type AppEntry } from "@/hooks/useWindowManager";
+import { useDesktopMode, type DesktopMode } from "@/stores/desktop-mode";
+import { getGatewayUrl, gatewayAssetUrl } from "@/lib/gateway";
 import { iconUrlForSlug } from "@/lib/app-launch";
 import {
   DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+  osViewIconUrlForApp,
   OS_VIEW_DESTINATION_PATHS,
   OS_VIEW_LABELS,
   isOsViewDestinationPath,
   otherOsViewMode,
+  remoteBrowserSurfaceForPath,
+  REMOTE_BROWSER_PATHS,
 } from "@matrix-os/contracts";
+
+/** Reveal the desktop without discarding open apps or their saved geometry. */
+export function showWebDesktop(minimizeWindow: (id: string) => void = useWindowManager.getState().minimizeWindow): void {
+  const state = useWindowManager.getState();
+  useDesktopMode.getState().setMode("desktop");
+  state.exitFullscreen();
+  for (const windowRecord of state.windows) {
+    if (!windowRecord.minimized) minimizeWindow(windowRecord.id);
+  }
+}
+
+/** Canonical window-manager opening reveals the destination in one state change. */
+export function openWebAppBridgeWindow(name: string, path: string, openWindow: (name: string, path: string) => void): void {
+  openWindow(name, path);
+}
 
 export type WebDesktopBuiltInLaunch =
   | { kind: "external"; url: string }
@@ -18,12 +37,9 @@ export type WebDesktopBuiltInLaunch =
 export { isOsViewDestinationPath };
 
 export function resolveWebDesktopBuiltInLaunch(path: string): WebDesktopBuiltInLaunch | null {
-  if (
-    path === "__browser__"
-    || path === "apps/browser/index.html"
-    || path === "apps/browser/dist/index.html"
-  ) {
-    return { kind: "external", url: "https://www.google.com" };
+  const browserSurface = remoteBrowserSurfaceForPath(path);
+  if (browserSurface) {
+    return { kind: "app", name: browserSurface === "browser" ? "Browser" : "Cloud desktop", path: REMOTE_BROWSER_PATHS[browserSurface] };
   }
   if (path === "__vscode__") {
     return { kind: "external-code" };
@@ -45,7 +61,7 @@ function findCanonicalApp(apps: readonly AppEntry[], paths: readonly string[]): 
 }
 
 function namedDesktopApp(app: AppEntry | undefined, fallback: AppEntry): AppEntry {
-  return app ? { ...app, name: fallback.name } : fallback;
+  return app ? { ...app, name: fallback.name, path: fallback.path } : fallback;
 }
 
 export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
@@ -60,18 +76,20 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
     { name: "Editor", path: "__editor__" },
     { name: "VS Code", path: "__vscode__", iconUrl: "/vscode.png" },
     { name: "Settings", path: "__settings__" },
-    { name: "Plugins", path: "__plugins__" },
+    { name: "Connect Apps", path: "__plugins__" },
     namedDesktopApp(findCanonicalApp(apps, browserPaths), { name: "Browser", path: "__browser__" }),
+    { name: "Cloud desktop", path: REMOTE_BROWSER_PATHS.desktop },
     namedDesktopApp(findCanonicalApp(apps, notesPaths), { name: "Notes", path: "apps/notes/index.html" }),
     namedDesktopApp(findCanonicalApp(apps, whiteboardPaths), { name: "Whiteboard", path: "apps/whiteboard/index.html" }),
   ];
   const firstClassPaths = new Set([
     ...DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+    REMOTE_BROWSER_PATHS.desktop,
     ...browserPaths,
     ...notesPaths,
     ...whiteboardPaths,
   ]);
-  return [...firstClass, ...apps.filter((app) => !firstClassPaths.has(app.path))];
+  return [...firstClass.map(app => ({ ...app, iconUrl: webShellIconUrlForApp(app) })), ...apps.filter((app) => !firstClassPaths.has(app.path))];
 }
 
 export function buildWebDesktopLauncherApps(
@@ -82,7 +100,23 @@ export function buildWebDesktopLauncherApps(
   const viewDestination: AppEntry = {
     name: `Web ${OS_VIEW_LABELS[destinationMode]}`,
     path: OS_VIEW_DESTINATION_PATHS[destinationMode],
-    iconUrl: iconUrlForSlug(destinationMode),
+    iconUrl: gatewayAssetUrl(`/system-app-icons/v3/${destinationMode}.png`),
   };
   return [viewDestination, ...buildWebDesktopIconApps(apps)];
+}
+
+
+/** Owner selections win; shell destinations use the same artwork in every web presentation. */
+export function webShellIconUrlForApp(app: { path: string; iconUrl?: string; icon?: string; slug?: string }): string | undefined {
+  if (app.iconUrl) return app.iconUrl;
+  if (app.path === OS_VIEW_DESTINATION_PATHS.canvas || app.path === OS_VIEW_DESTINATION_PATHS.desktop) {
+    const mode = app.path === OS_VIEW_DESTINATION_PATHS.canvas ? "canvas" : "desktop";
+    return gatewayAssetUrl(`/system-app-icons/v3/${mode}.png`);
+  }
+  return osViewIconUrlForApp(app, getGatewayUrl()) ?? iconUrlForSlug(app.icon ?? app.slug);
+}
+
+export function webGalleryLauncherIconUrl(apps: readonly { path: string; iconUrl?: string }[] = []): string {
+  const gallery = apps.filter(app => app.path === "matrix-app:app-gallery" || /^apps\/app-gallery\/(?:dist\/)?index\.html$/.test(app.path));
+  return gallery.length === 1 && gallery[0]?.iconUrl ? gallery[0].iconUrl : gatewayAssetUrl("/icons/v3-app-gallery.png")!;
 }

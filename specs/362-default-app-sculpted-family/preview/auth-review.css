@@ -1,0 +1,4 @@
+@import "tailwindcss";
+@import "../../../shell/src/app/fonts.css";
+@source "../../../shell/src/components/auth";
+body { margin: 0; }

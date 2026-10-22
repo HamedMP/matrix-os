@@ -137,7 +137,7 @@ describe("desktop integrations settings section", () => {
       .toBe("https://cdn.test/github.png");
   });
 
-  it("renders the Figma-style unified integration grid", async () => {
+  it("renders the grouped Connect Apps catalog", async () => {
     const api = makeApi({
       available: [
         { id: "github", name: "GitHub", category: "developer", logoUrl: "https://cdn.test/github.png", actions: {} },
@@ -164,11 +164,11 @@ describe("desktop integrations settings section", () => {
     expect(screen.getByText("Send messages and manage channels").className).toContain("text-sm");
     expect(screen.getByTestId("integration-action-slack").getAttribute("data-state")).toBe("connected");
     expect(screen.getByTestId("integration-action-github").getAttribute("data-state")).toBe("available");
-    expect(screen.getByTestId("integration-connect-github").className).toContain("rounded-[8px]");
+    expect(screen.getByTestId("integration-connect-github").className).toContain("rounded-full");
     expect(Array.from(screen.getByTestId("integrations-grid").querySelectorAll("[data-testid^='integration-card-']")).map((card) => card.getAttribute("data-testid"))).toEqual([
+      "integration-card-linear",
       "integration-card-slack",
       "integration-card-github",
-      "integration-card-linear",
     ]);
   });
 
@@ -365,6 +365,19 @@ describe("desktop integrations settings section", () => {
 
     expect(previousApi.post).not.toHaveBeenCalledWith("/api/integrations/sync", {});
     expect(screen.queryByText("Personal")).toBeNull();
+  });
+
+  it("allows disconnecting a connected account missing from the catalog", async () => {
+    const api = makeApi({ available: [] });
+    useConnection.setState({ api: api as never });
+    render(<IntegrationsSettingsSection />);
+    await waitFor(() => expect(screen.getByText("Work")).not.toBeNull());
+    expect(screen.getByTestId("integration-connect-gmail").hasAttribute("disabled")).toBe(true);
+    expect(screen.getByTestId(`integration-disconnect-${CONN_ID}`).hasAttribute("disabled")).toBe(false);
+    fireEvent.click(screen.getByTestId(`integration-disconnect-${CONN_ID}`));
+    await waitFor(() => expect(screen.getByText(/Disconnect Work\?/)).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: /^Disconnect$/ }));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith(`/api/integrations/${CONN_ID}`));
   });
 
   it("disconnects an account after confirmation", async () => {

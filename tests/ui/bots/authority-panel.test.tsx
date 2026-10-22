@@ -15,6 +15,13 @@ const view: BotAuthorityView = {
 };
 
 describe("bot authority panel", () => {
+  it("shows the narrow Gmail label authority and preserves its boundaries", () => {
+    render(<BotAuthorityPanel view={{ ...view, grants: [{ ...view.grants[0], effects: ["read", "label"] }] }}
+      onRevoke={vi.fn()} onMemory={vi.fn()} />);
+    expect(screen.getByText(/read Inbox.*add Jev classification labels/)).toBeTruthy();
+    expect(screen.getByText(/preserve existing labels/i)).toBeTruthy();
+    expect(screen.getByText(/no archive, send, delete, or mark read/i)).toBeTruthy();
+  });
   it("shows grants and memory provenance, then confirms only after success", async () => {
     let finish!: () => void;
     const confirm = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));

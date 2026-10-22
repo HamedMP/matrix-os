@@ -39,23 +39,14 @@ function setup(fetchImpl: typeof fetch, resolveCredentials = async () => ({ env:
 }
 
 describe("run-owned broker inference cancellation", () => {
-  it("never sends Codex inference after cancellation while owner identity resolves", async () => {
-    let finish!: (value: { url: string; headers: { authorization: string; "chatgpt-account-id": string } }) => void;
-    const resolveIdentity = vi.fn(async () => new Promise<{ url: string; headers: { authorization: string; "chatgpt-account-id": string } }>((resolve) => { finish = resolve; }));
-    const fetchImpl = vi.fn<typeof fetch>(async () => new Response("done"));
+  it("refuses legacy Codex inference before consulting owner identity even for a live registry binding", async () => {
+    const resolveIdentity = vi.fn(); const fetchImpl = vi.fn<typeof fetch>(async () => new Response("done"));
     const fixture = setup(fetchImpl, undefined, resolveIdentity);
-    const codex = { ...binding, accessSourceId: "owner_openai_profile" as const,
-      route: { ...binding.route, api: "openai-responses" as const, modelId: "gpt-5.6-luna" } };
+    const codex = { ...binding, accessSourceId: "owner_openai_profile" as const, route: { ...binding.route, api: "openai-responses" as const, modelId: "gpt-5.6-luna" } };
     fixture.registry.bind(codex);
     try {
-      const pending = fixture.actions.handleFrame({ ...frame(codex), action: "inference.responses", path: "/v1/responses",
-        body: JSON.stringify({ model: codex.route.modelId, stream: true, input: [] }) });
-      await vi.advanceTimersByTimeAsync(0); expect(resolveIdentity).toHaveBeenCalledTimes(1);
-      fixture.registry.cancelInference(codex);
-      finish({ url: "https://chatgpt.com/backend-api/codex/responses", headers: { authorization: "Bearer test-only", "chatgpt-account-id": "test-only" } });
-      const result = await pending;
-      expect(fetchImpl).not.toHaveBeenCalled();
-      expect(result).toMatchObject({ ok: false, error: "action_denied" });
+      const result = await fixture.actions.handleFrame({ ...frame(codex), action: "inference.responses", path: "/v1/responses", body: JSON.stringify({ model: codex.route.modelId, stream: true, input: [] }) });
+      expect(result).toMatchObject({ ok: false, error: "provider_unavailable" }); expect(resolveIdentity).not.toHaveBeenCalled(); expect(fetchImpl).not.toHaveBeenCalled();
     } finally { fixture.queue.close(); fixture.registry.shutdown(); }
   });
 

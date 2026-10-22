@@ -6,13 +6,16 @@ on:
     paths:
       - ".github/workflows/platform-cloud-run.yml"
       - "packages/platform/**"
+      - "packages/gateway/src/integrations/**"
       - "packages/sync-client/**"
       - "packages/observability/**"
       - "packages/clerk-sync/**"
       - "shell/**"
       - "distro/customer-vps/**"
       - "scripts/start-platform-cloud-run.sh"
+      - "scripts/ci/platform-account-deletion-env.sh"
       - "scripts/ci/platform-whatsapp-env.sh"
+      - "scripts/ci/platform-google-analytics-env.sh"
       - "scripts/render-platform-worker-service.mjs"
       - "scripts/select-legacy-platform-worker-tags.mjs"
       - "Dockerfile.platform"
@@ -69,6 +72,11 @@ jobs:
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL }}
       WHATSAPP_ENABLED: ${{ vars.WHATSAPP_ENABLED || 'false' }}
       WHATSAPP_ENCRYPTION_KEY_VERSION: ${{ vars.WHATSAPP_ENCRYPTION_KEY_VERSION || '1' }}
+      ACCOUNT_DELETION_CONFIGURED: ${{ vars.ACCOUNT_DELETION_CONFIGURED || 'false' }}
+      ACCOUNT_DELETION_ENABLED: ${{ vars.ACCOUNT_DELETION_ENABLED || 'false' }}
+      ACCOUNT_DELETION_SECRET_VERSION: ${{ vars.ACCOUNT_DELETION_SECRET_VERSION || '1' }}
+      CLERK_USER_WEBHOOK_SECRET_VERSION: ${{ vars.CLERK_USER_WEBHOOK_SECRET_VERSION || '1' }}
+      APPLE_SIGN_IN_SECRET_VERSION: ${{ vars.APPLE_SIGN_IN_SECRET_VERSION || '1' }}
       MATRIX_API_ORIGIN: ${{ vars.MATRIX_API_ORIGIN }}
       # Personal remote-server broker; independent of the hosted Matrix MCP endpoint.
       CUSTOM_MCP_ENABLED: ${{ vars.CUSTOM_MCP_ENABLED || 'false' }}
@@ -82,16 +90,23 @@ jobs:
       MATRIX_MCP_ALLOWED_ORIGINS: ${{ vars.MATRIX_MCP_ALLOWED_ORIGINS }}
       MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: ${{ vars.MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID || 'collaboration-v1' }}
       MATRIX_COLLABORATION_ALLOWED_ORIGINS: ${{ vars.MATRIX_APP_URL }}
+      # Environment configuration takes precedence over the repository variable.
+      MATRIX_INTERNAL_CLERK_ORG_ID: ${{ vars.MATRIX_INTERNAL_CLERK_ORG_ID }}
       MATRIX_APP_URL: ${{ vars.MATRIX_APP_URL }}
       MATRIX_APP_DOMAIN_HOSTS: ${{ vars.MATRIX_APP_DOMAIN_HOSTS }}
       MATRIX_CODE_DOMAIN_HOSTS: ${{ vars.MATRIX_CODE_DOMAIN_HOSTS }}
       CUSTOMER_VPS_IMAGE_VERSION: 'stable'
       ATS_BOOKING_BASE_URL: ${{ vars.ATS_BOOKING_BASE_URL }}
+      ATS_GROUP_INTAKE_ENABLED: ${{ vars.ATS_GROUP_INTAKE_ENABLED || 'false' }}
       GOLDEN_SNAPSHOT_BUILDS_ENABLED: ${{ vars.GOLDEN_SNAPSHOT_BUILDS_ENABLED || 'false' }}
       GOLDEN_SNAPSHOTS_ENABLED: 'true'
       GOLDEN_SNAPSHOT_ROLLOUT_PERCENT: '100'
       MATRIX_CARD_TRIALS_ENABLED: ${{ vars.MATRIX_CARD_TRIALS_ENABLED || 'true' }}
       MATRIX_CARD_TRIAL_DAYS: ${{ vars.MATRIX_CARD_TRIAL_DAYS || '3' }}
+      MATRIX_STARTER_TRIAL_DAYS: ${{ vars.MATRIX_STARTER_TRIAL_DAYS || '14' }}
+      GOOGLE_TAG_MANAGER_ID: ${{ vars.GOOGLE_TAG_MANAGER_ID || 'GTM-5D8ZT4HF' }}
+      GOOGLE_ANALYTICS_MEASUREMENT_ID: ${{ vars.GOOGLE_ANALYTICS_MEASUREMENT_ID }}
+      GOOGLE_ANALYTICS_API_SECRET_VERSION: ${{ vars.GOOGLE_ANALYTICS_API_SECRET_VERSION || '1' }}
       MATRIX_PREBILLING_PROVISIONING_ENABLED: 'true'
       MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT: '100'
       MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE: ${{ vars.MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE || '4' }}
@@ -109,6 +124,9 @@ jobs:
       MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: ${{ vars.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED || 'false' }}
       MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: ${{ vars.MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED || 'false' }}
       MATRIX_FUNDED_AI_RUNTIME_ENABLED: ${{ vars.MATRIX_FUNDED_AI_RUNTIME_ENABLED || 'false' }}
+      MATRIX_FUNDED_HOST_CONFIG_ENABLED: ${{ vars.MATRIX_FUNDED_HOST_CONFIG_ENABLED || 'false' }}
+      MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS: ${{ vars.MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS }}
+      MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH: ${{ vars.MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH }}
       MATRIX_FUNDED_AI_RELAY_URL: ${{ vars.MATRIX_FUNDED_AI_RELAY_URL }}
       MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT || '0' }}
       MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT || '0' }}
@@ -120,6 +138,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Validate Private Preview organization configuration
+        run: |
+          set -euo pipefail
+          if [ "${DEPLOY_ENVIRONMENT:-}" = "production" ] && [ -z "${MATRIX_INTERNAL_CLERK_ORG_ID:-}" ]; then
+            echo "MATRIX_INTERNAL_CLERK_ORG_ID is required for production Private Preview access." >&2
+            exit 1
+          fi
+          # Empty staging configuration keeps Private Preview disabled; never infer an organization.
+          if [ -n "${MATRIX_INTERNAL_CLERK_ORG_ID:-}" ] && ! [[ "$MATRIX_INTERNAL_CLERK_ORG_ID" =~ ^org_[A-Za-z0-9]{1,124}$ ]]; then
+            echo "MATRIX_INTERNAL_CLERK_ORG_ID must be a valid Clerk organization id when configured." >&2
+            exit 1
+          fi
 
       - name: Validate deployment configuration
         run: |
@@ -194,6 +225,12 @@ jobs:
           esac
           scripts/ci/platform-speech-production-env.sh validate
           scripts/ci/platform-whatsapp-env.sh validate
+          scripts/ci/platform-account-deletion-env.sh validate
+          bash scripts/ci/platform-google-analytics-env.sh validate
+          if ! [[ "$MATRIX_STARTER_TRIAL_DAYS" =~ ^(0*[1-9]|0*[12][0-9]|0*30)$ ]]; then
+            echo "MATRIX_STARTER_TRIAL_DAYS must be an integer from 1 to 30." >&2
+            exit 1
+          fi
           if ! [[ "$MATRIX_CARD_TRIAL_DAYS" =~ ^(0*[1-9]|0*[12][0-9]|0*30)$ ]]; then
             echo "MATRIX_CARD_TRIAL_DAYS must be an integer from 1 to 30." >&2
             exit 1
@@ -202,7 +239,7 @@ jobs:
             echo "MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE must be a positive integer." >&2
             exit 1
           fi
-          for name in MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED MATRIX_FUNDED_AI_RUNTIME_ENABLED; do
+          for name in MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED MATRIX_FUNDED_AI_RUNTIME_ENABLED MATRIX_FUNDED_HOST_CONFIG_ENABLED; do
             case "${!name}" in
               true|false) ;;
               *)
@@ -211,11 +248,14 @@ jobs:
                 ;;
             esac
           done
-          if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" != "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" ]; then
-            echo "Funded AI control-plane and runtime flags must be enabled or disabled together." >&2
+          if [ "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" = "true" ] &&
+             [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" != "true" ]; then
+            echo "Funded AI runtime provisioning requires the control plane." >&2
             exit 1
           fi
-          if [ "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" = "true" ]; then
+          # Control-only deployment supports operator canary acceptance before
+          # customer provisioning. Its paid probes still need bounded budgets.
+          if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
             for name in MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT; do
               if ! [[ "${!name:-}" =~ ^[1-9][0-9]{0,4}$ ]]; then
                 echo "$name must be a positive bounded integer when funded AI is enabled." >&2
@@ -232,6 +272,31 @@ jobs:
               echo "MATRIX_FUNDED_AI_RELAY_URL must be an HTTPS origin when funded AI is enabled." >&2
               exit 1
             fi
+          fi
+          if [ "$MATRIX_FUNDED_HOST_CONFIG_ENABLED" = "true" ]; then
+            python3 - <<'PYCONFIG'
+          import datetime, os, re, uuid
+          def reject():
+              raise SystemExit("Funded host configuration is misconfigured")
+          if os.environ["DEPLOY_ENVIRONMENT"] != "production" or os.environ["MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED"] != "true":
+              reject()
+          raw = os.environ.get("MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS", "")
+          ids = raw.split(",") if raw else []
+          if len(ids) > 100 or len(set(ids)) != len(ids): reject()
+          for value in ids:
+              try:
+                  if str(uuid.UUID(value)) != value: reject()
+              except ValueError: reject()
+          if not re.fullmatch(r"https://matrix-ai-relay-production-[a-z0-9]+(?:-[a-z0-9]+)?\.a\.run\.app", os.environ.get("MATRIX_FUNDED_AI_RELAY_URL", "")): reject()
+          if not re.fullmatch(r"[a-f0-9]{40}", os.environ.get("GITHUB_SHA", "")): reject()
+          stamp = os.environ.get("MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH", "")
+          if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", stamp): reject()
+          try:
+              expiry = datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+          except ValueError: reject()
+          remaining = expiry - datetime.datetime.now(datetime.timezone.utc)
+          if not datetime.timedelta(0) < remaining <= datetime.timedelta(days=7): reject()
+          PYCONFIG
           fi
           case "$MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED" in
             true)
@@ -391,20 +456,46 @@ jobs:
             ai-relay-control-token
             ai-funded-credential-hash-secret
           )
+          accessor_member="serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}"
+          validate_access_policy() {
+            jq -e '
+              type == "object" and
+              (.bindings == null or (.bindings | type == "array")) and
+              all(.bindings[]?;
+                type == "object" and (.role | type == "string") and
+                (.members | type == "array") and
+                all(.members[]; type == "string"))
+            ' >/dev/null
+          }
+          has_unconditional_accessor() {
+            jq -e --arg member "$accessor_member" '
+              any(.bindings[]?;
+                .role == "roles/secretmanager.secretAccessor" and
+                .condition == null and
+                any(.members[]?; . == $member))
+            ' >/dev/null
+          }
+          project_policy=""
           for secret_name in "${required_funded_ai_secrets[@]}"; do
             gcloud secrets versions describe latest \
               --secret "$secret_name" \
               --project "$GCP_PROJECT_ID" >/dev/null
-            accessor_member="$(
-              gcloud secrets get-iam-policy "$secret_name" \
-                --project "$GCP_PROJECT_ID" \
-                --flatten='bindings[].members' \
-                --filter="bindings.role:roles/secretmanager.secretAccessor AND bindings.members:serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" \
-                --format='value(bindings.members)' \
-                | head -1
-            )"
-            if [ "$accessor_member" != "serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}" ]; then
-              echo "$secret_name must grant roles/secretmanager.secretAccessor to ${CLOUD_RUN_SERVICE_ACCOUNT}." >&2
+            secret_policy="$(gcloud secrets get-iam-policy "$secret_name" \
+              --project "$GCP_PROJECT_ID" --format=json --quiet)"
+            # Malformed/unreadable IAM metadata is an error, not absent access.
+            printf '%s\n' "$secret_policy" | validate_access_policy
+            if printf '%s\n' "$secret_policy" | has_unconditional_accessor; then
+              continue
+            fi
+            # Project grants are inherited by secrets. Inspect existing access;
+            # never grant a new role or assume a conditional grant is effective.
+            if [ -z "$project_policy" ]; then
+              project_policy="$(gcloud projects get-iam-policy "$GCP_PROJECT_ID" \
+                --project "$GCP_PROJECT_ID" --format=json --quiet)"
+              printf '%s\n' "$project_policy" | validate_access_policy
+            fi
+            if ! printf '%s\n' "$project_policy" | has_unconditional_accessor; then
+              echo "$secret_name requires verified unconditional secret or project accessor access for ${CLOUD_RUN_SERVICE_ACCOUNT}." >&2
               exit 1
             fi
           done
@@ -432,6 +523,10 @@ jobs:
 
       - name: Verify opted-in WhatsApp secrets
         run: scripts/ci/platform-whatsapp-env.sh preflight-secrets
+
+      - name: Verify account deletion secrets
+        if: ${{ env.ACCOUNT_DELETION_CONFIGURED == 'true' }}
+        run: scripts/ci/platform-account-deletion-env.sh preflight-secrets
 
       - name: Verify golden snapshot operator secret
         run: |
@@ -473,6 +568,16 @@ jobs:
             ATS_ADMIN_SECRET=ats-admin-secret
           )
 
+          if [ "$ATS_GROUP_INTAKE_ENABLED" = "true" ]; then
+            required_ats_secrets+=(
+              ATS_MAIL_INGEST_SECRET=ats-mail-ingest-secret
+              ATS_SLACK_BOT_TOKEN=ats-slack-bot-token
+              ATS_SLACK_CHANNEL_ID=ats-slack-channel-id
+            )
+          elif [ "$ATS_GROUP_INTAKE_ENABLED" != "false" ]; then
+            echo "ATS_GROUP_INTAKE_ENABLED must be true or false." >&2
+            exit 1
+          fi
           for entry in "${required_ats_secrets[@]}"; do
             env_name="${entry%%=*}"
             secret_name="${entry#*=}"
@@ -831,6 +936,16 @@ jobs:
           ats_env_bindings=""
           ats_secret_bindings=""
           reddit_secret_bindings=""
+          google_env_bindings="$(bash scripts/ci/platform-google-analytics-env.sh env-bindings)"
+          google_secret_bindings="$(bash scripts/ci/platform-google-analytics-env.sh secret-bindings)"
+          if [ -n "$GOOGLE_ANALYTICS_MEASUREMENT_ID" ]; then
+            google_secret_state="$(gcloud secrets versions describe "$GOOGLE_ANALYTICS_API_SECRET_VERSION" \
+              --secret google-analytics-billing-api-secret --project "$GCP_PROJECT_ID" --format='value(state)')"
+            if [ "$google_secret_state" != "ENABLED" ]; then
+              echo "Google billing measurement requires an enabled pinned secret version." >&2
+              exit 1
+            fi
+          fi
           custom_mcp_secret_bindings=""
           if [ "$CUSTOM_MCP_ENABLED" = "true" ]; then
             custom_mcp_secret_bindings=",MCP_CREDENTIAL_ENCRYPTION_KEY=mcp-credential-encryption-key:${MCP_CREDENTIAL_ENCRYPTION_KEY_VERSION}"
@@ -838,10 +953,17 @@ jobs:
           if [ "$DEPLOY_ENVIRONMENT" = "production" ]; then
             ats_env_bindings="|ATS_BOOKING_BASE_URL=${ATS_BOOKING_BASE_URL}"
             ats_secret_bindings=",ATS_DATABASE_URL=ats-database-url:latest,ATS_INGEST_SECRET=ats-ingest-secret:latest,ATS_ADMIN_SECRET=ats-admin-secret:latest"
+            if [ "$ATS_GROUP_INTAKE_ENABLED" = "true" ]; then
+              ats_secret_bindings="${ats_secret_bindings},ATS_MAIL_INGEST_SECRET=ats-mail-ingest-secret:latest,ATS_SLACK_BOT_TOKEN=ats-slack-bot-token:latest,ATS_SLACK_CHANNEL_ID=ats-slack-channel-id:latest"
+            fi
             reddit_secret_bindings=",REDDIT_CONVERSIONS_ACCESS_TOKEN=reddit-conversions-access-token:latest"
           fi
 
           funded_ai_env_bindings="|MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=${MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED}|MATRIX_FUNDED_AI_RUNTIME_ENABLED=${MATRIX_FUNDED_AI_RUNTIME_ENABLED}|MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED=${MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED}"
+          funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_HOST_CONFIG_ENABLED=${MATRIX_FUNDED_HOST_CONFIG_ENABLED}"
+          if [ "$MATRIX_FUNDED_HOST_CONFIG_ENABLED" = "true" ]; then
+            funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS=${MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS}|MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH=${MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH}|MATRIX_FUNDED_HOST_CONFIG_SOURCE_SHA=${GITHUB_SHA}"
+          fi
           funded_ai_secret_bindings=""
           if [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" = "true" ]; then
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_RELAY_URL=${MATRIX_FUNDED_AI_RELAY_URL}"
@@ -854,6 +976,7 @@ jobs:
           speech_env_bindings="|PLATFORM_SPEECH_ENABLED=${PLATFORM_SPEECH_ENABLED}|MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED=${MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED}|PLATFORM_SPEECH_PROVIDER=${PLATFORM_SPEECH_PROVIDER}|PLATFORM_SPEECH_MODEL=${PLATFORM_SPEECH_MODEL}|PLATFORM_SPEECH_POLICY_REVISION=${PLATFORM_SPEECH_POLICY_REVISION}|PLATFORM_SPEECH_MICROUSD_PER_MINUTE=${PLATFORM_SPEECH_MICROUSD_PER_MINUTE}|PLATFORM_SPEECH_FUNDING_SOURCES=${PLATFORM_SPEECH_FUNDING_SOURCES}|PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD=${PLATFORM_SPEECH_MONTHLY_BUDGET_MICROUSD}|PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD=${PLATFORM_SPEECH_MONTHLY_PROMOTIONAL_CREDIT_MICROUSD}|PLATFORM_SPEECH_OWNER_AUDIO_ENABLED=${PLATFORM_SPEECH_OWNER_AUDIO_ENABLED}"
           speech_secret_bindings=""
           whatsapp_secret_bindings="$(scripts/ci/platform-whatsapp-env.sh secret-bindings)"
+          account_deletion_secret_bindings="$(scripts/ci/platform-account-deletion-env.sh secret-bindings)"
           if [ "$PLATFORM_SPEECH_ENABLED" = "true" ]; then
             speech_secret_bindings=",PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret:latest"
           fi
@@ -875,8 +998,8 @@ jobs:
             --ingress all \
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
-            --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_BACKGROUND_WORKERS_ENABLED=false|PLATFORM_PORT=8080|PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL}|MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN}|CUSTOMER_VPS_ENABLED=true|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION}|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS}|MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS}|NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL}|MATRIX_BILLING_PROVIDER=stripe|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED}|MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT}|MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE}|POSTHOG_HOST=https://eu.i.posthog.com|POSTHOG_API_HOST=https://eu.i.posthog.com|NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST}|NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST}|R2_PREFIX_ROOT=matrixos-sync|GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED}|GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED}|GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${MCP_OAUTH_CALLBACK_URL}|MCP_OAUTH_CLIENT_ID=${MCP_OAUTH_CLIENT_ID}|MATRIX_MCP_ENABLED=${MATRIX_MCP_ENABLED}|MATRIX_MCP_RESOURCE_URL=${MATRIX_MCP_RESOURCE_URL}|MATRIX_MCP_OAUTH_ISSUER=${MATRIX_MCP_OAUTH_ISSUER}|MATRIX_MCP_OAUTH_JWKS_URL=${MATRIX_MCP_OAUTH_JWKS_URL}|MATRIX_MCP_ALLOWED_ORIGINS=${MATRIX_MCP_ALLOWED_ORIGINS}|MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID=${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID}|MATRIX_COLLABORATION_ALLOWED_ORIGINS=${MATRIX_COLLABORATION_ALLOWED_ORIGINS}|REDDIT_PIXEL_ID=a2_jo0odxapssmi${ats_env_bindings}${funded_ai_env_bindings}${speech_env_bindings}" \
-            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ENDPOINT=r2-endpoint:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,POSTHOG_CONVERSATIONS_IDENTITY_SECRET=posthog-conversations-identity-secret:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest,MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys:latest,CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET=clerk-organization-webhook-signing-secret:latest${ats_secret_bindings}${reddit_secret_bindings}${custom_mcp_secret_bindings}${funded_ai_secret_bindings}${speech_secret_bindings}${whatsapp_secret_bindings}" \
+            --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_BACKGROUND_WORKERS_ENABLED=false|PLATFORM_PORT=8080|PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL}|MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN}|CUSTOMER_VPS_ENABLED=true|MATRIX_INTERNAL_CLERK_ORG_ID=${MATRIX_INTERNAL_CLERK_ORG_ID:-}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION}|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS}|MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS}|NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL}|MATRIX_BILLING_PROVIDER=stripe|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|MATRIX_STARTER_TRIAL_DAYS=${MATRIX_STARTER_TRIAL_DAYS}|MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED}|MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT}|MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE}|ACCOUNT_DELETION_CONFIGURED=${ACCOUNT_DELETION_CONFIGURED}|ACCOUNT_DELETION_ENABLED=${ACCOUNT_DELETION_ENABLED}|POSTHOG_HOST=https://eu.i.posthog.com|POSTHOG_API_HOST=https://eu.i.posthog.com|NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST}|NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST}|R2_PREFIX_ROOT=matrixos-sync|GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED}|GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED}|GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${MCP_OAUTH_CALLBACK_URL}|MCP_OAUTH_CLIENT_ID=${MCP_OAUTH_CLIENT_ID}|MATRIX_MCP_ENABLED=${MATRIX_MCP_ENABLED}|MATRIX_MCP_RESOURCE_URL=${MATRIX_MCP_RESOURCE_URL}|MATRIX_MCP_OAUTH_ISSUER=${MATRIX_MCP_OAUTH_ISSUER}|MATRIX_MCP_OAUTH_JWKS_URL=${MATRIX_MCP_OAUTH_JWKS_URL}|MATRIX_MCP_ALLOWED_ORIGINS=${MATRIX_MCP_ALLOWED_ORIGINS}|MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID=${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID}|MATRIX_COLLABORATION_ALLOWED_ORIGINS=${MATRIX_COLLABORATION_ALLOWED_ORIGINS}|REDDIT_PIXEL_ID=a2_jo0odxapssmi${ats_env_bindings}${funded_ai_env_bindings}${speech_env_bindings}${google_env_bindings}" \
+            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ENDPOINT=r2-endpoint:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,POSTHOG_CONVERSATIONS_IDENTITY_SECRET=posthog-conversations-identity-secret:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest,MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys:latest,CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET=clerk-organization-webhook-signing-secret:latest${ats_secret_bindings}${reddit_secret_bindings}${custom_mcp_secret_bindings}${funded_ai_secret_bindings}${speech_secret_bindings}${whatsapp_secret_bindings}${google_secret_bindings}${account_deletion_secret_bindings}" \
             --format=json); then
             exit 1
           fi
@@ -914,6 +1037,7 @@ jobs:
             GOLDEN_SNAPSHOT_ROLLOUT_PERCENT
             MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID
             MATRIX_COLLABORATION_ALLOWED_ORIGINS
+            MATRIX_INTERNAL_CLERK_ORG_ID
           )
           for name in "${required_provisioning_env[@]}"; do
             expected="${!name}"
@@ -969,6 +1093,9 @@ jobs:
 
       - name: Verify deployed WhatsApp contract
         run: scripts/ci/platform-whatsapp-env.sh verify-revision "$CANDIDATE_REVISION"
+
+      - name: Verify deployed account deletion contract
+        run: scripts/ci/platform-account-deletion-env.sh verify-revision "$CANDIDATE_REVISION"
 
       - name: Smoke candidate revision
         run: |
@@ -1118,7 +1245,7 @@ jobs:
             --min-instances "$min_instances" \
             --max-instances "$PLATFORM_MAX_INSTANCES" \
             --no-cpu-throttling \
-            --update-env-vars "PLATFORM_BACKGROUND_WORKERS_ENABLED=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED},MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT},MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE},GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED},GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}" \
+            --update-env-vars "PLATFORM_BACKGROUND_WORKERS_ENABLED=false,CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION},MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED},MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS},MATRIX_STARTER_TRIAL_DAYS=${MATRIX_STARTER_TRIAL_DAYS},MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED},MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT},MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE},ACCOUNT_DELETION_CONFIGURED=${ACCOUNT_DELETION_CONFIGURED},ACCOUNT_DELETION_ENABLED=${ACCOUNT_DELETION_ENABLED},GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED},GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED},GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}" \
             --remove-env-vars "MATRIX_PREBILLING_PROVISIONING_MAX_HOURLY_COST_MICROS,MATRIX_PREBILLING_PROVISIONING_COSTS" \
             --format=json)"
           production_revision="$(printf '%s\n' "$deploy_json" | jq -r '.status.traffic[]? | select(.tag == "production-candidate") | .revisionName // empty' | head -1)"
@@ -1157,6 +1284,7 @@ jobs:
             "CUSTOMER_VPS_IMAGE_VERSION=stable"
             "MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}"
             "MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}"
+            "MATRIX_STARTER_TRIAL_DAYS=${MATRIX_STARTER_TRIAL_DAYS}"
             "MATRIX_PREBILLING_PROVISIONING_ENABLED=true"
             "MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=100"
             "MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE}"
@@ -1165,6 +1293,7 @@ jobs:
             "GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}"
             "MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID=${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID}"
             "MATRIX_COLLABORATION_ALLOWED_ORIGINS=${MATRIX_COLLABORATION_ALLOWED_ORIGINS}"
+            "MATRIX_INTERNAL_CLERK_ORG_ID=${MATRIX_INTERNAL_CLERK_ORG_ID}"
           )
           for binding in "${required_production_env[@]}"; do
             name="${binding%%=*}"
@@ -1189,6 +1318,10 @@ jobs:
       - name: Verify production WhatsApp contract
         if: ${{ github.event_name == 'push' || inputs.promote }}
         run: scripts/ci/platform-whatsapp-env.sh verify-revision "$PRODUCTION_REVISION"
+
+      - name: Verify production account deletion contract
+        if: ${{ github.event_name == 'push' || inputs.promote }}
+        run: scripts/ci/platform-account-deletion-env.sh verify-revision "$PRODUCTION_REVISION"
 
       - name: Deploy dedicated platform worker
         if: ${{ github.event_name == 'push' || inputs.promote }}
@@ -1251,6 +1384,7 @@ jobs:
             exit 1
           fi
           scripts/ci/platform-whatsapp-env.sh verify-revision "$worker_revision"
+          scripts/ci/platform-account-deletion-env.sh verify-revision "$worker_revision" worker
 
       - name: Promote revision
         if: ${{ github.event_name == 'push' || inputs.promote }}

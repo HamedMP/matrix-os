@@ -36,7 +36,8 @@ it("shows authorized held models without executable choices or a new Chat defaul
   fireEvent.click(option);
   fireEvent.keyDown(option, { key: "Enter" });
   expect(select).not.toHaveBeenCalled();
-  expect(screen.getByText("Your credit is reserved while usage is confirmed.")).toBeVisible();
+  expect(within(option).getByText(/Matrix AI credit reserved/)).toBeVisible();
+  expect(screen.queryByText("Your credit is reserved while usage is confirmed.")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Agents & providers" }));
   expect(setup).toHaveBeenCalledExactlyOnceWith(catalog.instances[0], catalog.instances[0]!.setupActions[0]);
 });

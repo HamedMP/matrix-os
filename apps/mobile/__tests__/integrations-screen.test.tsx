@@ -1,4 +1,5 @@
 const mockPush = jest.fn();
+const mockBack = jest.fn();
 const mockUseComputerIntegrations = jest.fn();
 const mockRefreshConnection = jest.fn();
 const mockDeleteConnection = jest.fn();
@@ -22,7 +23,7 @@ jest.mock("react-native-gesture-handler", () => {
 });
 
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ push: mockPush }),
+  useRouter: () => ({ push: mockPush, back: mockBack, canGoBack: () => true }),
   useFocusEffect: (callback: () => void | (() => void)) => callback(),
 }));
 
@@ -34,8 +35,9 @@ import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { Linking, RefreshControl, StyleSheet as NativeStyleSheet } from "react-native";
 
-import IntegrationsScreen from "../app/(drawer)/integrations";
+import IntegrationsScreen from "../app/(drawer)/(tabs)/(apps)/integrations";
 import InstalledIntegrationsScreen from "../app/integrations-installed/index";
+import { ToastHost } from "../components/ui/Toast";
 
 describe("drawer integrations screen", () => {
   beforeEach(() => {
@@ -92,13 +94,21 @@ describe("drawer integrations screen", () => {
     expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false);
   });
 
+  it("returns to Apps from the back button in its top bar", () => {
+    render(<IntegrationsScreen />);
+
+    fireEvent.press(screen.getByRole("button", { name: "Back" }));
+
+    expect(mockBack).toHaveBeenCalledTimes(1);
+  });
+
   it("uses spacers instead of vertical padding or margins", () => {
     render(<IntegrationsScreen />);
 
     const styles = [
       screen.getByLabelText("View installed integrations").props.style,
       screen.getByText("2 connected accounts").props.style,
-      screen.getByText("AVAILABLE").props.style,
+      screen.getByText("Communication").props.style,
       screen.getByLabelText("Connect GitHub integration").props.style,
     ].map(NativeStyleSheet.flatten);
 
@@ -110,6 +120,17 @@ describe("drawer integrations screen", () => {
       expect(style.marginBottom).toBeUndefined();
       expect(style.marginVertical).toBeUndefined();
     }
+  });
+
+  it("searches apps and filters connected apps using the shared catalog", () => {
+    render(<IntegrationsScreen />);
+    fireEvent.changeText(screen.getByLabelText("Search apps"), "email");
+    expect(screen.getByLabelText("Connect Gmail integration")).toBeTruthy();
+    expect(screen.queryByLabelText("Connect GitHub integration")).toBeNull();
+    fireEvent.changeText(screen.getByLabelText("Search apps"), "");
+    fireEvent.press(screen.getByText("Connected"));
+    expect(screen.getByLabelText("Connect GitHub integration")).toBeTruthy();
+    expect(screen.queryByLabelText("Connect Gmail integration")).toBeNull();
   });
 
   it("lists available services and connected accounts from the computer", () => {
@@ -163,6 +184,16 @@ describe("drawer integrations screen", () => {
 
     fireEvent.press(screen.getByLabelText("Confirm delete connection"));
     expect(mockDeleteConnection).toHaveBeenCalledWith("connection-1");
+  });
+
+  it("says so with a toast once a connection is deleted", async () => {
+    mockDeleteConnection.mockResolvedValue(undefined);
+    render(<><InstalledIntegrationsScreen /><ToastHost /></>);
+
+    fireEvent.press(screen.getByLabelText("Delete Work GitHub connection"));
+    await act(async () => fireEvent.press(screen.getByLabelText("Confirm delete connection")));
+
+    expect(screen.getByText("Connection deleted")).toBeTruthy();
   });
 
   it("replaces the refresh glyph with a spinner for the refreshing connection", () => {

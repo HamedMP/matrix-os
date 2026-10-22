@@ -26,6 +26,11 @@ on:
         required: false
         type: number
         default: 14
+      build_windows:
+        description: Include protected Windows signing; disable only for branch artifact previews.
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -554,6 +559,7 @@ jobs:
 
   windows:
     name: Windows x64
+    if: ${{ inputs.build_windows }}
     runs-on: windows-latest
     environment: desktop-release
     timeout-minutes: 45

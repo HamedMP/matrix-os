@@ -24,7 +24,7 @@ import {
   OS_WINDOW_SIDEBAR_WIDTH,
   TopBar,
 } from "./OSWindow";
-import { SurfaceChromeContext, type SurfaceChromeSpec } from "./SurfaceChrome";
+import { BotDetailsContext, SurfaceChromeContext, type SurfaceChromeSpec } from "./SurfaceChrome";
 import { HostedWorkSidebar, HOSTED_WORK_SIDEBAR_WIDTH } from "../work/HostedWorkSidebar";
 import { WorkSurfaceRuntimeProvider } from "../work/WorkSurfaceRuntime";
 
@@ -152,6 +152,7 @@ export default function DesktopSurfaceFrame({
     isDesktopTransition,
   });
   const interactionCleanupRef = useRef<(() => void) | null>(null);
+  const [botDetailsHost, setBotDetailsHost] = useState<HTMLElement | null>(null);
   const [surfaceChrome, setSurfaceChrome] = useState<SurfaceChromeSpec | null>(null);
   const surfaceChromeHost = useMemo(() => ({ setChrome: setSurfaceChrome }), []);
 
@@ -254,17 +255,18 @@ export default function DesktopSurfaceFrame({
     <SurfaceChromeContext.Provider value={surfaceChromeHost}>
     <OSWindow
       surfaceId={tab.id}
-      sidebarWidth={tab.kind === "settings" ? 208 : isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined}
+      sidebarWidth={tab.kind === "settings" ? 248 : isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined}
       sidebar={tab.kind === "settings" ? (
         <SettingsSidebar section={settingsSection} onSectionChange={setSettingsSection} />
       ) : isWorkSurface ? (
-        <HostedWorkSidebar tab={tab} active={visible} />
+        <HostedWorkSidebar tab={tab} active={visible} searchShortcutActive={paneActive} />
       ) : undefined}
       safeAreaLayout={sidebarOwnsChrome ? "sidebar" : "pane"}
       topBarReservesSafeArea={isWindow || !isWorkSurface}
       topBar={showsSurfaceTopBar ? (
         <TopBar
           title={surfaceChrome?.hideTitle ? undefined : workChatTitle ?? (sidebarHidesTitle && !surfaceChrome?.showTitle ? undefined : surfaceChrome ? surfaceChrome.title : tab.title)}
+          titleLayout={surfaceChrome?.titleLayout}
           leftActions={surfaceChrome?.leftActions}
           rightActions={surfaceChrome?.rightActions}
           leftPaneWidth={surfaceChrome?.leftPaneWidth ?? (isWorkSurface ? HOSTED_WORK_SIDEBAR_WIDTH : undefined)}
@@ -297,9 +299,13 @@ export default function DesktopSurfaceFrame({
       style={frameStyle}
       onPointerDown={isWindow ? onFocus : undefined}
     >
+      <BotDetailsContext.Provider value={isWorkSurface ? botDetailsHost : null}>
       <div
+        ref={isWorkSurface ? setBotDetailsHost : undefined}
         key="surface-content"
         data-testid={`desktop-surface-content-${tab.kind}`}
+        data-bot-details-host={isWorkSurface || undefined}
+        style={isWorkSurface ? { "--matrix-bot-details-overlay-layer": DESKTOP_Z_INDEX.popover } as CSSProperties : undefined}
         className="relative flex min-h-0 flex-1 flex-col"
         inert={!interactive ? true : undefined}
       >
@@ -307,7 +313,7 @@ export default function DesktopSurfaceFrame({
           <TabPane
             tab={tab}
             active={paneActive}
-            visible={visible}
+            visible={tab.kind === "settings" || tab.kind === "app" ? visible && !isDesktopHidden && !isDesktopTransition : visible}
             layoutRevision={layoutRevision}
             visualScale={presentation === "canvas" ? interactionScale : 1}
             settingsSection={tab.kind === "settings" ? settingsSection : undefined}
@@ -315,6 +321,7 @@ export default function DesktopSurfaceFrame({
           />
         </TabErrorBoundary>
       </div>
+      </BotDetailsContext.Provider>
     </OSWindow>
     </SurfaceChromeContext.Provider>
   );

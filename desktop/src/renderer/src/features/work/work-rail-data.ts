@@ -1,4 +1,5 @@
-import { mergeCanonicalChatRecord } from "@matrix-os/ui";
+import type { ChatNavigationRecord } from "@matrix-os/ui";
+import { mergeChatNavigationRecord } from "@matrix-os/ui";
 import type { CanonicalChatRecord } from "@matrix-os/contracts";
 import type { CanonicalChatClient } from "../../lib/canonical-chat-client";
 import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
@@ -6,15 +7,15 @@ import type { CanonicalChatTitleProjection } from "./WorkSurfaceRuntime";
 const MAX_CHAT_PAGES = 10;
 
 export function applyProjectedChats(
-  records: CanonicalChatRecord[],
+  records: ChatNavigationRecord[],
   projections: CanonicalChatTitleProjection[] | undefined,
-): CanonicalChatRecord[] {
+): ChatNavigationRecord[] {
   if (!projections?.length) return records;
   return records.map((record) => {
     const projection = projections.find((candidate) => candidate.chatId === record.chat.id);
     if (!projection || ((record.chat.titleVersion ?? 0) === (projection.titleVersion ?? 0)
       && record.chat.revision >= projection.revision)) return record;
-    return mergeCanonicalChatRecord(record, {
+    return mergeChatNavigationRecord(record, {
       ...record,
       chat: { ...record.chat, title: projection.title, titleVersion: projection.titleVersion, revision: projection.revision },
     });

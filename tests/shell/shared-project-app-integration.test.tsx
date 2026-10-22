@@ -44,6 +44,7 @@ vi.mock("../../shell/src/hooks/useBrowserOrigin", () => ({
   useBrowserOrigin: () => "https://app.matrix-os.com",
 }));
 vi.mock("../../shell/src/lib/collaboration", () => ({
+  releaseShellCollaborationApi: vi.fn(),
   createShellCollaborationApi: () => ({
     baseUrl: "https://app.matrix-os.com",
     get: vi.fn(async (path: string) => {

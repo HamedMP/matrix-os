@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { ApiClient } from "../../lib/api";
 import { desktopQueryClient, desktopQueryScope, type DesktopQueryScope } from "../../lib/query-client";
 import { useConnection } from "../../stores/connection";
-import { canonicalOsViewCatalogPath } from "@matrix-os/contracts";
+import { appRuntimeSlugFromIdentity, canonicalOsViewCatalogPath } from "@matrix-os/contracts";
 export { appIconUrl, clearPreloadedAppIcons, preloadAppIcons } from "./app-icons";
 
 export interface MatrixApp {
@@ -28,7 +28,7 @@ function appIdentityFromFile(value: unknown): string | undefined {
   if (typeof value !== "string" || value.length > 300) return undefined;
   const identity = value
     .replace(/^\/+/, "")
-    .replace(/\/index\.html$/, "")
+    .replace(/\/(?:dist\/)?index\.html$/, "")
     .replace(/\.html$/, "");
   return identity.length <= 256 && SAFE_APP_IDENTITY.test(identity) ? identity : undefined;
 }
@@ -48,8 +48,13 @@ export function parseApps(value: unknown): MatrixApp[] {
     const name = typeof app.name === "string" && app.name.trim().length > 0 ? app.name.trim() : slug;
     const category =
       typeof app.category === "string" && app.category.trim().length > 0 ? app.category.trim() : undefined;
-    const appIdentity = appIdentityFromFile(app.file);
     const path = canonicalOsViewCatalogPath({ path: app.path, file: app.file }) ?? undefined;
+    const folderIdentity = appIdentityFromFile(app.file)
+      ?? (path?.startsWith("apps/") ? appIdentityFromFile(path.slice(5)) : undefined);
+    // Match the authenticated launch resolver: only bundled migrations alias
+    // their folder identity; moved owner apps retain the manifest identity.
+    const appIdentity = folderIdentity && appRuntimeSlugFromIdentity(folderIdentity) === slug ? folderIdentity
+      : path && slug.length <= 256 && SAFE_APP_IDENTITY.test(slug) ? slug : undefined;
     const iconUrl = typeof app.iconUrl === "string" && SAFE_LOCAL_ICON_URL.test(app.iconUrl)
       ? app.iconUrl
       : undefined;

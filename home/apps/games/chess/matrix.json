@@ -3,7 +3,7 @@
   "description": "Local two-player chess with full legal-move validation, SAN history, and saved games.",
   "runtime": "vite",
   "category": "games",
-  "icon": "game-center",
+  "icon": "v3-chess",
   "author": "system",
   "version": "1.0.0",
   "tags": [
@@ -39,7 +39,8 @@
       "package.json",
       "pnpm-lock.yaml",
       "vite.config.ts",
-      "tsconfig.json"
+      "tsconfig.json",
+      "../../../system/icons/v3-*.png"
     ]
   }
 }

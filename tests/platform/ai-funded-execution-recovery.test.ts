@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { createAiFundedOperatorRoutes } from "../../packages/platform/src/ai-funded-policy-routes.js";
 import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
-import { createTestPlatformDb, destroyTestPlatformDb } from "./platform-db-test-helper.js";
+import { createTestPlatformDb, destroyTestPlatformDb } from "./native-platform-db-test-helper.js";
 
 const modelId = "anthropic/claude-sonnet-5";
 const identity = { ownerId: "recovery_owner", machineId: "recovery_machine", runtimeSlot: "primary" };
@@ -140,6 +140,7 @@ describe("audited owner execution recovery without financial settlement", () => 
     const first = payload();
     expect((await send()).status).toBe(200);
     const row = await rows();
+    const second = await nextExpired("second_request");
     const audit = JSON.parse(row.execution_admission_release!);
     if (kind === "identity") audit.request.expectedOwnerId = "someone_else";
     if (kind === "ceiling") audit.response.maximumLiabilityMicrousd = 99;
@@ -147,8 +148,8 @@ describe("audited owner execution recovery without financial settlement", () => 
     await db.executor.updateTable("ai_funded_usage_reservations")
       .set({ execution_admission_release: kind === "invalid_json" ? "{" : JSON.stringify(audit) })
       .where("reservation_id", "=", first.reservationId).execute();
-    const second = await nextExpired("second_request");
     const before = await finance();
+    await expect(authorization("corrupt_history_admission")).rejects.toMatchObject({ code: "idempotency_conflict" });
     expect((await send(second)).status).toBe(409);
     expect(await finance()).toEqual(before);
     expect((await rows()).execution_admission_release).toBeNull();

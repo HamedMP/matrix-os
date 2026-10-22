@@ -7,7 +7,16 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
-trap cleanup EXIT
+finish_fresh_install() {
+  local status=$?
+  trap - EXIT
+  if [ "$status" -ne 0 ] && [ "${DOCKER_DIAGNOSTICS_CAPTURED:-false}" != true ]; then
+    collect_docker_diagnostics dev || true
+  fi
+  cleanup
+  exit "$status"
+}
+trap finish_fresh_install EXIT
 
 begin_test "Fresh Install"
 
