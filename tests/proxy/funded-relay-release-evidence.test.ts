@@ -72,7 +72,7 @@ try:
         gate.verify_candidate(result, data["candidate"])
     if data.get("exercisePromotion"):
         config = result["configuration"]
-        os.environ.update({"DEPLOY_ENVIRONMENT": "production", "GITHUB_REF": "refs/heads/main", "GITHUB_ENV": "/dev/null"})
+        os.environ.update({"DEPLOY_ENVIRONMENT": "production", "GITHUB_REF": "refs/heads/main", "GITHUB_ENV": "/dev/null", "GITHUB_SHA": "${sha}"})
         os.environ.update({key: config[field] for field, key in gate.CONFIG_ENV.items()})
         os.environ.update(config["pricing"])
         # A supplied emitted environment is the complete candidate input; never
@@ -93,6 +93,7 @@ try:
         change = data.get("candidateChange")
         if change == "secret": entries[-1]["valueFrom"]["secretKeyRef"]["key"] = "999"
         if change == "source": revision["metadata"]["labels"]["matrix-source-sha"] = "c" * 40
+        if change == "sourcePrefixCollision": revision["metadata"]["labels"]["matrix-source-sha"] = "${sha}"[:12] + "c" * 28
         if change == "account": revision["spec"]["serviceAccountName"] = "other@matrix-project.iam.gserviceaccount.com"
         if change == "pricing": entries[-5]["value"] = "different"
         if change == "duplicate": entries.append(entries[0])
@@ -108,8 +109,14 @@ try:
         if change == "memory": revision["spec"]["containers"][0]["resources"]["limits"]["memory"] = "8Gi"
         if change == "entrypoint": container = revision["spec"]["containers"][0]; container["command"] = ["node"]; container["args"] = ["-e", "process.exit(0)"]
         if change == "mount": revision["spec"]["containers"][0]["volumeMounts"] = [{"name":"override", "mountPath":"/app"}]
-        service = {"status": {"traffic": [{"tag":"candidate", "revisionName":result["candidate"]["revision"],
-          "url":"https://candidate---matrix-ai-relay-abcdef-ey.a.run.app"}]}}
+        service = {"status": {"url":"https://matrix-ai-relay-abcdef-ey.a.run.app", "traffic": [
+          {"tag":"candidate", "revisionName":"matrix-ai-relay-old", "percent":100,
+           "url":"https://candidate---matrix-ai-relay-abcdef-ey.a.run.app"},
+          {"tag":"relay-${sha.slice(0, 12)}", "revisionName":result["candidate"]["revision"],
+           "url":"https://relay-${sha.slice(0, 12)}---matrix-ai-relay-abcdef-ey.a.run.app"}]}}
+        if change == "tag": service["status"]["traffic"][1]["tag"] = "other"
+        if change == "tagUrl": service["status"]["traffic"][1]["url"] = "https://candidate---matrix-ai-relay-abcdef-ey.a.run.app"
+        if change == "revision": service["status"]["traffic"][1]["revisionName"] = "matrix-ai-relay-changed"
         gate.load_evidence = lambda stage: result
         gate.cloud_json = lambda kind, name: service if kind == "services" else revision
         gate.promotion()
@@ -185,7 +192,7 @@ describe("reviewed funded Relay release evidence", () => {
 gcloud() { for arg in "$@"; do printf '%s\\n' "$arg"; done; exit 0; }
 ${script}
 `], { encoding: "utf8", timeout: 10_000, env: {
-      ...process.env, GITHUB_SHA: sha, IMAGE_DIGEST: receipt.candidate.image,
+      ...process.env, GITHUB_SHA: sha, CANDIDATE_TAG: `relay-${sha.slice(0, 12)}`, IMAGE_DIGEST: receipt.candidate.image,
       GCP_PROJECT_ID: config.projectId, GCP_REGION: config.region,
       AI_RELAY_CLOUD_RUN_SERVICE: config.relayService,
       AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: config.relayServiceAccount,
@@ -248,7 +255,7 @@ ${script}
     expect(verify(reviewed, { promotion: true, exercisePromotion: true,
       candidateChange: "pricing" }).status).toBe(1);
   });
-  it.each(["secret", "source", "account", "pricing", "duplicate", "notReady", "environment",
+  it.each(["secret", "source", "sourcePrefixCollision", "tag", "tagUrl", "revision", "account", "pricing", "duplicate", "notReady", "environment",
     "unboundedRate", "unreviewedEnv", "maxInstances", "cloudConcurrency", "memory", "entrypoint", "mount"])(
     "rejects drift in actual candidate %s", candidateChange => {
       expect(verify(productionFixture(), { promotion: true, exercisePromotion: true, candidateChange }).status).toBe(1);
@@ -267,21 +274,26 @@ ${script}
   });
   it("requires an existing production baseline and verifies actual candidate isolation", () => {
     const result = spawnSync("python3", ["-c", `
-import importlib.util, os
+import importlib.util, os, pathlib, tempfile
 spec=importlib.util.spec_from_file_location('gate','scripts/verify-funded-relay-evidence.py')
 gate=importlib.util.module_from_spec(spec);spec.loader.exec_module(gate)
-os.environ.update({'DEPLOY_ENVIRONMENT':'production','GITHUB_REF':'refs/heads/main',
+temporary=tempfile.TemporaryDirectory();output=pathlib.Path(temporary.name,'env')
+os.environ.update({'DEPLOY_ENVIRONMENT':'production','GITHUB_REF':'refs/heads/main','GITHUB_ENV':str(output),
  'AI_RELAY_CLOUD_RUN_SERVICE':'matrix-ai-relay','CANDIDATE_REVISION':'matrix-ai-relay-00002-abc',
  'IMAGE_DIGEST':'fixture@sha256:abc','GITHUB_SHA':'${sha}'})
 gate.cloud_json=lambda kind,name: {'status':{}}
 try: gate.deployment_preflight(); raise AssertionError('missing baseline accepted')
 except ValueError: pass
-gate.cloud_json=lambda kind,name: {'status':{'latestReadyRevisionName':'matrix-ai-relay-00001-abc'}}
+baseline={'status':{'url':'https://matrix-ai-relay-abcdef-ey.a.run.app','latestReadyRevisionName':'matrix-ai-relay-00001-abc',
+ 'traffic':[{'revisionName':'matrix-ai-relay-00001-abc','percent':100}]}}
+gate.cloud_json=lambda kind,name: baseline
 gate.deployment_preflight()
-service={'status':{'latestReadyRevisionName':'matrix-ai-relay-00002-abc','traffic':[
- {'tag':'candidate','revisionName':'matrix-ai-relay-00002-abc','percent':0},
+os.environ.update(dict(line.split('=',1) for line in output.read_text().splitlines()))
+service={'status':{'url':'https://matrix-ai-relay-abcdef-ey.a.run.app','latestReadyRevisionName':'matrix-ai-relay-00002-abc','traffic':[
+ {'tag':'relay-${sha.slice(0, 12)}','url':'https://relay-${sha.slice(0, 12)}---matrix-ai-relay-abcdef-ey.a.run.app','revisionName':'matrix-ai-relay-00002-abc','percent':0},
  {'revisionName':'matrix-ai-relay-00001-abc','percent':100}]}}
-revision={'metadata':{'labels':{'matrix-source-sha':'${sha}'}},'spec':{'containers':[{'image':'fixture@sha256:abc'}]}}
+revision={'metadata':{'labels':{'matrix-source-sha':'${sha}'}},'spec':{'containers':[{'image':'fixture@sha256:abc'}]},
+ 'status':{'conditions':[{'type':'Ready','status':'True'}]}}
 gate.cloud_json=lambda kind,name: service if kind=='services' else revision
 gate.candidate_isolation()
 for target in ({'revisionName':'matrix-ai-relay-00002-abc','percent':100}, {'latestRevision':True,'percent':100}):
@@ -316,13 +328,14 @@ print('passed')
       const output = join(directory, "github-env");
       const result = spawnSync("python3", ["scripts/verify-funded-relay-evidence.py", "configuration"], {
         cwd: root, encoding: "utf8", timeout: 10_000,
-        env: { PATH: process.env.PATH, DEPLOY_ENVIRONMENT: "staging", GITHUB_ENV: output },
+        env: { PATH: process.env.PATH, DEPLOY_ENVIRONMENT: "staging", GITHUB_ENV: output, GITHUB_SHA: sha },
       });
       expect(result.status).toBe(0);
       const values = readFileSync(output, "utf8");
       expect(values).toContain("GATEWAY_TOKEN_SECRET=cloudflare-ai-gateway-token\n");
       expect(values).toContain("WORKERS_TOKEN_SECRET=cloudflare-workers-ai-token-preview\n");
       expect(values).toContain("WORKERS_TOKEN_VERSION=latest\n");
+      expect(values).toContain(`CANDIDATE_TAG=relay-${sha.slice(0, 12)}\n`);
       expect(values).not.toContain("-production");
     } finally {
       rmSync(directory, { recursive: true, force: true });
