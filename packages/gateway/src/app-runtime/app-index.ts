@@ -1,5 +1,5 @@
 import { readdir, readFile, realpath } from "node:fs/promises";
-import { join, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { ManifestError } from "./errors.js";
 import { parseManifest, SAFE_SLUG, type AppManifest } from "./manifest-schema.js";
 
@@ -25,8 +25,10 @@ export interface AppManifestIndexEntry {
 const APP_INDEX_CACHE_TTL_MS = 1_000;
 const appIndexCache = new Map<string, { expiresAt: number; entries: AppManifestIndexEntry[] }>();
 
-export function invalidateAppIndexCache(): void {
-  appIndexCache.clear();
+/** Clears one apps directory's index, or every index when no directory is given. */
+export function invalidateAppIndexCache(appsDir?: string): void {
+  if (appsDir === undefined) appIndexCache.clear();
+  else appIndexCache.delete(resolve(appsDir));
 }
 
 function isExpectedFsError(err: unknown): boolean {
@@ -119,12 +121,13 @@ async function scanManifestCandidates(
 
 async function getManifestCandidates(appsDir: string): Promise<AppManifestIndexEntry[]> {
   const now = Date.now();
-  const cached = appIndexCache.get(appsDir);
+  const key = resolve(appsDir);
+  const cached = appIndexCache.get(key);
   if (cached && cached.expiresAt > now) {
     return cached.entries;
   }
   const entries = await scanManifestCandidates(appsDir);
-  appIndexCache.set(appsDir, { entries, expiresAt: now + APP_INDEX_CACHE_TTL_MS });
+  appIndexCache.set(key, { entries, expiresAt: now + APP_INDEX_CACHE_TTL_MS });
   return entries;
 }
 
