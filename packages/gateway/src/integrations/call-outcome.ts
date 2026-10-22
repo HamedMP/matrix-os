@@ -5,6 +5,12 @@ import { IntegrationActionNotImplementedError } from "./action-execution.js";
 import { GoogleCollectionRefusedError } from "./collection-hook.js";
 import { DriveContentError } from "./drive-content.js";
 
+/** SDK errors can carry mailbox bodies, credentials, and arbitrary names/causes.
+ * Only fixed operation/classification labels may enter these diagnostics. */
+function logFailure(operation: "usage_update" | "action", classification: "failure" | "non_error_failure" | "unimplemented" | "timeout" | "connection"): void {
+  console.error("[integrations] operation failed", { operation, classification });
+}
+
 export function isConnectionError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const msg = err.message.toLowerCase();
@@ -58,7 +64,7 @@ export async function integrationActionSuccess(c: Context, input: {
   } catch (err: unknown) {
     // Usage metadata is best effort after the provider has already succeeded.
     // Losing that result would encourage the caller to repeat the action.
-    console.error("[integrations] usage timestamp update failed:", err);
+    logFailure("usage_update", err instanceof Error ? "failure" : "non_error_failure");
   }
   // Authority refusal must propagate after best-effort usage accounting.
   await input.beforeRelease?.();
@@ -66,7 +72,7 @@ export async function integrationActionSuccess(c: Context, input: {
 }
 
 /** Preserve general call's safe provider failure mapping for scoped reads. */
-export function integrationActionFailure(c: Context, err: unknown, service: string, action: string): Response {
+export function integrationActionFailure(c: Context, err: unknown, _service: string, _action: string): Response {
   if (err instanceof GoogleCollectionRefusedError) return c.json({ error: "Integration service unavailable" }, 503);
   if (err instanceof NativeGmailHistoryExpiredError) {
     return c.json({ error: "Mailbox history expired. Run a bounded resync before continuing.", code: err.code, resync_required: true }, 409);
@@ -85,7 +91,7 @@ export function integrationActionFailure(c: Context, err: unknown, service: stri
     return c.json({ error: messages[err.code], code: err.code }, status);
   }
   if (err instanceof IntegrationActionNotImplementedError) {
-    console.error(`[integrations] Action ${err.serviceId}/${err.actionId} has neither componentKey nor directApi -- registry incomplete`);
+    logFailure("action", "unimplemented");
     return c.json({ error: "Action not available" }, 501);
   }
   const upstreamStatus = getErrorStatusCode(err);
@@ -97,13 +103,13 @@ export function integrationActionFailure(c: Context, err: unknown, service: stri
     );
   }
   if (isTimeoutError(err)) {
-    console.error(`[integrations] callAction timeout for ${service}/${action}`);
+    logFailure("action", "timeout");
     return c.json({ error: "Integration call timed out" }, 504);
   }
   if (isConnectionError(err)) {
-    console.error(`[integrations] callAction connection error for ${service}/${action}:`, err);
+    logFailure("action", "connection");
     return c.json({ error: "Integration service unavailable" }, 503);
   }
-  console.error(`[integrations] callAction error for ${service}/${action}:`, err);
+  logFailure("action", err instanceof Error ? "failure" : "non_error_failure");
   return c.json({ error: "Integration call failed" }, 502);
 }

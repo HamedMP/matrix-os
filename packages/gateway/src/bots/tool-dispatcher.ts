@@ -198,6 +198,9 @@ export function createBotToolDispatcher(deps: {
   managedWorkspace?: (binding: import("./runtime-registry.js").ManagedPiRuntimeBinding) => Promise<string>;
   /** Recheck live source after staging, immediately before artifact publication. */
   assertSource?: (binding: PiRuntimeBinding, signal: AbortSignal) => Promise<void>;
+  /** Trusted host admission only. Pilot file generation must refuse before staging,
+   * not only before publication; this gate does not authorize owner uploads. */
+  artifactWrites?: { assertAllowed(binding: PiRuntimeBinding, signal: AbortSignal): Promise<void> };
   interactions?: Pick<BotInteractionService, "createFromTool">;
   memory?: Pick<BotMemoryService, "propose" | "search">;
   integrations?: Pick<BotIntegrationTools, "inventory" | "call">;
@@ -275,6 +278,8 @@ export function createBotToolDispatcher(deps: {
         // Never remove the target on error: publication may have happened before a
         // lost acknowledgement. Its bytes are complete; the broker retains uncertainty.
         await deps.assertSource?.(binding, signal);
+        await deps.artifactWrites?.assertAllowed(binding, signal);
+        if (signal.aborted) throw new BotBrokerActionError("timeout");
         try { await link(temp, target); }
         catch (error: unknown) {
           if (isCode(error, "EEXIST", "ELOOP")) throw new BotBrokerActionError("invalid_arguments");
@@ -285,6 +290,8 @@ export function createBotToolDispatcher(deps: {
       } else {
         // Staging/close may finish after native credentials were removed or replaced.
         await deps.assertSource?.(binding, signal);
+        await deps.artifactWrites?.assertAllowed(binding, signal);
+        if (signal.aborted) throw new BotBrokerActionError("timeout");
         await rename(temp, target);
       }
     } catch (error: unknown) {
@@ -330,6 +337,8 @@ export function createBotToolDispatcher(deps: {
         return { result: await deps.nativeTask.execute(binding, request.args.prompt, await workspace(binding), signal) };
       }
       if (request.capability === "artifact.write") {
+        await deps.artifactWrites?.assertAllowed(binding, signal);
+        if (signal.aborted) throw new BotBrokerActionError("timeout");
         // Paths may hold characters the checkpoint reference does not allow; the digest names the file.
         const outcomeRef = `artifact:${createHash("sha256").update(request.args.relPath).digest("hex").slice(0, 32)}`;
         return { result: await write(binding, request, signal), outcomeRef };

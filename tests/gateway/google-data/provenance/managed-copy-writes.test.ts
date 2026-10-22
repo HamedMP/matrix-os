@@ -45,6 +45,43 @@ beforeEach(async () => {
 });
 
 describe('atomic Google-derived managed Pi copies', () => {
+  it('adopts only an exact cache saved while its trusted history was ordinary', async () => {
+    await sessions.save({ ...request(), messages: [{ role: 'user', content: 'Please read my mail' }] });
+    expect(await inspectCopy()).toBeNull();
+    await mark();
+    expect((await sessions.load(key)).messages).toEqual([{ role: 'user', content: 'Please read my mail' }]);
+    expect((await inspectCopy())?.state).toBe('active');
+    await sessions.save(request(1));
+    expect((await inspectCopy())?.revision).toBe(2);
+  });
+  it.each(['proof', 'content'] as const)('rolls back adoption if ordinary proof expires after %s await', async phase => {
+    await sessions.save({ ...request(), messages: [{ role: 'user', content: 'Ordinary' }] });
+    await sql`UPDATE google_ordinary_copy_receipts SET expires_at=clock_timestamp()+interval '60 seconds'`.execute(db);
+    await mark(); let clock = new Date();
+    const delayed = db.withPlugin({ transformQuery: args => args.node, async transformResult(args) {
+      const row = args.result.rows[0];
+      if (phase === 'proof' && row && Object.keys(row).length === 1 && 'expires_at' in row) clock = new Date(clock.getTime()+120_000);
+      return args.result;
+    } });
+    const content = vi.fn(async tx => {
+      await sql`UPDATE managed_pi_sessions SET revision=revision+1 WHERE chat_id=${key.chatId}`.execute(tx);
+      if (phase === 'content') clock = new Date(clock.getTime()+120_000);
+      return 'synthetic';
+    });
+    await expect(createGoogleManagedPiCopyHooks({ now: () => clock }).aroundSave(delayed, key, undefined, content)).rejects.toThrow();
+    expect(content).toHaveBeenCalledTimes(phase === 'proof' ? 0 : 1);
+    expect((await createManagedPiSessionsRepository(db).load(key)).revision).toBe(1);
+    expect(await inspectCopy()).toBeNull();
+    expect((await sql`SELECT 1 FROM google_ordinary_copy_receipts`.execute(db)).rows).toHaveLength(1);
+  });
+  it('refuses an ordinary cache modified outside the receipt-bearing writer before collection', async () => {
+    await sessions.save({ ...request(), messages: [{ role: 'user', content: 'Ordinary' }] });
+    await sql`UPDATE managed_pi_sessions SET messages='[{"role":"user","content":"unproven modification"}]'::jsonb WHERE chat_id=${key.chatId}`.execute(db);
+    await mark();
+    await expect(sessions.load(key)).rejects.toThrow();
+    await expect(sessions.save(request(1))).rejects.toThrow();
+    expect(await inspectCopy()).toBeNull();
+  });
   it('registers first content and every later CAS revision with durable exact lineage', async () => {
     const context = await mark();
     expect(await sessions.save(request())).toEqual({ revision: 1 });

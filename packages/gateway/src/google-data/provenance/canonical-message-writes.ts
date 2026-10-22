@@ -7,6 +7,7 @@ import { createGoogleModelHistoryStore, type GoogleModelHistory } from '../runti
 import { GoogleProvenanceUnavailable, originKey, type GoogleCopy, type GoogleOrigin } from './contracts.js';
 import { createGoogleProvenanceStore } from './store.js';
 import { boundedProvenanceTransaction } from './transaction.js';
+import { matchingOrdinaryCopyReceipt, recordOrdinaryCopyReceipts, retireOrdinaryCopyReceipt } from './ordinary-copy-receipts.js';
 
 const MAX_HASH_BYTES = 512 * 1024;
 function deny(): never { throw new GoogleProvenanceUnavailable(); }
@@ -60,8 +61,10 @@ export function createGoogleCanonicalMessageWriteHook(options: { now?: () => Dat
     const requestedIds = requested.map(id => CanonicalChatMessageIdSchema.parse(id));
     if (key.owner.type !== 'personal') deny();
     let deadline: number | undefined;
+    let ordinaryProofDeadline: number | undefined;
     const capture = (value: string) => { const parsed = Date.parse(value); if (!Number.isFinite(parsed)) deny(); deadline = Math.min(deadline ?? parsed, parsed); };
-    const live = () => { check(signal); const clock = now().getTime(); if (!Number.isFinite(clock) || (deadline !== undefined && deadline <= clock)) deny(); check(signal); };
+    const live = () => { check(signal); const clock = now().getTime(); if (!Number.isFinite(clock) || (deadline !== undefined && deadline <= clock)
+      || (ordinaryProofDeadline !== undefined && ordinaryProofDeadline <= clock)) deny(); check(signal); };
     live();
     const result = await transact(tx => boundedProvenanceTransaction<ChatDatabase, T>(tx, async current => {
       const history = createGoogleModelHistoryStore<ChatDatabase>(current, { now });
@@ -114,7 +117,12 @@ export function createGoogleCanonicalMessageWriteHook(options: { now?: () => Dat
         live();
         const copy = copies.get(id);
         if (copy) match(copy, context, before, now().getTime());
-        else if (context.classification === 'google' && before) deny();
+        else if (before) {
+          const proof = await matchingOrdinaryCopyReceipt(current, { ownerId: key.owner.ownerId, chatId: key.chatId,
+            kind: 'derived', entityRef: canonicalMessageEntityRef(id) }, before);
+          if (!proof || Date.parse(proof) <= now().getTime()) deny();
+          ordinaryProofDeadline = Math.min(ordinaryProofDeadline ?? Infinity, Date.parse(proof)); live();
+        }
       }
       const result = await content(current);
       const fresh = await inspect();
@@ -137,7 +145,16 @@ export function createGoogleCanonicalMessageWriteHook(options: { now?: () => Dat
             capture(registered.retentionDeadline);
           }
           await inspect();
+          await retireOrdinaryCopyReceipt(current, { ownerId: key.owner.ownerId, chatId: key.chatId, kind: 'derived', entityRef: canonicalMessageEntityRef(id) });
         }
+      } else if (fresh.classification === 'ordinary') {
+        const receipts = [];
+        for (const id of ids) {
+          const hash = await canonicalMessagePayloadHash(current, { ...key, messageId: id });
+          if (!hash) deny();
+          receipts.push({ key: { ownerId: key.owner.ownerId, chatId: key.chatId, kind: 'derived' as const, entityRef: canonicalMessageEntityRef(id) }, hash });
+        }
+        await recordOrdinaryCopyReceipts(current, receipts);
       }
       live();
       return result;

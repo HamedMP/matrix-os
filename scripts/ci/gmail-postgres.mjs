@@ -27,7 +27,7 @@ export function gmailPostgresFiles(root) {
 function disposableUrl(value) {
   try {
     const url = new URL(value ?? '');
-    if (!['postgres:', 'postgresql:'].includes(url.protocol) || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+    if (!['postgres:', 'postgresql:'].includes(url.protocol) || !['127.0.0.1', '[::1]'].includes(url.hostname)
       || !/(?:^|_)test(?:_|$)/.test(url.pathname.slice(1)) || url.search || url.hash) throw Error();
     return value;
   } catch (error) { throw Error('Disposable PostgreSQL configuration required'); }
