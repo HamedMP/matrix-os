@@ -1,4 +1,7 @@
 const RESPONSE_DIAGNOSTIC_VALUES = {
+    streamReason: ['body_missing', 'reader_unavailable', 'body_read', 'utf8_decode', 'frame_fields', 'event_json', 'event_schema',
+        'event_name', 'output_delta', 'terminal_identity', 'event_after_terminal', 'upstream_failed', 'upstream_incomplete',
+        'upstream_error', 'done_order', 'trailing_frame', 'missing_completion', 'frame_limit', 'terminal_limit', 'pending_limit'],
     mime: ['json', 'html', 'plain', 'other'],
     bodyRead: ['complete', 'oversize', 'cancelled', 'timeout', 'failed'],
     bodyShape: ['object', 'array', 'string', 'number', 'boolean', 'null', 'empty', 'non_json'],
@@ -152,7 +155,7 @@ export function logPlanFailure(stage: string, error: unknown, context?: unknown)
     console.warn(`[chatgpt-plan] ${failure?.stage ?? stage}: ${category}${failure?.httpStatus !== undefined ? ` (http ${failure.httpStatus})` : ''}${diagnostic ? ` ${JSON.stringify(diagnostic)}` : ''}${network ? ` ${JSON.stringify({ networkDiagnostic: network })}` : ''}${correlation ? ` ${JSON.stringify({ correlation })}` : ''}`);
     if (failureSink) {
         const row = safePlanFailureRecord({ observedAt: new Date().toISOString(), stage: failure?.stage ?? stage,
-            category, httpStatus: failure?.httpStatus, correlation: context, networkDiagnostic: network });
+            category, httpStatus: failure?.httpStatus, correlation: context, networkDiagnostic: network, responseDiagnostic: diagnostic });
         if (row) {
             try { failureSink(row); }
             catch (error: unknown) { console.warn('[chatgpt-plan] diagnostic_record_failed'); }
@@ -179,6 +182,7 @@ export interface PlanFailureRecord {
     category: string;
     httpStatus?: number;
     networkDiagnostic?: PlanNetworkDiagnostic;
+    responseDiagnostic?: PlanResponseDiagnostic;
     correlation?: Partial<Record<'requestId' | 'runId' | 'computerId', string>>;
 }
 /** Disk records have a smaller contract than console diagnostics. No arbitrary strings. */
@@ -191,6 +195,8 @@ export function safePlanFailureRecord(value: unknown): PlanFailureRecord | null 
         stage: typeof input.stage === 'string' && PERSISTED_STAGES.has(input.stage) ? input.stage : 'other',
         category: typeof input.category === 'string' && PERSISTED_CATEGORIES.has(input.category) ? input.category : 'local_failure' };
     if (typeof input.httpStatus === 'number' && Number.isInteger(input.httpStatus) && input.httpStatus >= 100 && input.httpStatus <= 599) row.httpStatus = input.httpStatus;
+    const response = safePlanResponseDiagnostic(input.responseDiagnostic);
+    if (Object.keys(response).length) row.responseDiagnostic = response;
     const network = safePlanNetworkDiagnostic(input.networkDiagnostic);
     if (Object.keys(network).length) row.networkDiagnostic = network;
     const correlation = safeFailureCorrelation(input.correlation);

@@ -1,7 +1,7 @@
 import { validateBotImageInferenceBody } from "@matrix-os/contracts";
 import { CHATGPT_PLAN_RESPONSE_BYTE_LIMIT, INFERENCE_RESPONSE_BUFFER_MAX_BYTES, INFERENCE_RESPONSE_CHUNK_MAX_BYTES, ChatGptPlanWireSchema } from '@matrix-os/contracts';
 import { z } from 'zod/v4';
-import { PlanFailure, logPlanFailure, planNetworkFailureDiagnostic, safePlanResponseDiagnostic, type PlanResponseDiagnostic } from './diagnostics';
+import { PlanFailure, logPlanFailure, planNetworkFailureDiagnostic, planPeerNetworkFailureDiagnostic, safePlanResponseDiagnostic, type PlanResponseDiagnostic } from './diagnostics';
 import { PLAN_RESOURCE } from './oauth';
 const DIAGNOSTIC_BYTE_LIMIT = 16 * 1024;
 /** Only complete JSON objects from bounded SSE samples are inspected. */
@@ -173,11 +173,14 @@ export async function* requestPlanResponseStream(input: PlanResponseInput, valid
         head = (head + value).slice(0, DIAGNOSTIC_BYTE_LIMIT);
         tail = (tail + value).slice(-DIAGNOSTIC_BYTE_LIMIT);
     };
-    const fail = (category: string): never => {
+    const fail = (category: string, streamReason: NonNullable<PlanResponseDiagnostic['streamReason']>, error?: unknown): never => {
         const large = observedBytes > DIAGNOSTIC_BYTE_LIMIT;
         const samples = large ? [head.slice(0, DIAGNOSTIC_BYTE_LIMIT / 2), tail.slice(-DIAGNOSTIC_BYTE_LIMIT / 2)] : [head];
-        const read: BodyRead = { text: large ? head + tail : head, outcome: large ? 'oversize' : 'complete' };
-        throw new PlanFailure('responses', category, response.status, responseDiagnostic(response, read, samples));
+        const read: BodyRead = { text: large ? head + tail : head, outcome: streamReason === 'body_read'
+            ? category === 'timeout' ? 'timeout' : category === 'cancelled' ? 'cancelled' : 'failed'
+            : large ? 'oversize' : 'complete' };
+        throw new PlanFailure('responses', category, response.status, { ...responseDiagnostic(response, read, samples), streamReason },
+            streamReason === 'body_read' ? planPeerNetworkFailureDiagnostic(error, 'body_read') : undefined);
     };
     // The provider may deliver a large transport read containing many small
     // events. Decode it in bounded slices before adding to the event buffer.
@@ -186,28 +189,38 @@ export async function* requestPlanResponseStream(input: PlanResponseInput, valid
     const parseFrame = (raw: string): string => {
         const normalized = raw.replace(/\r\n?/g, '\n');
         const lines = normalized.slice(0, -2).split('\n').filter(Boolean);
-        if (lines.some(line => !line.startsWith(':') && !/^(?:data|event|id|retry)(?::|$)/.test(line))) fail('invalid_stream');
+        if (lines.some(line => !line.startsWith(':') && !/^(?:data|event|id|retry)(?::|$)/.test(line))) fail('invalid_stream', 'frame_fields');
         const data = lines.filter(line => line.startsWith('data:')).map(line => line.slice(5).replace(/^ /, '')).join('\n');
         if (data) {
             sawData = true;
             if (data === '[DONE]') {
-                if (!completed || doneSeen) fail('incomplete_stream');
+                if (!completed || doneSeen) fail('incomplete_stream', 'done_order');
                 doneSeen = true;
             } else {
-                if (doneSeen) fail('incomplete_stream');
+                if (doneSeen) fail('incomplete_stream', 'done_order');
+                let validationReason: NonNullable<PlanResponseDiagnostic['streamReason']> = 'event_json';
                 try {
-                    const event = z.object({ type: z.string().max(128).regex(/^(?:response\.[a-z0-9_.]+|error)$/) }).passthrough().parse(JSON.parse(data));
+                    const parsed: unknown = JSON.parse(data);
+                    validationReason = 'event_schema';
+                    const event = z.object({ type: z.string().max(128).regex(/^(?:response\.[a-z0-9_.]+|error)$/) }).passthrough().parse(parsed);
                     const eventNames = lines.filter(line => line.startsWith('event:')).map(line => line.slice(6).trim());
-                    if (eventNames.some(name => name && name !== event.type)) fail('invalid_stream');
-                    if (completed || ['response.failed', 'response.incomplete', 'error'].includes(event.type)) fail('incomplete_stream');
-                    if (event.type === 'response.output_text.delta') z.object({ delta: z.string() }).parse(event);
+                    if (eventNames.some(name => name && name !== event.type)) fail('invalid_stream', 'event_name');
+                    if (completed) fail('incomplete_stream', 'event_after_terminal');
+                    if (event.type === 'response.failed') fail('incomplete_stream', 'upstream_failed');
+                    if (event.type === 'response.incomplete') fail('incomplete_stream', 'upstream_incomplete');
+                    if (event.type === 'error') fail('incomplete_stream', 'upstream_error');
+                    if (event.type === 'response.output_text.delta') {
+                        validationReason = 'output_delta';
+                        z.object({ delta: z.string() }).parse(event);
+                    }
                     if (event.type === 'response.completed') {
+                        validationReason = 'terminal_identity';
                         z.object({ status: z.literal('completed'), model: z.literal(input.model) }).parse(event.response);
                         completed = true;
                     }
                 } catch (error: unknown) {
                     if (error instanceof PlanFailure) throw error;
-                    if (error instanceof SyntaxError || error instanceof z.ZodError) fail('invalid_stream');
+                    if (error instanceof SyntaxError || error instanceof z.ZodError) fail('invalid_stream', validationReason);
                     throw error;
                 }
             }
@@ -234,11 +247,11 @@ export async function* requestPlanResponseStream(input: PlanResponseInput, valid
             if (!eof && boundary[0].endsWith('\r') && boundary.index + boundary[0].length === pending.length) break;
             const frame = pending.slice(0, boundary.index + boundary[0].length);
             pending = pending.slice(boundary.index + boundary[0].length);
-            if (Buffer.byteLength(frame) > INFERENCE_RESPONSE_BUFFER_MAX_BYTES) fail('response_too_large');
+            if (Buffer.byteLength(frame) > INFERENCE_RESPONSE_BUFFER_MAX_BYTES) fail('response_too_large', 'frame_limit');
             const output = parseFrame(frame);
             if (completed) {
                 heldTerminal += output;
-                if (Buffer.byteLength(heldTerminal) > INFERENCE_RESPONSE_BUFFER_MAX_BYTES) fail('response_too_large');
+                if (Buffer.byteLength(heldTerminal) > INFERENCE_RESPONSE_BUFFER_MAX_BYTES) fail('response_too_large', 'terminal_limit');
             } else {
                 if (validateChunks) input.validate();
                 for (const piece of splitOutput(output)) {
@@ -262,11 +275,11 @@ export async function* requestPlanResponseStream(input: PlanResponseInput, valid
         }
     }
     const bodyStream = response.body;
-    if (!bodyStream) return fail('invalid_stream');
+    if (!bodyStream) return fail('invalid_stream', 'body_missing');
     let reader: ReadableStreamDefaultReader<Uint8Array>;
     try { reader = bodyStream.getReader(); }
     catch (error: unknown) {
-        if (error instanceof TypeError) fail('invalid_stream');
+        if (error instanceof TypeError) fail('invalid_stream', 'reader_unavailable');
         throw error;
     }
     const deadline = new AbortController();
@@ -293,7 +306,7 @@ export async function* requestPlanResponseStream(input: PlanResponseInput, valid
                     return result;
                 } catch (error: unknown) {
                     return fail(signal.aborted ? signal.reason instanceof DOMException && signal.reason.name === 'TimeoutError' ? 'timeout' : 'cancelled'
-                        : error instanceof DOMException && error.name === 'AbortError' ? 'cancelled' : 'invalid_stream');
+                        : error instanceof DOMException && error.name === 'AbortError' ? 'cancelled' : 'invalid_stream', 'body_read', error);
                 }
             })();
             if (read.done) break;
@@ -302,26 +315,26 @@ export async function* requestPlanResponseStream(input: PlanResponseInput, valid
                 let decoded: string;
                 try { decoded = decoder.decode(read.value.subarray(offset, offset + 4096), { stream: true }); }
                 catch (error: unknown) {
-                    if (error instanceof TypeError) fail('invalid_stream');
+                    if (error instanceof TypeError) fail('invalid_stream', 'utf8_decode');
                     throw error;
                 }
                 sample(decoded);
                 pending += decoded;
                 yield* drainFrames(false);
-                if (Buffer.byteLength(pending) > INFERENCE_RESPONSE_BUFFER_MAX_BYTES) fail('response_too_large');
+                if (Buffer.byteLength(pending) > INFERENCE_RESPONSE_BUFFER_MAX_BYTES) fail('response_too_large', 'pending_limit');
             }
         }
         let final: string;
         try { final = decoder.decode(); }
         catch (error: unknown) {
-            if (error instanceof TypeError) return fail('invalid_stream');
+            if (error instanceof TypeError) return fail('invalid_stream', 'utf8_decode');
             throw error;
         }
         sample(final);
         pending += final;
         yield* drainFrames(true);
-        if (pending.trim()) fail(/^(?:data|event):/m.test(head) ? 'incomplete_stream' : 'invalid_stream');
-        if (!completed) fail(sawData ? 'incomplete_stream' : 'invalid_stream');
+        if (pending.trim()) fail(/^(?:data|event):/m.test(head) ? 'incomplete_stream' : 'invalid_stream', 'trailing_frame');
+        if (!completed) fail(sawData ? 'incomplete_stream' : 'invalid_stream', 'missing_completion');
         input.validate();
         for (const piece of splitOutput(heldTerminal)) {
             refreshIdle();
