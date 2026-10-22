@@ -754,48 +754,6 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}
 
-      - name: Identify runner image for Playwright system packages
-        id: runner-image
-        if: needs.changes.outputs.should_run == 'true'
-        run: echo "version=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
-
-      # Cached .deb files skip the Ubuntu mirror, which has dropped to ~30 kB/s and turned this
-      # 18 MB install into a 10-minute step that exhausted the E2E timeout. The key pins the runner
-      # image so the cached packages always match the libraries already installed on it.
-      - name: Restore Playwright system packages
-        id: playwright-apt
-        if: needs.changes.outputs.should_run == 'true'
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.cache/playwright-apt
-          key: playwright-apt-${{ runner.os }}-${{ runner.arch }}-${{ steps.runner-image.outputs.version }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}
-
-      - name: Install Playwright system packages
-        if: needs.changes.outputs.should_run == 'true'
-        run: |
-          set -euo pipefail
-          cache="$HOME/.cache/playwright-apt"
-          if compgen -G "$cache/*.deb" >/dev/null; then
-            if sudo dpkg -i "$cache"/*.deb >/dev/null; then
-              echo "Installed $(ls "$cache"/*.deb | wc -l) Playwright system packages from cache."
-              exit 0
-            fi
-            echo "::warning::Cached Playwright system packages did not install; downloading them."
-          fi
-          echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' | sudo tee /etc/apt/apt.conf.d/99keep-playwright-debs >/dev/null
-          sudo rm -f /var/cache/apt/archives/*.deb
-          pnpm --filter @matrix-os/mcp-browser exec playwright install-deps chromium
-          pnpm --filter shell exec playwright install-deps chromium
-          rm -rf "$cache" && mkdir -p "$cache"
-          cp /var/cache/apt/archives/*.deb "$cache"/ 2>/dev/null || true
-
-      - name: Save Playwright system packages
-        if: needs.changes.outputs.should_run == 'true' && steps.playwright-apt.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/.cache/playwright-apt
-          key: ${{ steps.playwright-apt.outputs.cache-primary-key }}
-
       - name: Install Chromium for terminal presentation regression
         if: needs.changes.outputs.should_run == 'true'
         run: pnpm --filter @matrix-os/mcp-browser exec playwright install chromium
@@ -803,6 +761,27 @@ jobs:
       - name: Install Chromium for shell-scoped Settings regressions
         if: needs.changes.outputs.should_run == 'true'
         run: pnpm --filter shell exec playwright install chromium
+
+      # ubuntu-latest already ships the shared libraries Chromium and Electron need, so E2E skips
+      # Playwright's apt dependency install, which pulled ~17 MB of CJK/Thai fonts and took up to
+      # 11 minutes on a slow Ubuntu mirror. Fail fast with the missing library if an image drops one.
+      - name: Check browser shared libraries
+        if: needs.changes.outputs.should_run == 'true'
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          binaries=(~/.cache/ms-playwright/chromium-*/chrome-linux*/chrome
+            ~/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux*/chrome-headless-shell
+            desktop/node_modules/electron/dist/electron)
+          [ "${#binaries[@]}" -gt 0 ] || { echo "No browser binaries found" >&2; exit 1; }
+          missing=0 checked=0
+          for binary in "${binaries[@]}"; do
+            [ -x "$binary" ] || continue
+            checked=$((checked + 1))
+            if ldd "$binary" | grep 'not found'; then echo "::error::$binary has missing shared libraries"; missing=1; fi
+          done
+          echo "Checked $checked browser binaries; no shared library is missing."
+          exit "$missing"
 
       - name: Save Playwright browser revisions
         if: needs.changes.outputs.should_run == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'

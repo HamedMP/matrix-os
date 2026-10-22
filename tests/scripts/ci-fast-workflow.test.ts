@@ -85,20 +85,18 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(browsers).toHaveLength(2);
     // Install verifies each workspace's potentially different Chromium revision even on cache hits.
     expect(browsers.every(s => !s.if?.includes('cache-hit'))).toBe(true);
-    // System packages come from a runner-image-keyed .deb cache and fall back to both workspaces' install-deps.
-    const systemPackages = workflow.jobs.e2e.steps.find(s => s.name === 'Install Playwright system packages');
-    expect(systemPackages?.run).toContain('sudo dpkg -i');
-    expect(systemPackages?.run).toContain('@matrix-os/mcp-browser exec playwright install-deps chromium');
-    expect(systemPackages?.run).toContain('shell exec playwright install-deps chromium');
-    const aptCache = workflow.jobs.e2e.steps.find(s => s.name === 'Restore Playwright system packages');
-    expect(aptCache?.with?.key).toContain('steps.runner-image.outputs.version');
+    // ubuntu-latest ships Chromium's shared libraries; E2E never runs Playwright's apt install.
+    const e2eRuns = workflow.jobs.e2e.steps.map(s => s.run ?? '').join('\n');
+    expect(e2eRuns).not.toMatch(/--with-deps|install-deps|apt-get/);
+    const libraries = workflow.jobs.e2e.steps.find(s => s.name === 'Check browser shared libraries');
+    expect(libraries?.run).toContain("ldd \"$binary\" | grep 'not found'");
   });
 
   it('saves caches only after a cache miss, from the run that produced them', () => {
     const steps = Object.values(workflow.jobs).flatMap(job => job.steps);
     expect(steps.some(s => s.uses?.startsWith('actions/cache@'))).toBe(false);
     const saves = steps.filter(s => s.uses?.startsWith('actions/cache/save@'));
-    expect(saves).toHaveLength(3);
+    expect(saves).toHaveLength(2);
     for (const save of saves) expect(save.if).toMatch(/cache-hit != 'true'/);
     const nodeCaches = steps.filter(s => s.uses?.startsWith('actions/setup-node@') && s.with?.cache !== undefined);
     expect(nodeCaches.length).toBeGreaterThan(0);
