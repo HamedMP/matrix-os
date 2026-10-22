@@ -4,7 +4,7 @@ import { createManagedPiOwnerTools } from "../../../packages/gateway/src/chat/ma
 import type { ManagedPiRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import { getService } from "../../../packages/gateway/src/integrations/registry.js";
 const binding = { kind: "managed_chat", ownerId: "owner_qa", chatId: "chat_qa", runId: "run_qa", runtimeHandle: `runtime_${"a".repeat(32)}`, executionGeneration: "1", capabilities: ["integration.inventory", "integration.describe", "integration.call"], workspace: { kind: "chat_workspace" }, rootFingerprint: "a".repeat(64) } as ManagedPiRuntimeBinding;
-function setup(permissionMode = "full_access") {
+function setup(permissionMode = "full_access", authorizeExternalEgress?: (binding: ManagedPiRuntimeBinding, signal: AbortSignal) => Promise<void>) {
   const call = vi.fn(async () => ({ data: { count: 0 } }));
   const inventory = vi.fn(async () => [{ connectionId: "conn_qa", service: "github", label: "QA" }]);
   const authority = vi.fn(async () => ({ permissionMode }));
@@ -12,7 +12,7 @@ function setup(permissionMode = "full_access") {
     .filter(([, action]) => !input.readOnly || action.risk === "read")
     .map(([id, action]) => ({ id, description: action.description, risk: action.risk, params: action.params })));
   const signal = new AbortController(); const events: Array<Record<string, unknown>> = [];
-  const tools = createManagedPiOwnerTools({ authority, signalFor: () => signal.signal, integrations: { inventory, call, describe } });
+  const tools = createManagedPiOwnerTools({ authority, signalFor: () => signal.signal, ...(authorizeExternalEgress ? { authorizeExternalEgress } : {}), integrations: { inventory, call, describe } });
   tools.open(binding, event => events.push(event));
   return { tools, call, inventory, authority, signal, events, describe };
 }
@@ -26,7 +26,7 @@ it("declares only actually wired capabilities and validates bounded MCP/describe
 it("uses exact owner/account and read-only transport; exposes actual registry schema", async () => {
   const { tools, call } = setup("supervised");
   await tools.dispatch(binding, request("list_issues", { repo: "matrix/qa", per_page: 1 }), new AbortController().signal);
-  expect(call).toHaveBeenCalledWith("owner_qa", { service: "github", action: "list_issues", label: "QA", params: { repo: "matrix/qa", per_page: 1 }, read: true }, expect.any(AbortSignal));
+  expect(call).toHaveBeenCalledWith("owner_qa", { service: "github", action: "list_issues", label: "QA", connectionId: "conn_qa", params: { repo: "matrix/qa", per_page: 1 }, read: true }, expect.any(AbortSignal));
   const result = await tools.dispatch(binding, BotToolRequestSchema.parse({ toolCallId: "describe_qa", capability: "integration.describe", args: { service: "github" } }), new AbortController().signal);
   expect(JSON.stringify(result)).toContain("list_issues"); expect(JSON.stringify(result)).not.toContain("create_issue");
 });
@@ -95,4 +95,43 @@ it("denies unavailable transports and recipe identities without inheriting owner
   await expect(tools.dispatch({ ...binding, ownerId: "wrong" }, request("list_issues", { repo: "matrix/qa" }), new AbortController().signal)).rejects.toThrow();
   await expect(tools.dispatch({ ...binding, runId: "run_other" }, request("list_issues", { repo: "matrix/qa" }), new AbortController().signal)).rejects.toThrow();
   expect(call).not.toHaveBeenCalled();
+});
+
+it("checks the current egress guard before a non-Gmail integration receives model arguments", async () => {
+  const guard = vi.fn(async () => { throw new Error("Tool unavailable"); });
+  const { tools, call } = setup("full_access", guard);
+  await expect(tools.dispatch(binding, request("list_issues", { repo: "matrix/qa" }), new AbortController().signal)).rejects.toThrow("Tool unavailable");
+  expect(guard).toHaveBeenCalledExactlyOnceWith(binding, expect.any(AbortSignal)); expect(call).not.toHaveBeenCalled();
+  await tools.closeRun(binding.runId);
+});
+it.each(['browser.action', 'mcp.call'] as const)('checks egress before %s can send content, including remote approval preparation', async capability => {
+  const current = { ...binding, capabilities: [capability] } as ManagedPiRuntimeBinding;
+  const signal = new AbortController().signal; const guard = vi.fn(async () => { throw new Error('Tool unavailable'); });
+  const execute = vi.fn(); const mcpCall = vi.fn(); const remotePrepare = vi.fn(async () => ({ kind: 'allow' as const }));
+  const tools = createManagedPiOwnerTools({ authority: async () => ({ permissionMode: 'full_access' }), signalFor: () => signal, authorizeExternalEgress: guard,
+    sharedBrowser: { openRun: vi.fn(), execute, closeRun: vi.fn() } as never,
+    mcp: { inventory: async () => [], describe: async () => ({}), call: mcpCall } as never,
+    approvals: { registerRun: async () => ({ generation: 1 }), prepare: remotePrepare, revokeRun: async () => true } as never });
+  await tools.open(current, () => undefined);
+  const req = BotToolRequestSchema.parse({ toolCallId: 'egress_one', capability, args: capability === 'browser.action' ? { action: 'status' }
+    : { serverId: '123e4567-e89b-42d3-a456-426614174000', tool: 'echo', arguments: { text: 'synthetic-private-mail' } } });
+  await expect(tools.dispatch(current, req, signal)).rejects.toThrow('Tool unavailable');
+  expect(guard).toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled(); expect(mcpCall).not.toHaveBeenCalled(); expect(remotePrepare).not.toHaveBeenCalled();
+  await tools.closeRun(current.runId);
+});
+it('rechecks egress after remote MCP run registration before sending approval arguments', async () => {
+  const current = { ...binding, capabilities: ['mcp.call'] } as ManagedPiRuntimeBinding;
+  let classified = false; let finish!: (value: { generation: number }) => void; let entered!: () => void;
+  const ready = new Promise<void>(r => { entered = r; });
+  const registerRun = vi.fn(() => { entered(); return new Promise<{ generation: number }>(r => { finish = r; }); });
+  const prepare = vi.fn(async () => ({ kind: 'allow' as const })); const call = vi.fn();
+  const tools = createManagedPiOwnerTools({ authority: async () => ({ permissionMode: 'full_access' }), signalFor: () => new AbortController().signal,
+    authorizeExternalEgress: async () => { if (classified) throw new Error('Tool unavailable'); },
+    mcp: { inventory: async () => [], describe: async () => ({}), call } as never,
+    approvals: { registerRun, prepare, revokeRun: async () => true } as never });
+  await tools.open(current, () => undefined);
+  const req = BotToolRequestSchema.parse({ toolCallId: 'mcp_wait', capability: 'mcp.call', args: { serverId: '123e4567-e89b-42d3-a456-426614174000', tool: 'echo', arguments: { text: 'synthetic-private-mail' } } });
+  const pending = tools.dispatch(current, req, new AbortController().signal); const rejected = expect(pending).rejects.toThrow('Tool unavailable');
+  await ready; classified = true; finish({ generation: 1 }); await rejected;
+  expect(prepare).not.toHaveBeenCalled(); expect(call).not.toHaveBeenCalled(); await tools.closeRun(current.runId);
 });

@@ -7,6 +7,8 @@ import { lockGoogleContexts, migrateGoogleContexts } from "./contexts-schema.js"
 
 export type { GoogleContext, GoogleContextMark, GoogleContextOptions, GoogleContextSource, GoogleContextDeletionAuthority, GoogleContextOwnerDeletionAuthority, GoogleContextLimits } from "./contexts-contracts.js";
 export { GoogleContextUnavailable } from "./contexts-contracts.js";
+/** Stable private lineage identity shared by collection and inference admission. */
+export const googleContextOriginId = (owner: string, account: string, consent: string) => createHash("sha256").update(JSON.stringify([owner, account, consent])).digest("hex");
 interface ContextRow {
   id: string; owner_id: string; chat_id: string; revision: number; retention_deadline: Date;
   state: "active" | "purging" | "deleted"; sources: GoogleContextSource[];
@@ -21,7 +23,6 @@ const sourceProjection = sql`jsonb_build_object('originId',s.origin_id,'googleAc
 export function createGoogleContextStore<DB>(db: Kysely<DB>, options: GoogleContextOptions = {}) {
   const cap = contextLimits(options.limits);
   const now = options.now ?? (() => new Date());
-  const privateOriginId = (owner: string, account: string, consent: string) => createHash("sha256").update(JSON.stringify([owner, account, consent])).digest("hex");
   const validDeadline = (value: string) => Number.isFinite(new Date(value).getTime()) && new Date(value) > now();
   function project(row: ContextRow): GoogleContext {
     const sources = row.sources.map(source => ({ ...source, expiresAt: new Date(source.expiresAt).toISOString() }));
@@ -82,7 +83,7 @@ export function createGoogleContextStore<DB>(db: Kysely<DB>, options: GoogleCont
       return boundedProvenanceTransaction(db, async tx => {
         await lockGoogleContexts(tx);
         if (!validDeadline(input.expiresAt) || !validDeadline(input.retentionDeadline)) contextDeny();
-        const originId = privateOriginId(input.ownerId, input.googleAccountId, input.consentId);
+        const originId = googleContextOriginId(input.ownerId, input.googleAccountId, input.consentId);
         const existing = (await sql<{ profile_id: string; profile_revision: number; purpose_id: string; state: string }>`SELECT profile_id,profile_revision,purpose_id,state
           FROM google_context_sources WHERE origin_id=${originId} AND owner_id=${input.ownerId} FOR UPDATE`.execute(tx)).rows[0];
         if (existing && (existing.state !== "active" || existing.profile_id !== input.profileId || existing.profile_revision !== input.profileRevision || existing.purpose_id !== input.purposeId)) contextDeny();

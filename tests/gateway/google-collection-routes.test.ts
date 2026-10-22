@@ -18,9 +18,9 @@ function fixture(options: { native?: boolean; hook?: boolean; denied?: boolean; 
   const state = { denied: options.denied ?? false, revoked: false };
   const row = { id: account, user_id: owner, service, status: 'active', account_label: 'Work', account_email: 'owner@example.invalid', pipedream_account_id: options.native ? `gmail_${account}` : 'apn_work' };
   const inventory = options.empty ? [] : [row];
-  const provider = async (input: { url: string }) => { events.push('provider'); return input.url.endsWith('/profile') ? { emailAddress: 'owner@example.invalid' } : { id: 'private-result', snippet: 'private-mailbox-content' }; };
+  const provider = async (input: { url: string }, beforeSend?: (signal: AbortSignal) => Promise<void>, signal = new AbortController().signal) => { if (beforeSend) await beforeSend(signal); events.push('provider'); return input.url.endsWith('/profile') ? { emailAddress: 'owner@example.invalid' } : { id: 'private-result', snippet: 'private-mailbox-content' }; };
   const legacy = { proxyGet: vi.fn(provider), proxyPost: vi.fn(provider), listAccounts: vi.fn(async () => []), getAppInfo: vi.fn(async () => null),
-    boundedGmailGet: vi.fn(async (input: { kind: string }) => { events.push('provider'); return input.kind === 'profile' ? { emailAddress: 'owner@example.invalid' } : { id: 'private-result' }; }) };
+    boundedGmailGet: vi.fn(async (input: { kind: string }, signal = new AbortController().signal, beforeSend?: (signal: AbortSignal) => Promise<void>) => { if (beforeSend) await beforeSend(signal); events.push('provider'); return input.kind === 'profile' ? { emailAddress: 'owner@example.invalid' } : { id: 'private-result' }; }) };
   const token = vi.fn(async () => { events.push('token'); return 'synthetic-token'; });
   const fetcher = vi.fn(async (url: string) => Response.json(await provider({ url })));
   const pipedream = options.native ? createNativeGmailClient({ legacy: legacy as unknown as PipedreamConnectClient, oauth: { token }, fetcher }) : legacy as unknown as PipedreamConnectClient;
@@ -31,16 +31,52 @@ function fixture(options: { native?: boolean; hook?: boolean; denied?: boolean; 
         pipedream_account_id: input.pipedreamAccountId, account_label: input.accountLabel, account_email: input.accountEmail ?? null };
       inventory.push(connected as typeof row); return { ...connected, inserted: true };
     }) };
+  const beforeSend = vi.fn(async (signal: AbortSignal) => { events.push('send'); if (signal.aborted || state.revoked) throw new Error('synthetic private policy refusal'); });
   const release = vi.fn(async () => { events.push('release'); if (state.revoked) throw new Error('synthetic private policy refusal'); });
-  const admit = vi.fn<GoogleCollectionAdmission['admit']>(async () => { events.push('admit'); if (state.denied) throw new Error('synthetic private policy refusal'); return { release }; });
+  const admit = vi.fn<GoogleCollectionAdmission['admit']>(async () => { events.push('admit'); if (state.denied) throw new Error('synthetic private policy refusal'); return { beforeSend, release }; });
   const app = createIntegrationRoutes({ db: db as unknown as PlatformDb, pipedream, webhookSecret: 'synthetic', resolveUserId: async () => owner,
     ...(options.hook === false ? {} : { googleCollection: { admit } }) });
   const post = (path: string, body: Record<string, unknown>, headers: Record<string, string> = {}) => app.request(path, { method: 'POST',
     headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ service, label: 'Work', connectionId: account, ...body }) });
-  return { app, post, db, inventory, row, events, state, legacy, token, fetcher, admit, release };
+  return { app, post, db, inventory, row, events, state, legacy, token, fetcher, admit, beforeSend, release };
 }
 afterEach(() => vi.restoreAllMocks());
 describe('trusted Gmail collection route boundary', () => {
+  it.each(actions.flatMap(action => [false, true].map(native => ({ ...action, native }))))('revalidates $path/$action after credential waits before actual send (native=$native)', async ({ native, path, action, params }) => {
+    const f = fixture({ native });
+    if (native) f.token.mockImplementation(async () => { f.state.revoked = true; return 'synthetic-token'; });
+    else {
+      const proxy = action === 'send_email' ? f.legacy.proxyPost : f.legacy.proxyGet;
+      proxy.mockImplementation(async (input, beforeSend, signal) => { f.state.revoked = true; if (beforeSend) await beforeSend(signal!); f.events.push('provider'); return {}; });
+    }
+    const response = await f.post(path, { action, params });
+    expect(response.status).toBe(503); expect(f.beforeSend).toHaveBeenCalledTimes(1);
+    expect(f.fetcher).not.toHaveBeenCalled(); expect(f.events).not.toContain('provider'); expect(f.release).toHaveBeenCalledTimes(1);
+    expect(await response.text()).not.toContain('synthetic private');
+  });
+  it.each(['/call', '/read-call'])('passes request cancellation into provider execution on $0', async path => {
+    const f = fixture(); const controller = new AbortController(); let received: AbortSignal | undefined;
+    f.legacy.proxyGet.mockImplementation(async (_input, _beforeSend, signal) => { received = signal; return {}; });
+    const response = await f.app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, signal: controller.signal,
+      body: JSON.stringify({ service: 'gmail', label: 'Work', connectionId: account, action: 'get_message', params: { messageId: 'message1' } }) });
+    expect(response.status).toBe(200); expect(received).toBeDefined(); controller.abort(); expect(received?.aborted).toBe(true);
+  });
+  it('checks before each Jev send after earlier profile lookup awaits', async () => {
+    const f = fixture(); const original = f.legacy.boundedGmailGet.getMockImplementation()!;
+    f.legacy.boundedGmailGet.mockImplementation(async (input, signal, beforeSend) => {
+      const result = await original(input, signal, beforeSend); if (input.kind === 'profile') f.state.revoked = true; return result;
+    });
+    const binding = { service: 'gmail', connectionId: account, accountLabel: 'Work', expectedEmail: 'owner@example.invalid' };
+    const response = await f.post('/read-call', { action: 'get_thread_ids', params: { threadId: 'thread1' }, binding });
+    expect(response.status).toBe(503); expect(f.beforeSend).toHaveBeenCalledTimes(2);
+    expect(f.events.filter(e => e === 'provider')).toHaveLength(1); expect(f.release).toHaveBeenCalledTimes(1);
+  });
+  it('rejects a release-only lease before provider execution', async () => {
+    const f = fixture(); f.admit.mockResolvedValue({ release: f.release } as never);
+    expect((await f.post('/call', { action: 'get_message', params: { messageId: 'message1' } })).status).toBe(503);
+    expect(f.legacy.proxyGet).not.toHaveBeenCalled();
+  });
+
   it.each(actions.flatMap(action => [false, true].map(native => ({ ...action, native }))))('refuses $path/$action before any mailbox or credential call (native=$native)', async ({ native, path, action, params }) => {
     const f = fixture({ native, denied: true }); const response = await f.post(path, { action, params });
     expect(response.status).toBe(503); expect(await response.json()).toEqual({ error: 'Integration service unavailable' });
@@ -92,7 +128,7 @@ describe('trusted Gmail collection route boundary', () => {
   });
   it.each(['/call', '/read-call'])('preserves exact request bytes for server signature verification on $0', async path => {
     const f = fixture(); const body = ' { "service" : "gmail", "label":"Work", "connectionId":"' + account + '", "action":"get_message", "params": {"messageId":"message1"} } ';
-    f.admit.mockImplementation(async c => { expect(await c.req.text()).toBe(body); return { release: f.release }; });
+    f.admit.mockImplementation(async c => { expect(await c.req.text()).toBe(body); return { beforeSend: f.beforeSend, release: f.release }; });
     const response = await f.app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
     expect(response.status).toBe(200); expect(f.admit).toHaveBeenCalledTimes(1);
   });

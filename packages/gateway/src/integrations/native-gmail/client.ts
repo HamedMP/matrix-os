@@ -1,3 +1,4 @@
+import type { BeforeGmailSend } from "../gmail-send-admission.js";
 import type { PipedreamConnectClient } from '../pipedream.js';
 import { BoundedGmailReadSchema } from '../pipedream-bounded-get.js';
 import { BoundedGmailLabelsSchema } from '../pipedream-bounded-labels.js';
@@ -10,8 +11,10 @@ export function createNativeGmailClient(options: { legacy: PipedreamConnectClien
   const { legacy } = options;
   const request = createNativeGmailRequest(options);
   const coalesce = createReadCoalescer(128, 10_000);
-  const get = (input: NativeGmailRequest, limit?: number, signal?: AbortSignal) => signal ? request(input, 'GET', limit, signal)
+  const get = (input: NativeGmailRequest, limit?: number, signal?: AbortSignal, beforeSend?: BeforeGmailSend) => signal || beforeSend ? request(input, 'GET', limit, signal, beforeSend)
     : coalesce(JSON.stringify([proxyReadKey(input), limit ?? 2 * 1024 * 1024]), () => request(input, 'GET', limit));
+  const control = (beforeSend?: BeforeGmailSend, signal?: AbortSignal): [BeforeGmailSend?, AbortSignal?] =>
+    signal ? [beforeSend, signal] : beforeSend ? [beforeSend] : [];
   return {
     ...legacy,
     boundedFinanceAction: async (input, signal) => {
@@ -29,17 +32,17 @@ export function createNativeGmailClient(options: { legacy: PipedreamConnectClien
       if (!legacy.readDriveFile) throw new Error('Integration unavailable');
       return legacy.readDriveFile(input);
     },
-    proxyGet: input => isNativeGmailAccount(input.accountId) ? get(input) : legacy.proxyGet(input),
-    proxyPost: input => isNativeGmailAccount(input.accountId) ? request(input, 'POST') : legacy.proxyPost(input),
-    proxyPut: input => isNativeGmailAccount(input.accountId) ? request(input, 'PUT') : legacy.proxyPut(input),
-    proxyPatch: input => isNativeGmailAccount(input.accountId) ? request(input, 'PATCH') : legacy.proxyPatch(input),
-    proxyDelete: input => isNativeGmailAccount(input.accountId) ? request(input, 'DELETE') : legacy.proxyDelete(input),
-    callAction: input => isNativeGmailAccount(input.accountId) ? request(input, 'POST') : legacy.callAction(input),
-    boundedGmailGet: async (raw, signal) => {
+    proxyGet: (input, beforeSend, signal) => isNativeGmailAccount(input.accountId) ? get(input, undefined, signal, beforeSend) : legacy.proxyGet(input, ...control(beforeSend, signal)),
+    proxyPost: (input, beforeSend, signal) => isNativeGmailAccount(input.accountId) ? request(input, 'POST', undefined, signal, beforeSend) : legacy.proxyPost(input, ...control(beforeSend, signal)),
+    proxyPut: (input, beforeSend, signal) => isNativeGmailAccount(input.accountId) ? request(input, 'PUT', undefined, signal, beforeSend) : legacy.proxyPut(input, ...control(beforeSend, signal)),
+    proxyPatch: (input, beforeSend, signal) => isNativeGmailAccount(input.accountId) ? request(input, 'PATCH', undefined, signal, beforeSend) : legacy.proxyPatch(input, ...control(beforeSend, signal)),
+    proxyDelete: (input, beforeSend, signal) => isNativeGmailAccount(input.accountId) ? request(input, 'DELETE', undefined, signal, beforeSend) : legacy.proxyDelete(input, ...control(beforeSend, signal)),
+    callAction: (input, beforeSend, signal) => isNativeGmailAccount(input.accountId) ? request(input, 'POST', undefined, signal, beforeSend) : legacy.callAction(input, ...control(beforeSend, signal)),
+    boundedGmailGet: async (raw, signal, beforeSend) => {
       const input = BoundedGmailReadSchema.parse(raw);
       if (!isNativeGmailAccount(input.accountId)) {
         if (!legacy.boundedGmailGet) throw new Error('Integration read unavailable');
-        return legacy.boundedGmailGet(input, signal);
+        return legacy.boundedGmailGet(input, signal, ...(beforeSend ? [beforeSend] : []));
       }
       const target = new URL(`${BASE}/profile`); let limit = 32 * 1024;
       if (input.kind === 'threads') {
@@ -57,13 +60,13 @@ export function createNativeGmailClient(options: { legacy: PipedreamConnectClien
         target.pathname = `/gmail/v1/users/me/messages/${input.id}/attachments/${input.attachmentId}`;
         limit = Math.ceil((1024 * 1024) / 3) * 4 + 1024;
       }
-      return get({ externalUserId: input.externalUserId, accountId: input.accountId, url: target.href }, limit, signal);
+      return get({ externalUserId: input.externalUserId, accountId: input.accountId, url: target.href }, limit, signal, beforeSend);
     },
-    boundedGmailLabels: async (raw, signal) => {
+    boundedGmailLabels: async (raw, signal, beforeSend) => {
       const input = BoundedGmailLabelsSchema.parse(raw);
       if (!isNativeGmailAccount(input.accountId)) {
         if (!legacy.boundedGmailLabels) throw new Error('Mailbox labeling could not be confirmed');
-        return legacy.boundedGmailLabels(input, signal);
+        return legacy.boundedGmailLabels(input, signal, ...(beforeSend ? [beforeSend] : []));
       }
       const target = new URL(`${BASE}/labels`); let body: Record<string, unknown> | undefined;
       if (input.kind === 'labels') target.searchParams.set('fields', 'labels(id,name,type)');
@@ -76,7 +79,7 @@ export function createNativeGmailClient(options: { legacy: PipedreamConnectClien
       }
       const limit = input.kind === 'labels' ? 512 * 1024 : 32 * 1024;
       const identity = { externalUserId: input.externalUserId, accountId: input.accountId, url: target.href };
-      return body ? request({ ...identity, body }, 'POST', limit, signal) : get(identity, limit, signal);
+      return body ? request({ ...identity, body }, 'POST', limit, signal, beforeSend) : get(identity, limit, signal, beforeSend);
     },
   };
 }

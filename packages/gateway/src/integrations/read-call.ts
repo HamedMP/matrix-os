@@ -102,16 +102,16 @@ export function createIntegrationReadCallRoutes(options: {
     if (connectionId && selected.connection.id !== connectionId) return c.json({ error: "Action not permitted" }, 403);
     const user = await options.db.getUserById(uid);
     if (!user?.pipedream_external_id) return c.json({ error: "Integration unavailable" }, 503);
-    let beforeRelease: (() => Promise<void>) | undefined;
+    let lease: Awaited<ReturnType<typeof admitGoogleCollection>>;
     try {
       // This request gate does not qualify Jev onward processing.
       if (binding) validateJevBoundRead({ ownerId: uid, externalUserId: user.pipedream_external_id,
         connection: selected.connection, binding, action, params, pipedream: options.pipedream, signal: c.req.raw.signal });
-      beforeRelease = await admitGoogleCollection(options.googleCollection, c, uid, selected.connection, "/read-call");
+      lease = await admitGoogleCollection(options.googleCollection, c, uid, selected.connection, "/read-call");
       if (binding) {
         const data = await executeJevBoundRead({ ownerId: uid, externalUserId: user.pipedream_external_id,
-          connection: selected.connection, binding, action, params, pipedream: options.pipedream, signal: c.req.raw.signal });
-        return await integrationActionSuccess(c, { db: options.db, connectionId: selected.connection.id, service, action, data, beforeRelease });
+          connection: selected.connection, binding, action, params, pipedream: options.pipedream, signal: c.req.raw.signal, beforeSend: lease?.beforeSend });
+        return await integrationActionSuccess(c, { db: options.db, connectionId: selected.connection.id, service, action, data, beforeRelease: lease?.release });
       }
       const { data, summary } = await executeIntegrationAction({
         pipedream: options.pipedream,
@@ -122,6 +122,8 @@ export function createIntegrationReadCallRoutes(options: {
         serviceId: service,
         actionId: action,
         params,
+        beforeSend: lease?.beforeSend,
+        signal: c.req.raw.signal,
       });
       return await integrationActionSuccess(c, {
         db: options.db,
@@ -130,10 +132,10 @@ export function createIntegrationReadCallRoutes(options: {
         action,
         data,
         summary,
-        beforeRelease,
+        beforeRelease: lease?.release,
       });
     } catch (err: unknown) {
-      try { await beforeRelease?.(); } catch (releaseError) { return integrationActionFailure(c, releaseError, service, action); }
+      try { await lease?.release(); } catch (releaseError) { return integrationActionFailure(c, releaseError, service, action); }
       if (err instanceof JevBoundReadError) return c.json({ error: "Integration read unavailable" }, err.code === "denied" ? 403 : 503);
       return integrationActionFailure(c, err, service, action);
     }

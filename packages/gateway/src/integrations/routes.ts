@@ -19,6 +19,7 @@ import { isScopedReadCatalogRequest, projectIntegrationCatalog } from "./catalog
 import { createIntegrationReadCallRoutes } from "./read-call.js";
 import { createJevLabelCallRoutes } from "./jev-label-call.js";
 export { authorizeInternalJevLabels } from "./jev-label-call.js";
+export { createGoogleCollectionAdmissionForPlatform } from "../google-data/register-collection-admission.js";
 
 // ---------------------------------------------------------------------------
 // Zod schemas

@@ -9,6 +9,7 @@
  * codes, never upstream text.
  */
 import { Hono } from "hono";
+import { GOOGLE_PROCESSING_HEADER, signGoogleProcessingEnvelope, type GoogleProcessingClaim } from "../google-data/runtime/envelope.js";
 import { z } from "zod/v4";
 import { delegatedIntegrationHeaders } from "../integrations/delegated-identity.js";
 import { REFRESH_LIMITS } from "../integrations/refresh/contracts.js";
@@ -50,6 +51,8 @@ export type BotIntegrationTransport = (ownerId: string, request: {
   path: string;
   body?: Record<string, unknown>;
   readScope?: boolean;
+  /** Trusted server value; never serialized into the body or accepted from tool JSON. */
+  processingClaim?: GoogleProcessingClaim;
   signal: AbortSignal;
 }) => Promise<Response>;
 
@@ -159,13 +162,14 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
     }
   }
 
-  type CallInput = { service: string; action: string; label: string; connectionId?: string; params: Record<string, unknown>; read: boolean };
+  type CallInput = { service: string; action: string; label: string; connectionId?: string; params: Record<string, unknown>; read: boolean; processingClaim?: GoogleProcessingClaim };
   async function call(ownerId: string, input: CallInput, maxBytes: number, signal?: AbortSignal) {
     return send(ownerId, {
       method: "POST",
       path: input.read ? "/read-call" : "/call",
       body: { service: input.service, action: input.action, label: input.label, params: input.params, ...(input.connectionId ? { connectionId: input.connectionId } : {}) },
       readScope: input.read,
+      ...(input.processingClaim ? { processingClaim: input.processingClaim } : {}),
     }, CALL_TIMEOUT_MS, async (response, bounded) => {
       const result = CallResultSchema.safeParse(await readJson(response, maxBytes, bounded));
       if (!result.success) throw new BotIntegrationError("unavailable");
@@ -213,7 +217,7 @@ export function createBotIntegrationClient(transport: BotIntegrationTransport) {
       return call(ownerId, { ...input, read: true }, MAX_IMPORT_CALL_BYTES, signal);
     },
     /** Runs one action on the account with `label`. Reads use the read-only route, which never syncs. */
-    async call(ownerId: string, input: { service: string; action: string; label: string; connectionId?: string; params: Record<string, unknown>; read: boolean }, signal?: AbortSignal) {
+    async call(ownerId: string, input: CallInput, signal?: AbortSignal) {
       const maxBytes = input.read && input.service === "gmail" && input.action === "get_attachment"
         ? MAX_GMAIL_ATTACHMENT_CALL_BYTES : MAX_CALL_BYTES;
       return call(ownerId, input, maxBytes, signal);
@@ -236,12 +240,22 @@ export function createPlatformIntegrationTransport(options: { baseUrl: string; m
       authorization: `Bearer ${options.machineToken}`,
       ...delegatedIntegrationHeaders(ownerId, options.machineToken),
     });
-    if (request.body) headers.set("content-type", "application/json");
+    const body = request.body ? JSON.stringify(request.body) : undefined;
+    if (request.signal.aborted) throw new BotIntegrationError("unavailable");
+    if (request.processingClaim) {
+      if (request.method !== "POST" || !["/call", "/read-call"].includes(request.path)
+        || request.processingClaim.ownerId !== ownerId || request.body?.service !== "gmail"
+        || request.body.connectionId !== request.processingClaim.googleAccountId) throw new BotIntegrationError("unavailable");
+      headers.set(GOOGLE_PROCESSING_HEADER, signGoogleProcessingEnvelope(request.processingClaim, {
+        method: request.method, path: request.path, body: body!, machineToken: options.machineToken,
+      }));
+    }
+    if (body) headers.set("content-type", "application/json");
     if (request.readScope) headers.set(INTEGRATION_READ_SCOPE_HEADER, "read");
     return (options.fetchImpl ?? fetch)(`${base}${request.path === "/" ? "" : request.path}`, {
       method: request.method,
       headers,
-      ...(request.body ? { body: JSON.stringify(request.body) } : {}),
+      ...(body ? { body } : {}),
       redirect: "error",
       signal: request.signal,
     });
@@ -251,6 +265,8 @@ export function createPlatformIntegrationTransport(options: { baseUrl: string; m
 /** The gateway's own integration routes, called in process for the owner. */
 export function createLocalIntegrationTransport(routes: Hono): BotIntegrationTransport {
   return (ownerId, request) => {
+    // Local owner projection does not establish a machine-bound collection authority.
+    if (request.processingClaim) throw new BotIntegrationError("unavailable");
     // This adapter is called by trusted server code, never by an app page.
     // Project its owner into verified context instead of trusting an HTTP header.
     const local = new Hono();
