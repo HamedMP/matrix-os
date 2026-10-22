@@ -91,3 +91,20 @@ This startup unit does not yet install durable stop receipts, queue/source purge
 or a recurring copy-deletion driver. Those lifecycle integrations and the platform fixed
 managed-route resolver remain separate required units; these source checks alone do not
 qualify a deployed pilot or implicit Cloudflare Anthropic routing.
+
+### Opt-in platform host composition
+
+`MATRIX_GOOGLE_QUALIFIED_FUNDED_ENABLED=true` requires the existing funded control plane
+and its distinct secrets plus a fixed `MATRIX_FUNDED_AI_RELAY_URL`. The platform allocates
+its own bounded qualified transaction runner, installs only the additive binding child
+schema, registers the separate qualified issue/check/authorization routes, and supplies
+the same authenticated fixed relay resolver to internal signed-owner processing policy.
+Public owner inspection routes receive no resolver and cannot set the private delegated
+machine principal. Off/absent configuration allocates no new pool or routes; partial or
+invalid enabled configuration refuses startup. Shutdown aborts/drains bounded control
+requests and service work before closing only the dedicated pool. No review/profile,
+policy grant, consent or managed processor approval is created by this composition.
+
+Proxy-side exact config/review opt-in remains independently required. An absent, stale or
+implicit Anthropic review refuses qualified work. This is source installation, not a live
+provider-account qualification or approval to enable the pilot.
