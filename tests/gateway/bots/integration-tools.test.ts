@@ -341,7 +341,7 @@ describe("bot integration tools", () => {
       expect(providerRead).not.toHaveBeenCalled();
     } else {
       await expect(tools.call(binding, read)).resolves.toMatchObject({ ok: true });
-      expect(providerRead).toHaveBeenCalledWith(expect.objectContaining({ accountId: "apn_work", externalUserId: "pd_owner" }));
+      expect(providerRead).toHaveBeenCalledWith(expect.objectContaining({ accountId: "apn_work", externalUserId: "pd_owner", kind: "threads" }), expect.any(AbortSignal));
     }
     expect(transport).toHaveBeenCalledWith(OWNER, expect.objectContaining({ path: "/read-call", readScope: true, body: expect.objectContaining({ connectionId: WORK.connectionId, label: "Work" }) }));
   });
@@ -374,7 +374,7 @@ describe("bot integration tools", () => {
     } else {
       await expect(tools.call(later, send)).resolves.toMatchObject({ ok: true });
       expect(providerWrite).toHaveBeenCalledOnce();
-      expect(providerWrite).toHaveBeenCalledWith(expect.objectContaining({ accountId: "apn_work", externalUserId: "pd_owner" }));
+      expect(providerWrite).toHaveBeenCalledWith(expect.objectContaining({ accountId: "apn_work", externalUserId: "pd_owner" }), undefined, expect.any(AbortSignal));
       await expect(tools.call(later, send)).resolves.toMatchObject({ ok: true });
       expect(providerWrite).toHaveBeenCalledOnce();
     }

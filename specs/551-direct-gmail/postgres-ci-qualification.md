@@ -1,0 +1,7 @@
+# Gmail PostgreSQL CI qualification — ENG-355
+
+The provenance and broker-startup transaction regressions require actual PostgreSQL. Vitest routes those suites out of the generic no-database lane; this is not qualification. The mandatory CI PostgreSQL job runs all Google-data suites, actual broker startup and qualified platform/proxy composition with the disposable loopback service as the native fixture authority. A separate bounded runner prepares the fixed fixture-admin database, discovers the complete scoped inventory and rejects missing files, skipped assertions, inconsistent counts and stale reports. No owner/platform database secret, deployment, provider request or publishing action is involved.
+
+Extraction plan for the existing large CI workflow: keep this change to one named runner step in its existing disposable PostgreSQL job. Put inventory, resource bounds and qualification logic in scripts/ci/gmail-postgres.mjs, with execution/result regressions; do not expand inline workflow orchestration. Existing job readiness and CI Results already enforce this job. The runner uses prepared prerequisites, serial file execution, an eight-minute process deadline and the existing ten-minute job limit.
+
+Validation must include no-database suite collection, real PostgreSQL execution with no skipped assertions, runner tests and full hosted branch CI on the frozen candidate. Passing a no-database skip is never reported as evidence that a database race was tested. Public documentation remains the separate site PR287.

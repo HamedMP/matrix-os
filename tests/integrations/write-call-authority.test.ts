@@ -69,7 +69,7 @@ describe("immutable selected account on general integration calls", () => {
   it.each([{}, { connectionId: "conn_work" }])("retains legacy label calls and allows a matching immutable account %s", async input => {
     const fixture = setup();
     expect((await fixture.call(input)).status).toBe(200);
-    expect(fixture.proxyPost).toHaveBeenCalledWith(expect.objectContaining({ externalUserId: "pd_owner", accountId: "apn_work" }));
+    expect(fixture.proxyPost).toHaveBeenCalledWith(expect.objectContaining({ externalUserId: "pd_owner", accountId: "apn_work" }), undefined, expect.any(AbortSignal));
   });
 
   it("still permits legacy sync on cache miss when no immutable account was supplied", async () => {
