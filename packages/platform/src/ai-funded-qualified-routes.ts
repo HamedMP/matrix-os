@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod/v4';
-import { GoogleQualifiedFundedDiscoveryRequestSchema, GoogleQualifiedFundedIssueRequestSchema, GoogleQualifiedFundedCheckRequestSchema } from '@matrix-os/contracts';
+import { GoogleQualifiedFundedDiscoveryRequestSchema, GoogleQualifiedFundedIssueRequestSchema, GoogleQualifiedFundedCheckRequestSchema, GoogleQualifiedFundedAuthorizationRequestSchema, GoogleQualifiedFundedDispatchCheckRequestSchema } from '@matrix-os/contracts';
 import type { QualifiedFundedService } from './ai-funded-qualified-service.js';
 import { timingSafeTokenEquals } from './platform-token.js';
 import { QualifiedFundedError } from './ai-funded-qualified-errors.js';
@@ -74,6 +74,14 @@ export function createQualifiedFundedRelayRoutes(options: { service: QualifiedFu
   app.post('/check', limit(), async c => {
     const input = GoogleQualifiedFundedCheckRequestSchema.safeParse(await json(c)); if (!input.success) return fail(c, 400);
     return c.json(await options.service.check(input.data, c.get('qualifiedSignal')), 200);
+  });
+  app.post('/authorize', limit(), async c => {
+    const input = GoogleQualifiedFundedAuthorizationRequestSchema.safeParse(await json(c)); if (!input.success) return fail(c, 400);
+    return c.json(await options.service.authorize(input.data, c.get('qualifiedSignal')), 200);
+  });
+  app.post('/dispatch-check', limit(), async c => {
+    const input = GoogleQualifiedFundedDispatchCheckRequestSchema.safeParse(await json(c)); if (!input.success) return fail(c, 400);
+    return c.json(await options.service.dispatchCheck(input.data, c.get('qualifiedSignal')), 200);
   });
   return app;
 }

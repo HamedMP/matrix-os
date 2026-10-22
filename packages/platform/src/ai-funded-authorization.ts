@@ -43,26 +43,30 @@ export interface FundedAuthorizeDependencies {
   reservationIdFactory(): string;
   reservationTtlMs: number;
   policyFreshnessMs: number;
+  /** Fixed server adapter only; never selected by an HTTP/body flag. Default legacy decoder is unchanged. */
+  protocol?: { decode(input: unknown): { request: z.infer<typeof FundedAiAuthorizationRequestSchema>; tokenId: string; routeDigest: string } };
 }
 
 export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
   return async function authorize(input: z.input<typeof FundedAiAuthorizationRequestSchema>): Promise<FundedAiAuthorizationResponse> {
-    const request = FundedAiAuthorizationRequestSchema.parse(input);
-    const tokenMatch = FUNDED_TOKEN_PATTERN.exec(request.credential);
-    if (!tokenMatch) throw new AiFundedPolicyError("unauthorized");
+    const decoded = deps.protocol?.decode(input);
+    const request = decoded?.request ?? FundedAiAuthorizationRequestSchema.parse(input);
+    const tokenId = decoded?.tokenId ?? FUNDED_TOKEN_PATTERN.exec(request.credential)?.[1];
+    if (!tokenId) throw new AiFundedPolicyError("unauthorized");
     const checked = deps.now();
     const checkedAt = checked.toISOString();
     const periodStart = utcMonthStart(checked);
     const payloadHash = createHash("sha256").update(JSON.stringify({
-      tokenId: tokenMatch[1], requestId: request.requestId,
+      tokenId, requestId: request.requestId,
       modelId: request.modelId, maxCostMicrousd: request.maxCostMicrousd,
       ...(request.billingMode ? { billingMode: request.billingMode } : {}),
       ...(request.jevPricingVersion ? { jevPricingVersion: request.jevPricingVersion } : {}),
+      ...(decoded ? { qualifiedRouteDigest: decoded.routeDigest } : {}),
     })).digest("hex");
     await deps.db.ready;
     const outcome = await deps.db.transaction(async (trx): Promise<AuthorizeOutcome> => {
       const credential = await trx.executor.selectFrom("ai_runtime_credentials")
-        .selectAll().where("token_id", "=", tokenMatch[1]).executeTakeFirst();
+        .selectAll().where("token_id", "=", tokenId).executeTakeFirst();
       if (!credential || !hashesEqual(credential.token_hash, deps.hashCredential(request.credential))
         || credential.revoked_at !== null || Date.parse(credential.expires_at) <= checked.getTime()
         || credential.audience !== FUNDED_AI_AUDIENCE || credential.scope !== FUNDED_AI_SCOPE) {

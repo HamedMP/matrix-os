@@ -1480,3 +1480,4 @@ export * from "#funded-host-activation";
 export * from '#managed-google-route';
 export * from '#managed-google-route-control';
 export * from '#google-qualified-funded';
+export * from '#google-qualified-authorization';

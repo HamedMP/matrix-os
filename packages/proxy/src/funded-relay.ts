@@ -1,3 +1,6 @@
+import { coalesceQualifiedResponse } from './funded-qualified-stream.js';
+import { createQualifiedFundedRoute, isQualifiedFundedCredential } from './funded-qualified-route.js';
+import { snapshotFundedRelayConfig, type ManagedRouteControlConfig } from './managed-route-control-config.js';
 import { isManagedWorkersAiModel } from "@matrix-os/contracts";
 import { createHmac, randomUUID } from "node:crypto";
 import {
@@ -56,6 +59,7 @@ interface FundedRelayDependencies extends FundedRelayConfig {
   now?: () => Date;
   requestIdFactory?: () => string;
   platformClient?: FundedPlatformClient;
+  managedRouteControl?: ManagedRouteControlConfig;
 }
 
 type VerifiedFundedIdentity = FundedAiIdentity & {
@@ -246,8 +250,13 @@ function identitiesMatch(left: VerifiedFundedIdentity, right: VerifiedFundedIden
 
 function fundedCredential(c: Context): string {
   const key = c.req.header("x-api-key") ?? "";
-  if (isFundedProxyApiKey(key)) return key;
   const bearer = /^Bearer (\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1] ?? "";
+  // Any qualified prefix selects the fail-closed boundary; conflicting headers cannot downgrade it.
+  if (isQualifiedFundedCredential(key) || isQualifiedFundedCredential(bearer)) {
+    if (key && bearer && key !== bearer) return 'sk-matrix-google-funded-invalid';
+    return isQualifiedFundedCredential(key) ? key : bearer;
+  }
+  if (isFundedProxyApiKey(key)) return key;
   return isFundedProxyApiKey(bearer) ? bearer : key;
 }
 
@@ -255,7 +264,7 @@ function createDisabledRelay(): FundedRelay {
   return {
     register(app) {
       app.all("/v1/*", async (c, next) => {
-        if (!isFundedProxyApiKey(fundedCredential(c))) return next();
+        if (!(isFundedProxyApiKey(fundedCredential(c)) || isQualifiedFundedCredential(fundedCredential(c)))) return next();
         return errorResponse(c, 403, "permission_error", "Matrix-funded AI is disabled");
       });
     },
@@ -267,10 +276,12 @@ function createDisabledRelay(): FundedRelay {
 
 export function createFundedRelay(dependencies: FundedRelayDependencies | null): FundedRelay {
   if (!dependencies) return createDisabledRelay();
-  const config = dependencies;
+  const { fetch: providedFetch, now: providedNow, requestIdFactory: providedIds, platformClient: providedPlatform, managedRouteControl, ...input } = dependencies;
+  const config = { ...(managedRouteControl ? snapshotFundedRelayConfig(input) : input), fetch: providedFetch, now: providedNow, requestIdFactory: providedIds, platformClient: providedPlatform };
   const fetchImpl = config.fetch ?? fetch;
   const now = config.now ?? (() => new Date());
   const requestIdFactory = config.requestIdFactory ?? randomUUID;
+  const qualifiedRoute = createQualifiedFundedRoute({ config, settings: managedRouteControl, fetch: fetchImpl, now, releaseRejected: releaseBeforeStart });
   const admission = new AdmissionController(config, () => now().getTime());
   const platform = config.platformClient ?? createFundedPlatformClient({ ...config, fetch: fetchImpl });
   const settlementQueue = new SettlementRetryQueue({
@@ -365,14 +376,17 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
 
     const credential = fundedCredential(c);
+    let qualified: ReturnType<typeof qualifiedRoute> | undefined;
+    try { if (isQualifiedFundedCredential(credential)) qualified = qualifiedRoute(credential, model.canonicalModelId); }
+    catch (error) { return controlPlaneError(c, error); }
     const checkInput = FundedAiPolicyCheckRequestSchema.safeParse({
       credential,
       modelId: model.canonicalModelId,
     });
-    if (!checkInput.success) return errorResponse(c, 401, "authentication_error", "Unauthorized");
+    if (!qualified && !checkInput.success) return errorResponse(c, 401, "authentication_error", "Unauthorized");
     let checked: Awaited<ReturnType<FundedPlatformClient["check"]>>;
     try {
-      checked = await platform.check(checkInput.data, state.lifetimeSignal);
+      checked = qualified ? await qualified.check(state.lifetimeSignal) : await platform.check(checkInput.data!, state.lifetimeSignal);
     } catch (error) {
       return controlPlaneError(c, error);
     }
@@ -446,7 +460,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     let authorization: Awaited<ReturnType<FundedPlatformClient["authorize"]>>;
     try {
       const claimKey = fundedClaimKey(c);
-      authorization = await platform.authorize({
+      authorization = qualified ? await qualified.authorize({ requestId, maxCostMicrousd, ...(claimKey ? { claimKey } : {}) }, state.lifetimeSignal) : await platform.authorize({
         credential,
         requestId,
         modelId: model.canonicalModelId,
@@ -524,8 +538,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       redirect: "error",
       signal: generationSignal,
     };
-    let dispatched = false;
+    let dispatched = false; let startedConfirmed = false;
     try {
+      await qualified?.validate(generationSignal, generationUrl);
       const started = await platform.start(
         { reservationId: reservation.reservationId, tokenId: authorization.identity.tokenId },
         state.lifetimeSignal,
@@ -534,8 +549,12 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         || started.requestId !== requestId || started.tokenId !== authorization.identity.tokenId) {
         throw new Error("Funded AI start response did not match its reservation");
       }
+      startedConfirmed = true;
+      await qualified?.validate(generationSignal, generationUrl);
       dispatched = true;
       const fetched = await fetchImpl(generationUrl, generationInit);
+      try { await qualified?.validate(state.lifetimeSignal, generationUrl); }
+      catch (error) { await fetched.body?.cancel().catch(cleanup => console.warn('[qualified-relay] Result cleanup:', cleanup instanceof Error ? cleanup.name : 'UnknownError')); throw error; }
       const upstream = isOpenAi && fetched.ok
         ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
       clearTimeout(firstResponseTimer);
@@ -565,7 +584,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         return new Response(null, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
       }
       const responseBody = boundedBody(
-        upstream.body,
+        qualified ? coalesceQualifiedResponse(upstream.body) : upstream.body,
         config.maxResponseBytes,
         resourceLease,
         (reason) => state.controller.abort(reason),
@@ -584,12 +603,17 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
             ambiguous: () => enqueueFinalization({ mode: "conservative" }),
           };
         })(),
+        qualified ? () => qualified.validate(state.lifetimeSignal, generationUrl) : undefined,
       );
       state.handedOff = true;
       return new Response(responseBody, { status: upstream.status, headers: safeUpstreamHeaders(upstream) });
     } catch (error) {
       clearTimeout(firstResponseTimer);
-      if (!dispatched && error instanceof FundedControlPlaneError) {
+      if (qualified && !dispatched && startedConfirmed) {
+        enqueueFinalization({ mode: 'exact', actualCostMicrousd: 0 }); resourceLease.release(); state.resourceLease = null;
+        return controlPlaneError(c, error);
+      }
+      if (!dispatched && (qualified || error instanceof FundedControlPlaneError)) {
         const released = await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
         resourceLease.release();
         state.resourceLease = null;
@@ -602,6 +626,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       state.resourceLease = null;
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded AI upstream request failed", { errorName });
+      if (qualified && error instanceof FundedControlPlaneError) return controlPlaneError(c, error);
       if (state.lifetimeSignal.aborted || firstResponseController.signal.aborted) {
         return errorResponse(c, 504, "timeout_error", "AI access timed out");
       }
@@ -838,7 +863,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           return errorResponse(c, 403, "permission_error", "AI access is unavailable");
         }
         const providedKey = fundedCredential(c);
-        if (!isFundedProxyApiKey(providedKey)) return next();
+        if (isQualifiedFundedCredential(providedKey) && c.req.path !== CHAT_COMPLETIONS_PATH)
+          return errorResponse(c, 503, 'api_error', 'AI access is temporarily unavailable');
+        if (!(isFundedProxyApiKey(providedKey) || isQualifiedFundedCredential(providedKey))) return next();
         if (c.req.method !== "POST") return errorResponse(c, 404, "not_found_error", "AI route not found");
         if (c.req.path !== MESSAGES_PATH && c.req.path !== COUNT_TOKENS_PATH
           && c.req.path !== CHAT_COMPLETIONS_PATH && c.req.path !== EVALUATE_PATH && c.req.path !== JEV_READINESS_PATH) {

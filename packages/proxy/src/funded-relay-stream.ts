@@ -24,6 +24,7 @@ export function boundedBody(
     complete(): void;
     ambiguous(): void;
   },
+  beforeRelease?: () => Promise<void>,
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   let seen = 0;
@@ -80,9 +81,11 @@ export function boundedBody(
           return;
         }
         observer?.push(result.value);
+        if (beforeRelease) { lifetimeSignal.throwIfAborted(); await beforeRelease(); lifetimeSignal.throwIfAborted(); }
         controller.enqueue(result.value);
       } catch (error) {
         reportAmbiguous();
+        if (beforeRelease) { abortUpstream('response release denied'); await reader.cancel().catch(cleanup => console.warn('[qualified-relay] Stream cleanup:', cleanup instanceof Error ? cleanup.name : 'UnknownError')); }
         settle();
         if (!lifetimeSignal.aborted) {
           const errorName = error instanceof Error ? error.name : "UnknownError";
