@@ -130,11 +130,11 @@ describe("explicit managed Pi route", () => {
     const bedrock = snapshot({
       bedrockModels: [SONNET],
       sources: [{ id: "matrix_included", models: [SONNET] }],
-      models: [{ id: SONNET, vendor: "anthropic", sources: ["matrix_included"] }],
+      models: [{ id: SONNET, vendor: "anthropic", capabilities: ["tools", "vision"], sources: ["matrix_included"] }],
     });
     expect(resolveManagedPiRoute(bedrock, { instanceId: "matrix_pi_default", model: SONNET }, NOW))
       .toMatchObject({ accessSourceId: "matrix_included", route: {
-        api: "openai-completions", modelId: SONNET,
+        api: "openai-completions", modelId: SONNET, input: ["text"],
       } });
   });
   it("refuses stale, forged, and revoked explicit routes without falling back", () => {

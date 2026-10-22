@@ -62,7 +62,10 @@ function routeFor(snapshot: AiProviderSnapshotV3, entry: (typeof SOURCES_IN_ORDE
   const route = BotModelRouteSchema.safeParse({
     api: anthropic && !bedrock ? "anthropic-messages" : "openai-completions",
     modelId,
-    input: model.capabilities.includes("vision") ? ["text", "image"] : ["text"],
+    // The bounded Bedrock/OpenAI translator currently accepts text only. Do
+    // not inherit the native Anthropic descriptor's vision capability until
+    // that exact request path can translate and enforce image inputs.
+    input: !bedrock && model.capabilities.includes("vision") ? ["text", "image"] : ["text"],
     contextWindow: anthropic ? ANTHROPIC_CONTEXT_WINDOW : OTHER_CONTEXT_WINDOW,
     maxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
   });

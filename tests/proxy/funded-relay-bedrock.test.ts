@@ -65,13 +65,13 @@ function platform() {
   };
 }
 
-function response(): Response {
+function response(model = MODEL): Response {
   const chunk = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
-  return new Response(chunk({ id: "response_1", model: MODEL,
+  return new Response(chunk({ id: "response_1", model,
     choices: [{ index: 0, delta: { content: "ok" }, finish_reason: null }] })
-    + chunk({ id: "response_1", model: MODEL,
+    + chunk({ id: "response_1", model,
       choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })
-    + chunk({ id: "response_1", model: MODEL, choices: [], usage: {
+    + chunk({ id: "response_1", model, choices: [], usage: {
       prompt_tokens: 100, completion_tokens: 20, total_tokens: 120,
       prompt_tokens_details: { cached_tokens: 10, cache_write_5m_tokens: 5, cache_write_1h_tokens: 5 },
     } }) + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
@@ -86,10 +86,10 @@ function workersResponse(): Response {
     } }) + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
 }
 
-function request() {
+function request(model = MODEL) {
   return new Request("https://relay.example/v1/chat/completions", { method: "POST",
     headers: { authorization: `Bearer ${CREDENTIAL}`, "content-type": "application/json" },
-    body: JSON.stringify({ model: MODEL, messages: [{ role: "user", content: "hi" }],
+    body: JSON.stringify({ model, messages: [{ role: "user", content: "hi" }],
       max_tokens: 20, stream: true }) });
 }
 
@@ -171,6 +171,35 @@ describe("funded Bedrock relay", () => {
       }) }, expect.any(AbortSignal));
     await relay.close();
     expect(bedrockUpstream.close).toHaveBeenCalledOnce();
+  });
+
+  it("accepts the Provider V3 model ID and rewrites it to the configured Bedrock client ID", async () => {
+    const control = platform();
+    const route = { ...ROUTE, clientModelId: "bedrock-qualified", canonicalModelId: "anthropic/claude-opus-5" };
+    const bedrockUpstream: FundedGenerationUpstream = {
+      dispatch: vi.fn(async () => ({ response: response(route.clientModelId), provenance: {
+        upstream: "aws_bedrock", routeId: route.routeId, resolvedModel: route.resolvedModel,
+        inferenceProfile: route.inferenceProfile, region: route.region,
+        pricingVersion: route.pricing.version, providerRequestId: "aws-request-alias",
+      } })),
+      close: vi.fn(),
+    };
+    const relay = createFundedRelay({ ...config(), bedrockRoute: route, now: () => NOW,
+      requestIdFactory: () => "request_1", platformClient: control as unknown as FundedPlatformClient,
+      bedrockUpstream });
+    const app = new Hono(); relay.register(app);
+
+    const result = await app.fetch(request("claude-opus-5"));
+
+    expect(result.status).toBe(200);
+    expect(control.check).toHaveBeenCalledWith(expect.objectContaining({
+      modelId: "anthropic/claude-opus-5",
+    }), expect.any(AbortSignal));
+    expect(bedrockUpstream.dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({ model: "bedrock-qualified" }),
+    }));
+    expect(await result.text()).toContain('"content":"ok"');
+    await relay.close();
   });
 
   it("rejects a conservatively oversized Bedrock input before reservation or start", async () => {

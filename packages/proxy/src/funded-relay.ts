@@ -369,7 +369,15 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     const requestSearch = new URL(c.req.url).search;
     try {
       const body: unknown = JSON.parse(await c.req.text());
-      const allowedOpenAiModels = new Set(config.bedrockRoute ? [config.bedrockRoute.clientModelId] : []);
+      // Provider V3 exposes the canonical vendor model without its vendor
+      // prefix, while the relay route may use a private client alias. Accept
+      // only those three exact, configuration-bound spellings and normalize
+      // to the private client ID before provider dispatch.
+      const allowedOpenAiModels = new Set(config.bedrockRoute ? [
+        config.bedrockRoute.clientModelId,
+        config.bedrockRoute.canonicalModelId,
+        config.bedrockRoute.canonicalModelId.replace(/^anthropic\//, ""),
+      ] : []);
       const serialized = isOpenAi
         ? serializeFundedOpenAiRequest(body, allowedOpenAiModels)
         : serializeFundedRequest(body);
@@ -377,7 +385,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       requestBody = serialized.body;
       anthropicBeta = resolveRequestedBetas(c.req.header("anthropic-beta"), config.allowedBetas);
       if (!isOpenAi) assertFundedSystemMessageBeta(parsedBody as FundedRequest, anthropicBeta);
-      isBedrockCandidate = isOpenAi && config.bedrockRoute?.clientModelId === parsedBody.model;
+      isBedrockCandidate = isOpenAi && allowedOpenAiModels.has(parsedBody.model);
       if (isBedrockCandidate && parsedBody.stream !== true) {
         throw new Error("Bedrock funded requests require streaming");
       }
@@ -427,6 +435,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     if (isBedrock) {
       try {
+        parsedBody = {
+          ...parsedBody as ReturnType<typeof serializeFundedOpenAiRequest>["request"],
+          model: config.bedrockRoute!.clientModelId,
+        };
         // Validate provider translation and its conservative input ceiling
         // only after the platform has bound this request to Bedrock, but still
         // before an owner hold is reserved or a request is started.

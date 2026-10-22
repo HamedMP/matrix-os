@@ -62,9 +62,13 @@ describe("managed Chat catalog", () => {
     expect(managedChatInstances(snapshot, [])[0]).toMatchObject({
       id: "kernel_matrix_included", availability: "unavailable", models: [],
     });
-    expect(managedPiChatInstances(snapshot)[0]).toMatchObject({
-      availability: "available", models: [{ id: "claude-sonnet-5", availability: "available" }],
+    const [managedPi] = managedPiChatInstances(snapshot);
+    expect(managedPi).toMatchObject({
+      availability: "available", models: [{
+        id: "claude-sonnet-5", availability: "available", supportsVision: false,
+      }],
     });
+    expect(managedPi?.models[0]?.capabilities).not.toContain("vision");
   });
 
   it.each(["setup_required", "unavailable", "unknown", "expired"] as const)("retains a non-runnable Matrix AI route for a %s access source", (state) => {
