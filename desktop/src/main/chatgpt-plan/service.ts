@@ -7,7 +7,7 @@ import type { ChatGptPlanPeerRequest } from '@matrix-os/contracts';
 import type { AuthService } from '../auth/auth-service';
 import { CHATGPT_PLAN_INVOKE, type ChatgptPlanSession, type ChatgptPlanStatus, type ChatgptPlanModel } from '../../shared/chatgpt-plan-ipc';
 import { PLAN_RESOURCE, planJson, validatePlanTokens } from './oauth';
-import { requestPlanResponse } from './responses';
+import { requestPlanResponse, requestPlanResponseStream } from './responses';
 import { planCatalog, planJwks, revokePlanAccount } from './provider';
 import { startPlanLoopback } from './loopback';
 import { createPlanNativePeer, type PlanPeerBinding } from './peer';
@@ -282,7 +282,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
                 peerSyncTask = null;
         }
     }
-    async function infer(request: Extract<ChatGptPlanPeerRequest, {
+    function prepareInference(request: Extract<ChatGptPlanPeerRequest, {
         action: 'infer';
     }>, signal: AbortSignal) {
         const live = deps.auth.getStatus();
@@ -303,18 +303,37 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         const controller = new AbortController();
         requests.add(controller);
         const operationSignal = AbortSignal.any([signal, controller.signal, AbortSignal.timeout(120000)]);
-        try {
-            return await requestPlanResponse({
+        return {
+            controller,
+            input: {
                 fetchFn, body: request.body, model: request.model, signal: operationSignal, validate,
                 accessToken: async () => (await freshTokens(value, operationSignal)).accessToken,
-            });
+            },
+        };
+    }
+    async function infer(request: Extract<ChatGptPlanPeerRequest, {
+        action: 'infer';
+    }>, signal: AbortSignal) {
+        const { controller, input } = prepareInference(request, signal);
+        try {
+            return await requestPlanResponse(input);
         }
         finally {
             requests.delete(controller);
         }
     }
+    async function* inferStream(request: Extract<ChatGptPlanPeerRequest, {
+        action: 'infer';
+    }>, signal: AbortSignal): AsyncGenerator<string> {
+        const { controller, input } = prepareInference(request, signal);
+        try {
+            yield* requestPlanResponseStream(input);
+        } finally {
+            requests.delete(controller);
+        }
+    }
     const peer = createPlanNativePeer({
-        fetchFn, current: currentPeer, infer, connected: value => {
+        fetchFn, current: currentPeer, infer, inferStream, connected: value => {
             bridgeConnected = value;
             if (!value)
                 peerSignature = null;

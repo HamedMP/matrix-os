@@ -1,6 +1,6 @@
-import { BOT_IMAGE_INFERENCE_MAX_BYTES, validateBotImageInferenceBody } from "@matrix-os/contracts";
+import { BOT_IMAGE_INFERENCE_MAX_BYTES, INFERENCE_RESPONSE_BUFFER_MAX_BYTES, validateBotImageInferenceBody } from "@matrix-os/contracts";
 import { request as httpRequest } from "node:http";
-import { Readable, Transform } from "node:stream";
+import { Readable } from "node:stream";
 import { MAX_BRIDGE_RESPONSE_BYTES } from "@matrix-os/scope-runtime/inference-bridge";
 
 const MAX_WAIT_MS = 11 * 60_000;
@@ -45,16 +45,21 @@ export function createBotBridgeFetch(socketPath: string): typeof fetch {
         for (const [name, value] of Object.entries(res.headers)) {
           if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);
         }
+        const streamed = res.headers["x-matrix-inference-stream"] === "1";
         let received = 0;
-        const bounded = new Transform({ transform(chunk: Buffer, _encoding, callback) {
-          received += chunk.length;
-          callback(received > MAX_BRIDGE_RESPONSE_BYTES ? new RangeError("Bot inference response exceeds capacity") : null, chunk);
-        } });
-        res.once("error", (error) => bounded.destroy(error));
-        bounded.once("close", () => res.destroy());
-        const body = Readable.toWeb(res.pipe(bounded)) as ReadableStream<Uint8Array>;
+        const source = Readable.toWeb(res) as ReadableStream<Uint8Array>;
+        const body = source.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            if (!streamed) received += chunk.byteLength;
+            if (chunk.byteLength > INFERENCE_RESPONSE_BUFFER_MAX_BYTES
+              || (!streamed && received > MAX_BRIDGE_RESPONSE_BYTES)) {
+              throw new RangeError("Bot inference response exceeds capacity");
+            }
+            controller.enqueue(chunk);
+          },
+        }));
         try { resolve(new Response(body, { status: res.statusCode ?? 502, headers })); }
-        catch (error: unknown) { res.destroy(); bounded.destroy(); reject(error); }
+        catch (error: unknown) { res.destroy(); reject(error); }
       });
       req.once("error", reject);
       req.end(Buffer.concat(chunks, size));

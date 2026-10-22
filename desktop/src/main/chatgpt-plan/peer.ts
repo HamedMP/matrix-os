@@ -1,7 +1,32 @@
 import { sign } from 'node:crypto';
+import { z } from 'zod/v4';
 import { CHATGPT_PLAN_PEER_POLL_BYTE_LIMIT, CHATGPT_PLAN_PEER_CLOCK_SKEW_MS, CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS, chatGptPlanPeerRequestId, ChatGptPlanPeerChallengeSchema, ChatGptPlanPeerSessionSchema, ChatGptPlanPeerReplySchema, ChatGptPlanPeerPollSchema, chatGptPlanPeerProof, type ChatGptPlanPeerSnapshot, type ChatGptPlanPeerRequest } from '@matrix-os/contracts';
 import { logPlanFailure, PlanFailure } from './diagnostics';
-import { boundedText } from './oauth';
+const POST_CONFLICT = Symbol('reply already settled');
+async function readPeerText(response: Response, limit: number, signal: AbortSignal, interruption: Promise<never>): Promise<string> {
+    if (!response.body) return '';
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let text = '', bytes = 0;
+    try {
+        while (true) {
+            signal.throwIfAborted();
+            const chunk = await Promise.race([reader.read(), interruption]);
+            signal.throwIfAborted();
+            if (chunk.done) return text + decoder.decode();
+            bytes += chunk.value.byteLength;
+            if (bytes > limit) throw new Error('response too large');
+            text += decoder.decode(chunk.value, { stream: true });
+        }
+    } finally {
+        try { void reader.cancel().catch((error: unknown) => logPlanFailure('peer_response_cleanup', error)); }
+        catch (error: unknown) { logPlanFailure('peer_response_cleanup', error); }
+        finally {
+            try { reader.releaseLock(); }
+            catch (error: unknown) { logPlanFailure('peer_response_cleanup', error); }
+        }
+    }
+}
 export interface PlanPeerBinding {
     runtimeSlot: string;
     authGeneration: number;
@@ -18,6 +43,9 @@ interface PeerDependencies {
     infer(request: Extract<ChatGptPlanPeerRequest, {
         action: 'infer';
     }>, signal: AbortSignal): Promise<string>;
+    inferStream?(request: Extract<ChatGptPlanPeerRequest, {
+        action: 'infer';
+    }>, signal: AbortSignal): AsyncIterable<string>;
     connected(value: boolean): void;
 }
 /** Private authenticated transport. Never exposes its session nonce or OAuth material. */
@@ -40,24 +68,34 @@ export function createPlanNativePeer(deps: PeerDependencies) {
         const encoded = JSON.stringify(body);
         if (path === 'reply' && Buffer.byteLength(encoded) > CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT)
             throw new Error('peer reply too large');
-        const response = await deps.fetchFn(url.toString(), {
-            method: 'POST', redirect: 'error', headers: {
-                authorization: `Bearer ${binding.bearer}`, 'content-type': 'application/json'
-            },
-            body: encoded, signal: AbortSignal.any([signal, AbortSignal.timeout(path === 'poll' ? 15000 : 10000)]),
-        });
-        if (path === 'reply' && response.status === 409) {
-            await response.body?.cancel();
-            return {};
+        const deadline = AbortSignal.any([signal, AbortSignal.timeout(path === 'poll' ? 15000 : 10000)]);
+        let interrupted!: () => void;
+        const interruption = new Promise<never>((_, reject) => { interrupted = () => reject(deadline.reason); });
+        deadline.addEventListener('abort', interrupted, { once: true });
+        try {
+            deadline.throwIfAborted();
+            const response = await Promise.race([deps.fetchFn(url.toString(), {
+                method: 'POST', redirect: 'error', headers: {
+                    authorization: `Bearer ${binding.bearer}`, 'content-type': 'application/json'
+                },
+                body: encoded, signal: deadline,
+            }), interruption]);
+            if (path === 'reply' && response.status === 409) {
+                void response.body?.cancel().catch((error: unknown) => logPlanFailure('peer_reply_cleanup', error));
+                return POST_CONFLICT;
+            }
+            if (!response.ok) {
+                void response.body?.cancel().catch((error: unknown) => logPlanFailure('peer_response_cleanup', error));
+                throw new PlanFailure(`peer_${path}`, 'http_error', response.status);
+            }
+            const text = await readPeerText(response, path === 'poll' ? CHATGPT_PLAN_PEER_POLL_BYTE_LIMIT : limit, deadline, interruption);
+            deadline.throwIfAborted();
+            if (!deps.current(binding))
+                throw new Error('peer changed');
+            return text ? JSON.parse(text) as unknown : {};
+        } finally {
+            deadline.removeEventListener('abort', interrupted);
         }
-        if (!response.ok) {
-            await response.body?.cancel();
-            throw new PlanFailure(`peer_${path}`, 'http_error', response.status);
-        }
-        const text = await boundedText(response, path === "poll" ? CHATGPT_PLAN_PEER_POLL_BYTE_LIMIT : limit);
-        if (!deps.current(binding))
-            throw new Error('peer changed');
-        return text ? JSON.parse(text) as unknown : {};
     }
     async function stop() {
         const previous = connection;
@@ -131,12 +169,31 @@ export function createPlanNativePeer(deps: PeerDependencies) {
                         const operation = (async () => {
                             const signal = AbortSignal.any([call.signal, controller.signal, AbortSignal.timeout(Math.ceil(Math.min(remaining, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS)))]);
                             try {
-                                const body = await deps.infer(request, signal);
-                                signal.throwIfAborted();
-                                const reply = ChatGptPlanPeerReplySchema.parse({
-                                    ...session, id: request.id, ok: true, status: 200, headers: { 'content-type': 'text/event-stream' }, body
-                                });
-                                await post(binding, 'reply', reply, controller.signal);
+                                if (request.responseMode === 'stream') {
+                                    if (!deps.inferStream) throw new Error('stream inference unavailable');
+                                    let sequence = 0;
+                                    const send = async (reply: unknown) => {
+                                        const ack = await post(binding, 'reply', ChatGptPlanPeerReplySchema.parse(reply), signal);
+                                        if (ack === POST_CONFLICT) return false;
+                                        z.object({ version: z.literal(1), ok: z.literal(true), sessionId: z.literal(session.sessionId),
+                                            id: z.literal(request.id), sequence: z.literal(sequence) }).strict().parse(ack);
+                                        return true;
+                                    };
+                                    for await (const chunk of deps.inferStream(request, signal)) {
+                                        signal.throwIfAborted();
+                                        if (!await send({ ...session, id: request.id, ok: true, stream: 'chunk', sequence, body: chunk })) return;
+                                        sequence += 1;
+                                    }
+                                    signal.throwIfAborted();
+                                    await send({ ...session, id: request.id, ok: true, stream: 'end', sequence });
+                                } else {
+                                    const body = await deps.infer(request, signal);
+                                    signal.throwIfAborted();
+                                    const reply = ChatGptPlanPeerReplySchema.parse({
+                                        ...session, id: request.id, ok: true, status: 200, headers: { 'content-type': 'text/event-stream' }, body
+                                    });
+                                    await post(binding, 'reply', reply, controller.signal);
+                                }
                             }
                             catch (error: unknown) {
                                 if (controller.signal.aborted || call.signal.aborted)

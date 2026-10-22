@@ -14,13 +14,16 @@ type InferenceReply = {
     headers: Record<string, string>;
     body: string;
 };
-type Pending = {
-    resolve(reply: InferenceReply): void;
+type PendingBase = {
     reject(error: unknown): void;
     abort(): void;
     signal: AbortSignal;
     timer: ReturnType<typeof setTimeout>;
 };
+type Pending = PendingBase & (
+    { kind: 'legacy'; resolve(reply: InferenceReply): void }
+    | { kind: 'stream'; chunk(sequence: number, body: string): Promise<void>; end(sequence: number): void }
+);
 type Peer = {
     sessionId: string;
     sequence: number;
@@ -197,11 +200,22 @@ export function createChatGptPlanPeers(deps: {
             const pending = p.pending.get(parsed.data.id);
             if (!pending)
                 throw new ChatGptPlanPeerError('conflict');
+            const reply = parsed.data;
+            if (reply.ok && 'stream' in reply) {
+                if (pending.kind !== 'stream') throw new ChatGptPlanPeerError('conflict');
+                if (reply.stream === 'chunk') {
+                    const { sessionId, id, sequence } = reply;
+                    return pending.chunk(sequence, reply.body).then(() => ({ version: 1 as const, ok: true as const, sessionId, id, sequence }));
+                }
+                pending.end(reply.sequence);
+                return { version: 1 as const, ok: true as const, sessionId: reply.sessionId, id: reply.id, sequence: reply.sequence };
+            }
+            if (reply.ok && (pending.kind !== 'legacy' || !('status' in reply))) throw new ChatGptPlanPeerError('conflict');
             p.pending.delete(parsed.data.id);
             clearTimeout(pending.timer);
             pending.signal.removeEventListener('abort', pending.abort);
-            if (parsed.data.ok)
-                pending.resolve({ status: parsed.data.status, headers: parsed.data.headers, body: parsed.data.body });
+            if (reply.ok && 'status' in reply && pending.kind === 'legacy')
+                pending.resolve({ status: reply.status, headers: reply.headers, body: reply.body });
             else
                 pending.reject(new ChatGptPlanPeerError('unavailable'));
             return { version: 1 as const, ok: true as const };
@@ -266,7 +280,7 @@ export function createChatGptPlanPeers(deps: {
                     reject(new ChatGptPlanPeerError('unavailable'));
                 };
                 const timeout = setTimeout(abort, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS);
-                p.pending.set(id, { resolve, reject, signal, abort, timer: timeout });
+                p.pending.set(id, { kind: 'legacy', resolve, reject, signal, abort, timer: timeout });
                 signal.addEventListener('abort', abort, { once: true });
                 if (signal.aborted) {
                     abort();
@@ -276,6 +290,106 @@ export function createChatGptPlanPeers(deps: {
                     computerId: deps.computerId, requestClass: binding.requestClass, runId: binding.runId, model: binding.route.modelId, body });
                 p.wake?.();
             });
+        },
+        async inferStream(binding: PiRuntimeBinding, body: string, signal: AbortSignal) {
+            if (!await service.revalidate(binding, signal))
+                throw new ChatGptPlanPeerError('unavailable');
+            const p = current();
+            if (!p || p.sessionId !== binding.subscription?.peerId)
+                throw new ChatGptPlanPeerError('unavailable');
+            if (p.pending.size >= 4 || p.requests.length >= 32 || p.sequence >= CHATGPT_PLAN_PEER_MAX_SEQUENCE)
+                throw new ChatGptPlanPeerError('unavailable');
+            const sequence = ++p.sequence;
+            const id = chatGptPlanPeerRequestId(p.sessionId, sequence);
+            const expiresAt = new Date(now() + CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS).toISOString();
+            type Read = { resolve(value: IteratorResult<string>): void; reject(error: unknown): void };
+            type Chunk = { value: string; acknowledge(): void; reject(error: unknown): void };
+            let waiting: Read | undefined;
+            let buffered: Chunk | undefined;
+            let nextSequence = 0;
+            let ended = false;
+            let failure: unknown;
+            const unavailable = () => new ChatGptPlanPeerError('unavailable');
+            const fail = (error: unknown) => {
+                failure = error;
+                buffered?.reject(error);
+                buffered = undefined;
+                waiting?.reject(error);
+                waiting = undefined;
+            };
+            const remove = () => {
+                const pending = p.pending.get(id);
+                if (!pending) return false;
+                p.pending.delete(id);
+                clearTimeout(pending.timer);
+                signal.removeEventListener('abort', pending.abort);
+                return true;
+            };
+            const abort = () => {
+                if (!remove()) return;
+                p.requests = p.requests.filter(request => request.id !== id);
+                if (p.requests.length < 32)
+                    p.requests.push({ version: 1, action: 'cancel', id });
+                p.wake?.();
+                fail(unavailable());
+            };
+            const iterator: AsyncIterableIterator<string> = {
+                [Symbol.asyncIterator]() { return this; },
+                next() {
+                    if (failure) return Promise.reject(failure);
+                    if (buffered) {
+                        const chunk = buffered;
+                        buffered = undefined;
+                        chunk.acknowledge();
+                        return Promise.resolve({ value: chunk.value, done: false as const });
+                    }
+                    if (ended) return Promise.resolve({ value: undefined, done: true as const });
+                    if (waiting) return Promise.reject(new ChatGptPlanPeerError('conflict'));
+                    return new Promise<IteratorResult<string>>((resolve, reject) => { waiting = { resolve, reject }; });
+                },
+                async return() {
+                    abort();
+                    return { value: undefined, done: true as const };
+                },
+            };
+            const timer = setTimeout(abort, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS);
+            const pending: Pending = {
+                kind: 'stream', signal, abort, timer, reject: fail,
+                chunk(chunkSequence, value) {
+                    if (chunkSequence !== nextSequence || buffered || ended || failure)
+                        throw new ChatGptPlanPeerError('conflict');
+                    nextSequence += 1;
+                    return new Promise<void>((acknowledge, reject) => {
+                        if (waiting) {
+                            const read = waiting;
+                            waiting = undefined;
+                            read.resolve({ value, done: false });
+                            acknowledge();
+                        } else buffered = { value, acknowledge, reject };
+                    });
+                },
+                end(endSequence) {
+                    if (endSequence !== nextSequence || buffered || ended || failure)
+                        throw new ChatGptPlanPeerError('conflict');
+                    ended = true;
+                    remove();
+                    waiting?.resolve({ value: undefined, done: true });
+                    waiting = undefined;
+                },
+            };
+            p.pending.set(id, pending);
+            signal.addEventListener('abort', abort, { once: true });
+            if (signal.aborted) {
+                abort();
+                throw unavailable();
+            }
+            else {
+                p.requests.push({ version: 1, action: 'infer', id, sequence, expiresAt, responseMode: 'stream', accountId: binding.subscription!.accountId,
+                    grantRevision: binding.subscription!.grantRevision, computerId: deps.computerId, requestClass: binding.requestClass,
+                    runId: binding.runId, model: binding.route.modelId, body });
+                p.wake?.();
+            }
+            return { status: 200, headers: { 'content-type': 'text/event-stream' }, body: iterator };
         },
         close() {
             closed = true;

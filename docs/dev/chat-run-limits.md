@@ -35,6 +35,16 @@ A credential lease, a model request and an agent turn have separate lifetimes. M
 
 Model context windows, prompt/input token admission, output-token budgets and maximum tool/inference steps remain bounded. Display truncation cannot increase a model’s context. A file being uploaded successfully does not mean that it can be parsed or admitted as model input.
 
+Bot inference uses explicit chunked streaming from the native ChatGPT peer or upstream HTTP response through the gateway, Unix broker, private HTTP bridge and Pi worker. There is no cumulative 1 MiB wire-response cap on this path. Each UTF-8 transport chunk is at most 64 KiB. A single ChatGPT SSE event and held terminal buffer remain bounded at 1 MiB, including events that repeat the complete output. One JSON stream frame is at most `6 * 64 KiB + 4096` bytes. These parser and buffer limits can still reject an oversized individual event; streaming does not promise arbitrary model output or increase context and output-token budgets.
+
+Each native chunk waits for an exact session/request/sequence acknowledgement. The peer buffers at most one unconsumed chunk, and the Unix/HTTP writers wait for downstream drain. A native chunk POST retains its 10-second stall bound; existing individual inference deadlines remain 30 seconds for owner Anthropic and 120 seconds for funded or ChatGPT calls. Those are per-call bounds, separate from an agent turn that can perform multiple model calls. Stop, owner/source changes and transport close cancel upstream work. No partially received model request is automatically retried.
+
+ChatGPT text and arguments are provisional until a single valid completed event, actual upstream EOF and final authority validation. The native and gateway validators hold completed and `[DONE]` until that barrier, because the installed SDK can treat `[DONE]` as completion before reading later errors. An incomplete, late-error or invalid-terminal response cannot authorize tools through this path. The Unix reader also requires a valid end frame and clean EOF before completing its HTTP response.
+
+Legacy whole-body replies retain a shared 1 MiB raw UTF-8 cap and a separate `6 * raw + 4096` inference JSON-envelope bound. This compatibility path does not imply a 1 MiB limit on the new streaming path.
+
+These response limits do not set the size of a user's message or uploaded file. Outbound egress reads retain their separate 512 KiB body limit, and non-inference tool/session control replies retain their existing frame limit. Gateway and worker changes must ship together in the same host bundle, with a matching native peer for ChatGPT streaming; older components cannot qualify the new path.
+
 ## Output presentation and protocol guards
 
 The live canonical assistant preview retains a prefix within a 96 KiB JSON-encoded text budget and at most 64 message identities. It reserves one visible truncation notice, then continues consuming tools, state and terminal events. Later text, including a final explanation, may be omitted. Credential sidecars are retained only when their complete masked placeholder fits; truncation cannot move an existing credential’s message offset. This is not a full output log.

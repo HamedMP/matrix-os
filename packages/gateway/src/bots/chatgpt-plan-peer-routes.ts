@@ -70,7 +70,7 @@ export function createChatGptPlanPeerRoutes(options: {
   });
   routes.post(`${root}/reply`, async c => {
     const { ownerId, peers } = authorized(c);
-    return c.json(peers.reply(ownerId, await c.req.json()));
+    return c.json(await peers.reply(ownerId, await c.req.json()));
   });
   routes.post(`${root}/disconnect`, async c => {
     const { ownerId, peers } = authorized(c);

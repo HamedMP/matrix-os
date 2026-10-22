@@ -11,8 +11,10 @@ import {
   ScopeRuntimeBrokerResponseSchema,
   type ScopeRuntimeBotInferenceRequest,
   type ScopeRuntimeBrokerResponse,
+  type ScopeRuntimeBrokerResult,
 } from "@matrix-os/scope-runtime/broker-protocol";
 import { z } from "zod/v4";
+import { boundedInferenceSseFrames, guardInferenceStream, inferenceResponseText } from "./inference-stream.js";
 import { forwardChatGptPlanInference } from "./chatgpt-plan-inference.js";
 import type { FundedAdmissionQueue } from "../funded-ai/admission-queue.js";
 import { FundedAiCredentialError, type MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
@@ -99,12 +101,20 @@ function failure(
  * queue bounds how long a request waits for capacity (two minutes for a
  * person in chat, ten for a routine); each send then has its own deadline.
  */
+export function forwardBotInference(
+  request: ScopeRuntimeBotInferenceRequest & { responseMode?: undefined }, binding: PiRuntimeBinding,
+  authorize: (modelId: string) => BotInferenceAuthorization, deps: BotInferenceDependencies,
+): Promise<ScopeRuntimeBrokerResponse>;
+export function forwardBotInference(
+  request: ScopeRuntimeBotInferenceRequest, binding: PiRuntimeBinding,
+  authorize: (modelId: string) => BotInferenceAuthorization, deps: BotInferenceDependencies,
+): Promise<ScopeRuntimeBrokerResult>;
 export async function forwardBotInference(
   request: ScopeRuntimeBotInferenceRequest,
   binding: PiRuntimeBinding,
   authorize: (modelId: string) => BotInferenceAuthorization,
   deps: BotInferenceDependencies,
-): Promise<ScopeRuntimeBrokerResponse> {
+): Promise<ScopeRuntimeBrokerResult> {
   let modelId: string;
   let parsedBody: z.infer<typeof BotInferenceBodySchema>;
   try {
@@ -136,6 +146,7 @@ export async function forwardBotInference(
     return forwardChatGptPlanInference(request, binding, { authority: {
       ...authority,
       infer: (candidate, body, signal) => authority.infer(candidate, body, signal),
+      ...(authority.inferStream ? { inferStream: (candidate: PiRuntimeBinding, body: string, signal: AbortSignal) => authority.inferStream!(candidate, body, signal) } : {}),
       revalidate: async (candidate, signal) => (!deps.revalidateBinding || await deps.revalidateBinding(candidate))
         && !signal.aborted && await authority.revalidate(candidate, signal),
     }, signal: lifecycle,
@@ -194,20 +205,23 @@ export async function forwardBotInference(
     }
     if (accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);
     // Returns "denied" instead of sending when the run lost its authorization.
+    const streamLifetime = new AbortController();
+    let responseSignal = lifecycle;
     const send = async (): Promise<Response | "denied"> => {
       if (binding.anthropicApi && !await deps.matrixAnthropic!.revalidate(binding, lifecycle)) return "denied";
       if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return "denied";
       if (lifecycle.aborted) return "denied";
       if (!stillAuthorized()) return "denied";
       if (isolated && (!await deps.isolatedChat!.consume(binding) || lifecycle.aborted || !stillAuthorized())) return "denied";
+      responseSignal = AbortSignal.any([lifecycle, streamLifetime.signal, AbortSignal.timeout(
+        accessSourceId === "matrix_included" ? FUNDED_INFERENCE_TIMEOUT_MS : INFERENCE_TIMEOUT_MS,
+      )]);
       return fetchImpl(`${baseUrl}${request.path}`, {
         method: "POST",
         headers,
         body: inferenceBody,
         redirect: "error",
-        signal: AbortSignal.any([lifecycle, AbortSignal.timeout(
-          accessSourceId === "matrix_included" ? FUNDED_INFERENCE_TIMEOUT_MS : INFERENCE_TIMEOUT_MS,
-        )]),
+        signal: responseSignal,
       });
     };
 
@@ -233,7 +247,19 @@ export async function forwardBotInference(
       await discard(response);
       return failure(request.requestId, "provider_unavailable");
     }
-    const body = await readBoundedBody(response);
+    if (request.responseMode === 'stream') {
+      const authorized = async () => !responseSignal.aborted && stillAuthorized()
+        && (!binding.anthropicApi || await deps.matrixAnthropic!.revalidate(binding, responseSignal))
+        && (!deps.revalidateBinding || await deps.revalidateBinding(binding)) && !responseSignal.aborted && stillAuthorized();
+      if (!await authorized()) { streamLifetime.abort(); await discard(response); return failure(request.requestId, 'action_denied'); }
+      if (accessSourceId === 'matrix_included') deps.onFundedFailure?.(binding, undefined);
+      return { version: 1, requestId: request.requestId, ok: true, status: response.status,
+        headers: safeResponseHeaders(response, 'inference'),
+        body: guardInferenceStream(boundedInferenceSseFrames(inferenceResponseText(response, responseSignal)), {
+          signal: responseSignal, authorized, abort: () => streamLifetime.abort(),
+        }) };
+    }
+    const body = await readBoundedBody(response, "inference");
     if (binding.anthropicApi && (lifecycle.aborted || !await deps.matrixAnthropic!.revalidate(binding, lifecycle)
       || deps.revalidateBinding && !await deps.revalidateBinding(binding) || !stillAuthorized())) return failure(request.requestId, "action_denied");
     const result = ScopeRuntimeBrokerResponseSchema.parse({

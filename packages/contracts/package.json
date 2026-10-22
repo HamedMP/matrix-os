@@ -22,6 +22,7 @@
     "./command-preview-policy": "./src/command-preview-policy.mjs"
   },
   "imports": {
+    "#inference-response-limits": "./src/inference-response-limits.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
     "#chatgpt-plan-wire": "./src/chatgpt-plan-wire.ts",
     "#canonical-chat-import-parts": "./src/canonical-chat-import-parts.ts",
