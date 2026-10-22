@@ -1,3 +1,4 @@
+import type { GoogleManagedRouteResolver } from './runtime/profile-resolution.js';
 import type { Hono, Context } from 'hono';
 import type { PlatformDb } from '../platform-db.js';
 import { createGoogleDataOwnerRoutes } from './owner-routes.js';
@@ -5,9 +6,9 @@ import { registerGooglePlatformPolicyRoutes } from './register-platform-routes.j
 
 /** Reuse the integration database's verified principal mapping. Both native
  * and Pipedream Gmail accounts have the same exact canonical owner check. */
-export function registerGoogleDataOwnerRoutes(app: Hono, db: PlatformDb, resolveUserId: (c: Context) => Promise<string | null>) {
+export function registerGoogleDataOwnerRoutes(app: Hono, db: PlatformDb, resolveUserId: (c: Context) => Promise<string | null>, options: { resolveManagedRoute?: GoogleManagedRouteResolver } = {}) {
   if (!db.googleData) return;
-  registerGooglePlatformPolicyRoutes(app, db, resolveUserId);
+  registerGooglePlatformPolicyRoutes(app, db, resolveUserId, options);
   app.route('/', createGoogleDataOwnerRoutes({ ...db.googleData,
     resolveOwner: async c => {
       const userId = await resolveUserId(c);
