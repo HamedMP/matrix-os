@@ -17,6 +17,7 @@ import { resolveManagedPiSelection } from "./managed-pi-route.js";
 import { createManagedPiSystemPrompt, ManagedPiPersonalityError, type ManagedPiPersonalityConfig } from "./managed-pi-system-prompt.js";
 import { fundedChatError, type FundedChatFailureReason } from "./funded-chat-error.js";
 import { assertTextOnlySteering } from "./steer-delivery-error.js";
+import { createManagedPiQuiescence, ManagedPiStopUnavailable, type ManagedPiQuiescenceOptions } from "./managed-pi-quiescence.js";
 
 const StateSchema = z.object({ runtimeHandle: z.string().regex(/^runtime_[a-f0-9]{32}$/), executionGeneration: z.string().regex(/^(0|[1-9][0-9]{0,19})$/) }).strict();
 // Match the supervisor's typed runtime.bot errors; never log its reply or error text.
@@ -44,6 +45,11 @@ interface Active {
   isolated: boolean;
   inputs?: PreparedBotInputs;
   signal?: AbortSignal;
+  stopController: AbortController;
+  release?: Promise<void>;
+  releaseFailure?: ManagedPiStopUnavailable;
+  toolClose?: Promise<void>;
+  tracked: ReturnType<ReturnType<typeof createManagedPiQuiescence>["track"]>;
 }
 
 /** Two policies use one pinned worker/broker. Ordinary Chat has no recipe or bot grants. */
@@ -59,30 +65,44 @@ export function createManagedPiRuntime(deps: {
   admission: ManagedPiAdmission; host: ScopeRuntimeHost; providers: AiProviderSnapshotReader; lifetime: AbortSignal;
   forgetRun(runId: string): void;
   cancelInference(binding: ManagedPiRuntimeBinding): void;
+  quiescence?: ManagedPiQuiescenceOptions;
 }) {
   const systemPrompt = createManagedPiSystemPrompt(deps.personality);
   const limits = readTrustedBotRunLimits();
   const active = new Map<string, Active>(); // capacity/terminal eviction below; runtime deadline bounds lifetime.
-  async function stop(runId: string): Promise<void> {
-    const run = active.get(runId); if (!run || run.finished) return;
+  const quiescence = createManagedPiQuiescence(deps.quiescence);
+  function release(run: Active): Promise<void> {
+    if (!run.binding) return Promise.resolve();
+    return run.release ??= deps.admission.release(run.binding.runtimeHandle, run.binding.executionGeneration);
+  }
+  async function stop(runId: string, force = false): Promise<void> {
+    const run = active.get(runId); if (!run) return;
+    if (run.finished) { if (force) await run.release; return; }
+    if (run.stopping && !force) return;
+    const firstStop = !run.stopping;
     run.stopping = true;
+    run.stopController.abort();
     run.inputs?.dispose();
     const binding = run.binding;
     if (binding) deps.cancelInference(binding);
     // Local approvals are revoked synchronously; Platform revocation is bounded and must not delay Stop.
-    void deps.ownerTools?.closeRun(runId).catch((error: unknown) => console.warn("[managed-pi] tool close failed", error instanceof Error ? error.name : "UnknownError"));
+    if (firstStop && deps.ownerTools) {
+      run.toolClose = deps.ownerTools.closeRun(runId);
+      void run.toolClose.catch((error: unknown) => console.warn("[managed-pi] tool close failed", diagnosticErrorName(error)));
+    }
     if (!binding) return;
+    if (force) { await release(run); return; }
     let delivered = false;
     try { delivered = (await deps.host.client.runBot({ ...binding, command: { version: 1, kind: "bot.cancel", runId } })).ok; }
     catch (error: unknown) { console.warn("[managed-pi] cancel delivery failed", error instanceof Error ? error.name : "UnknownError"); }
-    if (!delivered) { await deps.admission.release(binding.runtimeHandle); return; }
+    if (!delivered) { await release(run); return; }
     run.grace ??= setTimeout(() => {
-      if (!run.finished) void deps.admission.release(binding.runtimeHandle).catch((error: unknown) => console.warn("[managed-pi] runtime release failed", error instanceof Error ? error.name : "UnknownError"));
+      if (!run.finished) void release(run).catch((error: unknown) => console.warn("[managed-pi] runtime release failed", error instanceof Error ? error.name : "UnknownError"));
     }, 10_000);
     run.grace.unref();
   }
   async function execute(input: CanonicalProviderRunInput<State>, run: Active): Promise<CanonicalProviderRunEvent> {
-    const signal = AbortSignal.any([input.signal, deps.lifetime, AbortSignal.timeout(10 * 60_000)]);
+    const signal = AbortSignal.any([input.signal, deps.lifetime, run.stopController.signal, AbortSignal.timeout(10 * 60_000)]);
     run.signal = signal;
     const onAbort = () => { void stop(input.runId).catch((error: unknown) => console.warn("[managed-pi] cancellation failed", error instanceof Error ? error.name : "UnknownError")); };
     signal.addEventListener("abort", onAbort, { once: true });
@@ -100,6 +120,7 @@ export function createManagedPiRuntime(deps: {
       await run.inputs.revalidate();
       stage = "admission";
       run.binding = await deps.admission.admit({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, resolved });
+      run.tracked.bind(run.binding, () => stop(input.runId, true));
       if (signal.aborted || run.stopping) return { type: "run.completed", outcome: "aborted" };
       run.inputs.bind(run.binding);
       const isolatedTurn = await deps.isolatedChat?.claim(run.binding);
@@ -146,9 +167,16 @@ export function createManagedPiRuntime(deps: {
       } };
     } finally {
       run.inputs?.dispose();
-      await deps.ownerTools?.closeRun(input.runId).catch((error: unknown) => console.warn("[managed-pi] tool close failed", error instanceof Error ? error.name : "UnknownError"));
+      // Stop can launch cleanup while open() is still awaited. Drain that exact
+      // operation as well as a final pass over resources created during the wait.
+      const toolCleanup = await Promise.allSettled([run.toolClose, deps.ownerTools?.closeRun(input.runId)]);
+      for (const outcome of toolCleanup) if (outcome.status === "rejected") {
+        run.releaseFailure = new ManagedPiStopUnavailable();
+        console.warn("[managed-pi] tool close failed", diagnosticErrorName(outcome.reason));
+      }
       run.finished = true; if (run.grace) clearTimeout(run.grace); signal.removeEventListener("abort", onAbort);
-      if (run.binding) await deps.admission.release(run.binding.runtimeHandle).catch((error: unknown) => console.warn("[managed-pi] release failed", error instanceof Error ? error.name : "UnknownError"));
+      if (run.binding) await release(run).catch((error: unknown) => { run.releaseFailure = new ManagedPiStopUnavailable();
+        console.warn("[managed-pi] release failed", diagnosticErrorName(error)); });
     }
   }
   const runs: BotRunSource = {
@@ -183,9 +211,12 @@ export function createManagedPiRuntime(deps: {
       const input = parseCanonicalProviderRunInput(value);
       if (input.owner.type !== "personal" || input.sharedScopeId || input.parts.some((part) => part.type !== "text" && part.type !== "attachment_reference" && !(part.type === "resource_reference" && ["agent", "chat"].includes(part.resource.kind) && input.context))) throw new Error("Unsupported Matrix AI input");
       if (active.has(input.runId) || active.size >= BOT_RUNTIME_REGISTRY_CAPACITY) throw new Error("Matrix AI capacity unavailable");
-      const run: Active = { ownerId: input.owner.ownerId, chatId: input.chatId, stopping: false, finished: false, isolated: false, queue: createCanonicalCliEventQueue<Event>(2048) };
+      const tracked = quiescence.track({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId }, () => stop(input.runId, true));
+      const run: Active = { ownerId: input.owner.ownerId, chatId: input.chatId, stopping: false, finished: false, isolated: false,
+        stopController: new AbortController(), tracked, queue: createCanonicalCliEventQueue<Event>(2048) };
       active.set(input.runId, run);
       const result = execute(input, run).finally(() => { active.delete(input.runId); deps.forgetRun(input.runId); run.queue.finish(); });
+      void result.then(() => tracked.settle(run.releaseFailure), (error: unknown) => tracked.settle(error));
       let drained = false; let activities = 0;
       // Worker starts are capped at60; terminal events evict and run exit drains.
       const pendingTools = new Map<string, Extract<BotEvent["event"], { type: "tool_progress" }>>();
@@ -216,7 +247,10 @@ export function createManagedPiRuntime(deps: {
           }
         }
         drained = true;
-      } finally { if (!drained) await stop(input.runId); }
+      } finally { if (!drained) {
+        await quiescence.stopAndDrain({ ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, signal: new AbortController().signal });
+        await result;
+      } }
       const terminal = await result;
       for (const progress of terminal.type === "run.completed" && terminal.outcome === "completed" ? [] : pendingTools.values()) {
         for (const event of mapBotEvent({ ...progress, phase: terminal.type === "run.completed" && terminal.outcome === "aborted" ? "cancelled" : "failed",
@@ -225,7 +259,13 @@ export function createManagedPiRuntime(deps: {
       pendingTools.clear(); toolFrames.clear();
       yield terminal;
     },
-    async cancel(input) { const run = active.get(input.runId); if (run && run.ownerId === input.owner.ownerId && run.chatId === input.chatId) await stop(input.runId); },
+    async cancel(input) {
+      const run = active.get(input.runId);
+      if (run && input.owner.type === "personal" && run.ownerId === input.owner.ownerId && run.chatId === input.chatId) {
+        void stop(input.runId).catch((error: unknown) => console.warn("[managed-pi] cancellation failed", diagnosticErrorName(error)));
+        await quiescence.stopAndDrain({ ownerId: run.ownerId, chatId: run.chatId, runId: input.runId, signal: new AbortController().signal });
+      }
+    },
     async submitApproval(input) {
       const run = active.get(input.runId);
       if (!deps.ownerTools || !run || run.isolated || run.ownerId !== input.owner.ownerId || input.owner.type !== "personal" || run.chatId !== input.chatId || run.stopping || run.finished) throw new Error("Approval unavailable");
@@ -239,7 +279,7 @@ export function createManagedPiRuntime(deps: {
         command: { version: 1, kind: "bot.steer", runId: input.runId, text: input.prompt.slice(0, 8192) } });
       if (!reply.ok) throw new Error("Matrix AI steering unavailable");
     },
-    async recover(input) { await deps.ownerTools?.closeRun(input.runId); await deps.admission.release(input.state.runtimeHandle); return { outcome: "failed", messages: [] }; },
+    async recover(input) { await deps.ownerTools?.closeRun(input.runId); await deps.admission.release(input.state.runtimeHandle, input.state.executionGeneration); return { outcome: "failed", messages: [] }; },
   };
   return { adapter, runs, events,
     async readSubmittedArtifact(binding: PiRuntimeBinding, args: Extract<import("@matrix-os/contracts").BotToolRequest, { capability: "artifact.read" }>["args"]) {
@@ -260,5 +300,7 @@ export function createManagedPiRuntime(deps: {
         || run.binding?.runtimeHandle !== binding.runtimeHandle || run.binding.executionGeneration !== binding.executionGeneration) return;
       run.fundedFailure = reason;
     },
-    async close() { await Promise.all([...active.keys()].map(stop)); } };
+    stopAndDrain: quiescence.stopAndDrain,
+    withStoppedRun: quiescence.withStoppedRun,
+    async close() { await quiescence.close(); } };
 }

@@ -118,9 +118,15 @@ export function createManagedPiAdmission(deps: {
       catch (error: unknown) { await deps.host.client.stopRuntime({ runtimeHandle: runtime.runtimeHandle }); throw error; }
       return binding;
     },
-    async release(runtimeHandle: string): Promise<void> {
+    async release(runtimeHandle: string, executionGeneration?: string): Promise<void> {
       deps.registry.release(runtimeHandle);
-      await deps.host.client.stopRuntime({ runtimeHandle });
+      const stopped = await deps.host.client.stopRuntime({ runtimeHandle });
+      // The client already rejects raw supervisor failures. Its unwrapped ACK
+      // must additionally name this exact runtime (and generation when known).
+      if (!stopped || stopped.state !== "stopped" || stopped.runtimeHandle !== runtimeHandle
+        || (executionGeneration !== undefined && stopped.executionGeneration !== executionGeneration)) {
+        throw new BotAdmissionError("unavailable");
+      }
     },
   };
 }

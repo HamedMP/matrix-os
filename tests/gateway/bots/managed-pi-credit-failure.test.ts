@@ -40,7 +40,7 @@ async function runFailure(options: { code?: "insufficient_credit" | "budget_exce
     turnId: "cturn_failure", runId: binding.runId, selection, prompt: "hello", parts: [{ type: "text", text: "hello" }],
     interactionMode: "default", permissionMode: "supervised", signal: new AbortController().signal })) events.push(event);
   expect(JSON.stringify(events)).not.toContain("PRIVATE SDK ERROR");
-  expect(release).toHaveBeenCalledExactlyOnceWith(binding.runtimeHandle);
+  expect(release).toHaveBeenCalledExactlyOnceWith(binding.runtimeHandle, binding.executionGeneration);
   // A terminal run's late broker diagnostic cannot resurrect state.
   runtime.recordFundedFailure(binding, "insufficient_credit");
   await runtime.close();

@@ -86,10 +86,13 @@ describe("run-owned broker inference cancellation", () => {
       await runtime.adapter.cancel!({ ...input, owner: { type: "personal", ownerId: "other_owner" } });
       await runtime.adapter.cancel!({ ...input, chatId: "chat_other" });
       expect(signal?.aborted).toBe(false); expect(runBot).toHaveBeenCalledTimes(1);
-      await runtime.adapter.cancel!(input);
+      let cancelled = false;
+      const cancellation = runtime.adapter.cancel!(input).then(() => { cancelled = true; });
       await expect(pending).resolves.toMatchObject({ ok: false, error: "provider_unavailable" });
       expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(cancelled).toBe(false);
       finish({ ok: true, reply: { runId: binding.runId, status: "cancelled", toolActions: 0, sessionRevision: 1 } });
+      await cancellation;
       expect((await iterator.next()).value).toMatchObject({ type: "run.completed", outcome: "aborted" });
       await iterator.next();
     } finally { await runtime.close(); fixture.queue.close(); fixture.registry.shutdown(); }

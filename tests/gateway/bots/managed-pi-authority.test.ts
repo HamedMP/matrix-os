@@ -43,7 +43,7 @@ async function setup(permissionMode = "full_access", supervisedBrowser = false) 
   const createRuntime = vi.fn(async (): Promise<Awaited<ReturnType<ScopeRuntimeHost["client"]["createRuntime"]>>> => ({
     runtimeHandle: `runtime_${"c".repeat(32)}`, executionGeneration: "2", state: "running",
   }));
-  const stopRuntime = vi.fn(async () => undefined);
+  const stopRuntime = vi.fn(async ({ runtimeHandle }: { runtimeHandle: string }) => ({ runtimeHandle, executionGeneration: "2", state: "stopped" as const }));
   const host = { available: true, client: { createRuntime, stopRuntime } } as unknown as ScopeRuntimeHost;
   const admission = createManagedPiAdmission({ db, homePath: home, host, registry, supervisedBrowser, toolCapabilities: ["browser.action", "mcp.call"], roots: { resolve: async () => { throw new Error("Unexpected project" ); } } });
   const input = { ownerId: OWNER, chatId: "chat_authority", runId: result.run.id, resolved: resolveManagedPiRoute(snapshot, selection) };

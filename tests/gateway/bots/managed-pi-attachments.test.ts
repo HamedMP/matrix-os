@@ -82,7 +82,7 @@ it.each([{ mode: "Chat", revoke: false }, { mode: "Bot", revoke: false }, { mode
   ]);
   const registry = new BotRuntimeRegistry(); let serial = 0;
   let actions: ReturnType<typeof createBotBrokerActions>;
-  const stopRuntime = vi.fn(async () => undefined);
+  const stopRuntime = vi.fn(async (request: string | {runtimeHandle:string}) => ({runtimeHandle:typeof request === "string"?request:request.runtimeHandle,executionGeneration:"1",state:"stopped" as const}));
   const host = { available: true, client: {
     createRuntime: async () => ({ runtimeHandle: `runtime_${(++serial).toString(16).padStart(32, "0")}`, executionGeneration: "1" }), stopRuntime,
     runBot: async (request: { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }) => {
