@@ -9,7 +9,7 @@ class IndependentValidation(unittest.TestCase):
  def test_complete_dynamic_evidence_passes_without_historical_counts(self):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);inv,req=evidence(root);result=v.validate(root,inv,req)
-   self.assertEqual((result['phaseCount'],result['guardCount']),(55,14));self.assertEqual(len(result['requiredElectronFiles']),13);self.assertNotIn('containerGone',result)
+   self.assertEqual((result['phaseCount'],result['guardCount']),(56,14));self.assertEqual(len(result['requiredElectronFiles']),14);self.assertNotIn('containerGone',result)
  def test_each_artifact_is_required(self):
   for name in ARTIFACTS:
    with self.subTest(name=name),tempfile.TemporaryDirectory() as td:

@@ -58,7 +58,7 @@ class MainSourceContracts(unittest.TestCase):
     if p.name=='qualification.json':value.update(sourceKind='main',parents=inv['parents'])
     p.write_text(json.dumps(value))
    proof=validate.validate(root,inv,req)
-   self.assertEqual((proof['phaseCount'],proof['guardCount'],proof['independentHostSourceChecks']),(55,14,4))
+   self.assertEqual((proof['phaseCount'],proof['guardCount'],proof['independentHostSourceChecks']),(56,14,4))
    meta=json.loads((root/'qualification.json').read_text());meta.pop('sourceKind');(root/'qualification.json').write_text(json.dumps(meta))
    with self.assertRaises(ValueError):validate.validate(root,inv,req)
 
