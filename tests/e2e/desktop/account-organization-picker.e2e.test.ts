@@ -66,8 +66,9 @@ suite("Electron Desktop account organization picker", () => {
       return {
         withinViewport: bounds.top >= 0 && bounds.bottom <= window.innerHeight,
         scrolls: element.scrollHeight > element.clientHeight,
+        frameworkHeightDefined: Number.parseFloat(getComputedStyle(element).getPropertyValue("--radix-dropdown-menu-content-available-height")) > 0,
       };
-    }), { timeout: 5_000 }).toEqual({ withinViewport: true, scrolls: true });
+    }), { timeout: 5_000 }).toEqual({ withinViewport: true, scrolls: true, frameworkHeightDefined: true });
     for (const item of [page.getByRole("menuitemradio", { name: "Organization 18", exact: true }), page.getByRole("menuitem", { name: "Settings", exact: true }), page.getByRole("menuitem", { name: "Log out", exact: true })]) {
       await item.scrollIntoViewIfNeeded();
       const visible = await item.evaluate((element) => {
