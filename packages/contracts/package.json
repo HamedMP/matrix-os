@@ -47,6 +47,7 @@
     "#agent-runtime-config": "./src/agent-runtime-config.ts",
     "#agent-thread-contracts": "./src/agent-thread-contracts.ts",
     "#chat-navigation": "./src/chat-navigation.ts",
+    "#cpu-capacity": "./src/cpu-capacity.ts",
     "#canonical-chat": "./src/canonical-chat.ts",
     "#canonical-chat-tool-activities": "./src/canonical-chat-tool-activities.ts",
     "#canonical-chat-tool-details": "./src/canonical-chat-tool-details.ts",
