@@ -372,7 +372,7 @@ sleep() { :; }
 if apply_update explicit; then exit 2; fi
 '''
                 functions = '\n'.join(re.search(name + r'\(\) \{[\s\S]*?\n\}', built).group(0)
-                                      for name in ('write_update_transaction_state', 'seal_update_transaction'))
+                                      for name in ('write_update_transaction_state', 'seal_update_transaction_permissions', 'seal_update_transaction'))
                 shell = shell.replace('seal_update_transaction() { :; }', functions)
                 if failure == 'preflight':
                     shell = shell.replace('if apply_update explicit; then exit 2; fi',
@@ -445,7 +445,7 @@ exec(compile(sys.stdin.read(), '<actual-emitted-retirement-with-io-fault>', 'exe
             os.chmod('/opt/matrix/staging/update-phase', 0o600)
             Path('/opt/matrix/staging/bundle-' + B + '.tar.gz').write_bytes(archive_bytes)
             functions = '\n'.join(re.search(name + r'\(\) \{[\s\S]*?\n\}', built).group(0)
-                                  for name in ('write_update_transaction_state', 'seal_update_transaction', 'transaction_candidate_is_committed'))
+                                  for name in ('write_update_transaction_state', 'seal_update_transaction_permissions', 'seal_update_transaction', 'transaction_candidate_is_committed'))
             shell = recovery_shell() + '\n' + functions + '''
 json_field() { python3 -c "import json,sys;print(json.load(sys.stdin).get(sys.argv[1],''))" "$2" <<< "$1"; }
 version=''' + B + '''

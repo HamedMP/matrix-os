@@ -34,12 +34,25 @@ function syncAgentHarnessSource(): string {
     );
 }
 
+function runSyncAgentHarness(tempDir: string, invocation: string, env: Record<string, string> = {}) {
+  // Keep the complete updater out of Linux's bounded command arguments.
+  const script = join(tempDir, 'recovery.sh');
+  writeFileSync(script, `${syncAgentHarnessSource()}\n${invocation}`);
+  const result = spawnSync('bash', [script], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    env: { ...process.env, TEST_ROOT: tempDir, ...env },
+    timeout: 10_000,
+  });
+  if (result.error) throw result.error;
+  return result;
+}
+
 function runInterruptedLegacyUpdateRecovery(options: {
   installedReleaseVersion: string;
   rollbackAppVersion: string;
   rollbackStatus?: number;
 }) {
-  const root = process.cwd();
   const tempDir = mkdtempSync(join(tmpdir(), 'matrix-interrupted-update-'));
   const appDir = join(tempDir, 'app');
   const rollbackDir = `${appDir}.rollback`;
@@ -62,22 +75,13 @@ recover_interrupted_update
 `;
 
   try {
-    return spawnSync('bash', ['-c', `${syncAgentHarnessSource()}\n${invocation}`], {
-      cwd: root,
-      encoding: 'utf8',
-      env: {
-        ...process.env,
-        TEST_ROOT: tempDir,
-        ROLLBACK_STATUS: String(options.rollbackStatus ?? 0),
-      },
-    });
+    return runSyncAgentHarness(tempDir, invocation, { ROLLBACK_STATUS: String(options.rollbackStatus ?? 0) });
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
 }
 
 function runLegacyManualRollback() {
-  const root = process.cwd();
   const tempDir = mkdtempSync(join(tmpdir(), 'matrix-manual-rollback-'));
   const appDir = join(tempDir, 'app');
   const rollbackDir = `${appDir}.rollback`;
@@ -107,11 +111,7 @@ current_version
 `;
 
   try {
-    return spawnSync('bash', ['-c', `${syncAgentHarnessSource()}\n${invocation}`], {
-      cwd: root,
-      encoding: 'utf8',
-      env: { ...process.env, TEST_ROOT: tempDir },
-    });
+    return runSyncAgentHarness(tempDir, invocation);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
