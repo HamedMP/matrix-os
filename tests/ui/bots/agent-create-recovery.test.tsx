@@ -112,6 +112,20 @@ it("preserves selected recipe data through failed refresh and retry", async () =
   expect(screen.getByRole("button", { name: "Create Agent" })).toBeEnabled();
 });
 
+it("shows quiet model loading without offering retry before a failure", async () => {
+  const x = fixture();
+  let resolve!: (value: Awaited<ReturnType<typeof x.client.catalog>>) => void;
+  x.client.catalog.mockReturnValueOnce(new Promise(value => { resolve = value; }));
+  render(<ChatAgentsPanel client={x.client} view="recipes" onClose={x.close}/>);
+  expect(screen.getByText("Loading models…")).toHaveAttribute("role", "status");
+  expect(screen.queryByRole("button", { name: "Retry models" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Start from scratch" })).toBeDisabled();
+  const catalog = await clientFixture({ matrix: true }).catalog();
+  await act(async () => resolve(catalog));
+  await waitFor(() => expect(screen.queryByText("Loading models…")).toBeNull());
+  expect(screen.getByRole("button", { name: "Start from scratch" })).toBeEnabled();
+});
+
 it("offers model retry from a failed chooser and coalesces its pending requests", async () => {
   const x = fixture(); x.client.catalog.mockRejectedValueOnce(new Error("private discovery failure"));
   render(<ChatAgentsPanel client={x.client} view="recipes" onClose={x.close}/>);
@@ -119,11 +133,14 @@ it("offers model retry from a failed chooser and coalesces its pending requests"
   const retry = await screen.findByRole("button", { name: "Retry models" });
   expect(screen.getByRole("button", { name: "Start from scratch" })).toBeDisabled();
   expect(retry).toBeEnabled();
+  retry.focus(); expect(retry).toHaveFocus();
   let resolve!: (value: Awaited<ReturnType<typeof x.client.catalog>>) => void;
   const catalog = await clientFixture({ matrix: true }).catalog();
   x.client.catalog.mockReturnValueOnce(new Promise(value => { resolve = value; }));
   fireEvent.click(retry); fireEvent.click(retry);
-  expect(retry).toBeDisabled(); expect(x.client.catalog).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("button", { name: "Retry models" })).toBeNull();
+  expect(screen.getByText("Loading models…")).toHaveAttribute("role", "status");
+  expect(x.client.catalog).toHaveBeenCalledTimes(2);
   await act(async () => resolve(catalog));
   await waitFor(() => expect(screen.getByRole("button", { name: "Start from scratch" })).toBeEnabled());
   expect(screen.queryByText("private discovery failure")).toBeNull();
@@ -152,6 +169,7 @@ it("retries failed model discovery without losing a draft or reusing stale model
   x.client.catalog.mockReturnValueOnce(new Promise(value => { resolve = value; }));
   fireEvent.click(retry);
   expect(retry).toBeDisabled(); expect(editor.getByRole("button", { name: "Create Agent" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Retry models" })).toBeNull();
   const catalog = await clientFixture({ matrix: true }).catalog();
   await act(async () => resolve(catalog));
   await waitFor(() => expect(editor.getByRole("button", { name: "Create Agent" })).toBeEnabled());
