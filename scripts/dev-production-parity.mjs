@@ -472,14 +472,18 @@ function runInRuntime(command, options = {}) {
   return run("ssh", sshArguments(command), options);
 }
 
-function runInRuntimeAsync(command, startupSignal) {
+export async function runInRuntimeAsync(command, startupSignal, options = {}) {
+  startupSignal?.throwIfAborted();
+  const timeout = options.timeoutMs ?? 30 * 60_000;
+  if (!Number.isSafeInteger(timeout) || timeout <= 0 || timeout > 30 * 60_000) {
+    throw new Error("Invalid SSH startup timeout");
+  }
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn("ssh", sshArguments(command), { cwd: root, stdio: "inherit" });
-    const onAbort = () => child.kill("SIGTERM");
-    startupSignal?.addEventListener("abort", onAbort, { once: true });
+    const child = (options.spawnProcess ?? spawn)("ssh", sshArguments(command), {
+      cwd: root, stdio: "inherit", timeout, signal: startupSignal, killSignal: "SIGKILL",
+    });
     child.once("error", rejectPromise);
     child.once("exit", (code, terminationSignal) => {
-      startupSignal?.removeEventListener("abort", onAbort);
       if (code === 0) resolvePromise();
       else rejectPromise(new Error(`ssh ${command.join(" ")} failed (code ${code}, signal ${terminationSignal})`));
     });
