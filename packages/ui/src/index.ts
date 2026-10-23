@@ -278,7 +278,7 @@ export * from "./chat-navigation/metrics.js";
 export * from "./onboarding-widget/index.js";
 
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
-export { BrowserSurface, createHostedBrowserSession } from "./browser/index.js";
+export { BrowserSurface, createHostedBrowserSession, createBrowserSetupTransport } from "./browser/index.js";
 export type { BrowserSurfaceProps, BrowserSurfaceKind, BrowserStatus } from "./browser/index.js";
 export { BrowserPermissionCard } from "./browser-permission/BrowserPermissionCard.js";
 export { createBrowserPermissionClient, type BrowserPermissionClient } from "./browser-permission/client.js";
@@ -289,5 +289,5 @@ export { chatAttachmentSubmissionError, chatAttachmentComposerPolicy } from "./c
 export { gatewayChatAvailableMicrousd } from "./agents-providers/utils.js";
 
 export { OwnerManagedUpdateNotice } from "./owner-managed-update-notice.js";
-
 export { SubmittedBotAnswers, isBotAnswerContinuation } from "./chat-agents/bots/SubmittedBotAnswers.js";
+export { botCreationFailureReason, type BotCreationFailureReason } from "./chat-agents/creation-error.js";

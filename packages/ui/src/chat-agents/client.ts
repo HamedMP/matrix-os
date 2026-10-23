@@ -46,7 +46,7 @@ export function createChatAgentClient(request: (
   return {
     driveProjects: createChatDriveProjectClient(request),
     bots: createBotClient(request),
-    list: async () => ChatAgentListResponseSchema.parse(await request("/api/chat-agents", "GET")),
+    list: async () => ChatAgentListResponseSchema.parse(await request("/api/chat-agents?includeManagedCustomRecoveries=true", "GET")),
     catalog: async (options) => CanonicalProviderCatalogSchema.parse(await request(canonicalChatProviderCatalogPath(options?.refresh === true), "GET")),
     recipeCatalog: async () => ChatAgentRecipeCatalogSchema.parse(await request("/api/chat-agents/recipe-catalog", "GET")),
     integrations: async () => IntegrationConnectionListSchema.parse(await request("/api/integrations", "GET")),

@@ -47,6 +47,7 @@ import { BotBrokerActionError, createBotBrokerActions, registerBotBroker, type B
 import { createMatrixBotChatProviderAdapter, type BotChatState } from "../bots/chat-adapter.js";
 import { bootstrapBotDatabase } from "../bots/database.js";
 import { createBotInstantiation, ensureBotWorkspace, ownerBotExecutor, type BotInstantiation } from "../bots/instantiation.js";
+import { createManagedCustomRecovery, type ManagedCustomRecovery } from "../bots/managed-custom-recovery.js";
 import { createBotRecipeCatalog, type BotRecipeCatalog } from "../bots/recipe-catalog.js";
 import { createBotOperationReconciler } from "../bots/reconciliation.js";
 import { createBotBindingsRepository } from "../bots/repositories/bindings.js";
@@ -123,6 +124,7 @@ export interface BotServices {
   cancelAnthropicInference?(): void;
   recipes: BotRecipeCatalog;
   instantiation: BotInstantiation;
+  recovery: ManagedCustomRecovery;
   authority: BotAuthority;
   /**
    * Starts completing started connection requests. Called once the chat
@@ -210,6 +212,11 @@ export async function startBots(options: {
     customRecipes,
     ensureWorkspace: (botId) => ensureBotWorkspace(options.homePath, botId),
   });
+  let recoveryRegistry: BotRuntimeRegistry | undefined;
+  const recovery = createManagedCustomRecovery({ chats: options.repository, agents: options.agents, customRecipes,
+    validateSelection: createBotCreationSelectionValidator({ available: () => Boolean(options.host?.available), providers: options.providers }),
+    ensureWorkspace: botId => ensureBotWorkspace(options.homePath, botId),
+    hasLiveRuntime: (ownerId, chatId) => recoveryRegistry?.hasChatRuntime(ownerId, chatId) ?? false });
   const reconciler = createBotOperationReconciler({ operations: createBotOperationsRepository(db), instantiation });
   await reconciler.start();
   const transact = createBotStateTransactions(options.repository);
@@ -274,7 +281,7 @@ export async function startBots(options: {
   const host = options.host;
   if (!host?.available) {
     return {
-      recipes, instantiation, interactions, memory, grants, authority, botChats, tasks, startConnectionReconciler, providerConnections, chatgptPlanPeers,
+      recipes, instantiation, recovery, interactions, memory, grants, authority, botChats, tasks, startConnectionReconciler, providerConnections, chatgptPlanPeers,
       async close() {
         chatgptPlanPeers?.close();
         await stopConnections();
@@ -323,6 +330,7 @@ export async function startBots(options: {
   saveSweepTimer.unref();
 
   const registry = new BotRuntimeRegistry();
+  recoveryRegistry = registry;
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
   const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
     registry, profileGuard: options.nativeProfileGuard, lifetime: lifetime.signal, callTool: (binding, request, signal) => brokerTool(binding, request, signal) }) : undefined;
@@ -442,6 +450,7 @@ export async function startBots(options: {
   return {
     recipes,
     instantiation,
+    recovery,
     interactions,
     memory,
     grants,

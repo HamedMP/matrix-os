@@ -1,4 +1,8 @@
-import { recoverCreatedCustomBot } from "./recover-created-custom-bot.js";
+import { saveAgentDraft, type AgentCreationAttempt } from "./save-agent-draft.js";
+import { safeHttpStatus } from "./safe-http-status.js";
+import { botCreationFailureMessage } from "./creation-error.js";
+import { agentEditorValidation } from "./agent-editor-validation.js";
+import { agentDraftMatchesSaved, recoverSavedFundedBot, savedAgentRecoveryBaseRevision } from "./saved-agent-recovery.js";
 import { useAgentProviderCatalog } from "./use-agent-provider-catalog.js";
 import {configureCreatedExecutor} from "./bots/configure-created-executor.js";
 import type {BotExecutorSelection} from "./bots/BotTaskExecutorField.js";
@@ -8,7 +12,7 @@ import { botModelChoiceMatchesSelection, isAutomaticBotSelection, matrixBotModel
 import { isChatAgentDriver, MATRIX_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
 import type { StartAgentChat } from "./client.js";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChatAgentRecipeSchema, JevInboxTriageBindingSchema, type InstantiateBotResponse, type BotRecipeSummary, type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
+import { ChatAgentRecipeSchema, JevInboxTriageBindingSchema, type InstantiateBotResponse, type BotRecipeSummary, type ChatAgent, type ChatAgentListResponse, type ChatAgentRecipeCatalog, type CanonicalProviderCatalog, type CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { DAILY_BRIEF_RECIPE_ID, isLegacyDailyBriefEntry } from "./bots/daily-brief-navigation.js";
@@ -16,7 +20,7 @@ import { BotRecipeSetup } from "./bots/BotRecipeSetup.js";
 import { recipeSkillsFit } from "./recipe-skills.js";
 import { activeConnections } from "./recipe-integrations.js";
 import { JEV_AGENT_DESCRIPTION, JEV_AGENT_NAME, jevAgentInstructions, jevAgentRecipe, jevAgentSelection } from "./jev-agent-template.js";
-import { editableAgentRecipe, agentRecipePatch } from "./recipe-edit.js";
+import { editableAgentRecipe } from "./recipe-edit.js";
 import { AgentEditor, type AgentDraft } from "./AgentEditor.js";
 import { AgentAvatar } from "./AgentAvatar.js";
 import { AgentRecipesPanel } from "./AgentRecipesPanel.js";
@@ -29,6 +33,7 @@ const muted = chatAgentMutedStyle;
 const requestId = () => `req_${crypto.randomUUID().replaceAll("-", "")}`;
 type Draft = AgentDraft;
 type Library = {
+  managedCustomRecoveries?: ChatAgentListResponse["managedCustomRecoveries"];
   agents: ChatAgent[]; catalog: CanonicalProviderCatalog | null; enabled: boolean;
   loading: boolean; catalogLoading?: boolean; pending: boolean; error: string; notice: string;
   recipeCatalog: ChatAgentRecipeCatalog | null; connections: ChatAgentIntegrationConnection[];
@@ -91,14 +96,16 @@ function DailyBriefCreation({ onRefreshCatalog, onSetup, recipe, client, models,
     onCreate={(name,executor) => { void create(name,executor); }} onClose={onClose} />;
 }
 
-function AgentLibraryBody({ state, client, models, edit, newAgent, chooser = false, change, save, archive, back, retryRecipes, setup, openDailyBrief, refreshModels, setupPaused }: {
-  state: Library; client: ChatAgentClient; models: ReturnType<typeof deriveCanonicalProviderChoices>;
+function AgentLibraryBody({ state, client, models, retainedCreation, recover, edit, newAgent, chooser = false, change, save, archive, back, retryRecipes, setup, openDailyBrief, refreshModels, setupPaused }: {
+  retainedCreation?: AgentCreationAttempt | null; state: Library; client: ChatAgentClient; models: ReturnType<typeof deriveCanonicalProviderChoices>;
   edit(agent: ChatAgent | "new"): void; openDailyBrief?: () => void; change(value: Partial<Draft>): void;
   newAgent(): void; chooser?: boolean;
-  save(): Promise<void>; archive(): Promise<void>; back(): void; retryRecipes(): void; setup?: () => void; refreshModels(): void; setupPaused: boolean;
+  recover(): Promise<void>; save(): Promise<void>; archive(): Promise<void>; back(): void; retryRecipes(): void; setup?: () => void; refreshModels(): void; setupPaused: boolean;
 }) {
   if (state.loading) return <p role="status" className="mt-5 text-sm">Loading Agents…</p>;
   if (!state.enabled) return <p className="mt-5 text-sm">Agents are disabled for this computer.</p>;
+  const editingId = state.editing && state.editing !== "new" ? state.editing.id : undefined;
+  const unfinishedRecovery = state.managedCustomRecoveries?.some(recovery => recovery.agentId === editingId) ?? false;
   return <div className="matrix-chat-agents-library mx-auto grid w-full max-w-3xl gap-5 py-8">
     <div hidden={chooser || Boolean(state.editing)} inert={chooser || Boolean(state.editing)} className="grid gap-5">
     <header className="flex flex-wrap items-center justify-between gap-3">
@@ -129,9 +136,10 @@ function AgentLibraryBody({ state, client, models, edit, newAgent, chooser = fal
         <div className="min-w-0 flex-1"><h3 className="text-base font-semibold">{state.editing === "new" ? "New agent" : "Edit agent"}</h3><p className="truncate text-xs" style={muted}>{state.draft.name}</p></div>
         <button type="button" className={button} aria-label="Close agent settings" disabled={state.pending} onClick={back}>×</button>
       </header>
-      <AgentEditor botClient={client.bots} draft={state.draft} editing={state.editing} pending={state.pending} models={models} catalog={state.catalog} catalogLoading={state.catalogLoading}
+      <AgentEditor unfinishedRecovery={unfinishedRecovery} botClient={client.bots} retainedManaged={retainedCreation?.managed} retainedSelection={retainedCreation?.input.selection} draft={state.draft} editing={state.editing} pending={state.pending} models={models} catalog={state.catalog} catalogLoading={state.catalogLoading}
         recipeCatalog={state.recipeCatalog} connections={state.connections} recipeLoading={state.recipeLoading} recipeError={state.recipeError}
-        connectionError={state.connectionError} change={change} onSave={save} onArchive={archive} onBack={back} onSetup={setup} onRefreshCatalog={refreshModels} onRetryRecipe={retryRecipes} cancelLabel="Cancel" apps={state.editing !== "new" && state.editing.recipeRef ? <BotEditorApps key={state.editing.id} agentId={state.editing.id} client={client}/> : undefined} />
+        connectionError={state.connectionError} change={change} onSave={save} onArchive={archive} onBack={back} onSetup={setup} onRefreshCatalog={refreshModels} onRetryRecipe={retryRecipes} cancelLabel="Cancel" onRecover={state.editing !== "new" && savedAgentRecoveryBaseRevision(state.editing, state.managedCustomRecoveries) !== undefined && client.bots?.recoverManagedCustom ? recover : undefined}
+        recoveryDisabled={state.editing !== "new" && !agentDraftMatchesSaved(state.draft, state.editing)} apps={state.editing !== "new" && state.editing.recipeRef ? <BotEditorApps key={state.editing.id} agentId={state.editing.id} client={client}/> : undefined} />
       {state.error ? <p role="alert" className="mt-3 text-xs">{state.error}</p> : null}
     </Dialog> : null}
   </div>;
@@ -161,7 +169,13 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
   const scratchTrigger = useRef<HTMLButtonElement | null>(null);
   const [creationView, setCreationView] = useState(view === "recipes");
   const [dailyRecipe, setDailyRecipe] = useState<{ client: ChatAgentClient; recipe: BotRecipeSummary } | null>(null);
-  const customCreated = useRef<{ client: ChatAgentClient; result: InstantiateBotResponse } | null>(null);
+  const creationAttempt = useRef<AgentCreationAttempt | null>(null);
+  const [retainedCreation, setRetainedCreation] = useState<AgentCreationAttempt | null>(null);
+  const recoveredBot = useRef<InstantiateBotResponse | null>(null);
+  const saving = useRef(false);
+  const mounted = useRef(false);
+  const editorGeneration = useRef(0);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const jevCreateAttempt = useRef<{ accountLabel: string; selectionKey: string; requestId: string } | null>(null);
   const [library, setState] = useState<Library>({ agents: [], catalog: null, enabled: true,
     loading: true, pending: false, error: "", notice: "", editing: null, draft: null,
@@ -196,7 +210,7 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
   useEffect(() => {
     let current = true;
     void client.list().then((library) => {
-      if (current) setState((previous) => ({ ...previous, agents: library.agents, enabled: library.enabled, loading: false }));
+      if (current) setState((previous) => ({ ...previous, agents: library.agents, managedCustomRecoveries: library.managedCustomRecoveries, enabled: library.enabled, loading: false }));
     }).catch((failure: unknown) => {
       console.warn("[chat-agents] Library unavailable:", failure instanceof Error ? failure.name : "UnknownError");
       if (current) setState((previous) => ({ ...previous, loading: false, error: "Agents could not be loaded. Close and try again." }));
@@ -299,7 +313,10 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
       });
   };
   const edit = (agent: ChatAgent | "new") => {
-    customCreated.current = null;
+    creationAttempt.current = null;
+    setRetainedCreation(null);
+    recoveredBot.current = null;
+    editorGeneration.current += 1;
     modelCatalog.refresh();
     const recipeBot = agent !== "new" && !!agent.recipeRef;
     const managedNew = agent === "new" && Boolean(client.bots?.createCustom);
@@ -319,48 +336,88 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
       draft: current.draft ? { ...current.draft, ...value, requestId: nextRequestId } : null,
     }));
   };
+  const editorModels = !retainedCreation?.managed && state.draft?.recipe?.skills.includes("matrix-jev-email-triage")
+    ? models.filter(choice => choice.instanceId === jevSelection?.instanceId && choice.modelId === jevSelection?.model)
+    : retainedCreation?.managed === false ? models
+    : state.editing === "new" && client.bots?.createCustom
+      ? botModels.filter(choice => choice.instanceId === "matrix_pi_default" || choice.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID)
+      : state.editing && state.editing !== "new" && state.editing.recipeRef ? botModels : models;
   const save = async () => {
-    const draft = state.draft;
-    const recipeBot = state.editing !== null && state.editing !== "new" && Boolean(state.editing.recipeRef);
-    if (state.pending || !draft?.selection || !draft.name.trim() || !draft.instructions.trim()
-      || (!recipeBot && draft.recipe !== undefined && draft.recipe !== null && (!ChatAgentRecipeSchema.safeParse(draft.recipe).success
-        || !recipeSkillsFit(draft.recipe.skills, state.recipeCatalog?.skills ?? [])))) return;
+    const draft = state.draft, editing = state.editing;
+    if (saving.current || state.pending || !draft || !editing
+      || editing !== "new" && state.managedCustomRecoveries?.some(recovery => recovery.agentId === editing.id)
+      || !agentEditorValidation({ draft, editing, models: editorModels,
+      catalog: state.catalog, catalogLoading: state.catalogLoading, recipeCatalog: state.recipeCatalog,
+      managedCreation: Boolean(client.bots?.createCustom), retainedManaged: creationAttempt.current?.managed,
+      retainedSelection: creationAttempt.current?.input.selection }).valid) return;
+    const generation = editorGeneration.current;
+    const current = () => mounted.current && generation === editorGeneration.current;
+    saving.current = true;
     patch({ pending: true, error: "" });
     try {
-      const fields = { name: draft.name, description: draft.description, instructions: draft.instructions };
-      const retained = customCreated.current?.client === client ? customCreated.current.result : undefined;
-      const customManaged = state.editing === "new" && (draft.selection.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID || !!retained);
-      let managedCreated = retained;
-      if (customManaged && !managedCreated) {
-        if (!client.bots?.createCustom) throw new Error("Managed Bot creation unavailable");
-        managedCreated = await client.bots.createCustom({ ...fields, selection: draft.selection, clientRequestId: draft.requestId, ...(draft.recipe ? { recipe: draft.recipe } : {}) });
-        customCreated.current = { client, result: managedCreated };
+      const { saved, managed, attempt } = await saveAgentDraft(client, creationAttempt, draft, editing, current);
+      if (!current()) return;
+      if (editing === "new" && onOpenBotChat && client.bots) {
+        const chatId = attempt?.chatId ?? await client.bots.ensureDirectChat(saved.id);
+        if (!chatId) throw new Error("Bot conversation unavailable");
+        if (attempt) attempt.chatId = chatId;
+        if (!current()) return;
+        await onOpenBotChat(chatId);
+        if (!current()) return;
+        onClose();
       }
-      const saved = managedCreated
-        ? await recoverCreatedCustomBot(client, managedCreated, draft)
-        : state.editing === "new"
-        ? await client.create({ ...fields, selection: draft.selection, clientRequestId: draft.requestId, ...(draft.recipe ? { recipe: draft.recipe } : {}) })
-        : await client.update(state.editing!.id, { ...fields,
-          ...(JSON.stringify(draft.selection) === JSON.stringify(state.editing!.selection) ? {} : { selection: draft.selection }), baseRevision: state.editing!.revision,
-          ...agentRecipePatch(state.editing!, draft.recipe) });
-      if (!saved) throw new Error("Created Bot readback unavailable");
-      customCreated.current = null;
+      creationAttempt.current = null;
+      setRetainedCreation(null);
       setCreationView(false);
-      setState((current) => ({ ...current, pending: false, editing: null, draft: null,
-        agents: [...current.agents.filter((agent) => agent.id !== saved.id), saved],
-        notice: recipeBot || customManaged ? "Saved. Open this bot’s Chat from the sidebar to send a request."
+      setState((previous) => ({ ...previous, pending: false, editing: null, draft: null,
+        agents: [...previous.agents.filter((agent) => agent.id !== saved.id), saved],
+        notice: managed ? "Saved. Open this bot’s Chat from the sidebar to send a request."
           : `Saved. Type @${saved.name} in a Chat to give this Agent a request.`,
       }));
     } catch (failure: unknown) {
       console.warn("[chat-agents] Save failed:", failure instanceof Error ? failure.name : "UnknownError");
-      patch({ pending: false, error: customCreated.current?.client === client
+      if (!current()) return;
+      const attempt = creationAttempt.current?.client === client ? creationAttempt.current : null;
+      setRetainedCreation(attempt ? { ...attempt } : null);
+      patch({ pending: false, error: botCreationFailureMessage(failure) ?? (attempt?.result || attempt?.agent
         ? "Bot was created, but setup could not finish. Your changes are still here. Try again to finish this Bot."
-        : "Agent could not be saved. Your changes are still here. Try again or reopen the Agent to refresh." });
+        : attempt ? "We could not confirm whether your Bot was saved. Your changes are still here. Try again to safely finish the same Bot."
+        : "Agent could not be saved. Your changes are still here. Try again or reopen the Agent to refresh.") });
+    } finally {
+      saving.current = false;
     }
   };
+  const recover = async () => {
+    const draft = state.draft, agent = state.editing;
+    const baseRevision = agent && agent !== "new" ? savedAgentRecoveryBaseRevision(agent, state.managedCustomRecoveries) : undefined;
+    if (saving.current || state.pending || !draft || !agent || agent === "new" || baseRevision === undefined
+      || agent.selection.instanceId !== "matrix_pi_default" || !agentDraftMatchesSaved(draft, agent)) return;
+    const generation = editorGeneration.current, current = () => mounted.current && generation === editorGeneration.current;
+    saving.current = true;
+    patch({ pending: true, error: "" });
+    try {
+      const { saved, chatId } = await recoverSavedFundedBot(client, recoveredBot, agent, draft, current, baseRevision);
+      if (!current()) return;
+      if (onOpenBotChat) await onOpenBotChat(chatId);
+      if (!current()) return;
+      recoveredBot.current = null;
+      patch({ pending: false, editing: null, draft: null,
+        managedCustomRecoveries: state.managedCustomRecoveries?.filter(recovery => recovery.agentId !== saved.id),
+        agents: [...state.agents.filter(candidate => candidate.id !== saved.id), saved], notice: "Bot recovered. Its existing Chat is ready." });
+      if (onOpenBotChat) onClose();
+    } catch (failure: unknown) {
+      console.warn("[chat-agents] Bot recovery failed:", failure instanceof Error ? failure.name : "UnknownError");
+      if (current()) patch({ pending: false, error: recoveredBot.current
+        ? "Bot was recovered, but its Chat could not open. Try again to open the same Chat."
+        : safeHttpStatus(failure) === 409
+          ? "Bot changed since you opened it. Reopen it before recovering. Your changes are still here."
+          : "Bot could not be recovered. Your changes are still here. Try again." });
+    } finally { saving.current = false; }
+  };
   const archive = async () => {
-    if (state.pending || !state.editing || state.editing === "new") return;
+    if (saving.current || state.pending || !state.editing || state.editing === "new") return;
     const agent = state.editing;
+    saving.current = true;
     patch({ pending: true, error: "" });
     try {
       await client.update(agent.id, { baseRevision: agent.revision, archived: true });
@@ -370,7 +427,7 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
     } catch (failure: unknown) {
       console.warn("[chat-agents] Archive failed:", failure instanceof Error ? failure.name : "UnknownError");
       patch({ pending: false, error: "Agent could not be archived. Try again." });
-    }
+    } finally { saving.current = false; }
   };
   const recipes = creationView;
   const title = state.editing === "new" || recipes ? "New agent" : state.editing ? "Edit agent" : "Your AI team";
@@ -396,14 +453,10 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
       onCreateJev={client.bots && onOpenBotChat ? createJev : undefined} connections={state.connections}
       jevUnavailable={jevUnavailable} jevPending={jevPending} jevError={jevError} /></div> : null}
     {!recipes || state.editing ? <div className="mx-auto w-full max-w-3xl">
-    <AgentLibraryBody state={state} client={client} models={state.draft?.recipe?.skills.includes("matrix-jev-email-triage")
-      ? models.filter(choice => choice.instanceId === jevSelection?.instanceId && choice.modelId === jevSelection?.model)
-      : state.editing === "new" && client.bots?.createCustom
-        ? botModels.filter(choice => choice.instanceId === "matrix_pi_default" || choice.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID)
-        : state.editing && state.editing !== "new" && state.editing.recipeRef ? botModels : models}
+    <AgentLibraryBody state={state} client={client} models={editorModels} retainedCreation={retainedCreation}
       openDailyBrief={client.bots && onOpenBotChat ? openDailyBrief : undefined}
-      chooser={recipes} newAgent={() => setCreationView(true)} edit={edit} change={change} save={save} archive={archive}
-      back={() => patch({ editing: null, draft: null, error: "" })} retryRecipes={retryRecipes} refreshModels={modelCatalog.refresh} setupPaused={setupPaused}
+      chooser={recipes} newAgent={() => setCreationView(true)} recover={recover} edit={edit} change={change} save={save} archive={archive}
+      back={() => { editorGeneration.current += 1; patch({ editing: null, draft: null, error: "" }); }} retryRecipes={retryRecipes} refreshModels={modelCatalog.refresh} setupPaused={setupPaused}
       setup={onSetup ? () => { setSetupPaused(true); onSetup(); } : undefined} />
     {state.error && !state.editing ? <p role="alert" className="mt-4 text-sm">{state.error}</p> : state.notice ? <p role="status" className="mt-4 min-w-0 truncate text-sm" title={state.notice}>{state.notice}</p> : null}
     </div> : null}

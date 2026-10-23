@@ -3,7 +3,7 @@ export const FundedHostActivationIdentitySchema = z.object({
   handle: z.string().min(2).max(63).regex(/^[a-z0-9][a-z0-9-]{1,62}$/),
   machineId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/),
   ownerId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/),
-  runtimeSlot: z.literal('primary'),
+  runtimeSlot: z.string().min(1).max(32).regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/),
   runtimeTokenEpoch: z.number().int().min(1).max(2147483647),
 }).strict();
 const fields = {

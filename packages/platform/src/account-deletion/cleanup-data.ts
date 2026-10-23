@@ -139,7 +139,7 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
       if (!summary.rows.length) throw new Error('Accounting erasure tombstone unavailable');
     }
     await trx.executor.deleteFrom('ai_funded_credit_ledger').where('owner_id','=',owner).execute();
-    for (const table of ['ai_runtime_credentials', 'ai_funded_priority_claims', 'ai_funded_runtime_policies',
+    for (const table of ['ai_runtime_credentials', 'ai_funded_priority_claims', 'preview_runtime_allocations', 'ai_funded_runtime_policies',
       'ai_funded_promotional_grant_balances', 'ai_funded_runtime_balances', 'ai_funded_credit_restrictions',
       'speech_operations', 'speech_runtime_allowances', 'ai_credit_checkout_claims', 'ai_funded_usage_reservations'] as const) {
       await trx.executor.deleteFrom(table).where('owner_id','=',owner).execute();

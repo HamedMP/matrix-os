@@ -12,6 +12,13 @@ afterEach(() => {
   vi.resetModules();
 });
 
+it.each([false, true])("advertises Browser setup only for a Browser-authorized native view: %s", async enabled => {
+  vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge", ...(enabled ? ["--matrix-app-browser-bridge"] : [])]);
+  await import("../../desktop/src/preload/index.js");
+  const [, bridge] = electron.contextBridge.exposeInMainWorld.mock.calls[0];
+  expect(bridge.browserSetup).toBe(enabled ? true : undefined);
+});
+
 it("exposes shared app capabilities while reserving activity access for Resource Manager", async () => {
   vi.spyOn(process, "argv", "get").mockReturnValue(["electron", "--matrix-app-bridge"]);
   await import("../../desktop/src/preload/index.js");

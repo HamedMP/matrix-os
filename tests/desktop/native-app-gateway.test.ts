@@ -93,3 +93,35 @@ describe("native gateway IPC boundary", () => {
     }
   });
 });
+
+describe("native Browser setup capability", () => {
+  it.each(["token", "origin", "generation"] as const)("discards setup replies after the active %s changes", async changed => {
+    let token = "initial-token", origin = "https://gateway.test", generation = 1;
+    let resolve!: (value: Response) => void;
+    const fetchFn = vi.fn(() => new Promise<Response>(complete => { resolve = complete; }));
+    const request = createNativeAppGatewayRequester({ getToken: () => token, getGatewayOrigin: () => origin,
+      getAuthGeneration: () => generation, fetchFn });
+    const pending = request("matrix-browser", { url: "/api/browser/setup" }, "browser-lab");
+    if (changed === "token") token = "next-token";
+    if (changed === "origin") origin = "https://other-gateway.test";
+    if (changed === "generation") generation++;
+    resolve(Response.json({ status: "ready", retryAvailable: false }));
+    await expect(pending).rejects.toThrow("Browser authentication changed");
+  });
+  it("exposes only fixed setup status/retry to registered Browser and Cloud desktop senders", async () => {
+    const { bridge, fetchFn } = setup();
+    for (const [id, identity] of [[50, "matrix-browser"], [51, "matrix-cloud-desktop"]] as const) {
+      bridge.register(id, identity, "browser-lab");
+      const source = { id, url: "https://gateway.test/apps/browser-lab/?surface=browser" };
+      await bridge.gatewayFetch(source, { url: "/api/browser/setup" });
+      await bridge.gatewayFetch(source, { url: "/api/browser/setup/retry", init: { method: "POST", body: "{}" } });
+    }
+    expect(fetchFn).toHaveBeenCalledWith("https://gateway.test/api/browser/setup/retry", expect.objectContaining({
+      method: "POST", body: "{}", headers: { authorization: "Bearer desktop-token", "content-type": "application/json", origin: "https://gateway.test" },
+    }));
+    const count = fetchFn.mock.calls.length;
+    for (const payload of [{ url: "/api/browser/setup/retry" }, { url: "/api/browser/setup?path=other" }, { url: "/api/browser/setup/retry", init: { method: "POST", body: '{"command":"arbitrary"}' } }]) await expect(bridge.gatewayFetch({ id: 50, url: "https://gateway.test/apps/browser-lab/" }, payload)).rejects.toThrow();
+    await expect(bridge.gatewayFetch(sender, { url: "/api/browser/setup" })).rejects.toThrow();
+    expect(fetchFn).toHaveBeenCalledTimes(count);
+  });
+});

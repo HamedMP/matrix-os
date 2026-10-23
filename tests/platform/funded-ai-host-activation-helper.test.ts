@@ -24,6 +24,18 @@ describe('funded AI host configuration primitive', () => {
     expect(result.status, result.stderr).toBe(0);
     expect(await readFile(f.envPath, 'utf8')).toContain('MATRIX_FUNDED_AI_ENABLED=true');
   });
+  it('installs an exact non-primary Preview proof without relaxing local identity checks', async () => {
+    const f = await fixture();
+    const previewSlot = 'pr-2383';
+    const previewRequest = { ...request, identity: { ...request.identity,
+      handle: previewSlot, runtimeSlot: previewSlot } };
+    await writeFile(f.envPath, original
+      .replace('MATRIX_HANDLE=alice', `MATRIX_HANDLE=${previewSlot}`)
+      .replace('MATRIX_RUNTIME_SLOT=primary', `MATRIX_RUNTIME_SLOT=${previewSlot}`));
+    const result = apply(f.envPath, previewRequest);
+    expect(result.status, result.stderr).toBe(0);
+    expect(await readFile(f.envPath, 'utf8')).toContain('MATRIX_FUNDED_AI_ENABLED=true');
+  });
   it('initializes absent authoritative epoch and changes only five managed assignments atomically', async () => {
     const f = await fixture();
     expect(apply(f.envPath).status).toBe(0);

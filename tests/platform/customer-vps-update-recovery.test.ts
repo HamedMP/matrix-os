@@ -62,7 +62,10 @@ recover_interrupted_update
 `;
 
   try {
-    return spawnSync('bash', ['-c', `${syncAgentHarnessSource()}\n${invocation}`], {
+    // The inlined updater exceeds Linux's 128 KiB single-argument limit.
+    // Stream the same script so recovery actually executes in Linux CI.
+    return spawnSync('bash', ['-s'], {
+      input: `${syncAgentHarnessSource()}\n${invocation}`,
       cwd: root,
       encoding: 'utf8',
       env: {
@@ -107,7 +110,8 @@ current_version
 `;
 
   try {
-    return spawnSync('bash', ['-c', `${syncAgentHarnessSource()}\n${invocation}`], {
+    return spawnSync('bash', ['-s'], {
+      input: `${syncAgentHarnessSource()}\n${invocation}`,
       cwd: root,
       encoding: 'utf8',
       env: { ...process.env, TEST_ROOT: tempDir },
@@ -175,7 +179,7 @@ describe('customer VPS update recovery', () => {
       rollbackAppVersion: 'v2026.09.08-1195',
     });
 
-    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(result.status, result.error?.message || result.stderr || result.stdout).toBe(0);
     expect(result.stdout).toContain('rollback:false');
     expect(result.stdout).toContain('error:apply_interrupted:v2026.09.11-pr-test');
   });
@@ -186,7 +190,7 @@ describe('customer VPS update recovery', () => {
       rollbackAppVersion: 'v2026.09.08-1195',
     });
 
-    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(result.status, result.error?.message || result.stderr || result.stdout).toBe(0);
     expect(result.stdout).not.toContain('rollback:');
     expect(result.stdout).toContain('error:post_install_rollback_failed:v2026.09.11-pr-test');
   });
@@ -198,7 +202,7 @@ describe('customer VPS update recovery', () => {
       rollbackStatus: 1,
     });
 
-    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(result.status, result.error?.message || result.stderr || result.stdout).toBe(0);
     expect(result.stdout).toContain('rollback:false');
     expect(result.stdout).toContain('error:post_install_rollback_failed:v2026.09.11-pr-test');
   });
@@ -206,7 +210,7 @@ describe('customer VPS update recovery', () => {
   it('allows manual rollback when current release metadata identifies the rollback app', () => {
     const result = runLegacyManualRollback();
 
-    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(result.status, result.error?.message || result.stderr || result.stdout).toBe(0);
     expect(result.stdout).toContain('Installed release metadata already identifies the rollback app');
     expect(result.stdout).toContain('active-version:v2026.09.08-1195');
   });

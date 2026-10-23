@@ -42,7 +42,7 @@ import {
   type CanonicalUpdateChatTitleRequest,
 } from "@matrix-os/contracts";
 import type { ChatMessage } from "@/lib/chat";
-import { canonicalChatSafeFailureReason } from "@matrix-os/ui";
+import { botCreationFailureReason, canonicalChatSafeFailureReason, type BotCreationFailureReason } from "@matrix-os/ui";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -121,9 +121,9 @@ function safeAttachmentName(name: string): { label: string; pathName: string } {
 
 const MAX_ERROR_BODY_BYTES = 4096;
 
-async function readErrorCode(response: Response): Promise<string | undefined> {
+async function readErrorMetadata(response: Response, botPath: boolean): Promise<{ code?: string; reason?: BotCreationFailureReason }> {
   const reader = response.body?.getReader();
-  if (!reader) return undefined;
+  if (!reader) return {};
   try {
     let bytes = 0;
     let text = "";
@@ -134,27 +134,32 @@ async function readErrorCode(response: Response): Promise<string | undefined> {
       bytes += chunk.value.byteLength;
       if (bytes > MAX_ERROR_BODY_BYTES) {
         await reader.cancel();
-        return undefined;
+        return {};
       }
       text += decoder.decode(chunk.value, { stream: true });
     }
     const value: unknown = JSON.parse(text + decoder.decode());
-    if (typeof value !== "object" || value === null || !("error" in value)
-      || typeof value.error !== "object" || value.error === null || !("code" in value.error)) return undefined;
-    return canonicalChatSafeFailureReason(value.error.code) ? value.error.code as string : undefined;
+    if (typeof value !== "object" || value === null) return {};
+    const error = "error" in value && typeof value.error === "object" && value.error !== null ? value.error : botPath ? value : {};
+    const code = "code" in error ? error.code : undefined;
+    return { code: canonicalChatSafeFailureReason(code) || botPath && code === "invalid_request" ? code as string : undefined,
+      reason: botPath ? botCreationFailureReason(value) : undefined };
   } catch (error) {
     console.warn("[canonical-chat] Error response unavailable:", error instanceof Error ? error.name : "UnknownError");
-    return undefined;
+    return {};
   } finally { reader.releaseLock(); }
 }
 
-async function jsonResponse(response: Response): Promise<unknown> {
-  if (!response.ok) throw new CanonicalShellChatRequestError(response.status, await readErrorCode(response));
+async function jsonResponse(response: Response, path: string): Promise<unknown> {
+  if (!response.ok) {
+    const { code, reason } = await readErrorMetadata(response, /^\/api\/chat-agents(?:[/?]|$)/.test(path));
+    throw new CanonicalShellChatRequestError(response.status, code, reason);
+  }
   return response.json();
 }
 
 export class CanonicalShellChatRequestError extends Error {
-  constructor(readonly status: number, readonly code?: string) {
+  constructor(readonly status: number, readonly code?: string, readonly reason?: BotCreationFailureReason) {
     super("Canonical Chat request failed");
     this.name = "CanonicalShellChatRequestError";
   }
@@ -183,7 +188,7 @@ export function createCanonicalShellChatClient(options: {
       headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
     } : {}),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  }).then(jsonResponse);
+  }).then(response => jsonResponse(response, path));
   const createId = options.createId ?? (() => globalThis.crypto.randomUUID().replaceAll("-", ""));
   return {
     browserPermissions: createBrowserPermissionClient((path, method, body) => request(path, { method, ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) })),

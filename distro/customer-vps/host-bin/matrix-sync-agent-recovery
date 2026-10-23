@@ -278,6 +278,14 @@ do_rollback() {
   if [ "$healthy" = true ]; then
     clear_retired_symphony_rollback_after_rollback || return 1
     finish_confirmed_update_transaction || return 1
+    # Converge native code to the restored payload only after core rollback
+    # passes health; Chrome/profile remain live until bounded reconciliation.
+    if [ -f /etc/systemd/system/matrix-browser-runtime.service ] \
+      && [ -f /usr/local/libexec/matrix-browser-runtime.py ]; then
+      sudo systemctl reset-failed matrix-browser-runtime.service || true
+      sudo systemctl restart --no-block matrix-browser-runtime.service \
+        || log "WARN: Browser rollback reconciliation remains pending"
+    fi
     log "Rollback complete (now at $(current_version))"
   else
     log "ERROR: rollback health check failed — services may be down"

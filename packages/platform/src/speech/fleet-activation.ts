@@ -53,6 +53,7 @@ export async function activatePlatformSpeechFleet(options: {
   machines: readonly z.input<typeof MachineSchema>[];
   platformOrigin: string;
   platformSecret: string;
+  runtimeSecret?: string;
   fetchImpl?: typeof fetch;
   fetchDispatcher?: import("undici").Dispatcher;
   wait?: (delayMs: number) => Promise<void>;
@@ -87,7 +88,7 @@ export async function activatePlatformSpeechFleet(options: {
       handle: machine.handle,
       machineId: machine.machineId,
       runtimeSlot: machine.runtimeSlot,
-    }, options.platformSecret, machine.runtimeTokenEpoch);
+    }, options.runtimeSecret ?? options.platformSecret, machine.runtimeTokenEpoch);
     const expectedRevision = createHash("sha256")
       .update(`${machine.machineId}\0${machine.runtimeSlot}\0${origin.origin}\0${runtimeToken}`)
       .digest("hex");
