@@ -68,13 +68,22 @@ describe("get started wizard", () => {
       initialGetStartedWizard(),
       { type: "toggle-goal", goal: "code" },
       { type: "toggle-goal", goal: "build" },
-      { type: "toggle-tool", tool: "github" },
+      { type: "toggle-tool", tool: "codex" },
       { type: "pick-app-idea", id: "habit-tracker" },
       { type: "pick-starter", id: "ask-anything" },
       { type: "toggle-goal", goal: "build" },
     );
     // The app idea is also App Gallery's own answer, so it stays.
-    expect(getStartedAnswersFromWizard(state)).toEqual({ goals: ["code"], tools: ["github"], appIdea: "habit-tracker" });
+    expect(getStartedAnswersFromWizard(state)).toEqual({ goals: ["code"], tools: ["codex"], appIdea: "habit-tracker" });
+    expect(getStartedAnswersFromWizard(run(state, { type: "toggle-goal", goal: "code" })).tools).toEqual([]);
+  });
+
+  it("records connected integrations as tools, after the coding agents picked", () => {
+    let state = run(initialGetStartedWizard(), { type: "toggle-goal", goal: "code" }, { type: "toggle-tool", tool: "codex" });
+    state = run(state, { type: "connected", services: ["linear", "github", "twitter"] });
+    expect(getStartedAnswersFromWizard(state).tools).toEqual(["codex", "github", "linear"]);
+    // Skipping the step clears picks, never real connections.
+    expect(getStartedAnswersFromWizard(run({ ...state, step: "tools" }, { type: "skip" })).tools).toEqual(["github", "linear"]);
   });
 
   it("keeps a starter only when exploring is on screen", () => {

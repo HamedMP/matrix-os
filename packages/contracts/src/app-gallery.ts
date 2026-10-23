@@ -33,7 +33,10 @@ export interface GalleryReadiness {
 }
 
 /** Null inventory represents a failed/unavailable read, never an empty account list. */
-export function deriveGalleryReadiness(app: Pick<GalleryApp, "services">, connections: readonly GalleryConnection[] | null): GalleryReadiness {
+/** The service fields readiness reads; a full catalog app or a listing both fit. */
+export interface GalleryServiceRef { id: string; name: string; optional?: boolean }
+
+export function deriveGalleryReadiness(app: { services: readonly GalleryServiceRef[] }, connections: readonly GalleryConnection[] | null): GalleryReadiness {
   const services = app.services.map(service => ({ id: service.id, name: service.name, accounts: (connections ?? []).filter(account => account.service === service.id && account.status === "active") }));
   if (services.length === 0) return { status: "ready", services };
   if (connections === null) return { status: "unknown", services };
@@ -56,4 +59,23 @@ export function appGalleryBuildPrompt(input: string): string | null {
   const request = input.trim();
   if (!request || request.length > APP_GALLERY_BUILD_MAX_CHARS) return null;
   return `[BUILD] Build an app for my Matrix computer: ${request}. Use my connected tools only after I choose the accounts and approve imports. Make it work in Web Desktop, Web Canvas, Electron Desktop, Web Mobile and Native Mobile.`;
+}
+
+export const GALLERY_READY_APPS_MAX = 6;
+
+/**
+ * Apps App Gallery would call ready (every required service connected, at least one connection)
+ * for these connected services, most connections used first, then catalog order.
+ */
+export function galleryAppsReadyWith<T extends { services: readonly GalleryServiceRef[] }>(
+  apps: readonly T[],
+  connected: ReadonlySet<string>,
+  max = GALLERY_READY_APPS_MAX,
+): { app: T; using: T["services"][number][] }[] {
+  const connections: GalleryConnection[] = [...connected].map((service) => ({ service, account_label: service, status: "active" }));
+  return apps
+    .filter((app) => app.services.length > 0 && deriveGalleryReadiness(app, connections).status === "ready")
+    .map((app) => ({ app, using: app.services.filter((service) => connected.has(service.id)) }))
+    .sort((left, right) => right.using.length - left.using.length)
+    .slice(0, max);
 }

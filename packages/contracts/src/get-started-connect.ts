@@ -1,17 +1,13 @@
 import {
   GET_STARTED_TOOL_GROUPS,
-  type GetStartedAnswers,
   type GetStartedGoalId,
   type GetStartedToolId,
 } from "#get-started";
 
-// Spec 635, Section 4: what the wizard's last screen offers to connect. Only
-// apps from the computer's own integration catalog get a Connect button; agent
-// sign-ins and messaging channels stay informational and remain in Getting
-// started. Service ids are fixed here, never taken from the client.
-
-export const GET_STARTED_CONNECT_MAX_PICKED = 4;
-export const GET_STARTED_CONNECT_MAX_SUGGESTED = 2;
+// Spec 635, Section 4: how the wizard's tools map to integrations. Step 3
+// connects through the Settings marketplace with the integrations that fit the
+// owner's goals first; agent sign-ins and messaging channels are not
+// integrations. Service ids are fixed here, never taken from the client.
 
 export type GetStartedToolConnect =
   | { kind: "app"; service: string; why: string }
@@ -44,29 +40,16 @@ const TOOL_LABELS = new Map<GetStartedToolId, string>(
   GET_STARTED_TOOL_GROUPS.flatMap((group) => group.tools.map((tool) => [tool.id, tool.label] as const)),
 );
 
-const SUGGESTIONS: Record<GetStartedGoalId | "none", { title: string; tools: readonly GetStartedToolId[] }> = {
-  code: { title: "Popular with developers", tools: ["figma", "slack", "github"] },
-  business: { title: "Popular for running a business", tools: ["gmail", "google-calendar", "slack"] },
-  assistant: { title: "Popular for a personal assistant", tools: ["google-calendar", "gmail", "todoist"] },
-  build: { title: "Popular for building apps", tools: ["github", "notion"] },
-  explore: { title: "Popular to start with", tools: ["gmail", "google-calendar"] },
-  none: { title: "Popular to start with", tools: ["gmail", "google-calendar"] },
+// Suggested integrations per goal, after the goal's own tools; services the
+// computer cannot connect are simply not in its catalog.
+const SUGGESTIONS: Record<GetStartedGoalId | "none", readonly GetStartedToolId[]> = {
+  code: ["figma", "slack", "github"],
+  business: ["gmail", "google-calendar", "slack"],
+  assistant: ["google-calendar", "gmail", "todoist"],
+  build: ["github", "notion"],
+  explore: ["gmail", "google-calendar"],
+  none: ["gmail", "google-calendar"],
 };
-
-export interface GetStartedConnectRow {
-  tool: GetStartedToolId;
-  label: string;
-  why: string;
-  kind: GetStartedToolConnect["kind"];
-  /** Present only for apps the computer can connect. */
-  service?: string;
-}
-
-export interface GetStartedConnectPlan {
-  rows: GetStartedConnectRow[];
-  suggestionTitle: string | null;
-  suggestions: GetStartedConnectRow[];
-}
 
 /** The display name for an integration service id, from the same catalog as the connect list. */
 export function getStartedServiceLabel(service: string): string {
@@ -80,26 +63,33 @@ export function getStartedToolConnect(tool: GetStartedToolId): GetStartedToolCon
   return TOOL_CONNECT[tool];
 }
 
-function row(tool: GetStartedToolId, available: ReadonlySet<string>): GetStartedConnectRow | null {
-  const connect = TOOL_CONNECT[tool];
-  const label = TOOL_LABELS.get(tool) ?? tool;
-  if (connect.kind !== "app") return { tool, label, why: connect.why, kind: connect.kind };
-  if (!available.has(connect.service)) return null;
-  return { tool, label, why: connect.why, kind: "app", service: connect.service };
+/** The tool a connected integration service stands for, if the wizard's catalog has one. */
+export function getStartedToolForService(service: string): GetStartedToolId | undefined {
+  for (const [tool, connect] of Object.entries(TOOL_CONNECT) as [GetStartedToolId, GetStartedToolConnect][]) {
+    if (connect.kind === "app" && connect.service === service) return tool;
+  }
+  return undefined;
 }
 
-/** Picked tools first (capped), then two connectable suggestions for the first goal. */
-export function getStartedConnectPlan(answers: GetStartedAnswers, available: ReadonlySet<string>): GetStartedConnectPlan {
-  const rows = answers.tools
-    .map((tool) => row(tool, available))
-    .filter((candidate): candidate is GetStartedConnectRow => candidate !== null)
-    .slice(0, GET_STARTED_CONNECT_MAX_PICKED);
-  const picked = new Set(answers.tools);
-  const source = SUGGESTIONS[answers.goals[0] ?? "none"];
-  const suggestions = source.tools
-    .filter((tool) => !picked.has(tool))
-    .map((tool) => row(tool, available))
-    .filter((candidate): candidate is GetStartedConnectRow => candidate?.kind === "app")
-    .slice(0, GET_STARTED_CONNECT_MAX_SUGGESTED);
-  return { rows, suggestionTitle: suggestions.length > 0 ? source.title : null, suggestions };
+/** Integration services that fit the goals: each goal's own tools, then its suggestions, in goal order. */
+export function getStartedConnectOrder(goals: readonly GetStartedGoalId[]): string[] {
+  const tools = (goals.length > 0 ? goals : (["none"] as const)).flatMap((goal) => [
+    ...(GET_STARTED_TOOL_GROUPS.find((group) => group.goal === goal)?.tools.map((tool) => tool.id) ?? []),
+    ...SUGGESTIONS[goal],
+  ]);
+  const services = tools.flatMap((tool) => {
+    const connect = TOOL_CONNECT[tool];
+    return connect.kind === "app" ? [connect.service] : [];
+  });
+  return [...new Set(services)];
+}
+
+/** The marketplace catalog with the integrations that fit the goals first; the rest keep catalog order. */
+export function orderConnectCatalog<T extends { id: string }>(catalog: readonly T[], goals: readonly GetStartedGoalId[]): T[] {
+  const order = getStartedConnectOrder(goals);
+  const rank = new Map(order.map((service, index) => [service, index]));
+  return catalog
+    .map((service, index) => ({ service, rank: rank.get(service.id) ?? order.length + index }))
+    .sort((left, right) => left.rank - right.rank)
+    .map(({ service }) => service);
 }

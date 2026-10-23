@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createDesktopGetStartedPort } from "../../desktop/src/renderer/src/features/get-started/desktop-get-started-port.js";
+import { createDesktopGetStartedGalleryPort, createDesktopGetStartedPort } from "../../desktop/src/renderer/src/features/get-started/desktop-get-started-port.js";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api.js";
 
 describe("Electron Get started port", () => {
@@ -18,5 +18,23 @@ describe("Electron Get started port", () => {
     expect(bound.put).toHaveBeenCalledWith("/api/settings/get-started", { type: "skip" }, expect.objectContaining({ timeoutMs: 10_000 }));
     expect(api.get).not.toHaveBeenCalled();
     expect(api.put).not.toHaveBeenCalled();
+  });
+});
+
+describe("Electron Get started gallery port", () => {
+  it("lists and installs on the wizard's runtime and uses the runtime's gallery icon", async () => {
+    const bound = {
+      get: vi.fn(async () => ({ version: 1, apps: [] })),
+      post: vi.fn(async () => ({ status: "installed" })),
+    };
+    const api = { forRuntime: vi.fn(() => bound) } as unknown as ApiClient;
+    const gallery = createDesktopGetStartedGalleryPort(api, "studio", "https://app.matrix-os.com");
+    const signal = new AbortController().signal;
+    await gallery.list(signal);
+    expect(bound.get).toHaveBeenCalledWith("/api/app-gallery", expect.objectContaining({ signal, timeoutMs: 10_000 }));
+    await gallery.install("folio");
+    expect(bound.post).toHaveBeenCalledWith("/api/app-gallery/folio/install", {}, expect.objectContaining({ timeoutMs: 10_000 }));
+    expect(gallery.iconUrl("folio")).toBe("https://app.matrix-os.com/icons/gallery-folio.png?runtime=studio");
+    await expect(gallery.install("../etc")).rejects.toThrow();
   });
 });

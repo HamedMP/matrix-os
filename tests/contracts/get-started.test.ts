@@ -33,9 +33,14 @@ describe("get started catalog", () => {
     }
   });
 
-  it("orders tool groups by the chosen goals", () => {
-    expect(getStartedToolGroupsForGoals(["assistant", "code"]).map((group) => group.goal))
-      .toEqual(["assistant", "code"]);
+  it("offers only choices that are not integrations on the connect step, in goal order", () => {
+    // Integrations are connected through the marketplace on the same step.
+    const groups = getStartedToolGroupsForGoals(["assistant", "build", "code"]);
+    expect(groups.map((group) => group.kind)).toEqual(["app-idea", "tools"]);
+    const coding = groups.find((group) => group.kind === "tools");
+    expect(coding).toMatchObject({ goal: "code", title: "Your coding agent" });
+    expect(coding?.kind === "tools" ? coding.tools.map((tool) => tool.id) : []).toEqual(["claude-code", "codex", "opencode"]);
+    expect(getStartedToolGroupsForGoals(["business"])).toEqual([]);
   });
 
   it("falls back to the exploring group when no goals are chosen", () => {

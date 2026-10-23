@@ -117,18 +117,26 @@ export type GetStartedChoiceGroup =
 const APP_IDEA_GROUP = { kind: "app-idea", goal: "build", title: "First app idea", options: GET_STARTED_APP_IDEAS } as const;
 const STARTER_GROUP = { kind: "starter", goal: "explore", title: "Sounds fun", options: GET_STARTED_STARTERS } as const;
 
-/** The step 3 groups in the order the owner picked their goals; exploring when nothing was picked. */
+/** Coding agents are signed into in Settings, not connected as integrations, so step 3 asks for them. */
+const CODING_AGENT_IDS: ReadonlySet<GetStartedToolId> = new Set(["claude-code", "codex", "opencode"]);
+const CODING_AGENT_GROUP = {
+  kind: "tools",
+  goal: "code",
+  title: "Your coding agent",
+  tools: GET_STARTED_TOOL_GROUPS.flatMap((group) => group.tools).filter((tool) => CODING_AGENT_IDS.has(tool.id)),
+} as const satisfies GetStartedChoiceGroup;
+
+/**
+ * Step 3's choices that are not integrations (those connect through the marketplace on the same
+ * step), in the order the owner picked their goals; exploring when nothing was picked.
+ */
 export function getStartedToolGroupsForGoals(goals: readonly GetStartedGoalId[]): GetStartedChoiceGroup[] {
-  const groups: GetStartedChoiceGroup[] = [];
-  for (const goal of goals) {
-    if (goal === "build") groups.push(APP_IDEA_GROUP);
-    else if (goal === "explore") groups.push(STARTER_GROUP);
-    else {
-      const group = GET_STARTED_TOOL_GROUPS.find((candidate) => candidate.goal === goal);
-      if (group) groups.push({ kind: "tools", ...group });
-    }
-  }
-  return groups.length > 0 ? groups : [STARTER_GROUP];
+  if (goals.length === 0) return [STARTER_GROUP];
+  return goals.flatMap((goal): GetStartedChoiceGroup[] => {
+    if (goal === "build") return [APP_IDEA_GROUP];
+    if (goal === "explore") return [STARTER_GROUP];
+    return goal === "code" ? [CODING_AGENT_GROUP] : [];
+  });
 }
 
 const goalIds = GET_STARTED_GOALS.map((goal) => goal.id) as [GetStartedGoalId, ...GetStartedGoalId[]];

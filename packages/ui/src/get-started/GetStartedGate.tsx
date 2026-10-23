@@ -3,6 +3,7 @@ import { productScales } from "@matrix-os/brand/tokens";
 import { useGettingStartedAutoOpenSuppression, useGettingStartedBlocker } from "../getting-started-visibility.js";
 import { usePublishGetStartedAnswers } from "./answers-context.js";
 import type { GetStartedConnect, GetStartedConnector } from "./connect.js";
+import { useGetStartedGallery, type GetStartedGalleryPort } from "./gallery.js";
 import { GetStartedWizard } from "./GetStartedWizard.js";
 import { useGetStarted, type GetStartedPort } from "./use-get-started.js";
 
@@ -95,6 +96,8 @@ export interface GetStartedGateProps {
   connector?: GetStartedConnector;
   /** Rendered only while the wizard is open; e.g. Electron's renderer overlay lease above native views. */
   whileActive?: ComponentType;
+  /** App Gallery on this computer, for the apps the owner's connections make ready. */
+  gallery?: GetStartedGalleryPort;
   /** The element that paints the desktop background; the wizard draws a blurred copy of it. */
   backdropSource?: GetStartedBackdropSource;
 }
@@ -105,10 +108,11 @@ export interface GetStartedGateProps {
  * It cannot be closed or minimized; it ends only when the owner finishes or skips it.
  * Any load failure falls back to today's desktop.
  */
-export function GetStartedGate({ port, zIndex, children, connector: Connector, whileActive: WhileActive, backdropSource }: GetStartedGateProps) {
+export function GetStartedGate({ port, zIndex, children, connector: Connector, whileActive: WhileActive, backdropSource, gallery: galleryPort }: GetStartedGateProps) {
   const getStarted = useGetStarted(port);
   const active = getStarted.phase === "active";
   const backdrop = useDesktopBackdrop(backdropSource, active);
+  const gallery = useGetStartedGallery(galleryPort, active);
   useBlockBackgroundShortcuts(active);
   useGettingStartedBlocker(active);
   useGettingStartedAutoOpenSuppression(getStarted.phase !== "done");
@@ -126,6 +130,7 @@ export function GetStartedGate({ port, zIndex, children, connector: Connector, w
       onFinish={getStarted.finish}
       onSkipAll={getStarted.skipAll}
       connect={connect}
+      gallery={gallery}
     />
   );
   return (

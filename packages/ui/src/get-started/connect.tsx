@@ -1,14 +1,14 @@
 import {
-  getStartedConnectPlan,
+  orderConnectCatalog,
   type AvailableIntegration,
   type ConnectedIntegration,
-  type GetStartedAnswers,
-  type GetStartedConnectRow,
+  type GetStartedGoalId,
   type OnboardingWidgetEvent,
 } from "@matrix-os/contracts";
 import { Loading03Icon } from "@hugeicons/core-free-icons";
-import { useCallback, useId, useMemo, useState, type ComponentType, type ReactNode } from "react";
-import { AppLogo, ButtonRow, Icon } from "../onboarding-widget/parts.js";
+import { useCallback, useMemo, useState, type ComponentType, type ReactNode } from "react";
+import { IntegrationMarketplace } from "../integrations/IntegrationMarketplace.js";
+import { ButtonRow, Icon } from "../onboarding-widget/parts.js";
 
 /** A surface's app connections, read from the same hooks its onboarding widget uses. */
 export interface GetStartedConnect {
@@ -18,6 +18,8 @@ export interface GetStartedConnect {
   failedServices: ReadonlySet<string>;
   /** Catalog logos by service id, shown like the onboarding widget's app list. */
   logoUrls: ReadonlyMap<string, string>;
+  /** The computer's integration catalog, as Settings > Integrations lists it. */
+  catalog: readonly AvailableIntegration[];
   /** This computer has no app connection service. */
   unavailable: boolean;
   /** Opens the provider's own sign-in; the wizard never sees tokens or URLs. */
@@ -70,16 +72,11 @@ export function useGetStartedConnect({ failures, available, connections, connect
     connectApp(service);
   }, [clear, connectApp]);
   return useMemo(() => ({
-    availableServices, connectedServices, connectingService, failedServices, logoUrls, unavailable: appsUnavailable, connect,
-  }), [availableServices, connectedServices, connectingService, failedServices, logoUrls, appsUnavailable, connect]);
+    availableServices, connectedServices, connectingService, failedServices, logoUrls, catalog: available, unavailable: appsUnavailable, connect,
+  }), [availableServices, connectedServices, connectingService, failedServices, logoUrls, available, appsUnavailable, connect]);
 }
 
-function ConnectAction({ row, connect }: { row: GetStartedConnectRow; connect: GetStartedConnect }) {
-  if (row.kind !== "app" || !row.service) return <span className="mxo-muted">Later</span>;
-  return <ServiceConnectAction service={row.service} label={row.label} connect={connect} />;
-}
-
-/** Connect, waiting, connected and retry states for one app; shared by the tool list and suggested bots. */
+/** Connect, waiting, connected and retry states for one app, used by the suggested bots. */
 export function ServiceConnectAction({ service, label, connect, text = "Connect" }: {
   service: string;
   label: string;
@@ -110,47 +107,19 @@ export function ServiceConnectAction({ service, label, connect, text = "Connect"
   );
 }
 
-/** The onboarding widget's app list rows, with the reason each tool is offered. */
-function ConnectRows({ rows, connect, label, labelledBy }: {
-  rows: readonly GetStartedConnectRow[];
-  connect: GetStartedConnect;
-  label?: string;
-  labelledBy?: string;
-}) {
-  return (
-    <ul className="mxo-card mxo-app-list" aria-label={label} aria-labelledby={labelledBy}>
-      {rows.map((row) => (
-        <li key={row.tool} className="mxo-app">
-          <AppLogo src={row.service ? connect.logoUrls.get(row.service) : undefined} name={row.label} />
-          <span className="mxo-app__name">
-            {row.label}
-            <span className="mxo-muted mxo-gs__why">{row.why}</span>
-          </span>
-          <ConnectAction row={row} connect={connect} />
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-export function GetStartedConnectList({ answers, connect }: { answers: GetStartedAnswers; connect: GetStartedConnect }) {
-  const suggestionId = useId();
-  const plan = useMemo(() => getStartedConnectPlan(answers, connect.availableServices), [answers, connect.availableServices]);
-  if (connect.unavailable) {
-    return <p className="mxo-muted">You can connect apps from Getting started once you're in.</p>;
+/**
+ * Spec 635, step 3: the Settings > Integrations marketplace itself, with the integrations that
+ * fit the owner's goals first. Connect opens the app's own sign-in through the surface's host.
+ */
+export function GetStartedConnectTools({ goals, connect }: { goals: readonly GetStartedGoalId[]; connect: GetStartedConnect | null }) {
+  const services = useMemo(() => (connect ? orderConnectCatalog(connect.catalog, goals) : []), [connect, goals]);
+  const connectedIds = useMemo(() => [...(connect?.connectedServices ?? [])], [connect]);
+  if (!connect || connect.unavailable || services.length === 0) {
+    return <p className="mxo-muted">You can connect apps later in Settings.</p>;
   }
-  if (plan.rows.length === 0 && plan.suggestions.length === 0) return null;
   return (
-    <section className="mxo-gs__connect-section">
-      <h3 className="mxo-muted">Connect your tools</h3>
-      {plan.rows.length > 0 ? <ConnectRows rows={plan.rows} connect={connect} label="Connect your tools" /> : null}
-      {plan.suggestionTitle ? (
-        <>
-          <h4 id={suggestionId} className="mxo-muted">{plan.suggestionTitle}</h4>
-          <ConnectRows rows={plan.suggestions} connect={connect} labelledBy={suggestionId} />
-        </>
-      ) : null}
-      <p className="mxo-muted">Optional. Each one opens the app's own sign-in. Anything you skip stays in Getting started.</p>
+    <section className="mxo-gs__marketplace" aria-label="Integrations">
+      <IntegrationMarketplace services={services} connectedIds={connectedIds} connectingId={connect.connectingService} onConnect={connect.connect} />
     </section>
   );
 }

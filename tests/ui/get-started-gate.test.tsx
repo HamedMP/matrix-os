@@ -119,8 +119,9 @@ describe("GetStartedGate", () => {
     expect(screen.getByRole("button", { name: "Write code with agents" })).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
 
-    expect(await screen.findByText("Your coding tools")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "GitHub" }));
+    expect(await screen.findByRole("heading", { name: "Connect the tools you use" })).toBeInTheDocument();
+    expect(screen.getByText("Your coding agent")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(await screen.findByRole("button", { name: "Skip" }));
     fireEvent.click(await screen.findByRole("button", { name: "Next" }));
@@ -133,7 +134,7 @@ describe("GetStartedGate", () => {
 
     expect(await screen.findByTestId("desktop-widget")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(saves.at(-1)).toEqual({ type: "complete", answers: { name: "Sam", goals: ["code"], tools: ["github"] } });
+    expect(saves.at(-1)).toEqual({ type: "complete", answers: { name: "Sam", goals: ["code"], tools: ["codex"] } });
   });
 
   it("lets every question be skipped and goes back without losing answers", async () => {

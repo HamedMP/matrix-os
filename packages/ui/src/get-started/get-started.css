@@ -224,6 +224,24 @@
   .mxo-gs__ideas { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* Step 3 shows the Settings integrations list as is. The card is narrower than
+   Settings, so its two-column grid (a viewport breakpoint) stays one column. */
+.mxo-gs__marketplace .sm\:grid-cols-2 { grid-template-columns: minmax(0, 1fr); }
+
+/* App Gallery's own app icons on the ready apps. */
+.mxo-gs__ready-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  font-weight: 600;
+  color: var(--mxo-ink);
+}
+
+.mxo-gs__ready-icon img { width: 40px; height: 40px; object-fit: contain; }
+
 /* "Meet your bots": one card per bot, its gallery avatar on the left. */
 .mxo-gs__bots {
   display: flex;

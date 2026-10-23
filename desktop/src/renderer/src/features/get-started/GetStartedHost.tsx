@@ -3,7 +3,7 @@ import { useMemo, type ReactNode } from "react";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
-import { createDesktopGetStartedPort } from "./desktop-get-started-port";
+import { createDesktopGetStartedGalleryPort, createDesktopGetStartedPort } from "./desktop-get-started-port";
 import { useOnboardingOverlayLease } from "../onboarding-widget/use-onboarding-overlay-lease";
 import { DesktopGetStartedConnector } from "./DesktopGetStartedConnector";
 
@@ -16,10 +16,11 @@ function GetStartedOverlayLease() {
 /** Electron paints the wallpaper on the DesktopBackground layer. */
 const desktopBackdrop = () => document.querySelector<HTMLElement>('[data-testid="desktop-background"]');
 
-function DesktopGetStartedGate({ api, runtimeSlot, children }: { api: ApiClient; runtimeSlot: string; children: ReactNode }) {
+function DesktopGetStartedGate({ api, runtimeSlot, platformHost, children }: { api: ApiClient; runtimeSlot: string; platformHost: string; children: ReactNode }) {
   const port = useMemo(() => createDesktopGetStartedPort(api, runtimeSlot), [api, runtimeSlot]);
+  const gallery = useMemo(() => createDesktopGetStartedGalleryPort(api, runtimeSlot, platformHost), [api, runtimeSlot, platformHost]);
   return (
-    <GetStartedGate port={port} zIndex={DESKTOP_Z_INDEX.getStarted} connector={DesktopGetStartedConnector} whileActive={GetStartedOverlayLease} backdropSource={desktopBackdrop}>
+    <GetStartedGate port={port} zIndex={DESKTOP_Z_INDEX.getStarted} connector={DesktopGetStartedConnector} whileActive={GetStartedOverlayLease} gallery={gallery} backdropSource={desktopBackdrop}>
       {children}
     </GetStartedGate>
   );
@@ -31,7 +32,8 @@ export default function GetStartedHost({ children }: { children: ReactNode }) {
   const api = useConnection((state) => state.api);
   const handle = useConnection((state) => state.handle);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const platformHost = useConnection((state) => state.platformHost);
   if (status !== "signed-in" || !api || !handle) return <>{children}</>;
   // A computer or runtime switch starts a fresh check against the new gateway.
-  return <DesktopGetStartedGate key={`${handle}:${runtimeSlot}`} api={api} runtimeSlot={runtimeSlot}>{children}</DesktopGetStartedGate>;
+  return <DesktopGetStartedGate key={`${handle}:${runtimeSlot}`} api={api} runtimeSlot={runtimeSlot} platformHost={platformHost}>{children}</DesktopGetStartedGate>;
 }

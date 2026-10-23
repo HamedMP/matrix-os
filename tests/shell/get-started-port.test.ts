@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createShellGetStartedPort } from "../../shell/src/components/get-started/shell-get-started-port.js";
+import { createShellGetStartedGalleryPort, createShellGetStartedPort } from "../../shell/src/components/get-started/shell-get-started-port.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -31,5 +31,30 @@ describe("shell Get started port", () => {
     const error = await createShellGetStartedPort("https://gw.example").load(new AbortController().signal).catch((err: unknown) => err);
     expect(error).toBeInstanceOf(Error);
     expect(String((error as Error).message)).toBe("GetStartedRequestFailed:500");
+  });
+});
+
+describe("shell Get started gallery port", () => {
+  it("lists App Gallery, installs an app with an empty JSON body, and points at its gallery icon", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ version: 1, apps: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const gallery = createShellGetStartedGalleryPort("https://gw.example");
+    await expect(gallery.list(new AbortController().signal)).resolves.toEqual({ version: 1, apps: [] });
+    await gallery.install("folio");
+    const [listUrl, listInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [installUrl, installInit] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    expect(listUrl).toBe("https://gw.example/api/app-gallery");
+    expect(listInit.signal).toBeInstanceOf(AbortSignal);
+    expect(installUrl).toBe("https://gw.example/api/app-gallery/folio/install");
+    expect(installInit).toMatchObject({ method: "POST", body: "{}" });
+    expect(installInit.signal).toBeInstanceOf(AbortSignal);
+    expect(gallery.iconUrl("folio")).toBe("https://gw.example/icons/gallery-folio.png");
+  });
+
+  it("refuses app ids the gallery could never have", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(createShellGetStartedGalleryPort("https://gw.example").install("../etc")).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

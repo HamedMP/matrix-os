@@ -1,22 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
-  GET_STARTED_CONNECT_MAX_PICKED,
   GET_STARTED_TOOL_IDS,
-  getStartedConnectPlan,
+  getStartedConnectOrder,
   getStartedToolConnect,
-  type GetStartedAnswers,
+  getStartedToolForService,
+  orderConnectCatalog,
 } from "../../packages/contracts/src/index.js";
 
-const ALL_APPS = new Set([
-  "github", "linear", "jira", "figma", "gmail", "microsoft_outlook", "google_calendar",
-  "slack", "notion", "stripe", "hubspot", "discord", "todoist",
-]);
-
-function answers(partial: Partial<GetStartedAnswers>): GetStartedAnswers {
-  return { goals: [], tools: [], ...partial };
-}
-
-describe("get started connect plan", () => {
+describe("get started connect step", () => {
   it("knows how every tool connects, with a valid service id for apps", () => {
     for (const tool of GET_STARTED_TOOL_IDS) {
       const connect = getStartedToolConnect(tool);
@@ -28,36 +19,23 @@ describe("get started connect plan", () => {
     expect(getStartedToolConnect("whatsapp").kind).toBe("channel");
   });
 
-  it("lists picked tools in order, capped", () => {
-    const plan = getStartedConnectPlan(
-      answers({ goals: ["code"], tools: ["github", "claude-code", "linear", "jira", "figma"] }),
-      ALL_APPS,
-    );
-    expect(plan.rows.map((row) => row.tool)).toEqual(["github", "claude-code", "linear", "jira"]);
-    expect(plan.rows).toHaveLength(GET_STARTED_CONNECT_MAX_PICKED);
-    expect(plan.rows[0]).toMatchObject({ label: "GitHub", service: "github", why: "So your AI can work on your repos" });
+  it("maps a connected service back to its tool", () => {
+    expect(getStartedToolForService("linear")).toBe("linear");
+    expect(getStartedToolForService("microsoft_outlook")).toBe("outlook");
+    expect(getStartedToolForService("google_calendar")).toBe("google-calendar");
+    expect(getStartedToolForService("twitter")).toBeUndefined();
   });
 
-  it("leaves out apps the computer cannot connect", () => {
-    const plan = getStartedConnectPlan(answers({ goals: ["code"], tools: ["github", "linear"] }), new Set(["github"]));
-    expect(plan.rows.map((row) => row.tool)).toEqual(["github"]);
+  it("puts the integrations that fit the goals first, in goal order", () => {
+    expect(getStartedConnectOrder(["code"]).slice(0, 5)).toEqual(["github", "linear", "jira", "figma", "slack"]);
+    expect(getStartedConnectOrder(["business", "code"]).slice(0, 3)).toEqual(["gmail", "microsoft_outlook", "google_calendar"]);
+    expect(getStartedConnectOrder([])).toEqual(["gmail", "google_calendar"]);
+    const order = getStartedConnectOrder(["code", "business", "assistant", "build", "explore"]);
+    expect(new Set(order).size).toBe(order.length);
   });
 
-  it("suggests two available apps for the first goal that were not picked", () => {
-    const plan = getStartedConnectPlan(answers({ goals: ["code", "business"], tools: ["figma"] }), ALL_APPS);
-    expect(plan.suggestionTitle).toBe("Popular with developers");
-    expect(plan.suggestions.map((row) => row.tool)).toEqual(["slack", "github"]);
-  });
-
-  it("suggests apps to start with when no goal was picked", () => {
-    const plan = getStartedConnectPlan(answers({}), ALL_APPS);
-    expect(plan.suggestionTitle).toBe("Popular to start with");
-    expect(plan.suggestions.map((row) => row.service)).toEqual(["gmail", "google_calendar"]);
-  });
-
-  it("has nothing to connect when the app catalog is unavailable", () => {
-    const plan = getStartedConnectPlan(answers({ goals: ["business"], tools: ["gmail"] }), new Set());
-    expect(plan.rows).toEqual([]);
-    expect(plan.suggestions).toEqual([]);
+  it("orders a catalog by that list and keeps everything else after, in catalog order", () => {
+    const catalog = ["twitter", "slack", "github", "notion"].map((id) => ({ id }));
+    expect(orderConnectCatalog(catalog, ["code"]).map((service) => service.id)).toEqual(["github", "slack", "twitter", "notion"]);
   });
 });

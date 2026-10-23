@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import React, { useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, renderHook, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
+import type { GetStartedUpdate } from "../../packages/contracts/src/index.js";
 import {
   GetStartedGate,
   useGetStartedConnect,
@@ -14,12 +15,27 @@ import { GET_STARTED_WIZARD_STEPS } from "../../packages/contracts/src/index.js"
 
 const AT = "2026-10-25T10:12:00.000Z";
 
-function port(draft: Record<string, unknown>): GetStartedPort {
-  return {
-    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 6, ...draft } })),
-    save: vi.fn(async () => ({ status: "completed", completedAt: AT, answers: { goals: [], tools: [] } })),
+function port(draft: Record<string, unknown>) {
+  const saves: GetStartedUpdate[] = [];
+  const value: GetStartedPort = {
+    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 2, ...draft } })),
+    save: vi.fn(async (update: GetStartedUpdate) => {
+      saves.push(update);
+      if (update.type === "complete") return { status: "completed", completedAt: AT, answers: update.answers };
+      if (update.type === "draft") return { status: "in_progress", updatedAt: AT, draft: update.draft };
+      return { status: "skipped", skippedAt: AT };
+    }),
   };
+  return Object.assign(value, { saves });
 }
+
+const CATALOG = [
+  { id: "twitter", name: "X", category: "Social" },
+  { id: "slack", name: "Slack", category: "Communication", logoUrl: "https://example.test/slack.png" },
+  { id: "github", name: "GitHub", category: "Developer", logoUrl: "https://example.test/github.png" },
+  { id: "linear", name: "Linear", category: "Developer" },
+  { id: "gmail", name: "Gmail", category: "Email" },
+];
 
 function makeConnector(initial: Partial<GetStartedConnect>) {
   const connect = vi.fn();
@@ -33,6 +49,7 @@ function makeConnector(initial: Partial<GetStartedConnect>) {
       failedServices: new Set(),
       connectingService: null,
       logoUrls: new Map([["github", "https://example.test/github.png"]]),
+      catalog: CATALOG,
       unavailable: false,
       connect,
       ...state,
@@ -45,7 +62,7 @@ afterEach(() => {
   cleanup();
 });
 
-describe("Get started connect list", () => {
+describe("Connect the tools you use", () => {
   it("keeps the owner in the wizard while an app sign-in is still under way", async () => {
     // Ending the wizard unmounts its connector, which would drop the sign-in without a word.
     const at = (step: (typeof GET_STARTED_WIZARD_STEPS)[number]): GetStartedPort => ({
@@ -65,54 +82,47 @@ describe("Get started connect list", () => {
     expect(await screen.findByRole("button", { name: "Skip setup" })).toBeDisabled();
   });
 
-  it("lists the picked tools and two suggestions, without connecting anything by itself", async () => {
+  it("shows the Settings integrations list with the tools for the owner's goals first", async () => {
     const { Connector, connect } = makeConnector({});
-    render(<GetStartedGate port={port({ name: "Sam", goals: ["code"], tools: ["github", "claude-code"] })} zIndex={1} connector={Connector} />);
-    const list = await screen.findByRole("list", { name: "Connect your tools" });
-    const rows = within(list).getAllByRole("listitem");
-    expect(rows.map((row) => row.querySelector(".mxo-app__name")?.firstChild?.textContent)).toEqual(["GitHub", "Claude Code"]);
-    expect(rows[0]!.querySelector("img")).toHaveAttribute("src", "https://example.test/github.png");
-    expect(within(rows[0]!).getByText("So your AI can work on your repos")).toBeInTheDocument();
-    expect(within(rows[1]!).queryByRole("button")).not.toBeInTheDocument();
-    expect(screen.getByText("Popular with developers")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Connect Figma" })).toBeInTheDocument();
-    expect(screen.getByText("Optional. Each one opens the app's own sign-in. Anything you skip stays in Getting started.")).toBeInTheDocument();
+    render(<GetStartedGate port={port({ name: "Sam", goals: ["code"], tools: [] })} zIndex={1} connector={Connector} />);
+    expect(await screen.findByRole("heading", { name: "Connect the tools you use" })).toBeInTheDocument();
+    const marketplace = screen.getByTestId("integrations-grid");
+    expect(within(marketplace).getByRole("searchbox", { name: "Search integrations" })).toBeInTheDocument();
+    const cards = within(marketplace).getAllByTestId(/^integration-card-/).map((card) => card.dataset.testid);
+    expect(cards.indexOf("integration-card-github")).toBeLessThan(cards.indexOf("integration-card-twitter"));
+    expect(screen.getByTestId("integration-card-github").querySelector("img")).toHaveAttribute("src", "https://example.test/github.png");
+    // Coding agents are not integrations, so they stay as choices above the list.
+    expect(screen.getByText("Your coding agent")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Codex" })).toBeInTheDocument();
     expect(connect).not.toHaveBeenCalled();
   });
 
-  it("connects through the host and shows waiting, connected and failed states", async () => {
+  it("connects right on the step, shows it connected, and records it as a tool", async () => {
     const { Connector, connect, update } = makeConnector({});
-    render(<GetStartedGate port={port({ goals: ["code"], tools: ["github"] })} zIndex={1} connector={Connector} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Connect GitHub" }));
-    expect(connect).toHaveBeenCalledWith("github");
-
-    update({ connectingService: "github" });
-    expect(screen.getByText("Waiting for GitHub sign-in…")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Connect Figma" })).toBeDisabled();
-
-    update({ connectingService: null, failedServices: new Set(["github"]) });
-    expect(screen.getByText("Sign-in didn't finish")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Try connecting GitHub again" }));
-    expect(connect).toHaveBeenLastCalledWith("github");
-
-    update({ failedServices: new Set(), connectedServices: new Set(["github"]) });
-    expect(screen.getByText("Connected")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /GitHub/ })).not.toBeInTheDocument();
+    const gatePort = port({ name: "Sam", goals: ["code"], tools: [] });
+    render(<GetStartedGate port={gatePort} zIndex={1} connector={Connector} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Connect Linear" }));
+    expect(connect).toHaveBeenCalledWith("linear");
+    update({ connectedServices: new Set(["linear"]) });
+    expect(within(screen.getByTestId("integration-card-linear")).getByText("✓ Connected")).toBeInTheDocument();
+    for (const button of ["Next", "Next", "Next", "Finish"]) fireEvent.click(await screen.findByRole("button", { name: button }));
+    fireEvent.click(await screen.findByRole("button", { name: "Enter your computer" }));
+    await waitFor(() => expect(gatePort.saves.at(-1)).toMatchObject({ type: "complete", answers: { tools: ["linear"] } }));
   });
 
   it("explains when this computer cannot connect apps", async () => {
-    const { Connector } = makeConnector({ unavailable: true, availableServices: new Set() });
-    render(<GetStartedGate port={port({ goals: ["code"], tools: ["github"] })} zIndex={1} connector={Connector} />);
-    expect(await screen.findByText("You can connect apps from Getting started once you're in.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Connect / })).not.toBeInTheDocument();
+    const { Connector } = makeConnector({ unavailable: true });
+    render(<GetStartedGate port={port({ goals: ["business"], tools: [] })} zIndex={1} connector={Connector} />);
+    expect(await screen.findByText("You can connect apps later in Settings.")).toBeInTheDocument();
+    expect(screen.queryByTestId("integrations-grid")).not.toBeInTheDocument();
   });
 
-  it("still lets the owner enter without connecting", async () => {
+  it("has no connect list on the summary any more", async () => {
     const { Connector } = makeConnector({});
-    const gatePort = port({ goals: ["code"], tools: ["github"] });
-    render(<GetStartedGate port={gatePort} zIndex={1} connector={Connector}><div data-testid="widget" /></GetStartedGate>);
-    fireEvent.click(await screen.findByRole("button", { name: "Enter your computer" }));
-    expect(await screen.findByTestId("widget")).toBeInTheDocument();
+    render(<GetStartedGate port={port({ step: 6, name: "Sam", goals: ["code"], tools: [] })} zIndex={1} connector={Connector} />);
+    expect(await screen.findByRole("heading", { name: "All set, Sam." })).toBeInTheDocument();
+    expect(screen.queryByTestId("integrations-grid")).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Connect your tools" })).not.toBeInTheDocument();
   });
 });
 
@@ -147,6 +157,7 @@ describe("useGetStartedConnect", () => {
       return { failures, connect };
     });
     expect([...result.current.connect.availableServices]).toEqual(["github"]);
+    expect(result.current.connect.catalog).toEqual([{ id: "github", name: "GitHub", category: "dev" }]);
     expect([...result.current.connect.connectedServices]).toEqual(["gmail"]);
     act(() => result.current.failures.onEvent({ type: "connect.failed", service: "github" }));
     expect(result.current.connect.failedServices.has("github")).toBe(true);

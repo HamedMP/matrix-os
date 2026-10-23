@@ -1,5 +1,6 @@
 import {
   GET_STARTED_NAME_MAX_CHARS,
+  GET_STARTED_TOOL_IDS,
   getStartedToolGroupsForGoals,
   type GetStartedAnswers,
   type GetStartedAppIdeaId,
@@ -15,6 +16,7 @@ import {
   GetStartedBotSchema,
   type GetStartedBot,
 } from "#get-started-bot";
+import { getStartedToolForService } from "#get-started-connect";
 import { getStartedRecipeBotIdsForGoals, type GetStartedRecipeBotId } from "#get-started-recipe-bots";
 
 // Spec 635, Section 3: the wizard's client state machine. It is shared by
@@ -36,6 +38,8 @@ export interface GetStartedWizardState {
   botChosen: boolean;
   /** Ready-made bots added on the last screen. */
   bots: GetStartedRecipeBotId[];
+  /** Integration services connected right now; reported by the surface, never saved in a draft. */
+  connected: string[];
 }
 
 export type GetStartedWizardEvent =
@@ -48,7 +52,8 @@ export type GetStartedWizardEvent =
   | { type: "pick-app-idea"; id: GetStartedAppIdeaId }
   | { type: "pick-starter"; id: GetStartedStarterId }
   | { type: "bot"; patch: Partial<GetStartedBot> }
-  | { type: "toggle-bot"; id: GetStartedRecipeBotId };
+  | { type: "toggle-bot"; id: GetStartedRecipeBotId }
+  | { type: "connected"; services: readonly string[] };
 
 const QUESTION_COUNT = GET_STARTED_WIZARD_STEPS.indexOf("summary");
 
@@ -86,6 +91,7 @@ export function initialGetStartedWizard(draft?: GetStartedDraft): GetStartedWiza
     bot: draft?.bot ?? DEFAULT_GET_STARTED_BOT,
     botChosen: Boolean(draft?.bot),
     bots: [...(draft?.bots ?? [])],
+    connected: [],
   };
 }
 
@@ -100,6 +106,7 @@ export function reduceGetStartedWizard(state: GetStartedWizardState, event: GetS
     case "pick-app-idea": return { ...state, appIdea: state.appIdea === event.id ? undefined : event.id };
     case "pick-starter": return { ...state, starter: state.starter === event.id ? undefined : event.id };
     case "toggle-bot": return { ...state, bots: toggle(state.bots, event.id) };
+    case "connected": return { ...state, connected: [...event.services] };
     case "bot": {
       const bot = { ...state.bot, ...event.patch };
       bot.name = bot.name.slice(0, GET_STARTED_BOT_NAME_MAX_CHARS);
@@ -114,9 +121,14 @@ export function getStartedAnswersFromWizard(state: GetStartedWizardState): GetSt
   const groups = getStartedToolGroupsForGoals(state.goals);
   const visibleTools = new Set(groups.flatMap((group) => (group.kind === "tools" ? group.tools.map((tool) => tool.id) : [])));
   const name = state.name.replace(/\p{Cc}/gu, "").replaceAll("<!--", "").replaceAll("-->", "").trim();
+  // Picked coding agents, then every connected integration the catalog knows, in catalog order.
+  const connectedTools = new Set(state.connected.map(getStartedToolForService));
   const answers: GetStartedAnswers = {
     goals: [...state.goals],
-    tools: state.tools.filter((tool) => visibleTools.has(tool)),
+    tools: [...new Set([
+      ...state.tools.filter((tool) => visibleTools.has(tool)),
+      ...GET_STARTED_TOOL_IDS.filter((tool) => connectedTools.has(tool)),
+    ])],
   };
   if (name) answers.name = name;
   // App Gallery shows the ideas to everyone, so a pick stands whatever the goals.

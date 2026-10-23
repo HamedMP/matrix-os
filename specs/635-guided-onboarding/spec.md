@@ -23,6 +23,8 @@ Why: today a new member pays, waits on a progress screen, and lands on a generic
 | Nima | Target the weekend hackathon. | Priorities below; cut from the bottom if time runs short. |
 | Hamed | The very first bot is configured here: a name and personality. It becomes the one connected to WhatsApp and the tech resolver for Matrix issues. | Bonus P2 "Make your AI yours" writes the name and personality into SOUL, which the personal Matrix Bot already reads (ENG-235). WhatsApp ([ENG-126](https://linear.app/matrix-os/issue/ENG-126/use-one-central-matrix-pi-conversation-across-whatsapp-and-matrix)), tech resolver and bots creating bots are later. |
 | Stefan | The bot is a plus; the video flow is the most important part. | P0/P1 cover the video; the bot setup is P2. |
+| Hamed | Tool selection and connecting should come earlier, not on the last screen: "Connect the tools you use", connected directly, in the exact Integrations design with icons. | Step 3 is "Connect the tools you use" and renders the shared `IntegrationMarketplace` from Settings > Integrations (search, filters, icons, Connect / waiting / Connected). The summary no longer has a connect list. |
+| Hamed | Suggest Matrix apps: "because you connected x, y, z, these apps are ready with your data", in a nice listing with icons. | Step 5 lists App Gallery apps whose required services are connected (App Gallery's own readiness rule), with their icons and Add. |
 
 ## Priorities
 
@@ -52,24 +54,19 @@ Times are positions in the demo video. Quoted copy is the intended product copy.
 - **Navigation:** Back (left), Skip and Next (right). Next is the dark primary button; on the last question it reads "Finish".
 - **Step 1, "What should we call you?"** Text field, placeholder "Your first name", hint "Your AI will use this." Enter goes to the next step. Soft grey focus border.
 - **Step 2, "What will you use Matrix for?"** Multi-select chips: "Write code with agents", "Run my business", "Personal assistant", "Build apps", "Just exploring". Hint: "Pick any. We'll set up those first." Selected chips fill black.
-- **Step 3, "Which tools do you use?"** One group per chosen goal:
-  - Your coding tools: GitHub, Claude Code, Codex, OpenCode, Linear, Jira, Figma
-  - Tools you run on: Gmail, Outlook, Google Calendar, Slack, Notion, Stripe, HubSpot
-  - Where should your AI reach you?: Telegram, WhatsApp, Discord, Email, Todoist
-  - First app idea: Habit tracker, Client CRM, Budget planner, Recipe box
+- **Step 3, "Connect the tools you use"** The Settings > Integrations marketplace (`IntegrationMarketplace`, same rows, icons, search and filters), with the integrations that fit the chosen goals first. Connect opens the app's own sign-in, like Settings. Above it, only choices that are not integrations:
+  - Your coding agent (Write code with agents): Claude Code, Codex, OpenCode
+  - First app idea (Build apps): Habit tracker, Client CRM, Budget planner, Recipe box
   - Sounds fun (exploring, or nothing picked): Build something small, Play a game, Ask anything
 
-  Nothing connects here; these are preferences.
+  The connected integrations become the owner's tools for personalisation (Getting started, widget, bots). A surface without app connections shows "You can connect apps later in Settings".
 - **Step 4, "Name your main bot"** (Atlas, Nova, Ada, Sage or own; Brief / Friendly / Playful): "This is your main bot. It uses this name and style everywhere you talk to Matrix." Becomes the full P2 bot setup. Without P2 this step is dropped and the AI stays "Matrix".
-- **Step 5, "Build your own apps" (App Gallery):** shown to everyone. Four example apps as cards (Habit tracker, Client CRM, Budget planner, Recipe box) with icon and one line; picking one is the owner's app idea (shared with the "First app idea" choice on step 3), so Matrix offers to build it on arrival. "Make anything else in App Gallery anytime." Skip clears the pick.
+- **Step 5, App Gallery:** when connected integrations make App Gallery apps ready (App Gallery's `deriveGalleryReadiness`), the title is "Apps ready with your data" and the hint "Because you connected Gmail and Google Calendar, these apps are ready with your data." Each app shows its gallery icon, name, tagline and "Uses Gmail, Google Calendar", with Add (installs it right away, like App Gallery's own install) then "Added". Up to six apps, most connected services first. Below, "Or build your own" with the four app ideas. With no ready apps, the step is "Build your own apps" with the four idea cards (icon and one line); picking one is the owner's app idea (shared with step 3), so Matrix offers to build it on arrival. Skip clears the idea pick.
 - **Step 6, "Meet your bots":** see Section 7b.
 
-### Scene 2: All set + Connect your tools (0:13–0:18), P0
+### Scene 2: All set (0:13–0:18), P0
 
-- **Heading:** "All set, Sam." with "Using it for" (goals) and "Your AI" (name · tone).
-- **"Connect your tools":** a row per picked tool (up to four) with icon, name and why, e.g. GitHub "So your AI can work on your repos", Claude Code "Sign in with your Claude account", Linear "Read issues so your AI can help with them". Below, two suggestions under a goal label, e.g. "Popular with developers": Figma, Slack.
-- **Row states:** "Connect" (disabled until the computer is ready) → spinner + "Waiting for GitHub sign-in…" → green "Connected".
-- **Note:** "Optional. Each one opens the app's own sign-in. Anything you skip stays in Getting started."
+- **Heading:** "All set, Sam." with "Using it for" (goals), "Your AI" (name · tone) and "Your bots". Connecting now happens on step 3.
 - **Button:** "Enter your computer" (disabled with "Finishing your computer…" until ready).
 - Real: `useIntegrations().startConnect`, `shell:open-external`, bounded polling (widget `AppsScreen`), agent sign-in through the provider workflow client.
 
