@@ -7,7 +7,7 @@ import {
 } from "@matrix-os/contracts";
 
 import { SETTINGS_KEY } from "./initial-theme";
-import { HOSTED_GATEWAY_URL, isMatrixHostedOrigin, mobileHostedStorageKey } from "./hosted-origin";
+import { HOSTED_GATEWAY_URL, isMatrixHostedHostname, isMatrixHostedOrigin, mobileHostedStorageKey } from "./hosted-origin";
 export { HOSTED_GATEWAY_URL } from "./hosted-origin";
 
 const GATEWAY_CONNECTION_KEY = mobileHostedStorageKey("matrix_os_gateway_connection");
@@ -62,7 +62,7 @@ function parseHostedGatewayUrl(input: string): HostedGatewayRoute | null {
   } catch {
     return null;
   }
-  if (parsed.origin !== HOSTED_GATEWAY_URL || parsed.hash) return null;
+  if (parsed.origin !== HOSTED_GATEWAY_URL || parsed.hash || parsed.username || parsed.password) return null;
   if ((parsed.pathname === "/" || parsed.pathname === "") && !parsed.search) {
     return { url: HOSTED_GATEWAY_URL, handle: null, runtimeSlot: "primary" };
   }
@@ -118,7 +118,10 @@ export function normalizeGatewayUrl(input: string): string {
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error("Matrix OS URL must start with http:// or https://.");
   }
-  if (isMatrixHostedOrigin(parsed.origin) && parsed.origin !== HOSTED_GATEWAY_URL) {
+  // Reserve the hostname even when a port, scheme or trailing DNS dot would
+  // otherwise make this built-in target look like a custom server.
+  if (isMatrixHostedHostname(parsed.hostname)
+    && (parsed.origin !== HOSTED_GATEWAY_URL || parsed.username || parsed.password)) {
     throw new Error("Use this app’s Matrix OS Cloud target.");
   }
   parsed.pathname = parsed.pathname.replace(/\/+$/, "");
