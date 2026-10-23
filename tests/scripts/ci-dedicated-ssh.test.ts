@@ -145,15 +145,25 @@ describe('SSH completion while authenticated renewal is pending',()=>{
  });
 });
 
- it('rejects a receipt that omits the required account organization picker',async()=>{
-  const c=fake(),pending=run(c);pending.catch(()=>{});await admitted(c);
-  const invalid=receipt();invalid.requiredElectronFiles=invalid.requiredElectronFiles.filter(file=>!file.endsWith('/account-organization-picker.e2e.test.ts'));
-  emit(c,'completed',{status:0,receipt:invalid});c.emit('close',0);
-  await expect(pending).rejects.toThrow(/qualification receipt/);
- });
- it('rejects a receipt that did not execute both required Electron input files',async()=>{
-  const c=fake(),pending=run(c);pending.catch(()=>{});await admitted(c);
-  const invalid=receipt();invalid.reports['electron-input'].files=1;
-  emit(c,'completed',{status:0,receipt:invalid});c.emit('close',0);
-  await expect(pending).rejects.toThrow(/evidence counts/);
- });
+it('rejects a receipt that omits the required account organization picker', async () => {
+ const child = fake();
+ const pending = run(child);
+ const rejected = expect(pending).rejects.toThrow(/qualification receipt/);
+ await admitted(child);
+ const invalid = receipt();
+ invalid.requiredElectronFiles = invalid.requiredElectronFiles.filter(file => !file.endsWith('/account-organization-picker.e2e.test.ts'));
+ emit(child, 'completed', { status: 0, receipt: invalid });
+ child.emit('close', 0);
+ await rejected;
+});
+it('rejects a receipt that did not execute both required Electron input files', async () => {
+ const child = fake();
+ const pending = run(child);
+ const rejected = expect(pending).rejects.toThrow(/evidence counts/);
+ await admitted(child);
+ const invalid = receipt();
+ invalid.reports['electron-input'].files = 1;
+ emit(child, 'completed', { status: 0, receipt: invalid });
+ child.emit('close', 0);
+ await rejected;
+});
