@@ -95,6 +95,29 @@ describe("Conversation scroller (MessageScroller semantics)", () => {
     expect(el.scrollTop).toBe(100);
   });
 
+  it("lets the browser anchor an unpinned reader when nested content grows", () => {
+    const metrics = { scrollHeight: 500, clientHeight: 200 };
+    render(
+      <Conversation>
+        <ConversationContent>
+          <ConversationItem messageId="m1">image above the reader</ConversationItem>
+          <ConversationItem messageId="m2">current reading position</ConversationItem>
+        </ConversationContent>
+      </Conversation>,
+    );
+    const el = viewport();
+    mockMetrics(el, metrics);
+    fireContentResize();
+    expect(el.style.overflowAnchor).toBe("none");
+
+    el.scrollTop = 100;
+    fireEvent.scroll(el);
+    expect(el.style.overflowAnchor).toBe("auto");
+    metrics.scrollHeight = 800;
+    fireContentResize();
+    expect(el.scrollTop).toBe(100);
+  });
+
   it("shows the scroll-to-latest pill away from the bottom and jumps to the end on click", () => {
     const metrics = { scrollHeight: 1000, clientHeight: 200 };
     render(

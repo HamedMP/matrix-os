@@ -195,7 +195,7 @@ export function Conversation({ children, ref }: { children: ReactNode; ref?: Ref
         aria-label="Messages"
         tabIndex={0}
         className="scroll-fade h-full overflow-y-auto"
-        style={{ overflowAnchor: "none" }}
+        style={{ overflowAnchor: atBottom ? "none" : "auto" }}
         data-slot="message-scroller-viewport"
       >
         {children}
