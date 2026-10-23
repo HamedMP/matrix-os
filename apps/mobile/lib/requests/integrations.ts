@@ -1,5 +1,6 @@
 import { parseIntegrationAttemptStatus, type IntegrationAttemptStatus } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { HOSTED_GATEWAY_URL } from "@/lib/hosted-origin";
 import { GmailConnectionMethodSchema, GmailConnectionOptionsSchema, type GmailConnectionMethod, type GmailConnectionOptions } from "@matrix-os/contracts/integration-marketplace";
 
 import { buildGatewayRequestUrl, fetchAuthenticatedJson, fetchAuthenticatedResponse } from "@/lib/requests/http";
@@ -72,7 +73,7 @@ function isTrustedConnectUrl(value: string): boolean {
     const url = new URL(value);
     if (url.protocol !== "https:" || url.username || url.password || url.hash) return false;
     if (url.hostname === "pipedream.com" || url.hostname.endsWith(".pipedream.com")) return true;
-    return url.origin === "https://app.matrix-os.com" && url.pathname === "/auth/gmail"
+    return url.origin === HOSTED_GATEWAY_URL && url.pathname === "/auth/gmail"
       && [...url.searchParams.keys()].length === 1
       && /^[A-Za-z0-9_-]{43}$/.test(url.searchParams.get("state") ?? "");
   } catch {
@@ -192,7 +193,7 @@ export async function fetchIntegrationConnectionAttempt(clerkToken: string, comp
   if (!CONNECTION_ID.test(attemptId)) throw new Error(INTEGRATION_CONNECT_ERROR);
   return fetchAuthenticatedJson({
     url: integrationUrl(computerGatewayUrl, `/api/integrations/gmail/pipedream/attempts/${attemptId}`), token: clerkToken,
-    errorMessage: 'Could not confirm connection. Try connecting again.',
+    errorMessage: "Could not confirm connection. Try connecting again.",
     schema: z.unknown().transform(value => { const receipt = parseIntegrationAttemptStatus(value); if (!receipt) throw new Error(INTEGRATION_CONNECT_ERROR); return receipt; }),
   });
 }
