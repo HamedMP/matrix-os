@@ -89,6 +89,37 @@ const CANONICAL_CHAT_FAILURE_COPY: Record<CanonicalChatSafeError["code"], string
   service_unavailable: "Chat service is temporarily unavailable. Try again.",
 };
 
+const UNEXPECTED_RUN_FAILURE_BY_CATEGORY = {
+  timeout: "The agent stopped because the operation timed out.",
+  validation: "Chat could not process the agent response.",
+  resource_limit: "The agent response exceeded the size limit.",
+  state_conflict: "Chat changed while the agent was working. Refresh and try again.",
+  network: "The agent connection was interrupted.",
+  authorization: "The agent lost access during the run. Review its permissions.",
+} as const;
+const UNEXPECTED_RUN_FAILURE_BY_STAGE = {
+  preparation: "Chat could not prepare the agent run.",
+  provider: "The agent stopped unexpectedly during execution.",
+  projection: "Chat could not process the agent response.",
+  persistence: "Chat could not save the agent response.",
+  recovery: "Chat could not restore the agent run.",
+  cleanup: "Chat could not finish stopping the agent run.",
+  execution: "The agent stopped unexpectedly during execution.",
+} as const;
+
+/** Only fixed, reviewed diagnoses cross from an unexpected exception into Chat. */
+export function canonicalUnexpectedRunFailure(diagnostic: {
+  stage: keyof typeof UNEXPECTED_RUN_FAILURE_BY_STAGE;
+  category: keyof typeof UNEXPECTED_RUN_FAILURE_BY_CATEGORY | "unknown";
+}): CanonicalChatSafeError {
+  const safeMessage = diagnostic.stage === "persistence" || diagnostic.category === "unknown"
+    ? UNEXPECTED_RUN_FAILURE_BY_STAGE[diagnostic.stage]
+    : UNEXPECTED_RUN_FAILURE_BY_CATEGORY[diagnostic.category];
+  const retryable = diagnostic.stage !== "persistence" && diagnostic.stage !== "cleanup"
+    && (diagnostic.category === "network" || diagnostic.category === "unknown");
+  return { code: "run_failed", safeMessage, retryable, recoveryActions: retryable ? ["retry"] : [] };
+}
+
 type AgentFailureDefinition = {
   code: CanonicalChatSafeError["code"];
   safeMessage: string;
@@ -146,6 +177,10 @@ export function canonicalReviewedAgentFailure(code: unknown, reviewedDetail: unk
 export function canonicalChatSafeFailureReason(code: unknown, reviewedDetail?: unknown): string | undefined {
   const reviewed = canonicalReviewedAgentFailure(code, reviewedDetail);
   if (reviewed) return reviewed.safeMessage;
+  if (code === "run_failed" && typeof reviewedDetail === "string"
+    && (Object.values(UNEXPECTED_RUN_FAILURE_BY_CATEGORY) as string[]).includes(reviewedDetail)) return reviewedDetail;
+  if (code === "run_failed" && typeof reviewedDetail === "string"
+    && (Object.values(UNEXPECTED_RUN_FAILURE_BY_STAGE) as string[]).includes(reviewedDetail)) return reviewedDetail;
   // Claude publishes a separately validated quota reset. Accept only this
   // closed copy template, never an arbitrary upstream safeMessage.
   if (code === "run_failed" && typeof reviewedDetail === "string") {
@@ -161,6 +196,12 @@ export function canonicalChatSafeFailureReason(code: unknown, reviewedDetail?: u
   return typeof code === "string" && Object.hasOwn(CANONICAL_CHAT_FAILURE_COPY, code)
     ? CANONICAL_CHAT_FAILURE_COPY[code as CanonicalChatSafeError["code"]]
     : undefined;
+}
+
+/** Do not imply a diagnosis exists when the provider reported no error. */
+export function canonicalChatFailureNotice(code: unknown, reviewedDetail: unknown): string {
+  if (code === undefined) return "The agent stopped without reporting a reason.";
+  return canonicalChatSafeFailureReason(code, reviewedDetail) ?? CANONICAL_CHAT_FAILURE_COPY.run_failed;
 }
 
 /** Shared terminal outcome derivation; renderers only adapt placement and styling. */
@@ -180,9 +221,8 @@ export function canonicalChatTerminalNotices(detail: z.infer<typeof CanonicalCha
       ...(run.status === "failed" && runError?.type === "run.error" ? { code: runError.error.code } : {}),
       beforeMessageId: inputs[index + 1]?.turn.inputMessageId,
       text: run.status === "failed"
-        ? canonicalChatSafeFailureReason(runError?.type === "run.error" ? runError.error.code : undefined,
+        ? canonicalChatFailureNotice(runError?.type === "run.error" ? runError.error.code : undefined,
           runError?.type === "run.error" ? runError.error.safeMessage : undefined)
-          ?? canonicalChatSafeFailureReason("run_failed")!
         : "Agent work stopped.",
       timestamp: Date.parse(run.completedAt ?? run.updatedAt),
     }];

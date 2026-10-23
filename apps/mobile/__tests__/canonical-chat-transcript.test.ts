@@ -241,7 +241,7 @@ describe("turns that did not finish", () => {
 
   it("does not offer a retry for a failure without a reported error", () => {
     expect(noticeOf(failedChat({ error: null }))).toMatchObject({
-      text: "The agent could not finish. Try again.",
+      text: "The agent stopped without reporting a reason.",
       notice: { tone: "failed" },
     });
     expect(noticeOf(failedChat({ error: null }))?.notice?.retryTurnId).toBeUndefined();
