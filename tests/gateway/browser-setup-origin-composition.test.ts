@@ -30,7 +30,7 @@ describe("fresh primary Browser retry origin composition", () => {
     // Real bootstrap controller and deferred route composition, not a stubbed origin predicate.
     let controller = createGatewayAllowedOriginController(process.env);
     const app = new Hono(); app.use("*", authMiddleware(secret));
-    const runtime = registerDeferredRuntimeRoutes({ app, homePath, isAllowedBrowserLabOrigin: origin => controller.resolve(origin) === origin,
+    const runtime = await registerDeferredRuntimeRoutes({ app, homePath, ownerDatabase: null, isAllowedBrowserLabOrigin: origin => controller.resolve(origin) === origin,
       integrationRoutes: null, internalIntegrationBaseUrl: null, internalPlatformToken: undefined, internalPlatformUrl: undefined, internalHandle: primary.MATRIX_HANDLE,
       proxyIntegrationRequest: async () => new Response(null, { status: 503 }), devAppAuthBypass: false,
       posthogErrorTracker: { captureEvent: vi.fn() } as never, ownerTelemetryDistinctId: "fixture-owner",
