@@ -43,7 +43,7 @@ Every mutating route uses `bodyLimit` and Zod validation. Secret comparisons use
 
 After deploying the exact PR bundle, `preview-vps.yml` reads `/vps/fleet` with operator authentication and requires one healthy machine whose handle and runtime slot equal `pr-<number>`, whose Platform classification is `preview`, and whose state is running and authorized. It posts the returned exact owner, machine ID, slot, and token epoch to the activation route. The workflow fails unless both host configurations are verified and both request allowances are positive with concurrency `1`.
 
-An owner-only `private-preview` cannot use that branch workflow because it is provisioned from a reviewed bundle by the production Platform. Instead, its authenticated registration path invokes the same activator after the exact machine becomes running. The activator receives the registered row's owner, machine ID, runtime slot, and token epoch; failures leave funded capabilities unavailable and return only a generic registration warning. Re-registration cannot refill or extend an existing allocation.
+An owner-only `private-preview` cannot use that branch workflow because it is provisioned from a reviewed bundle by the production Platform. Instead, its authenticated registration path persists a pending activation and invokes the same activator after the exact machine becomes running. The activator receives the registered row's owner, machine ID, runtime slot, and token epoch; failures leave funded capabilities unavailable, return only a generic registration warning, and remain pending for the bounded reconciliation worker. Retry is independent of the consumed one-use registration token, and stale in-flight activation claims are reclaimable after the reconciliation lease expires. Re-registration cannot refill or extend an existing allocation.
 
 Only the existing same-repository, approved `preview-vps` execution path reaches this step. Fork PRs and unapproved workflow code receive neither production operator secrets nor Preview funded access. Replays do not mint a new allowance. PR teardown deletes the machine and cascades the allocation; the existing 72-hour reaper remains a second cleanup boundary.
 
@@ -70,7 +70,7 @@ The control plane writes `MATRIX_PREVIEW_RUNTIME=true` into host configuration o
 - Speech admission also retains the global speech admission lock, atomically
   increments the speech counter, and writes the operation/reservation in the
   same transaction.
-- Host activation happens after the database commit. A host-config failure may leave an unused or partially consumed allocation, which is acceptable because reruns are idempotent and cannot refill it. An allocation without both verified host configs is not reported ready.
+- Host activation happens after the database commit. A host-config failure may leave an unused or partially consumed allocation, which is acceptable because the durable pending activation is retried independently and reruns are idempotent and cannot refill it. An allocation without both verified host configs is not reported ready.
 - Expired allocations may remain as audit/accounting rows until machine or account cleanup, but all auth and mutation paths fail closed on expiry. Machine deletion cascades them; account deletion also deletes them explicitly.
 - AI's existing owner-wide concurrency guard can be stricter than the Preview runtime's one-operation cap. It may defer a Preview request while another owner-funded request is active, but it cannot move or spend primary credit.
 
@@ -88,7 +88,7 @@ If a future requirement needs Preview-specific Platform code to authorize or rou
 
 ## Acceptance and evidence
 
-Focused Red → Green tests cover both server-authoritative Preview classes, bounded configuration, exact identity and epoch, owner-only Private Preview registration activation, one-time activation, AI and speech counters, concurrency, primary-balance isolation, cross-machine token rejection, expiry, deletion/recreation, workflow gating, migrations, contracts, and customer-path regression.
+Focused Red → Green tests cover both server-authoritative Preview classes, bounded configuration, exact identity and epoch, owner-only Private Preview registration activation and durable retry after transient failure or a stale claim, one-time activation, AI and speech counters, concurrency, primary-balance isolation, cross-machine token rejection, expiry, deletion/recreation, workflow gating, migrations, contracts, and customer-path regression.
 
 Merge readiness additionally requires one fresh exact-build Preview VPS created by `preview-vps.yml` and evidence for:
 
