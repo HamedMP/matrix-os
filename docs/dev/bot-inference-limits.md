@@ -43,3 +43,10 @@ generation: Native keeps the original inference and consumes no extra model-call
 allowance for a duplicate. Cancel/ACK, source authorization and the original
 inference/funding guards remain independent. This transport correction does not
 raise tool, token, context, funding or per-worker-invocation budgets.
+
+Worker progress projection has a separate event budget. Text switches from small
+live updates to bounded batches before exhausting the 2,000-event ceiling; all
+60 potential tool lifecycles retain their own event allocation. This is a display
+and broker-request guard, not an inference-call allowance. Saving the internal
+session does not refill the canonical Chat preview. See `chat-run-limits.md` for
+the exact text, notice, tool and retained-preview bounds.
