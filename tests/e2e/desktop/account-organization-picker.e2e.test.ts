@@ -40,6 +40,11 @@ suite("Electron Desktop account organization picker", () => {
     await page.getByRole("button", { name: /create account/i }).waitFor();
     await page.evaluate(() => window.operator.invoke("auth:start-device-flow", {}));
     await page.getByRole("button", { name: "Open account menu", exact: true }).waitFor({ timeout: 15_000 });
+    // Exercise menu hydration after a slow membership response on every open.
+    await page.route("**/api/organizations", async (route) => {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+      await route.continue();
+    });
   }, 60_000);
 
   afterEach(async () => { await page?.keyboard.press("Escape"); });
@@ -55,14 +60,14 @@ suite("Electron Desktop account organization picker", () => {
   it("keeps the last organization and account actions reachable in a short viewport", async () => {
     await page.getByRole("button", { name: "Open account menu", exact: true }).click();
     const menu = page.getByRole("menu", { name: "Account", exact: true });
-    await menu.waitFor();
-    const bounds = await menu.evaluate((element) => ({
-      top: element.getBoundingClientRect().top, bottom: element.getBoundingClientRect().bottom,
-      viewport: window.innerHeight, scrolls: element.scrollHeight > element.clientHeight,
-    }));
-    expect(bounds.top).toBeGreaterThanOrEqual(0);
-    expect(bounds.bottom).toBeLessThanOrEqual(bounds.viewport);
-    expect(bounds.scrolls).toBe(true);
+    await page.getByRole("menuitemradio", { name: "Organization 18", exact: true }).waitFor();
+    await expect.poll(() => menu.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        withinViewport: bounds.top >= 0 && bounds.bottom <= window.innerHeight,
+        scrolls: element.scrollHeight > element.clientHeight,
+      };
+    }), { timeout: 5_000 }).toEqual({ withinViewport: true, scrolls: true });
     for (const item of [page.getByRole("menuitemradio", { name: "Organization 18", exact: true }), page.getByRole("menuitem", { name: "Settings", exact: true }), page.getByRole("menuitem", { name: "Log out", exact: true })]) {
       await item.scrollIntoViewIfNeeded();
       const visible = await item.evaluate((element) => {
