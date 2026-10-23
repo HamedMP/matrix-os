@@ -42,6 +42,7 @@ export function createPreviewRuntimeAccessActivator(options: {
   config: PreviewRuntimeAccessConfig;
   hostControlSecret: string;
   platformOrigin: string;
+  speechPlatformOrigin: string;
   relayOrigin: string;
   fetchImpl?: typeof fetch;
   fetchDispatcher?: Dispatcher;
@@ -53,8 +54,10 @@ export function createPreviewRuntimeAccessActivator(options: {
   }
   const config = options.config;
   const platformOrigin = new URL(options.platformOrigin);
+  const speechPlatformOrigin = new URL(options.speechPlatformOrigin);
   const relayOrigin = new URL(options.relayOrigin);
-  if (platformOrigin.protocol !== "https:" || relayOrigin.protocol !== "https:") {
+  if (platformOrigin.protocol !== "https:" || speechPlatformOrigin.protocol !== "https:"
+    || relayOrigin.protocol !== "https:") {
     throw new Error("Preview runtime activation is misconfigured");
   }
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -130,7 +133,7 @@ export function createPreviewRuntimeAccessActivator(options: {
       machines: [{ machineId: machine.machine_id, clerkUserId: machine.clerk_user_id,
         handle: machine.handle, runtimeSlot: machine.runtime_slot, runtimeTokenEpoch: machine.runtime_token_epoch,
         publicIPv4: machine.public_ipv4 }],
-      platformOrigin: platformOrigin.origin,
+      platformOrigin: speechPlatformOrigin.origin,
       platformSecret: options.hostControlSecret,
       runtimeSecret: config.runtimeSecret,
       fetchImpl,
