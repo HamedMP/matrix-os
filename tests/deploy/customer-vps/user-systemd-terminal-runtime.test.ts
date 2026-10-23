@@ -215,7 +215,8 @@ describe("customer VPS user-systemd terminal runtime", () => {
     expect(stop).toBeGreaterThan(seal);
     expect(bootstrap).toBeGreaterThan(stop);
     expect(updater).toContain('readonly UPDATE_TRANSACTION_DIR="$STAGING_DIR/update-transaction"');
-    expect(updater).toContain("sudo chown -R root:root \"$UPDATE_TRANSACTION_DIR\"");
+    expect(updater).toContain("seal_update_transaction_permissions || return 1");
+    expect(updater).not.toContain("sudo chown -R root:root \"$UPDATE_TRANSACTION_DIR\"");
     expect(updater).toContain("restore_update_payload_directory /etc/systemd/system systemd");
     expect(updater).toContain("restore_update_payload_directory /etc/systemd/user user-systemd");
     expect(updater).toContain('stop_candidate_touched_system_units');
