@@ -295,11 +295,13 @@
   font-size: 12px;
 }
 
-.mxo-gs button:focus-visible,
-.mxo-gs__title:focus-visible {
+.mxo-gs button:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--mxo-ink) 30%, transparent);
   outline-offset: 2px;
 }
+
+/* The step title takes focus for screen readers; it is not a control, so it draws no outline. */
+.mxo-gs__title:focus { outline: none; }
 
 @media (max-width: 480px) {
   .mxo-gs__body { padding: 20px 16px 8px; }
