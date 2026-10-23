@@ -41,6 +41,15 @@ describe("integration marketplace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try connecting Gmail again" }));
     expect(onConnect).toHaveBeenCalledWith("gmail");
   });
+  it("can keep every app connectable while one sign-in is pending", () => {
+    const onConnect = vi.fn();
+    render(<IntegrationMarketplace services={services} connectedIds={[]} connectingId="gmail" lockWhileConnecting={false} onConnect={onConnect} />);
+    expect((screen.getByRole("button", { name: "Connect Asana" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Connect Asana" }));
+    expect(onConnect).toHaveBeenCalledWith("asana");
+    // The pending one can be started again, e.g. after its window was closed.
+    expect((screen.getByRole("button", { name: "Connect Gmail" }) as HTMLButtonElement).disabled).toBe(false);
+  });
   it("connects in one click with no label form and disables all actions while connecting", () => {
     const onConnect = vi.fn();
     const view = render(<IntegrationMarketplace services={services} connectedIds={[]} onConnect={onConnect} />);

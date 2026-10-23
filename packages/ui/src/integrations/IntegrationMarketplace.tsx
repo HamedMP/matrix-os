@@ -7,7 +7,7 @@ const muted = { color: "var(--text-tertiary, var(--muted-foreground))" };
 const pill = { background: "var(--bg-surface-hover, var(--muted))" };
 
 export function IntegrationMarketplace<T extends IntegrationCatalogItem>({
-  services, connectedIds, connectingId, onConnect, renderService, leadingSection, failedIds,
+  services, connectedIds, connectingId, onConnect, renderService, leadingSection, failedIds, lockWhileConnecting = true,
 }: {
   services: readonly T[];
   connectedIds: readonly string[];
@@ -18,6 +18,11 @@ export function IntegrationMarketplace<T extends IntegrationCatalogItem>({
   leadingSection?: { title: string; ids: readonly string[] };
   /** Apps whose last sign-in did not finish; their rows say so and offer Try again. */
   failedIds?: readonly string[];
+  /**
+   * Settings locks every Connect while a sign-in is pending. Get started keeps them all usable,
+   * so a cancelled or stuck sign-in never blocks the next app; a new connect replaces it.
+   */
+  lockWhileConnecting?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [connectedOnly, setConnectedOnly] = useState(false);
@@ -62,7 +67,7 @@ export function IntegrationMarketplace<T extends IntegrationCatalogItem>({
             <div className="grid grid-cols-1 gap-x-8 gap-y-2 sm:grid-cols-2">
               {visible.map(service => renderService ? <div key={service.id}>{renderService(service)}</div> : (
                 <MarketplaceRow key={service.id} service={service} connected={connectedIds.includes(service.id)} connecting={connectingId === service.id}
-                  failed={failed.has(service.id)} disabled={Boolean(connectingId)} onConnect={() => onConnect(service.id)} />
+                  failed={failed.has(service.id)} disabled={lockWhileConnecting && Boolean(connectingId)} onConnect={() => onConnect(service.id)} />
               ))}
             </div>
           </section>

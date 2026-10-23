@@ -8,7 +8,7 @@ import { GetStartedGate, type GetStartedConnect, type GetStartedPort } from "../
 
 const AT = "2026-10-25T10:12:00.000Z";
 
-function setup(connected: string[] = [], options: { available?: string[]; draft?: Record<string, unknown> } = {}) {
+function setup(connected: string[] = [], options: { available?: string[]; draft?: Record<string, unknown>; connectingService?: string } = {}) {
   const saves: GetStartedUpdate[] = [];
   const port: GetStartedPort = {
     load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 5, name: "Sam", goals: ["business"], tools: [], ...options.draft } })),
@@ -23,7 +23,7 @@ function setup(connected: string[] = [], options: { available?: string[]; draft?
   function Connector({ children }: { children: (connect: GetStartedConnect) => ReactNode }) {
     return <>{children({
       availableServices: new Set(options.available ?? []), connectedServices: new Set(connected), failedServices: new Set(),
-      logoUrls: new Map(), connectingService: null, unavailable: false, connect,
+      logoUrls: new Map(), connectingService: options.connectingService ?? null, unavailable: false, connect,
     })}</>;
   }
   render(<GetStartedGate port={port} zIndex={1} connector={Connector}><div data-testid="widget" /></GetStartedGate>);
@@ -64,6 +64,14 @@ describe("Meet your bots", () => {
     fireEvent.click(screen.getByRole("button", { name: "Enter your computer" }));
     await waitFor(() => expect(saves.at(-1)?.type).toBe("complete"));
     expect(saves.at(-1)).not.toHaveProperty("answers.bots");
+  });
+
+  it("keeps a bot's app sign-in usable while another sign-in is pending", async () => {
+    const { connect } = setup(["gmail"], { available: ["google_calendar", "gmail"], connectingService: "github" });
+    const button = await screen.findByRole("button", { name: "Connect Google Calendar" });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    expect(connect).toHaveBeenCalledWith("google_calendar");
   });
 
   it("offers the missing app's sign-in right in the bot row", async () => {

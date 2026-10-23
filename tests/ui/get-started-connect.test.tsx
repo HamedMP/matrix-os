@@ -114,6 +114,15 @@ describe("Connect the tools you use", () => {
     await waitFor(() => expect(gatePort.saves.at(-1)).toMatchObject({ type: "complete", answers: { tools: ["linear"] } }));
   });
 
+  it("lets the owner move on to another app while one sign-in is still pending", async () => {
+    const { Connector, connect } = makeConnector({ connectingService: "github" });
+    render(<GetStartedGate port={port({ goals: ["code"], tools: [] })} zIndex={1} connector={Connector} />);
+    const linear = await screen.findByRole("button", { name: "Connect Linear" });
+    expect(linear).toBeEnabled();
+    fireEvent.click(linear);
+    expect(connect).toHaveBeenCalledWith("linear");
+  });
+
   it("explains a sign-in that did not finish and offers to try again", async () => {
     const { Connector, connect } = makeConnector({ failedServices: new Set(["linear"]) });
     render(<GetStartedGate port={port({ goals: ["code"], tools: [] })} zIndex={1} connector={Connector} />);

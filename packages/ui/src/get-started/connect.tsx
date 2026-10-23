@@ -92,19 +92,19 @@ export function ServiceConnectAction({ service, label, connect, text = "Connect"
   if (connect.connectingService === service) {
     return <span className="mxo-muted"><Icon icon={Loading03Icon} size={14} className="mxo-spin" /> Waiting for {label} sign-in…</span>;
   }
-  const busy = connect.connectingService !== null;
+  // Another app's pending sign-in never blocks this one; starting it replaces that attempt.
   if (connect.failedServices.has(service)) {
     return (
       <ButtonRow>
         <span className="mxo-failed-line">Sign-in didn't finish</span>
-        <button type="button" className="mxo-btn mxo-btn--outline" disabled={busy} aria-label={`Try connecting ${label} again`} onClick={() => connect.connect(service)}>
+        <button type="button" className="mxo-btn mxo-btn--outline" aria-label={`Try connecting ${label} again`} onClick={() => connect.connect(service)}>
           Try again
         </button>
       </ButtonRow>
     );
   }
   return (
-    <button type="button" className="mxo-btn mxo-btn--outline" disabled={busy} aria-label={`Connect ${label}`} onClick={() => connect.connect(service)}>
+    <button type="button" className="mxo-btn mxo-btn--outline" aria-label={`Connect ${label}`} onClick={() => connect.connect(service)}>
       {text}
     </button>
   );
@@ -131,6 +131,7 @@ export function GetStartedConnectTools({ goals, connect }: { goals: readonly Get
         connectingId={connect.connectingService}
         failedIds={failedIds}
         leadingSection={leadingSection}
+        lockWhileConnecting={false}
         onConnect={connect.connect}
       />
     </section>
