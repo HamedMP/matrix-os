@@ -95,6 +95,9 @@ describe("Connect the tools you use", () => {
       .toEqual(["integration-card-github", "integration-card-linear", "integration-card-slack"]);
     expect(within(marketplace).getAllByRole("region")[0]).toBe(suggested);
     expect(screen.getByTestId("integration-card-github").querySelector("img")).toHaveAttribute("src", "https://example.test/github.png");
+    // Customer feedback: say what a connection is for before asking for it.
+    expect(within(screen.getByTestId("integration-card-gmail")).getByText("So your AI can sort and draft email")).toBeInTheDocument();
+    expect(within(screen.getByTestId("integration-card-github")).getByText("So your AI can work on your repos")).toBeInTheDocument();
     // Coding agents are not integrations, so they stay as choices above the list.
     expect(screen.getByText("Your coding agent")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Codex" })).toBeInTheDocument();

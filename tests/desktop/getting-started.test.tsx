@@ -18,6 +18,8 @@ import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
+import { useIntegrations } from "@desktop/renderer/src/features/integrations/integrations-store";
+import { useRetainedComposerDrafts } from "@desktop/renderer/src/features/chat/retained-composer-drafts";
 
 function render(ui: React.ReactNode) {
   return rtlRender(ui, { wrapper: ({ children }) => <GettingStartedVisibilityProvider scope="test">{children}</GettingStartedVisibilityProvider> });
@@ -178,6 +180,63 @@ describe("GettingStartedPopover", () => {
     expect(localStorage.getItem(gettingStartedAutoOpenKey("neo", "primary"))).toBe("1");
   });
 
+  describe("closing the loop (customer feedback)", () => {
+    async function openWith(overrides: Record<string, unknown>) {
+      const api = makeApi({
+        "/api/integrations": [],
+        "/api/workspace/projects": { projects: [] },
+        "/api/chats?limit=1": { items: [] },
+        "/api/github/status": { authenticated: false },
+        ...overrides,
+      });
+      useConnection.setState({ api: api as never, userId: "user_1" } as never);
+      render(<GettingStartedPopover />);
+      fireEvent.click(await screen.findByRole("button", { name: /^Getting started — / }));
+      return { api, dialog: await screen.findByRole("dialog", { name: "Getting started" }) };
+    }
+
+    it("reloads while open when the window comes back into focus", async () => {
+      const { api } = await openWith({});
+      const reads = () => api.get.mock.calls.filter(([path]) => path === "/api/integrations").length;
+      await waitFor(() => expect(reads()).toBeGreaterThan(0));
+      const before = reads();
+      fireEvent.focus(window);
+      await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    });
+
+    it("starts GitHub's own sign-in instead of opening the app directory", async () => {
+      const startConnect = vi.spyOn(useIntegrations.getState(), "startConnect").mockResolvedValue(null);
+      const { dialog } = await openWith({});
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Connect GitHub" }));
+      await waitFor(() => expect(startConnect).toHaveBeenCalledWith("github", expect.anything()));
+      expect(useTabs.getState().tabs.some((tab) => tab.kind === "settings")).toBe(false);
+    });
+
+    it("shows email & calendar as half done and connects the missing app", async () => {
+      const startConnect = vi.spyOn(useIntegrations.getState(), "startConnect").mockResolvedValue(null);
+      const { dialog } = await openWith({ "/api/integrations": [{ id: CONNECTION_ID, service: "gmail", status: "active" }] });
+      fireEvent.click(await within(dialog).findByRole("button", { name: /Connect Google Calendar \(1 of 2\)/ }));
+      await waitFor(() => expect(startConnect).toHaveBeenCalledWith("google_calendar", expect.anything()));
+    });
+
+    it("says the coding agent is signed in on the Matrix computer", async () => {
+      const { dialog } = await openWith({ "/api/agents/credentials/status": { agents: [] } });
+      expect(await within(dialog).findByText("On your Matrix computer, where your AI runs")).not.toBeNull();
+    });
+
+    it("turns finished email into a ready prompt in a new chat, unsent", async () => {
+      const { dialog } = await openWith({
+        "/api/integrations": [
+          { id: CONNECTION_ID, service: "gmail", status: "active" },
+          { id: "22222222-2222-4222-8222-222222222222", service: "google_calendar", status: "active" },
+        ],
+      });
+      fireEvent.click(await within(dialog).findByRole("button", { name: /Find emails that need a reply/ }));
+      expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({ kind: "work", workRoute: "chat", chatView: "draft" }));
+      expect(useRetainedComposerDrafts.getState().drafts["new:global"]?.text).toMatch(/still need a reply from me.*Don't send anything\./);
+    });
+  });
+
   describe("after Get started", () => {
     function renderAfter(state: unknown) {
       const port: GetStartedPort = { load: vi.fn(async () => state), save: vi.fn() };
@@ -253,7 +312,7 @@ describe("GettingStartedPopover", () => {
       expect(activate).toHaveBeenLastCalledWith(galleryTab?.id);
     });
 
-    it("leads with the owner's answers and shows an icon on every step", async () => {
+    it("leads with the owner's answers and shows an icon on every step, or Try once it is done", async () => {
       renderAfter({ status: "completed", completedAt: "2026-10-22T10:00:00.000Z", answers: { goals: ["code"], tools: ["codex"] } });
       const dialog = await screen.findByRole("dialog", { name: "Getting started" });
       const rows = await waitFor(() => {
@@ -262,7 +321,7 @@ describe("GettingStartedPopover", () => {
         return buttons;
       });
       expect(rows).toHaveLength(5);
-      for (const row of rows) expect(row.querySelector("svg")).not.toBeNull();
+      for (const row of rows) expect(row.querySelector("svg") ?? within(row).queryByText("Try")).not.toBeNull();
       expect(within(dialog).getByTestId("getting-started-app-gallery").textContent).toContain("Build your first app in App Gallery");
     });
   });
@@ -320,7 +379,7 @@ describe("GettingStartedPopover", () => {
 
     fireEvent.click(trigger);
     expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
-    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(18));
+    await waitFor(() => expect(api.get.mock.calls.filter(([path]) => path === "/api/github/status")).toHaveLength(3));
   });
 
   it("matches the Figma typography, spacing, colors, and icon sizing", async () => {
@@ -356,14 +415,14 @@ describe("GettingStartedPopover", () => {
       .toBe("rgb(46, 58, 42)");
     expect(screen.getByTestId("getting-started-progress-fill").className).not.toContain("rounded");
 
-    const githubRow = screen.getByRole("button", { name: "Connect GitHub" });
-    expect(githubRow.className).toContain("gap-3");
-    expect(githubRow.className).toContain("py-2");
-    expect(githubRow.querySelector(":scope > svg:last-child")?.getAttribute("width")).toBe("16");
+    const emailRow = screen.getByRole("button", { name: "Connect email & calendar" });
+    expect(emailRow.className).toContain("gap-3");
+    expect(emailRow.className).toContain("py-2");
+    expect(emailRow.querySelector(":scope > svg:last-child")?.getAttribute("width")).toBe("16");
     expect(screen.getByRole("button", { name: "Set up billing" })
       .querySelector("img")?.getAttribute("width")).toBe("12");
     expect(screen.getByRole("button", { name: "Log in to Codex / Claude" })).not.toBeNull();
-    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(12));
+    await waitFor(() => expect(api.get.mock.calls.filter(([path]) => path === "/api/github/status")).toHaveLength(2));
   });
 
   it("consumes the shared onboarding brand palette", () => {
@@ -380,13 +439,14 @@ describe("GettingStartedPopover", () => {
     render(<GettingStartedPopover />);
     const api = useConnection.getState().api!;
     fireEvent.click(await screen.findByRole("button", { name: "Getting started — 3 of 5" }));
-    fireEvent.click(screen.getByRole("button", { name: "Connect email & calendar" }));
+    // Connect rows start the app's sign-in now; a step without one still opens its Settings page.
+    fireEvent.click(screen.getByRole("button", { name: "Log in to Codex / Claude" }));
 
-    expect(useUi.getState().requestedSettingsSection).toBe("services");
+    expect(useUi.getState().requestedSettingsSection).toBe("agents-providers");
     expect(useTabs.getState().tabs).toEqual([
       expect.objectContaining({ kind: "settings", title: "Settings" }),
     ]);
     expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
-    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(12));
+    await waitFor(() => expect(api.get.mock.calls.filter(([path]) => path === "/api/github/status")).toHaveLength(2));
   });
 });

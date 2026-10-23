@@ -83,3 +83,9 @@ export function getStartedConnectOrder(goals: readonly GetStartedGoalId[]): stri
   });
   return [...new Set(services)];
 }
+
+/** What connecting a service is for, when the wizard's catalog knows it (customer feedback, spec 635). */
+export function getStartedConnectBenefit(service: string): string | undefined {
+  const tool = getStartedToolForService(service);
+  return tool ? TOOL_CONNECT[tool].why : undefined;
+}

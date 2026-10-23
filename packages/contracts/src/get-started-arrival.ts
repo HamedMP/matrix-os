@@ -70,6 +70,53 @@ const CHECKED_AGENTS: readonly { id: GetStartedToolId; label: string; agent: str
   { id: "codex", label: "Codex", agent: "codex" },
 ];
 
+const EMAIL_CALENDAR_SERVICES = ["gmail", "google_calendar"] as const;
+
+// Customer feedback (spec 635): every prompt only reads, so sending it is always safe.
+const READ_ONLY = "Don't change anything.";
+const STEP_TRIES: Partial<Record<GettingStartedStepId, GettingStartedTry>> = {
+  github: { label: "List my GitHub repos", prompt: `List my GitHub repositories and suggest one to start with. ${READ_ONLY}` },
+  "email-calendar": {
+    label: "Find emails that need a reply",
+    prompt: "Find emails from the last few days that still need a reply from me, one line each. Don't send anything.",
+  },
+};
+const SERVICE_TRIES: Record<string, GettingStartedTry> = {
+  linear: { label: "Summarize my open Linear issues", prompt: `Summarize my open Linear issues by priority. ${READ_ONLY}` },
+  jira: { label: "Summarize my open Jira tickets", prompt: `Summarize my open Jira tickets by priority. ${READ_ONLY}` },
+  slack: { label: "Catch me up on Slack", prompt: `Catch me up on what I missed in Slack today. ${READ_ONLY}` },
+  notion: { label: "Find my recent Notion pages", prompt: `List the Notion pages I edited recently, one line each. ${READ_ONLY}` },
+  microsoft_outlook: {
+    label: "Find emails that need a reply",
+    prompt: "Find Outlook emails from the last few days that still need a reply from me, one line each. Don't send anything.",
+  },
+  todoist: { label: "List my tasks due this week", prompt: `List my Todoist tasks due this week. ${READ_ONLY}` },
+  hubspot: { label: "Find deals that need a follow-up", prompt: `List HubSpot deals that need a follow-up from me. ${READ_ONLY}` },
+  stripe: { label: "Summarize this month's payments", prompt: `Summarize this month's Stripe payments. ${READ_ONLY}` },
+};
+
+/** An unfinished step names the sign-in that finishes it, so the row can start it directly. */
+function stepRow(step: GettingStartedStep, connected: ReadonlySet<string> | null): GettingStartedRow {
+  const row: GettingStartedRow = { kind: "step", ...step };
+  if (step.status === "complete") {
+    const action = STEP_TRIES[step.id];
+    return action ? { ...row, try: action } : row;
+  }
+  switch (step.id) {
+    case "github": return { ...row, connect: "github" };
+    case "email-calendar": {
+      const missing = EMAIL_CALENDAR_SERVICES.filter((service) => !connected?.has(service));
+      const next = missing[0] ?? "gmail";
+      return connected && missing.length === 1
+        ? { ...row, label: `Connect ${getStartedServiceLabel(next)} (1 of 2)`, connect: next }
+        : { ...row, connect: next };
+    }
+    // Settings can also show a subscription signed in on this device; the step checks the computer.
+    case "agent": return { ...row, detail: "On your Matrix computer, where your AI runs" };
+    default: return row;
+  }
+}
+
 /**
  * Getting started for this owner: their goals first, and the coding agents they picked by name.
  * A named agent step is done only when one of those agents is signed in (`availableAgents`).
@@ -93,9 +140,19 @@ export function personalizeGettingStartedSteps(
 // Services the five steps already check, so they never get a second row.
 const STEP_SERVICES = new Set(["github", "gmail", "google_calendar"]);
 
+/** Something useful to ask once a connection is done; it opens Chat with the prompt, unsent. */
+export interface GettingStartedTry {
+  label: string;
+  prompt: string;
+}
+
+/**
+ * `connect` is the integration a row signs in to when clicked; `detail` is a second line of help;
+ * `try` replaces a finished step with a first action.
+ */
 export type GettingStartedRow =
-  | ({ kind: "step" } & GettingStartedStep)
-  | { kind: "tool"; id: `tool:${string}`; label: string; status: GettingStartedStepStatus; service: string }
+  | ({ kind: "step"; connect?: string; detail?: string; try?: GettingStartedTry } & GettingStartedStep)
+  | { kind: "tool"; id: `tool:${string}`; label: string; status: GettingStartedStepStatus; service: string; connect?: string; try?: GettingStartedTry }
   | { kind: "bot"; id: `bot:${string}`; label: string; status: GettingStartedStepStatus; recipeId: GetStartedRecipeBotId; create?: true };
 
 /**
@@ -114,13 +171,18 @@ export function gettingStartedRows(
   bots: GettingStartedBotStatuses = {},
 ): { rows: GettingStartedRow[]; completedCount: number; total: number } {
   const steps = answers ? personalizeGettingStartedSteps(snapshot.steps, answers, snapshot.availableAgents) : snapshot.steps;
-  const rows: GettingStartedRow[] = steps.map((step) => ({ kind: "step", ...step }));
   const connected = snapshot.connectedServices ? new Set(snapshot.connectedServices) : null;
+  const rows: GettingStartedRow[] = steps.map((step) => stepRow(step, connected));
   for (const tool of answers?.tools ?? []) {
     const connect = getStartedToolConnect(tool);
     if (connect.kind !== "app" || STEP_SERVICES.has(connect.service)) continue;
     const status = connected ? (connected.has(connect.service) ? "complete" : "incomplete") : "unavailable";
-    rows.push({ kind: "tool", id: `tool:${connect.service}`, label: `Connect ${getStartedServiceLabel(connect.service)}`, status, service: connect.service });
+    rows.push({
+      kind: "tool", id: `tool:${connect.service}`, label: `Connect ${getStartedServiceLabel(connect.service)}`, status, service: connect.service,
+      ...(status === "complete"
+        ? (SERVICE_TRIES[connect.service] ? { try: SERVICE_TRIES[connect.service]! } : {})
+        : { connect: connect.service }),
+    });
   }
   for (const recipeId of answers?.bots ?? []) {
     const status = bots[recipeId];

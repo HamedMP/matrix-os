@@ -2,7 +2,7 @@
 
 import {
   useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded,
-  openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, type GettingStartedRequest,
+  openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, gettingStartedRowAction, gettingStartedRowView, type GettingStartedRequest, type GettingStartedRowAction, type GettingStartedRowView,
 } from "@matrix-os/ui";
 import { onboardingChecklist } from "@matrix-os/brand";
 import {
@@ -10,16 +10,18 @@ import {
   emptyGettingStartedSnapshot,
   getStartedAppGalleryLabel,
   gettingStartedRows,
+  type GetStartedRecipeBotId,
   type GettingStartedRow,
   type GettingStartedSnapshot,
   type GettingStartedStepId,
   type GettingStartedStepStatus,
 } from "@matrix-os/contracts";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
 import { Bot, CheckIcon, ClipboardCheck, CreditCard, DownloadIcon, Folder, Github, KeyRound, MailIcon, Plug, Sparkles } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { useGettingStartedConnections } from "./use-getting-started-connections";
 
 const STATUS_TIMEOUT_MS = 10_000;
 const BRAND_COLORS = onboardingChecklist.colors;
@@ -82,22 +84,22 @@ export function resolveDesktopDownloadSuggestion(
   return fallback;
 }
 
-const STEP_ICONS: Record<GettingStartedStepId, typeof Github> = {
-  github: Github,
-  "email-calendar": MailIcon,
-  agent: KeyRound,
-  "first-work": Folder,
-  billing: CreditCard,
-};
-
-function rowIcon(row: GettingStartedRow): typeof Github {
-  if (row.kind === "tool") return Plug;
-  if (row.kind === "bot") return Bot;
-  return STEP_ICONS[row.id];
+/** Each row's icon, chosen in JSX so the React Compiler sees a fixed component. */
+function RowIconGlyph({ row }: { row: GettingStartedRow }) {
+  const props = { className: "size-4 shrink-0", "aria-hidden": true, style: { color: BRAND_COLORS.subtleText } } as const;
+  if (row.kind === "tool") return <Plug {...props} />;
+  if (row.kind === "bot") return <Bot {...props} />;
+  switch (row.id) {
+    case "github": return <Github {...props} />;
+    case "email-calendar": return <MailIcon {...props} />;
+    case "agent": return <KeyRound {...props} />;
+    case "first-work": return <Folder {...props} />;
+    case "billing": return <CreditCard {...props} />;
+  }
 }
 
-/** Where a Getting started row leads besides Settings: Chat (optionally a bot's own chat) or App Gallery. */
-export type GettingStartedDestination = { kind: "chat"; chatId?: string } | { kind: "app-gallery" };
+/** Where a Getting started row leads besides Settings: Chat (a bot's own chat, or a ready prompt) or App Gallery. */
+export type GettingStartedDestination = { kind: "chat"; chatId?: string; prompt?: string } | { kind: "app-gallery" };
 
 /** Bot status reads and opening a bot's chat, on the owner's gateway. */
 const webGettingStartedRequest: GettingStartedRequest = async (path, method, body) => {
@@ -191,6 +193,43 @@ export async function loadWebGettingStartedSnapshot(
   return deriveGettingStartedSnapshot({ github, integrations, agents, projects, chats, billing });
 }
 
+/** One checklist row: label (or its try action), optional help line, and its icon or "Try". */
+function ChecklistRow({ row, view, onActivate }: { row: GettingStartedRow; view: GettingStartedRowView; onActivate(): void }) {
+  return (
+    <button
+      type="button"
+      onClick={onActivate}
+      aria-busy={view.trailing === "waiting"}
+      className="flex w-full items-center gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-muted/70 focus-visible:bg-muted/70"
+      title={row.status === "unavailable" ? "Status is temporarily unavailable" : undefined}
+    >
+      <StepIndicator step={row} />
+      <span className="min-w-0 flex-1">
+        <span
+          className="block truncate"
+          style={{
+            color: view.struck ? BRAND_COLORS.subtleText : BRAND_COLORS.text,
+            fontSize: 11,
+            fontWeight: 400,
+            lineHeight: "normal",
+            textDecoration: view.struck ? "line-through" : "none",
+          }}
+        >
+          {view.label}
+        </span>
+        {view.detail ? (
+          <span className="mt-0.5 block truncate" style={{ color: BRAND_COLORS.subtleText, fontSize: 10 }}>{view.detail}</span>
+        ) : null}
+      </span>
+      {view.trailing === "icon" ? (
+        <RowIconGlyph row={row} />
+      ) : view.trailing === "try" ? (
+        <span className="shrink-0 rounded-full border px-2 py-0.5" style={{ borderColor: BRAND_COLORS.border, color: BRAND_COLORS.text, fontSize: 10 }}>Try</span>
+      ) : null}
+    </button>
+  );
+}
+
 function StepIndicator({ step }: { step: { status: GettingStartedStepStatus } }) {
   const complete = step.status === "complete";
   return (
@@ -213,15 +252,16 @@ function StepIndicator({ step }: { step: { status: GettingStartedStepStatus } })
  * from the saved choices instead, and the rows reload with the result.
  */
 function activateBotRow(
-  row: Extract<GettingStartedRow, { kind: "bot" }>,
-  agentId: string | undefined,
+  action: Extract<GettingStartedRowAction, { type: "bot" | "create-bots" }>,
+  agentIds: Partial<Record<GetStartedRecipeBotId, string>>,
   onOpenFirstWork: GettingStartedPopoverProps["onOpenFirstWork"],
   reload: () => void,
 ): void {
-  if (row.create) {
+  if (action.type === "create-bots") {
     retryGettingStartedBots(webGettingStartedRequest, reload);
     return;
   }
+  const agentId = agentIds[action.recipeId];
   if (!agentId) {
     onOpenFirstWork({ kind: "chat" });
     return;
@@ -252,6 +292,9 @@ function GettingStartedPopoverContent({
   const { markManualOpen, onOpenAutoFocus, onCloseAutoFocus } = useGettingStartedPopoverFocus();
   const helpTriggerRef = useRef<HTMLButtonElement>(null);
   const [refreshRequest, setRefreshRequest] = useState(0);
+  const requestRefresh = useCallback(() => setRefreshRequest((request) => (request + 1) % 1_000_000), []);
+  // Rows start an app's own sign-in, like the onboarding widget, and reload when any connection changes.
+  const { connectApp, connectingService, appsUnavailable } = useGettingStartedConnections(requestRefresh);
   const [snapshot, setSnapshot] = useState(emptyGettingStartedSnapshot);
   // Spec 635: lead with the steps that fit the owner's Get started answers.
   const getStartedAnswers = useGetStartedAnswers();
@@ -325,9 +368,6 @@ function GettingStartedPopoverContent({
 
   useEffect(() => {
     if (!open) return;
-    const requestRefresh = () => {
-      setRefreshRequest((request) => (request + 1) % 1_000_000);
-    };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") requestRefresh();
     };
@@ -339,13 +379,13 @@ function GettingStartedPopoverContent({
       window.removeEventListener("focus", requestRefresh);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [open]);
+  }, [open, requestRefresh]);
 
   const handleRadixOpenChange = (nextOpen: boolean) => {
     if (!nextOpen || blocked) return;
     markManualOpen();
     setOpen(true);
-    setRefreshRequest((request) => (request + 1) % 1_000_000);
+    requestRefresh();
   };
 
   const activateStep = (id: GettingStartedStepId) => {
@@ -367,15 +407,24 @@ function GettingStartedPopoverContent({
   };
 
   const activateRow = (row: GettingStartedRow) => {
-    if (row.kind === "step") {
-      activateStep(row.id);
-      return;
+    const action = gettingStartedRowAction(row, { canConnect: !appsUnavailable });
+    switch (action.type) {
+      case "try":
+        onOpenFirstWork({ kind: "chat", prompt: action.prompt });
+        return;
+      case "connect":
+        connectApp(action.service);
+        return;
+      case "step":
+        activateStep(action.id);
+        return;
+      case "settings":
+        onOpenSettings("integrations");
+        return;
+      case "create-bots":
+      case "bot":
+        activateBotRow(action, bots.agentIds, onOpenFirstWork, () => setRefreshRequest((request) => (request + 1) % 1_000_000));
     }
-    if (row.kind === "tool") {
-      onOpenSettings("integrations");
-      return;
-    }
-    activateBotRow(row, bots.agentIds[row.recipeId], onOpenFirstWork, () => setRefreshRequest((request) => (request + 1) % 1_000_000));
   };
 
   useEffect(() => {
@@ -492,34 +541,9 @@ function GettingStartedPopoverContent({
               <Sparkles className="size-4 shrink-0" aria-hidden="true" />
               <span className="min-w-0 flex-1 truncate">{getStartedAppGalleryLabel(getStartedAnswers)} in App Gallery</span>
             </button>
-            {rows.map((row) => {
-              const complete = row.status === "complete";
-              const RowIcon = rowIcon(row);
-              return (
-                <button
-                  key={row.id}
-                  type="button"
-                  onClick={() => activateRow(row)}
-                  className="flex w-full items-center gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-muted/70 focus-visible:bg-muted/70"
-                  title={row.status === "unavailable" ? "Status is temporarily unavailable" : undefined}
-                >
-                  <StepIndicator step={row} />
-                  <span
-                    className="min-w-0 flex-1 truncate"
-                    style={{
-                      color: complete ? BRAND_COLORS.subtleText : BRAND_COLORS.text,
-                      fontSize: 11,
-                      fontWeight: 400,
-                      lineHeight: "normal",
-                      textDecoration: complete ? "line-through" : "none",
-                    }}
-                  >
-                    {row.label}
-                  </span>
-                  <RowIcon className="size-4 shrink-0" aria-hidden="true" style={{ color: BRAND_COLORS.subtleText }} />
-                </button>
-              );
-            })}
+            {rows.map((row) => (
+              <ChecklistRow key={row.id} row={row} view={gettingStartedRowView(row, connectingService)} onActivate={() => activateRow(row)} />
+            ))}
           </div>
         </PopoverPrimitive.Content>
       </PopoverPrimitive.Portal>

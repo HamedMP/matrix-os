@@ -37,6 +37,24 @@ function rememberDraft(
   return next;
 }
 
+/**
+ * Puts text in a new Chat's composer, for a surface that opens Chat with a ready prompt. It never
+ * sends, and it leaves a draft the owner already started alone.
+ */
+function hasStartedDraft(draft: ComposerDraft | undefined): boolean {
+  return Boolean(draft && (draft.text.trim() || draft.referenceTokens.length));
+}
+
+export function seedNewChatDraft(text: string): boolean {
+  const identity = desktopComposerDraftIdentity(useConnection.getState());
+  const scope = newChatDraftScope(null);
+  const retained = useRetainedComposerDrafts.getState();
+  if (retained.identity === identity && hasStartedDraft(retained.drafts[scope])) return false;
+  retained.update(identity, (current, revision) => (hasStartedDraft(current[scope]) ? current
+    : rememberDraft(current, scope, { text, referenceTokens: [], projectId: null, requestIdentity: revision }, null, revision)));
+  return true;
+}
+
 export function useChatComposerDrafts({
   clientIdentity,
   retentionIdentity,

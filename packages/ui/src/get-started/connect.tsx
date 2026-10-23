@@ -1,4 +1,5 @@
 import {
+  getStartedConnectBenefit,
   getStartedConnectOrder,
   type AvailableIntegration,
   type ConnectedIntegration,
@@ -115,7 +116,11 @@ export function ServiceConnectAction({ service, label, connect, text = "Connect"
  * fit the owner's goals first. Connect opens the app's own sign-in through the surface's host.
  */
 export function GetStartedConnectTools({ goals, connect }: { goals: readonly GetStartedGoalId[]; connect: GetStartedConnect | null }) {
-  const services = connect?.catalog ?? [];
+  // Each known integration says what it is for, not only what it can do.
+  const services = useMemo(() => (connect?.catalog ?? []).map((service) => {
+    const benefit = getStartedConnectBenefit(service.id);
+    return benefit ? { ...service, description: benefit } : service;
+  }), [connect]);
   const connectedIds = useMemo(() => [...(connect?.connectedServices ?? [])], [connect]);
   const failedIds = useMemo(() => [...(connect?.failedServices ?? [])], [connect]);
   // The integrations that fit the goals lead; the marketplace's category sections follow as in Settings.

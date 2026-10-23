@@ -26,6 +26,21 @@ Why: today a new member pays, waits on a progress screen, and lands on a generic
 | Hamed | Tool selection and connecting should come earlier, not on the last screen: "Connect the tools you use", connected directly, in the exact Integrations design with icons. | Step 3 is "Connect the tools you use" and renders the shared `IntegrationMarketplace` from Settings > Integrations (search, filters, icons, Connect / waiting / Connected). The summary no longer has a connect list. |
 | Hamed | Suggest Matrix apps: "because you connected x, y, z, these apps are ready with your data", in a nice listing with icons. | Step 5 lists App Gallery apps whose required services are connected (App Gallery's own readiness rule), with their icons and Add. |
 
+
+## Customer feedback (22 October 2026)
+
+User-feedback changes, kept apart from the team feedback above (separate stack layer). Main point: after connecting accounts he did not know what to do next; setup must end with a clear, useful first result.
+
+| Feedback | How this spec handles it |
+| -- | -- |
+| "Connect GitHub" opens the general app directory; he still has to search. | Getting started rows start that app's own sign-in directly (the same connect flow as the onboarding widget). |
+| The checklist does not update after connecting GitHub and email. | Getting started reloads every 15 s and on focus on every surface, and at once on any connection change (gateway events on Web, the connect poll on Electron). |
+| Email & calendar stays unchecked with only Gmail connected. | The row reads "Connect Google Calendar (1 of 2)" and connects the missing app. |
+| Settings shows Codex "Connected on this device" while the login step stays unchecked. | The step adds "On your Matrix computer, where your AI runs"; the device subscription and the computer sign-in are different things. |
+| He is asked to connect tools without knowing what they enable. | The wizard's integrations list shows the benefit for known tools ("So your AI can sort and draft email"). |
+| After setup he has to work out the next action himself. | A finished step becomes a "Try" action that opens Chat with a ready prompt (for example "Find emails that need a reply"); nothing runs until he sends it. |
+| Out of scope here | The update dialog and the "unavailable" repository listing in Chat; tracked separately. |
+
 ## Priorities
 
 | Priority | What | Reuses |

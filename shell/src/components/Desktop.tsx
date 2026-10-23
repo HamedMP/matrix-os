@@ -35,8 +35,7 @@ import { gatewayAssetUrl, getGatewayUrl } from "@/lib/gateway";
 import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
 import { DesktopOnboardingWidget } from "./onboarding-widget/DesktopOnboardingWidget";
-import type { GettingStartedDestination } from "./onboarding/GettingStartedPopover";
-import { catalogAppLaunchPath } from "@/lib/app-catalog-launch";
+import { useGettingStartedDestination } from "./onboarding/use-getting-started-destination";
 import { ShellGetStartedGate } from "./get-started/ShellGetStartedGate";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
@@ -828,14 +827,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     setTaskBoardOpen(false);
   }, []);
 
-  const openGettingStartedWork = useCallback((destination?: GettingStartedDestination) => {
-    if (destination?.kind === "app-gallery") {
-      openAppOrFocus(catalogAppLaunchPath({ slug: "app-gallery", path: "apps/app-gallery/index.html" }) ?? "apps/app-gallery/index.html", "App Gallery");
-      return;
-    }
-    if (destination?.chatId) chat?.switchConversation(destination.chatId);
-    openAppOrFocus("__chat__", "Chat");
-  }, [chat, openAppOrFocus]);
+  const openGettingStartedWork = useGettingStartedDestination(chat, openAppOrFocus);
 
   const canvasToolbarChild = desktopMode === "canvas" ? (
     <CanvasToolbar

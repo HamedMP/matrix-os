@@ -2,6 +2,20 @@
 
 import { GettingStartedVisibilityProvider, useGettingStartedAutoOpenSuppression } from "../../packages/ui/src/getting-started-visibility";
 import { GetStartedAnswersProvider, GetStartedGate, type GetStartedPort } from "../../packages/ui/src/get-started/index.js";
+
+// The real hook opens the gateway socket; these tests drive connections through this stand-in.
+const connections = vi.hoisted(() => ({
+  connectApp: vi.fn(),
+  connectingService: null as string | null,
+  appsUnavailable: false,
+  onChanged: null as (() => void) | null,
+}));
+vi.mock("../../shell/src/components/onboarding/use-getting-started-connections.js", () => ({
+  useGettingStartedConnections: (onChanged: () => void) => {
+    connections.onChanged = onChanged;
+    return connections;
+  },
+}));
 import React from "react";
 import { act, cleanup, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -186,8 +200,9 @@ describe("web getting started status", () => {
     fireEvent.pointerDown(screen.getByRole("button", { name: "Outside" }), { button: 0, ctrlKey: false });
     expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Connect email & calendar" }));
-    expect(onOpenSettings).toHaveBeenCalledWith("integrations");
+    // A finished step without a try action still opens its Settings page, and the checklist stays open.
+    fireEvent.click(screen.getByRole("button", { name: "Log in to Codex / Claude" }));
+    expect(onOpenSettings).toHaveBeenCalledWith("agents-providers");
     expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
 
     fireEvent.click(trigger);
@@ -211,6 +226,70 @@ describe("web getting started status", () => {
 
     expect(await screen.findByRole("dialog", { name: "Getting started" })).toBeTruthy();
     expect(window.localStorage.getItem(webGettingStartedAutoOpenKey("/"))).toBe("1");
+  });
+
+  describe("closing the loop (customer feedback)", () => {
+    function installFetch(integrations: unknown[]) {
+      return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url = String(input);
+        const body = url.endsWith("/api/integrations") ? integrations
+          : url.endsWith("/api/agents/credentials/status") ? { agents: [] }
+            : url.endsWith("/api/workspace/projects") ? { projects: [] }
+              : url.endsWith("/api/chats?limit=1") ? { items: [] }
+                : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: true } }
+                  : { authenticated: false };
+        return new Response(JSON.stringify(body), { status: 200 });
+      });
+    }
+
+    async function openPopover(onOpenFirstWork = vi.fn(), onOpenSettings = vi.fn()) {
+      render(<GettingStartedPopover onOpenSettings={onOpenSettings} onOpenFirstWork={onOpenFirstWork} />);
+      fireEvent.click(await screen.findByRole("button", { name: /^Getting started — / }));
+      return screen.findByRole("dialog", { name: "Getting started" });
+    }
+
+    beforeEach(() => {
+      vi.stubGlobal("PointerEvent", MouseEvent);
+      window.localStorage.setItem(webGettingStartedAutoOpenKey("/"), "1");
+      connections.connectApp.mockReset();
+    });
+
+    it("starts GitHub's own sign-in and reloads the moment a connection changes", async () => {
+      const fetcher = installFetch([]);
+      const onOpenSettings = vi.fn();
+      const dialog = await openPopover(vi.fn(), onOpenSettings);
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Connect GitHub" }));
+      expect(connections.connectApp).toHaveBeenCalledWith("github");
+      expect(onOpenSettings).not.toHaveBeenCalled();
+      const reads = () => fetcher.mock.calls.filter(([input]) => String(input).endsWith("/api/integrations")).length;
+      const before = reads();
+      act(() => connections.onChanged?.());
+      await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    });
+
+    it("shows email & calendar as half done and connects the missing app", async () => {
+      installFetch([{ id: CONNECTION_ID, service: "gmail", status: "active" }]);
+      const dialog = await openPopover();
+      fireEvent.click(await within(dialog).findByRole("button", { name: /Connect Google Calendar \(1 of 2\)/ }));
+      expect(connections.connectApp).toHaveBeenCalledWith("google_calendar");
+    });
+
+    it("turns finished email into a ready prompt in a new chat, unsent", async () => {
+      installFetch([
+        { id: CONNECTION_ID, service: "gmail", status: "active" },
+        { id: "22222222-2222-4222-8222-222222222222", service: "google_calendar", status: "active" },
+      ]);
+      const onOpenFirstWork = vi.fn();
+      const dialog = await openPopover(onOpenFirstWork);
+      fireEvent.click(await within(dialog).findByRole("button", { name: /Find emails that need a reply/ }));
+      expect(onOpenFirstWork).toHaveBeenCalledWith({ kind: "chat", prompt: expect.stringMatching(/still need a reply from me.*Don't send anything\./) });
+    });
+
+    it("says the coding agent is signed in on the Matrix computer", async () => {
+      installFetch([]);
+      const dialog = await openPopover();
+      expect(await within(dialog).findByText("On your Matrix computer, where your AI runs")).toBeTruthy();
+    });
   });
 
   describe("after Get started", () => {
@@ -281,7 +360,7 @@ describe("web getting started status", () => {
       );
       const dialog = await screen.findByRole("dialog", { name: "Getting started" });
       fireEvent.click(await within(dialog).findByRole("button", { name: "Connect Linear" }));
-      expect(onOpenSettings).toHaveBeenCalledWith("integrations");
+      expect(connections.connectApp).toHaveBeenCalledWith("linear");
       fireEvent.click(await within(dialog).findByRole("button", { name: "Chat with Writing Bot" }));
       await waitFor(() => expect(onOpenFirstWork).toHaveBeenCalledWith({ kind: "chat", chatId: BOT_CHAT }));
       expect(within(dialog).getByTestId("getting-started-counter").textContent).toBe("0 of 7");

@@ -13,6 +13,7 @@ export {
 export { GetStartedGate, type GetStartedGateProps } from "./GetStartedGate.js";
 export type { GetStartedGallery, GetStartedGalleryApp, GetStartedGalleryPort } from "./gallery.js";
 export { openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, type GettingStartedRequest } from "./getting-started-bots.js";
+export { gettingStartedRowAction, gettingStartedRowView, type GettingStartedRowAction, type GettingStartedRowView } from "./getting-started-row.js";
 export { GetStartedWizard, type GetStartedWizardProps } from "./GetStartedWizard.js";
 export {
   GET_STARTED_SAVE_ERROR,
