@@ -12,8 +12,8 @@
 /* The wizard draws its own blurred copy of the wallpaper on an opaque layer,
    so icons, the dock and windows never show through. `place-items: center`
    on the parent also aligns absolutely positioned children, which would
-   shrink these empty layers to 0x0; stretch them explicitly. The fallback
-   colour (brand neutral 800) covers the desktop before the wallpaper loads. */
+   shrink these empty layers to 0x0; stretch them explicitly. GetStartedGate sets the
+   fallback colour from the brand tokens. */
 .mxo-gs__backdrop {
   position: absolute;
   inset: 0;
@@ -21,7 +21,6 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background-color: #242323;
 }
 
 /* Extends past the edges so the blur doesn't fade to the fallback colour. */

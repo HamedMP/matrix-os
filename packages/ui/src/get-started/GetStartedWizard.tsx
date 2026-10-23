@@ -165,7 +165,7 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
             value={wizard.name}
             onChange={(event) => dispatch({ type: "name", value: event.target.value })}
             onKeyDown={(event) => {
-              if (event.key === "Enter") dispatch({ type: "next" });
+              if (event.key === "Enter" && !event.nativeEvent.isComposing) dispatch({ type: "next" });
             }}
           />
         ) : null}

@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { productScales } from "@matrix-os/brand/tokens";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import type { GetStartedUpdate } from "../../packages/contracts/src/index.js";
@@ -93,6 +94,8 @@ describe("GetStartedGate", () => {
     const dialog = await screen.findByRole("dialog", { name: "What should we call you?" });
     expect(dialog).toHaveAttribute("aria-modal", "true");
     expect(dialog.closest(".ph-no-capture")).not.toBeNull();
+    // Opaque brand fallback so icons, the dock and windows never show through.
+    expect(document.querySelector(".mxo-gs__backdrop")).toHaveStyle({ backgroundColor: productScales.neutral[800] });
     expect(screen.queryByRole("button", { name: /close|minimi[sz]e/i })).not.toBeInTheDocument();
     expect(screen.queryByTestId("desktop-widget")).not.toBeInTheDocument();
     fireEvent.keyDown(dialog, { key: "Escape" });
@@ -105,6 +108,9 @@ describe("GetStartedGate", () => {
     const name = await screen.findByPlaceholderText("Your first name");
     expect(name).toHaveFocus();
     fireEvent.change(name, { target: { value: "Sam" } });
+    // Enter that confirms an IME composition (Chinese, Japanese) must not leave the step.
+    fireEvent.keyDown(name, { key: "Enter", isComposing: true });
+    expect(screen.getByPlaceholderText("Your first name")).toBeInTheDocument();
     fireEvent.keyDown(name, { key: "Enter" });
 
     expect(await screen.findByRole("dialog", { name: "What will you use Matrix for?" })).toBeInTheDocument();
@@ -341,8 +347,6 @@ describe("get started styles", () => {
     expect(backdrop).toContain("width: 100%");
     expect(backdrop).toContain("height: 100%");
     expect(backdrop).toContain("overflow: hidden");
-    // Opaque fallback so icons, the dock and windows never show through.
-    expect(backdrop).toMatch(/background-color: #[0-9a-f]{6};/i);
   });
 
   it("blurs its own copy of the wallpaper instead of relying on backdrop-filter", () => {

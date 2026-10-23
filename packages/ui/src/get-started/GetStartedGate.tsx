@@ -1,4 +1,5 @@
 import { useEffect, useState, type ComponentType, type CSSProperties, type ReactNode } from "react";
+import { productScales } from "@matrix-os/brand/tokens";
 import { useGettingStartedAutoOpenSuppression, useGettingStartedBlocker } from "../getting-started-visibility.js";
 import { usePublishGetStartedAnswers } from "./answers-context.js";
 import type { GetStartedConnect, GetStartedConnector } from "./connect.js";
@@ -81,6 +82,9 @@ function useBlockBackgroundShortcuts(active: boolean): void {
   }, [active]);
 }
 
+/** Covers the desktop before the wallpaper loads. */
+const BACKDROP_FALLBACK: CSSProperties = { backgroundColor: productScales.neutral[800] };
+
 export interface GetStartedGateProps {
   port: GetStartedPort;
   /** The surface's layer for full-window setup overlays: above windows and the dock, below hard gates. */
@@ -127,7 +131,7 @@ export function GetStartedGate({ port, zIndex, children, connector: Connector, w
   return (
     <div className="mxo-root mxo-gs ph-no-capture" style={{ zIndex }}>
       {WhileActive ? <WhileActive /> : null}
-      <div className="mxo-gs__backdrop" aria-hidden="true">
+      <div className="mxo-gs__backdrop" style={BACKDROP_FALLBACK} aria-hidden="true">
         <div className="mxo-gs__backdrop-image" style={backdrop ?? undefined} />
       </div>
       <div className="mxo-gs__scrim" aria-hidden />
