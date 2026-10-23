@@ -34,6 +34,22 @@ function validate(overrides: Record<string, string>) {
   });
 }
 
+function deploy(overrides: Record<string, string>) {
+  const script = step("Deploy tagged revision").split("candidate_url=")[0];
+  return spawnSync("bash", ["-c", `
+    gcloud() { if [ "$2 $3" = "services describe" ]; then return 1; fi; printf '%s\\n' "$@"; }
+    ${script}
+    printf '%s\\n' "$deploy_json"
+  `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
+    Object.keys(workflow.jobs.deploy.env).map((key) => [key, "fixture"])),
+    MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14",
+    GOOGLE_TAG_MANAGER_ID: "GTM-TEST123", GOOGLE_ANALYTICS_MEASUREMENT_ID: "",
+    GOOGLE_ANALYTICS_API_SECRET_VERSION: "1",
+    WHATSAPP_ENABLED: "false", WHATSAPP_ENCRYPTION_KEY_VERSION: "1",
+    ACCOUNT_DELETION_CONFIGURED: "false", ACCOUNT_DELETION_ENABLED: "false",
+    IMAGE_DIGEST: "image@sha256:fixture", ...overrides } });
+}
+
 describe("Matrix AI credit Cloud Run deployment", () => {
   it("keeps checkout disabled without funded AI or price configuration", () => {
     expect(validate({}).status).toBe(0);
@@ -87,9 +103,18 @@ describe("Matrix AI credit Cloud Run deployment", () => {
   it("mounts the dedicated Preview secret only for the explicit opt-in", () => {
     expect(workflow.jobs.deploy.env.MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED)
       .toContain("vars.MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED");
-    const deployScript = step("Deploy tagged revision");
-    expect(deployScript).toContain("MATRIX_PREVIEW_RUNTIME_SECRET=matrix-preview-runtime-secret:latest");
-    expect(deployScript).toContain('if [ "$MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED" = "true" ]');
+    const disabled = deploy({ MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED: "false" });
+    expect(disabled.status, disabled.stderr).toBe(0);
+    expect(disabled.stdout).toContain("MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED=false");
+    expect(disabled.stdout).not.toContain("MATRIX_PREVIEW_RUNTIME_SECRET=");
+    expect(disabled.stdout).not.toContain("MATRIX_PREVIEW_RUNTIME_TTL_MS=");
+
+    const enabled = deploy({ MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED: "true" });
+    expect(enabled.status, enabled.stderr).toBe(0);
+    expect(enabled.stdout).toContain("MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED=true");
+    expect(enabled.stdout).toContain("MATRIX_PREVIEW_RUNTIME_SECRET=matrix-preview-runtime-secret:latest");
+    expect(enabled.stdout).toContain("MATRIX_PREVIEW_RUNTIME_TTL_MS=fixture");
+    expect(enabled.stdout).toContain("MATRIX_PREVIEW_MAX_CONCURRENCY=fixture");
   });
 
   it("binds the reviewed package IDs only when checkout is enabled", () => {
