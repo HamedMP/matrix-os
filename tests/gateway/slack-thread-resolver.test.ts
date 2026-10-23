@@ -14,6 +14,7 @@ import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { CollaborationAuthority } from "../../packages/gateway/src/collaboration/authority.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import { createProjectChatAssignmentCoordinator } from "../../packages/gateway/src/collaboration/project-chat-assignment.js";
 import { createSlackThreadResolver } from "../../packages/gateway/src/slack/thread-resolver.js";
 import { MATRIX_BOT_SELECTION } from "../../packages/gateway/src/bots/selection.js";
 import { SHARED_MATRIX_BOT_ELIGIBILITY } from "../../packages/gateway/src/collaboration/shared-ai-eligibility.js";
@@ -52,50 +53,66 @@ describe("Slack thread creation inherits live Project authority", () => {
     expect(await fixture.db.selectFrom("collaboration_members").selectAll().where("scope_id", "=", first.scopeId).execute()).toEqual([]);
     expect(resolveCompanyBot).toHaveBeenCalledWith(expect.objectContaining({ chatId: first.chatId, projectScopeId: ids.scope, projectId: "company_project" }));
   });
-  it("locks the Project before its inherited Chat when fencing a Slack thread", async () => {
+  it("locks the Chat row before its Project and inherited scope when fencing a Slack thread", async () => {
     const project = await authority.authorize({ scopeId: ids.scope, actorId: actors.owner, action: "read" });
     const binding = await resolver()({ envelope, project });
     const lockOrder: string[] = [];
     const plugin: KyselyPlugin = {
       transformQuery(args) {
         const query = JSON.stringify(args.node);
-        if (query.includes('"modifier":"ForUpdate"') && query.includes('"name":"collaboration_scopes"')) {
-          lockOrder.push(query.includes(ids.scope) ? "project" : query.includes(binding.scopeId) ? "chat" : "other");
+        if (query.includes('"modifier":"ForUpdate"') && query.includes('"name":"chats"')) {
+          lockOrder.push("chat");
+        } else if (query.includes('"modifier":"ForUpdate"') && query.includes('"name":"collaboration_scopes"')) {
+          lockOrder.push(query.includes(ids.scope) ? "project" : query.includes(binding.scopeId) ? "child" : "other");
         }
         return args.node;
       },
       async transformResult(args) { return args.result; },
     };
     await resolver({ db: fixture.db.withPlugin(plugin) })({ envelope, project });
-    expect(lockOrder).toEqual(["project", "chat"]);
+    expect(lockOrder).toEqual(["chat", "project", "child"]);
   });
-  it.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("does not deadlock against Project-before-Chat assignment on PostgreSQL", async () => {
+  it.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("does not deadlock against the real Chat-before-Project assignment coordinator on PostgreSQL", async () => {
     const project = await authority.authorize({ scopeId: ids.scope, actorId: actors.owner, action: "read" });
     const binding = await resolver()({ envelope, project });
-    let projectLocked!: (pid: number) => void;
-    const held = new Promise<number>((resolve) => { projectLocked = resolve; });
+    const owner = { type: "personal" as const, ownerId: project.ownerId };
+    const current = await fixture.db.selectFrom("chats").select("revision").where("id", "=", binding.chatId).executeTakeFirstOrThrow();
+    let chatLocked!: () => void;
+    const held = new Promise<void>((resolve) => { chatLocked = resolve; });
     let continueAssignment!: () => void;
     const proceed = new Promise<void>((resolve) => { continueAssignment = resolve; });
-    const assignment = fixture.db.transaction().execute(async (trx) => {
-      const { rows: [backend] } = await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(trx);
-      if (!backend) throw new Error("PostgreSQL backend unavailable");
-      await trx.selectFrom("collaboration_scopes").select("id").where("id", "=", ids.scope).forUpdate().executeTakeFirstOrThrow();
-      projectLocked(backend.pid);
-      await proceed;
-      await trx.selectFrom("collaboration_scopes").select("id").where("id", "=", binding.scopeId).forUpdate().executeTakeFirstOrThrow();
-    });
-    const assignmentPid = await held;
+    const pausedQueries = new Set<string>();
+    let paused = false;
+    const plugin: KyselyPlugin = {
+      transformQuery(args) {
+        const query = JSON.stringify(args.node);
+        if (!paused && query.includes('"modifier":"ForUpdate"') && query.includes('"name":"chats"')) pausedQueries.add(args.queryId);
+        return args.node;
+      },
+      async transformResult(args) {
+        if (pausedQueries.delete(args.queryId)) {
+          paused = true;
+          chatLocked();
+          await proceed;
+        }
+        return args.result;
+      },
+    };
+    const assignmentDb = fixture.db.withPlugin(plugin);
+    const assignmentChats = new ChatRepository(assignmentDb as unknown as Kysely<ChatDatabase>);
+    const assignments = createProjectChatAssignmentCoordinator({ db: assignmentDb, chatRepository: assignmentChats, now: () => at });
+    const assignment = assignments.run(owner, repository => repository.update(owner, binding.chatId, {
+      baseRevision: Number(current.revision), title: "Owner update during Slack admission",
+    }));
+    await held;
     const resolution = resolver()({ envelope, project });
-    const settled = Promise.allSettled([assignment, resolution]);
+    let resolverSettled = false;
+    void resolution.then(() => { resolverSettled = true; }, () => { resolverSettled = true; });
     try {
-      let resolverBlocked = false;
-      for (let attempt = 0; attempt < 100 && !resolverBlocked; attempt++) {
-        const result = await sql<{ blocked: boolean }>`SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE ${assignmentPid} = ANY(pg_blocking_pids(pid))) AS blocked`.execute(fixture.db);
-        resolverBlocked = result.rows[0]?.blocked === true;
-        if (!resolverBlocked) await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      expect(resolverBlocked).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(resolverSettled).toBe(false);
     } finally { continueAssignment(); }
+    const settled = Promise.allSettled([assignment, resolution]);
     const results = await settled;
     for (const result of results) if (result.status === "rejected") throw result.reason;
     expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);

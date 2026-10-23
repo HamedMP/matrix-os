@@ -55,10 +55,12 @@ export function createSlackThreadResolver(options: SlackThreadResolverOptions) {
     const eligibility = parseCollaborationAiEligibility(capability.eligibility);
     if (!eligibility.matrixBot || !Number.isSafeInteger(capability.generation) || capability.generation < 1) throw new SlackCompanyError("unavailable");
     await options.db.transaction().execute(async (trx) => {
-      // Match Project assignment and Company Brain writes: inherited parent before child.
+      // Owner Chat updates take this row before reconciling Project inheritance.
+      // Keep the same Chat -> parent -> child order so Slack admission cannot
+      // deadlock an owner update that is moving or refreshing this Chat.
+      const chat = await trx.selectFrom("chats").selectAll().where("id", "=", chatId).where("owner_type", "=", "personal").where("owner_id", "=", project.ownerId).forUpdate().executeTakeFirst();
       const parent = await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", project.scopeId).forUpdate().executeTakeFirst();
       const child = await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", binding.resourceScopeId!).forUpdate().executeTakeFirst();
-      const chat = await trx.selectFrom("chats").selectAll().where("id", "=", chatId).where("owner_type", "=", "personal").where("owner_id", "=", project.ownerId).forUpdate().executeTakeFirst();
       if (!parent || !child || !chat || parent.deleted_at || child.deleted_at || parent.lifecycle !== "shared" || child.lifecycle !== "shared"
         || parent.owner_id !== project.ownerId || parent.organization_id !== project.organizationId || parent.resource_id !== project.resourceId
         || Number(parent.auth_epoch) !== project.authEpoch || parent.authority_runtime_id !== project.authorityRuntimeId || Number(parent.authority_generation) !== project.authorityGeneration
