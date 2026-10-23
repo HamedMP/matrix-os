@@ -18,3 +18,16 @@ export function snapshot() {
   value.gatewayPolicy = { accessSourceId: "matrix_included", allowedModelIds: ["sonnet"], monthlyBudgetMicrousd: 5_000_000, topUpEnabled: false };
   return value;
 }
+
+/** Server observation after a $5 purchase against $4 remaining and $1 settled. */
+export function purchasedObservation(): ProviderManagedCreditObservation {
+  const paid = observation(9_000_000);
+  paid.policy.monthlyBudgetMicrousd = 10_000_000;
+  paid.usage.usedMicrousd = 1_000_000;
+  paid.usage.limitMicrousd = 10_000_000;
+  paid.usage.credit!.promotionalBalanceMicrousd = 4_000_000;
+  paid.usage.credit!.addonBalanceMicrousd = 5_000_000;
+  paid.usage.budget!.monthlyBudgetMicrousd = 10_000_000;
+  paid.usage.budget!.settledThisMonthMicrousd = 1_000_000;
+  return paid;
+}

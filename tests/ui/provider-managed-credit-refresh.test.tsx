@@ -18,7 +18,7 @@ import { ProviderSettingsController, ProviderSettingsTransportError, useProvider
 import { AgentsProvidersView } from "../../packages/ui/src/agents-providers/AgentsProvidersView";
 import type { ProviderWorkflowClient } from "../../packages/ui/src/agents-providers/types";
 import { gatewayChatAvailableMicrousd } from "../../packages/ui/src/agents-providers/utils";
-import { observation, snapshot, start } from "./provider-managed-credit-fixture";
+import { observation, purchasedObservation, snapshot, start } from "./provider-managed-credit-fixture";
 import { ProviderSettingsSnapshotSchema, type ProviderManagedCreditObservation } from "@matrix-os/contracts";
 
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(start); });
@@ -32,6 +32,25 @@ function setup() {
   const controller = new ProviderSettingsController({ identityKey: "owner/runtime", transport, onCatalogChanged });
   return { original, transport, getSnapshot, getManagedCredit, onCatalogChanged, controller };
 }
+it("shows a completed purchase on the Web shared Settings view after authoritative credit refresh", async () => {
+  const t = setup();
+  const workflow: ProviderWorkflowClient = { capabilities: vi.fn().mockResolvedValue([]), start: vi.fn(),
+    get: vi.fn(), cancel: vi.fn(), submitKey: vi.fn(), logs: vi.fn() };
+  function WebSettings() {
+    const state = useProviderSettingsController({ identityKey: "paid-web", transport: t.transport,
+      automaticCreditRefreshEnabled: true });
+    return state.snapshot ? <AgentsProvidersView workflowClient={workflow} snapshot={state.snapshot}
+      selectedHarnessId={state.selectedHarnessId} busy={state.busy} onSelectHarness={state.onSelectHarness}
+      onRefresh={() => void state.refresh()} onMutate={state.mutate} /> : null;
+  }
+  render(<WebSettings />);
+  await act(async () => {});
+  expect(screen.getByText("$4.00")).toBeVisible();
+  t.getManagedCredit.mockImplementation(async () => purchasedObservation());
+  await act(async () => { await vi.advanceTimersByTimeAsync(45_000); });
+  expect(screen.getByText("$9.00")).toBeVisible();
+  expect(t.getSnapshot).toHaveBeenCalledOnce();
+});
 it("quietly replaces only authoritative credit and budget, without discovery callbacks or busy", async () => {
   const t = setup(); await t.controller.refresh({ refresh: false });
   const before = t.controller.getState().snapshot!;
