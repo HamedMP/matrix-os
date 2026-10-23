@@ -267,6 +267,13 @@ requests and expiry. An existing Private Preview created before this host marker
 and registration hook must be destroyed and started again after the Platform
 change is deployed.
 
+If host configuration fails after registration, Platform keeps a durable
+pending activation and retries it during normal reconciliation without reusing
+the consumed registration token. A stale in-flight claim is also reclaimed
+after the reconciliation lease expires. The machine remains available but its
+funded capabilities correctly remain unavailable until both host configurations
+verify; do not edit the host or recreate it for a transient activation warning.
+
 Who can use it: members of the internal Clerk organization named by
 `MATRIX_INTERNAL_CLERK_ORG_ID`. Membership is read through the collaboration
 organization projection, so the platform needs collaboration configured; without

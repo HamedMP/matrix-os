@@ -178,9 +178,13 @@ Do not activate funded access manually on the host. If Platform reports the
 machine as anything other than running, authorized, and explicitly
 `provisioning_class=preview` or `provisioning_class=private-preview`, or if the
 protected activation step did not succeed, the correct state is unavailable.
-Fix the provisioning/control-plane path and rerun the workflow, or destroy and
-start the Private Preview again. Never infer eligibility from a `pr-*` or
-`pv-*` handle.
+For a shared Preview, fix the provisioning/control-plane path and rerun the
+workflow. For a Private Preview, post-registration activation is durably pending
+and the normal reconciliation worker retries transient failures without reusing
+the one-use registration token; investigate only if that retry continues to
+fail. Destroy and start the Private Preview again only when it predates the
+required host marker/registration hook or when explicit cleanup is intended.
+Never infer eligibility from a `pr-*` or `pv-*` handle.
 
 ## Cleanup
 
