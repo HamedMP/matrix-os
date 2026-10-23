@@ -114,7 +114,8 @@ export function createLocalDevelopmentEnv(baseEnv = process.env) {
     NEXT_PUBLIC_E2E_TEST_BYPASS: "1",
     MATRIX_AUTH_ALLOW_INSECURE_DEV: "1",
     MATRIX_DEV_APP_AUTH_BYPASS: "1",
-    MATRIX_SELF_HOSTED: "1",
+    // Managed E2E mode retains Clerk context for Files and shared views.
+    MATRIX_SELF_HOSTED: "0",
     MATRIX_HOME_MIRROR: "true",
   };
 }
@@ -272,6 +273,7 @@ export async function startLocalDevelopment({
     localInfrastructureCommands.stopApplicationContainers[0],
     localInfrastructureCommands.stopApplicationContainers.slice(1),
   );
+  await runCommand("pnpm", ["--filter", "@matrix-os/gateway", "build:native"], { env });
   await runCommand(buildCommand[0], buildCommand.slice(1), { env });
   const services = startServices(env);
   let stoppedBySignal = false;

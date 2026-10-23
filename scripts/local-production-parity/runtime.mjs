@@ -1,10 +1,19 @@
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
+import { promisify } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
 import { closeSync, existsSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   root, machineName, runtimeDirectory, runtimeDiskPath, runtimeSeedPath,
   runtimePidPath, runtimeLogPath,
 } from "./config.mjs";
+const executeFile = promisify(execFile);
+
+function ownsRuntimeCommand(command, diskPath) {
+  const escaped = diskPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return /^(?:\S*\/)?qemu-system-x86_64\s/.test(command)
+    && new RegExp(`(?:^|[\\s,])file=${escaped}(?=,|\\s+-|$)`).test(command);
+}
 
 export function readRuntimePid() {
   if (!existsSync(runtimePidPath)) return null;
@@ -16,22 +25,22 @@ export function runtimeProcessIsOwned(options = {}) {
   const pid = options.pid ?? readRuntimePid();
   const diskPath = options.diskPath ?? runtimeDiskPath;
   const processCommand = options.processCommand ?? ((candidatePid) => {
-    const result = spawnSync("ps", ["-p", String(candidatePid), "-o", "command="], { encoding: "utf8" });
+    const result = spawnSync("ps", ["-p", String(candidatePid), "-o", "command="], { encoding: "utf8", timeout: 5000, maxBuffer: 1024 * 1024 });
     return result.status === 0 ? result.stdout.trim() : "";
   });
-  return pid !== null && processCommand(pid).includes(diskPath);
+  return pid !== null && ownsRuntimeCommand(processCommand(pid), diskPath);
 }
 
 export function runtimeProcessPids(options = {}) {
   const diskPath = options.diskPath ?? runtimeDiskPath;
   const processList = options.processList ?? (() => {
-    const result = spawnSync("ps", ["-axo", "pid=,command="], { cwd: root, encoding: "utf8" });
+    const result = spawnSync("ps", ["-axo", "pid=,command="], { cwd: root, encoding: "utf8", timeout: 5000, maxBuffer: 1024 * 1024 });
     if (result.status !== 0) throw new Error(`ps -axo pid=,command= failed: ${result.stderr.trim()}`);
     return result.stdout.trim();
   });
   return processList().split("\n").flatMap((line) => {
     const match = /^\s*(\d+)\s+(.+)$/.exec(line);
-    if (!match || !match[2].includes("qemu-system-x86_64") || !match[2].includes(`file=${diskPath}`)) return [];
+    if (!match || !ownsRuntimeCommand(match[2], diskPath)) return [];
     return [Number(match[1])];
   });
 }
@@ -57,16 +66,18 @@ export function qemuRuntimeArguments(options = {}) {
 
 export function startQemuRuntime() {
   const output = openSync(resolve(runtimeDirectory, "qemu.log"), "a");
-  // Use the installed executable so QEMU can locate its firmware.
-  const result = spawnSync("which", ["qemu-system-x86_64"], { cwd: root, encoding: "utf8" });
-  if (result.status !== 0) throw new Error("qemu-system-x86_64 is required");
-  const child = spawn(result.stdout.trim(), qemuRuntimeArguments(), {
-    cwd: root,
-    stdio: ["ignore", output, output],
-  });
-  closeSync(output);
+  let child;
+  try {
+    // Use the installed executable so QEMU can locate its firmware.
+    const result = spawnSync("which", ["qemu-system-x86_64"], { cwd: root, encoding: "utf8", timeout: 5000 });
+    if (result.status !== 0) throw new Error("qemu-system-x86_64 is required");
+    child = spawn(result.stdout.trim(), qemuRuntimeArguments(), {
+      cwd: root, detached: true, stdio: ["ignore", output, output],
+    });
+  } finally { closeSync(output); }
   if (!child.pid) throw new Error("QEMU did not return a process id");
   writeFileSync(runtimePidPath, `${child.pid}\n`, { mode: 0o600 });
+  child.unref();
 }
 
 export async function stopQemuRuntime() {
@@ -117,31 +128,45 @@ export function sshArguments(command, options = {}) {
   ];
 }
 
-export async function waitForRuntimeSsh(timeoutMs = 15 * 60_000, signal) {
+export async function runRuntimeSshProbe(command, { timeoutMs = 10_000, signal, execute = executeFile } = {}) {
+  signal?.throwIfAborted();
+  const timeout = Math.max(1, Math.min(timeoutMs, 10_000));
+  if (!Number.isFinite(timeout)) throw new Error("Invalid SSH probe timeout");
+  try {
+    await execute("ssh", sshArguments(command), { cwd: root, timeout,
+      signal, killSignal: "SIGKILL", maxBuffer: 64 * 1024 });
+    return true;
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (!(error instanceof Error)) throw error;
+    console.warn("VM SSH probe not ready:", error.name);
+    return false;
+  }
+}
+
+export async function waitForRuntimeSsh(timeoutMs = 15 * 60_000, signal, { probe = runRuntimeSshProbe } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     signal?.throwIfAborted();
-    const result = spawnSync("ssh", sshArguments(["true"]), { cwd: root, stdio: "ignore" });
-    if (result.status === 0) return;
+    if (await probe(["true"], { timeoutMs: Math.min(10_000, deadline - Date.now()), signal })) return;
     if (!runtimeProcessIsOwned()) throw new Error(`QEMU exited during startup; inspect ${runtimeLogPath}`);
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5_000));
+    await delay(Math.min(5000, Math.max(0, deadline - Date.now())), undefined, { signal });
   }
   throw new Error(`Timed out waiting for the production VM; inspect ${runtimeLogPath}`);
 }
 
-export async function waitForRuntimeReadiness(timeoutMs = 30 * 60_000, signal) {
+export async function waitForRuntimeReadiness(timeoutMs = 30 * 60_000, signal, { probe = runRuntimeSshProbe } = {}) {
   const deadline = Date.now() + timeoutMs;
-  const probe = [
+  const command = [
     "sudo", "test", "-f", "/opt/matrix/register-complete", "&&",
     "sudo", "systemctl", "is-active", "--quiet",
     "nginx", "matrix-gateway", "matrix-shell", "matrix-scope-runtime", "matrix-terminal-runtime",
   ];
   while (Date.now() < deadline) {
     signal?.throwIfAborted();
-    const result = spawnSync("ssh", sshArguments(probe), { cwd: root, stdio: "ignore" });
-    if (result.status === 0) return;
+    if (await probe(command, { timeoutMs: Math.min(10_000, deadline - Date.now()), signal })) return;
     if (!runtimeProcessIsOwned()) throw new Error(`QEMU exited during readiness checks; inspect ${runtimeLogPath}`);
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 5_000));
+    await delay(Math.min(5000, Math.max(0, deadline - Date.now())), undefined, { signal });
   }
   throw new Error("Timed out waiting for production registration and runtime services");
 }

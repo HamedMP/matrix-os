@@ -6,6 +6,22 @@ import { createLocalDevelopmentEnv, LOCAL_DEVELOPMENT_SERVICES, localInfrastruct
   startLocalDevelopment, startLocalInfrastructure } from "../../scripts/dev-local.mjs";
 const root = process.cwd();
 describe("source development lifecycle", () => {
+  it("builds the gateway native addon before starting source services", async () => {
+    const events: string[] = [];
+    await expect(startLocalDevelopment({
+      startInfrastructure: async () => undefined,
+      runCommand: async (command: string, args: string[]) => { events.push([command, ...args].join(" ")); },
+      startServices: () => {
+        events.push("start-services");
+        return { exited: Promise.resolve({ name: "fixture", pid: 123, code: 0 }), stop: async () => {} };
+      },
+      waitForHttp: async () => new Promise<void>(() => {}), log: () => {},
+    })).rejects.toThrow(/stopped/);
+    const native = events.indexOf("pnpm --filter @matrix-os/gateway build:native");
+    expect(native).toBeGreaterThanOrEqual(0);
+    expect(native).toBeLessThan(events.indexOf("start-services"));
+  });
+
   it("keeps source infrastructure and package filters explicit", () => {
     expect(localInfrastructureCommands.start).toEqual([
       "docker",
@@ -57,7 +73,7 @@ describe("source development lifecycle", () => {
       NEXT_PUBLIC_E2E_TEST_BYPASS: "1",
       MATRIX_AUTH_ALLOW_INSECURE_DEV: "1",
       MATRIX_BIND_HOST: "127.0.0.1",
-      MATRIX_SELF_HOSTED: "1",
+      MATRIX_SELF_HOSTED: "0",
     });
     expect(env).not.toHaveProperty("PORT");
   });
