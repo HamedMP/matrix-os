@@ -906,11 +906,12 @@ async function handleItemLifecycle(raw) {
     });
     startedToolItems.add(matrixItemId);
   }
-  if (toolItemsWithOutput.has(matrixItemId) || itemHasOutput(item)) {
+  const output = codexToolOutput(item, privateToolItems.has(matrixItemId), toolOutputKey ? { key: toolOutputKey, toolCallId: matrixItemId } : undefined);
+  if (toolItemsWithOutput.has(matrixItemId) || itemHasOutput(item) || output) {
     await persist({
       type: "matrix.codex.tool.output",
       toolCallId: matrixItemId,
-      ...(codexToolOutput(item, privateToolItems.has(matrixItemId), toolOutputKey ? { key: toolOutputKey, toolCallId: matrixItemId } : undefined) ?? {
+      ...(output ?? {
         text: item.type === "commandExecution" ? "Command produced output." : "Tool returned a result.",
         truncated: true,
       }),

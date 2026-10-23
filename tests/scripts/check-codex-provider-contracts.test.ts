@@ -134,7 +134,14 @@ describe("Codex provider contract checker", () => {
         // earlier qualification without changing either current contract.
         version: "0.162.0",
         execContract: { ...contract, latestVerifiedVersion: "0.162.0" },
-        appServerContract: { ...appServerContract, latestVerifiedVersion: "0.162.0" },
+        appServerContract: { ...appServerContract, latestVerifiedVersion: "0.162.0",
+          requiredServerProtocolSchemaDigests: {
+            ...appServerContract.requiredServerProtocolSchemaDigests,
+            "item/started": "cf1ee0c03c5e17473745ae11c8328710721a8cf7074417b7a49e3e358046e2a3",
+            "item/completed": "68920d904d688fc3e97522fc692ee17be5b7d9eb9435975644972ef43400d4c0",
+            "turn/completed": "b2500c9932e97982d2267730d43f01ab9b93423b4b662fc6040ea776766cf728",
+          },
+        },
         execSchemaBytes, appServerSchemaBytes, runtimeTarget,
       })).not.toThrow();
     }
@@ -201,8 +208,8 @@ describe("Codex provider contract checker", () => {
     })).toThrow("Codex 0.160.2 is not verified");
   });
 
-  it("retains reviewed Codex schemas through 0.163.0", () => {
-    expect(contract.latestVerifiedVersion).toBe("0.163.0");
+  it("retains reviewed Codex schemas through 0.164.0", () => {
+    expect(contract.latestVerifiedVersion).toBe("0.164.0");
     expect(contract.verifiedVersions["0.162.1"]).toEqual(contract.verifiedVersions["0.162.0"]);
     expect(appServerContract.verifiedVersions["0.162.1"]).toEqual(appServerContract.verifiedVersions["0.162.0"]);
     expect(contract.verifiedVersions["0.156.0"]).toEqual({
@@ -231,7 +238,7 @@ describe("Codex provider contract checker", () => {
     expect(appServerContract.verifiedVersions["0.160.0"]).toEqual(appServerContract.verifiedVersions["0.159.3"]);
     expect(contract.verifiedVersions["0.160.1"]).toEqual(contract.verifiedVersions["0.160.0"]);
     expect(appServerContract.verifiedVersions["0.160.1"]).toEqual(appServerContract.verifiedVersions["0.160.0"]);
-    expect(appServerContract.latestVerifiedVersion).toBe("0.163.0");
+    expect(appServerContract.latestVerifiedVersion).toBe("0.164.0");
     expect(appServerContract.verifiedVersions["0.156.0"]).toEqual({
       schemaSha256ByTarget: {
         "darwin-arm64": "655adafa0ccea3d84f30bcbdc74e201fa14511c51e08d0cd024a0280daa8bc60",
@@ -266,9 +273,9 @@ describe("Codex provider contract checker", () => {
     });
     expect(appServerContract.requiredServerProtocolSchemaDigests).toMatchObject({
       "mcpServer/elicitation/request": "d164b1519690cfb0b5f353c8e6eb37087f720e7dcd81df4c145bc964f9416d05",
-      "item/started": "cf1ee0c03c5e17473745ae11c8328710721a8cf7074417b7a49e3e358046e2a3",
-      "item/completed": "68920d904d688fc3e97522fc692ee17be5b7d9eb9435975644972ef43400d4c0",
-      "turn/completed": "b2500c9932e97982d2267730d43f01ab9b93423b4b662fc6040ea776766cf728",
+      "item/started": "554ed510ef9adc011a14b1d0045b2741c536a0f6a4728b07723537c31f088cb5",
+      "item/completed": "7f57001a4be1380e4d2d183ae76dafc2beb274a9e4401edc4bd676cc59e7d2a3",
+      "turn/completed": "2417c2c44801a090d921300b88a225c379a80fb559cdc96a72f6861514e1351a",
     });
   });
 
