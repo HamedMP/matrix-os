@@ -1,3 +1,4 @@
+import { isAiCreditCheckoutMachineAllowed } from './ai-credit-checkout.js';
 import {
   FundedAiAuthorizationRequestSchema,
   FundedAiTerminalOutcomeRequestSchema, FundedAiExecutionRecoveryBatchRequestSchema,
@@ -215,6 +216,7 @@ export function createAiFundedRuntimeRoutes(options: {
   platformSecret: string;
   repository: AiFundedPolicyRepository;
   topUpEnabled?: boolean;
+  topUpAllowedMachineIds?: readonly string[];
   promotionalGrant?: AiFundedPromotionalGrantConfig;
   routeProbes?: FundedModelProbeService;
   isolatedChat?: IsolatedChatEnvelope;
@@ -296,7 +298,8 @@ export function createAiFundedRuntimeRoutes(options: {
         ? FundedAiRuntimeChatFundingSummaryResponseSchema : FundedAiRuntimeFundingSummaryResponseSchema;
       return c.json(schema.parse({
         contractVersion: 1,
-        funding: { ...summary.funding, topUpEnabled: options.topUpEnabled === true },
+        funding: { ...summary.funding, topUpEnabled: options.topUpEnabled === true
+          && isAiCreditCheckoutMachineAllowed(options.topUpAllowedMachineIds, machine.machineId) },
         policy: summary.policy,
         ...(body.data.includeChatAvailability ? { chatAvailability: summary.chatAvailability } : {}),
       }), 200);

@@ -1,7 +1,7 @@
 import type { Context, Handler } from "hono";
 import { createHash } from "node:crypto";
 import { getActiveUserMachineByClerkId, type PlatformDB } from "../db.js";
-import { AiCreditCheckoutRequestSchema, findAiCreditPackage, type AiCreditCheckoutConfig } from "../ai-credit-checkout.js";
+import { AiCreditCheckoutRequestSchema, findAiCreditPackage, isAiCreditCheckoutMachineAllowed, type AiCreditCheckoutConfig } from "../ai-credit-checkout.js";
 import { AiCreditCheckoutStoreError, finalizeAiCreditCheckoutClaim, getClaimByRequestId,
   prepareAiCreditCheckoutClaim } from "../ai-credit-checkout-store.js";
 import { isAiCreditCheckoutRouteHealthy } from "../ai-credit-checkout-readiness.js";
@@ -42,6 +42,9 @@ export function createAiCreditCheckoutHandler(options: {
       const machine = await getActiveUserMachineByClerkId(options.db, clerkUserId, parsed.data.runtimeSlot);
       if (!machine || machine.status !== "running" || machine.activationState !== "authorized") {
         return c.json({ error: "Computer is unavailable", code: "runtime_unavailable" }, 409);
+      }
+      if (options.checkout.enabled && !isAiCreditCheckoutMachineAllowed(options.checkout.allowedMachineIds, machine.machineId)) {
+        return c.json(options.unavailableResponse, 503);
       }
       const idempotencyKey = `matrix-ai-credit:${createHash("sha256")
         .update(`${clerkUserId}\0${machine.machineId}\0${parsed.data.requestId}`)

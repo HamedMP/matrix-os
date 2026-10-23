@@ -24,7 +24,12 @@ export type AiCreditCheckoutConfig = { enabled: false } | {
   enabled: true;
   automaticTax: boolean;
   packages: readonly AiCreditPackage[];
+  allowedMachineIds?: readonly string[];
 };
+
+export function isAiCreditCheckoutMachineAllowed(allowedMachineIds: readonly string[] | undefined, machineId: string): boolean {
+  return allowedMachineIds === undefined || allowedMachineIds.includes(machineId);
+}
 
 const PACKAGE_DEFINITIONS = [
   { id: "usd_5", amountUsd: 5, envKey: "STRIPE_PRICE_AI_CREDIT_USD_5" },
@@ -37,6 +42,21 @@ export const AI_CREDIT_CHECKOUT_KIND = "ai_credit_addon";
 export function loadAiCreditCheckoutConfig(env: NodeJS.ProcessEnv): AiCreditCheckoutConfig {
   if (env.MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED !== "true") return { enabled: false };
   if (!env.STRIPE_SECRET_KEY || !env.STRIPE_WEBHOOK_SECRET) return { enabled: false };
+  let allowedMachineIds: string[] | undefined;
+  const rawMachineIds = env.MATRIX_FUNDED_AI_ADDON_CHECKOUT_ALLOWED_MACHINE_IDS;
+  if (rawMachineIds !== undefined) {
+    if (rawMachineIds.length > 4096) return { enabled: false };
+    let value: unknown;
+    try { value = JSON.parse(rawMachineIds); }
+    catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      console.warn('[billing] Invalid checkout machine allowlist JSON');
+      return { enabled: false };
+    }
+    const parsed = z.array(z.uuid()).min(1).max(32).safeParse(value);
+    if (!parsed.success) return { enabled: false };
+    allowedMachineIds = parsed.data;
+  }
   const configured = PACKAGE_DEFINITIONS.map((definition) => {
     const parsed = StripePriceIdSchema.safeParse(env[definition.envKey]);
     if (!parsed.success) return null;
@@ -62,6 +82,7 @@ export function loadAiCreditCheckoutConfig(env: NodeJS.ProcessEnv): AiCreditChec
     // nothing. Operations must explicitly attest that registrations are live.
     automaticTax: env.MATRIX_AI_CREDIT_STRIPE_TAX_REGISTRATIONS_VERIFIED === "true",
     packages,
+    ...(allowedMachineIds ? { allowedMachineIds } : {}),
   };
 }
 

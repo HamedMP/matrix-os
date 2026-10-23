@@ -1,5 +1,9 @@
 # AI credit and managed-model closeout
 
+## Main-only purchase acceptance increment (23 October 2026)
+
+The requester authorized enabling purchases and testing on their main computer after approving the live Stripe catalog. Before activation, add a bounded optional machine allowlist to the existing checkout configuration. Enforce it both in the authenticated checkout handler and the runtime top-up projection; invalid/empty configured lists fail closed. Preserve unconfigured global behavior for a separately authorized broad release. TDD covers an allowed main, another computer of the same owner, another owner, invalid lists, and disabled-mode precedence. Use the existing isolated worktree/PR; keep subscription issuance off. Deploy the resulting exact image only as a zero-default-traffic candidate with the main machine allowlisted and the reviewed Price IDs. Do not bypass readiness, price/tax gates, copy user tokens, change permissions, or submit real payment. Verify normal user authentication and routing before claiming the main UI enabled; stop at a concrete payment handoff or actual blocker. No default traffic promotion or Relay release is included.
+
 Tracks: [ENG-296](https://linear.app/matrix-os/issue/ENG-296), existing AI Gateway billing work. Requester approved one task and one implementation PR on 22 October 2026. Base: `69a06f252298c4f20e5ef207d125ae8e8da226dc`.
 
 ## Outcome and limits

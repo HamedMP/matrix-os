@@ -369,11 +369,13 @@ async function startPlatformServerWithCleanup(
       relayControlToken: fundedAiConfig.relayControlToken,
       ...probeLimits,
     });
+    const creditCheckoutConfig = loadAiCreditCheckoutConfig(process.env);
     internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
       db,
       platformSecret: fundedAiConfig.platformSecret,
       repository: fundedAiRepository,
-      topUpEnabled: loadAiCreditCheckoutConfig(process.env).enabled,
+      topUpEnabled: creditCheckoutConfig.enabled,
+      topUpAllowedMachineIds: creditCheckoutConfig.enabled ? creditCheckoutConfig.allowedMachineIds : undefined,
       promotionalGrant: fundedAiConfig.promotionalGrant,
       routeProbes: fundedModelProbes,
       isolatedChat: parseIsolatedChatEnvelope(process.env.MATRIX_ISOLATED_CHAT_ENVELOPE),
