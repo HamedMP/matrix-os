@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react-native";
-import { FlatList, KeyboardAvoidingView, Platform, Text } from "react-native";
+import { FlatList, Platform, Text } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
 import { AgentChatScreen, type AgentChatScreenProps } from "../components/agents/AgentChatScreen";
