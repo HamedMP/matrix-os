@@ -6,6 +6,7 @@ interface AnswersStore {
   ended: boolean;
   finishedNow: boolean;
   publish(answers: GetStartedAnswers | null, ended: boolean, finishedNow: boolean): void;
+  consumeFinishedNow(): void;
 }
 
 const AnswersContext = createContext<AnswersStore | null>(null);
@@ -22,7 +23,8 @@ export function GetStartedAnswersProvider({ scope, children }: { scope: string; 
   const ended = held.scope === scope && held.ended;
   const finishedNow = held.scope === scope && held.finishedNow;
   const publish = useCallback((next: GetStartedAnswers | null, nextEnded: boolean, nextFinishedNow: boolean) => setHeld({ scope, answers: next, ended: nextEnded, finishedNow: nextFinishedNow }), [scope]);
-  const value = useMemo<AnswersStore>(() => ({ answers, ended, finishedNow, publish }), [answers, ended, finishedNow, publish]);
+  const consumeFinishedNow = useCallback(() => setHeld((current) => (current.finishedNow ? { ...current, finishedNow: false } : current)), []);
+  const value = useMemo<AnswersStore>(() => ({ answers, ended, finishedNow, publish, consumeFinishedNow }), [answers, ended, finishedNow, publish, consumeFinishedNow]);
   return <AnswersContext value={value}>{children}</AnswersContext>;
 }
 
@@ -45,6 +47,16 @@ export function useGetStartedEnded(): boolean {
  */
 export function useGetStartedFinishedNow(): boolean {
   return useContext(AnswersContext)?.finishedNow ?? false;
+}
+
+const NOTHING_TO_CONSUME = () => {};
+
+/**
+ * Ends `useGetStartedFinishedNow` for this arrival once its one-time action has started or been
+ * dropped, so a remounted reader never repeats it. Safe without a provider.
+ */
+export function useConsumeGetStartedFinishedNow(): () => void {
+  return useContext(AnswersContext)?.consumeFinishedNow ?? NOTHING_TO_CONSUME;
 }
 
 /** Called by the gate once answers are known or setup has ended. */

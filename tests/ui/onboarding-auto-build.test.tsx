@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from "@testing-library/react";
-import { useReducer } from "react";
+import { act, cleanup, render, renderHook } from "@testing-library/react";
+import React, { useCallback, useReducer } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { initialOnboardingWidgetState, reduceOnboardingWidget } from "../../packages/contracts/src/index.js";
+import { initialOnboardingWidgetState, reduceOnboardingWidget, type OnboardingWidgetEvent } from "../../packages/contracts/src/index.js";
+import {
+  GetStartedAnswersProvider,
+  useConsumeGetStartedFinishedNow,
+  useGetStartedFinishedNow,
+  usePublishGetStartedAnswers,
+} from "../../packages/ui/src/get-started/answers-context.js";
 import { useOnboardingAutoBuild } from "../../packages/ui/src/onboarding-widget/host/use-onboarding-auto-build.js";
 
 afterEach(cleanup);
@@ -11,7 +17,15 @@ const suggestion = { title: "Habit tracker", prompt: "[BUILD] Build an app for m
 
 function useHarness(props: { finishedNow: boolean; aiReady: boolean; openChat: () => void; suggestion?: typeof suggestion | null }) {
   const [state, dispatch] = useReducer(reduceOnboardingWidget, { size: "corner", firstTaskCompleted: false }, initialOnboardingWidgetState);
-  useOnboardingAutoBuild({ suggestion: props.suggestion === undefined ? suggestion : props.suggestion, finishedNow: props.finishedNow, aiReady: props.aiReady, state, dispatch, openChat: props.openChat });
+  useOnboardingAutoBuild({
+    suggestion: props.suggestion === undefined ? suggestion : props.suggestion,
+    finishedNow: props.finishedNow,
+    consumeFinishedNow: () => {},
+    aiReady: props.aiReady,
+    state,
+    dispatch,
+    openChat: props.openChat,
+  });
   return { state, dispatch };
 }
 
@@ -98,5 +112,53 @@ describe("onboarding auto build", () => {
     expect(result.current.state.screen).toMatchObject({ kind: "run", phase: "starting", answer: "Summarize my week instead." });
     admit(result);
     expect(openChat).not.toHaveBeenCalled();
+  });
+});
+
+describe("onboarding auto build across widget remounts", () => {
+  /** Like the Get started gate right after the owner finished: published once, never again. */
+  function FinishedJustNow() {
+    usePublishGetStartedAnswers(null, true, true);
+    return null;
+  }
+
+  function Widget({ aiReady, builds }: { aiReady: boolean; builds: string[] }) {
+    const [state, reduce] = useReducer(reduceOnboardingWidget, { size: "corner", firstTaskCompleted: false }, initialOnboardingWidgetState);
+    const dispatch = useCallback((event: OnboardingWidgetEvent) => {
+      if (event.type === "build.requested") builds.push(event.title);
+      reduce(event);
+    }, [builds]);
+    useOnboardingAutoBuild({
+      suggestion,
+      finishedNow: useGetStartedFinishedNow(),
+      consumeFinishedNow: useConsumeGetStartedFinishedNow(),
+      aiReady,
+      state,
+      dispatch,
+      openChat: () => {},
+    });
+    return null;
+  }
+
+  function Desktop({ widget, aiReady, builds }: { widget: number; aiReady: boolean; builds: string[] }) {
+    return (
+      <GetStartedAnswersProvider scope="owner">
+        <FinishedJustNow />
+        <Widget key={widget} aiReady={aiReady} builds={builds} />
+      </GetStartedAnswersProvider>
+    );
+  }
+
+  it("starts the picked app once per arrival, even when the widget remounts", () => {
+    const builds: string[] = [];
+    const view = render(<Desktop widget={1} aiReady={false} builds={builds} />);
+    // Remounted while it waits for an AI, the build is still the next thing to start.
+    view.rerender(<Desktop widget={2} aiReady={false} builds={builds} />);
+    expect(builds).toEqual([]);
+    view.rerender(<Desktop widget={2} aiReady builds={builds} />);
+    expect(builds).toEqual(["Habit tracker"]);
+    // Remounted after it started, the widget never starts it a second time.
+    view.rerender(<Desktop widget={3} aiReady builds={builds} />);
+    expect(builds).toEqual(["Habit tracker"]);
   });
 });

@@ -17,12 +17,14 @@ type AutoBuild =
  * Spec 635 (team feedback): the first app the owner picked in Get started starts building as
  * soon as they arrive and an AI can run it, then its chat opens so they can watch. Picking it
  * was the go-ahead. It starts only from the idle task list: if the owner picks something else
- * while it waits for an AI, it stays the widget's one-click task. Once per arrival.
+ * while it waits for an AI, it stays the widget's one-click task. Once per arrival: starting or
+ * dropping it consumes `finishedNow`, so a remounted widget never starts it again.
  */
-export function useOnboardingAutoBuild({ suggestion, finishedNow, aiReady, state, dispatch, openChat }: {
+export function useOnboardingAutoBuild({ suggestion, finishedNow, consumeFinishedNow, aiReady, state, dispatch, openChat }: {
   suggestion: { title: string; prompt: string } | null;
   /** The owner finished Get started in this window just now. */
   finishedNow: boolean;
+  consumeFinishedNow: () => void;
   aiReady: boolean;
   state: OnboardingWidgetState;
   dispatch: (event: OnboardingWidgetEvent) => void;
@@ -34,12 +36,14 @@ export function useOnboardingAutoBuild({ suggestion, finishedNow, aiReady, state
     if (auto.current.phase !== "waiting" || !finishedNow || !suggestion) return;
     if (!idle) {
       auto.current = { phase: "done" };
+      consumeFinishedNow();
       return;
     }
     if (!aiReady) return;
     auto.current = { phase: "started", requestId: null, run: null, waitingForComputer: false };
     dispatch({ type: "build.requested", title: suggestion.title, prompt: suggestion.prompt });
-  }, [aiReady, dispatch, finishedNow, idle, suggestion]);
+    consumeFinishedNow();
+  }, [aiReady, consumeFinishedNow, dispatch, finishedNow, idle, suggestion]);
 
   const runRequest = state.screen.kind === "run" ? state.screen.requestId : null;
   const runPhase = state.screen.kind === "run" ? state.screen.phase : null;

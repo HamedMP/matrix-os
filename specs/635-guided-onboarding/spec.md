@@ -136,7 +136,7 @@ Personal Matrix Bot: at "Enter your computer", create it with `POST /api/chat-ag
 - **The wizard can't be closed until it is finished.** Close and minimize stay hidden while it runs. Each question keeps a Skip.
 - **Shown once per account.** Finishing or skipping both count. Recorded on the owner's computer in `system/get-started.json`, so a second device doesn't show it again.
 - **Closing the tab or refreshing mid-way does not count.** The wizard resumes with earlier answers.
-- **The AI asks before every action.** Clone, branch, pull request, app build, schedules: each needs an explicit yes; connecting always opens the provider's own sign-in.
+- **The AI asks before every action.** Clone, branch, pull request, app build, schedules: each needs an explicit yes; connecting always opens the provider's own sign-in. Picking a first app idea on the App Gallery step is that yes for its build: the step says "Pick one and Matrix starts building it in Chat as soon as your AI is ready.", and the build starts at most once, only right after the owner finishes setup.
 - **Editable later.** P2 answers change in Settings > Identity & personality; Getting started order follows `get-started.json`.
 
 ## Surfaces

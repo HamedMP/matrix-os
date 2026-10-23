@@ -70,6 +70,14 @@ describe("GetStartedAgentLogin", () => {
     expect(await screen.findByText("Claude account · sam@example.com")).toBeInTheDocument();
   });
 
+  it("disables sign-in on a read-only computer and says why, like Settings", async () => {
+    const readOnly = { ...snapshot(), access: { mode: "read_only", reason: "remote_policy" } } as ProviderSettingsSnapshot;
+    render(<GetStartedAgentLogin agent="claude" port={port({ snapshot: readOnly })} />);
+    expect(await screen.findByRole("region", { name: "Claude Code connection" })).toBeInTheDocument();
+    expect(screen.getByText("Your organization controls these settings.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Claude account/ })).toBeDisabled();
+  });
+
   it("waits for this computer's provider state before offering a sign-in", () => {
     render(<GetStartedAgentLogin agent="claude" port={port({ snapshot: null })} />);
     expect(screen.getByRole("status")).toHaveTextContent("Checking Claude Code…");

@@ -21,7 +21,7 @@ import { useOnboardingAiConnect, type OnboardingAiConnectPort } from "./use-onbo
 import { useOnboardingAutoBuild } from "./use-onboarding-auto-build.js";
 import { useOnboardingChatHandoff } from "./use-onboarding-chat-handoff.js";
 import { useOnboardingRun } from "./use-onboarding-run.js";
-import { useGetStartedAnswers, useGetStartedFinishedNow } from "../../get-started/answers-context.js";
+import { useConsumeGetStartedFinishedNow, useGetStartedAnswers, useGetStartedFinishedNow } from "../../get-started/answers-context.js";
 
 export interface OnboardingAppConnect {
   connectingService: string | null;
@@ -148,6 +148,7 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
   useOnboardingAutoBuild({
     suggestion: buildSuggestion,
     finishedNow: useGetStartedFinishedNow(),
+    consumeFinishedNow: useConsumeGetStartedFinishedNow(),
     aiReady: !loading && selection !== null && !creditsExhausted,
     state,
     dispatch,

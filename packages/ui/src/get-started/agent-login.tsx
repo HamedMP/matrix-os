@@ -3,6 +3,7 @@ import { useEffect, useState, type ComponentType } from "react";
 import { HarnessWorkflowPanel } from "../agents-providers/HarnessWorkflowPanel.js";
 import { hasConfiguredConnection, resolveHarnessConnection } from "../agents-providers/harness-connection.js";
 import { managedConnectionCapability } from "../agents-providers/managed-connection-capability.js";
+import { ReadOnlyNotice } from "../agents-providers/ReadOnlyNotice.js";
 import type { ProviderWorkflowClient, ProviderWorkflowUICapability } from "../agents-providers/types.js";
 import { connectedAccountLabel, providerName } from "../agents-providers/utils.js";
 
@@ -70,6 +71,37 @@ function AgentConnected({ agent, account, source }: { agent: GetStartedAgentKind
 
 const ignoreTerminal = () => undefined;
 
+/** Settings' install and sign-in panel for an agent that is not connected yet; read only when Settings is. */
+function AgentSignIn({ capability, harness, source, snapshot, port, operationId, onOperationId }: {
+  capability: ProviderWorkflowUICapability;
+  harness: ProviderSettingsSnapshot["harnesses"][number] | undefined;
+  source: ProviderAccessSource | undefined;
+  snapshot: ProviderSettingsSnapshot;
+  port: GetStartedAgentLoginPort;
+  operationId: string | null;
+  onOperationId: (id: string | null) => void;
+}) {
+  const readOnly = snapshot.access.mode === "read_only" ? snapshot.access : null;
+  return (
+    <div className="matrix-agents-providers mxo-gs__agent-login">
+      {readOnly ? <ReadOnlyNotice access={readOnly} /> : null}
+      <HarnessWorkflowPanel
+        harness={harness ?? { id: capability.harnessInstanceId, harness: capability.harness, displayName: capability.displayName, installState: capability.installState, authState: "unknown" }}
+        source={source}
+        capability={capability}
+        client={port.workflowClient}
+        disabled={readOnly !== null}
+        onRefresh={port.refresh}
+        onOpenTerminal={ignoreTerminal}
+        onOpenAuthorizationUrl={port.openAuthorizationUrl}
+        operationId={operationId ?? capability.activeOperationId ?? null}
+        onOperationId={onOperationId}
+        terminalAvailable={false}
+      />
+    </div>
+  );
+}
+
 /**
  * Spec 635, step 3: the Settings > Agents & providers install and sign-in for the coding agent
  * the owner picked, in place, from the same V3 provider state as Settings. The wizard cannot show
@@ -85,24 +117,7 @@ export function GetStartedAgentLogin({ agent, port }: { agent: GetStartedAgentKi
   const { snapshot } = port;
   const harness = snapshot.harnesses.find((item) => item.id === capability.harnessInstanceId);
   const { account, source } = harness ? resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources) : { account: undefined, source: undefined };
-  const connected = Boolean(harness && hasConfiguredConnection(harness, source));
-  if (connected) return <AgentConnected agent={agent} account={account} source={source} />;
+  if (harness && hasConfiguredConnection(harness, source)) return <AgentConnected agent={agent} account={account} source={source} />;
   if (capability.installState === "installed" && !canSignInHere(capability)) return later;
-  return (
-    <div className="matrix-agents-providers mxo-gs__agent-login">
-      <HarnessWorkflowPanel
-        harness={harness ?? { id: capability.harnessInstanceId, harness: capability.harness, displayName: capability.displayName, installState: capability.installState, authState: "unknown" }}
-        source={source}
-        capability={capability}
-        client={port.workflowClient}
-        disabled={false}
-        onRefresh={port.refresh}
-        onOpenTerminal={ignoreTerminal}
-        onOpenAuthorizationUrl={port.openAuthorizationUrl}
-        operationId={operationId ?? capability.activeOperationId ?? null}
-        onOperationId={setOperationId}
-        terminalAvailable={false}
-      />
-    </div>
-  );
+  return <AgentSignIn capability={capability} harness={harness} source={source} snapshot={snapshot} port={port} operationId={operationId} onOperationId={setOperationId} />;
 }
