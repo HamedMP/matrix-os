@@ -112,6 +112,49 @@ it("preserves selected recipe data through failed refresh and retry", async () =
   expect(screen.getByRole("button", { name: "Create Agent" })).toBeEnabled();
 });
 
+it("offers model retry from a failed chooser and coalesces its pending requests", async () => {
+  const x = fixture(); x.client.catalog.mockRejectedValueOnce(new Error("private discovery failure"));
+  render(<ChatAgentsPanel client={x.client} view="recipes" onClose={x.close}/>);
+  await screen.findByText("Models could not be refreshed. Your draft is still here.");
+  const retry = await screen.findByRole("button", { name: "Retry models" });
+  expect(screen.getByRole("button", { name: "Start from scratch" })).toBeDisabled();
+  expect(retry).toBeEnabled();
+  let resolve!: (value: Awaited<ReturnType<typeof x.client.catalog>>) => void;
+  const catalog = await clientFixture({ matrix: true }).catalog();
+  x.client.catalog.mockReturnValueOnce(new Promise(value => { resolve = value; }));
+  fireEvent.click(retry); fireEvent.click(retry);
+  expect(retry).toBeDisabled(); expect(x.client.catalog).toHaveBeenCalledTimes(2);
+  await act(async () => resolve(catalog));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Start from scratch" })).toBeEnabled());
+  expect(screen.queryByText("private discovery failure")).toBeNull();
+});
+
+it("retries failed model discovery without losing a draft or reusing stale model authority", async () => {
+  const x = fixture(); await draft(x);
+  fireEvent.click(screen.getByRole("button", { name: "Add recipe" }));
+  fireEvent.click(screen.getByRole("checkbox", { name: "Personal Daily Brief" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Expected output" }), { target: { value: "A verified report" } });
+  const model = (screen.getByRole("combobox", { name: "Model" }) as HTMLSelectElement).value;
+  x.client.catalog.mockRejectedValueOnce(new Error("private discovery failure"));
+  fireEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+  await screen.findByText("Models could not be refreshed. Your draft is still here.");
+  const retry = await screen.findByRole("button", { name: "Retry models" });
+  expect(screen.getByRole("button", { name: "Create Agent" })).toBeDisabled();
+  let resolve!: (value: Awaited<ReturnType<typeof x.client.catalog>>) => void;
+  x.client.catalog.mockReturnValueOnce(new Promise(value => { resolve = value; }));
+  fireEvent.click(retry);
+  expect(retry).toBeDisabled(); expect(screen.getByRole("button", { name: "Create Agent" })).toBeDisabled();
+  const catalog = await clientFixture({ matrix: true }).catalog();
+  await act(async () => resolve(catalog));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Create Agent" })).toBeEnabled());
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(agent.name);
+  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(agent.instructions);
+  expect(screen.getByRole("textbox", { name: "Expected output" })).toHaveValue("A verified report");
+  expect(screen.getByRole("checkbox", { name: "Personal Daily Brief" })).toBeChecked();
+  expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(model);
+  expect(x.createCustom).not.toHaveBeenCalled();
+});
+
 it("submits a valid recipe with optional Ask when run integration", async () => {
   const x = fixture(); await draft(x);
   fireEvent.click(screen.getByRole("button", { name: "Add recipe" }));

@@ -440,7 +440,10 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
     {dailyRecipe?.client === client && client.bots && onOpenBotChat ? <DailyBriefCreation onRefreshCatalog={modelCatalog.refresh} onSetup={onSetup} recipe={dailyRecipe.recipe} client={client} models={botModels} catalog={state.catalog} catalogLoading={state.catalogLoading}
       onOpen={async chatId => { await onOpenBotChat(chatId); onClose(); }} onClose={() => setDailyRecipe(null)} /> : null}
     {setupPaused ? <button type="button" className={button} onClick={() => { setSetupPaused(false); modelCatalog.refresh(); }}>Resume agent setup</button> : null}
-    {modelCatalog.error ? <p role="alert" className="text-xs">{modelCatalog.error}</p> : null}
+    {modelCatalog.error || modelCatalog.loading ? <div className="flex flex-wrap items-center gap-2 text-xs">
+      {modelCatalog.error ? <p role="alert">{modelCatalog.error}</p> : <p role="status">Loading models…</p>}
+      <button type="button" className={button} disabled={modelCatalog.loading || state.pending} onClick={modelCatalog.refresh}>Retry models</button>
+    </div> : null}
     <div hidden={setupPaused} className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
     {recipes ? <div hidden={Boolean(state.editing)} inert={Boolean(state.editing)}><AgentRecipesPanel
       onStartFromScratch={trigger => { scratchTrigger.current = trigger; edit("new"); }}

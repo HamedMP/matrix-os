@@ -231,7 +231,7 @@ export function createCanonicalChatClient(
   const trackEvent = options.trackEvent ?? trackDesktopEvent;
   return {
     browserPermissions: createBrowserPermissionClient((path, method, body) => method === "GET" ? transport.get(path) : transport.delete(path, body)),
-    agents: createChatAgentClient((path, method, body) => method === "GET" ? transport.get(path)
+    agents: createChatAgentClient((path, method, body, requestOptions) => method === "GET" ? requestOptions ? transport.get(path, requestOptions) : transport.get(path)
       : method === "POST" ? transport.post(path, body)
         : method === "DELETE" ? transport.delete(path)
           : transport.patch(path, body)),
