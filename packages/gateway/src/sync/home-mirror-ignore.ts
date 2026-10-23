@@ -38,7 +38,6 @@ const DEFAULT_IGNORE_DIRS = new Set([
   ".claude",
   ".codex",
   ".hermes",
-  ".cua-driver",
   ".local",
   ".npm",
   ".rustup",

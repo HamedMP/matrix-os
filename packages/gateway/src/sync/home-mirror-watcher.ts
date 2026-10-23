@@ -70,7 +70,6 @@ export class HomeMirrorWatcher {
     const next = watch(homeRoot, {
       persistent: true,
       ignoreInitial: true,
-      followSymlinks: false,
       awaitWriteFinish: { stabilityThreshold: 250, pollInterval: 100 },
       ignored: (absPath) => this.opts.pruned(relative(homeRoot, absPath)),
     });
