@@ -281,6 +281,7 @@ export function createApp(deps: {
   accountDeletion?: AccountDeletionRuntime;
   customerVpsService?: CustomerVpsService;
   activateManagedFeatures?: import('./managed-feature-activation.js').ManagedFeatureActivator;
+  activatePreviewRuntimeAccess?: import('./preview-runtime-activation.js').PreviewRuntimeAccessActivator;
   /** Overrides the collaboration organization projection for Private Preview membership. */
   privatePreviewMembership?: PrivatePreviewMembershipCheck;
   goldenSnapshotService?: GoldenSnapshotService;
@@ -793,6 +794,7 @@ export function createApp(deps: {
     app.route('/vps', createCustomerVpsRoutes({
       service: deps.customerVpsService,
       activateManagedFeatures: deps.activateManagedFeatures,
+      activatePreviewRuntimeAccess: deps.activatePreviewRuntimeAccess,
       platformSecret,
       goldenSnapshotOperatorSecret,
       probeMachineHealth,

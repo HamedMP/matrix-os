@@ -318,7 +318,7 @@ export async function createGateway(config: GatewayConfig) {
     : undefined;
   const speechRuntime = createGatewaySpeechRuntime({
     env: process.env,
-    getOwnerId: (c) => requireRequestPrincipal(c).userId,
+    getPrincipal: (c) => requireRequestPrincipal(c),
   });
   const runningVersion = getVersion(
     config.runningVersion ? { version: config.runningVersion } : undefined,

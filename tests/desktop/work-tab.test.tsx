@@ -349,7 +349,7 @@ describe("WorkTab rail integration", () => {
           }),
         });
       }
-      if (path === "/api/chat-agents") return { enabled: true, agents: [] };
+      if (path === "/api/chat-agents?includeManagedCustomRecoveries=true") return { enabled: true, agents: [], managedCustomRecoveries: [] };
       if (/^\/api\/chats\/[^/]+\/bot$/.test(path)) return { agentId: null };
       if (/^\/api\/chats\/(?:chat_global|chat_alpha)\?/.test(path)) return {
         record: path.startsWith("/api/chats/chat_alpha?") ? projectChat : globalChat,

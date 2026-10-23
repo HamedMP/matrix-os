@@ -12,6 +12,8 @@ import {
   type PlatformSpeechService,
   type SpeechFundingPort,
 } from "./service.js";
+import type { PreviewRuntimeAccessConfig } from "../preview-runtime-access.js";
+import { createPreviewAwareSpeechFundingPort } from "./preview-funding.js";
 
 const DISABLED_LIMITS = {
   enabled: true as const,
@@ -77,6 +79,7 @@ export function createConfiguredPlatformSpeechService(options: {
   config: PlatformSpeechConfig;
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  previewRuntimeAccess?: PreviewRuntimeAccessConfig;
 }): PlatformSpeechService {
   if (!options.config.enabled) {
     return createUnavailablePlatformSpeechService({
@@ -104,20 +107,28 @@ export function createConfiguredPlatformSpeechService(options: {
       policy: policy(config),
     });
   }
+  let funding: SpeechFundingPort;
+  if (config.fundingMode === "preview_no_charge") {
+    funding = fixtureFunding(deriveSecret(config.speechSecret, "funding"));
+  } else {
+    const paidFunding = createAiFundedSpeechFundingPort({
+      allowedSources: config.allowedFundingSources,
+      credentialHashSecret: deriveSecret(config.speechSecret, "funding"),
+      reservationIdFactory: () => `speech_${randomUUID().replaceAll("-", "")}`,
+      now: options.now,
+      monthlyAllowance: {
+        monthlyBudgetMicrousd: config.monthlyBudgetMicrousd,
+        monthlyPromotionalCreditMicrousd: config.monthlyPromotionalCreditMicrousd,
+      },
+    });
+    funding = options.previewRuntimeAccess?.enabled
+      ? createPreviewAwareSpeechFundingPort({ paid: paidFunding,
+        previewSecret: options.previewRuntimeAccess.runtimeSecret, now: options.now })
+      : paidFunding;
+  }
   const service = createPlatformSpeechService({
     operations,
-    funding: config.fundingMode === "preview_no_charge"
-      ? fixtureFunding(deriveSecret(config.speechSecret, "funding"))
-      : createAiFundedSpeechFundingPort({
-        allowedSources: config.allowedFundingSources,
-        credentialHashSecret: deriveSecret(config.speechSecret, "funding"),
-        reservationIdFactory: () => `speech_${randomUUID().replaceAll("-", "")}`,
-        now: options.now,
-        monthlyAllowance: {
-          monthlyBudgetMicrousd: config.monthlyBudgetMicrousd,
-          monthlyPromotionalCreditMicrousd: config.monthlyPromotionalCreditMicrousd,
-        },
-      }),
+    funding,
     adapter: createOpenAiFileTranscriptionAdapter({
       apiKey: config.apiKey,
       model: config.model,

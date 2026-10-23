@@ -53,6 +53,8 @@ import { createCustomerVpsProvisioner } from './customer-vps-provision.js';
 import { createCustomerVpsRecovery } from './customer-vps-recovery.js';
 import { createCustomerVpsRegistration } from './customer-vps-registration.js';
 import { createCustomerVpsPrivatePreviews } from './customer-vps-private-preview.js';
+import { activatePendingPrivatePreviewRuntimeAccess } from './customer-vps-preview-access-reconciliation.js';
+import { listPrivatePreviewRuntimeAccessActivationMachineIds } from './customer-vps-provisioning-jobs.js';
 
 export type {
   ProvisionResponse,
@@ -642,7 +644,10 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     async reconcileProvisioning() {
       await dispatchProvisioningJobs();
       await prebillingFallbackReconciler?.();
-      const staleBefore = new Date(now().getTime() - deps.config.reconciliationStaleAfterMs).toISOString();
+      const reconciliationNow = now();
+      const staleBefore = new Date(
+        reconciliationNow.getTime() - deps.config.reconciliationStaleAfterMs,
+      ).toISOString();
       const rows = await listStaleUserMachines(
         deps.db,
         ['provisioning', 'recovering'],
@@ -656,6 +661,36 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       );
       let failed = 0;
       let running = 0;
+      let previewAccessChecked = 0;
+      if (deps.activatePreviewRuntimeAccess) {
+        const previewAccessMachineIds = await listPrivatePreviewRuntimeAccessActivationMachineIds(
+          deps.db,
+          staleBefore,
+          Math.min(deps.config.reconciliationBatchSize, 10),
+        );
+        previewAccessChecked = previewAccessMachineIds.length;
+        for (const machineId of previewAccessMachineIds) {
+          const activationNow = now();
+          const result = await activatePendingPrivatePreviewRuntimeAccess({
+            db: deps.db,
+            machineId,
+            activate: deps.activatePreviewRuntimeAccess,
+            now: activationNow,
+            staleBefore: new Date(
+              activationNow.getTime() - deps.config.reconciliationStaleAfterMs,
+            ).toISOString(),
+          });
+          if (result.status === 'ready') {
+            running += 1;
+          } else if (result.status === 'failed') {
+            failed += 1;
+            logCustomerVpsError(
+              `private preview funded runtime reconciliation failed machineId=${machineId}`,
+              result.error,
+            );
+          }
+        }
+      }
       for (let row of rows) {
         if (row.status === 'recovering') {
           const recoveryCreate = await reconcilePendingRecoveryCreate(row);
@@ -829,7 +864,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
       }
       await retryProviderDeletions();
       await retryRunningMachineMetadata();
-      return { checked: rows.length + resizingRows.length, failed, running };
+      return { checked: rows.length + resizingRows.length + previewAccessChecked, failed, running };
     },
   };
 }

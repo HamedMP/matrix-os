@@ -2,7 +2,7 @@ import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { AiProviderLocalObservationSchema } from "#ai-provider";
-import { FundedAiChatAvailabilitySchema, isManagedWorkersAiModel } from "#funded-ai";
+import { FundedAiChatAvailabilitySchema, PreviewRequestQuotaSchema, isManagedWorkersAiModel } from "#funded-ai";
 import { MatrixAnthropicConnectionSchema } from "#matrix-anthropic-connection";
 import { MATRIX_CHATGPT_PLAN_INSTANCE_ID } from "#bots/model-choice";
 
@@ -152,6 +152,7 @@ export const ProviderUsageSchema = z.discriminatedUnion("kind", [
     budget: ProviderManagedBudgetSchema,
     /** Opt-in ordinary Chat projection; legacy aggregate credit remains unchanged. */
     chatAvailability: FundedAiChatAvailabilitySchema.optional(),
+    previewQuota: PreviewRequestQuotaSchema.optional(),
   }).strict().superRefine((usage, ctx) => {
     if (usage.chatAvailability && (usage.chatAvailability.asOf !== usage.asOf
       || usage.chatAvailability.eligibleBalanceMicrousd > usage.credit.creditBalanceMicrousd
