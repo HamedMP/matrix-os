@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
-import { CanonicalChatDetailResponseSchema, CanonicalChatListResponseSchema } from "@matrix-os/contracts";
+import { BotDirectChatResponseSchema, ChatAgentListResponseSchema, CanonicalChatDetailResponseSchema, CanonicalChatListResponseSchema } from "@matrix-os/contracts";
 import { createCanonicalChatFixture } from "../../contracts/fixtures/canonical-chat";
 import { closeElectronApp } from "./fixtures/close-electron";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
@@ -17,7 +17,8 @@ if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !built) {
   throw new Error("Required Desktop build missing");
 }
 const suite = built ? describe : describe.skip;
-const fixture = createCanonicalChatFixture("running").snapshot;
+const canonicalFixture = createCanonicalChatFixture("running");
+const fixture = canonicalFixture.snapshot;
 const chatId = fixture.chat.id;
 const run = fixture.runs[0]!;
 const turn = fixture.turns[0]!;
@@ -106,6 +107,15 @@ const server = createServer((req, res) => {
     streams.add(res);
     res.on("close", () => streams.delete(res));
     return;
+  }
+  if (url.pathname === "/api/chat-agents") {
+    return json(ChatAgentListResponseSchema.parse({ enabled: true, agents: [] }));
+  }
+  if (url.pathname === `/api/chats/${chatId}/bot`) {
+    return json(BotDirectChatResponseSchema.parse({ agentId: null }));
+  }
+  if (url.pathname === "/api/chat-providers") {
+    return json(canonicalFixture.providerCatalog);
   }
   if (url.pathname === "/api/chats") {
     return json(CanonicalChatListResponseSchema.parse({ items: [record()] }));
