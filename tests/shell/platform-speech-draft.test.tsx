@@ -94,6 +94,52 @@ describe("platform speech draft recording", () => {
     await waitFor(() => expect(hook.result.current.previewQuota?.requestsRemaining).toBe(1));
   });
 
+  it("keeps recording unavailable until post-transcription quota refresh completes", async () => {
+    const previewReady = {
+      ...ready,
+      previewQuota: {
+        mode: "preview" as const,
+        requestLimit: 1,
+        requestsUsed: 0,
+        requestsRemaining: 1,
+        maxConcurrency: 1 as const,
+        expiresAt: "2026-10-20T16:00:00.000Z",
+      },
+    };
+    const exhausted = {
+      ...previewReady,
+      previewQuota: {
+        ...previewReady.previewQuota,
+        requestsUsed: 1,
+        requestsRemaining: 0,
+      },
+    };
+    const refresh = Promise.withResolvers<typeof exhausted>();
+    const capabilities = vi.fn()
+      .mockResolvedValueOnce(previewReady)
+      .mockReturnValueOnce(refresh.promise);
+    const adapter = captureAdapter();
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-preview-refresh",
+      client: client({ capabilities }),
+      captureAdapter: adapter,
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    await act(async () => hook.result.current.start());
+    act(() => hook.result.current.stop());
+
+    await waitFor(() => expect(capabilities).toHaveBeenCalledTimes(2));
+    expect(hook.result.current.phase).toBe("loading");
+    await act(async () => hook.result.current.start());
+    expect(adapter.start).toHaveBeenCalledTimes(1);
+
+    await act(async () => refresh.resolve(exhausted));
+    await waitFor(() => expect(hook.result.current.phase).toBe("unavailable"));
+    expect(hook.result.current.previewQuota?.requestsRemaining).toBe(0);
+  });
+
   it("makes exhausted Preview dictation unavailable while preserving the quota", async () => {
     const exhausted = {
       ...ready,

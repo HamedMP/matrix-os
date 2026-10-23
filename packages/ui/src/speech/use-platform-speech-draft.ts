@@ -271,6 +271,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     requestRef.current = { requestId, controller, generation: active.generation };
     setError(null);
     setPhase("transcribing");
+    let transcriptionCompleted = false;
     try {
       const result = await client.transcribe({
         requestId,
@@ -279,7 +280,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
       });
       if (generationRef.current !== active.generation) return;
       if (result.outcome === "transcript") options.onDraft(result.text);
-      setPhase("idle");
+      transcriptionCompleted = true;
     } catch (caught: unknown) {
       if (generationRef.current !== active.generation || controller.signal.aborted) return;
       const safeMessage = options.safeErrorMessage?.(caught);
@@ -295,11 +296,17 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
         quotaRefreshRef.current?.abort();
         const quotaController = new AbortController();
         quotaRefreshRef.current = quotaController;
+        if (transcriptionCompleted) setPhase("loading");
         void client.capabilities(quotaController.signal).then((value) => {
           if (generationRef.current === active.generation) {
             setCapabilities(value);
             setCapabilitiesStale(false);
-            if (!supportedMediaType(value, options.captureAdapter)) setPhase("unavailable");
+            const supported = supportedMediaType(value, options.captureAdapter) !== undefined;
+            if (transcriptionCompleted) {
+              setPhase(supported ? "idle" : "unavailable");
+            } else if (!supported) {
+              setPhase("unavailable");
+            }
           }
         }).catch((caught: unknown) => {
           if (!quotaController.signal.aborted && generationRef.current === active.generation) {
@@ -316,7 +323,7 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
 
   async function start(): Promise<void> {
     if (!capabilities || !["idle", "error"].includes(phase)
-      || captureStartRef.current || recordingRef.current || requestRef.current) return;
+      || captureStartRef.current || recordingRef.current || requestRef.current || quotaRefreshRef.current) return;
     const mediaType = supportedMediaType(capabilities, options.captureAdapter);
     if (!mediaType || capabilities.fileTranscription.status !== "ready") return;
     const generation = ++generationRef.current;
