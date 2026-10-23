@@ -312,7 +312,7 @@ export function runPresentation(
         label: stopped ? "Agent work stopped" : "Agent work failed",
         ...(!stopped && runError ? { failureCode: runError.error.code } : {}),
         markdown: stopped ? "Run was cancelled."
-          : canonicalChatFailureNotice(runError?.error.code, runError?.error.safeMessage, run.id),
+          : canonicalChatFailureNotice(runError?.error.code, runError?.error.safeMessage),
         timestamp: Date.parse(runError?.occurredAt ?? run.completedAt ?? run.updatedAt),
         ...(!stopped && allowRetry && runError?.error.retryable && (reviewedFailure?.retryable ?? true)
           && runError.error.recoveryActions?.includes("retry")

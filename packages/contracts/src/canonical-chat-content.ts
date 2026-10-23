@@ -1,6 +1,6 @@
 import { z } from "zod/v4";
 import { CanonicalChatDetailResponseSchema, CanonicalChatRecordSchema, CanonicalChatStreamEventSchema, CanonicalChatStreamServerFrameSchema } from "#canonical-chat-api";
-import { CanonicalChatMessageSchema, CanonicalChatRunIdSchema } from "#canonical-chat";
+import { CanonicalChatMessageSchema } from "#canonical-chat";
 import type { CanonicalChatSafeError } from "#canonical-chat";
 export { canonicalChatApprovals, canonicalChatApprovalOutcome, canonicalChatApprovalTitle, type CanonicalChatApprovalView } from "#canonical-chat-approvals";
 export { supervisedToolApproval, supervisedToolApprovalCopy, supervisedToolRetryDraft, supervisedToolRetryPrompt, SUPERVISED_TOOL_APPROVAL_TTL_MS, type SupervisedToolApproval, type SupervisedToolApprovalSource } from "#supervised-tool-approval";
@@ -198,14 +198,10 @@ export function canonicalChatSafeFailureReason(code: unknown, reviewedDetail?: u
     : undefined;
 }
 
-/** Give support a stable lookup key when the Run has no reviewed reason. */
-export function canonicalChatFailureNotice(code: unknown, reviewedDetail: unknown, runId: unknown): string {
-  const reason = canonicalChatSafeFailureReason(code, reviewedDetail)
-    ?? CANONICAL_CHAT_FAILURE_COPY.run_failed;
-  const validRunId = CanonicalChatRunIdSchema.safeParse(runId);
-  return reason === CANONICAL_CHAT_FAILURE_COPY.run_failed && validRunId.success
-    ? `${reason} Run ID: ${validRunId.data}.`
-    : reason;
+/** Do not imply a diagnosis exists when the provider reported no error. */
+export function canonicalChatFailureNotice(code: unknown, reviewedDetail: unknown): string {
+  if (code === undefined) return "The agent stopped without reporting a reason.";
+  return canonicalChatSafeFailureReason(code, reviewedDetail) ?? CANONICAL_CHAT_FAILURE_COPY.run_failed;
 }
 
 /** Shared terminal outcome derivation; renderers only adapt placement and styling. */
@@ -226,7 +222,7 @@ export function canonicalChatTerminalNotices(detail: z.infer<typeof CanonicalCha
       beforeMessageId: inputs[index + 1]?.turn.inputMessageId,
       text: run.status === "failed"
         ? canonicalChatFailureNotice(runError?.type === "run.error" ? runError.error.code : undefined,
-          runError?.type === "run.error" ? runError.error.safeMessage : undefined, run.id)
+          runError?.type === "run.error" ? runError.error.safeMessage : undefined)
         : "Agent work stopped.",
       timestamp: Date.parse(run.completedAt ?? run.updatedAt),
     }];

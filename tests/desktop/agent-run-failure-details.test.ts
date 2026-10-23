@@ -8,12 +8,12 @@ const usageCopy = "Usage limit reached. Wait for reset or switch connection.";
 const creditCopy = "No usable agent credit. Check billing or switch connection.";
 
 describe("actionable agent failure details", () => {
-  it("provides a run reference when the provider reported no failure reason", () => {
+  it("states plainly when the provider reported no failure reason", () => {
     const { snapshot } = createCanonicalChatFixture("failed");
-    const copy = `The agent could not finish. Try again. Run ID: ${snapshot.runs[0]!.id}.`;
+    const copy = "The agent stopped without reporting a reason.";
     expect(canonicalChatPresentation(snapshot)[0]?.final?.markdown).toBe(copy);
     expect(canonicalChatTerminalNotices(snapshot as never)[0]?.text).toBe(copy);
-    expect(canonicalChatFailureNotice("run_failed", "/home/private", "run_bad token=private"))
+    expect(canonicalChatFailureNotice("run_failed", "/home/private"))
       .toBe("The agent could not finish. Try again.");
   });
   it.each([
