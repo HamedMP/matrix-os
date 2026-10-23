@@ -1029,7 +1029,7 @@ jobs:
     needs: [changes, ci-backend]
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
@@ -1118,6 +1118,12 @@ jobs:
         env:
           DESKTOP_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
         run: GITHUB_SHA="$DESKTOP_SOURCE_SHA" bun run build:desktop
+
+      - name: Run required Desktop account organization picker
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/account-organization-picker.e2e.test.ts
 
       - name: Run required Desktop file download regression
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'

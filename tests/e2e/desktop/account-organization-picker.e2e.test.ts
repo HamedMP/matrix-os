@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -7,8 +7,14 @@ import { _electron, type ElectronApplication, type Page } from "playwright";
 import { startStubGateway } from "./fixtures/stub-gateway";
 
 const root = resolve(__dirname, "../../..");
+const desktopMain = join(root, "desktop/out/main/index.js");
+const hasDesktopBuild = existsSync(desktopMain);
+if (process.env.MATRIX_DESKTOP_E2E_REQUIRED === "1" && !hasDesktopBuild) {
+  throw new Error("Required Desktop E2E build is missing");
+}
+const suite = hasDesktopBuild ? describe : describe.skip;
 
-describe("Electron Desktop account organization picker", () => {
+suite("Electron Desktop account organization picker", () => {
   let app: ElectronApplication;
   let page: Page;
   let profile: string;
@@ -25,7 +31,7 @@ describe("Electron Desktop account organization picker", () => {
     profile = mkdtempSync(join(tmpdir(), "matrix-account-picker-"));
     app = await _electron.launch({
       executablePath: createRequire(join(root, "desktop/package.json"))("electron") as string,
-      args: [join(root, "desktop/out/main/index.js")],
+      args: [desktopMain],
       env: { ...process.env, OPERATOR_GATEWAY_URL: gateway.url, OPERATOR_USER_DATA_DIR: profile },
     });
     page = await app.firstWindow();
