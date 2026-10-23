@@ -102,6 +102,33 @@ describe("usage-based funded AI admission", () => {
     });
   });
 
+  it("persists content-free upstream provenance and rejects conflicting replay", async () => {
+    const auth = await repo.authorize(request(credential.token, "bedrock_provenance"));
+    const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };
+    await repo.startReservation(key);
+    const upstreamProvenance = {
+      upstream: "aws_bedrock" as const,
+      routeId: "bedrock-eu-primary",
+      resolvedModel: "qualified-model",
+      inferenceProfile: "arn:aws:bedrock:eu-west-1:123456789012:inference-profile/qualified-model",
+      region: "eu-west-1",
+      pricingVersion: "aws-bedrock-qualified-2026-10-13",
+      providerRequestId: "aws-request-1",
+    };
+    const exact = { ...key, mode: "exact" as const, actualCostMicrousd: 120, upstreamProvenance };
+    const settled = await repo.finalizeReservation(exact);
+    expect(await repo.finalizeReservation(exact)).toEqual(settled);
+    await expect(repo.finalizeReservation({ ...exact, upstreamProvenance: {
+      ...upstreamProvenance, providerRequestId: "aws-request-2",
+    } })).rejects.toMatchObject({ code: "idempotency_conflict" });
+    expect(await db.executor.selectFrom("ai_funded_usage_reservations")
+      .select(["upstream", "route_id", "resolved_model", "inference_profile", "region", "pricing_version", "provider_request_id"])
+      .where("reservation_id", "=", key.reservationId).executeTakeFirstOrThrow())
+      .toEqual({ upstream: "aws_bedrock", route_id: "bedrock-eu-primary", resolved_model: "qualified-model",
+        inference_profile: upstreamProvenance.inferenceProfile, region: "eu-west-1",
+        pricing_version: "aws-bedrock-qualified-2026-10-13", provider_request_id: "aws-request-1" });
+  });
+
   it("keeps stale usage holds until exact provider usage arrives", async () => {
     const auth = await repo.authorize(request(credential.token));
     const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };

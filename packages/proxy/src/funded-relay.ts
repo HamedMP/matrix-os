@@ -12,6 +12,17 @@ import type { Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
 import { isFundedProxyApiKey } from "./auth.js";
+import {
+  assertBedrockInputWithinRoute,
+  bedrockRouteProvenance,
+  BedrockUpstreamError,
+  createBedrockFundedUpstream,
+} from "./funded-bedrock-upstream.js";
+import {
+  estimateBedrockWorstCaseMicrousd,
+  isBedrockPricingCurrent,
+  priceBedrockUsageMicrousd,
+} from "./funded-bedrock-route.js";
 import { AdmissionController, type AdmissionLease } from "./funded-relay-admission.js";
 import { refundFundedCapacityAttempt } from "./funded-relay-capacity.js";
 import { COUNT_TOKENS_BODY_LIMIT_BYTES, type FundedRelayConfig } from "./funded-relay-config.js";
@@ -41,6 +52,7 @@ import { classifyFundedUpstreamRejection } from "./funded-relay-rejection.js";
 import { SettlementRetryQueue } from "./funded-relay-settlement-queue.js";
 import { boundedBody, safeUpstreamHeaders } from "./funded-relay-stream.js";
 import { createFundedUsageTracker, type FundedFinalization } from "./funded-relay-usage.js";
+import type { FundedGenerationUpstream, FundedUpstreamProvenance } from "./funded-relay-upstream.js";
 
 const MESSAGES_PATH = "/v1/messages";
 const COUNT_TOKENS_PATH = "/v1/messages/count_tokens";
@@ -58,6 +70,7 @@ interface FundedRelayDependencies extends FundedRelayConfig {
   now?: () => Date;
   requestIdFactory?: () => string;
   platformClient?: FundedPlatformClient;
+  bedrockUpstream?: FundedGenerationUpstream;
 }
 
 type VerifiedFundedIdentity = FundedAiIdentity & {
@@ -275,6 +288,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
   const requestIdFactory = config.requestIdFactory ?? randomUUID;
   const admission = new AdmissionController(config, () => now().getTime());
   const platform = config.platformClient ?? createFundedPlatformClient({ ...config, fetch: fetchImpl });
+  const bedrockUpstream = config.bedrockRoute
+    ? dependencies.bedrockUpstream ?? createBedrockFundedUpstream(config.bedrockRoute)
+    : null;
   const shutdown = new AbortController();
   let closing = false;
   let terminalComplete = true;
@@ -347,16 +363,28 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     let anthropicBeta: string | null;
     let model: ReturnType<typeof mapFundedModel>;
     const isOpenAi = c.req.path === CHAT_COMPLETIONS_PATH;
+    let isBedrock = false;
     const requestSearch = new URL(c.req.url).search;
     try {
       const body: unknown = JSON.parse(await c.req.text());
-      const serialized = isOpenAi ? serializeFundedOpenAiRequest(body) : serializeFundedRequest(body);
+      const allowedOpenAiModels = new Set(config.bedrockRoute ? [config.bedrockRoute.clientModelId] : []);
+      const serialized = isOpenAi
+        ? serializeFundedOpenAiRequest(body, allowedOpenAiModels)
+        : serializeFundedRequest(body);
       parsedBody = serialized.request;
       requestBody = serialized.body;
       anthropicBeta = resolveRequestedBetas(c.req.header("anthropic-beta"), config.allowedBetas);
       if (!isOpenAi) assertFundedSystemMessageBeta(parsedBody as FundedRequest, anthropicBeta);
-      model = mapFundedModel(parsedBody.model);
-      if (isManagedWorkersAiModel(model.nativeModelId) !== isOpenAi) throw new Error("Unsupported funded AI model");
+      isBedrock = isOpenAi && config.bedrockRoute?.clientModelId === parsedBody.model;
+      if (isBedrock && parsedBody.stream !== true) {
+        throw new Error("Bedrock funded requests require streaming");
+      }
+      model = isBedrock
+        ? { nativeModelId: config.bedrockRoute!.clientModelId, canonicalModelId: config.bedrockRoute!.canonicalModelId }
+        : mapFundedModel(parsedBody.model);
+      if ((isManagedWorkersAiModel(model.nativeModelId) || isBedrock) !== isOpenAi) {
+        throw new Error("Unsupported funded AI model");
+      }
     } catch (error) {
       if (error instanceof Error && error.name === "BodyLimitError") throw error;
       if (error instanceof Error && error.message === "Unsupported funded AI model") {
@@ -368,7 +396,21 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     if (c.req.path === MESSAGES_PATH && parsedBody.max_tokens === undefined) {
       return errorResponse(c, 400, "invalid_request_error", "Invalid AI request");
     }
-    if (isOpenAi && (!config.workersAiToken || config.reservationMode !== "usage")) {
+    if (isBedrock) {
+      try {
+        // Validate provider translation and its conservative input ceiling
+        // before an owner hold is reserved or a request is started.
+        assertBedrockInputWithinRoute(
+          parsedBody as ReturnType<typeof serializeFundedOpenAiRequest>["request"],
+          config.bedrockRoute!,
+        );
+      } catch (error) {
+        console.warn("[proxy] Funded AI request rejected", requestRejectionDiagnostic(error));
+        return errorResponse(c, 400, "invalid_request_error", "Invalid AI request");
+      }
+    }
+    if (isOpenAi && (config.reservationMode !== "usage"
+      || (isBedrock ? !bedrockUpstream : !config.workersAiToken))) {
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
 
@@ -400,7 +442,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         secret: config.metadataSecret,
       }),
     });
-    if (isOpenAi) {
+    if (isOpenAi && !isBedrock) {
       upstreamHeaders.delete("anthropic-version");
       upstreamHeaders.delete("anthropic-beta");
       upstreamHeaders.delete("cf-aig-authorization");
@@ -411,7 +453,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     let inputTokens: number;
     try {
       if (config.reservationMode === "usage" && c.req.path !== COUNT_TOKENS_PATH) {
-        inputTokens = maximumFundedInputTokens(model.canonicalModelId);
+        inputTokens = isBedrock ? config.bedrockRoute!.maxInputTokens : maximumFundedInputTokens(model.canonicalModelId);
       } else {
         const counted = await countTokens({
           requestBody: serializeCountTokensRequest(parsedBody as FundedRequest),
@@ -437,13 +479,17 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
 
     let estimate: ReturnType<typeof estimateWorstCaseMicrousd>;
     try {
-      estimate = estimateWorstCaseMicrousd({
-        canonicalModelId: model.canonicalModelId,
-        inputTokens,
-        maxOutputTokens: parsedBody.max_tokens!,
-        now: now(),
-        pricingReviews: config.pricingReviews,
-      });
+      estimate = isBedrock
+        ? estimateBedrockWorstCaseMicrousd({
+          route: config.bedrockRoute!, inputTokens, maxOutputTokens: parsedBody.max_tokens!, now: now(),
+        })
+        : estimateWorstCaseMicrousd({
+          canonicalModelId: model.canonicalModelId,
+          inputTokens,
+          maxOutputTokens: parsedBody.max_tokens!,
+          now: now(),
+          pricingReviews: config.pricingReviews,
+        });
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded AI pricing unavailable", { errorName });
@@ -477,7 +523,9 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     }
     // Authorization can cross the operator review deadline. Release its
     // untouched reservation before start rather than dispatching stale pricing.
-    if (!isFundedModelPriceCurrent(model.canonicalModelId, now(), config.pricingReviews)) {
+    if (isBedrock
+      ? !isBedrockPricingCurrent(config.bedrockRoute!, now())
+      : !isFundedModelPriceCurrent(model.canonicalModelId, now(), config.pricingReviews)) {
       await releaseBeforeStart(reservation.reservationId, authorization.identity.tokenId);
       return errorResponse(c, 503, "api_error", "AI access is temporarily unavailable");
     }
@@ -506,7 +554,10 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
     };
     const terminal = createRelayTerminalRecorder({ identity: authorization.identity, reservationId: reservation.reservationId,
       requestId, now, queue: settlementQueue, acknowledgementTimeoutMs: Math.min(10_000, 2 * config.platformTimeoutMs), shutdownSignal: shutdown.signal });
-    const enqueueFinalization = async (result: FundedFinalization, terminalState: "completed" | "failed" | "cancelled" = "completed"): Promise<void> => {
+    const enqueueFinalization = async (
+      result: FundedFinalization & { upstreamProvenance?: FundedUpstreamProvenance },
+      terminalState: "completed" | "failed" | "cancelled" = "completed",
+    ): Promise<void> => {
       if (result.mode === "conservative" && reservation.billingMode === "usage") {
         if (!await terminal.unknown(terminalState) && closing) terminalComplete = false;
       } else if (result.mode === "exact" && (reservation.billingMode === "usage" || result.actualCostMicrousd <= reservation.reservedMicrousd)) {
@@ -521,7 +572,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       firstResponseController.abort(new DOMException("AI first response timed out", "TimeoutError"));
     }, config.firstResponseTimeoutMs);
     const generationSignal = AbortSignal.any([state.lifetimeSignal, firstResponseController.signal]);
-    const generationUrl = isOpenAi
+    const generationUrl = isOpenAi && !isBedrock
       ? workersAiTarget(config.gatewayBaseUrl, model.nativeModelId).url
       : `${config.gatewayBaseUrl}${MESSAGES_PATH}${requestSearch}`;
     // Retain pseudonymous generation receipts even when gateway collection is
@@ -550,9 +601,21 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
       }
       terminal.started(started);
       dispatched = true;
-      const fetched = terminal.response(await fetchImpl(generationUrl, generationInit));
-      const upstream = isOpenAi && fetched.ok
-        ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
+      let upstreamProvenance: FundedUpstreamProvenance | undefined;
+      let upstream: Response;
+      if (isBedrock) {
+        const dispatchedResult = await bedrockUpstream!.dispatch({
+          request: parsedBody as ReturnType<typeof serializeFundedOpenAiRequest>["request"],
+          requestId,
+          signal: generationSignal,
+        });
+        upstream = terminal.response(dispatchedResult.response);
+        upstreamProvenance = dispatchedResult.provenance;
+      } else {
+        const fetched = terminal.response(await fetchImpl(generationUrl, generationInit));
+        upstream = isOpenAi && fetched.ok
+          ? normalizeWorkersAiResponse(fetched, model.nativeModelId, config.maxResponseBytes) : fetched;
+      }
       clearTimeout(firstResponseTimer);
       if (!upstream.ok) {
         await enqueueFinalization(await classifyFundedUpstreamRejection({
@@ -592,10 +655,20 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
             canonicalModelId: model.canonicalModelId,
             pricingVersion: estimate.pricingVersion,
             maxCaptureBytes: config.maxResponseBytes,
+            ...(isBedrock ? {
+              priceUsage: (usage) => priceBedrockUsageMicrousd({
+                route: config.bedrockRoute!, pricingVersion: estimate.pricingVersion, usage,
+              }),
+            } : {}),
           });
           return {
             push: (chunk: Uint8Array) => tracker.push(chunk),
-            complete: () => enqueueFinalization(tracker.complete()),
+            complete: () => {
+              const finalization = tracker.complete();
+              return enqueueFinalization(finalization.mode === "exact" && upstreamProvenance
+                ? { ...finalization, upstreamProvenance }
+                : finalization);
+            },
             ambiguous: () => enqueueFinalization({ mode: "conservative" }, "cancelled"),
             unconfirmed: () => { if (closing) terminalComplete = false; },
           };
@@ -614,11 +687,20 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
         refundFundedCapacityAttempt(runtimeAttempt, error);
         return controlPlaneError(c, error);
       }
-      await enqueueFinalization({ mode: "conservative" }, "failed");
+      const confirmedBedrockThrottle = isBedrock && error instanceof BedrockUpstreamError
+        && error.kind === "throttled";
+      await enqueueFinalization(confirmedBedrockThrottle
+        ? {
+            mode: "exact",
+            actualCostMicrousd: 0,
+            upstreamProvenance: bedrockRouteProvenance(config.bedrockRoute!),
+          }
+        : { mode: "conservative" }, "failed");
       resourceLease.release();
       state.resourceLease = null;
       const errorName = error instanceof Error ? error.name : "UnknownError";
       console.warn("[proxy] Funded AI upstream request failed", { errorName });
+      if (error instanceof BedrockUpstreamError && error.kind === "throttled") return rateLimited(c);
       if (state.lifetimeSignal.aborted || firstResponseController.signal.aborted) {
         return errorResponse(c, 504, "timeout_error", "AI access timed out");
       }
@@ -946,6 +1028,7 @@ export function createFundedRelay(dependencies: FundedRelayDependencies | null):
           const acknowledged = await settlementQueue.close(signal);
           return ended && acknowledged && terminalComplete && !signal.aborted;
         } finally {
+          bedrockUpstream?.close();
           signal.removeEventListener("abort", abort);
         }
       })();

@@ -54,6 +54,25 @@ const OpaqueCredentialSchema = z.string()
   .min(64)
   .max(256)
   .regex(/^sk-matrix-funded-[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}\.[A-Za-z0-9_-]{43}$/);
+const UpstreamReferenceSchema = z.string().min(1).max(2_048)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/);
+const ResolvedModelReferenceSchema = z.string().min(1).max(2_048)
+  .regex(/^@?[A-Za-z0-9][A-Za-z0-9._:/-]*$/);
+
+/** Content-free evidence attached by the trusted relay to exact settlement. */
+export const FundedAiUpstreamProvenanceSchema = z.object({
+  upstream: z.enum(["cloudflare_anthropic", "cloudflare_workers_ai", "aws_bedrock"]),
+  routeId: z.string().min(1).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+  resolvedModel: ResolvedModelReferenceSchema,
+  inferenceProfile: UpstreamReferenceSchema.optional(),
+  region: z.string().min(3).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+){2,5}$/).optional(),
+  pricingVersion: z.string().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+  providerRequestId: UpstreamReferenceSchema.optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.upstream === "aws_bedrock" && (!value.inferenceProfile || !value.region)) {
+    ctx.addIssue({ code: "custom", message: "Bedrock provenance requires an inference profile and region" });
+  }
+});
 
 export const FundedAiIdentitySchema = z.object({
   ownerId: canonicalReferenceId(160),
@@ -376,7 +395,10 @@ export const FundedAiFinalizationRequestSchema = z.discriminatedUnion("mode", [
     mode: z.literal("exact"),
     actualCostMicrousd: MicrousdSchema,
     jevProvenance: JevProvenanceSchema.optional(),
-  }).strict(),
+    upstreamProvenance: FundedAiUpstreamProvenanceSchema.optional(),
+  }).strict().refine((value) => !(value.jevProvenance && value.upstreamProvenance), {
+    message: "Jev and generic upstream provenance are mutually exclusive",
+  }),
   z.object({
     reservationId: canonicalReferenceId(160),
     tokenId: TokenIdSchema,
