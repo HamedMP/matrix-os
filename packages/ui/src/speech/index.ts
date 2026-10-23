@@ -1,7 +1,12 @@
-export { usePlatformSpeechDraft } from "./use-platform-speech-draft.js";
+export {
+  platformSpeechControlState,
+  platformSpeechPreviewQuotaLabel,
+  usePlatformSpeechDraft,
+} from "./use-platform-speech-draft.js";
 export type {
   PlatformSpeechCapture,
   PlatformSpeechCaptureAdapter,
+  PlatformSpeechControlState,
   PlatformSpeechDraftClient,
   PlatformSpeechDraftPhase,
   PlatformSpeechRecording,

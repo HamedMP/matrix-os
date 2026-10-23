@@ -1,4 +1,6 @@
 import {
+  platformSpeechControlState,
+  platformSpeechPreviewQuotaLabel,
   PlatformSpeechRecorderError,
   usePlatformSpeechDraft,
   type PlatformSpeechDraftClient,
@@ -171,6 +173,14 @@ export function useComposerSpeech({
         staleTime: CAPABILITIES_STALE_MS,
         retry: false,
       }),
+      transcribe: async (input) => {
+        const result = await gateway.transcribe(input);
+        // A successful request spends Preview quota. Mark the cached answer
+        // stale before the shared hook asks again so mobile never shows the
+        // pre-request allowance for another five minutes.
+        await queryClient.invalidateQueries({ queryKey: capabilitiesKey, exact: true });
+        return result;
+      },
     };
   }, [queryClient, capabilitiesKey, session]);
 
@@ -223,10 +233,15 @@ export function useComposerSpeech({
     return () => subscription.remove();
   }, [queryClient, capabilitiesKey, requestEnd]);
 
-  if (!enabled || !speech.isSupported) return undefined;
-  if (speech.phase === "loading" || speech.phase === "unavailable") return undefined;
+  if (!enabled) return undefined;
+  const control = platformSpeechControlState(speech);
+  if (!control.visible) return undefined;
   return {
     phase: speech.phase,
+    control,
+    previewQuotaLabel: speech.previewQuota
+      ? platformSpeechPreviewQuotaLabel(speech.previewQuota)
+      : null,
     elapsedMs: speech.elapsedMs,
     inputLevel: speech.inputLevel,
     inputLevelSequence: speech.inputLevelSequence,
@@ -240,5 +255,10 @@ export function useComposerSpeech({
       speech.stop();
     },
     cancel: speech.cancel,
+    retryCapabilities: () => {
+      tapHaptic();
+      void queryClient.invalidateQueries({ queryKey: capabilitiesKey, exact: true })
+        .then(() => speech.retryCapabilities());
+    },
   };
 }

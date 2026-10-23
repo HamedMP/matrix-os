@@ -2,7 +2,10 @@
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { usePlatformSpeechDraft } from "../../packages/ui/src/speech/use-platform-speech-draft.js";
+import {
+  platformSpeechControlState,
+  usePlatformSpeechDraft,
+} from "../../packages/ui/src/speech/use-platform-speech-draft.js";
 import type { PlatformSpeechCaptureAdapter } from "../../packages/ui/src/speech/use-platform-speech-draft.js";
 import type { BrowserSpeechClient } from "../../shell/src/lib/platform-speech-client.js";
 
@@ -58,6 +61,182 @@ function client(overrides: Partial<BrowserSpeechClient> = {}): BrowserSpeechClie
 describe("platform speech draft recording", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("exposes the server-authoritative Preview dictation quota", async () => {
+    const previewReady = {
+      ...ready,
+      previewQuota: {
+        mode: "preview" as const,
+        requestLimit: 3,
+        requestsUsed: 1,
+        requestsRemaining: 2,
+        maxConcurrency: 1 as const,
+        expiresAt: "2026-10-20T16:00:00.000Z",
+      },
+    };
+    const capabilities = vi.fn()
+      .mockResolvedValueOnce(previewReady)
+      .mockResolvedValue({ ...previewReady, previewQuota: {
+        ...previewReady.previewQuota, requestsUsed: 2, requestsRemaining: 1,
+      } });
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-preview",
+      client: client({ capabilities }),
+      captureAdapter: captureAdapter(),
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    expect(hook.result.current.previewQuota).toEqual(previewReady.previewQuota);
+    await act(async () => hook.result.current.start());
+    act(() => hook.result.current.stop());
+    await waitFor(() => expect(hook.result.current.previewQuota?.requestsRemaining).toBe(1));
+  });
+
+  it("keeps recording unavailable until post-transcription quota refresh completes", async () => {
+    const previewReady = {
+      ...ready,
+      previewQuota: {
+        mode: "preview" as const,
+        requestLimit: 1,
+        requestsUsed: 0,
+        requestsRemaining: 1,
+        maxConcurrency: 1 as const,
+        expiresAt: "2026-10-20T16:00:00.000Z",
+      },
+    };
+    const exhausted = {
+      ...previewReady,
+      previewQuota: {
+        ...previewReady.previewQuota,
+        requestsUsed: 1,
+        requestsRemaining: 0,
+      },
+    };
+    const refresh = Promise.withResolvers<typeof exhausted>();
+    const capabilities = vi.fn()
+      .mockResolvedValueOnce(previewReady)
+      .mockReturnValueOnce(refresh.promise);
+    const adapter = captureAdapter();
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-preview-refresh",
+      client: client({ capabilities }),
+      captureAdapter: adapter,
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    await act(async () => hook.result.current.start());
+    act(() => hook.result.current.stop());
+
+    await waitFor(() => expect(capabilities).toHaveBeenCalledTimes(2));
+    expect(hook.result.current.phase).toBe("loading");
+    await act(async () => hook.result.current.start());
+    expect(adapter.start).toHaveBeenCalledTimes(1);
+
+    await act(async () => refresh.resolve(exhausted));
+    await waitFor(() => expect(hook.result.current.phase).toBe("unavailable"));
+    expect(hook.result.current.previewQuota?.requestsRemaining).toBe(0);
+  });
+
+  it("makes exhausted Preview dictation unavailable while preserving the quota", async () => {
+    const exhausted = {
+      ...ready,
+      previewQuota: {
+        mode: "preview" as const,
+        requestLimit: 2,
+        requestsUsed: 2,
+        requestsRemaining: 0,
+        maxConcurrency: 1 as const,
+        expiresAt: "2026-10-20T16:00:00.000Z",
+      },
+    };
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-preview-exhausted",
+      client: client({ capabilities: vi.fn().mockResolvedValue(exhausted) }),
+      captureAdapter: captureAdapter(),
+      onDraft: vi.fn(),
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("unavailable"));
+    expect(hook.result.current.isSupported).toBe(false);
+    expect(hook.result.current.previewQuota).toEqual(exhausted.previewQuota);
+  });
+
+  it("fails closed on a stale post-transcription quota and retries capability refresh", async () => {
+    const previewReady = {
+      ...ready,
+      previewQuota: {
+        mode: "preview" as const,
+        requestLimit: 1,
+        requestsUsed: 0,
+        requestsRemaining: 1,
+        maxConcurrency: 1 as const,
+        expiresAt: "2026-10-20T16:00:00.000Z",
+      },
+    };
+    const exhausted = {
+      ...previewReady,
+      previewQuota: {
+        ...previewReady.previewQuota,
+        requestsUsed: 1,
+        requestsRemaining: 0,
+      },
+    };
+    const capabilities = vi.fn()
+      .mockResolvedValueOnce(previewReady)
+      .mockRejectedValueOnce(new Error("private refresh detail"))
+      .mockResolvedValueOnce(exhausted);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-preview-stale",
+      client: client({ capabilities }),
+      captureAdapter: captureAdapter(),
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    await act(async () => hook.result.current.start());
+    act(() => hook.result.current.stop());
+
+    await waitFor(() => expect(hook.result.current.capabilitiesStale).toBe(true));
+    expect(hook.result.current.phase).toBe("unavailable");
+    expect(hook.result.current.isSupported).toBe(false);
+    expect(hook.result.current.previewQuota).toEqual(previewReady.previewQuota);
+    await act(async () => hook.result.current.retryCapabilities());
+    await waitFor(() => expect(hook.result.current.capabilitiesStale).toBe(false));
+    expect(hook.result.current.previewQuota).toEqual(exhausted.previewQuota);
+    expect(hook.result.current.phase).toBe("unavailable");
+    expect(warn).toHaveBeenCalledWith("[speech-draft] quota refresh failed", "Error");
+    expect(warn).not.toHaveBeenCalledWith(expect.anything(), expect.stringContaining("private refresh detail"));
+  });
+
+  it("keeps the retry control visible when customer speech capabilities become stale", async () => {
+    const capabilities = vi.fn()
+      .mockResolvedValueOnce(ready)
+      .mockRejectedValueOnce(new Error("private refresh detail"))
+      .mockResolvedValueOnce(ready);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-customer-stale",
+      client: client({ capabilities }),
+      captureAdapter: captureAdapter(),
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    await act(async () => hook.result.current.start());
+    act(() => hook.result.current.stop());
+
+    await waitFor(() => expect(hook.result.current.capabilitiesStale).toBe(true));
+    expect(hook.result.current.previewQuota).toBeUndefined();
+    expect(platformSpeechControlState(hook.result.current)).toMatchObject({
+      disabled: false,
+      label: "Retry speech availability",
+      visible: true,
+    });
+    await act(async () => hook.result.current.retryCapabilities());
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
   });
 
   it("records, stops, transcribes once, and inserts an editable draft without sending", async () => {

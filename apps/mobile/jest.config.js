@@ -27,6 +27,7 @@ module.exports = {
     // The shared speech hook (@matrix-os/ui/speech) imports its siblings by their built names.
     "^\\./use-platform-speech-draft\\.js$": "<rootDir>/../../packages/ui/src/speech/use-platform-speech-draft.ts",
     "^\\./pcm\\.js$": "<rootDir>/../../packages/ui/src/speech/pcm.ts",
+    "^\\.\\./agents-providers/utils\\.js$": "<rootDir>/../../packages/ui/src/agents-providers/utils.ts",
     "^react$": "<rootDir>/node_modules/react",
     "^@/(.*)$": "<rootDir>/$1",
   },

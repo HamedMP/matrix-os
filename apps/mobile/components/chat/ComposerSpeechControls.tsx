@@ -58,15 +58,16 @@ export function SpeechButton({ speech, disabled }: { speech: ComposerSpeech; dis
     );
   }
   const waiting = speech.phase === "requesting_permission";
+  const checking = speech.phase === "loading";
   return (
     <IconButton
       {...quiet}
-      accessibilityLabel={waiting ? "Waiting for microphone permission" : "Start voice input"}
+      accessibilityLabel={waiting ? "Waiting for microphone permission" : speech.control.label}
       icon={MicIcon}
-      loading={waiting}
+      loading={waiting || checking}
       spinnerColor={colors.textDefault}
-      disabled={disabled}
-      onPress={speech.start}
+      disabled={disabled || speech.control.disabled}
+      onPress={speech.phase === "unavailable" ? speech.retryCapabilities : speech.start}
     />
   );
 }

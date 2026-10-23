@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REGISTER_FLAG="${MATRIX_REGISTER_FLAG:-/opt/matrix/register-complete}"
+REGISTER_FLAG="${MATRIX_REGISTER_FLAG:-/var/lib/matrix-vps-registration/register-complete}"
 REGISTER_LOCK="${MATRIX_REGISTER_LOCK:-${REGISTER_FLAG}.lock}"
 MAX_ATTEMPTS="${MATRIX_REGISTRATION_MAX_ATTEMPTS:-30}"
 INSTANCE_ID_URL="${MATRIX_METADATA_INSTANCE_ID_URL:-http://169.254.169.254/hetzner/v1/metadata/instance-id}"

@@ -12,6 +12,14 @@ Vercel previews only test the website/platform preview surface. Customer runtime
 
 Do not use this as the normal production rollout path. A preview VPS is a temporary branch runtime and should have its own handle and runtime slot.
 
+For a same-repository PR that needs Matrix-funded Chat or dictation, use the
+`preview-vps` label workflow or an owner-only Private Preview documented in
+[Preview Environments](preview-environments.md#bounded-funded-chat-and-dictation).
+Both create an explicitly server-classified Preview machine and perform the
+protected, exact-generation activation automatically. The legacy manual
+`/containers/provision` flow below is not Preview funded-access admission and
+must not be made eligible by its handle, runtime slot, or a host edit.
+
 ## Inputs
 
 | Value | Example | Notes |
@@ -152,6 +160,31 @@ Add checks for the branch under test. Examples:
 | Gateway or WebSocket | Verify auth, token paths, health, and expected websocket flows from the preview runtime. |
 | Integrations | Verify platform-owned secrets stay on platform and customer VPS calls proxy through the platform route. |
 | Default apps | Confirm app manifests, icons, and built `dist` assets load from the preview VPS. |
+
+For a workflow-provisioned `preview-vps` runtime or a newly registered Private
+Preview, also verify the following without printing credentials or private host
+configuration:
+
+- Matrix AI Settings shows a Preview Chat request allowance and expiry.
+- Chat shows a Preview dictation request allowance; one real recording inserts
+  an editable transcript and refreshes the remaining count.
+- One real funded Chat turn decrements the Preview request counter while the
+  owner's customer-primary balance remains unchanged.
+- Reusing either runtime token for another owner, machine, slot, or token epoch
+  is denied. Deleting and recreating the Preview does not revive old access.
+- The exact PR commit and bundle version match the workflow output.
+
+Do not activate funded access manually on the host. If Platform reports the
+machine as anything other than running, authorized, and explicitly
+`provisioning_class=preview` or `provisioning_class=private-preview`, or if the
+protected activation step did not succeed, the correct state is unavailable.
+For a shared Preview, fix the provisioning/control-plane path and rerun the
+workflow. For a Private Preview, post-registration activation is durably pending
+and the normal reconciliation worker retries transient failures without reusing
+the one-use registration token; investigate only if that retry continues to
+fail. Destroy and start the Private Preview again only when it predates the
+required host marker/registration hook or when explicit cleanup is intended.
+Never infer eligibility from a `pr-*` or `pv-*` handle.
 
 ## Cleanup
 

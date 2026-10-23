@@ -22,7 +22,10 @@ it.each(["valid", "wrong-machine", "wrong-version", "wrong-server", "symlink"])(
     writeFileSync(join(root, "app/BUNDLE_VERSION"), "v2026.09.06-test\n");
     if (scenario === "symlink") symlinkSync(join(root, "app/BUNDLE_VERSION"), join(root, "register-complete"));
     const args = [root, "pr-1479", scenario === "wrong-machine" ? "machine_other" : "machine_expected", scenario === "wrong-version" ? "v2026.09.05-test" : "v2026.09.06-test", "203.0.113.1", scenario === "wrong-server" ? "203.0.113.2" : "203.0.113.1"];
-    const result = spawnSync("python3", ["-c", `import runpy,sys,pathlib\nm=runpy.run_path(sys.argv[1],run_name="fixture")\nm["recover"](pathlib.Path(sys.argv[2]),*sys.argv[3:])`, resolve("scripts/preview-registration-recovery.py"), ...args], { encoding: "utf8" });
+    const result = spawnSync("python3", ["-c", `import runpy,sys,pathlib\nm=runpy.run_path(sys.argv[1],run_name="fixture")\nm["recover"](pathlib.Path(sys.argv[2]),*sys.argv[3:])`, resolve("scripts/preview-registration-recovery.py"), ...args], {
+      encoding: "utf8",
+      env: { ...process.env, MATRIX_REGISTER_FLAG: join(root, "register-complete") },
+    });
     if (scenario === "valid") {
       expect(result.status, result.stderr).toBe(0);
       expect(readFileSync(join(root, "register-complete"), "utf8")).toContain("machine_expected");

@@ -5,7 +5,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import type { ProviderAccessSource } from "@matrix-os/contracts";
 import { GatewayPanel, isMatrixGatewaySourceReady } from "../../packages/ui/src/agents-providers/GatewayPanel";
-import { gatewayCreditLines } from "../../packages/ui/src/agents-providers/utils";
+import { gatewayCreditLines, localDateTimeWithZone } from "../../packages/ui/src/agents-providers/utils";
 
 const now = "2026-10-05T09:00:00.000Z";
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -30,6 +30,17 @@ it("shows zero ordinary Chat credit with a positive speech-inclusive total", () 
   expect(screen.getByText("$0.00")).toBeVisible();
   expect(screen.queryByText("$1.00")).toBeNull();
   expect(screen.queryByText(/voice credit/i)).toBeNull();
+});
+it("shows the exact local Preview expiry time and time zone", () => {
+  freeze(); const s = source(); if (s.usage.kind !== "managed_credit") throw new Error("fixture");
+  s.usage.previewQuota = { requestLimit: 25, requestsUsed: 1, requestsRemaining: 24,
+    expiresAt: "2026-10-20T16:45:00.000Z" };
+  render(<GatewayPanel source={s} policy={null} provider={null} disabled={false} canSetBudget={false} canSetAllowlist={false}
+    canAddCredit={false} onMutate={vi.fn()} onAddCredit={vi.fn()} onRefresh={vi.fn()} />);
+  const expiry = localDateTimeWithZone("2026-10-20T16:45:00.000Z");
+  expect(expiry).toMatch(/\d{1,2}:\d{2}/);
+  expect(expiry).toMatch(/(?:GMT|UTC|[A-Z]{2,})/);
+  expect(screen.getByText(`Preview allowance: 24 of 25 Chat requests remaining until ${expiry}.`)).toBeVisible();
 });
 it.each([1, 4_999, 9_999, 10_000])("caps source credit by monthly budget and preserves precision: %s", amount => {
   freeze(); const s = source(); if (s.usage.kind !== "managed_credit") throw new Error("fixture");

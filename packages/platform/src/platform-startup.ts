@@ -104,6 +104,7 @@ import { loadPreviewRuntimeAccessConfig } from './preview-runtime-access.js';
 import { createPreviewRuntimeAccessActivator, type PreviewRuntimeAccessActivator } from './preview-runtime-activation.js';
 import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
 import { createAccountDeletionIntegrationWebhookAdmission } from './account-deletion/integration-webhook.js';
+import { appOrigin } from './origins.js';
 
 interface GatewayPlatformUser {
   id: string;
@@ -819,7 +820,8 @@ async function startPlatformServerWithCleanup(
       activatePreviewRuntimeAccess = createPreviewRuntimeAccessActivator({
         db, repository: fundedAiRepository, config: previewRuntimeAccess,
         hostControlSecret: customerVpsConfig.platformSecret,
-        platformOrigin: new URL(customerVpsConfig.platformRegisterUrl).origin,
+        platformOrigin: appOrigin(),
+        speechPlatformOrigin: new URL(customerVpsConfig.platformRegisterUrl).origin,
         relayOrigin: customerVpsConfig.fundedAiRelayUrl,
         fetchDispatcher: customerVpsProxyDispatcher,
       });

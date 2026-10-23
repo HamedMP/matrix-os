@@ -23,6 +23,15 @@ const READY = {
     ownerAudio: { enabled: false },
   },
 } as const;
+const PREVIEW_READY = {
+  ...READY,
+  previewQuota: {
+    requestLimit: 25,
+    requestsUsed: 1,
+    requestsRemaining: 24,
+    expiresAt: "2026-10-24T02:00:00.000Z",
+  },
+} as const;
 const DISABLED = {
   contractVersion: 1,
   fileTranscription: {
@@ -151,6 +160,20 @@ describe("useComposerSpeech", () => {
 
     await act(async () => undefined);
     expect(result.current).toBeUndefined();
+  });
+
+  it("keeps the Preview allowance visible with its server expiry", async () => {
+    mockClient.capabilities.mockResolvedValue(PREVIEW_READY);
+    const { result } = renderSpeech();
+
+    await waitFor(() => expect(result.current?.phase).toBe("idle"));
+
+    expect(result.current?.control).toMatchObject({
+      visible: true,
+      disabled: false,
+      label: "Start voice input",
+    });
+    expect(result.current?.previewQuotaLabel).toMatch(/^Preview dictation: 24 of 25 requests remaining until .+\.$/);
   });
 
   it("asks once per computer, not once per chat", async () => {
@@ -293,6 +316,34 @@ describe("useComposerSpeech", () => {
     act(() => appStateListener?.("active"));
 
     await waitFor(() => expect(result.current?.phase).toBe("idle"));
+    warn.mockRestore();
+  });
+
+  it("retains the Preview allowance and offers an explicit retry when quota refresh fails", async () => {
+    mockClient.capabilities
+      .mockResolvedValueOnce(PREVIEW_READY)
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(PREVIEW_READY);
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { result } = renderSpeech();
+    await waitFor(() => expect(result.current?.phase).toBe("idle"));
+    act(() => result.current?.start());
+    await waitFor(() => expect(result.current?.phase).toBe("recording"));
+    speak();
+    act(() => result.current?.stop());
+
+    await waitFor(() => expect(result.current?.phase).toBe("unavailable"));
+    expect(result.current?.control).toMatchObject({
+      visible: true,
+      disabled: false,
+      label: "Retry speech availability",
+    });
+    expect(result.current?.previewQuotaLabel).toMatch(/^Preview dictation: 24 of 25 requests remaining until .+\.$/);
+
+    act(() => result.current?.retryCapabilities());
+
+    await waitFor(() => expect(result.current?.phase).toBe("idle"));
+    expect(mockClient.capabilities).toHaveBeenCalledTimes(3);
     warn.mockRestore();
   });
 

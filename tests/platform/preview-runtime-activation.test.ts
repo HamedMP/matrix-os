@@ -83,6 +83,7 @@ describe("Preview runtime host activation", () => {
       config: loadPreviewRuntimeAccessConfig({ MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED: "true",
         MATRIX_PREVIEW_RUNTIME_SECRET: previewSecret, PLATFORM_SECRET: hostSecret }),
       hostControlSecret: hostSecret, platformOrigin: "https://app.matrix-os.com",
+      speechPlatformOrigin: "https://api.matrix-os.com",
       relayOrigin: "https://matrix-ai-relay-production-test.a.run.app",
       fetchImpl: fetchImpl as typeof fetch, wait: async () => undefined, now: () => new Date(now) });
 
@@ -90,8 +91,10 @@ describe("Preview runtime host activation", () => {
       runtimeSlot: identity.runtimeSlot, expectedRuntimeTokenEpoch: 1 })).resolves.toMatchObject({ status: "ready" });
     expect(JSON.stringify(fundedBody)).not.toMatch(/api[_-]?key|provider[_-]?key/i);
     expect(fundedBody).toMatchObject({ identity: { machineId: identity.machineId, ownerId: identity.ownerId,
-      runtimeSlot: identity.runtimeSlot, runtimeTokenEpoch: 1 } });
+      runtimeSlot: identity.runtimeSlot, runtimeTokenEpoch: 1 },
+      configuration: { platformOrigin: "https://app.matrix-os.com" } });
     expect(speechBody).toMatchObject({ machineId: identity.machineId, runtimeSlot: identity.runtimeSlot,
+      origin: "https://api.matrix-os.com",
       runtimeToken: buildPlatformSpeechRuntimeVerificationToken({ handle: identity.handle,
         machineId: identity.machineId, runtimeSlot: identity.runtimeSlot }, previewSecret, 1) });
   });
@@ -150,6 +153,7 @@ describe("Preview runtime host activation", () => {
       config: loadPreviewRuntimeAccessConfig({ MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED: "true",
         MATRIX_PREVIEW_RUNTIME_SECRET: previewSecret, PLATFORM_SECRET: hostSecret }),
       hostControlSecret: hostSecret, platformOrigin: "https://app.matrix-os.com",
+      speechPlatformOrigin: "https://api.matrix-os.com",
       relayOrigin: "https://matrix-ai-relay-production-test.a.run.app",
       fetchImpl: fetchImpl as typeof fetch, wait: async () => undefined, now: () => new Date(now) });
 
@@ -157,5 +161,6 @@ describe("Preview runtime host activation", () => {
       runtimeSlot: machine.runtimeSlot, expectedRuntimeTokenEpoch: 1 })).resolves.toMatchObject({ status: "ready" });
     expect(applied).toMatchObject({ identity: { machineId: machine.machineId,
       runtimeSlot: machine.runtimeSlot, runtimeTokenEpoch: 1 } });
+    expect(speechBody).toMatchObject({ origin: "https://api.matrix-os.com" });
   });
 });

@@ -81,11 +81,16 @@ export type {
 } from "./agents-providers/provider-settings-controller.js";
 export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
 export { applyCanonicalChatContent } from "./canonical-chat-content.js";
-export { usePlatformSpeechDraft } from "./speech/use-platform-speech-draft.js";
+export {
+  platformSpeechControlState,
+  platformSpeechPreviewQuotaLabel,
+  usePlatformSpeechDraft,
+} from "./speech/use-platform-speech-draft.js";
 export { SpeechInputWaveform } from "./speech/SpeechInputWaveform.js";
 export type {
   PlatformSpeechCapture,
   PlatformSpeechCaptureAdapter,
+  PlatformSpeechControlState,
   PlatformSpeechDraftClient,
   PlatformSpeechDraftPhase,
   PlatformSpeechRecording,

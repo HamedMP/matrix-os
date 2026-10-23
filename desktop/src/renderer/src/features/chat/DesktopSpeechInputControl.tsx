@@ -3,6 +3,8 @@ import {
   createBrowserSpeechClient,
   createWebPcmSpeechCaptureAdapter,
   PlatformSpeechRecorderError,
+  platformSpeechControlState,
+  platformSpeechPreviewQuotaLabel,
   resolveSpeechWorkletUrl,
   SpeechInputWaveform,
   usePlatformSpeechDraft,
@@ -37,26 +39,27 @@ export function DesktopSpeechInputControl({
       ? caught.safeMessage
       : caught instanceof PlatformSpeechRecorderError ? caught.safeMessage : undefined,
   });
-  const active = ["requesting_permission", "recording", "transcribing"].includes(speech.phase);
+  const control = platformSpeechControlState(speech);
+  const active = control.active;
   useEffect(() => {
     onActiveChange?.(active);
     return () => onActiveChange?.(false);
   }, [active, onActiveChange]);
-  if (!speech.isSupported && !active && !speech.error) return null;
-  const label = speech.phase === "requesting_permission"
-    ? "Cancel microphone request"
-    : speech.phase === "recording"
-      ? "Stop recording"
-      : speech.phase === "transcribing"
-        ? "Cancel transcription"
-        : "Start voice input";
+  if (!control.visible && !speech.error) return null;
   const activate = () => {
-    if (speech.phase === "recording") speech.stop();
+    if (speech.capabilitiesStale) void speech.retryCapabilities();
+    else if (speech.phase === "recording") speech.stop();
     else if (speech.phase === "requesting_permission" || speech.phase === "transcribing") speech.cancel();
     else void speech.start();
   };
   return (
     <div className="relative flex items-center gap-1">
+      {speech.previewQuota ? (
+        <span role="status" className="text-xs" style={{ color: "var(--text-tertiary)" }}>
+          {platformSpeechPreviewQuotaLabel(speech.previewQuota)}
+          {speech.capabilitiesStale ? " Last known quota; refresh required." : null}
+        </span>
+      ) : null}
       {speech.error ? (
         <span
           role="alert"
@@ -80,9 +83,9 @@ export function DesktopSpeechInputControl({
       ) : null}
       <button
         type="button"
-        aria-label={label}
-        title={label}
-        disabled={disabled && !active}
+        aria-label={control.label}
+        title={control.label}
+        disabled={(disabled || control.disabled) && !active}
         onClick={activate}
         className="flex h-9 w-9 items-center justify-center rounded-full outline-none hover:bg-[var(--bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
         style={{ color: speech.phase === "recording" ? "var(--danger)" : "var(--text-secondary)" }}

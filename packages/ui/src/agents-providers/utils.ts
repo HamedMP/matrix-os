@@ -8,6 +8,15 @@ import type {
   ProviderUsage,
 } from "@matrix-os/contracts";
 
+const LOCAL_DATE_TIME_WITH_ZONE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  timeZoneName: "short",
+});
+
 export function gatewayPolicyAllowsModel(policy: ProviderGatewayPolicy | null, modelId: string): boolean {
   return policy !== null && policy.allowedModelIds.includes(modelId)
     && (policy.effectiveAllowedModelIds === undefined || policy.effectiveAllowedModelIds.includes(modelId));
@@ -25,6 +34,10 @@ export function money(microusd: number, currency = "USD"): string {
 export function shortDate(value: string | null): string | null {
   if (value === null) return null;
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(value));
+}
+
+export function localDateTimeWithZone(value: string): string {
+  return LOCAL_DATE_TIME_WITH_ZONE_FORMATTER.format(new Date(value));
 }
 
 export function relativeCheckedAt(value: string, now = Date.now()): string {

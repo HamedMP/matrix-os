@@ -5,6 +5,8 @@ import { ChatSlashPicker } from "./ChatSlashPicker";
 import {CompanyDriveContextControl} from "./CompanyDriveContextControl";
 import {
   BOT_ATTACHMENT_HANDOFF_REASON,
+  platformSpeechControlState,
+  platformSpeechPreviewQuotaLabel,
   usePlatformSpeechDraft,
   SpeechInputWaveform,
   type ChatAgentDraftRequest,
@@ -117,6 +119,7 @@ export function ChatInput({
     },
   });
   const speechBusy = speech.phase === "requesting_permission" || speech.phase === "recording" || speech.phase === "transcribing";
+  const speechControl = platformSpeechControlState(speech);
   const contextEnabled = driveContextEnabled && !botContext;
   const blockedDriveContext = resources.some(resource => resource.kind === "organization_drive") && !contextEnabled;
   const canSend = (!botRequiresFullAccess || permission.confirmed) && !blockedDriveContext && !speechBusy && canSendChatInput({ connected, sending, busy, references: resources.length, text: input, attachments: attachments.length });
@@ -165,7 +168,8 @@ export function ChatInput({
   };
 
   const handleMicClick = () => {
-    if (speech.phase === "recording") speech.stop();
+    if (speech.capabilitiesStale) void speech.retryCapabilities();
+    else if (speech.phase === "recording") speech.stop();
     else if (speech.phase === "requesting_permission" || speech.phase === "transcribing") speech.cancel();
     else void speech.start();
   };
@@ -188,6 +192,12 @@ export function ChatInput({
       {botMention.error || botMention.notice ? <p role="alert" className="text-xs">{botMention.error || botMention.notice}</p> : null}
       {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
       {speech.error ? <p role="alert" className="text-xs text-destructive">{speech.error}</p> : null}
+      {speech.previewQuota ? (
+        <p role="status" className="text-xs text-muted-foreground">
+          {platformSpeechPreviewQuotaLabel(speech.previewQuota)}
+          {speech.capabilitiesStale ? " Last known quota; refresh required." : null}
+        </p>
+      ) : null}
       <Attachments attachments={attachments} onRemove={removeFile} />
       <div ref={slashAnchorRef} className="relative flex items-end rounded-2xl border border-border/60 bg-card/80 shadow-sm transition-shadow focus-within:shadow-md focus-within:border-border">
         <ChatSlashPicker instance={slashInstance} loading={slashCatalogLoading} query={slashQuery} listRef={slashListRef} anchorRef={slashAnchorRef} inputRef={textareaRef}
@@ -236,16 +246,12 @@ export function ChatInput({
           className="border-0 bg-transparent shadow-none focus-visible:ring-0 text-sm min-h-0 max-h-40 resize-none py-3 px-2 flex-1"
         />
         <div className="flex items-center gap-0.5 mb-2 mr-2">
-          {speech.isSupported ? (
+          {speechControl.visible ? (
             <Button
               type="button"
-              aria-label={speech.phase === "requesting_permission"
-                ? "Cancel microphone request"
-                : speech.phase === "recording"
-                  ? "Stop recording"
-                  : speech.phase === "transcribing"
-                    ? "Cancel transcription"
-                    : "Start voice input"}
+              aria-label={speechControl.label}
+              title={speechControl.label}
+              disabled={!speechBusy && speechControl.disabled}
               size="icon"
               variant="ghost"
               className={`size-8 rounded-full ${speech.phase === "recording" ? "text-destructive" : "text-muted-foreground hover:text-foreground"}`}
