@@ -13,16 +13,41 @@ export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse):
     if (source?.role === "user" && context) message.metadata = { ...message.metadata, chatRunContext: context };
   }
   for (const run of detail.runs) {
-    const nextMessage = detail.messages.findLast((message) => message.role === "assistant" && message.runId === run.id)
-      ?? detail.messages.find((message) => message.role === "user" && message.seq > (detail.turns.find((turn) => turn.id === run.turnId)?.baseMessageSeq ?? 0) + 1);
-    const index = nextMessage ? messages.findIndex((message) => message.id === nextMessage.id) : -1;
-    const tools: ChatMessage[] = canonicalChatToolActivities(run, detail.activities).map((activity) => ({
-      id: `${run.id}:tool:${activity.id}`, role: "system", requestId: run.id,
-      tool: activity.label, toolDisplay: activity,
-      content: `${activity.state === "running" ? "Using" : "Used"} ${activity.label}`,
-      timestamp: Date.parse(run.startedAt ?? run.createdAt),
+    const anchors = runActivityAnchors(run.id, detail.activities);
+    const runMessages = messages.filter((message) => message.role === "assistant" && !message.tool && message.requestId === run.id);
+    const tools = canonicalChatToolActivities(run, detail.activities).map((activity) => ({
+      anchor: anchors.tools.get(activity.id),
+      message: {
+        id: `${run.id}:tool:${activity.id}`, role: "system", requestId: run.id,
+        tool: activity.label, toolDisplay: activity,
+        content: `${activity.state === "running" ? "Using" : "Used"} ${activity.label}`,
+        timestamp: Date.parse(run.startedAt ?? run.createdAt),
+      } satisfies ChatMessage,
     }));
-    messages.splice(index < 0 ? messages.length : index, 0, ...tools);
+    if (runMessages.length === 0) {
+      const nextMessage = detail.messages.find((message) => message.role === "user" && message.seq > (detail.turns.find((turn) => turn.id === run.turnId)?.baseMessageSeq ?? 0) + 1);
+      const index = nextMessage ? messages.findIndex((message) => message.id === nextMessage.id) : -1;
+      messages.splice(index < 0 ? messages.length : index, 0, ...tools.map((tool) => tool.message));
+      continue;
+    }
+    // Place each tool before the first text block that started at or after it,
+    // so "3 tools, text, 5 tools, text" renders as separate groups between text.
+    const textAnchors = runMessages.map((message) => anchors.messages.get(message.id) ?? { time: message.timestamp });
+    const before = new Map<string, ChatMessage[]>();
+    const after: ChatMessage[] = [];
+    for (const tool of tools) {
+      const textIndex = tool.anchor
+        ? textAnchors.findIndex((anchor) => compareAnchors(anchor, tool.anchor!) >= 0)
+        : runMessages.length - 1;
+      if (textIndex < 0) after.push(tool.message);
+      else before.set(runMessages[textIndex].id, [...(before.get(runMessages[textIndex].id) ?? []), tool.message]);
+    }
+    for (const [messageId, group] of before) {
+      messages.splice(messages.findIndex((message) => message.id === messageId), 0, ...group);
+    }
+    if (after.length) {
+      messages.splice(messages.findIndex((message) => message.id === runMessages.at(-1)!.id) + 1, 0, ...after);
+    }
   }
   for (const approval of canonicalChatApprovals(detail)) {
     const existing = messages.find(message => message.id === approval.id);
@@ -54,4 +79,29 @@ export function projectCanonicalTranscript(detail: CanonicalChatDetailResponse):
     });
   }
   return messages;
+}
+
+type ActivityAnchor = { sequence?: number; time: number };
+
+function compareAnchors(left: ActivityAnchor, right: ActivityAnchor): number {
+  if (left.sequence !== undefined && right.sequence !== undefined) return left.sequence - right.sequence;
+  return left.time - right.time;
+}
+
+/** First position of each tool call and streamed text block within one run. */
+function runActivityAnchors(runId: string, activities: CanonicalChatDetailResponse["activities"]) {
+  const tools = new Map<string, ActivityAnchor>();
+  const messages = new Map<string, ActivityAnchor>();
+  const keep = (map: Map<string, ActivityAnchor>, key: string, anchor: ActivityAnchor) => {
+    const current = map.get(key);
+    if (!current || compareAnchors(anchor, current) < 0) map.set(key, anchor);
+  };
+  for (const activity of activities) {
+    if (activity.runId !== runId) continue;
+    const anchor = { ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}), time: Date.parse(activity.occurredAt) };
+    if (activity.type === "tool.progress") keep(tools, activity.toolCallId, anchor);
+    else if (activity.type === "agent.activity") keep(tools, activity.activityId, anchor);
+    else if (activity.type === "assistant.delta") keep(messages, activity.messageId, anchor);
+  }
+  return { tools, messages };
 }
