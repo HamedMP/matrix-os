@@ -3,7 +3,7 @@ import { AgentThreadEventSchema, type AgentThreadEvent } from "@matrix-os/contra
 import type { CodingAgentProviderEventBatch, CodingAgentProviderEventPublisher } from "./provider-adapter.js";
 
 function isDisplay(event: AgentThreadEvent): boolean {
-  return ["assistant.text.delta", "assistant.text.completed", "tool.started", "tool.output", "tool.completed"].includes(event.type);
+  return ["assistant.text.delta", "assistant.text.completed", "tool.started", "tool.output"].includes(event.type);
 }
 
 export function codingPreviewOmissionNotice(options: { threadId: string; scope: string; now: () => Date; nextEventId: () => string }): AgentThreadEvent[] {

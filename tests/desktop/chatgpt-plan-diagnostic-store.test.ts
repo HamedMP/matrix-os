@@ -56,6 +56,23 @@ it('reports a failed disk write without throwing through logPlanFailure or claim
   expect(await store.flush()).toBe(false);
   expect(await readFile(directory, 'utf8')).toBe('unchanged');
 });
+it('retains failed writes for a later flush without retrying continuously', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const actualRename = fs.rename;
+  const rename = vi.spyOn(fs, 'rename').mockRejectedValue(Object.assign(new Error('Write unavailable'), { code: 'EIO' }));
+  const { store, file } = await setup();
+  logPlanFailure('responses', new DOMException('SECRET', 'TimeoutError'));
+  expect(await store.flush()).toBe(false);
+  expect(rename).toHaveBeenCalledTimes(1);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(rename).toHaveBeenCalledTimes(1);
+  rename.mockImplementation(actualRename);
+  expect(await store.flush()).toBe(true);
+  expect(JSON.parse(await readFile(file, 'utf8'))).toEqual([
+    expect.objectContaining({ stage: 'responses', category: 'timeout' }),
+  ]);
+  expect(rename).toHaveBeenCalledTimes(2);
+});
 it('stops accepting records and makes later flush harmless after bounded close', async () => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   const { store, file } = await setup();

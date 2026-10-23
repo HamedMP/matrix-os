@@ -76,8 +76,10 @@ function fixture(phase: "route" | "input" | "admission" | "tools" | "source" | "
     loseLease = () => onFailure(new Error("PRIVATE LEASE FAILURE"));
     return { stop: renewalStop };
   });
-  const runBot = vi.fn(async (request: { command: { kind: string } }) => {
+  const transportAborted = vi.fn();
+  const runBot = vi.fn(async (request: { command: { kind: string }; signal?: AbortSignal }) => {
     if (request.command.kind === "bot.cancel") return { ok: true };
+    request.signal?.addEventListener("abort", transportAborted, { once: true });
     phaseEntered(); return worker.promise;
   });
   const admit = vi.fn(async (input: { ownerId: string; chatId: string; runId: string; resolved: ResolvedBotRoute }) => {
@@ -108,7 +110,7 @@ function fixture(phase: "route" | "input" | "admission" | "tools" | "source" | "
     }
   })();
   return { runtime, input, lifetime, gate, worker, binding, release, startRenewal, renewalStop, loseLease: () => loseLease(), closeRun, forgetRun, cancelInference, phaseEntered, runBot, admit, done, events,
-    getSnapshot, resolvePlan, resolveAnthropic,
+    getSnapshot, resolvePlan, resolveAnthropic, transportAborted,
     terminal: () => terminal,
     stop: () => runtime.adapter.cancel!({ owner, chatId: binding.chatId, runId: binding.runId }) };
 }
@@ -116,6 +118,15 @@ async function ready(test: ReturnType<typeof fixture>) {
   await vi.advanceTimersByTimeAsync(0);
   expect(test.phaseEntered).toHaveBeenCalledOnce();
 }
+
+it.each(longRunningSources)("aborts the $name busy transport on Stop even when runtime release fails", async ({ source }) => {
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const test = fixture("worker", false, source); await ready(test);
+  test.release.mockRejectedValueOnce(new Error("Release unavailable"));
+  await test.stop(); await vi.advanceTimersByTimeAsync(0); await test.done;
+  expect(test.terminal()).toEqual(abortedEvent);
+  expect(test.transportAborted).toHaveBeenCalledOnce();
+});
 
 it.each(longRunningSources)("keeps a silent busy $name turn alive beyond thirty minutes and accepts its eventual result", async ({ source }) => {
   const test = fixture("worker", false, source); await ready(test);

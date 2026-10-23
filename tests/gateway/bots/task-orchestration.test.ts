@@ -35,7 +35,7 @@ const AGENT = {
   revision: 1, createdAt: "2026-09-27T12:00:00.000Z", updatedAt: "2026-09-27T12:00:00.000Z",
 };
 
-type RunBotInput = { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string; text?: string } };
+type RunBotInput = { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string; text?: string }; signal?: AbortSignal };
 
 let db: Kysely<OwnerBotDatabase>;
 let destroy: () => Promise<void>;
@@ -457,6 +457,20 @@ describe("bot turns through the matrix_bot adapter", () => {
     finish();
     expect.soft((await running).at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
     expect.soft(await tasks()).toEqual([expect.objectContaining({ status: "cancelled", run_id: "run_turn1" })]);
+  });
+
+  it("aborts the Recipe Bot busy transport without waiting for its worker to finish", async () => {
+    const transportAborted = vi.fn();
+    const x = setup({ worker: input => {
+      input.signal?.addEventListener("abort", transportAborted, { once: true });
+      return new Promise(() => undefined);
+    } });
+    const running = collect(x.adapter.start(turn()));
+    await vi.waitFor(() => expect(x.commands.map(command => command.kind)).toEqual(["bot.run"]));
+    await x.orchestrator.cancel("run_turn1");
+    expect((await running).at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
+    expect(transportAborted).toHaveBeenCalledOnce();
+    await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "cancelled" })]);
   });
 
   it("renews the exact bound runtime and stops renewal before terminal release", async () => {

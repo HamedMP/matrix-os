@@ -32,7 +32,7 @@ async function fixture(maxConnections?: number) {
   await server.start();
   const client = createScopeRuntimeClient({ socketPath: join(root, "supervisor.sock"), profileCatalog: {} });
   cleanup.push(async () => { release(); await client.close(); await server.close(); });
-  const run = () => client.runBot({ ...identity, command: { version: 1, kind: "bot.run", runId: "run_capacity" } });
+  const run = (signal?: AbortSignal) => client.runBot({ ...identity, command: { version: 1, kind: "bot.run", runId: "run_capacity" }, signal });
   const renew = () => client.renewRuntime(identity);
   const stop = () => client.stopRuntime(identity);
   const cancel = () => client.runBot({ ...identity, command: { version: 1, kind: "bot.cancel", runId: "run_capacity" } });
@@ -40,6 +40,22 @@ async function fixture(maxConnections?: number) {
 }
 
 describe("scope runtime control capacity", () => {
+  it("reclaims every busy request slot on caller abort without a worker reply or hard Stop", async () => {
+    const test = await fixture();
+    const controller = new AbortController();
+    const pending = Array.from({ length: 32 }, () => test.run(controller.signal).catch(error => error));
+    await vi.waitFor(() => expect(test.server.connectionCount()).toBe(32));
+    await expect(test.run()).rejects.toMatchObject({ code: "client_capacity" });
+    controller.abort();
+    expect(await Promise.all(pending)).toEqual(Array.from({ length: 32 }, () => expect.objectContaining({ code: "runtime_unavailable" })));
+    await vi.waitFor(() => expect(test.server.connectionCount()).toBe(0));
+    expect(test.enteredStops()).toBe(0);
+    const replacement = test.run();
+    await vi.waitFor(() => expect(test.server.connectionCount()).toBe(1));
+    test.release();
+    await expect(replacement).resolves.toMatchObject({ ok: true });
+  });
+
   it("holds 32 turns, 32 renewals and 32 cancels while preserving all 32 hard Stop slots", async () => {
     const test = await fixture();
     const work = Array.from({ length: 32 }, () => test.run().catch(error => error));

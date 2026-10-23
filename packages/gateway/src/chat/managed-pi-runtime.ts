@@ -149,7 +149,7 @@ export function createManagedPiRuntime(deps: {
       if (signal.aborted || run.stopping) return cancelled();
       stage = "worker_dispatch";
       const reply = await cancellation.waitBusy(() => deps.host.client.runBot({ runtimeHandle: run.binding!.runtimeHandle, executionGeneration: run.binding!.executionGeneration,
-        command: { version: 1, kind: "bot.run", runId: input.runId } }));
+        command: { version: 1, kind: "bot.run", runId: input.runId }, signal }));
       if (signal.aborted || run.stopping) return cancelled();
       const outcome = reply.ok ? BotRunOutcomeSchema.safeParse(reply.reply) : undefined;
       if (outcome?.success && outcome.data.runId === input.runId && outcome.data.status === "completed") return { type: "run.completed", outcome: "completed" };

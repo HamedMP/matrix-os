@@ -46,6 +46,28 @@ it("evicts queued display for a later control without replaying an in-flight pub
   expect(received.filter(id => id.startsWith("queued_"))).toHaveLength(1);
 });
 
+it("preserves a successful tool completion when queued output fills the preview", async () => {
+  let release!: () => void;
+  const received: AgentThreadEvent[] = [];
+  const publisher = createCodingPreviewPublisher(async batch => {
+    received.push(...batch.events);
+    if (received.length === 1) await new Promise<void>(resolve => { release = resolve; });
+  }, 2);
+  const completed: AgentThreadEvent = { ...base, eventId: "completed", type: "tool.completed", toolCallId: "tool_one", outcome: "success" };
+  publisher.queue({ events: [{ ...base, eventId: "started", type: "tool.started", toolCallId: "tool_one", displayName: "Run command", kind: "command" }] });
+  await Promise.resolve();
+  try {
+    publisher.queue({ events: [preview("queued_one"), preview("queued_two")] });
+    publisher.queue({ events: [completed] });
+  } finally { release(); }
+  await publisher.finished();
+  expect(received.filter(event => event.eventId === "started")).toHaveLength(1);
+  expect(received).toContainEqual(completed);
+  expect(received.filter(event => event.eventId.startsWith("queued_"))).toHaveLength(1);
+  expect(publisher.truncated).toBe(true);
+  expect(publisher.failure).toBeUndefined();
+});
+
 it("bounds one hung publish independently of the whole busy turn", async () => {
   const { vi } = await import("vitest");
   vi.useFakeTimers();

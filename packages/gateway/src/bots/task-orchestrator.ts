@@ -413,7 +413,7 @@ export function createBotTaskOrchestrator(deps: {
       await setup(async () => { await deps.assertSource?.(binding, input.signal); });
       if (input.signal.aborted || run.stopping) return await settle(task, run.stopping === "lease_lost" ? "failed" : "cancelled");
       const reply = await Promise.race([
-        deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.run", runId: input.runId } }),
+        deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.run", runId: input.runId }, signal: run.setupAbort.signal }),
         stopped,
       ]);
       // Stop is final even if an uncooperative worker replies with success afterward.

@@ -91,9 +91,10 @@ export function createPlanDiagnosticStore(options: { directory: string; now?: ()
     }
     function start() {
         if (operation || stopped) return;
-        operation = persist().catch((error: unknown) => { failed = true; warning(); }).finally(() => {
+        operation = persist().catch((error: unknown) => { dirty = true; failed = true; warning(); }).finally(() => {
             operation = undefined;
-            if (dirty && !stopped) start();
+            // Keep the snapshot for a later flush/record, without a disk-failure retry loop.
+            if (dirty && !failed && !stopped) start();
         });
     }
     void ready.then(() => { if (dirty && !stopped) start(); });
@@ -115,7 +116,7 @@ export function createPlanDiagnosticStore(options: { directory: string; now?: ()
             // Await that writer too, within the same overall deadline.
             while (!stopped) {
                 const current = operation;
-                if (current) await current;
+                if (current) { await current; if (failed) return false; }
                 else if (dirty) start();
                 else return !failed;
             }
