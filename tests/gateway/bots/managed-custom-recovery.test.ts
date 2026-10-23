@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Kysely } from "kysely";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { CanonicalChatSnapshotSchema } from "@matrix-os/contracts";
+import { ChatAgentListResponseSchema, CanonicalChatSnapshotSchema } from "@matrix-os/contracts";
+import { createChatAgentRoutes } from "../../../packages/gateway/src/chat/agent-routes.js";
+import { ChatAgentContext } from "../../../packages/gateway/src/chat/agent-context.js";
 import { ChatAgentStore } from "../../../packages/gateway/src/chat/agent-store.js";
 import type { ChatDatabase } from "../../../packages/gateway/src/chat/database.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
@@ -265,4 +267,79 @@ it.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("never overwrites a concurrent 
   expect(current.revision).toBe(2);
   if ("value" in archived) { expect(current.archived).toBe(true); expect(current.recipeRef).toBeUndefined(); }
   else expect(current.recipeRef).toEqual({ recipeId: "custom-coordinator", version: "1" });
+});
+
+function libraryRoutes() {
+  return createChatAgentRoutes({ agents, repository: chats, recovery, recipes,
+    context: new ChatAgentContext({ agents, repository: chats, recipes, enabled: () => true }), enabled: () => true,
+    catalog: { getCatalog: vi.fn() }, getPrincipal: () => ({ userId: OWNER, source: "jwt" }) });
+}
+
+it("projects the original reserved revision after promotion rollback and hides recovery after activation", async () => {
+  let transaction = 0;
+  const broken = setup({ chats: { withTransaction: work => chats.withTransaction(async repository => {
+    const value = await work(repository); if (++transaction === 3) throw new Error("Injected activation rollback"); return value;
+  }) } });
+  const rows = await preservedRows();
+  await expect(broken.recover(OWNER, botId, { baseRevision: 1 })).rejects.toMatchObject({ code: "unavailable" });
+  const operationBefore = await state.db.selectFrom("bot_operations").selectAll().execute();
+  const fileBefore = await agents.getCreationSnapshot(owner, botId);
+  const wire = await libraryRoutes().request("/api/chat-agents?includeManagedCustomRecoveries=true");
+  expect(wire.status).toBe(200);
+  const library = ChatAgentListResponseSchema.parse(await wire.json());
+  expect(library.agents[0]).toMatchObject({ revision: 2, recipeRef: { recipeId: "custom-coordinator" } });
+  expect(library).toMatchObject({ managedCustomRecoveries: [{ agentId: botId, baseRevision: 1 }] });
+  expect(await state.db.selectFrom("bot_operations").selectAll().execute()).toEqual(operationBefore);
+  expect(await agents.getCreationSnapshot(owner, botId)).toEqual(fileBefore);
+  expect(await preservedRows()).toEqual(rows);
+  await expect(recovery.recover(OWNER, botId, library.managedCustomRecoveries![0])).rejects.toMatchObject({ code: "invalid_request" });
+  await expect(recovery.recover(OWNER, botId, { baseRevision: library.managedCustomRecoveries![0]!.baseRevision })).resolves.toMatchObject({ chatId });
+  expect(await (await libraryRoutes().request("/api/chat-agents?includeManagedCustomRecoveries=true")).json()).toMatchObject({ managedCustomRecoveries: [] });
+  expect(await preservedRows()).toEqual(rows);
+});
+
+it.each(["owner", "hash", "request", "binding", "archived", "recipe", "revision"])("omits invalid unfinished recovery projection: %s", async condition => {
+  const failed = setup({ ensureWorkspace: async () => { throw new Error("Injected failure"); } });
+  await expect(failed.recover(OWNER, botId, { baseRevision: 1 })).rejects.toMatchObject({ code: "unavailable" });
+  if (condition === "owner") await state.db.updateTable("bot_operations").set({ owner_id: "foreign-owner" }).execute();
+  if (condition === "hash") await state.db.updateTable("bot_operations").set({ payload_hash: "f".repeat(64) }).execute();
+  if (condition === "request") await state.db.updateTable("bot_operations").set({ client_request_id: "req_managedcustom_recover_forged" }).execute();
+  if (condition === "binding") await state.db.updateTable("bot_chat_bindings").set({ removed_at: NOW }).execute();
+  if (condition === "archived") await agents.update(owner, botId, { baseRevision: 1, archived: true });
+  if (condition === "recipe") await agents.update(owner, botId, { baseRevision: 1, instructions: "New owner edit" });
+  if (condition === "revision") await agents.update(owner, botId, { baseRevision: 1, description: "New description" });
+  const response = await libraryRoutes().request("/api/chat-agents?includeManagedCustomRecoveries=true");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ managedCustomRecoveries: [] });
+});
+
+it("projects reserved recovery without provider readiness or any workspace mutation", async () => {
+  await expect(setup({ ensureWorkspace: async () => { throw new Error("Injected failure"); } }).recover(OWNER, botId, { baseRevision: 1 }))
+    .rejects.toMatchObject({ code: "unavailable" });
+  const validateSelection = vi.fn(async () => { throw new Error("Provider offline"); }), ensureWorkspace = vi.fn();
+  const service = setup({ validateSelection, ensureWorkspace });
+  expect(await service.projectUnfinished(OWNER, await agents.list(owner))).toEqual([{ agentId: botId, baseRevision: 1 }]);
+  expect(validateSelection).not.toHaveBeenCalled(); expect(ensureWorkspace).not.toHaveBeenCalled();
+  const agent = (await agents.get(owner, botId))!;
+  expect(await service.projectUnfinished(OWNER, [{ ...agent, recipeRef: { recipeId: "daily-brief", version: "1" } }])).toEqual([]);
+});
+
+it("fails a status read safely on infrastructure failure without enabling a fallback projection", async () => {
+  const app = createChatAgentRoutes({ agents, repository: chats, recovery: { projectUnfinished: async () => { throw new Error("private database diagnostic"); } },
+    context: new ChatAgentContext({ agents, repository: chats, recipes, enabled: () => true }), enabled: () => true,
+    catalog: { getCatalog: vi.fn() }, getPrincipal: () => ({ userId: OWNER, source: "jwt" }) });
+  const response = await app.request("/api/chat-agents?includeManagedCustomRecoveries=true");
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({ error: "Agents are temporarily unavailable." });
+});
+
+it("keeps the default library wire compatible with installed strict clients and validates projection opt-in", async () => {
+  const response = await libraryRoutes().request("/api/chat-agents");
+  expect(response.status).toBe(200);
+  const wire = await response.json();
+  expect(ChatAgentListResponseSchema.omit({ managedCustomRecoveries: true }).safeParse(wire).success).toBe(true);
+  expect(wire).not.toHaveProperty("managedCustomRecoveries");
+  for (const query of ["includeManagedCustomRecoveries=false", "includeManagedCustomRecoveries=true&ownerId=foreign", "includeManagedCustomRecoveries=1"]) {
+    expect((await libraryRoutes().request(`/api/chat-agents?${query}`)).status).toBe(400);
+  }
 });

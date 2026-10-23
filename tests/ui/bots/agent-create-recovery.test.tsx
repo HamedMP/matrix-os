@@ -21,7 +21,7 @@ const created = { agent: { id: agent.id, name: agent.name, avatarSeed: "a".repea
 function fixture() {
   const client = clientFixture({ matrix: true });
   const createCustom = vi.fn(async () => { client.list.mockResolvedValue({ enabled: true, agents: [agent] }); return created; });
-  const bots = { createCustom, recipes: vi.fn(async () => []), ensureDirectChat: vi.fn(async () => created.chatId) };
+  const bots = { authority: vi.fn(async () => ({ connections: [], grants: [] })), createCustom, recipes: vi.fn(async () => []), ensureDirectChat: vi.fn(async () => created.chatId) };
   return { client: { ...client, bots: bots as unknown as BotClient }, createCustom, open: vi.fn(), close: vi.fn() };
 }
 async function draft(x: ReturnType<typeof fixture>) {
@@ -194,4 +194,70 @@ it.each([
   expect(screen.queryByText("private/raw provider diagnostic")).toBeNull();
   expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(agent.instructions);
   expect(screen.getByRole("button", { name: "Create Agent" })).toBeEnabled();
+});
+
+
+it("reopens a file-promoted unfinished recovery and resumes its server-projected original revision", async () => {
+  const x = fixture(), promoted = { ...agent, revision: 2 };
+  x.client.list.mockResolvedValue(Object.assign({ enabled: true, agents: [promoted] }, {
+    managedCustomRecoveries: [{ agentId: agent.id, baseRevision: 1 }],
+  }));
+  const recoverManagedCustom = vi.fn(async () => {
+    x.client.list.mockResolvedValue({ enabled: true, agents: [promoted] });
+    return { ...created, agent: { ...created.agent, revision: 2 } };
+  });
+  Object.assign(x.client.bots!, { recoverManagedCustom });
+  const first = render(<ChatAgentsPanel client={x.client} onClose={x.close} onOpenBotChat={x.open}/>);
+  fireEvent.click(await screen.findByRole("button", { name: `Edit ${agent.name}` }));
+  expect(screen.getByRole("button", { name: "Recover Bot" })).toBeEnabled();
+  first.unmount();
+  render(<ChatAgentsPanel client={x.client} onClose={x.close} onOpenBotChat={x.open}/>);
+  fireEvent.click(await screen.findByRole("button", { name: `Edit ${agent.name}` }));
+  fireEvent.click(screen.getByRole("button", { name: "Recover Bot" }));
+  await waitFor(() => expect(x.open).toHaveBeenCalledWith(created.chatId));
+  expect(recoverManagedCustom).toHaveBeenCalledExactlyOnceWith(agent.id, { baseRevision: 1 });
+  expect(x.client.update).not.toHaveBeenCalled(); expect(x.createCustom).not.toHaveBeenCalled();
+  fireEvent.click(await screen.findByRole("button", { name: `Edit ${agent.name}` }));
+  expect(screen.queryByRole("button", { name: "Recover Bot" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+  await screen.findByText("No app access recorded.");
+});
+
+it("hides recovery for an active promoted Bot without an unfinished server projection", async () => {
+  const x = fixture();
+  x.client.list.mockResolvedValue({ enabled: true, agents: [agent] });
+  Object.assign(x.client.bots!, { recoverManagedCustom: vi.fn() });
+  render(<ChatAgentsPanel client={x.client} onClose={x.close} onOpenBotChat={x.open}/>);
+  fireEvent.click(await screen.findByRole("button", { name: `Edit ${agent.name}` }));
+  await screen.findByText("No app access recorded.");
+  expect(screen.queryByRole("button", { name: "Recover Bot" })).toBeNull();
+});
+
+it("requires finishing projected recovery before Save can advance the promoted definition", async () => {
+  const x = fixture(), promoted = { ...agent, revision: 2 };
+  x.client.list.mockResolvedValue(Object.assign({ enabled: true, agents: [promoted] }, {
+    managedCustomRecoveries: [{ agentId: agent.id, baseRevision: 1 }],
+  }));
+  Object.assign(x.client.bots!, { recoverManagedCustom: vi.fn() });
+  render(<ChatAgentsPanel client={x.client} onClose={x.close} onOpenBotChat={x.open}/>);
+  fireEvent.click(await screen.findByRole("button", { name: `Edit ${agent.name}` }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Uncommitted owner edit" } });
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Recover Bot" })).toBeDisabled();
+  expect(screen.getByText(/Finish recovery before saving changes to this Bot/)).toBeTruthy();
+  expect(screen.getByText(/Reopen this Bot to discard unsaved changes before recovering/)).toBeTruthy();
+  fireEvent.submit(screen.getByRole("button", { name: "Save changes" }).closest("form")!);
+  expect(x.client.update).not.toHaveBeenCalled();
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Uncommitted owner edit");
+  expect(screen.getByRole("button", { name: "Archive Agent" })).toBeEnabled();
+  await screen.findByText("No app access recorded.");
+});
+
+it.each(["Web", "Electron"] as const)("opts in to recovery projection through the actual %s list transport", async surface => {
+  const wireLibrary = { enabled: true, agents: [agent], managedCustomRecoveries: [{ agentId: agent.id, baseRevision: 1 }] };
+  const fetchFn = vi.fn<(input: unknown) => Promise<Response>>(async () => new Response(JSON.stringify(wireLibrary), { status: 200, headers: { "content-type": "application/json" } }));
+  const wire = surface === "Web" ? createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn })
+    : createCanonicalChatClient(createApiClient({ baseUrl: "https://matrix.test", getRuntimeSlot: () => "primary", fetchFn }));
+  expect(await wire.agents!.list()).toMatchObject(wireLibrary);
+  expect(String(fetchFn.mock.calls[0]![0])).toContain("/api/chat-agents?includeManagedCustomRecoveries=true");
 });

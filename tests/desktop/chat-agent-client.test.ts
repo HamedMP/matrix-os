@@ -19,6 +19,11 @@ describe("Chat Agent recipe client", () => {
     expect(() => client.bots!.recoverManagedCustom!("bot_recover01", { baseRevision: 0 })).toThrow();
     expect(request).toHaveBeenCalledTimes(1);
   });
+  it("preserves the bounded unfinished-recovery projection through library transport parsing", async () => {
+    const request = vi.fn(async () => ({ enabled: true, agents: [], managedCustomRecoveries: [{ agentId: "bot_recover01", baseRevision: 1 }] }));
+    expect(await createChatAgentClient(request).list()).toMatchObject({ managedCustomRecoveries: [{ agentId: "bot_recover01", baseRevision: 1 }] });
+    expect(request).toHaveBeenCalledExactlyOnceWith("/api/chat-agents?includeManagedCustomRecoveries=true", "GET");
+  });
   it("requests funding-aware model states through the existing shared transport", async () => {
     const request = vi.fn(async () => createCanonicalProviderCatalogFixture());
     await createChatAgentClient(request).catalog();

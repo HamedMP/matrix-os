@@ -6,7 +6,13 @@ import { recoverCreatedAgent } from "./recover-created-custom-bot.js";
 import { safeHttpStatus } from "./safe-http-status.js";
 
 export type AgentCreationAttempt = { client: ChatAgentClient; input: CreateChatAgentRequest; managed: boolean;
-  result?: InstantiateBotResponse; agent?: ChatAgent; chatId?: string };
+  result?: InstantiateBotResponse; agent?: ChatAgent; chatId?: string; uncertainOutcome?: boolean };
+
+function matchesSavedDraft(draft: AgentDraft, agent: ChatAgent): boolean {
+  const recipe = draft.recipe === undefined && agent.recipe ? null : draft.recipe;
+  return draft.name === agent.name && draft.description === agent.description && draft.instructions === agent.instructions
+    && JSON.stringify(draft.selection) === JSON.stringify(agent.selection) && !Object.keys(agentRecipePatch(agent, recipe)).length;
+}
 
 /** An uncertain response replays the exact original request, then edits its verified identity. */
 export async function saveAgentDraft(client: ChatAgentClient, retained: { current: AgentCreationAttempt | null },
@@ -29,20 +35,21 @@ export async function saveAgentDraft(client: ChatAgentClient, retained: { curren
       if (attempt.managed) attempt.result = await client.bots!.createCustom!(attempt.input);
       else attempt.agent = await client.create(attempt.input);
     } catch (failure: unknown) {
-      // These explicit rejections occur before create. Conflicts/timeouts/server errors
-      // may describe an existing operation, so keep their exact request for recovery.
+      // A first validation/auth rejection happens before writes. Once any request
+      // may have committed, later validation failures cannot disprove that operation.
+      // Capacity errors can also follow definition/workspace creation.
       const status = safeHttpStatus(failure);
-      if (status !== null && [400, 401, 403, 404, 413, 422, 429].includes(status)) retained.current = null;
+      if (!attempt.uncertainOutcome && status !== null && [400, 401, 403, 404, 413, 422].includes(status)) retained.current = null;
+      else attempt.uncertainOutcome = true;
       throw failure;
     }
   }
   if (!isCurrent()) throw new Error("Agent setup ended");
   const id = attempt.result?.agent.id ?? attempt.agent!.id;
-  const unchanged = draft.name === attempt.input.name && draft.description === attempt.input.description
-    && draft.instructions === attempt.input.instructions && JSON.stringify(draft.selection) === JSON.stringify(attempt.input.selection)
-    && JSON.stringify(draft.recipe ?? null) === JSON.stringify(attempt.input.recipe ?? null);
-  const saved = attempt.agent && unchanged ? attempt.agent : await recoverCreatedAgent(client, id, draft, attempt.managed, isCurrent);
+  const saved = !attempt.managed && attempt.agent && matchesSavedDraft(draft, attempt.agent)
+    ? attempt.agent : await recoverCreatedAgent(client, id, draft, attempt.managed, isCurrent);
   if (!saved || !isCurrent()) throw new Error("Created Bot readback unavailable");
+  attempt.agent = saved;
   if (attempt.result) attempt.chatId = attempt.result.chatId;
   return { saved, managed: attempt.managed, attempt };
 }

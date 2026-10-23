@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { sql, type Transaction } from "kysely";
 import { ChatAgentIdSchema, CreateManagedCustomBotRequestSchema, InstantiateBotResponseSchema, RecoverManagedCustomBotRequestSchema,
   isManagedCustomBot, type CanonicalChatModelSelection, type ChatAgent, type InstantiateBotResponse } from "@matrix-os/contracts";
@@ -77,6 +78,41 @@ export function createManagedCustomRecovery(deps: {
   }
 
   return {
+    /** No discovery or mutations. A file reference alone never authorizes resumption. */
+    async projectUnfinished(ownerId: string, listed: readonly ChatAgent[]): Promise<{ agentId: string; baseRevision: number }[]> {
+      const candidates = listed.slice(0, 100).filter(agent => !agent.archived && agent.selection.instanceId === "matrix_pi_default"
+        && !agent.selection.options?.length && (!agent.recipeRef || isManagedCustomBot(agent)))
+        .map(agent => {
+          const baseRevision = agent.recipeRef ? agent.revision - 1 : agent.revision;
+          return { agent, baseRevision, requestId: managedCustomRecoveryRequestId(ownerId, agent.id, baseRevision) };
+        }).filter(candidate => candidate.baseRevision >= 1);
+      if (!candidates.length) return [];
+      return deps.chats.withTransaction(async repository => {
+        await lockChatAgentOwner(repository.kysely, owner(ownerId));
+        const operations = await ownerBotExecutor(repository.kysely).selectFrom("bot_operations").selectAll()
+          .where("owner_id", "=", ownerId).where("client_request_id", "in", candidates.map(candidate => candidate.requestId))
+          .where("status", "!=", "active").limit(100).execute();
+        const result: { agentId: string; baseRevision: number }[] = [];
+        for (const { agent, baseRevision, requestId } of candidates) {
+          const operation = operations.find(operation => operation.bot_id === agent.id && operation.client_request_id === requestId);
+          if (!operation) continue;
+          const stored = await deps.agents.getCreationSnapshot(owner(ownerId), agent.id);
+          if (!stored || !isDeepStrictEqual(stored.agent, agent) || stored.createHash !== operation.payload_hash) continue;
+          if (operation.workspace_rel_path !== `bots/${agent.id}`) continue;
+          try {
+            const chat = await directChat(repository, ownerId, agent.id);
+            if (chat.id !== operation.chat_id) continue;
+            await idle(repository, ownerId, agent.id, chat);
+            result.push({ agentId: agent.id, baseRevision });
+          } catch (error: unknown) {
+            // An ineligible candidate must not hide unrelated Bots. Infrastructure
+            // failures still fail the read instead of enabling a fallback action.
+            if (!(error instanceof ManagedCustomRecoveryError) || !["conflict", "not_found"].includes(error.code)) throw error;
+          }
+        }
+        return result;
+      });
+    },
     async recover(ownerId: string, agentIdValue: string, requestValue: unknown): Promise<InstantiateBotResponse> {
       const id = ChatAgentIdSchema.safeParse(agentIdValue), parsed = RecoverManagedCustomBotRequestSchema.safeParse(requestValue);
       if (!id.success || !parsed.success) throw new ManagedCustomRecoveryError("invalid_request");

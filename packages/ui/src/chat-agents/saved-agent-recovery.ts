@@ -1,4 +1,4 @@
-import { isManagedCustomBot, type ChatAgent, type InstantiateBotResponse } from "@matrix-os/contracts";
+import { isManagedCustomBot, type ChatAgent, type ChatAgentListResponse, type InstantiateBotResponse } from "@matrix-os/contracts";
 import type { AgentDraft } from "./AgentEditor.js";
 import type { ChatAgentClient } from "./client.js";
 import { agentRecipePatch } from "./recipe-edit.js";
@@ -8,12 +8,18 @@ export function agentDraftMatchesSaved(draft: AgentDraft, agent: ChatAgent) {
     && JSON.stringify(draft.selection) === JSON.stringify(agent.selection) && !Object.keys(agentRecipePatch(agent, draft.recipe)).length;
 }
 
+/** A promoted definition needs the server's exact unfinished operation projection. */
+export function savedAgentRecoveryBaseRevision(agent: ChatAgent, recoveries: ChatAgentListResponse["managedCustomRecoveries"]) {
+  if (agent.archived || agent.selection.instanceId !== "matrix_pi_default" || agent.selection.options?.length) return undefined;
+  return recoveries?.find(recovery => recovery.agentId === agent.id)?.baseRevision ?? (!agent.recipeRef ? agent.revision : undefined);
+}
+
 export async function recoverSavedFundedBot(client: ChatAgentClient, retained: { current: InstantiateBotResponse | null },
-  agent: ChatAgent, draft: AgentDraft, isCurrent: () => boolean) {
+  agent: ChatAgent, draft: AgentDraft, isCurrent: () => boolean, unfinishedBaseRevision?: number) {
   if (!isCurrent() || !agentDraftMatchesSaved(draft, agent) || !client.bots?.recoverManagedCustom)
     throw new Error("Saved Bot recovery unavailable");
   if (!retained.current) {
-    const result = await client.bots.recoverManagedCustom(agent.id, { baseRevision: agent.revision });
+    const result = await client.bots.recoverManagedCustom(agent.id, { baseRevision: unfinishedBaseRevision ?? agent.revision });
     if (result.agent.id !== agent.id) throw new Error("Recovered Bot identity did not match");
     retained.current = result;
   }

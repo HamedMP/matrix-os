@@ -48,14 +48,14 @@ function AgentEditorActions({ editing, pending, saveDisabled, onArchive, onBack,
 }
 
 export function AgentEditor({ botClient, draft, editing, pending, models, catalog, catalogLoading = false, recipeCatalog, connections, recipeLoading, recipeError, connectionError,
-  change, onSave, onArchive, onBack, onSetup, onRefreshCatalog, onRetryRecipe, allowArchive = true, cancelLabel = "Back", apps, onRecover, recoveryDisabled, retainedSelection, retainedManaged }: {
+  change, onSave, onArchive, onBack, onSetup, onRefreshCatalog, onRetryRecipe, allowArchive = true, cancelLabel = "Back", apps, onRecover, recoveryDisabled, retainedSelection, retainedManaged, unfinishedRecovery = false }: {
   botClient?: BotClient; apps?: ReactNode; draft: AgentDraft; editing: ChatAgent | "new"; pending: boolean; models: ReturnType<typeof deriveCanonicalProviderChoices>;
   catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean;
   recipeCatalog: ChatAgentRecipeCatalog | null; connections: ChatAgentIntegrationConnection[];
   recipeLoading: boolean; recipeError: string; connectionError: string;
   change(value: Partial<AgentDraft>): void; onSave(): Promise<void>; onArchive(): Promise<void>; onBack(): void;
   onRetryRecipe(): void; onSetup?: () => void; onRefreshCatalog?: () => void; allowArchive?: boolean; cancelLabel?: string;
-  onRecover?: () => Promise<void>; recoveryDisabled?: boolean;
+  onRecover?: () => Promise<void>; recoveryDisabled?: boolean; unfinishedRecovery?: boolean;
   retainedSelection?: CanonicalChatModelSelection; retainedManaged?: boolean;
 }) {
   const ids = useId();
@@ -66,7 +66,7 @@ export function AgentEditor({ botClient, draft, editing, pending, models, catalo
   const editableRecipeCatalog = managedCustom && recipeCatalog
     ? { ...recipeCatalog, skills: recipeCatalog.skills.filter(skill => skill.id !== "matrix-jev-email-triage") }
     : recipeCatalog;
-  const saveDisabled = pending || !validation.valid;
+  const saveDisabled = pending || unfinishedRecovery || !validation.valid;
   return <form className="mt-5 grid gap-4" onSubmit={(event) => { event.preventDefault(); if (!saveDisabled) void onSave(); }}>
       <p className="text-xs" style={muted}>Name, Instructions and Model are required. A recipe also requires Expected output.</p>
       <label className="grid gap-1.5 text-sm" htmlFor={`${ids}-name`}>Name<input id={`${ids}-name`} aria-invalid={Boolean(errors.name)} aria-describedby={errors.name ? `${ids}-name-error` : undefined} className={input} value={draft.name} maxLength={80} required disabled={pending} onChange={(event) => change({ name: event.target.value })} /></label>
@@ -88,10 +88,11 @@ export function AgentEditor({ botClient, draft, editing, pending, models, catalo
         {Object.entries(errors).filter(([, message]) => message !== "These skills are too large to use together. Remove a selected skill.")
           .map(([field, message]) => <p key={field}>{message}</p>)}
       </div> : null}
+      {unfinishedRecovery ? <p role="status" className="text-xs">Finish recovery before saving changes to this Bot. Its existing Chat, history and permissions are preserved.</p> : null}
       <AgentEditorActions editing={editing} pending={pending} saveDisabled={saveDisabled} onArchive={onArchive} onBack={onBack} allowArchive={allowArchive} cancelLabel={cancelLabel} />
       {onRecover ? <div className="grid gap-2 text-xs">
-        <p>This older Bot needs recovery to use Matrix AI in its existing Chat. Its history and permissions are preserved.</p>
-        {recoveryDisabled && !pending ? <p>Save your changes or reopen this Bot before recovering it.</p> : null}
+        <p>{unfinishedRecovery ? "Recovery is unfinished. Continue to finish the same Bot and Chat." : "This older Bot needs recovery to use Matrix AI in its existing Chat. Its history and permissions are preserved."}</p>
+        {recoveryDisabled && !pending ? <p>{unfinishedRecovery ? "Reopen this Bot to discard unsaved changes before recovering it." : "Save your changes or reopen this Bot before recovering it."}</p> : null}
         <button type="button" className={`${button} justify-self-start`} disabled={pending || recoveryDisabled} onClick={() => void onRecover()}>Recover Bot</button>
       </div> : null}
     </form>;
