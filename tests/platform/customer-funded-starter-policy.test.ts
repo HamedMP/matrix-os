@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountDeletionRepository } from '../../packages/platform/src/account-deletion/repository.js';
-import { initializeCustomerFundedStarterPolicy } from '../../packages/platform/src/customer-funded-starter-policy.js';
+import { initializeCustomerFundedStarterPolicy, lockCustomerFundedStarterActivation } from '../../packages/platform/src/customer-funded-starter-policy.js';
 import { createAiFundedPolicyRepository } from '../../packages/platform/src/ai-funded-policy-repository.js';
 import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
@@ -230,6 +230,27 @@ describe('customer starter policy initialization', () => {
       AI_FUNDED_PROMOTIONAL_GRANT_EXPIRES_AT: now })).toBe(true);
     expect((await policies())[0]).toMatchObject({ expires_at: null, monthly_budget_microusd: 5000000 });
     expect(await db.executor.selectFrom('ai_funded_credit_ledger').selectAll().execute()).toHaveLength(1);
+  });
+
+  it('requires a transaction for funded activation and ignores disabled or missing targets', async () => {
+    await expect(lockCustomerFundedStarterActivation(db, 'owner', enabledEnv)).rejects.toThrow(/transaction/);
+    await expect(lockCustomerFundedStarterActivation(db, 'owner', {})).resolves.toBeUndefined();
+    expect(await initializeCustomerFundedStarterPolicy(db, 'missing-machine', { now, env: enabledEnv })).toBe(false);
+    expect(await policies()).toEqual([]);
+  });
+
+  it.each(['policy', 'balance'] as const)('refuses a mismatched %s identity without changing or funding it', async target => {
+    const repo = createAiFundedPolicyRepository({ db, credentialHashSecret: 'h'.repeat(32) });
+    await repo.setRuntimePolicy({ identity: { ownerId: 'owner', machineId: '9f05824c-8d0a-4d83-9cb4-b312d43ff112', runtimeSlot: 'primary' },
+      expectedRevision: 0, enabled: true, allowedModelIds: models, monthlyBudgetMicrousd: 123, expiresAt: null });
+    if (target === 'policy') await db.executor.updateTable('ai_funded_runtime_policies').set({ runtime_slot: 'other' }).execute();
+    else await db.executor.updateTable('ai_funded_runtime_balances').set({ runtime_slot: 'other' }).execute();
+    const before = await policies();
+    const balances = await db.executor.selectFrom('ai_funded_runtime_balances').selectAll().execute();
+    await expect(initialize()).rejects.toThrow(/identity mismatch/);
+    expect(await policies()).toEqual(before);
+    expect(await db.executor.selectFrom('ai_funded_runtime_balances').selectAll().execute()).toEqual(balances);
+    expect(await db.executor.selectFrom('ai_funded_credit_ledger').selectAll().execute()).toEqual([]);
   });
 
   it('fails atomically without the real configured hash secret', async () => {

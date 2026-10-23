@@ -11,6 +11,7 @@ type CheckoutRow = {
   clerk_user_id: string; machine_runtime_slot: string; status: string; activation_state: string; deleted_at: string | null;
   owner_id: string; policy_runtime_slot: string; runtime_enabled: boolean; runtime_allowed_model_ids: string;
   monthly_budget_microusd: unknown; expires_at: string | null; runtime_revision: number;
+  budget_mode: 'fixed' | 'credit_backed';
   global_enabled: boolean; global_allowed_model_ids: string; global_revision: number;
   credit_balance_microusd: unknown; promotional_balance_microusd: unknown; addon_balance_microusd: unknown;
   reserved_microusd: unknown; funding_shortfall_microusd: unknown; month_period_start: string;
@@ -46,7 +47,7 @@ export async function readCheckoutFundingSnapshot(input: {
         machine.status, machine.activation_state, machine.deleted_at,
         runtime.owner_id, runtime.runtime_slot as policy_runtime_slot,
         runtime.enabled as runtime_enabled, runtime.allowed_model_ids as runtime_allowed_model_ids,
-        runtime.monthly_budget_microusd, runtime.expires_at, runtime.revision as runtime_revision,
+        runtime.monthly_budget_microusd, runtime.budget_mode, runtime.expires_at, runtime.revision as runtime_revision,
         global.enabled as global_enabled, global.allowed_model_ids as global_allowed_model_ids,
         global.revision as global_revision,
         balance.credit_balance_microusd, balance.promotional_balance_microusd,
@@ -72,7 +73,6 @@ export async function readCheckoutFundingSnapshot(input: {
       if (row.restriction_frozen === true || exactInteger(row.restriction_debt_microusd ?? 0) > 0) {
         throw new AiFundedPolicyError("access_disabled");
       }
-    const monthlyBudgetMicrousd = exactInteger(row.monthly_budget_microusd);
     const enabled = row.global_enabled && row.runtime_enabled
       && (row.expires_at === null || Date.parse(row.expires_at) > checked.getTime());
     const allowedModelIds = enabled
@@ -83,7 +83,7 @@ export async function readCheckoutFundingSnapshot(input: {
     const balance = currentBalance.month_period_start === currentPeriod ? currentBalance : {
       ...currentBalance, month_period_start: currentPeriod, month_spent_microusd: 0, month_reserved_microusd: 0,
     };
-    const funding = fundingSummary(balance, monthlyBudgetMicrousd, checkedAt);
+    const funding = fundingSummary(balance, exactInteger(row.monthly_budget_microusd), checkedAt, row.budget_mode);
     const sources = input.includeChatAvailability ? await fundingSourceAvailability(trx.executor, identity, balance, checkedAt, { readOnly: true }) : undefined;
     if (Date.now() >= deadlineAtMs) throw new Error("Checkout funding read timed out");
     const chatAvailability = sources ? FundedAiChatAvailabilitySchema.parse({ contractVersion: 1, asOf: checkedAt,
@@ -92,12 +92,13 @@ export async function readCheckoutFundingSnapshot(input: {
     }) : undefined;
     return {
       funding, ...(chatAvailability ? { chatAvailability } : {}),
+      ...(row.budget_mode === 'credit_backed' ? { creditBackedBudget: true as const } : {}),
       policy: {
         enabled: enabled && allowedModelIds.length > 0,
         globalRevision: row.global_revision,
         runtimeRevision: row.runtime_revision,
         allowedModelIds,
-        monthlyBudgetMicrousd,
+        monthlyBudgetMicrousd: funding.monthlyBudgetMicrousd,
         checkedAt,
         staleAfter: new Date(checked.getTime() + input.policyFreshnessMs).toISOString(),
       },

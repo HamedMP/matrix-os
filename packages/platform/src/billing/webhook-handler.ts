@@ -27,6 +27,7 @@ import {
 } from '../billing.js';
 
 import { processAiCreditWebhookEvent } from '../ai-credit-checkout-webhook.js';
+import { issueSubscriptionRuntimeCredit, recordSubscriptionCreditPayment, recordSubscriptionCreditTerms } from '../subscription-ai-credit-billing.js';
 
 import { deliverRedditAttribution } from '../reddit-purchase-attribution.js';
 
@@ -168,6 +169,8 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
           }
           const invoice = readInvoiceProjection(event.data.object);
           if (!invoice) return { received: true, ignored: true };
+          if (event.type === 'invoice.paid') await recordSubscriptionCreditPayment({ db: trx, value: event.data.object,
+            priceCatalog: loadStripePriceCatalog(env), env, now: webhookProcessedAt, repository: options.fundedAiRepository });
           const subscription = await getBillingSubscriptionByStripeId(trx, invoice.stripeSubscriptionId);
           if (!subscription) return { received: true, ignored: true };
           emitTelemetry(
@@ -255,6 +258,8 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
             });
           }
           const priceCatalog = loadStripePriceCatalog(env);
+          if (event.type === 'invoice.paid') await issueSubscriptionRuntimeCredit({ db: trx, env,
+            now: webhookProcessedAt, repository: options.fundedAiRepository }, updated.stripeSubscriptionId);
           const summary = await recomputeStripeSummary(trx, updated.clerkUserId, priceCatalog, env, webhookProcessedAt);
           if (summary) await persistEntitlement(trx, summary);
           return { received: true, processed: true };
@@ -302,6 +307,8 @@ export function createStripeWebhookHandler(options: Parameters<typeof createBill
           updatedAt: webhookProcessedAt.toISOString(),
         });
         if (!projectionApplied) return { received: true, processed: true };
+        await recordSubscriptionCreditTerms({ db: trx, env, now: webhookProcessedAt, changeAt: new Date(epochSecondsToIso(event.created)),
+          repository: options.fundedAiRepository }, projection, event.data.object);
         if (projection.status === 'trialing' && !projection.firstTrialPaymentFailedAt) {
           const canceledSuspensions = await cancelOutstandingBillingRuntimeActions(
             trx,

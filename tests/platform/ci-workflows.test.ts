@@ -15,6 +15,18 @@ import { join } from 'node:path';
 import { parse } from 'yaml';
 import { sourceChangeScript } from '../../scripts/ci/dedicated-changes.mjs';
 
+it('runs subscription and credit regressions on disposable native PostgreSQL in required CI', () => {
+  const job = parse(readFileSync('.github/workflows/ci.yml', 'utf8')).jobs['funded-postgres'];
+  const step = job.steps.find((entry: { name?: string }) => entry.name === 'Verify reviewed paid starter recovery on PostgreSQL');
+  expect(step?.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL).toBe('postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_ci_platform_fixture_admin');
+  expect(step?.run).toContain('CREATE DATABASE matrix_ci_platform_fixture_admin');
+  for (const suite of ['subscription-ai-credit-approved', 'subscription-ai-credit-webhook',
+    'funded-ai-addon-checkout', 'customer-funded-paid-recovery']) {
+    expect(step?.run).toContain(`tests/platform/${suite}.test.ts`);
+  }
+  expect(step?.run).toContain('--maxWorkers=1 --no-file-parallelism');
+});
+
 function readWorkflowStepRun(
   root: string,
   workflowPath: string,
@@ -801,7 +813,8 @@ describe('CI workflows', () => {
       'invoice.paid',
       'invoice.payment_failed',
     ]) {
-      expect(production).toContain(eventType);
+      expect(production).toContain('platform-ai-credit-release.py verify-webhook');
+      expect(readFileSync(join(root, 'scripts/ci/platform-ai-credit-release.py'), 'utf8')).toContain(eventType);
     }
   });
 
@@ -949,8 +962,10 @@ describe('CI workflows', () => {
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
     expect(workflow).toContain('Verify Stripe webhook lifecycle events');
-    expect(workflow).toContain('checkout.session.completed');
-    expect(workflow).toContain('checkout.session.expired');
+    expect(workflow).toContain('platform-ai-credit-release.py verify-webhook');
+    const validation = readFileSync(join(root, 'scripts/ci/platform-ai-credit-release.py'), 'utf8');
+    expect(validation).toContain('checkout.session.completed');
+    expect(validation).toContain('checkout.session.expired');
     expect(workflow).toContain('/billing/webhooks/stripe');
     expect(workflow).toContain('https://api.stripe.com/v1/webhook_endpoints');
     expect(workflow).toContain('stripe-secret-key');

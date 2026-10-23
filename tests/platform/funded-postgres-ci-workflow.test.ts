@@ -99,6 +99,11 @@ describe("funded PostgreSQL CI coverage", () => {
     const directory = mkdtempSync(join(tmpdir(), "matrix-funded-pg-order-"));
     try {
       const log = join(directory, "commands");
+      // Database setup is validated by native execution; this ordering fixture
+      // must consume its heredoc without connecting to a real database.
+      const node = join(directory, "node");
+      writeFileSync(node, '#!/usr/bin/env bash\ncat >/dev/null\n');
+      chmodSync(node, 0o700);
       for (const name of ["bun", "pnpm"]) {
         const executable = join(directory, name);
         writeFileSync(executable, `#!/usr/bin/env bash
@@ -124,6 +129,7 @@ printf '\\n' >> "$WAIVER_CI_COMMANDS_PATH"
       expect(valid.commands.slice(1).every(command => command.startsWith("pnpm exec vitest run "))).toBe(true);
       expect(valid.commands[1]).toContain("tests/platform/ai-funded-model-probes-postgres.test.ts");
       expect(valid.commands[2]).toContain("tests/platform/customer-funded-paid-recovery-postgres.test.ts");
+      expect(valid.commands[2]).toContain("tests/platform/subscription-ai-credit-approved.test.ts");
       expect(valid.commands[3]).toContain("tests/platform/account-deletion-");
       expect(valid.commands[4]).toContain("tests/gateway/bots/funded-inference-timeout.test.ts");
       expect(valid.commands[5]).toContain("tests/platform/preview-drive-postgres-concurrency.test.ts");

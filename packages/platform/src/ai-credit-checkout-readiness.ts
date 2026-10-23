@@ -134,7 +134,8 @@ function validFunding(state: Awaited<ReturnType<AiFundedPolicyRepository["getChe
   const checkedAt = Date.parse(policy.checkedAt);
   const staleAfter = Date.parse(policy.staleAfter);
   const ledgerAsOf = Date.parse(funding.asOf);
-  return policy.enabled && policy.allowedModelIds.length > 0 && funding.remainingBudgetMicrousd > 0
+  return policy.enabled && policy.allowedModelIds.length > 0
+    && (funding.remainingBudgetMicrousd > 0 || state.creditBackedBudget === true)
     && Number.isFinite(checkedAt) && checkedAt <= now
     && Number.isFinite(staleAfter) && staleAfter > now
     && Number.isFinite(ledgerAsOf) && ledgerAsOf <= now + 60_000

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import type { AiCreditPackageId } from "./ai-credit-checkout.js";
 import type { PlatformDB, PlatformDatabase } from "./db.js";
+import { alignCreditBackedBudget } from './funded-credit-budget.js';
 
 const CHECKOUT_WINDOW_MS = 60 * 60_000;
 const CHECKOUT_ACTIVE_MS = 24 * 60 * 60_000;
@@ -137,13 +138,16 @@ export async function getClaimByPaymentReference(
   db: PlatformDB,
   paymentIntentId: string | null,
   chargeId: string | null,
+  lock = true,
 ) {
   if (!paymentIntentId && !chargeId) return undefined;
-  return db.executor.selectFrom("ai_credit_checkout_claims").selectAll()
+  let query = db.executor.selectFrom("ai_credit_checkout_claims").selectAll()
     .where((eb) => eb.or([
       ...(paymentIntentId ? [eb("payment_intent_id", "=", paymentIntentId)] : []),
       ...(chargeId ? [eb("charge_id", "=", chargeId)] : []),
-    ])).forUpdate().executeTakeFirst();
+    ]));
+  if (lock) query = query.forUpdate();
+  return query.executeTakeFirst();
 }
 
 export async function markClaimSession(
@@ -228,6 +232,9 @@ export async function reverseClaimCredit(
     frozen: sql<boolean>`ai_funded_credit_restrictions.frozen OR ${freeze || debt > 0}`,
     updated_at: at,
   })).execute();
+  await alignCreditBackedBudget(trx, {
+    ownerId: claim.owner_id, machineId: claim.machine_id, runtimeSlot: claim.runtime_slot,
+  }, at);
   return trx.executor.updateTable("ai_credit_checkout_claims").set({
     reversed_microusd: Number(claim.granted_microusd), reversal_debt_microusd: debt, updated_at: at,
   }).where("request_id", "=", claim.request_id).where("reversed_microusd", "=", 0)
@@ -262,6 +269,9 @@ export async function settleWonDisputeCredit(
         .where(sql<boolean>`addon_balance_microusd <= ${Number.MAX_SAFE_INTEGER - restoreToBalance}`)
         .returning("machine_id").executeTakeFirst();
       if (!restored) throw new Error("Funded AI credit restoration exceeds supported bounds");
+      await alignCreditBackedBudget(trx, {
+        ownerId: claim.owner_id, machineId: claim.machine_id, runtimeSlot: claim.runtime_slot,
+      }, at);
     }
   }
   if (shouldRestore) {

@@ -48,6 +48,9 @@ export async function migrateAiFunded(db: PlatformMigrationExecutor): Promise<vo
   `.execute(db);
   await sql`ALTER TABLE ai_funded_runtime_policies ADD COLUMN IF NOT EXISTS next_issue_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z'`.execute(db);
   await sql`ALTER TABLE ai_funded_runtime_policies ADD COLUMN IF NOT EXISTS monthly_budget_microusd BIGINT NOT NULL DEFAULT 0 CHECK (monthly_budget_microusd >= 0)`.execute(db);
+  // Existing operator limits remain fixed; adopting balance-backed budgets is explicit.
+  await sql`ALTER TABLE ai_funded_runtime_policies ADD COLUMN IF NOT EXISTS budget_mode TEXT NOT NULL DEFAULT 'fixed'
+    CHECK (budget_mode IN ('fixed', 'credit_backed'))`.execute(db);
   await sql`CREATE INDEX IF NOT EXISTS idx_ai_funded_runtime_owner ON ai_funded_runtime_policies(owner_id, runtime_slot)`.execute(db);
   await sql`
     CREATE TABLE IF NOT EXISTS ai_runtime_credentials (

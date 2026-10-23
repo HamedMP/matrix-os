@@ -6,6 +6,7 @@ import { createMockHetznerClient, createMockCustomerVpsSystemStore } from './cus
 import { JEV_MODEL_ID } from "@matrix-os/contracts";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
+import { sql } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAiFundedPolicyRepository } from "../../packages/platform/src/ai-funded-policy-repository.js";
 import { createPlatformDb, insertUserMachine, type PlatformDB } from "../../packages/platform/src/db.js";
@@ -73,6 +74,36 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
 
   const starterEnv = { MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: 'true',
     MATRIX_FUNDED_AI_RUNTIME_ENABLED: 'true', AI_FUNDED_CREDENTIAL_HASH_SECRET: 'h'.repeat(32) };
+
+  it.each(['credential', 'release'] as const)('%s waits for funded owner before financial or machine rows', async action => {
+    const identity = identities[0];
+    const reservation = action === 'release' ? await first.authorize({ credential: credentials[0],
+      requestId: 'release-owner-order', modelId, maxCostMicrousd: 1 }) : undefined;
+    await db.executor.updateTable('ai_funded_runtime_policies').set({ next_issue_at: '2000-01-01T00:00:00.000Z' })
+      .where('machine_id', '=', identity.machineId).execute();
+    let pending: Promise<unknown> | undefined;
+    try {
+      await db.transaction(async trx => {
+        await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
+        pending = action === 'credential' ? second.issueRuntimeCredential(identity) : second.releaseReservation({
+          tokenId: tokenIds[0], reservationId: reservation!.reservation.reservationId, reason: 'pre_upstream_failure' });
+        // Observe PostgreSQL's actual blocked lock, rather than relying on a sleep.
+        await vi.waitFor(async () => {
+          const waiting = await admin.query<{ count: number }>(`SELECT count(*)::int AS count
+            FROM pg_locks lock JOIN pg_stat_activity activity ON activity.pid = lock.pid
+            WHERE lock.locktype = 'advisory' AND NOT lock.granted AND activity.application_name = $1`, [`${schema}_second`]);
+          expect(waiting.rows[0].count).toBeGreaterThan(0);
+        }, { timeout: 3000, interval: 25 });
+        await trx.executor.selectFrom('user_machines').select('machine_id')
+          .where('machine_id', '=', identity.machineId).forUpdate().noWait().executeTakeFirstOrThrow();
+        await trx.executor.selectFrom('ai_funded_runtime_policies').select('machine_id')
+          .where('machine_id', '=', identity.machineId).forUpdate().noWait().executeTakeFirstOrThrow();
+      });
+      await expect(pending).resolves.toBeDefined();
+    } finally {
+      if (pending) await Promise.allSettled([pending]);
+    }
+  });
 
   it('starter registration waits for owner admission before taking the machine lock', async () => {
     for (const [key, value] of Object.entries(starterEnv)) vi.stubEnv(key, value);

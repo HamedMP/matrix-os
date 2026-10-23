@@ -20,6 +20,8 @@ import { createAiFundedMeteringRepository } from "./ai-funded-metering-repositor
 import { createFundedTerminalOutcome } from "./ai-funded-terminal-outcome.js";
 import { createFundedExecutionBatch } from "./ai-funded-execution-batch.js";
 import { createFundedExecutionRecovery } from "./ai-funded-execution-recovery.js";
+import { alignCreditBackedBudget } from './funded-credit-budget.js';
+import { issueConfiguredSubscriptionAiCredit } from './subscription-ai-credit-policy.js';
 
 export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
 
@@ -42,11 +44,13 @@ const RuntimePolicyUpdateSchema = z.object({
   enabled: z.boolean(),
   allowedModelIds: ModelIdsSchema,
   monthlyBudgetMicrousd: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  budgetMode: z.enum(['fixed', 'credit_backed']).optional(),
   expiresAt: IsoTimestampSchema.nullable(),
 }).strict();
 const TOKEN_PATTERN = /^sk-matrix-funded-([A-Za-z0-9][A-Za-z0-9_.:-]{0,79})\.([A-Za-z0-9_-]{43})$/;
 
 export interface AiFundedPolicyRepositoryOptions {
+  subscriptionCreditEnv?: NodeJS.ProcessEnv;
   db: PlatformDB;
   credentialHashSecret: string;
   now?: () => Date;
@@ -128,6 +132,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         "runtime.revision",
         "runtime.allowed_model_ids",
         "runtime.monthly_budget_microusd",
+        "runtime.budget_mode",
         "runtime.expires_at",
         "runtime.updated_at",
       ])
@@ -147,6 +152,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
       revision: row.revision,
       allowedModelIds: parseModels(row.allowed_model_ids),
       monthlyBudgetMicrousd: Number(row.monthly_budget_microusd),
+      ...(row.budget_mode === 'credit_backed' ? { budgetMode: row.budget_mode } : {}),
       expiresAt: row.expires_at,
       updatedAt: row.updated_at,
     };
@@ -184,6 +190,8 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     const policyTime = now();
     const at = policyTime.toISOString();
     return options.db.transaction(async (trx) => {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`
+        .execute(trx.executor);
       const machine = await trx.executor.selectFrom("user_machines").select([
         "machine_id", "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at",
       ]).where("machine_id", "=", identity.machineId).forUpdate().executeTakeFirst();
@@ -218,10 +226,11 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         month_reserved_microusd: 0,
         updated_at: at,
       }).onConflict((conflict) => conflict.column("machine_id").doNothing()).execute();
-      const row = await trx.executor.updateTable("ai_funded_runtime_policies").set({
+      let row = await trx.executor.updateTable("ai_funded_runtime_policies").set({
         enabled: parsed.enabled,
         allowed_model_ids: JSON.stringify(allowedModelIds),
         monthly_budget_microusd: parsed.monthlyBudgetMicrousd,
+        ...(parsed.budgetMode ? { budget_mode: parsed.budgetMode } : {}),
         expires_at: parsed.expiresAt,
         revision: parsed.expectedRevision + 1,
         updated_at: at,
@@ -229,12 +238,19 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         .where("runtime_slot", "=", identity.runtimeSlot).where("revision", "=", parsed.expectedRevision)
         .returningAll().executeTakeFirst();
       if (!row) throw new AiFundedPolicyError("revision_conflict");
+      if (row.budget_mode === 'credit_backed') {
+        await alignCreditBackedBudget(trx, identity, at);
+        row = await trx.executor.selectFrom('ai_funded_runtime_policies').selectAll()
+          .where('machine_id', '=', identity.machineId).where('owner_id', '=', identity.ownerId)
+          .where('runtime_slot', '=', identity.runtimeSlot).executeTakeFirstOrThrow();
+      }
       return {
         identity,
         enabled: row.enabled,
         revision: row.revision,
         allowedModelIds,
         monthlyBudgetMicrousd: Number(row.monthly_budget_microusd),
+        ...(row.budget_mode === 'credit_backed' ? { budgetMode: row.budget_mode } : {}),
         expiresAt: row.expires_at,
         updatedAt: row.updated_at,
       };
@@ -251,6 +267,8 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     const cooldownColumn = requestClass === "background" ? "next_background_issue_at" : "next_issue_at";
     const identity = IdentitySchema.parse(identityInput);
     await options.db.ready;
+    if (!probe) await issueConfiguredSubscriptionAiCredit({ db: options.db, repository: metering, identity,
+      env: options.subscriptionCreditEnv ?? process.env, now: now() });
     const checked = now();
     const checkedAt = checked.toISOString();
     const nextIssueAt = new Date(checked.getTime() + issueCooldownMs).toISOString();
@@ -267,7 +285,14 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
       monthly_budget_microusd: number;
       token_id: string;
     };
-    const issued = await sql<IssuedRow>`
+    const issued = await options.db.transaction(async trx => {
+      // Match grants/admission: owner, machine, then policy. In particular,
+      // credential FK insertion must not wait on a grant holding the machine
+      // while the grant waits on this issuance's cooldown policy update.
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${identity.ownerId}`}, 0))`.execute(trx.executor);
+      await trx.executor.selectFrom('user_machines').select('machine_id')
+        .where('machine_id', '=', identity.machineId).forUpdate().executeTakeFirst();
+      return sql<IssuedRow>`
       WITH eligible AS (
         SELECT
           runtime.machine_id,
@@ -321,7 +346,8 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         RETURNING token_id
       )
       SELECT leased.*, inserted.token_id FROM leased CROSS JOIN inserted
-    `.execute(options.db.executor);
+      `.execute(trx.executor);
+    });
     const row = issued.rows[0];
     if (!row) {
       const policy = await options.db.executor.selectFrom("ai_funded_runtime_policies as runtime")
@@ -368,6 +394,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
   }
 
   const metering = createAiFundedMeteringRepository({
+    subscriptionCreditEnv: options.subscriptionCreditEnv,
     db: options.db,
     credentialHashSecret: options.credentialHashSecret,
     now,

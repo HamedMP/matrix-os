@@ -1,4 +1,6 @@
 import { readFundedRecoveryAudit } from "./ai-funded-recovery-audit.js";
+import { alignCreditBackedBudget } from './funded-credit-budget.js';
+import { issueConfiguredSubscriptionAiCredit } from './subscription-ai-credit-policy.js';
 import { reconcileFundedTerminalAfterSettlement } from "./ai-funded-terminal-reconciliation.js";
 import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import { settleWaivedUsage } from './ai-funded-usage-waiver-settlement.js';
@@ -93,6 +95,7 @@ const MAX_PROMOTIONAL_GRANTS_PER_RUNTIME = 64;
 export const JEV_MANUAL_REVIEW_GRACE_MS = 10 * 60_000;
 
 export interface AiFundedMeteringRepositoryOptions {
+  subscriptionCreditEnv?: NodeJS.ProcessEnv;
   db: PlatformDB;
   credentialHashSecret: string;
   now: () => Date;
@@ -122,6 +125,8 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     projection: { includeChatAvailability?: true } = {},
   ) {
     const identity = IdentitySchema.parse(identityInput);
+    await issueConfiguredSubscriptionAiCredit({ db: options.db, repository: { grantCreditInTransaction }, identity,
+      env: options.subscriptionCreditEnv ?? process.env, now: options.now() });
     const checked = options.now();
     const checkedAt = checked.toISOString();
     const currentPeriod = utcMonthStart(checked);
@@ -136,7 +141,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
         .select([
           "owner_id", "runtime_slot", "enabled", "allowed_model_ids", "monthly_budget_microusd",
-          "expires_at", "revision",
+          "expires_at", "revision", "budget_mode",
         ])
         .where("machine_id", "=", identity.machineId).executeTakeFirst();
       const global = await trx.executor.selectFrom("ai_funded_global_policy")
@@ -162,7 +167,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const allowedModelIds = enabled
         ? intersectModels(parseModels(global.allowed_model_ids), parseModels(runtime.allowed_model_ids))
         : [];
-      const funding = fundingSummary(balance, monthlyBudgetMicrousd, checkedAt);
+      const funding = fundingSummary(balance, monthlyBudgetMicrousd, checkedAt, runtime.budget_mode);
       const sources = projection.includeChatAvailability
         ? await fundingSourceAvailability(trx.executor, identity, balance, checkedAt) : undefined;
       const chatAvailability = sources ? FundedAiChatAvailabilitySchema.parse({
@@ -179,7 +184,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           globalRevision: global.revision,
           runtimeRevision: runtime.revision,
           allowedModelIds: enabled ? allowedModelIds : [],
-          monthlyBudgetMicrousd,
+          monthlyBudgetMicrousd: funding.monthlyBudgetMicrousd,
           checkedAt,
           staleAfter: new Date(checked.getTime() + options.policyFreshnessMs).toISOString(),
         },
@@ -220,12 +225,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       if (!admission.newWorkAllowed) throw new AiFundedPolicyError("access_disabled");
     });
     const ownerPromotion = grant.kind === "promotional_grant" && grant.entryId.startsWith("promotion:");
-    if (ownerPromotion) {
-      // Campaign grants and admission share one owner-wide lock namespace.
-      // This serializes handoff with new reservations across every runtime.
-      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${grant.identity.ownerId}`}, 0))`
-        .execute(transaction.executor);
-    }
+    // Grant/budget updates take admission's owner lock before machine, policy
+    // and balance locks. This also preserves campaign handoff serialization.
+    await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${grant.identity.ownerId}`}, 0))`
+      .execute(transaction.executor);
     const machine = await transaction.executor.selectFrom("user_machines").select([
         "machine_id", "clerk_user_id", "runtime_slot", "deleted_at",
       ]).where("machine_id", "=", grant.identity.machineId).forUpdate().executeTakeFirst();
@@ -340,6 +343,10 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
           .where("revision", "=", promotion.revision)
           .returning("grant_entry_id").executeTakeFirst();
         if (!moved) throw new Error("Funded AI promotion handoff invariant violated");
+        await alignCreditBackedBudget(transaction, {
+          ownerId: promotion.owner_id, machineId: promotion.machine_id, runtimeSlot: promotion.runtime_slot,
+        }, at);
+        await alignCreditBackedBudget(transaction, grant.identity, at);
       }
     }
     if (inserted) {
@@ -379,6 +386,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         .where(sql<boolean>`credit_balance_microusd <= ${Number.MAX_SAFE_INTEGER - grant.amountMicrousd}`)
         .returning("machine_id").executeTakeFirst();
       if (!balance) throw new Error("Funded AI credit balance exceeds supported bounds");
+      await alignCreditBackedBudget(transaction, grant.identity, at);
     }
     return { ...grant, createdAt: stored.created_at };
   }
@@ -569,7 +577,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       // Machine FK checks during ledger insertion must not invert waiver's machine/row locks.
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${locator.owner_id}`}, 0))`.execute(trx.executor);
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
-        .select(["monthly_budget_microusd"]).where("machine_id", "=", locator.machine_id)
+        .select(["monthly_budget_microusd", "budget_mode"]).where("machine_id", "=", locator.machine_id)
         .executeTakeFirstOrThrow();
       const reservation = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .selectAll().where("reservation_id", "=", request.reservationId)
@@ -619,7 +627,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       const actualCostMicrousd = request.actualCostMicrousd ?? reserved;
       if (reservation.charge_waiver !== null) {
         const response = await settleWaivedUsage(trx.executor, reservation, actualCostMicrousd,
-          exactInteger(runtime.monthly_budget_microusd), checkedAt, request.jevProvenance, request.manualReview);
+          exactInteger(runtime.monthly_budget_microusd), checkedAt, request.jevProvenance, request.manualReview, runtime.budget_mode);
         return { response, finalizationMode: "exact" } as const;
       }
       if (reservation.status === "settled") {
@@ -748,7 +756,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         machineId: reservation.machine_id,
         runtimeSlot: reservation.runtime_slot,
       }, checkedAt);
-      const funding = fundingSummary(balance, monthlyBudget, checkedAt);
+      const funding = fundingSummary(balance, monthlyBudget, checkedAt, runtime.budget_mode);
       const response = FundedAiSettlementResponseSchema.parse({
         contractVersion: 1,
         reservationId: updated.reservation_id,
@@ -823,11 +831,12 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
     await options.db.ready;
     return options.db.transaction(async (trx) => {
       const locator = await trx.executor.selectFrom("ai_funded_usage_reservations")
-        .select("machine_id").where("reservation_id", "=", request.reservationId)
+        .select(["machine_id", "owner_id"]).where("reservation_id", "=", request.reservationId)
         .where("token_id", "=", request.tokenId).executeTakeFirst();
       if (!locator) throw new AiFundedPolicyError("unauthorized");
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${locator.owner_id}`}, 0))`.execute(trx.executor);
       const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
-        .select("monthly_budget_microusd").where("machine_id", "=", locator.machine_id)
+        .select(["monthly_budget_microusd", "budget_mode"]).where("machine_id", "=", locator.machine_id)
         .executeTakeFirstOrThrow();
       const reservation = await trx.executor.selectFrom("ai_funded_usage_reservations")
         .selectAll().where("reservation_id", "=", request.reservationId)
@@ -876,7 +885,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         machineId: reservation.machine_id,
         runtimeSlot: reservation.runtime_slot,
       }, checkedAt);
-      const funding = fundingSummary(balance, exactInteger(runtime.monthly_budget_microusd), checkedAt);
+      const funding = fundingSummary(balance, exactInteger(runtime.monthly_budget_microusd), checkedAt, runtime.budget_mode);
       const response = FundedAiReleaseResponseSchema.parse({
         contractVersion: 1,
         reservationId: reservation.reservation_id,

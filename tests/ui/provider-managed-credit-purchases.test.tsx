@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ProviderSettingsSnapshotSchema } from "@matrix-os/contracts";
 import { ProviderSettingsController } from "../../packages/ui/src/agents-providers/provider-settings-controller";
@@ -24,8 +24,10 @@ it("revokes purchase capability coherently when an authoritative top-up observat
   const view = render(<AgentsProvidersView snapshot={controller.getState().snapshot!} {...props} />);
   fireEvent.click(screen.getByRole("button", { name: "Buy credit" }));
   expect(screen.getByRole("button", { name: "Continue to checkout" })).toBeEnabled();
-  vi.setSystemTime(Date.now() + 45_000);
-  expect(await controller.refreshManagedCredit()).toBe("updated");
+  await act(async () => {
+    vi.setSystemTime(Date.now() + 45_000);
+    expect(await controller.refreshManagedCredit()).toBe("updated");
+  });
   const accepted = controller.getState().snapshot!;
   expect.soft(accepted.gatewayPolicy!.topUpEnabled).toBe(false);
   expect.soft(accepted.supportedActions).not.toContain("add_credit");
@@ -38,6 +40,26 @@ it("revokes purchase capability coherently when an authoritative top-up observat
   expect(screen.getByText("Credit purchases are not enabled for this computer. Contact your workspace administrator or support.")).toBeVisible();
   expect(onAddCredit).not.toHaveBeenCalled(); expect(onCatalogChanged).not.toHaveBeenCalled();
   controller.dispose();
+});
+
+it('requires a complete authoritative refresh before recovering the disabled purchase UI', async () => {
+  const onAddCredit = vi.fn().mockResolvedValue(undefined);
+  const props = { selectedHarnessId: null, busy: false, onSelectHarness: vi.fn(), onRefresh: vi.fn(),
+    onMutate: vi.fn(), onOpenTerminal: vi.fn(), onOpenBrowser: vi.fn(), onAddCredit };
+  const original = snapshot();
+  const view = render(<AgentsProvidersView snapshot={original} {...props} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Buy credit' }));
+  expect(screen.getByText('Credit purchases are not enabled for this computer. Contact your workspace administrator or support.')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Continue to checkout' })).toBeNull();
+  expect(onAddCredit).not.toHaveBeenCalled();
+  const authoritative = snapshot();
+  authoritative.gatewayPolicy!.topUpEnabled = true;
+  authoritative.supportedActions.push('add_credit');
+  expect(ProviderSettingsSnapshotSchema.safeParse(authoritative).success).toBe(true);
+  view.rerender(<AgentsProvidersView snapshot={authoritative} {...props} />);
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Continue to checkout' })); });
+  expect(onAddCredit).toHaveBeenCalledWith('matrix_included', 'usd_5', expect.stringMatching(/^[a-f0-9-]{36}$/));
+  expect(onAddCredit).toHaveBeenCalledTimes(1);
 });
 
 it.each([false, null])("cannot add a purchase workflow from summary alone when initial policy is %s", async initial => {

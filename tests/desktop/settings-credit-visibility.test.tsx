@@ -10,7 +10,7 @@ import { useTabs, type Tab } from "../../desktop/src/renderer/src/stores/tabs";
 import { useUi } from "../../desktop/src/renderer/src/stores/ui";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
-import { observation, snapshot, start } from "../ui/provider-managed-credit-fixture";
+import { observation, purchasedObservation, snapshot, start } from "../ui/provider-managed-credit-fixture";
 
 // Keep every Settings composition component and the controller/scheduler real.
 // Only the authenticated API boundary and native preload are synthetic.
@@ -62,11 +62,11 @@ function FrameFromRealSurfaceState() {
     onFocus={() => useTabs.getState().focusTab(tab.id)} onClose={() => {}} onMinimize={() => {}}
     onMaximize={() => useDesktopSurfaces.getState().maximizeToTab(tab.id)} onBoundsChange={() => {}} />;
 }
-function installApi() {
+function installApi(nextObservation?: () => ReturnType<typeof observation>) {
   const initial = snapshot();
   let reads = 0;
   const get = vi.fn(async (path: string) => {
-    if (path === "/api/ai/provider-settings/managed-credit") return observation(4_000_000 - ++reads * 10_000);
+    if (path === "/api/ai/provider-settings/managed-credit") return nextObservation ? nextObservation() : observation(4_000_000 - ++reads * 10_000);
     if (path.startsWith("/api/ai/provider-settings/workflows/")) return [];
     if (path.startsWith("/api/ai/provider-settings?")) return initial;
     throw new Error(`Unexpected synthetic request: ${path}`);
@@ -128,5 +128,16 @@ it("forwards retained visibility and section ownership through the real Settings
   view.rerender(<SettingsView section="runtime" automaticCreditRefreshEnabled />);
   expect(screen.queryByText("Advanced Matrix AI settings")).not.toBeInTheDocument();
   await act(async () => { await vi.advanceTimersByTimeAsync(45_000); });
+  expect(api.creditReads()).toHaveLength(1);
+});
+
+it("shows newly purchased credit after authoritative refresh without reopening Electron Settings", async () => {
+  const api = installApi(purchasedObservation);
+  render(<FrameFromRealSurfaceState />);
+  await act(async () => {});
+  expect(screen.getByText("$4.00")).toBeVisible();
+  await act(async () => { await vi.advanceTimersByTimeAsync(45_000); });
+  expect(screen.getByText("$9.00")).toBeVisible();
+  expect(api.fullReads()).toHaveLength(1);
   expect(api.creditReads()).toHaveLength(1);
 });

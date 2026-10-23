@@ -8,6 +8,11 @@ const production = YAML.parse(readFileSync(".github/workflows/platform-cloud-run
 const preview = YAML.parse(readFileSync(".github/workflows/preview-platform.yml", "utf8")).jobs.preview;
 const org = "org_SyntheticPreview123";
 const validationName = "Validate Private Preview organization configuration";
+const creditReleaseDefaults = {
+  MATRIX_AI_SUBSCRIPTION_CREDIT_ENABLED: 'false',
+  MATRIX_AI_CREDIT_STRIPE_TAX_REGISTRATIONS_VERIFIED: 'false',
+  MATRIX_FUNDED_AI_ADDON_CHECKOUT_ALLOWED_MACHINE_IDS: '',
+};
 const run = (job: typeof production, name: string): string => {
   const script = job.steps.find((entry: Step) => entry.name === name)?.run;
   expect(script, name).toBeTypeOf("string");
@@ -32,6 +37,7 @@ function deploy(job: typeof production, value: string) {
   return spawnSync("bash", ["-euc", script], { encoding: "utf8", timeout: 5_000, env: {
     PATH: process.env.PATH,
     ...Object.fromEntries(Object.keys(job.env).map((key) => [key, "fixture"])),
+    ...creditReleaseDefaults,
     MATRIX_INTERNAL_CLERK_ORG_ID: value, DEPLOY_ENVIRONMENT: "staging",
     MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED: "false", MATRIX_FUNDED_AI_RUNTIME_ENABLED: "false",
     MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: "false", MATRIX_FUNDED_HOST_CONFIG_ENABLED: "false",
@@ -94,11 +100,13 @@ describe("Private Preview organization deployment contract", () => {
   });
 
   it("rejects a production candidate that omits or substitutes the configured organization", () => {
-    const values = Object.fromEntries(Object.keys(production.env).map((key) => [key, "fixture"]));
+    const values = { ...Object.fromEntries(Object.keys(production.env).map((key) => [key, "fixture"])),
+      ...creditReleaseDefaults };
     const provisioningNames = ["CUSTOMER_VPS_IMAGE_VERSION", "MATRIX_PREBILLING_PROVISIONING_ENABLED",
       "MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT", "MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE",
       "GOLDEN_SNAPSHOTS_ENABLED", "GOLDEN_SNAPSHOT_ROLLOUT_PERCENT",
       "MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID", "MATRIX_COLLABORATION_ALLOWED_ORIGINS"];
+    provisioningNames.push('MATRIX_AI_SUBSCRIPTION_CREDIT_ENABLED', 'MATRIX_AI_CREDIT_STRIPE_TAX_REGISTRATIONS_VERIFIED');
     const base = [
       ...provisioningNames.map((name) => ({ name, value: values[name] })),
       { name: "MATRIX_COLLABORATION_TICKET_KEYS", valueFrom: { secretKeyRef: { name: "collaboration-ticket-keys", key: "latest" } } },

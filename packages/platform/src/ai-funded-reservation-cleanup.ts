@@ -186,14 +186,14 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
             return true;
           }
           const runtime = await trx.executor.selectFrom("ai_funded_runtime_policies")
-            .select("monthly_budget_microusd").where("machine_id", "=", reservation.machine_id)
+            .select(["monthly_budget_microusd", "budget_mode"]).where("machine_id", "=", reservation.machine_id)
             .executeTakeFirstOrThrow();
           const balance = await reconcileExpiredPromotionalCredit(trx.executor, {
             ownerId: reservation.owner_id,
             machineId: reservation.machine_id,
             runtimeSlot: reservation.runtime_slot,
           }, checkedAt);
-          const funding = fundingSummary(balance, exactInteger(runtime.monthly_budget_microusd), checkedAt);
+          const funding = fundingSummary(balance, exactInteger(runtime.monthly_budget_microusd), checkedAt, runtime.budget_mode);
           const response = FundedAiSettlementResponseSchema.parse({
             contractVersion: 1,
             reservationId: reservation.reservation_id,

@@ -61,12 +61,21 @@ export function fundingSummary(
   balance: BalanceSnapshot,
   monthlyBudgetMicrousd: number,
   asOf: string,
+  budgetMode: 'fixed' | 'credit_backed' = 'fixed',
 ): FundedAiFundingSummary {
+  const currentPeriod = utcMonthStart(new Date(asOf));
+  if (budgetMode === 'credit_backed' && balance.month_period_start !== currentPeriod) {
+    balance = { ...balance, month_period_start: currentPeriod, month_spent_microusd: 0, month_reserved_microusd: 0 };
+  }
   const creditBalanceMicrousd = exactInteger(balance.credit_balance_microusd);
   const reservedMicrousd = exactInteger(balance.reserved_microusd);
   const fundingShortfallMicrousd = exactInteger(balance.funding_shortfall_microusd);
   const settledThisMonthMicrousd = exactInteger(balance.month_spent_microusd);
   const reservedThisMonthMicrousd = exactInteger(balance.month_reserved_microusd);
+  if (budgetMode === 'credit_backed') {
+    monthlyBudgetMicrousd = exactInteger(settledThisMonthMicrousd
+      + Math.max(0, creditBalanceMicrousd - fundingShortfallMicrousd));
+  }
   return FundedAiFundingSummarySchema.parse({
     asOf,
     periodStart: balance.month_period_start,
