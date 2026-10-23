@@ -17,6 +17,7 @@ import {
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { useTabs } from "@desktop/renderer/src/stores/tabs";
 import { useUi } from "@desktop/renderer/src/stores/ui";
+import { useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
 
 function render(ui: React.ReactNode) {
   return rtlRender(ui, { wrapper: ({ children }) => <GettingStartedVisibilityProvider scope="test">{children}</GettingStartedVisibilityProvider> });
@@ -206,6 +207,8 @@ describe("GettingStartedPopover", () => {
       });
       api.post.mockResolvedValue({ chatId: "chat_writer0001" });
       useConnection.setState({ api: api as never });
+      // A closed or minimized window must come back, not just its tab.
+      const activate = vi.spyOn(useDesktopSurfaces.getState(), "activateSurface");
       renderAfter({ status: "completed", completedAt: "2026-10-22T10:00:00.000Z", answers: { goals: [], tools: ["linear"], bots: ["writing-bot"] } });
       const dialog = await screen.findByRole("dialog", { name: "Getting started" });
       expect(await within(dialog).findByRole("button", { name: "Connect Linear" })).not.toBeNull();
@@ -214,8 +217,12 @@ describe("GettingStartedPopover", () => {
         expect.objectContaining({ kind: "work", workRoute: "chat", chatId: "chat_writer0001" }),
       ));
       expect(api.post).toHaveBeenCalledWith("/api/chat-agents/bot_write001/direct-chat", {});
+      const chatTab = useTabs.getState().tabs.find((tab) => tab.kind === "work" && tab.chatId === "chat_writer0001");
+      expect(activate).toHaveBeenCalledWith(chatTab?.id);
       fireEvent.click(within(dialog).getByTestId("getting-started-app-gallery"));
-      expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({ kind: "app", slug: "app-gallery" }));
+      const galleryTab = useTabs.getState().tabs.find((tab) => tab.kind === "app" && tab.slug === "app-gallery");
+      expect(galleryTab).toBeDefined();
+      expect(activate).toHaveBeenLastCalledWith(galleryTab?.id);
     });
 
     it("leads with the owner's answers and shows an icon on every step", async () => {

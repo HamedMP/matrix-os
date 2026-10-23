@@ -10,7 +10,7 @@ import gettingStartedCheckUrl from "../../assets/getting-started-check.svg";
 import { Bot, ClipboardCheck, CreditCard, Folder, Github, KeyRound, MailIcon, Plug, Sparkles } from "../../lib/hugeicons";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
-import { useTabs } from "../../stores/tabs";
+import { showOnboardingTab as showTab } from "../onboarding-widget/onboarding-widget-navigation";
 import { useUi } from "../../stores/ui";
 import {
   emptyGettingStartedSnapshot,
@@ -88,7 +88,6 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
   const handle = useConnection((state) => state.handle);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
-  const openTab = useTabs((state) => state.openTab);
   const requestSettingsSection = useUi((state) => state.requestSettingsSection);
   const {
     visible: open, requestedOpen, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setRequestedOpen: setOpen,
@@ -157,8 +156,8 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
 
   const openSettings = useCallback((section: "services" | "providers" | "billing") => {
     requestSettingsSection(section);
-    openTab({ kind: "settings", title: "Settings" });
-  }, [openTab, requestSettingsSection]);
+    showTab({ kind: "settings", title: "Settings" });
+  }, [requestSettingsSection]);
 
   const activateStep = useCallback((id: GettingStartedStepId) => {
     switch (id) {
@@ -170,19 +169,19 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
         openSettings("providers");
         break;
       case "first-work":
-        openTab({ kind: "work", title: "Chat", workRoute: "chat", chatView: "draft" });
+        showTab({ kind: "work", title: "Chat", workRoute: "chat", chatView: "draft" });
         break;
       case "billing":
         openSettings("billing");
         break;
     }
-  }, [openSettings, openTab]);
+  }, [openSettings]);
 
   const openChat = useCallback((chatId?: string) => {
-    openTab(chatId
+    showTab(chatId
       ? { kind: "work", title: "Chat", workRoute: "chat", chatId, chatView: "conversation" }
       : { kind: "work", title: "Chat", workRoute: "chat", chatView: "draft" });
-  }, [openTab]);
+  }, []);
 
   const activateRow = useCallback((row: GettingStartedRow) => {
     if (row.kind === "step") {
@@ -305,7 +304,7 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
             <button
               type="button"
               data-testid="getting-started-app-gallery"
-              onClick={() => openTab({ kind: "app", slug: "app-gallery", title: "App Gallery" })}
+              onClick={() => showTab({ kind: "app", slug: "app-gallery", title: "App Gallery" })}
               className="flex w-full items-center gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-[var(--bg-hover)] focus-visible:bg-[var(--bg-hover)]"
               style={{ color: BRAND_COLORS.text, fontSize: 11 }}
             >
