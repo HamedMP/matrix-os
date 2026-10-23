@@ -25,10 +25,10 @@ export function nativeCodexLaunchPolicy(input: AgentLaunchInput, environment: Re
     throw new Error("Native Codex execution is unavailable");
   }
   const env = codexNativeEnvironment(input.runtimeHome, environment, input.nativeCodexSubscription.codexHome);
-  // Preserve only the execution budgets already validated by the launcher.
+  // Preserve only validated execution budgets and the opt-in timing flag.
   for (const [key, value] of Object.entries(environment)) {
     if (/^MATRIX_CODEX_(TOOL|COMMAND|NO_PROGRESS|TURN)_DEADLINE_MS$/.test(key)
-      || key === "MATRIX_CODEX_NO_PROGRESS_MS") env[key] = value;
+      || key === "MATRIX_CODEX_NO_PROGRESS_MS" || key === "MATRIX_CODEX_SEND_TIMINGS") env[key] = value;
   }
   return {
     env,
