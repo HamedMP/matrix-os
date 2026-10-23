@@ -1,23 +1,16 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
-import { botToolDisplayInput, botToolDisplayOutput, botToolDisplayMcpResult, type BotToolDisplay, type BotEvent, type BotToolCapability } from "@matrix-os/contracts";
+import { BOT_OUTPUT_MAX_ENCODED_BYTES, BOT_OUTPUT_LIMIT_NOTICE, botOutputEncodedBytes, botOutputPrefix,
+  botToolDisplayInput, botToolDisplayOutput, botToolDisplayMcpResult, type BotToolDisplay, type BotEvent, type BotToolCapability } from "@matrix-os/contracts";
 import { bridgeToolCallId } from "./tool-call-id.js";
 
 /** Leaves room for the event envelope inside the 16 KiB assistant delta bound. */
 const MAX_DELTA_BYTES = 12 * 1024;
 /** Small deltas are combined, so a chatty stream costs a few broker requests per second. */
 const DELTA_FLUSH_INTERVAL_MS = 250;
-/** Per-turn broker-request guard, independent of the saved model transcript. */
-export const MAX_EVENTS_PER_TURN = 2_000;
 const MAX_TOOLS = 60;
-// Every admitted tool can publish a start, three updates and one terminal,
-// including tools that have not started when live text becomes chatty.
-const MAX_TOOL_EVENTS = MAX_TOOLS * 5;
-const MAX_TEXT_EVENTS = MAX_EVENTS_PER_TURN - MAX_TOOL_EVENTS - 2;
-// Leave 98 coarse text chunks plus two honest notices. That covers the existing
-// 96 KiB Chat preview over 63 model boundaries without spending future tool slots.
-const LIVE_TEXT_EVENTS = MAX_TEXT_EVENTS - 98;
-const BATCHED_LABEL = "Live text updates are batched. Tool progress continues.";
-const PAUSED_LABEL = "Output preview paused. Tool progress and task status continue.";
+export const LIVE_TEXT_EVENTS = 1_600;
+const BATCHED_FLUSH_INTERVAL_MS = 1_000;
+const BATCHED_LABEL = "Live text updates refresh once per second. Tool progress continues.";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -52,9 +45,9 @@ export interface EventProjector {
  * are buffered and sent within 250 ms (a timer covers pauses in the stream),
  * when the buffer fills, or at a message or tool boundary. Every send goes
  * through one serial chain, so events leave in `seq` order. Chatty text
- * switches to full chunks/message boundaries; its remaining allocation never
- * consumes the reserved tool lifecycle allocation. Neither mode promises that
- * the saved model transcript is the complete canonical Chat preview.
+ * switches to a one-second refresh. Total encoded text is bounded independently
+ * of the number of updates; a long turn cannot spend future tool progress slots.
+ * Canonical Chat retains the same bounded output using continuation messages.
  */
 export function createEventProjector(options: {
   send(event: BotEvent): Promise<void>;
@@ -71,30 +64,23 @@ export function createEventProjector(options: {
   let chain: Promise<void> = Promise.resolve();
   let failure: unknown;
   let textEvents = 0;
+  let outputBytes = 0;
   let previewPaused = false;
   // At most the run action budget; terminal events evict immediately.
   const tools = new Map<string, { display: BotToolDisplay; privateContext: boolean; updates: number; lastUpdate: number }>();
   let toolStarts = 0;
 
   const emit = async (event: BotEvent["event"]) => {
-    // Text <=1698, tool lifecycles <=300, notices <=2: hard bound stays 2000.
-    if (seq >= MAX_EVENTS_PER_TURN) return;
     await options.send({ seq: seq++, event });
   };
   const emitText = async (text: string) => {
-    if (textEvents >= MAX_TEXT_EVENTS) {
-      if (!previewPaused) {
-        previewPaused = true;
-        await emit({ type: "activity", label: PAUSED_LABEL, state: "completed" });
-      }
-      return;
-    }
     textEvents += 1;
     await emit({ type: "assistant_delta", text });
     if (textEvents === LIVE_TEXT_EVENTS) {
       await emit({ type: "activity", label: BATCHED_LABEL, state: "completed" });
     }
   };
+  const flushInterval = () => textEvents < LIVE_TEXT_EVENTS ? DELTA_FLUSH_INTERVAL_MS : BATCHED_FLUSH_INTERVAL_MS;
   const flush = async () => {
     if (timer) {
       clearTimeout(timer);
@@ -119,26 +105,42 @@ export function createEventProjector(options: {
     return next;
   };
   const schedule = () => {
-    if (timer || buffered.length === 0 || textEvents >= LIVE_TEXT_EVENTS) return;
+    if (timer || buffered.length === 0) return;
     timer = setTimeout(() => {
       timer = undefined;
       // The failure is also kept by `serial` and surfaces on the next event or on drain.
       void serial(flush).catch((error: unknown) => {
         console.warn("[bot-runtime] timed event flush failed:", error instanceof Error ? error.name : "UnknownError");
       });
-    }, Math.max(0, DELTA_FLUSH_INTERVAL_MS - (now() - lastFlushAt)));
+    }, Math.max(0, flushInterval() - (now() - lastFlushAt)));
     timer.unref?.();
   };
 
   const project = async (event: AgentEvent) => {
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
       if (previewPaused) return;
-      buffered += event.assistantMessageEvent.delta;
-      bufferedBytes += encoder.encode(event.assistantMessageEvent.delta).byteLength;
-      if (bufferedBytes >= MAX_DELTA_BYTES || (textEvents < LIVE_TEXT_EVENTS && now() - lastFlushAt >= DELTA_FLUSH_INTERVAL_MS)) {
+      const delta = event.assistantMessageEvent.delta;
+      const retained = botOutputPrefix(delta, BOT_OUTPUT_MAX_ENCODED_BYTES - outputBytes);
+      outputBytes += botOutputEncodedBytes(retained);
+      // Even control characters fit the encoded event envelope. The SDK awaits
+      // this listener, and every full buffer waits for its broker send.
+      for (const chunk of splitUtf8(retained, 2 * 1024)) {
+        const bytes = botOutputEncodedBytes(chunk);
+        if (bufferedBytes + bytes > MAX_DELTA_BYTES) await serial(flush);
+        buffered += chunk;
+        bufferedBytes += bytes;
+      }
+      if (bufferedBytes >= MAX_DELTA_BYTES || now() - lastFlushAt >= flushInterval()) {
         await serial(flush);
       } else {
         schedule();
+      }
+      if (retained.length < delta.length) {
+        await serial(async () => {
+          await flush();
+          previewPaused = true;
+          await emit({ type: "activity", label: BOT_OUTPUT_LIMIT_NOTICE.trim(), state: "completed" });
+        });
       }
       return;
     }

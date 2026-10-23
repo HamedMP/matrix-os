@@ -2,7 +2,7 @@ import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
 import type { BotEvent } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
-import { createEventProjector, MAX_EVENTS_PER_TURN } from "../../packages/bot-runtime/src/events.js";
+import { createEventProjector, LIVE_TEXT_EVENTS } from "../../packages/bot-runtime/src/events.js";
 
 const partial = fauxAssistantMessage(fauxText(""));
 const delta = (text: string): AgentEvent => ({ type: "message_update", message: partial,
@@ -23,7 +23,7 @@ function fixture(signal?: AbortSignal) {
 }
 
 describe("bounded live-event continuation", () => {
-  it("coalesces slow deltas and delivers the next message boundary after the old cutoff", async () => {
+  it("coalesces slow deltas and delivers text after the old cutoff", async () => {
     const f = fixture();
     try {
       for (let i = 0; i < 2_100; i++) { f.tick(); await f.project(delta("x")); }
@@ -35,8 +35,8 @@ describe("bounded live-event continuation", () => {
       expect(f.sent.filter(frame => frame.event.type === "tool_progress").map(frame => frame.event)).toMatchObject([
         { toolCallId: "future", phase: "started" }, { toolCallId: "future", phase: "completed" },
       ]);
-      expect(f.sent.length).toBeLessThanOrEqual(MAX_EVENTS_PER_TURN);
-      expect(f.sent.some(frame => frame.event.type === "activity" && /batched/.test(frame.event.label))).toBe(true);
+      expect(f.sent.length).toBeGreaterThan(LIVE_TEXT_EVENTS);
+      expect(f.sent.some(frame => frame.event.type === "activity" && /refresh once per second/.test(frame.event.label))).toBe(true);
       expect(f.sent.some(frame => frame.event.type === "activity" && /full reply appears/.test(frame.event.label))).toBe(false);
     } finally { f.project.close(); }
   });
@@ -62,11 +62,11 @@ describe("bounded live-event continuation", () => {
     } finally { f.project.close(); }
   });
 
-  it("reserves all 60 future tool lifecycles even after both text allocations are spent", async () => {
+  it("preserves all 60 future tool lifecycles and later text after the old cutoff", async () => {
     const f = fixture();
     try {
       for (let i = 0; i < 2_100; i++) { f.tick(); await f.project(delta("x")); }
-      // Tiny message-boundary flushes exhaust coarse text slots without a large-output test.
+      // Repeated message boundaries cannot spend the later text or tool allocation.
       for (let i = 0; i < 200; i++) { await f.project(delta("y")); await f.project(boundary); }
       for (let tool = 0; tool < 60; tool++) {
         const id = `future_${tool}`; await f.project(start(id));
@@ -82,10 +82,10 @@ describe("bounded live-event continuation", () => {
       expect(tools.filter(event => event.phase === "started")).toHaveLength(60);
       expect(tools.filter(event => event.phase === "updated")).toHaveLength(180);
       expect(tools.filter(event => event.phase === "completed")).toHaveLength(60);
-      expect(f.sent.length).toBeLessThanOrEqual(MAX_EVENTS_PER_TURN);
+      expect(f.sent.length).toBeGreaterThan(LIVE_TEXT_EVENTS);
       expect(f.sent.every((frame, index) => frame.seq === index)).toBe(true);
-      expect(f.sent.filter(frame => frame.event.type === "activity")).toHaveLength(2);
-      expect(text(f.sent)).not.toContain("y".repeat(200));
+      expect(f.sent.filter(frame => frame.event.type === "activity")).toHaveLength(1);
+      expect(text(f.sent)).toBe("x".repeat(2_100) + "y".repeat(200));
     } finally { f.project.close(); }
   });
 

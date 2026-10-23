@@ -44,9 +44,11 @@ allowance for a duplicate. Cancel/ACK, source authorization and the original
 inference/funding guards remain independent. This transport correction does not
 raise tool, token, context, funding or per-worker-invocation budgets.
 
-Worker progress projection has a separate event budget. Text switches from small
-live updates to bounded batches before exhausting the 2,000-event ceiling; all
-60 potential tool lifecycles retain their own event allocation. This is a display
-and broker-request guard, not an inference-call allowance. Saving the internal
-session does not refill the canonical Chat preview. See `chat-run-limits.md` for
-the exact text, notice, tool and retained-preview bounds.
+Worker progress projection uses a separate encoded-text budget (8 MiB per turn),
+a 12 KiB encoded buffer and a serial awaited broker send. Timed updates continue
+at 250 ms initially and one second after 1,600 text publications; they no longer
+stop at a lifetime event count or wait for a full chunk. All 60 potential tool
+lifecycles retain their own bounded progress allocation. Canonical Matrix Agent
+output uses existing continuation messages under its same 8 MiB text budget.
+These presentation/request guards do not refill the model session, context,
+inference-call or funding allowance. See `chat-run-limits.md` for exact bounds.

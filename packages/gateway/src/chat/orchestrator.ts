@@ -15,6 +15,7 @@ import { activityPersistenceId } from "./activity-persistence.js";
 import { randomUUID } from "node:crypto";
 import { assistantMessageId } from "./assistant-credential-crypto.js";
 import { createBoundedAssistantPreview } from "./bounded-assistant-preview.js";
+import { createMatrixAssistantOutput } from "./matrix-assistant-output.js";
 import {
   CanonicalChatRunActivitySchema,
   CanonicalChatRunSteeringResponseSchema,
@@ -562,7 +563,8 @@ export class CanonicalChatOrchestrator {
       };
       browserRegistration = registerBrowserApprovalRun(this.options.browserApprovals, input, run.driverKind,
         async event => { await this.persistActivities(owner, run, [CanonicalProviderRunEventSchema.parse(event)]); });
-      const preview = createBoundedAssistantPreview();
+      const preview = run.driverKind === "matrix_pi" || run.driverKind === "matrix_bot"
+        ? createMatrixAssistantOutput() : createBoundedAssistantPreview();
       let responseCharacterCount = 0;
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
       failureStage = "provider";

@@ -1,5 +1,5 @@
 import {
-  CanonicalChatMessagePartSchema,
+  CanonicalChatStoredMessagePartSchema,
   CollaborationOperationSchema,
   CollaborationScopeExportSchema,
   type CollaborationOperation,
@@ -397,7 +397,7 @@ async function buildChatScopeExport(
 }
 
 function sanitizeExportParts(value: unknown) {
-  const parsed = CanonicalChatMessagePartSchema.array().max(64).parse(
+  const parsed = CanonicalChatStoredMessagePartSchema.array().max(64).parse(
     typeof value === "string" ? JSON.parse(value) as unknown : value,
   );
   return parsed.map((part) => part.type === "attachment_reference"

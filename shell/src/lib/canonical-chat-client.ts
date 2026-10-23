@@ -1,7 +1,7 @@
 import { createBrowserPermissionClient, type BrowserPermissionClient } from "@matrix-os/ui";
 import type { CanonicalSubmitChatApprovalRequest } from "@matrix-os/contracts";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
-import { MAX_AGENT_ATTACHMENT_BYTES, CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
+import { MAX_AGENT_ATTACHMENT_BYTES, CanonicalChatNavigationResponseSchema, canonicalAssistantOutputMessages, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, filePreviewContentUrl, type ChatAgentClient } from "@matrix-os/ui";
 import { chatEventVersionUrl, chatFundingVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
@@ -378,6 +378,7 @@ function partText(part: CanonicalChatMessage["parts"][number]): string | null {
 }
 
 export function projectCanonicalMessages(messages: CanonicalChatMessage[]): ChatMessage[] {
+  messages = canonicalAssistantOutputMessages(messages);
   const resolvedApprovals = new Set(messages.flatMap((message) => message.parts.flatMap((part) =>
     part.type === "approval_result" && message.runId
       ? [`${message.runId}\0${part.approvalId}`]
