@@ -120,7 +120,7 @@ describe("SignInScreen email code flow", () => {
   });
 
   it("rechecks the native target after email-code verification before activation", async () => {
-    let release!: (value: unknown) => void;
+    let release!: (value: { status: string; createdSessionId: string }) => void;
     mockAttemptFirstFactor.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
     render(<SignInScreen />);
     fireEvent.changeText(screen.getByLabelText("Email address"), "person@example.invalid");
