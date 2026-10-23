@@ -821,6 +821,7 @@ async function startPlatformServerWithCleanup(
         db, repository: fundedAiRepository, config: previewRuntimeAccess,
         hostControlSecret: customerVpsConfig.platformSecret,
         platformOrigin: appOrigin(),
+        speechPlatformOrigin: new URL(customerVpsConfig.platformRegisterUrl).origin,
         relayOrigin: customerVpsConfig.fundedAiRelayUrl,
         fetchDispatcher: customerVpsProxyDispatcher,
       });
