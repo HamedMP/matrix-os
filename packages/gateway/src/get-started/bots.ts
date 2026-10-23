@@ -14,7 +14,7 @@ export const GET_STARTED_MATRIX_BOT_REQUEST_ID = getStartedBotRequestId(GET_STAR
  * recipe reads the owner SOUL) and any ready-made bots they added, through the existing
  * instantiation service. Creating a bot grants it no app access.
  */
-export function createGetStartedBots(services: { recipes: Pick<BotRecipeCatalog, "list">; instantiation: Pick<BotInstantiation, "instantiate"> }) {
+export function createGetStartedBots(services: { recipes: Pick<BotRecipeCatalog, "list">; instantiation: Pick<BotInstantiation, "instantiate" | "completed"> }) {
   return async (ownerId: string, recipeId: string, name?: string): Promise<void> => {
     const recipe = services.recipes.list().find((candidate) => candidate.recipeId === recipeId);
     if (!recipe) throw new Error("BotRecipeUnavailable");
@@ -24,4 +24,14 @@ export function createGetStartedBots(services: { recipes: Pick<BotRecipeCatalog,
       ...(name ? { name } : {}),
     });
   };
+}
+
+/**
+ * Spec 635: whether a saved bot was ever created, from its fixed-request operation. The bot list
+ * leaves removed bots out, so this is what tells a removed bot ("created") from one whose
+ * creation never finished ("pending", which Getting started offers to create again).
+ */
+export function createGetStartedBotStatus(services: { instantiation: Pick<BotInstantiation, "completed"> }) {
+  return async (ownerId: string, recipeId: string): Promise<"created" | "pending"> =>
+    (await services.instantiation.completed(ownerId, getStartedBotRequestId(recipeId))) ? "created" : "pending";
 }

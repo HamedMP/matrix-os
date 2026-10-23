@@ -297,6 +297,9 @@ describe("web getting started status", () => {
           created = true;
           return new Response(JSON.stringify({ bots: { "writing-bot": "ready" } }), { status: 200 });
         }
+        if (url.endsWith("/api/settings/get-started/bots")) {
+          return new Response(JSON.stringify({ bots: { "writing-bot": created ? "created" : "pending" } }), { status: 200 });
+        }
         const body = url.endsWith("/api/chat-agents") ? {
           enabled: true,
           agents: created ? [{ id: "bot_write001", archived: false, createdAt: "2026-10-22T10:00:00.000Z", recipeRef: { recipeId: "writing-bot", version: 1 } }] : [],

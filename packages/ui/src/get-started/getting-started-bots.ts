@@ -36,10 +36,27 @@ function errorName(error: unknown): string {
 
 const agentPath = (agentId: string) => `/api/chat-agents/${encodeURIComponent(ChatAgentIdSchema.parse(agentId))}/direct-chat`;
 
+const SavedBotStatusSchema = z.object({ bots: z.record(z.string().max(128), z.enum(["created", "pending"])) });
+
+/**
+ * Which absent bots never finished being created. The bot list leaves removed bots out, so the
+ * gateway's record of each saved bot's creation tells them apart; when it can't be read, absent
+ * bots stay hidden rather than wrongly offered again.
+ */
+async function pendingBots(request: GettingStartedRequest): Promise<Set<string>> {
+  try {
+    const { bots } = SavedBotStatusSchema.parse(await request("/api/settings/get-started/bots", "GET"));
+    return new Set(Object.entries(bots).filter(([, status]) => status === "pending").map(([recipeId]) => recipeId));
+  } catch (error: unknown) {
+    console.warn("[getting-started] bot creation status unavailable:", errorName(error));
+    return new Set();
+  }
+}
+
 /**
  * Spec 635: whether the owner has chatted with each bot they added in Get started. A bot they
- * removed (archived) drops out (null); one that was never created reads as "missing", so it can
- * be created again; a failed check reads as unavailable, never as done.
+ * removed drops out (null); one whose creation never finished reads as "missing", so it can be
+ * created again; a failed check reads as unavailable, never as done.
  */
 export async function loadGettingStartedBots(request: GettingStartedRequest, recipeIds: readonly GetStartedRecipeBotId[]): Promise<GettingStartedBots> {
   if (recipeIds.length === 0) return EMPTY;
@@ -51,13 +68,14 @@ export async function loadGettingStartedBots(request: GettingStartedRequest, rec
     return { statuses: Object.fromEntries(recipeIds.map((id) => [id, "unavailable"])), agentIds: {} };
   }
   const result: GettingStartedBots = { statuses: {}, agentIds: {} };
+  const agentFor = (recipeId: GetStartedRecipeBotId) => (list.enabled ? list.agents : [])
+    .filter((candidate) => !candidate.archived && candidate.recipeRef?.recipeId === recipeId)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))[0];
+  const pending = list.enabled && recipeIds.some((recipeId) => !agentFor(recipeId)) ? await pendingBots(request) : new Set<string>();
   await Promise.all(recipeIds.map(async (recipeId) => {
-    const forRecipe = list.enabled ? list.agents.filter((candidate) => candidate.recipeRef?.recipeId === recipeId) : [];
-    const agent = forRecipe
-      .filter((candidate) => !candidate.archived)
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))[0];
+    const agent = agentFor(recipeId);
     if (!agent) {
-      result.statuses[recipeId] = !list.enabled || forRecipe.length > 0 ? null : "missing";
+      result.statuses[recipeId] = pending.has(recipeId) ? "missing" : null;
       return;
     }
     result.agentIds[recipeId] = agent.id;

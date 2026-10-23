@@ -168,6 +168,31 @@ describe("get started personality", () => {
     expect(ensureBot.mock.calls.map((call) => call[1])).toEqual(["writing-bot", "echo", "writing-bot", "echo"]);
   });
 
+  it("reports which saved bots finished being created, so removed bots stay removed", async () => {
+    const botStatus = vi.fn(async (_owner: string, recipeId: string) => (recipeId === "echo" ? "pending" as const : "created" as const));
+    const statusOf = () => app.request("/api/settings/get-started/bots");
+    app = new Hono();
+    app.route("/api/settings/get-started", createGetStartedRoutes({ homePath, enabled: true, getOwnerId: () => "user_owner", ensureBot, botStatus }));
+    expect((await statusOf()).status).toBe(404);
+    await complete(ATLAS, ["writing-bot", "echo"]);
+    const res = await statusOf();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ bots: { "matrix-bot": "created", "writing-bot": "created", echo: "pending" } });
+    expect(botStatus).toHaveBeenCalledWith("user_owner", "echo");
+    app = new Hono();
+    app.route("/api/settings/get-started", createGetStartedRoutes({ homePath, enabled: true, getOwnerId: () => null, ensureBot, botStatus }));
+    expect((await statusOf()).status).toBe(401);
+    app = new Hono();
+    app.route("/api/settings/get-started", createGetStartedRoutes({ homePath, enabled: true, getOwnerId: () => "user_owner", ensureBot }));
+    expect((await statusOf()).status).toBe(503);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    app = new Hono();
+    app.route("/api/settings/get-started", createGetStartedRoutes({ homePath, enabled: true, getOwnerId: () => "user_owner", ensureBot, botStatus: async () => { throw new Error("db down"); } }));
+    const down = await statusOf();
+    expect(down.status).toBe(503);
+    expect(await down.json()).toEqual({ error: "Bots are unavailable on this computer" });
+  });
+
   it("rejects bots that are not ready-made recipes", async () => {
     const res = await complete(null, ["matrix-bot"]);
     expect(res.status).toBe(400);

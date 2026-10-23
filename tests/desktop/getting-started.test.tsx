@@ -204,7 +204,8 @@ describe("GettingStartedPopover", () => {
       const baseGet = api.get.getMockImplementation();
       api.get.mockImplementation(async (path: string, ...rest: unknown[]) => path === "/api/chat-agents"
         ? { enabled: true, agents: created ? [{ id: "bot_write001", archived: false, createdAt: "2026-10-22T10:00:00.000Z", recipeRef: { recipeId: "writing-bot", version: 1 } }] : [] }
-        : baseGet?.(path, ...rest));
+        : path === "/api/settings/get-started/bots" ? { bots: { "writing-bot": created ? "created" : "pending" } }
+          : baseGet?.(path, ...rest));
       api.post.mockImplementation(async (path: string) => {
         if (path === "/api/settings/get-started/bots") {
           created = true;

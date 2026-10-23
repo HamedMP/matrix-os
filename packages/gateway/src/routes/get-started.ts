@@ -38,6 +38,8 @@ export interface GetStartedRoutesOptions {
   getOwnerId?: (c: Context) => string | null;
   /** Creates (or replays) a bot from a recipe. Best effort: setup never fails on it. */
   ensureBot?: (ownerId: string, recipeId: string, name?: string) => Promise<void>;
+  /** Whether a saved bot was ever created ("created") or its creation never finished ("pending"). */
+  botStatus?: (ownerId: string, recipeId: string) => Promise<"created" | "pending">;
 }
 
 class GetStartedStateCorruptError extends Error {
@@ -224,6 +226,34 @@ export function createGetStartedRoutes(opts: GetStartedRoutesOptions) {
       if (err instanceof OwnerFileMutationBusyError) return c.json({ error: SAVE_ERROR }, 503);
       console.warn("[get-started] Failed to save state:", errorName(err));
       return c.json({ error: SAVE_ERROR }, 500);
+    }
+  });
+
+  /**
+   * Spec 635: each saved bot's creation, so Getting started can tell a bot the owner removed
+   * ("created") from one whose creation never finished ("pending", offered as Create).
+   */
+  app.get("/bots", async (c) => {
+    if (!enabled) return c.json({ error: "Get started is not available" }, 404);
+    const botStatus = opts.botStatus;
+    if (!botStatus) return c.json({ error: BOTS_ERROR }, 503);
+    const ownerId = opts.getOwnerId?.(c) ?? null;
+    if (!ownerId) return c.json({ error: "Unauthorized" }, 401);
+    let state: GetStartedState | null;
+    try {
+      state = await withPinnedSystemDir(homePath, readState);
+    } catch (err) {
+      console.warn("[get-started] Failed to read state:", errorName(err));
+      return c.json({ error: LOAD_ERROR }, 500);
+    }
+    if (state?.status !== "completed") return c.json({ error: "Get started is not finished" }, 404);
+    try {
+      const bots: Record<string, "created" | "pending"> = {};
+      for (const job of savedBotJobs(state.answers)) bots[job.recipeId] = await botStatus(ownerId, job.recipeId);
+      return c.json({ bots });
+    } catch (err) {
+      console.warn("[get-started] Bot status unavailable:", errorName(err));
+      return c.json({ error: BOTS_ERROR }, 503);
     }
   });
 

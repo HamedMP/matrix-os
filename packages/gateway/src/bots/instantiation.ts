@@ -308,6 +308,10 @@ export function createBotInstantiation(deps: {
     }
   return {
     instantiate: (ownerId: string, requestValue: unknown) => instantiate(ownerId, requestValue),
+    /** Whether the creation request with this ID finished (its operation is active). */
+    async completed(ownerId: string, clientRequestId: string): Promise<boolean> {
+      return (await operations.get(ownerId, clientRequestId))?.status === "active";
+    },
     async createCustom(ownerId: string, requestValue: unknown): Promise<InstantiateBotResponse> {
       const parsed = CreateManagedCustomBotRequestSchema.safeParse(requestValue);
       if (!parsed.success) {

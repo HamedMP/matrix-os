@@ -35,14 +35,25 @@ describe("Getting started bots", () => {
     });
   });
 
-  it("drops bots the owner removed or archived", async () => {
+  it("drops a bot the owner removed, and offers to create one whose creation never finished", async () => {
+    // The bot list leaves removed bots out, so the gateway says which saved bots were created.
     const request = gateway({
-      "/api/chat-agents": { enabled: true, agents: [agent("bot_echo0001", "echo", { archived: true })] },
+      "/api/chat-agents": { enabled: true, agents: [] },
+      "/api/settings/get-started/bots": { bots: { echo: "created", "writing-bot": "pending" } },
     });
     expect(await loadGettingStartedBots(request, ["echo", "writing-bot"])).toEqual({
-      statuses: { echo: null, "writing-bot": null },
+      statuses: { echo: null, "writing-bot": "missing" },
       agentIds: {},
     });
+  });
+
+  it("hides absent bots when it cannot tell whether they were created", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const request = gateway({
+      "/api/chat-agents": { enabled: true, agents: [] },
+      "/api/settings/get-started/bots": new Error("down"),
+    });
+    expect((await loadGettingStartedBots(request, ["writing-bot"])).statuses).toEqual({ "writing-bot": null });
   });
 
   it("reports unavailable instead of done when a check fails", async () => {

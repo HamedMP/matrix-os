@@ -1,6 +1,6 @@
 /** Register the owner's settings, Get started (spec 635) and OS-view state routes. */
 import type { Context, Hono } from "hono";
-import { createGetStartedBots } from "../get-started/bots.js";
+import { createGetStartedBotStatus, createGetStartedBots } from "../get-started/bots.js";
 import { createOsViewStateRoutes } from "../os-view-state/routes.js";
 import { createGetStartedRoutes } from "../routes/get-started.js";
 
@@ -22,7 +22,7 @@ export function registerSettingsRoutes({ app, homePath, settingsRoutes, getStart
     homePath,
     enabled: getStartedEnabled,
     getOwnerId,
-    ...(botServices ? { ensureBot: createGetStartedBots(botServices) } : {}),
+    ...(botServices ? { ensureBot: createGetStartedBots(botServices), botStatus: createGetStartedBotStatus(botServices) } : {}),
   }));
   app.route("/api/settings", settingsRoutes);
   if (osViewState) {

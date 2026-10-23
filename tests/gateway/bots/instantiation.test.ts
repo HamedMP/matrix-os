@@ -109,6 +109,14 @@ describe("bot instantiation", () => {
     ]);
   });
 
+  it("tells whether a creation request finished, by request ID", async () => {
+    const instantiation = setup();
+    await expect(instantiation.completed(OWNER, "req_instantiate_1")).resolves.toBe(false);
+    await instantiation.instantiate(OWNER, request({ name: "Essay Partner" }));
+    await expect(instantiation.completed(OWNER, "req_instantiate_1")).resolves.toBe(true);
+    await expect(instantiation.completed(OWNER, "req_other")).resolves.toBe(false);
+  });
+
   it("refuses another payload for the same request, unknown recipes, and malformed input", async () => {
     const instantiation = setup();
     await instantiation.instantiate(OWNER, request());
