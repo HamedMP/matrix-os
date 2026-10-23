@@ -171,6 +171,17 @@ describe("GetStartedGate", () => {
     expect(await screen.findByPlaceholderText("Your first name")).toHaveValue("Alex");
   });
 
+  it("never fills a name the owner typed and cleared before the account loaded", async () => {
+    const { port } = makePort({ status: "pending" });
+    const view = render(<GetStartedGate port={port} zIndex={690} suggestedName={null}><div /></GetStartedGate>);
+    const name = await screen.findByPlaceholderText("Your first name");
+    fireEvent.change(name, { target: { value: "A" } });
+    fireEvent.change(name, { target: { value: "" } });
+    view.rerender(<GetStartedGate port={port} zIndex={690} suggestedName="Sam Lee"><div /></GetStartedGate>);
+    await act(async () => {});
+    expect(name).toHaveValue("");
+  });
+
   it("skips the whole setup from the first question", async () => {
     const { port, saves } = makePort({ status: "pending" });
     renderGate(port);

@@ -86,7 +86,8 @@ function useBlockBackgroundShortcuts(active: boolean): void {
 
 /**
  * Offers the account's first name once, when both the wizard and the account have loaded. It only
- * fills a fresh, empty name step, so a typed, cleared or saved name is never replaced.
+ * fills a fresh, empty name step: once the owner types (even if they clear it again), a saved name
+ * loads, or the wizard resumes on a later step, it never fills.
  */
 function usePrefillName(wizard: GetStartedWizardState | null, dispatch: (event: GetStartedWizardEvent) => void, accountName: string | null) {
   const offered = useRef(false);
@@ -94,9 +95,14 @@ function usePrefillName(wizard: GetStartedWizardState | null, dispatch: (event: 
   const loaded = wizard !== null;
   const empty = wizard?.step === "name" && wizard.name === "";
   useEffect(() => {
-    if (offered.current || !loaded || !name) return;
+    if (offered.current || !loaded) return;
+    if (!empty) {
+      offered.current = true;
+      return;
+    }
+    if (!name) return;
     offered.current = true;
-    if (empty) dispatch({ type: "name", value: name });
+    dispatch({ type: "name", value: name });
   }, [loaded, name, empty, dispatch]);
 }
 
