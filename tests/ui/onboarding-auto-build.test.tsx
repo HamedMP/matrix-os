@@ -89,4 +89,14 @@ describe("onboarding auto build", () => {
     admit(result);
     expect(openChat).not.toHaveBeenCalled();
   });
+
+  it("never opens Chat for a different message sent while the build waits for the computer", () => {
+    const openChat = vi.fn();
+    const { result } = renderHook(() => useHarness({ finishedNow: true, aiReady: true, openChat }));
+    act(() => result.current.dispatch({ type: "computer.waiting" }));
+    act(() => result.current.dispatch({ type: "freeform.submitted", text: "Summarize my week instead." }));
+    expect(result.current.state.screen).toMatchObject({ kind: "run", phase: "starting", answer: "Summarize my week instead." });
+    admit(result);
+    expect(openChat).not.toHaveBeenCalled();
+  });
 });
