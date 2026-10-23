@@ -801,7 +801,8 @@ describe('CI workflows', () => {
       'invoice.paid',
       'invoice.payment_failed',
     ]) {
-      expect(production).toContain(eventType);
+      expect(production).toContain('platform-ai-credit-release.py verify-webhook');
+      expect(readFileSync(join(root, 'scripts/ci/platform-ai-credit-release.py'), 'utf8')).toContain(eventType);
     }
   });
 
@@ -949,8 +950,10 @@ describe('CI workflows', () => {
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 
     expect(workflow).toContain('Verify Stripe webhook lifecycle events');
-    expect(workflow).toContain('checkout.session.completed');
-    expect(workflow).toContain('checkout.session.expired');
+    expect(workflow).toContain('platform-ai-credit-release.py verify-webhook');
+    const validation = readFileSync(join(root, 'scripts/ci/platform-ai-credit-release.py'), 'utf8');
+    expect(validation).toContain('checkout.session.completed');
+    expect(validation).toContain('checkout.session.expired');
     expect(workflow).toContain('/billing/webhooks/stripe');
     expect(workflow).toContain('https://api.stripe.com/v1/webhook_endpoints');
     expect(workflow).toContain('stripe-secret-key');

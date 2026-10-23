@@ -1,3 +1,18 @@
+## Production release wiring (23 October 2026)
+
+Requester clarified that this PR must be usable on production after normal component updates, without a Preview route dependency. They authorize current-head Greptile and full CI; marking the PR ready is necessary because Draft only runs metadata. This is not authorization to merge before qualification or to skip external payment acceptance.
+
+Minimal repair: extract AI credit deployment configuration and webhook delivery validation into `scripts/ci/platform-ai-credit-release.py`, with executable regression tests in `tests/scripts/platform-ai-credit-release.test.ts`. The existing large Platform workflow remains orchestration only: declare the three missing environment variables, call the validator before cloud authentication, render its bindings into the existing deployment, and delegate webhook checks to the helper. The helper preserves default-off subscription issuance, explicit checkout scope and tax attestation; it requires existing subscription events plus asynchronous payment, refund and dispute delivery. It never changes Stripe resources or production configuration.
+
+- [x] Reproduce missing workflow bindings and missing financial events with executable tests.
+- [x] Implement the bounded configuration/event validator and connect production deployment.
+- [x] Run focused configuration, checkout, policy and workflow regressions; inspect the final diff.
+- [ ] Commit/push the repair, mark PR ready for review, and request current-head Greptile/full CI.
+
+Required release artifact: Platform backend, including its in-process schema migration and signed webhook handler. This branch changes no client production sources: compatible Gateway, Web Desktop/Web Canvas/Web Mobile and Electron Desktop versions reuse their existing shared credit interface without new binaries for these backend changes. Check installed versions before claiming live parity. A stale host needs the normal host-bundle update; a stale Electron renderer needs the normal Electron release/update. Native Mobile currently hides external checkout links and this PR adds no Native Mobile purchase UI. No permanent Preview/expiring edge selector is required once canonical production Platform serves these routes. Use existing publish/rollout workflows; do not change fleet auto-update policy.
+
+Operational gates remain explicit: test-mode payment/refund receipt qualification, production Price/tax and webhook endpoint configuration, reviewed feature activation, existing fixed-policy adoption and historical subscription enrollment. Code merge alone cannot supply those external facts. The eight-model activation gates remain separate. Public product behavior is covered by the existing site documentation PR292; this increment changes deployment validation only.
+
 ## Sandbox payment acceptance and production preparation (23 October 2026)
 
 The requester now authorizes simulated payment testing followed by progress toward production once it passes. Reuse the existing Stripe test account and test-only secret bindings, verify `livemode=false`, and use disposable loopback PostgreSQL fixtures. Never send test events or test credit into the production database. Exercise the production Stripe adapter and webhook signature verification, immutable Checkout claim, paid-only/idempotent ledger grant, credit-backed budget, refunds/disputes, and client balance refresh. Existing mocked Stripe event tests alone do not establish an external payment round trip. Record which receipts came from Stripe versus a local signed fixture. Use existing sandbox prices where present; any required test-only payment objects stay in the verified sandbox and are tagged for cleanup. No new cloud computer or credentials are required.
