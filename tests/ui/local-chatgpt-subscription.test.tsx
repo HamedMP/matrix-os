@@ -13,7 +13,7 @@ function client(value = disconnected): LocalChatgptPlanClient {
   return { status: vi.fn().mockResolvedValue(value), connect: vi.fn().mockResolvedValue(connected), cancel: vi.fn().mockResolvedValue(disconnected), disconnect: vi.fn().mockResolvedValue(disconnected), refreshModels: vi.fn().mockResolvedValue(connected), setGrant: vi.fn().mockResolvedValue({ ...connected, grant: { revision: 1, enabled: true, background: false } }) };
 }
 it("shows only the personal ChatGPT card in Matrix AI without a Claude subscription or task consent entry", async () => {
-  render(<YourSubscriptions snapshot={{ access: { mode: "writable" }, harnesses: [] } as never} capabilities={[]} client={undefined} localChatgptClient={client()} operationIds={{}} workflowStatus={{}} forbidden={false} disabled={false} onOpen={vi.fn()} onRefresh={vi.fn()}/>);
+  render(<YourSubscriptions snapshot={{ access: { mode: "writable" }, harnesses: [], accessSources: [], accounts: [] } as never} capabilities={[]} client={undefined} localChatgptClient={client()} operationIds={{}} workflowStatus={{}} forbidden={false} disabled={false} onOpen={vi.fn()} onRefresh={vi.fn()}/>);
   await waitFor(() => expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeEnabled());
   const subscriptions = screen.getByRole("region", { name: "Your subscriptions" });
   expect(within(subscriptions).getAllByRole("article")).toHaveLength(1);
@@ -25,7 +25,9 @@ it("shows only the personal ChatGPT card in Matrix AI without a Claude subscript
 it("does not advertise a login action in unsupported Web or Canvas surfaces", () => {
   render(<LocalChatgptSubscription disabled={false} readOnly={false} onChanged={vi.fn()}/>);
   expect(screen.queryByRole("button", { name: "Continue with ChatGPT" })).toBeNull();
-  expect(screen.getByText(/Available in Electron Desktop/)).toBeVisible();
+  expect(screen.getByText(/ChatGPT subscription management requires Electron Desktop on the owner’s device\./)).toBeVisible();
+  expect(screen.getByText(/The paired device must stay connected while chats and Matrix Bots run\./)).toBeVisible();
+  expect(screen.getByText("Electron Desktop required")).toBeVisible();
 });
 it("connecting authorizes interactive Bots without extra checkbox or grant controls", async () => {
   const native = client(); const changed = vi.fn();
