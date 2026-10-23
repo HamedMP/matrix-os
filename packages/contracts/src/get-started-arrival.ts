@@ -96,10 +96,13 @@ const STEP_SERVICES = new Set(["github", "gmail", "google_calendar"]);
 export type GettingStartedRow =
   | ({ kind: "step" } & GettingStartedStep)
   | { kind: "tool"; id: `tool:${string}`; label: string; status: GettingStartedStepStatus; service: string }
-  | { kind: "bot"; id: `bot:${string}`; label: string; status: GettingStartedStepStatus; recipeId: GetStartedRecipeBotId };
+  | { kind: "bot"; id: `bot:${string}`; label: string; status: GettingStartedStepStatus; recipeId: GetStartedRecipeBotId; create?: true };
 
-/** Each added bot's chat status; null when the owner has removed that bot. Missing means not loaded yet. */
-export type GettingStartedBotStatuses = Partial<Record<GetStartedRecipeBotId, GettingStartedStepStatus | null>>;
+/**
+ * Each added bot's chat status: "missing" when its creation failed (it can be created again),
+ * null when the owner has removed that bot. An absent entry means not loaded yet.
+ */
+export type GettingStartedBotStatuses = Partial<Record<GetStartedRecipeBotId, GettingStartedStepStatus | "missing" | null>>;
 
 /**
  * Getting started for this owner: the five steps (personalised by their answers), then a
@@ -123,6 +126,11 @@ export function gettingStartedRows(
     const status = bots[recipeId];
     const bot = GET_STARTED_RECIPE_BOTS.find((candidate) => candidate.recipeId === recipeId);
     if (status === null || !bot) continue;
+    if (status === "missing") {
+      // Spec 635: a chosen bot that failed to create stays visible, with a way to create it again.
+      rows.push({ kind: "bot", id: `bot:${recipeId}`, label: `Create ${bot.label}`, status: "incomplete", recipeId, create: true });
+      continue;
+    }
     rows.push({ kind: "bot", id: `bot:${recipeId}`, label: `Chat with ${bot.label}`, status: status ?? "incomplete", recipeId });
   }
   return { rows, completedCount: rows.filter((row) => row.status === "complete").length, total: rows.length };

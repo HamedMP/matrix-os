@@ -38,7 +38,8 @@ const agentPath = (agentId: string) => `/api/chat-agents/${encodeURIComponent(Ch
 
 /**
  * Spec 635: whether the owner has chatted with each bot they added in Get started. A bot they
- * removed drops out (null); a failed check reads as unavailable, never as done.
+ * removed (archived) drops out (null); one that was never created reads as "missing", so it can
+ * be created again; a failed check reads as unavailable, never as done.
  */
 export async function loadGettingStartedBots(request: GettingStartedRequest, recipeIds: readonly GetStartedRecipeBotId[]): Promise<GettingStartedBots> {
   if (recipeIds.length === 0) return EMPTY;
@@ -51,13 +52,12 @@ export async function loadGettingStartedBots(request: GettingStartedRequest, rec
   }
   const result: GettingStartedBots = { statuses: {}, agentIds: {} };
   await Promise.all(recipeIds.map(async (recipeId) => {
-    const agent = list.enabled
-      ? list.agents
-        .filter((candidate) => !candidate.archived && candidate.recipeRef?.recipeId === recipeId)
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))[0]
-      : undefined;
+    const forRecipe = list.enabled ? list.agents.filter((candidate) => candidate.recipeRef?.recipeId === recipeId) : [];
+    const agent = forRecipe
+      .filter((candidate) => !candidate.archived)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))[0];
     if (!agent) {
-      result.statuses[recipeId] = null;
+      result.statuses[recipeId] = !list.enabled || forRecipe.length > 0 ? null : "missing";
       return;
     }
     result.agentIds[recipeId] = agent.id;
@@ -75,6 +75,19 @@ export async function loadGettingStartedBots(request: GettingStartedRequest, rec
     }
   }));
   return result;
+}
+
+const RetryBotsResponseSchema = z.object({ bots: z.record(z.string().max(128), z.enum(["ready", "failed"])) });
+
+/**
+ * Spec 635: creates the owner's saved bot choices again (idempotent on the gateway), then calls
+ * `done` either way so the rows reload with the result. Shared by every Getting started surface.
+ */
+export function retryGettingStartedBots(request: GettingStartedRequest, done: () => void): void {
+  void request("/api/settings/get-started/bots", "POST", {})
+    .then((body) => { RetryBotsResponseSchema.parse(body); })
+    .catch((error: unknown) => { console.warn("[getting-started] unable to create bots:", errorName(error)); })
+    .finally(done);
 }
 
 /** The bot's own chat, created on first use; null when the gateway has none to give. */

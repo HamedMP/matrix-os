@@ -2,7 +2,7 @@
 
 import {
   useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded,
-  openGettingStartedBotChat, useGettingStartedBots, type GettingStartedRequest,
+  openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, type GettingStartedRequest,
 } from "@matrix-os/ui";
 import { onboardingChecklist } from "@matrix-os/brand";
 import {
@@ -208,6 +208,33 @@ function StepIndicator({ step }: { step: { status: GettingStartedStepStatus } })
   );
 }
 
+/**
+ * A bot row opens that bot's own chat. A bot that failed to create (`create`) is created again
+ * from the saved choices instead, and the rows reload with the result.
+ */
+function activateBotRow(
+  row: Extract<GettingStartedRow, { kind: "bot" }>,
+  agentId: string | undefined,
+  onOpenFirstWork: GettingStartedPopoverProps["onOpenFirstWork"],
+  reload: () => void,
+): void {
+  if (row.create) {
+    retryGettingStartedBots(webGettingStartedRequest, reload);
+    return;
+  }
+  if (!agentId) {
+    onOpenFirstWork({ kind: "chat" });
+    return;
+  }
+  void openGettingStartedBotChat(webGettingStartedRequest, agentId).then(
+    (chatId) => onOpenFirstWork({ kind: "chat", ...(chatId ? { chatId } : {}) }),
+    (error: unknown) => {
+      console.warn("[getting-started] unable to open bot chat:", error instanceof Error ? error.name : typeof error);
+      onOpenFirstWork({ kind: "chat" });
+    },
+  );
+}
+
 export function GettingStartedPopover(props: GettingStartedPopoverProps) {
   const { scope } = useGettingStartedVisibility();
   return <GettingStartedPopoverContent key={scope} {...props} />;
@@ -348,18 +375,7 @@ function GettingStartedPopoverContent({
       onOpenSettings("integrations");
       return;
     }
-    const agentId = bots.agentIds[row.recipeId];
-    if (!agentId) {
-      onOpenFirstWork({ kind: "chat" });
-      return;
-    }
-    void openGettingStartedBotChat(webGettingStartedRequest, agentId).then(
-      (chatId) => onOpenFirstWork({ kind: "chat", ...(chatId ? { chatId } : {}) }),
-      (error: unknown) => {
-        console.warn("[getting-started] unable to open bot chat:", error instanceof Error ? error.name : typeof error);
-        onOpenFirstWork({ kind: "chat" });
-      },
-    );
+    activateBotRow(row, bots.agentIds[row.recipeId], onOpenFirstWork, () => setRefreshRequest((request) => (request + 1) % 1_000_000));
   };
 
   useEffect(() => {

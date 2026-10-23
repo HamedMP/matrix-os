@@ -1,7 +1,7 @@
 import { getStartedAppGalleryLabel, gettingStartedRows, type GettingStartedRow, type GettingStartedStepStatus } from "@matrix-os/contracts";
 import {
   useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded,
-  openGettingStartedBotChat, useGettingStartedBots, type GettingStartedRequest,
+  openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, type GettingStartedRequest,
 } from "@matrix-os/ui";
 import * as Popover from "@radix-ui/react-popover";
 import { onboardingChecklist } from "@matrix-os/brand";
@@ -190,6 +190,11 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
     }
     if (row.kind === "tool") {
       openSettings("services");
+      return;
+    }
+    if (row.create) {
+      // A bot that failed to create: create the saved choices again, then reload the rows.
+      if (botRequest) retryGettingStartedBots(botRequest, () => setRefreshRequest((request) => (request + 1) % 1_000_000));
       return;
     }
     const agentId = bots.agentIds[row.recipeId];

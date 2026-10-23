@@ -87,19 +87,19 @@ describe("get started personality", () => {
 
   it("keeps a retry path when the Matrix Bot cannot be created at the end of setup", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    ensureMatrixBot.mockRejectedValueOnce(new Error("db down"));
+    ensureBot.mockRejectedValueOnce(new Error("db down"));
     expect((await complete()).status).toBe(200);
     const res = await retryBots();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ bots: { "matrix-bot": "ready" } });
-    expect(ensureMatrixBot).toHaveBeenNthCalledWith(2, "user_owner", "Atlas");
+    expect(ensureBot).toHaveBeenNthCalledWith(2, "user_owner", "matrix-bot", "Atlas");
   });
 
   it("reports a retry that fails again, and refuses retries before setup is finished or without the bot service", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     expect((await retryBots()).status).toBe(404);
     await complete();
-    ensureMatrixBot.mockRejectedValueOnce(new Error("db down"));
+    ensureBot.mockRejectedValueOnce(new Error("db down"));
     expect(await (await retryBots()).json()).toEqual({ bots: { "matrix-bot": "failed" } });
     mount({ owner: null });
     expect((await retryBots()).status).toBe(401);
@@ -113,16 +113,16 @@ describe("get started personality", () => {
     let at = Date.parse("2026-10-25T10:00:00.000Z");
     app = new Hono();
     app.route("/api/settings/get-started", createGetStartedRoutes({
-      homePath, enabled: true, getOwnerId: () => "user_owner", ensureMatrixBot, now: () => new Date(at),
+      homePath, enabled: true, getOwnerId: () => "user_owner", ensureBot, now: () => new Date(at),
     }));
-    ensureMatrixBot.mockRejectedValueOnce(new Error("db down"));
+    ensureBot.mockRejectedValueOnce(new Error("db down"));
     await complete();
     at += 11 * 60 * 1000;
     await app.request("/api/settings/get-started");
-    await vi.waitFor(() => expect(ensureMatrixBot).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(ensureBot).toHaveBeenCalledTimes(2));
     await app.request("/api/settings/get-started");
     await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(ensureMatrixBot).toHaveBeenCalledTimes(2);
+    expect(ensureBot).toHaveBeenCalledTimes(2);
   });
 
   it("replays safely: one managed section, and the bot request again", async () => {
@@ -155,6 +155,17 @@ describe("get started personality", () => {
     const res = await complete(null, ["writing-bot", "echo"]);
     expect(res.status).toBe(200);
     expect(ensureBot.mock.calls.map((call) => call[1])).toEqual(["writing-bot", "echo"]);
+  });
+
+  it("retries a ready-made bot whose creation failed, keyed by recipe", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    ensureBot.mockImplementation(async (_owner: string, recipeId: string) => {
+      if (recipeId === "echo" && ensureBot.mock.calls.length <= 2) throw new Error("db down");
+    });
+    await complete(null, ["writing-bot", "echo"]);
+    const res = await retryBots();
+    expect(await res.json()).toEqual({ bots: { "writing-bot": "ready", echo: "ready" } });
+    expect(ensureBot.mock.calls.map((call) => call[1])).toEqual(["writing-bot", "echo", "writing-bot", "echo"]);
   });
 
   it("rejects bots that are not ready-made recipes", async () => {

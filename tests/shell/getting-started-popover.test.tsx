@@ -288,6 +288,40 @@ describe("web getting started status", () => {
       expect(onOpenFirstWork).toHaveBeenLastCalledWith({ kind: "app-gallery" });
     });
 
+    it("offers to create a chosen bot whose creation failed, and retries it", async () => {
+      vi.restoreAllMocks();
+      let created = false;
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/api/settings/get-started/bots") && init?.method === "POST") {
+          created = true;
+          return new Response(JSON.stringify({ bots: { "writing-bot": "ready" } }), { status: 200 });
+        }
+        const body = url.endsWith("/api/chat-agents") ? {
+          enabled: true,
+          agents: created ? [{ id: "bot_write001", archived: false, createdAt: "2026-10-22T10:00:00.000Z", recipeRef: { recipeId: "writing-bot", version: 1 } }] : [],
+        }
+          : url.endsWith("/api/chat-agents/bot_write001/direct-chat") ? { chatId: null }
+            : url.endsWith("/api/integrations") ? []
+              : url.endsWith("/api/agents/credentials/status") ? { agents: [] }
+                : url.endsWith("/api/workspace/projects") ? { projects: [] }
+                  : url.endsWith("/api/chats?limit=1") ? { items: [] }
+                    : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: false } }
+                      : { authenticated: false };
+        return new Response(JSON.stringify(body), { status: 200 });
+      });
+      render(
+        <GetStartedAnswersProvider scope="test">
+          <GetStartedGate port={ended({ status: "completed", completedAt: "2026-10-22T10:00:00.000Z", answers: { goals: [], tools: [], bots: ["writing-bot"] } })} zIndex={1} />
+          <GettingStartedPopover onOpenSettings={vi.fn()} onOpenFirstWork={vi.fn()} />
+        </GetStartedAnswersProvider>,
+      );
+      const dialog = await screen.findByRole("dialog", { name: "Getting started" });
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Create Writing Bot" }));
+      await waitFor(() => expect(fetchMock.mock.calls.some(([input, init]) => String(input).endsWith("/api/settings/get-started/bots") && init?.method === "POST")).toBe(true));
+      expect(await within(dialog).findByRole("button", { name: "Chat with Writing Bot" })).toBeTruthy();
+    });
+
     it("leads with the owner's answers and shows an icon on every step", async () => {
       renderAfter({ status: "completed", completedAt: "2026-10-22T10:00:00.000Z", answers: { goals: ["code"], tools: ["codex"] } });
       const dialog = await screen.findByRole("dialog", { name: "Getting started" });

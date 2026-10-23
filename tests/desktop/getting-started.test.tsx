@@ -194,6 +194,32 @@ describe("GettingStartedPopover", () => {
       expect(await screen.findByRole("dialog", { name: "Getting started" })).not.toBeNull();
     });
 
+    it("offers to create a chosen bot whose creation failed, and retries it", async () => {
+      let created = false;
+      const api = makeApi({
+        "/api/integrations": [],
+        "/api/workspace/projects": { projects: [] },
+        "/api/chats?limit=1": { items: [] },
+      });
+      const baseGet = api.get.getMockImplementation();
+      api.get.mockImplementation(async (path: string, ...rest: unknown[]) => path === "/api/chat-agents"
+        ? { enabled: true, agents: created ? [{ id: "bot_write001", archived: false, createdAt: "2026-10-22T10:00:00.000Z", recipeRef: { recipeId: "writing-bot", version: 1 } }] : [] }
+        : baseGet?.(path, ...rest));
+      api.post.mockImplementation(async (path: string) => {
+        if (path === "/api/settings/get-started/bots") {
+          created = true;
+          return { bots: { "writing-bot": "ready" } };
+        }
+        return { chatId: null };
+      });
+      useConnection.setState({ api: api as never });
+      renderAfter({ status: "completed", completedAt: "2026-10-22T10:00:00.000Z", answers: { goals: [], tools: [], bots: ["writing-bot"] } });
+      const dialog = await screen.findByRole("dialog", { name: "Getting started" });
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Create Writing Bot" }));
+      await waitFor(() => expect(api.post).toHaveBeenCalledWith("/api/settings/get-started/bots", {}));
+      expect(await within(dialog).findByRole("button", { name: "Chat with Writing Bot" })).not.toBeNull();
+    });
+
     it("opens an added bot's own chat and App Gallery from the checklist", async () => {
       const api = makeApi({
         "/api/integrations": [],

@@ -129,6 +129,14 @@ describe("Getting started rows from the owner's choices", () => {
     ]);
     expect(total).toBe(7);
   });
+
+  it("keeps a bot whose creation failed as a Create row instead of dropping it", () => {
+    const answers = { goals: [], tools: [], bots: ["writing-bot" as const, "echo" as const] };
+    const { rows } = gettingStartedRows(snapshot([]), answers, { "writing-bot": "missing", echo: null });
+    expect(rows.filter((row) => row.kind === "bot")).toEqual([
+      { kind: "bot", id: "bot:writing-bot", label: "Create Writing Bot", status: "incomplete", recipeId: "writing-bot", create: true },
+    ]);
+  });
 });
 
 describe("widget tasks from the owner's choices", () => {
