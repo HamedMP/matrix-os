@@ -2,6 +2,7 @@ import type { Context, Hono } from 'hono';
 import type { PlatformDB } from './db.js';
 import type { AccountDeletionAdapterOptions } from './account-deletion/adapters.js';
 import { withAccountDeletionOwnerLock } from './account-deletion/admission.js';
+import { loadNativeMobileTarget } from '@matrix-os/contracts';
 type LegacyClient = NonNullable<AccountDeletionAdapterOptions['pipedream']>;
 /** The factory transfers ownership; injected transaction/store wrappers never call this helper. */
 export async function initializeOwnedIntegrationDb<T extends { migrate(): Promise<void>; destroy(): Promise<void> }>(options: {
@@ -44,9 +45,11 @@ export async function createConfiguredPlatformGmail(options: {
   resolveUserId?: (c: Context) => Promise<string | null>;
   loadModule?: () => Promise<RuntimeModule>;
 }): Promise<PlatformGmailRuntime> {
+  const nativeMobileTarget = loadNativeMobileTarget(options.env);
   if (!requiresPlatformGmailRuntime(options.env)) return { client: options.legacy, isEligible: async () => false };
   const module: RuntimeModule = await (options.loadModule ?? (() => import(new URL('../../gateway/dist/integrations/native-gmail/runtime.js', import.meta.url).href)))();
-  return module.createNativeGmailRuntime({ db: options.integrationDb, legacy: options.legacy, env: options.env, resolveUserId: options.resolveUserId,
+  return module.createNativeGmailRuntime({ db: options.integrationDb, legacy: options.legacy,
+    env: { ...options.env, MATRIX_NATIVE_MOBILE_TARGET: nativeMobileTarget }, resolveUserId: options.resolveUserId,
     admit: async (userId, persist) => {
       const user = await options.integrationDb.getUserById(userId);
       if (!user) throw new Error('Connection owner unavailable');

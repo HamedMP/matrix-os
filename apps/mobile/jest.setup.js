@@ -4,6 +4,10 @@
 require("react-native-unistyles/mocks");
 require("./lib/unistyles");
 
+// Native suites run as the production binary unless a target-specific test
+// supplies its own immutable native application identity.
+jest.mock("expo-application", () => ({ applicationId: "com.matrixos.mobile" }));
+
 jest.mock("react-native-reanimated", () => {
   const { FlatList, ScrollView, Text, View } = require("react-native");
   const mockReact = require("react");

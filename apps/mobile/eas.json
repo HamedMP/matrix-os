@@ -36,6 +36,18 @@
         "simulator": false
       }
     },
+    "gmail-pilot-device": {
+      "extends": "base",
+      "developmentClient": true,
+      "distribution": "internal",
+      "channel": "gmail-pilot",
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN": "https://gmail-pilot.matrix-os.com",
+        "EXPO_PUBLIC_CLERK_OAUTH_REDIRECT_URL": "matrixos-gmail-pilot://sso-callback"
+      },
+      "ios": { "simulator": false }
+    },
     "preview": {
       "extends": "base",
       "distribution": "internal",

@@ -1,4 +1,5 @@
 import type { Context, Hono } from "hono";
+import { loadNativeMobileTarget } from "@matrix-os/contracts";
 import { createPlatformDb, type PlatformDb } from "../platform-db.js";
 import { createPipedreamClient, type PipedreamConnectClient } from "../integrations/pipedream.js";
 import { createIntegrationRoutes } from "../integrations/routes.js";
@@ -24,6 +25,7 @@ export async function initializePlatformIntegrations(
   options: PlatformIntegrationOptions,
 ): Promise<PlatformIntegrationServices> {
   const { env, broadcast } = options;
+  const nativeMobileTarget = loadNativeMobileTarget(env);
   const absent: PlatformIntegrationServices = {
     db: null, client: null, routes: null, resolveUserId: null,
   };
@@ -45,6 +47,7 @@ export async function initializePlatformIntegrations(
     });
     const resolveUserId = createIntegrationUserResolver(db, env);
     const routes = createIntegrationRoutes({
+      nativeMobileTarget,
       db,
       pipedream: client,
       webhookSecret: (() => {

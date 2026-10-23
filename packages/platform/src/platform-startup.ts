@@ -1,4 +1,5 @@
 import { createGoogleQualifiedPlatformRuntime } from './google-qualified-startup.js';
+import { loadNativeMobileTarget, type NativeMobileTarget } from '@matrix-os/contracts';
 import type { ManagedGoogleRouteResolveRequest, GoogleQualifiedFundedRoute } from '@matrix-os/contracts';
 import { loadGmailPipedreamAttemptConfig } from "./gmail-pipedream-attempt-config.js";
 import { createConfiguredPlatformGmail, initializeOwnedIntegrationDb, requiresPlatformGmailRuntime } from './native-gmail-startup.js';
@@ -197,6 +198,7 @@ interface GatewayIntegrationRoutesModule {
   createGoogleCollectionAdmissionForPlatform(input: { db: GatewayPlatformDb; machineTokenForHandle(handle: string): string }): InternalGoogleCollectionAdmission;
   authorizeInternalJevLabels(c: Context): Promise<boolean>;
   createIntegrationRoutes(opts: {
+    nativeMobileTarget?: NativeMobileTarget;
     db: GatewayPlatformDb;
     pipedream: unknown;
     nativeGmail?: unknown;
@@ -303,6 +305,7 @@ async function startPlatformServerWithCleanup(
   opts: StartPlatformServerOptions,
   registerCustomMcpStartupCleanup: (cleanup: () => Promise<void>) => void,
 ): Promise<void> {
+  const nativeMobileTarget = loadNativeMobileTarget(process.env);
   const {
     port,
     platformSecret,
@@ -554,7 +557,8 @@ async function startPlatformServerWithCleanup(
       projectId: integrationConfig.pipedreamProjectId,
       environment: integrationConfig.pipedreamEnvironment,
     });
-    const gmail = await createConfiguredPlatformGmail({ db, integrationDb: trustedPlatformDb, legacy: legacyPipedream, env: process.env,
+    const gmail = await createConfiguredPlatformGmail({ db, integrationDb: trustedPlatformDb, legacy: legacyPipedream,
+      env: { ...process.env, MATRIX_NATIVE_MOBILE_TARGET: nativeMobileTarget },
       resolveUserId: async c => resolveIntegrationUserId(c.get('platformUserId') as string | undefined, c.get('platformHandle') as string | undefined) });
     gmailLaunchRoutes = gmail.launchRoutes;
     const pipedream = gmail.client;
@@ -587,6 +591,7 @@ async function startPlatformServerWithCleanup(
     };
 
     integrationRoutes = createIntegrationRoutes({
+      nativeMobileTarget,
       db: trustedPlatformDb,
       pipedream,
       nativeGmail: gmail.oauth,
@@ -603,6 +608,7 @@ async function startPlatformServerWithCleanup(
       ...(process.env.CUSTOM_MCP_ENABLED === 'true' ? { mcpPresetBroker: managedMcpPresetProxy } : {}),
     });
     internalIntegrationRoutes = createIntegrationRoutes({
+      nativeMobileTarget,
       ...(googleQualifiedRuntime ? { resolveManagedRoute: googleQualifiedRuntime.resolveManagedRoute } : {}),
       db: trustedPlatformDb,
       googleCollection: createPlatformGoogleCollectionAdmission({ integrationDb: trustedPlatformDb, platformSecret,

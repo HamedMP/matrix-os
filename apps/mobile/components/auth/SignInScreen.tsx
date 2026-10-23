@@ -3,7 +3,7 @@ import { View, Text, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollVie
 import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { makeRedirectUri } from "expo-auth-session";
+import { assertNativeCallbackTarget, mobileSsoRedirectUri } from "@/lib/native-callback-target";
 import { useSSO, useAuth } from "@clerk/clerk-expo";
 import * as WebBrowser from "expo-web-browser";
 import { Image } from "expo-image";
@@ -23,10 +23,6 @@ import {
 const rabbitArtwork = require("../../assets/app.icon/Assets/rabbit.svg");
 
 WebBrowser.maybeCompleteAuthSession();
-
-const clerkOAuthRedirectUrl =
-  process.env.EXPO_PUBLIC_CLERK_OAUTH_REDIRECT_URL ??
-  makeRedirectUri({ scheme: "matrixos", path: "sso-callback" });
 
 type OAuthStrategy = "oauth_google" | "oauth_github";
 type AuthProvider = "google" | "github";
@@ -71,6 +67,7 @@ export function SignInScreen() {
   const handleOAuthSignIn = useCallback(async (strategy: OAuthStrategy, provider: AuthProvider) => {
     setLoadingProvider(provider);
     try {
+      const clerkOAuthRedirectUrl = mobileSsoRedirectUri(process.env.EXPO_PUBLIC_CLERK_OAUTH_REDIRECT_URL);
       const normalizedGatewayUrl = normalizeGatewayUrl(gatewayUrl);
       await saveSelectedGatewayUrl(normalizedGatewayUrl);
       setGatewayUrl(normalizedGatewayUrl);
@@ -130,6 +127,7 @@ export function SignInScreen() {
   const prepareGateway = useCallback(async () => {
     let targetGatewayUrl: string;
     try {
+      assertNativeCallbackTarget();
       targetGatewayUrl = normalizeGatewayUrl(gatewayUrl);
     } catch (err: unknown) {
       throw new SignInStepError(

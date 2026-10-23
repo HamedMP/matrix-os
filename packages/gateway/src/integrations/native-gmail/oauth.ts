@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { setTimeout as wait } from "node:timers/promises";
 import { z } from "zod/v4";
+import { nativeMobileTargetPolicy, type NativeMobileTarget } from "@matrix-os/contracts";
 import { decryptCustomMcpCredential, encryptCustomMcpCredential } from "../custom-mcp/crypto.js";
 import { gmailOAuthRequest, NativeGmailOAuthError } from "./oauth-request.js";
 import { GMAIL_SCOPE, type NativeGmailBinding, type NativeGmailConnection,
@@ -21,6 +22,7 @@ const granted = (scope: string | undefined) => scope?.split(/\s+/).includes(GMAI
 class RefreshLeaseBusy extends Error {}
 
 export interface NativeGmailOAuthOptions {
+  nativeMobileTarget?: NativeMobileTarget;
   store: NativeGmailStore; clientId: string; clientSecret: string; redirectUri: string; encryptionKey: Buffer;
   fetcher?: typeof fetch; now?: () => number;
   admit?: (userId: string, persist: () => Promise<void>) => Promise<void>;
@@ -29,9 +31,11 @@ export interface NativeGmailOAuthOptions {
 
 /** OAuth holds no plaintext credentials or replay state between operations. */
 export class NativeGmailOAuthManager {
+  private readonly returnUri: string;
   private readonly fetcher: typeof fetch;
   private readonly now: () => number;
   constructor(private readonly options: NativeGmailOAuthOptions) {
+    this.returnUri = nativeMobileTargetPolicy(options.nativeMobileTarget).integrationRedirectUri;
     if (options.encryptionKey.length !== 32 || !options.clientId || !options.clientSecret) throw new NativeGmailOAuthError();
     const callback = new URL(options.redirectUri);
     if (callback.protocol !== "https:" || callback.username || callback.password || callback.hash || callback.search) throw new NativeGmailOAuthError();
@@ -40,7 +44,7 @@ export class NativeGmailOAuthManager {
   }
 
   async start(input: { userId: string; externalUserId: string; label?: string; redirectUri?: string }): Promise<{ url: string }> {
-    if (!input.userId || !input.externalUserId || (input.redirectUri && input.redirectUri !== "matrixos://integrations")) throw new NativeGmailOAuthError();
+    if (!input.userId || !input.externalUserId || (input.redirectUri !== undefined && input.redirectUri !== this.returnUri)) throw new NativeGmailOAuthError();
     await this.assertEligible(input.userId);
     const labelValue = input.label === undefined ? undefined : z.string().trim().min(1).max(100).safeParse(input.label);
     if (labelValue && !labelValue.success) throw new NativeGmailOAuthError();
@@ -60,6 +64,7 @@ export class NativeGmailOAuthManager {
     if (!/^[A-Za-z0-9_-]{43}$/.test(state)) throw new NativeGmailOAuthError();
     const pending = await this.options.store.inspectState(hash(state), new Date(this.now()));
     if (!pending || pending.userId !== owner.userId) throw new NativeGmailOAuthError();
+    if (pending.redirectUri != null && pending.redirectUri !== this.returnUri) throw new NativeGmailOAuthError();
     await this.assertEligible(pending.userId);
     const { verifier } = z.object({ verifier: z.string().min(43).max(128) }).parse(decryptCustomMcpCredential(
       pending.encryptedVerifier, this.options.encryptionKey, stateBinding(pending.userId, pending.hash)));
@@ -93,6 +98,8 @@ export class NativeGmailOAuthManager {
     this.validateBrowserProof(state, browserProof);
     const pending = await this.options.store.consumeState(hash(state), new Date(this.now()));
     if (!pending || !code || code.length > 4096) throw new NativeGmailOAuthError();
+    // A configuration change never substitutes a fresh app destination into old consent.
+    if (pending.redirectUri != null && pending.redirectUri !== this.returnUri) throw new NativeGmailOAuthError();
     let connected: NativeGmailConnection | undefined;
     const persist = async () => {
       await this.assertEligible(pending.userId);
