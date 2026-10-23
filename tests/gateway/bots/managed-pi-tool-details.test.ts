@@ -143,6 +143,7 @@ it.each(["completed", "failed", "cancelled"] as const)("retains the managed tool
     return { ok: true, reply: { runId: binding.runId, status, toolActions: 1 } };
   }) } } as unknown as ScopeRuntimeHost;
   const runtime = createManagedPiRuntime({ toolOutputKey: key, admission: { admit: async () => binding,
+    startRenewal: () => ({ stop: async () => undefined }),
     release: async () => undefined, toolAuthority: async () => ({ permissionMode: "full_access" }), workspace: async () => "/owned/chat" },
     host, providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal, forgetRun: () => undefined, cancelInference: () => undefined });
   const events = [];
@@ -176,6 +177,7 @@ it.each(["failed", "cancelled", "completed"] as const)("closes an outstanding ma
     return { ok: true, reply: { runId: binding.runId, status, toolActions: 1 } };
   }) } } as unknown as ScopeRuntimeHost;
   const runtime = createManagedPiRuntime({ toolOutputKey: key, admission: { admit: async () => binding,
+    startRenewal: () => ({ stop: async () => undefined }),
     release: async () => undefined, toolAuthority: async () => ({ permissionMode: "full_access" }), workspace: async () => "/owned/chat" },
     host, providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal, forgetRun: () => undefined, cancelInference: () => undefined });
   const events = [];
