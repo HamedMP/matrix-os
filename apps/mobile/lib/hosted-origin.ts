@@ -32,7 +32,8 @@ export function mobileHostedStorage(storage: MobileHostedStorage): MobileHostedS
 }
 
 export function isMatrixHostedHostname(hostname: string): boolean {
-  return hostname === "app.matrix-os.com" || hostname === "gmail-pilot.matrix-os.com";
+  const normalized = hostname.toLowerCase().replace(/\.+$/, "");
+  return normalized === "app.matrix-os.com" || normalized === "gmail-pilot.matrix-os.com";
 }
 
 export function isMatrixHostedOrigin(origin: string): boolean {

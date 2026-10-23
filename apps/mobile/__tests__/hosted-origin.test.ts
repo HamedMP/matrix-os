@@ -26,3 +26,36 @@ it.each(["", " ", ` ${pilot}`, `${pilot}/`, `${pilot}/vm/test`, `${pilot}?x=1`, 
   jest.resetModules();
   expect(() => require("../lib/hosted-origin")).toThrow("Mobile hosted target unavailable");
 });
+
+it.each([production, pilot])("reserves both built-in hostnames across normalize/save/restore/Basic aliases in %s", async target => {
+  process.env.EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN = target;
+  jest.resetModules();
+  const storage = require("../lib/storage");
+  const secure = require("expo-secure-store");
+  secure.setItemAsync.mockClear();
+  secure.deleteItemAsync.mockClear();
+  for (const hostname of ["app.matrix-os.com", "gmail-pilot.matrix-os.com"]) {
+    for (const alias of [
+      `http://${hostname}/vm/other-box`,
+      `https://${hostname}:444/vm/other-box`,
+      `https://${hostname}./vm/other-box`,
+      `https://${hostname.toUpperCase()}.:444/vm/other-box`,
+      `https://${hostname}../vm/other-box`,
+      `https://user:fixture@${hostname}/vm/other-box`,
+    ]) {
+      expect(() => storage.normalizeGatewayUrl(alias)).toThrow();
+      await expect(storage.saveSelectedGatewayUrl(alias)).rejects.toThrow();
+      await expect(storage.saveSelectedGatewayBasicAuth(alias, "owner", "fixture-password")).rejects.toThrow();
+      secure.getItemAsync.mockResolvedValue(JSON.stringify({ id: "matrix-os-custom", url: alias }));
+      await expect(storage.getSelectedGatewayConnection()).resolves.toMatchObject({ url: target });
+    }
+  }
+  expect(secure.setItemAsync).not.toHaveBeenCalled();
+  expect(secure.deleteItemAsync).not.toHaveBeenCalled();
+  // Normalization must not reserve unrelated user-operated/custom hosts.
+  expect(storage.normalizeGatewayUrl("https://custom.example.invalid:444/vm/owner/"))
+    .toBe("https://custom.example.invalid:444/vm/owner");
+  expect(storage.normalizeGatewayUrl("https://app.matrix-os.com.custom.invalid/"))
+    .toBe("https://app.matrix-os.com.custom.invalid");
+  expect(storage.normalizeGatewayUrl(target)).toBe(target);
+});
