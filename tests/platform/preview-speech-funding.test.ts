@@ -71,6 +71,23 @@ describe("Preview speech no-charge funding", () => {
     expect(paid.reserve).toHaveBeenCalledOnce();
   });
 
+  it("uses the bounded no-charge path for an owner-only Private Preview", async () => {
+    const runtimeSlot = "pv-2383-deadbeef";
+    await db.executor.updateTable("user_machines").set({
+      handle: runtimeSlot,
+      runtime_slot: runtimeSlot,
+      provisioning_class: "private-preview",
+      source_pr: 2383,
+      confirmed_bundle_version: "preview",
+    }).where("machine_id", "=", preview.machineId).execute();
+    await db.executor.updateTable("preview_runtime_allocations").set({ runtime_slot: runtimeSlot })
+      .where("machine_id", "=", preview.machineId).execute();
+
+    const result = await reserve({ ...preview, runtimeSlot }, "privatepreview");
+    expect(result).toMatchObject({ reservationId: expect.stringMatching(/^preview_speech_/), reservedMicrousd: 0 });
+    expect(paid.reserve).not.toHaveBeenCalled();
+  });
+
   it("enforces one active speech operation for the exact Preview runtime", async () => {
     const operations = createSpeechOperationsRepository({ db, now: () => new Date(now),
       maximumActiveOperations: 10, maximumActiveOperationsPerOwner: 10 });

@@ -14,6 +14,13 @@ const PreviewIdentitySchema = z.object({
 }).strict();
 
 const ORDINARY_MODELS = ["anthropic/claude-sonnet-5", ...MANAGED_WORKERS_AI_MODEL_IDS];
+export const BOUNDED_PREVIEW_PROVISIONING_CLASSES = ["preview", "private-preview"] as const;
+
+export function isBoundedPreviewProvisioningClass(
+  value: string,
+): value is typeof BOUNDED_PREVIEW_PROVISIONING_CLASSES[number] {
+  return (BOUNDED_PREVIEW_PROVISIONING_CLASSES as readonly string[]).includes(value);
+}
 
 export type PreviewRuntimeAccessConfig = { enabled: false } | {
   enabled: true;
@@ -102,7 +109,8 @@ export async function initializePreviewRuntimeAccess(options: {
       "status", "activation_state", "deleted_at",
     ]).where("machine_id", "=", request.machineId).forUpdate().executeTakeFirst();
     if (!machine || machine.clerk_user_id !== request.ownerId || machine.runtime_slot !== request.runtimeSlot
-      || machine.runtime_token_epoch !== request.expectedRuntimeTokenEpoch || machine.provisioning_class !== "preview"
+      || machine.runtime_token_epoch !== request.expectedRuntimeTokenEpoch
+      || !isBoundedPreviewProvisioningClass(machine.provisioning_class)
       || machine.status !== "running" || machine.activation_state !== "authorized" || machine.deleted_at !== null) {
       throw new Error("Preview runtime is ineligible");
     }
@@ -167,7 +175,7 @@ export async function readActivePreviewRuntimeAccess(db: PlatformDB, identity: {
     .where("allocation.owner_id", "=", identity.ownerId)
     .where("allocation.runtime_slot", "=", identity.runtimeSlot)
     .whereRef("allocation.runtime_token_epoch", "=", "machine.runtime_token_epoch")
-    .where("machine.provisioning_class", "=", "preview")
+    .where("machine.provisioning_class", "in", BOUNDED_PREVIEW_PROVISIONING_CLASSES)
     .where("machine.status", "=", "running")
     .where("machine.activation_state", "=", "authorized")
     .where("machine.deleted_at", "is", null)

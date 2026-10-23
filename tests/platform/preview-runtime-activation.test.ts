@@ -37,14 +37,28 @@ describe("Preview runtime host activation", () => {
 
   afterEach(async () => destroyTestPlatformDb(db));
 
-  it("delivers separate exact-generation runtime tokens without provider credentials", async () => {
+  it.each(["preview", "private-preview"] as const)(
+    "delivers separate exact-generation runtime tokens without provider credentials for %s",
+    async provisioningClass => {
+    const identity = provisioningClass === "private-preview"
+      ? { ...machine, handle: "pv-2383-deadbeef", runtimeSlot: "pv-2383-deadbeef" }
+      : machine;
+    if (provisioningClass === "private-preview") {
+      await db.executor.updateTable("user_machines").set({
+        provisioning_class: provisioningClass,
+        handle: identity.handle,
+        runtime_slot: identity.runtimeSlot,
+        source_pr: 2383,
+        confirmed_bundle_version: "v2026.10.23-pr2383-test",
+      }).where("machine_id", "=", machine.machineId).execute();
+    }
     let fundedRevision = "";
     let fundedBody: Record<string, unknown> | undefined;
     let speechBody: Record<string, unknown> | undefined;
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/api/internal/platform-funded-ai/config") && init?.method === "POST") {
-        expect(init.headers).toMatchObject({ authorization: `Bearer ${buildPlatformVerificationToken(machine.handle, hostSecret)}` });
+        expect(init.headers).toMatchObject({ authorization: `Bearer ${buildPlatformVerificationToken(identity.handle, hostSecret)}` });
         fundedBody = JSON.parse(String(init.body)) as Record<string, unknown>;
         fundedRevision = createHash("sha256").update(fundedHostActivationRevisionInput(fundedBody as never)).digest("hex");
         return new Response(null, { status: 200 });
@@ -72,14 +86,14 @@ describe("Preview runtime host activation", () => {
       relayOrigin: "https://matrix-ai-relay-production-test.a.run.app",
       fetchImpl: fetchImpl as typeof fetch, wait: async () => undefined, now: () => new Date(now) });
 
-    await expect(activate({ ownerId: machine.ownerId, machineId: machine.machineId,
-      runtimeSlot: machine.runtimeSlot, expectedRuntimeTokenEpoch: 1 })).resolves.toMatchObject({ status: "ready" });
+    await expect(activate({ ownerId: identity.ownerId, machineId: identity.machineId,
+      runtimeSlot: identity.runtimeSlot, expectedRuntimeTokenEpoch: 1 })).resolves.toMatchObject({ status: "ready" });
     expect(JSON.stringify(fundedBody)).not.toMatch(/api[_-]?key|provider[_-]?key/i);
-    expect(fundedBody).toMatchObject({ identity: { machineId: machine.machineId, ownerId: machine.ownerId,
-      runtimeSlot: machine.runtimeSlot, runtimeTokenEpoch: 1 } });
-    expect(speechBody).toMatchObject({ machineId: machine.machineId, runtimeSlot: machine.runtimeSlot,
-      runtimeToken: buildPlatformSpeechRuntimeVerificationToken({ handle: machine.handle,
-        machineId: machine.machineId, runtimeSlot: machine.runtimeSlot }, previewSecret, 1) });
+    expect(fundedBody).toMatchObject({ identity: { machineId: identity.machineId, ownerId: identity.ownerId,
+      runtimeSlot: identity.runtimeSlot, runtimeTokenEpoch: 1 } });
+    expect(speechBody).toMatchObject({ machineId: identity.machineId, runtimeSlot: identity.runtimeSlot,
+      runtimeToken: buildPlatformSpeechRuntimeVerificationToken({ handle: identity.handle,
+        machineId: identity.machineId, runtimeSlot: identity.runtimeSlot }, previewSecret, 1) });
   });
 
   it("activates through the real Preview proof route and Gateway host handler", async () => {

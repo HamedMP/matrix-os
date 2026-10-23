@@ -49,6 +49,7 @@ import { z } from "zod/v4";
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { readCheckoutFundingSnapshot } from "./ai-funded-checkout-snapshot.js";
+import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 import {
   fundingSourceAvailability,
   debitAttributedPromotionalGrants,
@@ -148,7 +149,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
         || runtime.owner_id !== identity.ownerId || runtime.runtime_slot !== identity.runtimeSlot) {
         throw new AiFundedPolicyError("identity_mismatch");
       }
-      const preview = machine.provisioning_class === "preview"
+      const preview = isBoundedPreviewProvisioningClass(machine.provisioning_class)
         ? await trx.executor.selectFrom("preview_runtime_allocations").selectAll()
           .where("machine_id", "=", identity.machineId).where("owner_id", "=", identity.ownerId)
           .where("runtime_slot", "=", identity.runtimeSlot)
@@ -456,7 +457,7 @@ export function createAiFundedMeteringRepository(options: AiFundedMeteringReposi
       || row.runtime_owner_id !== row.owner_id || row.policy_runtime_slot !== row.runtime_slot) {
       throw new AiFundedPolicyError("unauthorized");
     }
-    if (row.provisioning_class === "preview") {
+    if (isBoundedPreviewProvisioningClass(row.provisioning_class)) {
       const allocation = await options.db.executor.selectFrom("preview_runtime_allocations").select("machine_id")
         .where("machine_id", "=", row.machine_id).where("owner_id", "=", row.owner_id)
         .where("runtime_slot", "=", row.runtime_slot)

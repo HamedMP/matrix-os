@@ -3,6 +3,7 @@ import { sql } from 'kysely';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
+import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { getProvisioningJobByMachineId } from '../../packages/platform/src/customer-vps-provisioning-jobs.js';
 import { PRIVATE_PREVIEW_HANDLE_PATTERN } from '../../packages/platform/src/customer-vps-schema.js';
 import { assertMachineProviderMutationAllowed } from '../../packages/platform/src/customer-vps-support.js';
@@ -155,6 +156,58 @@ describe('Private Preview provisioning', () => {
       new Date(),
     )).resolves.toBeUndefined();
     expect(resolveBillingEntitlement).not.toHaveBeenCalled();
+  });
+
+  it('activates an exact bounded runtime allocation when a Private Preview registers', async () => {
+    const activatePreviewRuntimeAccess = vi.fn(async () => ({
+      status: 'ready' as const,
+      allocation: {} as never,
+      fundedAiConfigured: true as const,
+      speechConfigured: true as const,
+    }));
+    const svc = createCustomerVpsService({
+      db,
+      config: loadCustomerVpsConfig({
+        PLATFORM_PORT: '9000',
+        PLATFORM_SECRET: 'platform-secret',
+        HETZNER_API_TOKEN: 'token',
+      }),
+      hetzner: createMockHetznerClient(),
+      systemStore: createMockCustomerVpsSystemStore(),
+      activatePreviewRuntimeAccess,
+      now: () => new Date('2026-09-28T00:00:00.000Z'),
+    });
+    const machineId = '00000000-0000-4000-8000-000000001907';
+    const runtimeSlot = 'pv-1907-deadbeef';
+    await insertUserMachine(db, {
+      machineId,
+      clerkUserId: owner,
+      handle: runtimeSlot,
+      runtimeSlot,
+      provisioningClass: 'private-preview',
+      activationState: 'authorized',
+      sourcePr: 1907,
+      confirmedBundleVersion: v1,
+      status: 'provisioning',
+      hetznerServerId: 1907,
+      imageVersion: v1,
+      registrationTokenHash: hashRegistrationToken('registration-token'),
+      registrationTokenExpiresAt: '2026-09-28T01:00:00.000Z',
+      provisionedAt: '2026-09-28T00:00:00.000Z',
+    });
+
+    await expect(svc.register('registration-token', {
+      machineId,
+      hetznerServerId: 1907,
+      publicIPv4: '203.0.113.19',
+      imageVersion: v1,
+    })).resolves.toEqual({ registered: true, status: 'running' });
+    expect(activatePreviewRuntimeAccess).toHaveBeenCalledWith({
+      ownerId: owner,
+      machineId,
+      runtimeSlot,
+      expectedRuntimeTokenEpoch: 1,
+    });
   });
 
   describe('explicit update', () => {

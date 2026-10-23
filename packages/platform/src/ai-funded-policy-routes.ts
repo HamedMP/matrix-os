@@ -37,7 +37,7 @@ import { FUNDED_PROBE_MODELS, type FundedModelProbeService } from "./ai-funded-m
 import { observeFundedModelRoutes } from "./ai-funded-route-observations.js";
 
 import { fundedReadinessPhase } from "./ai-funded-readiness-phase.js";
-import { readActivePreviewRuntimeAccess } from "./preview-runtime-access.js";
+import { isBoundedPreviewProvisioningClass, readActivePreviewRuntimeAccess } from "./preview-runtime-access.js";
 
 const RUNTIME_BODY_LIMIT = 1024;
 const RELAY_BODY_LIMIT = 4 * 1024;
@@ -140,7 +140,9 @@ function runtimeVerificationToken(options: {
   platformSecret: string;
   previewRuntimeSecret?: string;
 }, machine: NonNullable<Awaited<ReturnType<typeof getRunningUserMachineByHandle>>>): string {
-  const secret = machine.provisioningClass === "preview" ? options.previewRuntimeSecret : options.platformSecret;
+  const secret = isBoundedPreviewProvisioningClass(machine.provisioningClass)
+    ? options.previewRuntimeSecret
+    : options.platformSecret;
   if (!secret) throw new Error("Runtime authentication is unavailable");
   return buildPlatformRuntimeVerificationToken({
     handle: machine.handle,
@@ -158,7 +160,7 @@ async function authenticatedRuntimeMachine(
   const machine = await getRunningUserMachineByHandle(options.db, handle, runtimeSlot);
   if (!machine) return undefined;
   let runtimeSecret = options.platformSecret;
-  if (machine.provisioningClass === "preview") {
+  if (isBoundedPreviewProvisioningClass(machine.provisioningClass)) {
     const allocation = await readActivePreviewRuntimeAccess(options.db, {
       ownerId: machine.clerkUserId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot,
     }, (options.now ?? (() => new Date()))());

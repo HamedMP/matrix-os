@@ -1,12 +1,12 @@
-# Bounded funded access for ordinary Preview VPSes
+# Bounded funded access for PR Preview VPSes
 
 Ticket: [ENG-348](https://linear.app/matrix-os/issue/ENG-348/featpreview-fund-bounded-ai-and-speech-on-preview-vpses). Status: implementation complete; live Preview verification pending reviewed control-plane deployment.
 
 ## Goal
 
-A same-repository PR deployed by `.github/workflows/preview-vps.yml` receives a short-lived, machine-generation-scoped allowance for Matrix-funded Chat and dictation. The allowance is independent of the owner's customer-primary balance, cannot unlock personal accounts for shared Preview users, and requires no manual host edit.
+A same-repository PR deployed as either a shared `preview` VPS or an owner-only `private-preview` VPS receives a short-lived, machine-generation-scoped allowance for Matrix-funded Chat and dictation. The allowance is independent of the owner's customer-primary balance, cannot unlock personal accounts for shared Preview users, and requires no manual host edit.
 
-This is not production starter credit. Existing `provisioning_class=customer` plus `runtime_slot=primary` eligibility remains unchanged. A Preview is admitted only from the Platform database's exact `provisioning_class=preview` machine row and an exact owner, machine ID, runtime slot, and runtime token epoch supplied by the protected workflow.
+This is not production starter credit. Existing `provisioning_class=customer` plus `runtime_slot=primary` eligibility remains unchanged. A Preview is admitted only from an exact Platform database row whose server-authoritative class is `preview` or `private-preview`, together with its exact owner, machine ID, runtime slot, and runtime token epoch. A handle prefix alone never establishes Preview trust.
 
 ## Source of truth and data model
 
@@ -32,7 +32,7 @@ The AI dollar budget limits provider expense while the independent request count
 
 | Route | Authentication and admission | Public |
 | --- | --- | --- |
-| `POST /vps/preview/access/activate` | `PLATFORM_SECRET`; bounded JSON body; exact DB owner/machine/slot/epoch; running, authorized, non-deleted `preview` machine; feature opt-in | No |
+| `POST /vps/preview/access/activate` | `PLATFORM_SECRET`; bounded JSON body; exact DB owner/machine/slot/epoch; running, authorized, non-deleted `preview` or `private-preview` machine; feature opt-in | No |
 | `POST /internal/ai/runtime/:handle/*` | HMAC token derived from `MATRIX_PREVIEW_RUNTIME_SECRET`, exact handle/machine/slot/epoch, plus active Preview allocation; production customer routes retain `PLATFORM_SECRET` | No |
 | `/internal/speech/runtime/:handle/*` | Same exact-generation Preview token and active allocation; production customer routes retain `PLATFORM_SECRET` | No |
 | Host funded-config and speech activation endpoints | Existing machine-scoped host control token derived from `PLATFORM_SECRET`; called only by Platform after exact DB admission | No |
@@ -42,6 +42,8 @@ Every mutating route uses `bodyLimit` and Zod validation. Secret comparisons use
 ## Workflow and runtime wiring
 
 After deploying the exact PR bundle, `preview-vps.yml` reads `/vps/fleet` with operator authentication and requires one healthy machine whose handle and runtime slot equal `pr-<number>`, whose Platform classification is `preview`, and whose state is running and authorized. It posts the returned exact owner, machine ID, slot, and token epoch to the activation route. The workflow fails unless both host configurations are verified and both request allowances are positive with concurrency `1`.
+
+An owner-only `private-preview` cannot use that branch workflow because it is provisioned from a reviewed bundle by the production Platform. Instead, its authenticated registration path invokes the same activator after the exact machine becomes running. The activator receives the registered row's owner, machine ID, runtime slot, and token epoch; failures leave funded capabilities unavailable and return only a generic registration warning. Re-registration cannot refill or extend an existing allocation.
 
 Only the existing same-repository, approved `preview-vps` execution path reaches this step. Fork PRs and unapproved workflow code receive neither production operator secrets nor Preview funded access. Replays do not mint a new allowance. PR teardown deletes the machine and cascades the allocation; the existing 72-hour reaper remains a second cleanup boundary.
 
@@ -55,7 +57,7 @@ Platform activation configures the host through the existing protected host endp
 4. Activate speech with a separately derived speech token for the same machine generation.
 5. Return only coarse readiness and remaining counters to the workflow.
 
-The control plane writes `MATRIX_PREVIEW_RUNTIME=true` into host configuration only when the persisted machine has `provisioning_class=preview`; customer and Private Preview provisioning omit the marker. The runtime cannot top up a Preview allocation, inherit a configured owner promotion, or use checkout. Shared Preview users keep the existing denial for personal Integrations and Custom MCP accounts; funded Chat and dictation are machine capabilities, not personal-account delegation. Dictation accepts a non-owner only when the Gateway is an explicitly configured Preview runtime and Platform has supplied a verified collaborator principal after its live machine-access check. Customer runtimes and direct non-Platform principals retain the exact owner check.
+The control plane writes `MATRIX_PREVIEW_RUNTIME=true` into host configuration only when the persisted machine has `provisioning_class=preview` or `private-preview`; customer provisioning omits the marker. The runtime cannot top up a Preview allocation, inherit a configured owner promotion, or use checkout. Shared Preview users keep the existing denial for personal Integrations and Custom MCP accounts; funded Chat and dictation are machine capabilities, not personal-account delegation. Dictation accepts a non-owner only when the Gateway is an explicitly configured shared Preview runtime and Platform has supplied a verified collaborator principal after its live machine-access check. Private Preview remains owner-only at routing and machine access. Customer runtimes and direct non-Platform principals retain the exact owner check.
 
 ## Transaction, lock, and orphan-state rules
 
@@ -80,13 +82,13 @@ Operators can disable new activation by turning off the feature flag. To revoke 
 
 ## Spec 530 boundary
 
-This feature deliberately does not activate the Preview-owned routing and control-plane design from [spec 530](../530-per-pr-preview-hostnames/spec.md). Ordinary `preview-vps` still uses the production Platform only as an explicit trusted control plane for an already server-classified Preview machine. No unmerged Platform revision, unrestricted credential, wildcard Preview route, personal Clerk session, or branch-controlled secret path is introduced.
+This feature deliberately does not activate the Preview-owned routing and control-plane design from [spec 530](../530-per-pr-preview-hostnames/spec.md). Both shared and private PR Preview VPSes use the production Platform only as an explicit trusted control plane for an already server-classified Preview machine. No unmerged Platform revision, unrestricted credential, wildcard Preview route, personal Clerk session, or branch-controlled secret path is introduced.
 
 If a future requirement needs Preview-specific Platform code to authorize or route funded access, spec 530's per-PR database, service identity, secrets, Clerk instance, DNS/TLS, and cookie/CSRF isolation must land first. Do not route that unmerged code through production as a shortcut.
 
 ## Acceptance and evidence
 
-Focused Red → Green tests cover bounded configuration, exact identity and epoch, one-time activation, AI and speech counters, concurrency, primary-balance isolation, cross-machine token rejection, expiry, deletion/recreation, workflow gating, migrations, contracts, and customer-path regression.
+Focused Red → Green tests cover both server-authoritative Preview classes, bounded configuration, exact identity and epoch, owner-only Private Preview registration activation, one-time activation, AI and speech counters, concurrency, primary-balance isolation, cross-machine token rejection, expiry, deletion/recreation, workflow gating, migrations, contracts, and customer-path regression.
 
 Merge readiness additionally requires one fresh exact-build Preview VPS created by `preview-vps.yml` and evidence for:
 

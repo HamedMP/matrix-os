@@ -6,6 +6,7 @@ import { projectExpiredPromotionalCredit } from "./ai-funded-expiry-projection.j
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { exactInteger, fundingSummary, intersectModels, parseModels, utcMonthStart } from "./ai-funded-metering-helpers.js";
+import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 
 type CheckoutRow = {
   clerk_user_id: string; machine_runtime_slot: string; machine_runtime_token_epoch: number;
@@ -87,7 +88,7 @@ export async function readCheckoutFundingSnapshot(input: {
       if (row.restriction_frozen === true || exactInteger(row.restriction_debt_microusd ?? 0) > 0) {
         throw new AiFundedPolicyError("access_disabled");
       }
-    const preview = row.machine_provisioning_class === "preview"
+    const preview = isBoundedPreviewProvisioningClass(row.machine_provisioning_class)
       && row.preview_owner_id === identity.ownerId && row.preview_runtime_slot === identity.runtimeSlot
       && row.preview_runtime_token_epoch === row.machine_runtime_token_epoch
       && row.preview_expires_at !== null && Date.parse(row.preview_expires_at) > checked.getTime()

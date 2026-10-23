@@ -6,6 +6,7 @@ import type { PlatformDB } from './db.js';
 import { getAccountDeletionAdmission } from './account-deletion/admission.js';
 import { readUsageWaiverAudit, USAGE_WAIVER_MAX_RECORDS } from './ai-funded-usage-waiver-audit.js';
 import { buildPlatformRuntimeVerificationToken, timingSafeTokenEquals } from './platform-token.js';
+import { isBoundedPreviewProvisioningClass } from './preview-runtime-access.js';
 
 const Handle = z.string().min(1).max(63).regex(/^[a-z0-9][a-z0-9-]*$/);
 const RuntimeSlot = z.string().min(1).max(32).regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/);
@@ -25,11 +26,6 @@ export async function readFundedHostActivation(options: Options & {
   if (!Handle.safeParse(options.handle).success || !RuntimeSlot.safeParse(options.runtimeSlot).success
     || !/^[a-f0-9]{64}$/.test(supplied)) return { status: 'unauthorized' };
   if (options.platformSecret.length < 32) throw new Error('Managed feature configuration unavailable');
-  const preview = options.runtimeSlot !== 'primary';
-  const runtimeSecret = preview ? options.previewRuntimeSecret : options.platformSecret;
-  if (!runtimeSecret || runtimeSecret.length < 32 || (preview && runtimeSecret === options.platformSecret)) {
-    return { status: 'unauthorized' };
-  }
   await options.db.ready;
   return options.db.kysely.transaction().setIsolationLevel('repeatable read').execute(async trx => {
     await sql`SET TRANSACTION READ ONLY`.execute(trx);
@@ -37,9 +33,17 @@ export async function readFundedHostActivation(options: Options & {
     const machine = await trx.selectFrom('user_machines').selectAll()
       .where('handle', '=', options.handle).where('runtime_slot', '=', options.runtimeSlot)
       .where('status', '=', 'running').where('activation_state', '=', 'authorized')
-      .where('provisioning_class', '=', preview ? 'preview' : 'customer')
+      .where('provisioning_class', 'in', ['customer', 'preview', 'private-preview'])
       .where('deleted_at', 'is', null).executeTakeFirst();
     if (!machine) return { status: 'unauthorized' };
+    const preview = isBoundedPreviewProvisioningClass(machine.provisioning_class);
+    if (!preview && (machine.provisioning_class !== 'customer' || machine.runtime_slot !== 'primary')) {
+      return { status: 'unauthorized' };
+    }
+    const runtimeSecret = preview ? options.previewRuntimeSecret : options.platformSecret;
+    if (!runtimeSecret || runtimeSecret.length < 32 || (preview && runtimeSecret === options.platformSecret)) {
+      return { status: 'unauthorized' };
+    }
     const runtimeToken = buildPlatformRuntimeVerificationToken({ handle: machine.handle,
       machineId: machine.machine_id, runtimeSlot: machine.runtime_slot }, runtimeSecret, machine.runtime_token_epoch);
     if (!timingSafeTokenEquals(supplied, runtimeToken)) return { status: 'unauthorized' };

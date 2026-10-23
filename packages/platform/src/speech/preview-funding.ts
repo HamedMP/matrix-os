@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { sql } from "kysely";
 import type { SpeechFundingPort } from "./service.js";
 import { SpeechFundingError } from "./funding.js";
+import { isBoundedPreviewProvisioningClass } from "../preview-runtime-access.js";
 
 const PREFIX = "preview_speech_";
 
@@ -18,7 +19,9 @@ export function createPreviewAwareSpeechFundingPort(options: {
         "provisioning_class", "clerk_user_id", "runtime_slot", "runtime_token_epoch",
         "status", "activation_state", "deleted_at",
       ]).where("machine_id", "=", input.identity.machineId).executeTakeFirst();
-      if (machine?.provisioning_class !== "preview") return options.paid.reserve(trx, input);
+      if (!machine || !isBoundedPreviewProvisioningClass(machine.provisioning_class)) {
+        return options.paid.reserve(trx, input);
+      }
       if (machine.clerk_user_id !== input.identity.ownerId || machine.runtime_slot !== input.identity.runtimeSlot
         || machine.status !== "running" || machine.activation_state !== "authorized" || machine.deleted_at !== null) {
         throw new SpeechFundingError("allowance_exhausted");

@@ -60,14 +60,14 @@ describe('Private Preview host environment', () => {
     }
   });
 
-  it('marks only server-authorized PR Preview hosts as Preview runtimes', async () => {
+  it('marks both server-authorized Preview classes as bounded Preview runtimes', async () => {
     for (const template of [DEFAULT_CLOUD_INIT_TEMPLATE, await loadCustomerVpsCloudInitTemplate()]) {
       expect(envLines(renderCloudInitTemplate(template, hostConfig('pr-2383', 'preview'))))
         .toContain('MATRIX_PREVIEW_RUNTIME=true');
       expect(renderCloudInitTemplate(template, hostConfig('alice', 'customer')))
         .not.toContain('MATRIX_PREVIEW_RUNTIME');
-      expect(renderCloudInitTemplate(template, hostConfig('pv-1907-3fa91c2e', 'private-preview')))
-        .not.toContain('MATRIX_PREVIEW_RUNTIME');
+      expect(envLines(renderCloudInitTemplate(template, hostConfig('pv-1907-3fa91c2e', 'private-preview'))))
+        .toContain('MATRIX_PREVIEW_RUNTIME=true');
     }
   });
 

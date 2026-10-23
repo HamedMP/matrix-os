@@ -15,7 +15,11 @@ import { RuntimeSlotSchema } from "../customer-vps-schema.js";
 import { getRunningUserMachineByHandle, type PlatformDB } from "../db.js";
 import { buildPlatformSpeechRuntimeVerificationToken, timingSafeTokenEquals } from "../platform-token.js";
 import { SpeechServiceError, type PlatformSpeechService } from "./service.js";
-import { readActivePreviewRuntimeAccess, type PreviewRuntimeAccessSummary } from "../preview-runtime-access.js";
+import {
+  isBoundedPreviewProvisioningClass,
+  readActivePreviewRuntimeAccess,
+  type PreviewRuntimeAccessSummary,
+} from "../preview-runtime-access.js";
 
 const MAX_DICTATION_BODY_BYTES = 10 * 1024 * 1024 + 64 * 1024;
 const CANCELLATION_BODY_BYTES = 1_024;
@@ -73,7 +77,7 @@ async function runtimeIdentity(
   if (!machine) return undefined;
   let previewAccess: PreviewRuntimeAccessSummary | null = null;
   let runtimeSecret = options.platformSecret;
-  if (machine.provisioningClass === "preview") {
+  if (isBoundedPreviewProvisioningClass(machine.provisioningClass)) {
     previewAccess = await readActivePreviewRuntimeAccess(options.db, {
       ownerId: machine.clerkUserId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot,
     }, (options.now ?? (() => new Date()))());

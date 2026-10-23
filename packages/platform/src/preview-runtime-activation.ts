@@ -11,6 +11,7 @@ import type { PlatformDB } from "./db.js";
 import { buildPlatformRuntimeVerificationToken, buildPlatformVerificationToken } from "./platform-token.js";
 import {
   initializePreviewRuntimeAccess,
+  isBoundedPreviewProvisioningClass,
   type PreviewRuntimeAccessConfig,
   type PreviewRuntimeAccessSummary,
 } from "./preview-runtime-access.js";
@@ -70,7 +71,8 @@ export function createPreviewRuntimeAccessActivator(options: {
       "provisioning_class", "public_ipv4", "status", "activation_state", "deleted_at",
     ]).where("machine_id", "=", request.machineId).executeTakeFirst();
     if (!machine || machine.clerk_user_id !== request.ownerId || machine.runtime_slot !== request.runtimeSlot
-      || machine.runtime_token_epoch !== request.expectedRuntimeTokenEpoch || machine.provisioning_class !== "preview"
+      || machine.runtime_token_epoch !== request.expectedRuntimeTokenEpoch
+      || !isBoundedPreviewProvisioningClass(machine.provisioning_class)
       || machine.status !== "running" || machine.activation_state !== "authorized" || machine.deleted_at !== null
       || !machine.public_ipv4) throw new Error("Preview runtime is ineligible");
 

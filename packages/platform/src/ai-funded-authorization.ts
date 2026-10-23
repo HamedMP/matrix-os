@@ -33,6 +33,7 @@ import {
 import { evaluateFundedPriority, findConflictingActiveReservation, type FundedBillingMode } from "./ai-funded-priority-claims.js";
 import { fundingSourceAvailability, reconcileExpiredPromotionalCredit, reserveFundingSources } from "./ai-funded-reservation-sources.js";
 import { previewRuntimeOperationBusy } from "./preview-runtime-admission.js";
+import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 
 type AuthorizeOutcome =
   | { kind: "authorized"; response: FundedAiAuthorizationResponse }
@@ -132,7 +133,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         return { kind: "authorized", response: FundedAiAuthorizationResponseSchema.parse(JSON.parse(existing.authorization_response)) };
       }
 
-      if (machine.provisioning_class !== "customer" && machine.provisioning_class !== "preview") {
+      if (machine.provisioning_class !== "customer" && !isBoundedPreviewProvisioningClass(machine.provisioning_class)) {
         throw new AiFundedPolicyError("access_disabled");
       }
 
@@ -165,7 +166,7 @@ export function createFundedAuthorize(deps: FundedAuthorizeDependencies) {
         // A capacity refusal before any reservation: the reason tells callers it is safe to retry.
         throw new AiFundedPolicyError("rate_limited", "slot_busy");
       }
-      if (machine.provisioning_class === "preview") {
+      if (isBoundedPreviewProvisioningClass(machine.provisioning_class)) {
         const previewBusy = await previewRuntimeOperationBusy(
           trx.executor,
           identity,

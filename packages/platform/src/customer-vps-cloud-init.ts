@@ -35,7 +35,7 @@ export interface CustomerHostConfig {
   /** Whole host.env lines for Private Previews only; empty for every other class. */
   updateManifestBaseUrlEnv?: string;
   collaborationDisabledEnv?: string;
-  /** Server-authoritative runtime marker for ordinary PR Preview machines only. */
+  /** Server-authoritative runtime marker for shared and owner-only PR Preview machines. */
   previewRuntimeEnv?: string;
 }
 

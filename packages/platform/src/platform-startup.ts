@@ -815,6 +815,15 @@ async function startPlatformServerWithCleanup(
       if (!primaryStorageGate) throw new Error('Primary storage unavailable');
       await primaryStorageGate.assertReady();
     });
+    if (previewRuntimeAccess.enabled && fundedAiRepository && speechConfig.enabled) {
+      activatePreviewRuntimeAccess = createPreviewRuntimeAccessActivator({
+        db, repository: fundedAiRepository, config: previewRuntimeAccess,
+        hostControlSecret: customerVpsConfig.platformSecret,
+        platformOrigin: new URL(customerVpsConfig.platformRegisterUrl).origin,
+        relayOrigin: customerVpsConfig.fundedAiRelayUrl,
+        fetchDispatcher: customerVpsProxyDispatcher,
+      });
+    }
     customerVpsService = createCustomerVpsService({
       db,
       config: customerVpsConfig,
@@ -836,20 +845,12 @@ async function startPlatformServerWithCleanup(
             process.env,
           )
         : undefined,
+      ...(activatePreviewRuntimeAccess ? { activatePreviewRuntimeAccess } : {}),
     });
     activateManagedFeatures = createManagedFeatureActivator({ db, platformSecret: customerVpsConfig.platformSecret,
       relayOrigin: customerVpsConfig.fundedAiRelayUrl, fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
       speechEnabled: customerVpsConfig.platformSpeechEnabled, activateSpeech: target => customerVpsService!.activateSpeech(target),
       fetchDispatcher: customerVpsProxyDispatcher });
-    if (previewRuntimeAccess.enabled && fundedAiRepository && speechConfig.enabled) {
-      activatePreviewRuntimeAccess = createPreviewRuntimeAccessActivator({
-        db, repository: fundedAiRepository, config: previewRuntimeAccess,
-        hostControlSecret: customerVpsConfig.platformSecret,
-        platformOrigin: new URL(customerVpsConfig.platformRegisterUrl).origin,
-        relayOrigin: customerVpsConfig.fundedAiRelayUrl,
-        fetchDispatcher: customerVpsProxyDispatcher,
-      });
-    }
     if ((customerVpsConfig.fundedAiEnabled || previewRuntimeAccess.enabled) && internalFundedAiRuntimeRoutes) {
       internalFundedAiRuntimeRoutes.route('/', createFundedHostActivationRoutes({ db,
         platformSecret: customerVpsConfig.platformSecret,

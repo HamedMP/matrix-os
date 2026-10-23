@@ -20,6 +20,7 @@ import { createAiFundedMeteringRepository } from "./ai-funded-metering-repositor
 import { createFundedTerminalOutcome } from "./ai-funded-terminal-outcome.js";
 import { createFundedExecutionBatch } from "./ai-funded-execution-batch.js";
 import { createFundedExecutionRecovery } from "./ai-funded-execution-recovery.js";
+import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 
 export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
 
@@ -292,7 +293,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
           AND (
             machine.provisioning_class = 'customer'
             OR (
-              machine.provisioning_class = 'preview'
+              machine.provisioning_class IN ('preview', 'private-preview')
               AND EXISTS (
                 SELECT 1 FROM preview_runtime_allocations preview
                 WHERE preview.machine_id = machine.machine_id
@@ -354,14 +355,15 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         .where("runtime.machine_id", "=", identity.machineId).where("runtime.owner_id", "=", identity.ownerId)
         .where("runtime.runtime_slot", "=", identity.runtimeSlot).where("global_policy.policy_id", "=", "default")
         .executeTakeFirst();
-      if (policy?.provisioning_class === "preview"
+      if (policy && isBoundedPreviewProvisioningClass(policy.provisioning_class)
         && (policy.preview_runtime_token_epoch !== policy.runtime_token_epoch
           || policy.preview_expires_at === null || policy.preview_expires_at <= checkedAt
           || policy.ai_requests_used === null || policy.ai_request_limit === null
           || policy.ai_requests_used >= policy.ai_request_limit)) {
         throw new AiFundedPolicyError("access_disabled");
       }
-      if (policy && policy.provisioning_class !== "customer" && policy.provisioning_class !== "preview") {
+      if (policy && policy.provisioning_class !== "customer"
+        && !isBoundedPreviewProvisioningClass(policy.provisioning_class)) {
         throw new AiFundedPolicyError("access_disabled");
       }
       if (policy && policy.global_enabled && policy.runtime_enabled

@@ -12,6 +12,7 @@ import {
 } from "@matrix-os/contracts";
 import type { PlatformDB, PlatformDatabase, SpeechOperationsTable } from "../db.js";
 import { previewRuntimeOperationBusy } from "../preview-runtime-admission.js";
+import { BOUNDED_PREVIEW_PROVISIONING_CLASSES } from "../preview-runtime-access.js";
 
 const ReferenceSchema = z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const RuntimeSlotSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9_-]*$/);
@@ -303,7 +304,7 @@ export function createSpeechOperationsRepository(options: {
         .where("allocation.runtime_slot", "=", admission.identity.runtimeSlot)
         .whereRef("allocation.runtime_token_epoch", "=", "machine.runtime_token_epoch")
         .where("allocation.expires_at", ">", checkedAt)
-        .where("machine.provisioning_class", "=", "preview")
+        .where("machine.provisioning_class", "in", BOUNDED_PREVIEW_PROVISIONING_CLASSES)
         .where("machine.status", "=", "running")
         .where("machine.activation_state", "=", "authorized")
         .where("machine.deleted_at", "is", null)

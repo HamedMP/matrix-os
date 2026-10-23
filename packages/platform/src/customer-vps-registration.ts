@@ -230,6 +230,19 @@ export function createCustomerVpsRegistration(context: CustomerVpsContext) {
       logCustomerVpsError('write vps-meta failed', err);
       warnings.push('vps_meta_persistence_failed');
     }
+    if (updated.provisioningClass === 'private-preview' && deps.activatePreviewRuntimeAccess) {
+      try {
+        await deps.activatePreviewRuntimeAccess({
+          ownerId: updated.clerkUserId,
+          machineId: updated.machineId,
+          runtimeSlot: updated.runtimeSlot,
+          expectedRuntimeTokenEpoch: updated.runtimeTokenEpoch,
+        });
+      } catch (err: unknown) {
+        logCustomerVpsError(`private preview funded runtime activation failed machineId=${updated.machineId}`, err);
+        warnings.push('preview_runtime_activation_failed');
+      }
+    }
 
     return warnings.length > 0
       ? { registered: true, status: 'running', warnings }

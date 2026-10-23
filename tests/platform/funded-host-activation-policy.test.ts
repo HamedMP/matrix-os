@@ -35,13 +35,18 @@ describe('permanent funded host activation policy', () => {
     expect(await db.executor.selectFrom('user_machines').selectAll().execute()).toEqual(before);
     for (const table of ['ai_funded_credit_ledger', 'ai_runtime_credentials', 'ai_funded_usage_reservations', 'ai_funded_runtime_balances'] as const) expect(await db.executor.selectFrom(table).selectAll().execute()).toEqual([]);
   });
-  it('delivers an exact live Preview allocation only with the separate Preview proof secret', async () => {
-    const previewSlot = 'pr-2383';
+  it.each([
+    { provisioningClass: 'preview' as const, previewSlot: 'pr-2383' },
+    { provisioningClass: 'private-preview' as const, previewSlot: 'pv-2383-deadbeef' },
+  ])('delivers an exact live $provisioningClass allocation only with the separate Preview proof secret', async ({ provisioningClass, previewSlot }) => {
     const previewIdentity = { handle: previewSlot, machineId, runtimeSlot: previewSlot };
     await db.executor.updateTable('user_machines').set({
       handle: previewSlot,
       runtime_slot: previewSlot,
-      provisioning_class: 'preview',
+      provisioning_class: provisioningClass,
+      ...(provisioningClass === 'private-preview'
+        ? { source_pr: 2383, confirmed_bundle_version: 'v2026.10.18-pr2383-test' }
+        : {}),
     }).where('machine_id', '=', machineId).execute();
     await db.executor.updateTable('ai_funded_runtime_policies').set({
       runtime_slot: previewSlot,

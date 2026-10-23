@@ -118,6 +118,8 @@ export function buildHostConfig(
       ? `MATRIX_UPDATE_MANIFEST_BASE_URL=${platformInternalUrl}/private-preview-updates/${input.handle}`
       : '',
     collaborationDisabledEnv: privatePreview ? 'MATRIX_COLLABORATION_DISABLED=1' : '',
-    previewRuntimeEnv: input.provisioningClass === 'preview' ? 'MATRIX_PREVIEW_RUNTIME=true' : '',
+    previewRuntimeEnv: input.provisioningClass === 'preview' || input.provisioningClass === 'private-preview'
+      ? 'MATRIX_PREVIEW_RUNTIME=true'
+      : '',
   };
 }

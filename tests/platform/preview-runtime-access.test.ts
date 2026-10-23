@@ -112,6 +112,45 @@ describe("bounded Preview runtime access", () => {
     expect(await db.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute()).toHaveLength(1);
   });
 
+  it("gives an exact owner-only Private Preview its own bounded allocation", async () => {
+    const privateIdentity = {
+      ownerId: identity.ownerId,
+      machineId,
+      runtimeSlot: "pv-2383-deadbeef",
+    } as const;
+    await db.executor.updateTable("user_machines").set({
+      handle: privateIdentity.runtimeSlot,
+      runtime_slot: privateIdentity.runtimeSlot,
+      provisioning_class: "private-preview",
+      source_pr: 2383,
+      confirmed_bundle_version: "preview-build",
+    }).where("machine_id", "=", machineId).execute();
+
+    const allocation = await initializePreviewRuntimeAccess({
+      db,
+      repository,
+      config: enabledConfig(),
+      request: { ...privateIdentity, expectedRuntimeTokenEpoch: 1 },
+      now: () => new Date(clock),
+    });
+    expect(allocation).toMatchObject({
+      identity: { ...privateIdentity, runtimeTokenEpoch: 1 },
+      ai: { requestLimit: 2, requestsRemaining: 2 },
+      speech: { requestLimit: 2, requestsRemaining: 2 },
+    });
+
+    const credential = await repository.issueRuntimeCredential(privateIdentity);
+    const authorization = await repository.authorize({
+      credential: credential.credential.token,
+      requestId: "private_preview_request_1",
+      modelId,
+      maxCostMicrousd: 100,
+    });
+    expect(authorization.identity).toMatchObject(privateIdentity);
+    expect(await repository.getRuntimeFundingSummary(privateIdentity, { includeChatAvailability: true }))
+      .toMatchObject({ funding: { previewQuota: { requestsRemaining: 1 } } });
+  });
+
   it("enforces the hard AI request limit without consuming an owner-primary balance", async () => {
     await insertUserMachine(db, {
       machineId: "primary-machine",
