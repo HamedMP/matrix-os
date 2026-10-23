@@ -2,7 +2,7 @@ import {generateKeyPairSync} from 'node:crypto';
 import {expect,it,vi} from 'vitest';
 import {chatGptPlanPeerRequestId} from '@matrix-os/contracts';
 import {createPlanNativePeer} from '../../desktop/src/main/chatgpt-plan/peer';
-it.each(['chunk', 'end'])('negotiated reply %s ACK loss recovers once without another inference',async(lostKind)=>{
+it.each([['chunk', 'ssl'], ['end', 'ssl'], ['chunk', 'http502'], ['end', 'http502']] as const)('negotiated reply %s ACK loss (%s) recovers once without another inference',async(lostKind, failureKind)=>{
  const sessionId='00000000-0000-4000-8000-000000000001',id=chatGptPlanPeerRequestId(sessionId,1);
  const key=generateKeyPairSync('ed25519');const replies:Array<{stream?:string;sequence?:number;ok:boolean;body?:string}>=[];
  let polls=0,lost=false;const accepted:string[]=[];
@@ -24,7 +24,7 @@ it.each(['chunk', 'end'])('negotiated reply %s ACK loss recovers once without an
    if(r.stream==='chunk'){
     if(r.sequence===accepted.length)accepted.push(r.body);
    }
-   if(r.stream===lostKind&&!lost){lost=true;throw new Error('net::ERR_SSL_PROTOCOL_ERROR');}
+   if(r.stream===lostKind&&!lost){lost=true;if(failureKind==='http502')return new Response('',{status:502});throw new Error('net::ERR_SSL_PROTOCOL_ERROR');}
    return Response.json({version:1,ok:true,sessionId,id,sequence:r.sequence});
   }
   if(path==='disconnect')return Response.json({ok:true});throw new Error('unexpected route');
@@ -34,6 +34,7 @@ it.each(['chunk', 'end'])('negotiated reply %s ACK loss recovers once without an
   await vi.waitFor(()=>expect(replies.some(r=>!r.ok)||replies.filter(r=>r.stream===lostKind).length>=2).toBe(true),{timeout:1000});
   expect(inferStream).toHaveBeenCalledOnce();
   expect(replies.filter(r=>r.stream===lostKind&&r.sequence=== (lostKind==='chunk'?0:2))).toHaveLength(2);
+  const replayed=replies.filter(r=>r.stream===lostKind&&r.sequence===(lostKind==='chunk'?0:2));expect(replayed[0]).toEqual(replayed[1]);
   expect(accepted.join('')).toBe('data: first\n\ndata: second\n\n');
   expect(replies.some(r=>r.stream==='end')).toBe(true);expect(replies.some(r=>!r.ok)).toBe(false);
  }finally{await peer.stop();warn.mockRestore();}

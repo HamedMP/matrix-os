@@ -136,3 +136,10 @@ Then wire real Native peer -> Hono bearer/body boundary -> registry -> synthetic
 5. A separate public documentation PR in private `FinnaAI/matrix-os-site` under `content/docs/` is a release deliverable. Document bounded recovery, Stop and compatibility without incident identifiers or private topology. This proposal does not authorize creating or publishing that PR now.
 
 See [implementation plan](poll-delivery-v2-plan.md). Existing limitation/acceptance reports remain authoritative about unpassed live cases; this proposal cannot be reported as a completed runtime fix.
+
+
+### 2026-10-23 Native-only 502 recovery follow-up
+
+Paired QA exposed an intermediate gateway HTTP 502 closing the negotiated peer while a reply recovery was still eligible. A roughly 30-minute failure is not by itself proof of an aggregate run deadline. The follow-up uses the same existing one-retry budget only for an internal matching-stage `PlanFailure` with HTTP502 and no response/network/cause ambiguity. A poll preserves its cumulative ACK; a reply requires its separately negotiated v2 receipt and repeats only the immutable chunk/end. A second failure still closes. Other HTTP statuses, capability failures, old clients, authority/source/Cancel and trust checks remain strict. SSL predicates, per-attempt deadlines, receipt TTLs, memory, inference and financial budgets do not change. No wire, central Relay or shared Platform change is introduced.
+
+The new Native poll/immutable reply REDs fail before the classifier change; legacy and negative-status controls remain passing. Offline checks and later matching-version QA must be recorded separately. This follow-up does not establish the underlying cause of an intermediate network/proxy failure or waive user review and release checks.

@@ -21,6 +21,11 @@ export function blocksPollDeliveryRecovery(error: unknown): boolean {
 }
 export function retryableDeliveryFailure(error: unknown, stage: 'peer_poll' | 'peer_reply') {
   if (!(error instanceof PlanFailure) || error.stage !== stage) return false;
+  // Only receipt-enabled callers use this classifier. A 502 is not a validated
+  // receipt; retry the same ACK/chunk within the existing budget without
+  // trusting its body or any ambiguous failure cause.
+  if (error.category === 'http_error') return error.httpStatus === 502
+    && error.networkDiagnostic === undefined && error.responseDiagnostic === undefined && error.cause === undefined;
   const diagnostic = error.networkDiagnostic;
   if (!diagnostic || !['before_headers', 'body_read'].includes(diagnostic.phase ?? '')) return false;
   // post() attaches this phase only for its own deadline's exact exception.

@@ -285,3 +285,12 @@ it('does not let a safe cause override an unknown primary Node error code', asyn
   try { await vi.waitFor(() => expect(x.closed).toBe(true)); expect(x.polls).toBe(2); expect(JSON.stringify(x.records)).not.toContain('PRIVATE'); }
   finally { await x.close(); }
 });
+
+
+it('keeps legacy polling fail-closed for a 502 without negotiated receipts', async () => {
+  const f = await fixture([() => new Response('', { status: 502 })]);
+  try {
+    await vi.waitFor(() => expect(f.closed).toBe(true));
+    expect(f.polls).toBe(2); expect(f.inferCount).toBe(1); expect(f.sourceSignal?.aborted).toBe(true);
+  } finally { await f.close(); }
+});

@@ -62,3 +62,10 @@ Review: readonly protocol review found one P1 (unbounded duplicate HTTP waiters)
 4. Only then rebuild/register a new exact-source private Host bundle and matching QA Electron. Reuse the existing Preview/profile; no credential copying or new VM.
 5. Fresh English real-work turns: short, stream/Stop, next turn, actual busy 10/30 minutes, >96KiB saved tail/complete Copy/reopen. New evidence must name the exact source. An SSL failure remains an actual failure if bounded recovery is exhausted; do not call it a timeout or successful run.
 6. Update runtime support docs and prepare the separate public-site documentation PR as a release deliverable. No new paid resources or funding/permission changes.
+
+
+### 2026-10-23 Native-only 502 recovery follow-up
+
+Paired QA exposed an intermediate gateway HTTP 502 closing the negotiated peer while a reply recovery was still eligible. A roughly 30-minute failure is not by itself proof of an aggregate run deadline. The follow-up uses the same existing one-retry budget only for an internal matching-stage `PlanFailure` with HTTP502 and no response/network/cause ambiguity. A poll preserves its cumulative ACK; a reply requires its separately negotiated v2 receipt and repeats only the immutable chunk/end. A second failure still closes. Other HTTP statuses, capability failures, old clients, authority/source/Cancel and trust checks remain strict. SSL predicates, per-attempt deadlines, receipt TTLs, memory, inference and financial budgets do not change. No wire, central Relay or shared Platform change is introduced.
+
+The new Native poll/immutable reply REDs fail before the classifier change; legacy and negative-status controls remain passing. Offline checks and later matching-version QA must be recorded separately. This follow-up does not establish the underlying cause of an intermediate network/proxy failure or waive user review and release checks.
