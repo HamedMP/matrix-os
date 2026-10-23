@@ -131,6 +131,26 @@ describe('current history on canonical continuation sends', () => {
       await expect(f.invoke(kind)).rejects.toThrow(); expect(f.calls[kind]).not.toHaveBeenCalled();
     });
   }
+  it('drain waits for queue preparation after the active run has left the registry', async () => {
+    await fixture();
+    let enter!: () => void;
+    let resume!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const paused = new Promise<void>(resolve => { resume = resolve; });
+    vi.spyOn(repository, 'claimNextQueuedTurn').mockImplementationOnce(async () => {
+      enter(); await paused; return null;
+    });
+    release();
+    await entered;
+    expect(orchestrator!.activeCount).toBe(0);
+    let drained = false;
+    const draining = orchestrator!.drain().then(() => { drained = true; });
+    try {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(drained).toBe(false);
+    } finally { resume(); await draining; }
+    expect(drained).toBe(true);
+  });
   it('quiesces an expired run rather than forwarding a decline that could resume its model', async () => {
     const f = await fixture(); f.expire();
     await expect(orchestrator!.submitApproval(owner, 'chat_one', f.admitted.run.id, 'approval_one',

@@ -16,7 +16,8 @@ export function gmailPostgresFiles(root) {
     }
   }
   collect('tests/gateway/google-data');
-  files.push('tests/gateway/google-broker-collection-startup.test.ts',
+  files.push('tests/gateway/chat-history-continuation.test.ts',
+    'tests/gateway/google-broker-collection-startup.test.ts',
     'tests/gateway/google-data-owner-routes.test.ts',
     'tests/gateway/google-context-admission-startup.test.ts',
     'tests/gateway/google-platform-policy-composition.test.ts',
