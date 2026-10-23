@@ -1,6 +1,6 @@
 import { projectChatSubagent, canonicalChatToolDetail, canonicalChatToolActivityState, canonicalReviewedAgentFailure } from "@matrix-os/contracts";
 import type { CanonicalChatRun, CanonicalChatRunActivity } from "@matrix-os/contracts";
-import { canonicalChatSafeFailureReason } from "@matrix-os/ui";
+import { canonicalChatFailureNotice } from "@matrix-os/contracts";
 import type {
   ConversationActivityGroupPresentation, ConversationActivityPresentation, ConversationMessagePresentation,
   ConversationNoticePresentation, ConversationRequestPresentation, ConversationWorkPresentation,
@@ -312,8 +312,7 @@ export function runPresentation(
         label: stopped ? "Agent work stopped" : "Agent work failed",
         ...(!stopped && runError ? { failureCode: runError.error.code } : {}),
         markdown: stopped ? "Run was cancelled."
-          : canonicalChatSafeFailureReason(runError?.error.code, runError?.error.safeMessage)
-            ?? canonicalChatSafeFailureReason("run_failed")!,
+          : canonicalChatFailureNotice(runError?.error.code, runError?.error.safeMessage, run.id),
         timestamp: Date.parse(runError?.occurredAt ?? run.completedAt ?? run.updatedAt),
         ...(!stopped && allowRetry && runError?.error.retryable && (reviewedFailure?.retryable ?? true)
           && runError.error.recoveryActions?.includes("retry")

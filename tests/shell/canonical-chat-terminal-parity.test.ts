@@ -34,7 +34,7 @@ describe("terminal notice parity", () => {
     const expected = [
       "Prompt 1",
       status === "failed"
-        ? "The agent could not finish. Try again."
+        ? "The agent could not finish. Try again. Run ID: run_first."
         : "Agent work stopped.",
       "Prompt 2",
     ];
