@@ -92,13 +92,18 @@ describe("funded PostgreSQL CI coverage", () => {
     const result = executeSettlementStep(undefined);
     expect(result, result.diagnostics).toMatchObject({ status: 1, args: [] });
   });
-  it("prepares funded test prerequisites once before all six lanes and stops at a missing database URL", () => {
+  it("prepares funded test prerequisites once before all seven lanes and stops at a missing database URL", () => {
     const selected = job.steps.filter(step => step.name === "Build test prerequisites once"
       || step.run?.includes("pnpm exec vitest run"));
-    expect(selected).toHaveLength(7);
+    expect(selected).toHaveLength(8);
     const directory = mkdtempSync(join(tmpdir(), "matrix-funded-pg-order-"));
     try {
       const log = join(directory, "commands");
+      // Database setup is validated by native execution; this ordering fixture
+      // must consume its heredoc without connecting to a real database.
+      const node = join(directory, "node");
+      writeFileSync(node, '#!/usr/bin/env bash\ncat >/dev/null\n');
+      chmodSync(node, 0o700);
       for (const name of ["bun", "pnpm"]) {
         const executable = join(directory, name);
         writeFileSync(executable, `#!/usr/bin/env bash
@@ -119,15 +124,16 @@ printf '\\n' >> "$WAIVER_CI_COMMANDS_PATH"
       };
       const valid = execute(job.env.MATRIX_TEST_POSTGRES_URL);
       expect(valid.status, valid.stderr).toBe(0);
-      expect(valid.commands).toHaveLength(7);
+      expect(valid.commands).toHaveLength(8);
       expect(valid.commands[0]).toBe("bun run test:prepare");
       expect(valid.commands.slice(1).every(command => command.startsWith("pnpm exec vitest run "))).toBe(true);
       expect(valid.commands[1]).toContain("tests/platform/ai-funded-model-probes-postgres.test.ts");
       expect(valid.commands[2]).toContain("tests/platform/customer-funded-paid-recovery-postgres.test.ts");
-      expect(valid.commands[3]).toContain("tests/platform/account-deletion-");
-      expect(valid.commands[4]).toContain("tests/gateway/bots/funded-inference-timeout.test.ts");
-      expect(valid.commands[5]).toContain("tests/platform/preview-drive-postgres-concurrency.test.ts");
-      expect(valid.commands[6]).toContain("tests/gateway/browser-approval-repository.test.ts");
+      expect(valid.commands[3]).toContain("tests/platform/subscription-ai-credit-approved.test.ts");
+      expect(valid.commands[4]).toContain("tests/platform/account-deletion-");
+      expect(valid.commands[5]).toContain("tests/gateway/bots/funded-inference-timeout.test.ts");
+      expect(valid.commands[6]).toContain("tests/platform/preview-drive-postgres-concurrency.test.ts");
+      expect(valid.commands[7]).toContain("tests/gateway/browser-approval-repository.test.ts");
       const absent = execute(undefined);
       expect(absent.status).toBe(1);
       expect(absent.stderr).toContain("Disposable PostgreSQL test URL required");
