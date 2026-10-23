@@ -62,7 +62,6 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1";
-  const localAuthBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
   const app = <AppProviders>{children}</AppProviders>;
   const renderDocument = (includePostHogIdentify: boolean, content: React.ReactNode) => (
     <html
@@ -84,15 +83,17 @@ export default function RootLayout({
     </html>
   );
 
-  if (selfHostedMode || localAuthBypass) {
+  if (selfHostedMode) {
     return renderDocument(false, (
-      <OrganizationStateProvider value={{ status: selfHostedMode ? "none" : "loading", organizationId: null }}>
+      <OrganizationStateProvider value={{ status: "none", organizationId: null }}>
         {app}
       </OrganizationStateProvider>
     ));
   }
 
-  const content = <DefaultOrganization>{app}</DefaultOrganization>;
+  const content = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1"
+    ? <OrganizationStateProvider value={{ status: "loading", organizationId: null }}>{app}</OrganizationStateProvider>
+    : <DefaultOrganization>{app}</DefaultOrganization>;
 
   return (
     // ClerkProvider reads NEXT_PUBLIC_CLERK_SIGN_IN_URL / _SIGN_UP_URL to keep

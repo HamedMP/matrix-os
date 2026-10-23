@@ -6,7 +6,7 @@ import RootLayout from "../../shell/src/app/layout";
 import { useCollaborationOrganization } from "../../shell/src/lib/collaboration-organization-state";
 
 vi.mock("@clerk/nextjs", () => {
-  const unavailable = () => { throw new Error("Clerk must not load in standalone or bypass mode"); };
+  const unavailable = () => { throw new Error("Clerk must not load in standalone mode"); };
   return {
     ClerkProvider: unavailable,
     useAuth: unavailable,
@@ -28,7 +28,6 @@ function ShellContent() {
 
 it.each([
   { selfHosted: "1", bypass: "0", membership: "none" },
-  { selfHosted: "0", bypass: "1", membership: "loading" },
   { selfHosted: "1", bypass: "1", membership: "none" },
 ])("renders the owner shell without Clerk for selfHosted=$selfHosted, bypass=$bypass", ({ selfHosted, bypass, membership }) => {
   vi.stubEnv("MATRIX_SELF_HOSTED", selfHosted);
