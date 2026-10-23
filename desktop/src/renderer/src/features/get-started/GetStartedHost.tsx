@@ -5,6 +5,7 @@ import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import { createDesktopGetStartedGalleryPort, createDesktopGetStartedPort } from "./desktop-get-started-port";
 import { useOnboardingOverlayLease } from "../onboarding-widget/use-onboarding-overlay-lease";
+import { DesktopGetStartedAgentLogin } from "./DesktopGetStartedAgentLogin";
 import { DesktopGetStartedConnector } from "./DesktopGetStartedConnector";
 
 /** Native app views paint above the renderer, so the open wizard holds the overlay lease like the widget does. */
@@ -22,7 +23,7 @@ function DesktopGetStartedGate({ api, runtimeSlot, platformHost, children }: { a
   const port = useMemo(() => createDesktopGetStartedPort(api, runtimeSlot), [api, runtimeSlot]);
   const gallery = useMemo(() => createDesktopGetStartedGalleryPort(api, runtimeSlot, platformHost), [api, runtimeSlot, platformHost]);
   return (
-    <GetStartedGate port={port} zIndex={DESKTOP_Z_INDEX.getStarted} connector={DesktopGetStartedConnector} whileActive={GetStartedOverlayLease} gallery={gallery} backdropSource={desktopBackdrop} suggestedName={displayName}>
+    <GetStartedGate port={port} zIndex={DESKTOP_Z_INDEX.getStarted} connector={DesktopGetStartedConnector} whileActive={GetStartedOverlayLease} gallery={gallery} backdropSource={desktopBackdrop} suggestedName={displayName} agentLogin={DesktopGetStartedAgentLogin}>
       {children}
     </GetStartedGate>
   );

@@ -2,6 +2,7 @@ export {
   GetStartedAnswersProvider,
   useGetStartedAnswers,
   useGetStartedEnded,
+  useGetStartedFinishedNow,
 } from "./answers-context.js";
 export {
   GetStartedConnectTools,
@@ -22,3 +23,4 @@ export {
   type GetStartedPhase,
   type GetStartedPort,
 } from "./use-get-started.js";
+export { GetStartedAgentLogin, type GetStartedAgentLoginHost, type GetStartedAgentLoginPort } from "./agent-login.js";

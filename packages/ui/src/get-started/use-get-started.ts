@@ -36,6 +36,8 @@ export interface GetStartedController {
   answers: GetStartedAnswers | null;
   /** The owner finished or skipped setup, earlier or just now. */
   ended: boolean;
+  /** The owner finished setup in this window just now. */
+  finishedNow: boolean;
   dispatch(event: GetStartedWizardEvent): void;
   finish(): void;
   skipAll(): void;
@@ -48,6 +50,7 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
   const [error, setError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<GetStartedAnswers | null>(null);
   const [ended, setEnded] = useState(false);
+  const [finishedNow, setFinishedNow] = useState(false);
   const wizardRef = useRef<GetStartedWizardState | null>(null);
   // Saves run one at a time so a slow draft can never land after completion.
   const saveChain = useRef<Promise<SaveResult> | null>(null);
@@ -140,7 +143,10 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
     void enqueue(update).then(async (result) => {
       const parsed = result.ok ? GetStartedResponseSchema.safeParse(result.value) : null;
       if (parsed?.success && parsed.data.status === expected) {
-        if (parsed.data.status === "completed") setAnswers(parsed.data.answers);
+        if (parsed.data.status === "completed") {
+          setAnswers(parsed.data.answers);
+          setFinishedNow(true);
+        }
         setEnded(true);
         setPhase("done");
       } else {
@@ -158,5 +164,5 @@ export function useGetStarted(port: GetStartedPort): GetStartedController {
 
   const skipAll = useCallback(() => settle({ type: "skip" }, "skipped"), [settle]);
 
-  return { phase, wizard, submitting, error, answers, ended, dispatch, finish, skipAll };
+  return { phase, wizard, submitting, error, answers, ended, finishedNow, dispatch, finish, skipAll };
 }

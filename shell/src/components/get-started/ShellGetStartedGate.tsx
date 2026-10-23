@@ -7,6 +7,7 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { isSelfHostedRuntime } from "@/lib/self-host-mode";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { createShellGetStartedGalleryPort, createShellGetStartedPort } from "./shell-get-started-port";
+import { ShellGetStartedAgentLogin } from "./ShellGetStartedAgentLogin";
 import { ShellGetStartedConnector } from "./ShellGetStartedConnector";
 
 /** The web shell paints the wallpaper on `<body>` (useDesktopConfig). */
@@ -30,5 +31,5 @@ function ShellGate({ suggestedName, children }: { suggestedName: string | null; 
   // Read once, like the onboarding widget: switching computers reloads the page.
   const [port] = useState(() => createShellGetStartedPort(getGatewayUrl()));
   const [gallery] = useState(() => createShellGetStartedGalleryPort(getGatewayUrl()));
-  return <GetStartedGate port={port} zIndex={SHELL_Z_INDEX.getStarted} connector={ShellGetStartedConnector} gallery={gallery} backdropSource={bodyBackdrop} suggestedName={suggestedName}>{children}</GetStartedGate>;
+  return <GetStartedGate port={port} zIndex={SHELL_Z_INDEX.getStarted} connector={ShellGetStartedConnector} gallery={gallery} backdropSource={bodyBackdrop} suggestedName={suggestedName} agentLogin={ShellGetStartedAgentLogin}>{children}</GetStartedGate>;
 }

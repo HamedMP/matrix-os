@@ -5,6 +5,7 @@ import {
   getStartedAnswersFromWizard,
   getStartedBotFromWizard,
   getStartedQuestionProgress,
+  getStartedAgentsForTools,
   getStartedToolGroupsForGoals,
   type GetStartedAnswers,
   type GetStartedChoiceGroup,
@@ -17,6 +18,7 @@ import { useEffect, useId, useMemo, useRef, type KeyboardEvent, type ReactNode }
 import { ButtonRow, RabbitAvatar, ToggleChip } from "../onboarding-widget/parts.js";
 import { GetStartedAiStep } from "./ai-step.js";
 import { GetStartedAppGalleryStep, type GetStartedReadyApp } from "./app-gallery-step.js";
+import type { GetStartedAgentLoginHost } from "./agent-login.js";
 import { GetStartedConnectTools, type GetStartedConnect } from "./connect.js";
 import { joinNames, type GetStartedGallery } from "./gallery.js";
 import { GetStartedRecipeBots } from "./recipe-bots.js";
@@ -32,6 +34,8 @@ export interface GetStartedWizardProps {
   connect?: GetStartedConnect | null;
   /** App Gallery for step 5; absent when the surface has none. */
   gallery?: GetStartedGallery | null;
+  /** The surface's Settings sign-in for a picked coding agent on step 3; absent when it has none. */
+  agentLogin?: GetStartedAgentLoginHost | null;
 }
 
 /** App Gallery apps the owner's current connections make ready. */
@@ -70,10 +74,6 @@ function ChoiceGroup({ group, wizard, dispatch }: {
     const picked = new Set(wizard.tools);
     chips = group.tools.map((tool) => (
       <ToggleChip key={tool.id} label={tool.label} pressed={picked.has(tool.id)} onToggle={() => dispatch({ type: "toggle-tool", tool: tool.id })} />
-    ));
-  } else if (group.kind === "app-idea") {
-    chips = group.options.map((idea) => (
-      <ToggleChip key={idea.id} label={idea.label} pressed={wizard.appIdea === idea.id} onToggle={() => dispatch({ type: "pick-app-idea", id: idea.id })} />
     ));
   } else {
     chips = group.options.map((starter) => (
@@ -175,10 +175,11 @@ function SignInPending({ connect, step }: { connect: GetStartedConnect | null; s
 }
 
 /** The questions after the name: one body per step, under the shared heading. */
-function StepContent({ wizard, answers, connect, gallery, ready, dispatch, titleId }: {
+function StepContent({ wizard, answers, connect, gallery, ready, agentLogin: AgentLogin, dispatch, titleId }: {
   wizard: GetStartedWizardState;
   answers: GetStartedAnswers;
   connect: GetStartedConnect | null;
+  agentLogin: GetStartedAgentLoginHost | null;
   gallery: GetStartedGallery | null;
   ready: readonly GetStartedReadyApp[];
   dispatch(event: GetStartedWizardEvent): void;
@@ -201,6 +202,7 @@ function StepContent({ wizard, answers, connect, gallery, ready, dispatch, title
         {getStartedToolGroupsForGoals(wizard.goals).map((group) => (
           <ChoiceGroup key={group.goal} group={group} wizard={wizard} dispatch={dispatch} />
         ))}
+        {AgentLogin ? getStartedAgentsForTools(wizard.tools).map((agent) => <AgentLogin key={agent} agent={agent} />) : null}
         <GetStartedConnectTools goals={wizard.goals} connect={connect} />
       </div>
     );
@@ -211,7 +213,7 @@ function StepContent({ wizard, answers, connect, gallery, ready, dispatch, title
   }
 }
 
-export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish, onSkipAll, connect = null, gallery = null }: GetStartedWizardProps) {
+export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish, onSkipAll, connect = null, gallery = null, agentLogin = null }: GetStartedWizardProps) {
   const titleId = useId();
   const hintId = useId();
   const focusTarget = useRef<HTMLElement | null>(null);
@@ -276,7 +278,7 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
           />
         ) : null}
 
-        <StepContent wizard={wizard} answers={answers} connect={connect} gallery={gallery} ready={ready} dispatch={dispatch} titleId={titleId} />
+        <StepContent wizard={wizard} answers={answers} connect={connect} gallery={gallery} ready={ready} agentLogin={agentLogin} dispatch={dispatch} titleId={titleId} />
 
         {error ? <p className="mxo-failed-line" role="alert">{error}</p> : null}
         <SignInPending connect={connect} step={wizard.step} />

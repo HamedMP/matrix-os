@@ -9,6 +9,7 @@ import {
   GetStartedGate,
   useGetStartedAnswers,
   useGetStartedEnded,
+  useGetStartedFinishedNow,
   type GetStartedPort,
 } from "../../packages/ui/src/get-started/index.js";
 import { TasksScreen } from "../../packages/ui/src/onboarding-widget/screens.js";
@@ -23,6 +24,10 @@ function Goals() {
 
 function Ended() {
   return <p data-testid="ended">{useGetStartedEnded() ? "ended" : "open"}</p>;
+}
+
+function FinishedNow() {
+  return <p data-testid="finished-now">{useGetStartedFinishedNow() ? "now" : "not now"}</p>;
 }
 
 function port(loaded: unknown): GetStartedPort {
@@ -120,6 +125,43 @@ describe("Get started ended", () => {
       </GetStartedAnswersProvider>,
     );
     expect(await screen.findByText("ended")).toBeInTheDocument();
+  });
+});
+
+describe("Get started finished now", () => {
+  it("is true only when the owner finishes setup in this window", async () => {
+    render(
+      <GetStartedAnswersProvider scope="alice">
+        <FinishedNow />
+        <GetStartedGate port={port({ status: "in_progress", updatedAt: AT, draft: { step: 6, goals: [], tools: [] } })} zIndex={1} />
+      </GetStartedAnswersProvider>,
+    );
+    expect(screen.getByTestId("finished-now")).toHaveTextContent("not now");
+    fireEvent.click(await screen.findByRole("button", { name: "Enter your computer" }));
+    expect(await screen.findByText("now")).toBeInTheDocument();
+  });
+
+  it("stays false for setup finished earlier, or skipped", async () => {
+    render(
+      <GetStartedAnswersProvider scope="alice">
+        <FinishedNow />
+        <Ended />
+        <GetStartedGate port={port({ status: "completed", completedAt: AT, answers: { goals: [], tools: [] } })} zIndex={1} />
+      </GetStartedAnswersProvider>,
+    );
+    expect(await screen.findByText("ended")).toBeInTheDocument();
+    expect(screen.getByTestId("finished-now")).toHaveTextContent("not now");
+    cleanup();
+    render(
+      <GetStartedAnswersProvider scope="alice">
+        <FinishedNow />
+        <Ended />
+        <GetStartedGate port={port({ status: "pending" })} zIndex={1} />
+      </GetStartedAnswersProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Skip setup" }));
+    expect(await screen.findByText("ended")).toBeInTheDocument();
+    expect(screen.getByTestId("finished-now")).toHaveTextContent("not now");
   });
 });
 

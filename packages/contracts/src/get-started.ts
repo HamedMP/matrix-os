@@ -111,10 +111,8 @@ export type GetStartedStarterId = (typeof GET_STARTED_STARTERS)[number]["id"];
 
 export type GetStartedChoiceGroup =
   | ({ kind: "tools" } & GetStartedToolGroup)
-  | { kind: "app-idea"; goal: "build"; title: string; options: typeof GET_STARTED_APP_IDEAS }
   | { kind: "starter"; goal: "explore"; title: string; options: typeof GET_STARTED_STARTERS };
 
-const APP_IDEA_GROUP = { kind: "app-idea", goal: "build", title: "First app idea", options: GET_STARTED_APP_IDEAS } as const;
 const STARTER_GROUP = { kind: "starter", goal: "explore", title: "Sounds fun", options: GET_STARTED_STARTERS } as const;
 
 /** Coding agents are signed into in Settings, not connected as integrations, so step 3 asks for them. */
@@ -128,14 +126,26 @@ const CODING_AGENT_GROUP = {
 
 /**
  * Step 3's choices that are not integrations (those connect through the marketplace on the same
- * step), in the order the owner picked their goals; exploring when nothing was picked.
+ * step), in the order the owner picked their goals; exploring when nothing was picked. The first
+ * app idea is picked on the App Gallery step.
  */
 export function getStartedToolGroupsForGoals(goals: readonly GetStartedGoalId[]): GetStartedChoiceGroup[] {
   if (goals.length === 0) return [STARTER_GROUP];
   return goals.flatMap((goal): GetStartedChoiceGroup[] => {
-    if (goal === "build") return [APP_IDEA_GROUP];
     if (goal === "explore") return [STARTER_GROUP];
     return goal === "code" ? [CODING_AGENT_GROUP] : [];
+  });
+}
+
+/** The coding agents step 3 signs in through Settings > Agents & providers. */
+export type GetStartedAgentKind = "claude" | "codex";
+const TOOL_AGENTS: Partial<Record<GetStartedToolId, GetStartedAgentKind>> = { "claude-code": "claude", codex: "codex" };
+
+/** The picked coding agents that sign in on step 3, in pick order; OpenCode has no sign-in there. */
+export function getStartedAgentsForTools(tools: readonly GetStartedToolId[]): GetStartedAgentKind[] {
+  return tools.flatMap((tool) => {
+    const agent = TOOL_AGENTS[tool];
+    return agent ? [agent] : [];
   });
 }
 

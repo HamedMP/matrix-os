@@ -61,16 +61,19 @@ function ReadyApps({ ready, gallery, wizard, dispatch }: {
         })}
       </ul>
       <section aria-labelledby={ideasId}>
-        <h3 id={ideasId} className="mxo-muted">Or build your own</h3>
+        <h3 id={ideasId} className="mxo-muted">Or build your first app</h3>
         <div className="mxo-chips">
           {GET_STARTED_APP_IDEAS.map((idea) => (
             <ToggleChip key={idea.id} label={idea.label} pressed={wizard.appIdea === idea.id} onToggle={() => dispatch({ type: "pick-app-idea", id: idea.id })} />
           ))}
         </div>
+        <p className="mxo-muted">{BUILD_HINT}</p>
       </section>
     </div>
   );
 }
+
+const BUILD_HINT = "Pick one and Matrix starts building it in Chat as soon as your AI is ready.";
 
 const IDEA_ICONS: Record<GetStartedAppIdeaId, IconSvgElement> = {
   "habit-tracker": Target02Icon,
@@ -81,8 +84,8 @@ const IDEA_ICONS: Record<GetStartedAppIdeaId, IconSvgElement> = {
 
 /**
  * Spec 635: App Gallery between the main bot and the assistant bots. With apps the owner's
- * connections make ready, it lists them to add; otherwise it shows what owners can build. An idea
- * pick is only an answer, and Matrix offers to build it once they arrive.
+ * connections make ready, it lists them to add; otherwise it shows what owners can build. The
+ * first app idea lives here: Matrix starts building the pick when they arrive and an AI is ready.
  */
 export function GetStartedAppGalleryStep({ wizard, dispatch, labelledBy, gallery, ready }: {
   wizard: GetStartedWizardState;
@@ -109,7 +112,7 @@ export function GetStartedAppGalleryStep({ wizard, dispatch, labelledBy, gallery
           </button>
         ))}
       </div>
-      <p className="mxo-muted">Matrix offers to build your pick when you arrive. Make anything else in App Gallery anytime.</p>
+      <p className="mxo-muted">{BUILD_HINT} Make anything else in App Gallery anytime.</p>
     </div>
   );
 }

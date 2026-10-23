@@ -3,6 +3,7 @@ import { productScales } from "@matrix-os/brand/tokens";
 import { getStartedSuggestedName, type GetStartedWizardEvent, type GetStartedWizardState } from "@matrix-os/contracts";
 import { useGettingStartedAutoOpenSuppression, useGettingStartedBlocker } from "../getting-started-visibility.js";
 import { usePublishGetStartedAnswers } from "./answers-context.js";
+import type { GetStartedAgentLoginHost } from "./agent-login.js";
 import type { GetStartedConnect, GetStartedConnector } from "./connect.js";
 import { useGetStartedGallery, type GetStartedGalleryPort } from "./gallery.js";
 import { GetStartedWizard } from "./GetStartedWizard.js";
@@ -125,6 +126,8 @@ export interface GetStartedGateProps {
   backdropSource?: GetStartedBackdropSource;
   /** The sign-in account's name (Google, GitHub); its first name pre-fills an empty name step once. */
   suggestedName?: string | null;
+  /** The surface's Settings sign-in for a coding agent picked on step 3. */
+  agentLogin?: GetStartedAgentLoginHost;
 }
 
 /**
@@ -133,7 +136,7 @@ export interface GetStartedGateProps {
  * It cannot be closed or minimized; it ends only when the owner finishes or skips it.
  * Any load failure falls back to today's desktop.
  */
-export function GetStartedGate({ port, zIndex, children, connector: Connector, whileActive: WhileActive, backdropSource, gallery: galleryPort, suggestedName = null }: GetStartedGateProps) {
+export function GetStartedGate({ port, zIndex, children, connector: Connector, whileActive: WhileActive, backdropSource, gallery: galleryPort, suggestedName = null, agentLogin }: GetStartedGateProps) {
   const getStarted = useGetStarted(port);
   const active = getStarted.phase === "active";
   const backdrop = useDesktopBackdrop(backdropSource, active);
@@ -142,7 +145,7 @@ export function GetStartedGate({ port, zIndex, children, connector: Connector, w
   useBlockBackgroundShortcuts(active);
   useGettingStartedBlocker(active);
   useGettingStartedAutoOpenSuppression(getStarted.phase !== "done");
-  usePublishGetStartedAnswers(getStarted.answers, getStarted.ended);
+  usePublishGetStartedAnswers(getStarted.answers, getStarted.ended, getStarted.finishedNow);
 
   if (getStarted.phase === "loading") return null;
   if (getStarted.phase === "done" || !getStarted.wizard) return <>{children}</>;
@@ -157,6 +160,7 @@ export function GetStartedGate({ port, zIndex, children, connector: Connector, w
       onSkipAll={getStarted.skipAll}
       connect={connect}
       gallery={gallery}
+      agentLogin={agentLogin ?? null}
     />
   );
   return (

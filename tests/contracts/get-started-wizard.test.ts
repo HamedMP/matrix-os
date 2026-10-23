@@ -107,6 +107,11 @@ describe("get started wizard", () => {
     expect(getStartedAnswersFromWizard(state).appIdea).toBe("habit-tracker");
   });
 
+  it("keeps the App Gallery app idea when step 3 is skipped", () => {
+    const back = { ...initialGetStartedWizard(), step: "tools" as const, appIdea: "habit-tracker" as const };
+    expect(run(back, { type: "skip" })).toMatchObject({ step: "ai", appIdea: "habit-tracker" });
+  });
+
   it("toggles the single app idea", () => {
     let state = run(initialGetStartedWizard(), { type: "toggle-goal", goal: "build" }, { type: "pick-app-idea", id: "client-crm" });
     expect(state.appIdea).toBe("client-crm");

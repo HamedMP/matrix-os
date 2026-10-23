@@ -4,7 +4,8 @@ import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useSt
 interface AnswersStore {
   answers: GetStartedAnswers | null;
   ended: boolean;
-  publish(answers: GetStartedAnswers | null, ended: boolean): void;
+  finishedNow: boolean;
+  publish(answers: GetStartedAnswers | null, ended: boolean, finishedNow: boolean): void;
 }
 
 const AnswersContext = createContext<AnswersStore | null>(null);
@@ -15,12 +16,13 @@ const AnswersContext = createContext<AnswersStore | null>(null);
  * a scope change (account, computer or runtime) starts empty.
  */
 export function GetStartedAnswersProvider({ scope, children }: { scope: string; children: ReactNode }) {
-  const [held, setHeld] = useState<{ scope: string; answers: GetStartedAnswers | null; ended: boolean }>({ scope, answers: null, ended: false });
-  if (held.scope !== scope) setHeld({ scope, answers: null, ended: false });
+  const [held, setHeld] = useState<{ scope: string; answers: GetStartedAnswers | null; ended: boolean; finishedNow: boolean }>({ scope, answers: null, ended: false, finishedNow: false });
+  if (held.scope !== scope) setHeld({ scope, answers: null, ended: false, finishedNow: false });
   const answers = held.scope === scope ? held.answers : null;
   const ended = held.scope === scope && held.ended;
-  const publish = useCallback((next: GetStartedAnswers | null, nextEnded: boolean) => setHeld({ scope, answers: next, ended: nextEnded }), [scope]);
-  const value = useMemo<AnswersStore>(() => ({ answers, ended, publish }), [answers, ended, publish]);
+  const finishedNow = held.scope === scope && held.finishedNow;
+  const publish = useCallback((next: GetStartedAnswers | null, nextEnded: boolean, nextFinishedNow: boolean) => setHeld({ scope, answers: next, ended: nextEnded, finishedNow: nextFinishedNow }), [scope]);
+  const value = useMemo<AnswersStore>(() => ({ answers, ended, finishedNow, publish }), [answers, ended, finishedNow, publish]);
   return <AnswersContext value={value}>{children}</AnswersContext>;
 }
 
@@ -37,10 +39,18 @@ export function useGetStartedEnded(): boolean {
   return useContext(AnswersContext)?.ended ?? false;
 }
 
+/**
+ * True only when the owner finished setup in this window just now, not when a finished setup
+ * loads later or was skipped. A first app they picked then starts building. Safe without a provider.
+ */
+export function useGetStartedFinishedNow(): boolean {
+  return useContext(AnswersContext)?.finishedNow ?? false;
+}
+
 /** Called by the gate once answers are known or setup has ended. */
-export function usePublishGetStartedAnswers(answers: GetStartedAnswers | null, ended = false): void {
+export function usePublishGetStartedAnswers(answers: GetStartedAnswers | null, ended = false, finishedNow = false): void {
   const publish = useContext(AnswersContext)?.publish;
   useLayoutEffect(() => {
-    if (publish && (answers || ended)) publish(answers, ended);
-  }, [answers, ended, publish]);
+    if (publish && (answers || ended)) publish(answers, ended, finishedNow);
+  }, [answers, ended, finishedNow, publish]);
 }

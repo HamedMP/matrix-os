@@ -149,9 +149,8 @@ describe("GetStartedGate", () => {
   });
 
   it("resumes a saved draft on the step it was left", async () => {
-    renderGate(makePort({ status: "in_progress", updatedAt: AT, draft: { step: 2, name: "Sam", goals: ["build"], tools: [] } }).port);
-    expect(await screen.findByText("First app idea")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Habit tracker" })).toHaveAttribute("aria-pressed", "false");
+    renderGate(makePort({ status: "in_progress", updatedAt: AT, draft: { step: 4, name: "Sam", goals: ["build"], tools: [] } }).port);
+    expect(await screen.findByRole("button", { name: /Habit tracker/ })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("fills the name from the sign-in account, and never replaces one the owner typed or saved", async () => {
@@ -180,6 +179,20 @@ describe("GetStartedGate", () => {
     view.rerender(<GetStartedGate port={port} zIndex={690} suggestedName="Sam Lee"><div /></GetStartedGate>);
     await act(async () => {});
     expect(name).toHaveValue("");
+  });
+
+  it("shows the Settings sign-in under each coding agent the owner picks on step 3", async () => {
+    const AgentLogin = ({ agent }: { agent: "claude" | "codex" }) => <p>Sign in to {agent}</p>;
+    const { port } = makePort({ status: "in_progress", updatedAt: AT, draft: { step: 2, goals: ["code"], tools: ["claude-code"] } });
+    render(<GetStartedGate port={port} zIndex={690} agentLogin={AgentLogin}><div /></GetStartedGate>);
+    expect(await screen.findByText("Sign in to claude")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+    expect(screen.getByText("Sign in to codex")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
+    expect(screen.queryByText("Sign in to claude")).not.toBeInTheDocument();
+    // OpenCode has no sign-in here.
+    fireEvent.click(screen.getByRole("button", { name: "OpenCode" }));
+    expect(screen.getAllByText(/^Sign in to/)).toHaveLength(1);
   });
 
   it("skips the whole setup from the first question", async () => {

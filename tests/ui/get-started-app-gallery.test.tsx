@@ -99,7 +99,8 @@ describe("Apps ready with your data", () => {
     expect(rows[0]!.querySelector("img")).toHaveAttribute("src", "https://example.test/icons/gallery-atlas.png");
     expect(within(rows[0]!).getByText("Uses Gmail and Google Calendar")).toBeInTheDocument();
     // Building your own stays one click away.
-    expect(screen.getByText("Or build your own")).toBeInTheDocument();
+    expect(screen.getByText("Or build your first app")).toBeInTheDocument();
+    expect(screen.getByText("Pick one and Matrix starts building it in Chat as soon as your AI is ready.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Habit tracker/ })).toBeInTheDocument();
   });
 

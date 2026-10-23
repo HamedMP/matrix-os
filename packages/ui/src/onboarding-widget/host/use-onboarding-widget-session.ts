@@ -18,9 +18,10 @@ import type { OnboardingChatPort } from "./chat-port.js";
 import { onboardingSessionInit, writeOnboardingPrefs, type OnboardingStoredPrefs } from "./prefs.js";
 import { loadOnboardingRepos, type OnboardingRepoSource } from "./repos.js";
 import { useOnboardingAiConnect, type OnboardingAiConnectPort } from "./use-onboarding-ai-connect.js";
+import { useOnboardingAutoBuild } from "./use-onboarding-auto-build.js";
 import { useOnboardingChatHandoff } from "./use-onboarding-chat-handoff.js";
 import { useOnboardingRun } from "./use-onboarding-run.js";
-import { useGetStartedAnswers } from "../../get-started/answers-context.js";
+import { useGetStartedAnswers, useGetStartedFinishedNow } from "../../get-started/answers-context.js";
 
 export interface OnboardingAppConnect {
   connectingService: string | null;
@@ -144,6 +145,14 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
     : undefined), [getStartedAnswers]);
   const intro = getStartedAnswers ? getStartedWidgetIntro(getStartedAnswers.goals) : null;
   const buildSuggestion = useMemo(() => (getStartedAnswers ? getStartedBuildSuggestion(getStartedAnswers) : null), [getStartedAnswers]);
+  useOnboardingAutoBuild({
+    suggestion: buildSuggestion,
+    finishedNow: useGetStartedFinishedNow(),
+    aiReady: !loading && selection !== null && !creditsExhausted,
+    state,
+    dispatch,
+    openChat: showChat,
+  });
   return {
     state,
     actions,

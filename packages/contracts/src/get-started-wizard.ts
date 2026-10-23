@@ -75,7 +75,7 @@ function clearStep(state: GetStartedWizardState): GetStartedWizardState {
   switch (state.step) {
     case "name": return { ...state, name: "" };
     case "goals": return { ...state, goals: [] };
-    case "tools": return { ...state, tools: [], appIdea: undefined, starter: undefined };
+    case "tools": return { ...state, tools: [], starter: undefined };
     case "ai": return { ...state, bot: DEFAULT_GET_STARTED_BOT, botChosen: false };
     case "gallery": return { ...state, appIdea: undefined };
     case "bots": return { ...state, bots: [] };

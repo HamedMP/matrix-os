@@ -36,11 +36,13 @@ describe("get started catalog", () => {
   it("offers only choices that are not integrations on the connect step, in goal order", () => {
     // Integrations are connected through the marketplace on the same step.
     const groups = getStartedToolGroupsForGoals(["assistant", "build", "code"]);
-    expect(groups.map((group) => group.kind)).toEqual(["app-idea", "tools"]);
+    expect(groups.map((group) => group.kind)).toEqual(["tools"]);
     const coding = groups.find((group) => group.kind === "tools");
     expect(coding).toMatchObject({ goal: "code", title: "Your coding agent" });
     expect(coding?.kind === "tools" ? coding.tools.map((tool) => tool.id) : []).toEqual(["claude-code", "codex", "opencode"]);
     expect(getStartedToolGroupsForGoals(["business"])).toEqual([]);
+    // The first app idea is picked on the App Gallery step, not here.
+    expect(getStartedToolGroupsForGoals(["build"])).toEqual([]);
   });
 
   it("falls back to the exploring group when no goals are chosen", () => {
