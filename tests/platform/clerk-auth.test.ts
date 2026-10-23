@@ -101,6 +101,13 @@ describe("T800: Clerk JWT verification on subdomain proxy", () => {
     });
   });
 
+  it.each([" sk_fixture_with_whitespace\n", " "])("preserves the existing production secret value verbatim: %j", (secretKey) => {
+    expect(resolveClerkVerificationConfig({ CLERK_SECRET_KEY: secretKey })).toEqual({
+      verifyTokenOptions: { secretKey },
+      sessionRevocationSecret: secretKey,
+    });
+  });
+
   it("does not initialize Clerk auth without a verification key", () => {
     expect(resolveClerkVerificationConfig({})).toBeNull();
   });

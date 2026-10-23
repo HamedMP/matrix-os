@@ -26,7 +26,9 @@ export type ClerkVerificationConfig = {
 export function resolveClerkVerificationConfig(
   env: NodeJS.ProcessEnv,
 ): ClerkVerificationConfig | null {
-  const secretKey = env.CLERK_SECRET_KEY?.trim();
+  // Preserve the existing production input, including malformed values. Local
+  // JWT-key support must not change verification or revocation credentials.
+  const secretKey = env.CLERK_SECRET_KEY;
   if (secretKey) {
     return {
       verifyTokenOptions: { secretKey },
