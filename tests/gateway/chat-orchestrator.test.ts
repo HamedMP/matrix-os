@@ -2009,7 +2009,7 @@ describe("CanonicalChatOrchestrator", () => {
     expect(snapshot?.activities).toHaveLength(3);
   });
 
-  it("terminalizes a Run when semantic activity exceeds the persisted limit", async () => {
+  it("continues a Run while semantic activity rolls within the persisted limit", async () => {
     await repository.create(owner, {
       id: "chat_activity_overflow",
       clientRequestId: "req_create_activity_overflow",
@@ -2044,10 +2044,10 @@ describe("CanonicalChatOrchestrator", () => {
     await orchestrator.drain();
 
     const snapshot = await repository.exportChat(owner, "chat_activity_overflow");
-    expect(snapshot?.runs[0]).toMatchObject({ status: "failed", outcome: "failed" });
+    expect(snapshot?.runs[0]).toMatchObject({ status: "completed", outcome: "completed" });
     expect(snapshot?.activities.length).toBeLessThanOrEqual(500);
     expect(snapshot?.activities).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "run.error" }),
+      expect.objectContaining({ type: "run.status", status: "completed" }),
     ]));
     expect(orchestrator.activeCount).toBe(0);
   });

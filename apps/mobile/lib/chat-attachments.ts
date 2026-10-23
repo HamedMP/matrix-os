@@ -1,5 +1,6 @@
 import {
   CanonicalChatUserInputPartSchema,
+  MAX_AGENT_ATTACHMENT_BYTES,
   type CanonicalChatMessagePart,
   type CanonicalChatModelSelection,
   type CanonicalProviderCatalog,
@@ -38,8 +39,8 @@ export type AttachmentRejection = "too_large" | "unsupported" | "over_limit" | "
 
 /** The most one message carries, which is also the most the computer accepts. */
 export const MAX_MESSAGE_ATTACHMENTS = 8;
-/** The largest attachment sent: the limit the web composer applies. */
-export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+/** Shared raw-upload transport ceiling; managed image policy is checked separately. */
+export const MAX_ATTACHMENT_BYTES = MAX_AGENT_ATTACHMENT_BYTES;
 // The computer clears this folder of old uploads by itself, and removes a
 // single upload from nowhere else.
 const UPLOAD_DIRECTORY = "temporary/desktop-chat";
@@ -195,13 +196,11 @@ export function attachmentsTitle(attachments: readonly ComposerAttachment[]): st
   return `${attachments.length} ${photos ? "photos" : "files"}`;
 }
 
-const MAX_ATTACHMENT_SIZE_TEXT = `${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB`;
-
 const REJECTION_TEXT: Record<AttachmentRejection, (count: number) => string> = {
   too_large: (count) => (
     count === 1
-      ? `1 item is larger than ${MAX_ATTACHMENT_SIZE_TEXT}.`
-      : `${count} items are larger than ${MAX_ATTACHMENT_SIZE_TEXT}.`
+      ? "1 item exceeds its attachment size limit."
+      : `${count} items exceed their attachment size limits.`
   ),
   unsupported: (count) => (
     count === 1 ? "This model cannot read 1 of the items." : `This model cannot read ${count} of the items.`

@@ -108,7 +108,7 @@ function agentEvent(
 }
 
 describe("OpenClaw canonical Chat Provider adapter", () => {
-  it("uses agent expectFinal and projects assistant, tool, lifecycle, and durable state events", async () => {
+  it("uses bounded agent submission and projects assistant, tool, lifecycle, and durable state events", async () => {
     const rpc = new FakeRpc();
     const adapter = createOpenClawChatProviderAdapter({ rpc, homePath: "/home/matrix/home" });
     const result = collect(adapter.start(baseInput));
@@ -121,10 +121,10 @@ describe("OpenClaw canonical Chat Provider adapter", () => {
         provider: "openai",
         model: "gpt-5.4",
         deliver: false,
-        timeout: 120,
+        timeout: 0,
         idempotencyKey: "canonical-run-1",
       },
-      options: { expectFinal: true, timeoutMs: 125_000 },
+      options: { timeoutMs: 30_000 },
     });
     expect(rpc.calls[0]?.params).not.toHaveProperty("cwd");
     rpc.emit(agentEvent("lifecycle", { phase: "start", startedAt: 1 }, 1));

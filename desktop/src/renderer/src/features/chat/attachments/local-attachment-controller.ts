@@ -80,6 +80,7 @@ export function appendHermesAttachmentPaths(prompt: string, paths: readonly stri
 export function createLocalAttachmentController(options: {
   api: ApiClient | null;
   createId?: () => string;
+  validate?: (files: readonly File[]) => string | null;
 }): LocalAttachmentController {
   let items: InternalAttachment[] = [];
   let snapshot: readonly LocalConversationAttachment[] = [];
@@ -95,6 +96,8 @@ export function createLocalAttachmentController(options: {
   const revoke = (item: InternalAttachment) => {
     if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
   };
+
+  const validate = () => options.validate?.(items.map(item => item.file)) ?? null;
 
   const uploadOne = async (item: InternalAttachment): Promise<boolean> => {
     if (disposed || item.file.size > MAX_ATTACHMENT_FILE_BYTES) return false;
@@ -155,7 +158,7 @@ export function createLocalAttachmentController(options: {
           file,
           ...(shouldPreview(file) ? { previewUrl: URL.createObjectURL(file) } : {}),
           status: file.size <= MAX_ATTACHMENT_FILE_BYTES ? "ready" : "failed",
-          ...(file.size > MAX_ATTACHMENT_FILE_BYTES ? { error: "Files are limited to 10 MB." } : {}),
+          ...(file.size > MAX_ATTACHMENT_FILE_BYTES ? { error: "Files are limited to 10 MiB." } : {}),
         });
       }
       emit();
@@ -172,10 +175,14 @@ export function createLocalAttachmentController(options: {
       if (uploadInFlight) return;
       const item = items.find((candidate) => candidate.localId === localId);
       if (!item || item.status !== "failed" || item.file.size > MAX_ATTACHMENT_FILE_BYTES) return;
+      const error = validate();
+      if (error) { item.error = error; emit(); return; }
       await uploadOne(item);
     },
     async uploadAll() {
       if (uploadInFlight) return { ok: false, error: "Attachment upload is already in progress." };
+      const error = validate();
+      if (error) return { ok: false, error };
       uploadInFlight = true;
       const batch = [...items];
       try {

@@ -40,7 +40,8 @@ function fixture(selection = defaults, isolated = false) {
     return { ok: true, reply: { runId: binding.runId, status: "completed", toolActions: 0 } };
   });
   const runtime = createManagedPiRuntime({
-    admission: { admit, release, toolAuthority: async () => ({ permissionMode: "supervised" }), workspace: async () => "/unused" },
+    admission: { admit, release, toolAuthority: async () => ({ permissionMode: "supervised" }), workspace: async () => "/unused",
+      startRenewal: () => ({ stop: async () => undefined }) },
     host: { client: { runBot } } as unknown as ScopeRuntimeHost,
     providers: { getSnapshot: async () => snapshot }, personality: { homePath: home, runtimeOwnerId: "user_owner" },
     chatgptPlan: { resolve: async () => resolved } as never, matrixAnthropic: { resolve: async () => resolved } as never,

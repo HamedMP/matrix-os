@@ -31,12 +31,13 @@ afterEach(async () => {
   await rm(homePath, { recursive: true, force: true });
 });
 
-function setup(overrides: { createRuntime?: ReturnType<typeof vi.fn>; available?: boolean } = {}) {
+function setup(overrides: { createRuntime?: ReturnType<typeof vi.fn>; renewRuntime?: ReturnType<typeof vi.fn>; available?: boolean; registry?: BotRuntimeRegistry } = {}) {
   const client = {
     createRuntime: overrides.createRuntime ?? vi.fn(async () => ({ runtimeHandle: RUNTIME, executionGeneration: "5", state: "running" as const })),
+    renewRuntime: overrides.renewRuntime ?? vi.fn(async () => ({ runtimeHandle: RUNTIME, executionGeneration: "5", state: "running" as const })),
     stopRuntime: vi.fn(async () => ({ runtimeHandle: RUNTIME, executionGeneration: "5", state: "stopped" as const })),
   };
-  const registry = new BotRuntimeRegistry();
+  const registry = overrides.registry ?? new BotRuntimeRegistry();
   const roots = createChatExecutionRootResolver({
     homePath,
     projects: { getProjectById: vi.fn(), resolveProjectWorkingDirectory: vi.fn() },
@@ -48,7 +49,7 @@ function setup(overrides: { createRuntime?: ReturnType<typeof vi.fn>; available?
     roots,
     registry,
   });
-  return { admission, client, registry };
+  return { admission, client, registry, roots };
 }
 
 const request: PrivateBotRunRequest = {
@@ -153,5 +154,141 @@ describe("private bot admission", () => {
     const shared = new SharedAiRuntimeRegistry();
     expect(shared.lookup({ runtimeHandle: RUNTIME, executionGeneration: "5" })).toBeNull();
     expect(shared.authorize({ runtimeHandle: RUNTIME, executionGeneration: "5", action: "inference.messages" })).toEqual({ allowed: false });
+  });
+
+  it("renews only the same live run and preserves its inference authority", async () => {
+    const { admission, client, registry } = setup();
+    const admitted = await admission.admit(request);
+    const current = registry.lookupRun({ ...admitted, runId: request.runId });
+    if (!current || "kind" in current) throw new Error("missing private bot binding");
+    const signal = registry.inferenceSignal(current);
+    await admission.renew(current);
+    expect(client.renewRuntime).toHaveBeenCalledExactlyOnceWith({ runtimeHandle: RUNTIME, executionGeneration: "5" });
+    expect(registry.inferenceSignal(current)).toBe(signal);
+    expect(registry.lookupRun(current)).toEqual(current);
+  });
+
+  it("refuses renew after direct-chat removal, root drift, cancellation or release", async () => {
+    const { admission, client, registry, roots } = setup();
+    const admitted = await admission.admit(request);
+    const current = registry.lookupRun({ ...admitted, runId: request.runId });
+    if (!current || "kind" in current) throw new Error("missing private bot binding");
+    await createBotBindingsRepository(db).remove({ ownerId: OWNER, botId: BOT, chatId: request.chatId, now: NOW });
+    await expect(admission.renew(current)).rejects.toEqual(new BotAdmissionError("not_found"));
+    expect(client.renewRuntime).not.toHaveBeenCalled();
+
+    await createBotBindingsRepository(db).bindDirect({ ownerId: OWNER, botId: BOT, chatId: request.chatId, now: NOW });
+    const resolved = await roots.resolve({ type: "personal", ownerId: OWNER }, { kind: "bot_workspace", botId: BOT });
+    vi.spyOn(roots, "resolve").mockResolvedValue({ ...resolved, fingerprint: "0".repeat(64) });
+    await expect(admission.renew(current)).rejects.toEqual(new BotAdmissionError("root_changed"));
+    expect(client.renewRuntime).not.toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+    registry.cancelInference(current);
+    await expect(admission.renew(current)).rejects.toEqual(new BotAdmissionError("not_found"));
+    expect(client.renewRuntime).not.toHaveBeenCalled();
+    await admission.release(current.runtimeHandle);
+    await expect(admission.renew(current)).rejects.toEqual(new BotAdmissionError("not_found"));
+  });
+
+  it("does not revive a binding released during host renewal", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const renewRuntime = vi.fn(async () => { await gate; return { runtimeHandle: RUNTIME, executionGeneration: "5", state: "running" as const }; });
+    const { admission, client, registry } = setup({ renewRuntime });
+    const admitted = await admission.admit(request);
+    const current = registry.lookupRun({ ...admitted, runId: request.runId });
+    if (!current || "kind" in current) throw new Error("missing private bot binding");
+    const renewal = admission.renew(current);
+    await vi.waitFor(() => expect(renewRuntime).toHaveBeenCalledOnce());
+    registry.release(current.runtimeHandle);
+    finish();
+    await expect(renewal).rejects.toEqual(new BotAdmissionError("not_found"));
+    expect(registry.lookupRun(current)).toBeNull();
+    expect(client.stopRuntime).not.toHaveBeenCalled();
+  });
+
+  it("refuses renewal if the workspace changes while the host call is pending", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const renewRuntime = vi.fn(async () => { await gate; return { runtimeHandle: RUNTIME, executionGeneration: "5", state: "running" as const }; });
+    const { admission, registry, roots } = setup({ renewRuntime });
+    const admitted = await admission.admit(request);
+    const current = registry.lookupRun({ ...admitted, runId: request.runId });
+    if (!current || "kind" in current) throw new Error("missing private bot binding");
+    const renewal = admission.renew(current);
+    await vi.waitFor(() => expect(renewRuntime).toHaveBeenCalledOnce());
+    const resolved = await roots.resolve({ type: "personal", ownerId: OWNER }, { kind: "bot_workspace", botId: BOT });
+    vi.spyOn(roots, "resolve").mockResolvedValue({ ...resolved, fingerprint: "0".repeat(64) });
+    finish();
+    await expect(renewal).rejects.toEqual(new BotAdmissionError("root_changed"));
+  });
+
+  it("maps host renewal failure to an unavailable admission", async () => {
+    const { admission, registry } = setup({ renewRuntime: vi.fn(async () => { throw new ScopeRuntimeClientError("runtime_unavailable"); }) });
+    const admitted = await admission.admit(request);
+    const current = registry.lookupRun({ ...admitted, runId: request.runId });
+    if (!current || "kind" in current) throw new Error("missing private bot binding");
+    await expect(admission.renew(current)).rejects.toEqual(new BotAdmissionError("unavailable"));
+  });
+
+  it("stops and awaits an in-flight heartbeat before stopping the host", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const renewRuntime = vi.fn(async () => { await gate; return { runtimeHandle: RUNTIME, executionGeneration: "5", state: "running" as const }; });
+    const { admission, client, registry } = setup({ renewRuntime });
+    const admitted = await admission.admit(request);
+    const current = registry.lookupRun({ ...admitted, runId: request.runId });
+    if (!current || "kind" in current) throw new Error("missing private bot binding");
+    const onFailure = vi.fn();
+    admission.startRenewal(current, onFailure);
+    await vi.waitFor(() => expect(renewRuntime).toHaveBeenCalledOnce());
+    const releasing = admission.release(current.runtimeHandle);
+    expect(client.stopRuntime).not.toHaveBeenCalled();
+    finish();
+    await releasing;
+    expect(client.stopRuntime).toHaveBeenCalledOnce();
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it("stops after bounded drain when root preflight hangs and never renews the host late", async () => {
+    const { admission, client, registry, roots } = setup();
+    const admitted = await admission.admit(request);
+    const current = registry.lookupRun({ ...admitted, runId: request.runId });
+    if (!current || "kind" in current) throw new Error("missing private bot binding");
+    const resolved = await roots.resolve({ type: "personal", ownerId: OWNER }, { kind: "bot_workspace", botId: BOT });
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const resolve = vi.spyOn(roots, "resolve").mockImplementation(async () => { await gate; return resolved; });
+    const onFailure = vi.fn();
+    admission.startRenewal(current, onFailure);
+    await vi.waitFor(() => expect(resolve).toHaveBeenCalledOnce());
+    await admission.release(current.runtimeHandle);
+    expect(client.stopRuntime).toHaveBeenCalledOnce();
+    expect(registry.lookupRun(current)).toBeNull();
+    finish();
+    await Promise.resolve();
+    expect(client.renewRuntime).not.toHaveBeenCalled();
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it("stops after bounded drain when host renewal ignores abort and fences its late reply", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const renewRuntime = vi.fn(async () => { await gate; return { runtimeHandle: RUNTIME, executionGeneration: "5", state: "running" as const }; });
+    const { admission, client, registry } = setup({ renewRuntime });
+    const admitted = await admission.admit(request);
+    const current = registry.lookupRun({ ...admitted, runId: request.runId });
+    if (!current || "kind" in current) throw new Error("missing private bot binding");
+    const onFailure = vi.fn();
+    admission.startRenewal(current, onFailure);
+    await vi.waitFor(() => expect(renewRuntime).toHaveBeenCalledOnce());
+    await admission.release(current.runtimeHandle);
+    expect(client.stopRuntime).toHaveBeenCalledOnce();
+    expect(registry.lookupRun(current)).toBeNull();
+    finish();
+    await Promise.resolve();
+    expect(registry.lookupRun(current)).toBeNull();
+    expect(onFailure).not.toHaveBeenCalled();
   });
 });

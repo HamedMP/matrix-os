@@ -1,3 +1,4 @@
+import { createBotContinuationAdmitter } from "../../../packages/gateway/src/bots/continuations.js";
 import { withChatGptPlanProviderInstance } from "../../../packages/gateway/src/bots/chatgpt-plan-provider-instance.js";
 import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
 import { managedPiChatInstances } from "../../../packages/gateway/src/chat/managed-chat-catalog.js";
@@ -207,7 +208,6 @@ it('admits image/file parts for a vision model and rejects images for text-only 
 it.each([
   { kind: "image" as const, mimeType: "image/gif", sizeBytes: 10, reason: "PNG, JPEG or WebP" },
   { kind: "image" as const, mimeType: "image/png", sizeBytes: 2 * 1024 * 1024 + 1, reason: "2 MiB" },
-  { kind: "file" as const, mimeType: "text/plain", sizeBytes: 1024 * 1024 + 1, reason: "1 MiB" },
 ])("rejects managed $reason metadata before storing or starting a turn", async part => {
   const snapshot = makeAiProviderSnapshot(); snapshot.models[0]!.capabilities = ["tools", "vision"];
   savedSelection = { instanceId: "matrix_pi_default", model: snapshot.models[0]!.id };
@@ -215,6 +215,16 @@ it.each([
   const request = { clientRequestId: "req_input_limit", baseRevision: 0, parts: [{ type: "attachment_reference" as const, attachmentId: "att_bounded", label: "upload", kind: part.kind, mimeType: part.mimeType, sizeBytes: part.sizeBytes, ownerReference: "temporary/desktop-chat/input" }],
     selection: savedSelection, interactionMode: "default", permissionMode: "default" };
   await expect(orchestrator.admitTurn(principal, owner, BOT_CHAT, request)).rejects.toMatchObject({ status: 400, safeError: { safeMessage: expect.stringContaining(part.reason) } });
+  expect(started).toEqual([]); expect((await repository.get(owner, BOT_CHAT))?.chat.messageCount).toBe(0);
+});
+it("rejects 20 MiB plus one byte of managed file metadata before storing or starting a turn", async () => {
+  const snapshot = makeAiProviderSnapshot();
+  savedSelection = { instanceId: "matrix_pi_default", model: snapshot.models[0]!.id };
+  getCatalog.mockImplementation(async () => ({ revision: "file_total", drivers: [], instances: managedPiChatInstances(snapshot).map(instance => ({ ...instance, catalogRevision: "file_total" })) }));
+  const parts = [10 * 1024 * 1024, 10 * 1024 * 1024, 1].map((sizeBytes, index) => ({ type: "attachment_reference" as const,
+    attachmentId: `att_total_${index}`, label: `upload-${index}`, kind: "file" as const, mimeType: "application/octet-stream", sizeBytes, ownerReference: `temporary/desktop-chat/input-${index}` }));
+  await expect(orchestrator.admitTurn(principal, owner, BOT_CHAT, { clientRequestId: "req_file_total", baseRevision: 0, parts,
+    selection: savedSelection, interactionMode: "default", permissionMode: "default" })).rejects.toMatchObject({ status: 400, safeError: { safeMessage: expect.stringContaining("20 MiB") } });
   expect(started).toEqual([]); expect((await repository.get(owner, BOT_CHAT))?.chat.messageCount).toBe(0);
 });
 it("rechecks model image suitability on retry and queue without storing rejected metadata", async () => {
@@ -240,4 +250,27 @@ it("rejects funded image metadata above the conservative Relay aggregate before 
     parts: [{ type: "attachment_reference", attachmentId: "att_funded_image", kind: "image", label: "photo.png", mimeType: "image/png", sizeBytes: 1024 * 1024 + 1, ownerReference: "temporary/desktop-chat/photo.png" }],
     selection: savedSelection, interactionMode: "default", permissionMode: "default" })).rejects.toMatchObject({ status: 400, safeError: { safeMessage: expect.stringContaining("1 MiB") } });
   expect(started).toEqual([]); expect((await repository.get(owner, BOT_CHAT))?.chat.messageCount).toBe(0);
+});
+
+it("automatically delivers a blocking answer once, without a manual steer, after the old turn releases", async () => {
+  blockedRun = new Promise<void>(resolve => { finishBlockedRun = resolve; });
+  await orchestrator.admitTurn(principal, owner, BOT_CHAT, {
+    clientRequestId: "req_asking", baseRevision: 0, parts: [{ type: "text", text: "Ask me which format" }],
+    selection: savedSelection, interactionMode: "default", permissionMode: "default",
+  });
+  await vi.waitFor(() => expect(started).toHaveLength(1));
+  const continueAnswer = createBotContinuationAdmitter({ repository, orchestrator });
+  const answer = { chatId: BOT_CHAT, clientRequestId: "req_answer_in_0123456789abcdef", text: "Plain text" };
+  await continueAnswer(principal, answer);
+  await continueAnswer(principal, answer);
+  expect(await repository.listQueuedTurns(owner, BOT_CHAT)).toHaveLength(1);
+  finishBlockedRun!();
+  await vi.waitFor(() => expect(started).toHaveLength(2));
+  await orchestrator.drain();
+  await continueAnswer(principal, answer);
+  expect(started).toHaveLength(2);
+  expect(await repository.listQueuedTurns(owner, BOT_CHAT)).toHaveLength(0);
+  const detail = await repository.getDetailPage(owner, BOT_CHAT, { limit: 50 });
+  expect(detail!.messages.filter(message => message.role === "user" && message.parts.some(part =>
+    part.type === "text" && part.text === "Plain text"))).toHaveLength(1);
 });

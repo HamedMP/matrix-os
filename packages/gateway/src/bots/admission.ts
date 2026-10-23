@@ -8,6 +8,7 @@
  * address a private handle: no collaboration scope uses this namespace.
  */
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { BotModelRoute, BotToolCapability } from "@matrix-os/contracts";
 import {
   SCOPE_RUNTIME_BOT_ADAPTER_ID,
@@ -21,7 +22,8 @@ import type { BotCredentialAccessSourceId } from "./credentials.js";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 import { ScopeRuntimeClientError } from "../collaboration/scope-runtime-client.js";
 import type { BotExecutor } from "./repositories/shared.js";
-import { BotRuntimeRegistry, BotRuntimeRegistryError } from "./runtime-registry.js";
+import { BotRuntimeRegistry, BotRuntimeRegistryError, isManagedPiBinding, type BotRuntimeBinding } from "./runtime-registry.js";
+import { startRuntimeHeartbeat } from "./runtime-heartbeat.js";
 
 export type BotAdmissionErrorCode = "not_found" | "invalid_root" | "root_changed" | "unavailable" | "capacity_exceeded";
 
@@ -68,6 +70,7 @@ export function createPrivateBotAdmission(deps: {
   roots: Pick<ChatExecutionRootResolver, "resolve">;
   registry: BotRuntimeRegistry;
 }) {
+  const heartbeats = new Map<string, ReturnType<typeof startRuntimeHeartbeat>>();
   async function ownsDirectChat(input: { ownerId: string; botId: string; chatId: string }): Promise<boolean> {
     const row = await deps.db.selectFrom("bot_chat_bindings as binding")
       .innerJoin("chats as chat", "chat.id", "binding.chat_id")
@@ -81,9 +84,59 @@ export function createPrivateBotAdmission(deps: {
     return row !== undefined;
   }
 
-  /** Unbinds first so no frame is authorized, then stops the workload. */
+  async function renew(binding: BotRuntimeBinding, renewalSignal?: AbortSignal): Promise<void> {
+    const assertActive = () => { if (renewalSignal?.aborted) throw new BotAdmissionError("not_found"); };
+    assertActive();
+    const owned = deps.registry.lookupRun(binding);
+    if (!owned || isManagedPiBinding(owned) || !isDeepStrictEqual(owned, binding)) throw new BotAdmissionError("not_found");
+    const pinned: BotRuntimeBinding = owned;
+    const inferenceSignal = deps.registry.inferenceSignal(owned);
+    if (!inferenceSignal || inferenceSignal.aborted) throw new BotAdmissionError("not_found");
+    if (!deps.host.available) throw new BotAdmissionError("unavailable");
+    async function assertRoot(): Promise<void> {
+      try {
+        const root = await deps.roots.resolve({ type: "personal", ownerId: pinned.ownerId }, { kind: "bot_workspace", botId: pinned.botId });
+        assertActive();
+        if (root.fingerprint !== pinned.rootFingerprint) throw new BotAdmissionError("root_changed");
+      } catch (error: unknown) {
+        if (error instanceof ChatExecutionRootError) {
+          throw new BotAdmissionError(error.code === "validation_unavailable" ? "unavailable" : "invalid_root");
+        }
+        throw error;
+      }
+    }
+    const firstDirect = await ownsDirectChat(owned);
+    assertActive();
+    if (!firstDirect) throw new BotAdmissionError("not_found");
+    await assertRoot();
+    assertActive();
+    const secondDirect = await ownsDirectChat(owned);
+    assertActive();
+    if (inferenceSignal.aborted || !secondDirect) throw new BotAdmissionError("not_found");
+    try {
+      await deps.host.client.renewRuntime({ runtimeHandle: owned.runtimeHandle, executionGeneration: owned.executionGeneration,
+        ...(renewalSignal ? { signal: renewalSignal } : {}) });
+    } catch (error: unknown) {
+      assertActive();
+      if (error instanceof ScopeRuntimeClientError) throw new BotAdmissionError("unavailable");
+      throw error;
+    }
+    assertActive();
+    if (inferenceSignal.aborted) throw new BotAdmissionError("not_found");
+    await assertRoot();
+    assertActive();
+    const finalDirect = await ownsDirectChat(owned);
+    assertActive();
+    if (inferenceSignal.aborted || !finalDirect || !deps.registry.renew(owned)) throw new BotAdmissionError("not_found");
+  }
+
+  /** Abort renewal and unbind immediately, then drain briefly before host stop. */
   async function release(runtimeHandle: string): Promise<void> {
+    const heartbeat = heartbeats.get(runtimeHandle);
+    heartbeats.delete(runtimeHandle);
+    const stopped = heartbeat?.stop();
     deps.registry.release(runtimeHandle);
+    await stopped;
     try {
       await deps.host.client.stopRuntime({ runtimeHandle });
     } catch (error: unknown) {
@@ -93,6 +146,25 @@ export function createPrivateBotAdmission(deps: {
   }
 
   return {
+    renew,
+    startRenewal(binding: BotRuntimeBinding, onFailure: (error: unknown) => void): { stop(): Promise<void> } {
+      const owned = deps.registry.lookupRun(binding);
+      if (!owned || isManagedPiBinding(owned) || !isDeepStrictEqual(owned, binding)
+        || deps.registry.inferenceSignal(owned)?.aborted !== false) throw new BotAdmissionError("not_found");
+      if (heartbeats.has(binding.runtimeHandle)) throw new BotAdmissionError("unavailable");
+      if (heartbeats.size >= 64) throw new BotAdmissionError("capacity_exceeded");
+      const heartbeat = startRuntimeHeartbeat(signal => renew(binding, signal), error => {
+        if (heartbeats.get(binding.runtimeHandle) === heartbeat) heartbeats.delete(binding.runtimeHandle);
+        onFailure(error);
+      });
+      heartbeats.set(binding.runtimeHandle, heartbeat);
+      return {
+        async stop() {
+          if (heartbeats.get(binding.runtimeHandle) === heartbeat) heartbeats.delete(binding.runtimeHandle);
+          await heartbeat.stop();
+        },
+      };
+    },
     /**
      * Launches a sandboxed bot runtime for one run. On any failure after the
      * runtime starts, it is stopped before the error is returned, so no

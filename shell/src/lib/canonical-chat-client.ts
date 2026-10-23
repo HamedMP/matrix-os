@@ -1,7 +1,7 @@
 import { createBrowserPermissionClient, type BrowserPermissionClient } from "@matrix-os/ui";
 import type { CanonicalSubmitChatApprovalRequest } from "@matrix-os/contracts";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
-import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
+import { MAX_AGENT_ATTACHMENT_BYTES, CanonicalChatNavigationResponseSchema, canonicalAssistantOutputMessages, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, filePreviewContentUrl, type ChatAgentClient } from "@matrix-os/ui";
 import { chatEventVersionUrl, chatFundingVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
@@ -83,8 +83,8 @@ export interface ShellAttachmentInput {
 
 type CanonicalAttachmentReference = Extract<CanonicalChatMessagePart, { type: "attachment_reference" }>;
 
-const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
-const MAX_DATA_URL_LENGTH = 7 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = MAX_AGENT_ATTACHMENT_BYTES;
+const MAX_DATA_URL_LENGTH = Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 133;
 const DATA_URL = /^data:([^;,]{1,120});base64,([A-Za-z0-9+/]*={0,2})$/;
 const SAFE_MIME_TYPE = /^[A-Za-z0-9][A-Za-z0-9.+/-]+$/;
 const SAFE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -383,6 +383,7 @@ function partText(part: CanonicalChatMessage["parts"][number]): string | null {
 }
 
 export function projectCanonicalMessages(messages: CanonicalChatMessage[]): ChatMessage[] {
+  messages = canonicalAssistantOutputMessages(messages);
   const resolvedApprovals = new Set(messages.flatMap((message) => message.parts.flatMap((part) =>
     part.type === "approval_result" && message.runId
       ? [`${message.runId}\0${part.approvalId}`]

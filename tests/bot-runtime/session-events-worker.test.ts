@@ -2,7 +2,7 @@ import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxProvider, fauxText } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import type { BotEvent } from "@matrix-os/contracts";
-import { createEventProjector, MAX_EVENTS_PER_TURN, splitUtf8 } from "../../packages/bot-runtime/src/events.js";
+import { createEventProjector, LIVE_TEXT_EVENTS, splitUtf8 } from "../../packages/bot-runtime/src/events.js";
 import {
   BotSessionError,
   compactSession,
@@ -286,16 +286,21 @@ describe("bot event batching", () => {
     }
   });
 
-  it("stops forwarding after the per-turn budget with one notice", async () => {
+  it("refreshes chatty live text without a cumulative event cutoff", async () => {
     let clock = 0;
     const sent: BotEvent[] = [];
     const project = createEventProjector({ send: async (event) => { sent.push(event); }, capabilityForTool: () => undefined, now: () => clock });
-    for (let index = 0; index < MAX_EVENTS_PER_TURN + 50; index += 1) {
+    for (let index = 0; index < LIVE_TEXT_EVENTS + 50; index += 1) {
       clock += 1_000;
       await project(delta("x"));
     }
-    expect(sent).toHaveLength(MAX_EVENTS_PER_TURN);
-    expect(sent.at(-1)!.event).toMatchObject({ type: "activity", state: "started" });
+    await project.drain();
+    expect(sent.length).toBeGreaterThan(LIVE_TEXT_EVENTS);
+    expect(sent.filter(frame => frame.event.type === "activity")).toMatchObject([
+      { event: { label: "Live text updates refresh once per second. Tool progress continues.", state: "completed" } },
+    ]);
+    expect(sent.flatMap(frame => frame.event.type === "assistant_delta" ? [frame.event.text] : []).join("")).toBe("x".repeat(LIVE_TEXT_EVENTS + 50));
+    project.close();
   });
 });
 
@@ -375,29 +380,29 @@ it("retains managed Pi display evidence through partial and final tool results",
   ]);
 });
 
-it("reserves a bounded terminal event after live text fills the event budget", async () => {
+it("keeps tool completion independent of the live text refresh threshold", async () => {
   const sent: BotEvent[] = []; let clock = 0;
   const project = createEventProjector({ send: async event => { sent.push(event); }, capabilityForTool: () => "artifact.read", now: () => clock });
   await project({ type: "tool_execution_start", toolCallId: "call_budget", toolName: "read_artifact", args: { path: "proof.txt" } });
   const partial = fauxAssistantMessage(fauxText(""));
-  for (let i = 0; i < MAX_EVENTS_PER_TURN; i++) {
+  for (let i = 0; i < LIVE_TEXT_EVENTS; i++) {
     clock += 300;
     await project({ type: "message_update", message: partial, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "x", partial } });
   }
   await project({ type: "tool_execution_end", toolCallId: "call_budget", toolName: "read_artifact", result: { content: [{ type: "text", text: "final proof" }] }, isError: false });
   project.close();
-  expect(sent.length).toBeLessThanOrEqual(MAX_EVENTS_PER_TURN);
+  expect(sent.length).toBeGreaterThan(LIVE_TEXT_EVENTS);
   expect(sent.at(-1)?.event).toMatchObject({ type: "tool_progress", phase: "completed", display: { output: "final proof" } });
 });
 
 it.each([
-  { openFirst: false, deltas: 1999, buffered: false, reverse: false, visible: [], paused: 1 },
-  { openFirst: false, deltas: 1997, buffered: true, reverse: false, visible: ["call_b"], paused: 0 },
-  { openFirst: true, deltas: 1996, buffered: false, reverse: false, visible: ["call_a", "call_b"], paused: 0 },
-  { openFirst: true, deltas: 1996, buffered: false, reverse: true, visible: ["call_a", "call_b"], paused: 0 },
-  { openFirst: true, deltas: 1997, buffered: false, reverse: false, visible: ["call_a"], paused: 1 },
-  { openFirst: true, deltas: 1997, buffered: false, reverse: true, visible: ["call_a"], paused: 1 },
-])("keeps tool starts paired with reserved terminals at the event boundary (%j)", async ({ openFirst, deltas, buffered, reverse, visible, paused }) => {
+  { openFirst: false, deltas: 1999, buffered: false, reverse: false },
+  { openFirst: false, deltas: 1997, buffered: true, reverse: false },
+  { openFirst: true, deltas: 1996, buffered: false, reverse: false },
+  { openFirst: true, deltas: 1996, buffered: false, reverse: true },
+  { openFirst: true, deltas: 1997, buffered: false, reverse: false },
+  { openFirst: true, deltas: 1997, buffered: false, reverse: true },
+])("keeps future tool starts paired with terminals after the old event boundary (%j)", async ({ openFirst, deltas, buffered, reverse }) => {
   const sent: BotEvent[] = []; let clock = 0;
   const project = createEventProjector({ send: async event => { sent.push(event); }, capabilityForTool: () => "artifact.read", now: () => clock });
   const start = (toolCallId: string): AgentEvent => ({ type: "tool_execution_start", toolCallId, toolName: "read_artifact", args: { path: "proof.txt" } });
@@ -415,9 +420,10 @@ it.each([
     await project.drain();
   } finally { project.close(); }
   const tools = sent.flatMap(item => item.event.type === "tool_progress" ? [item.event] : []);
+  const visible = openFirst ? ["call_a", "call_b"] : ["call_b"];
   expect(tools.filter(event => event.phase === "started").map(event => event.toolCallId).sort()).toEqual(visible);
   expect(tools.filter(event => event.phase === "completed").map(event => event.toolCallId).sort()).toEqual(visible);
-  expect(sent.filter(item => item.event.type === "activity")).toHaveLength(paused);
-  expect(sent).toHaveLength(2000);
+  expect(sent.filter(item => item.event.type === "activity")).toHaveLength(1);
+  expect(sent.length).toBeGreaterThan(LIVE_TEXT_EVENTS);
   expect(sent.every((event, index) => event.seq === index)).toBe(true);
 });

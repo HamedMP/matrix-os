@@ -1,11 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   SCOPE_RUNTIME_BOT_PROFILE,
   SCOPE_RUNTIME_PROFILE,
-  createScopeRuntimeController,
+  createScopeRuntimeController as createController,
   type ScopeRuntimeLauncher,
 } from "../../packages/scope-runtime/src/supervisor.js";
 import type { ScopeRuntimeSandboxManifest } from "../../packages/scope-runtime/src/protocol.js";
+
+const controllers: Array<Awaited<ReturnType<typeof createController>>> = [];
+async function createScopeRuntimeController(options: Parameters<typeof createController>[0]) { const controller = await createController(options); controllers.push(controller); return controller; }
+afterEach(async () => { await Promise.all(controllers.splice(0).map(controller => controller.close())); });
 
 const REQUEST_ID = "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1";
 const SCOPE_HANDLE = "scope_11111111111111111111111111111111";
@@ -109,11 +113,11 @@ describe("scope runtime supervisor bot profile", () => {
   it("relays bot commands only to bot runtimes of the current generation", async () => {
     const native = launcher({
       list: vi.fn(async () => [
-        { runtimeHandle: RUNTIME_HANDLE, executionGeneration: "4", profileId: "scope-runtime-bot-v1" },
         { runtimeHandle: `runtime_${"3".repeat(32)}`, executionGeneration: "4" },
       ]),
     });
-    const controller = await createScopeRuntimeController({ launcher: native, executionGeneration: "4" });
+    const controller = await createScopeRuntimeController({ launcher: native, executionGeneration: "4", createRuntimeHandle: () => RUNTIME_HANDLE });
+    await expect(controller.handle(createBot)).resolves.toMatchObject({ ok: true });
 
     await expect(controller.handle(botCommand({ kind: "bot.cancel" }))).resolves.toEqual({
       version: 1, type: "runtime.bot.result", requestId: REQUEST_ID, ok: true,
@@ -140,14 +144,14 @@ describe("scope runtime supervisor bot profile", () => {
       { version: 1 as const, ok: false as const, error: "unavailable" as const },
     ];
     const native = launcher({
-      list: vi.fn(async () => [{ runtimeHandle: RUNTIME_HANDLE, executionGeneration: "4", profileId: "scope-runtime-bot-v1" }]),
       runBot: vi.fn(async () => {
         const reply = replies.shift();
         if (!reply) throw new Error("socket path /var/lib/secret");
         return reply;
       }),
     });
-    const controller = await createScopeRuntimeController({ launcher: native, executionGeneration: "4" });
+    const controller = await createScopeRuntimeController({ launcher: native, executionGeneration: "4", createRuntimeHandle: () => RUNTIME_HANDLE });
+    await expect(controller.handle(createBot)).resolves.toMatchObject({ ok: true });
     const run = () => controller.handle(botCommand({ kind: "bot.run" }));
     await expect(run()).resolves.toMatchObject({ ok: false, error: "busy" });
     await expect(run()).resolves.toMatchObject({ ok: false, error: "invalid_request" });
@@ -180,16 +184,17 @@ describe("scope runtime supervisor bot profile", () => {
     const stale = `runtime_${"5".repeat(32)}`;
     const fresh = `runtime_${"6".repeat(32)}`;
     let releaseSnapshot!: (running: ReadonlySet<string>) => void;
+    let created = 0;
     const native = launcher({
-      list: vi.fn(async () => [{ runtimeHandle: stale, executionGeneration: "4", profileId: "scope-runtime-bot-v1" }]),
       active: vi.fn(() => new Promise<ReadonlySet<string>>((resolve) => { releaseSnapshot = resolve; })),
     });
     const controller = await createScopeRuntimeController({
       launcher: native,
       executionGeneration: "4",
       maxRuntimes: 2,
-      createRuntimeHandle: () => fresh,
+      createRuntimeHandle: () => created++ === 0 ? stale : fresh,
     });
+    await expect(controller.handle(createBot)).resolves.toMatchObject({ ok: true, runtimeHandle: stale });
     // The slot is free, so this create does not prune; it starts while a relay failure prunes below.
     const failing = launcher({ runBot: vi.fn(async () => { throw new Error("worker gone"); }) }).runBot!;
     native.runBot = failing;

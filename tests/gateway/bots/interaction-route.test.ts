@@ -122,7 +122,7 @@ describe("answer continuations", () => {
 
   it("admits the answer once as the owner's message on the bot runtime", async () => {
     const admitTurn = vi.fn(async () => ({}) as never);
-    const admit = createBotContinuationAdmitter({ repository: { get: vi.fn(async () => record(4)) }, orchestrator: { admitTurn, enqueueQueuedTurn: vi.fn() } });
+    const admit = createBotContinuationAdmitter({ repository: { findQueuedAdmission: vi.fn(async () => null), get: vi.fn(async () => record(4)) }, orchestrator: { admitTurn, enqueueQueuedTurn: vi.fn() } });
     await admit(PRINCIPAL, CONTINUATION);
     expect(admitTurn).toHaveBeenCalledWith(PRINCIPAL, { type: "personal", ownerId: "user_owner_1" }, CHAT, {
       clientRequestId: CONTINUATION.clientRequestId, baseRevision: 4, parts: [{ type: "text", text: "Casual" }],
@@ -130,23 +130,34 @@ describe("answer continuations", () => {
     });
   });
 
+  it("admits the answer directly when the old turn ends during queue admission", async () => {
+    const busy = new CanonicalChatOrchestrationError(canonicalChatSafeError("chat_busy", "Busy"), 409);
+    const changed = new CanonicalChatOrchestrationError(canonicalChatSafeError("chat_conflict", "Finished"), 409);
+    const admitTurn = vi.fn().mockRejectedValueOnce(busy).mockResolvedValueOnce({});
+    const enqueueQueuedTurn = vi.fn().mockRejectedValueOnce(changed);
+    const get = vi.fn().mockResolvedValueOnce(record(1)).mockResolvedValueOnce(record(2));
+    await createBotContinuationAdmitter({ repository: { findQueuedAdmission: vi.fn(async () => null), get }, orchestrator: { admitTurn, enqueueQueuedTurn } })(PRINCIPAL, CONTINUATION);
+    expect(admitTurn).toHaveBeenCalledTimes(2);
+    expect(admitTurn.mock.calls[1][3]).toMatchObject({ baseRevision: 2, clientRequestId: CONTINUATION.clientRequestId });
+  });
+
   it("queues behind a busy chat and retries once after a concurrent change", async () => {
     const busy = new CanonicalChatOrchestrationError(canonicalChatSafeError("chat_busy", "Busy"), 409);
     const changed = new CanonicalChatOrchestrationError(canonicalChatSafeError("chat_conflict", "Changed"), 409);
     const enqueueQueuedTurn = vi.fn(async () => ({}) as never);
     await createBotContinuationAdmitter({
-      repository: { get: vi.fn(async () => record(1)) },
+      repository: { findQueuedAdmission: vi.fn(async () => null), get: vi.fn(async () => record(1)) },
       orchestrator: { admitTurn: vi.fn(async () => { throw busy; }), enqueueQueuedTurn },
     })(PRINCIPAL, CONTINUATION);
     expect(enqueueQueuedTurn).toHaveBeenCalledTimes(1);
 
     const admitTurn = vi.fn().mockRejectedValueOnce(changed).mockResolvedValueOnce({});
     const get = vi.fn().mockResolvedValueOnce(record(1)).mockResolvedValueOnce(record(2));
-    await createBotContinuationAdmitter({ repository: { get }, orchestrator: { admitTurn, enqueueQueuedTurn: vi.fn() } })(PRINCIPAL, CONTINUATION);
+    await createBotContinuationAdmitter({ repository: { findQueuedAdmission: vi.fn(async () => null), get }, orchestrator: { admitTurn, enqueueQueuedTurn: vi.fn() } })(PRINCIPAL, CONTINUATION);
     expect(admitTurn.mock.calls.map((call) => (call[3] as { baseRevision: number }).baseRevision)).toEqual([1, 2]);
 
     await expect(createBotContinuationAdmitter({
-      repository: { get: vi.fn(async () => null) }, orchestrator: { admitTurn: vi.fn(), enqueueQueuedTurn: vi.fn() },
+      repository: { findQueuedAdmission: vi.fn(async () => null), get: vi.fn(async () => null) }, orchestrator: { admitTurn: vi.fn(), enqueueQueuedTurn: vi.fn() },
     })(PRINCIPAL, CONTINUATION)).rejects.toEqual(new BotInteractionError("not_found"));
   });
 });

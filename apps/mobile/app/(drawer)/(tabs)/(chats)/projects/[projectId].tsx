@@ -73,6 +73,7 @@ export default function ProjectRoute() {
   const composer = useProjectComposer({
     projectId: project?.id ?? null,
     selection,
+    catalog,
     turnModes: defaultTurnModes(catalog, selection),
     attachmentKinds,
     // There is no model to send to until the provider catalog has loaded.
@@ -172,6 +173,7 @@ export default function ProjectRoute() {
             attachments: composer.attachments,
             room: composer.attachmentRoom,
             unreadable: composer.unreadableAttachments,
+            attachmentNotice: composer.attachmentNotice,
             onAdd: composer.addAttachments,
             onRemove: composer.removeAttachment,
             draft: composer.draft,
