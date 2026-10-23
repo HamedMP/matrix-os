@@ -24,8 +24,10 @@ describe.skipIf(!disposableRootLinux)("protected funded host root contracts (exp
   it("executes root lifecycle cases", () => execute("funded-host-component.test.py", "RootLifecycleTests"));
   it.each([
     "funded-host-generated-epoch.test.py",
+    "funded-host-generated-speech.test.py",
     "funded-host-restoration.test.py",
     "funded-host-artifact-repair.test.py",
+    "funded-host-speech-recovery.test.py",
     "funded-host-install-serialization.test.py",
   ])("executes %s without skipped cases", fixture => execute(fixture));
 });

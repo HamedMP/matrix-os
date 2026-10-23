@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { createSpeechGatewayRoutes } from "../../packages/gateway/src/speech/routes.js";
 import type { PlatformSpeechClient } from "../../packages/gateway/src/speech/platform-client.js";
-import { RequestPrincipalMisconfiguredError } from "../../packages/gateway/src/request-principal.js";
+import { markAuthContextReady, RequestPrincipalMisconfiguredError, requireRequestPrincipal,
+  setPlatformVerifiedPrincipal } from "../../packages/gateway/src/request-principal.js";
 
 const requestId = "sp_1788998400000_abcdefghijklmnop";
 const capabilities = {
@@ -48,7 +49,7 @@ function app(speech: PlatformSpeechClient, ownerId = "user_alice") {
   const root = new Hono();
   root.route("/api/speech", createSpeechGatewayRoutes({
     client: speech,
-    getOwnerId: () => ownerId,
+    getPrincipal: () => ({ userId: ownerId, source: "jwt" }),
   }));
   return root;
 }
@@ -69,6 +70,29 @@ describe("gateway speech routes", () => {
     const foreign = await app(client(), "user_bob").request("/api/speech/capabilities");
     expect(foreign.status).toBe(404);
     expect(JSON.stringify(await foreign.json())).not.toMatch(/alice|bob/i);
+  });
+
+  it("admits a server-verified Preview collaborator without relaxing ordinary owner checks", async () => {
+    const speech = client();
+    const root = new Hono();
+    root.use("*", async (c, next) => {
+      markAuthContextReady(c);
+      setPlatformVerifiedPrincipal(c, "user_bob");
+      return next();
+    });
+    root.route("/api/speech", createSpeechGatewayRoutes({
+      client: speech,
+      getPrincipal: (c) => requireRequestPrincipal(c),
+      previewRuntime: true,
+    }));
+    expect((await root.request("/api/speech/capabilities")).status).toBe(200);
+
+    const ordinary = new Hono();
+    ordinary.route("/api/speech", createSpeechGatewayRoutes({
+      client: speech,
+      getPrincipal: () => ({ userId: "user_bob", source: "platform-verified" }),
+    }));
+    expect((await ordinary.request("/api/speech/capabilities")).status).toBe(404);
   });
 
   it("derives dictation source and rejects caller-selected provider fields", async () => {
@@ -137,7 +161,7 @@ describe("gateway speech routes", () => {
     const root = new Hono();
     root.route("/api/speech", createSpeechGatewayRoutes({
       client: speech,
-      getOwnerId: (c) => c.req.header("x-test-owner") ?? "user_alice",
+      getPrincipal: (c) => ({ userId: c.req.header("x-test-owner") ?? "user_alice", source: "jwt" }),
     }));
     const first = root.request("/api/speech/transcriptions", { method: "POST", body: recordingForm(requestId) });
     const secondId = "sp_1788998400001_bcdefghijklmnopq";
@@ -178,7 +202,7 @@ describe("gateway speech routes", () => {
     const root = new Hono();
     root.route("/api/speech", createSpeechGatewayRoutes({
       client: speech,
-      getOwnerId: () => { throw new RequestPrincipalMisconfiguredError(); },
+      getPrincipal: () => { throw new RequestPrincipalMisconfiguredError(); },
     }));
     const response = await root.request("/api/speech/capabilities");
     expect(response.status).toBe(500);

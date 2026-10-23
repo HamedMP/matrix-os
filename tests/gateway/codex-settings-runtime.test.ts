@@ -270,3 +270,20 @@ it("commits immediate native completion after a signed-out metadata preflight in
   expect(connected.harnesses.find(row=>row.id===f.harness.id)).toMatchObject({configuredEnabled:true,enabled:true,accessSourceId:"owner_openai_profile",selectedAccountId:"owner_codex"});
   expect(f.terminal.createTab).not.toHaveBeenCalled();
 });
+
+it('automatically repairs saved native bookkeeping through real app-server identity reads without starting login', async () => {
+  const f = await fixture();
+  await writeFile(join(f.home, '.codex/auth.json'), JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: 'synthetic-existing-access', refresh_token: 'synthetic-existing-refresh' } }), { mode: 0o600 });
+  const before = JSON.parse(await readFile(f.store.configurationPath, 'utf8'));
+  Object.assign(before.harnesses.find((row: {id: string}) => row.id === f.harness.id), { enabled: true, accessSourceId: 'owner_openai_profile', selectedAccountId: 'owner_codex' });
+  await writeFile(f.store.configurationPath, JSON.stringify(before));
+  const authBefore = await readFile(join(f.home, '.codex/auth.json'), 'utf8');
+  const recovered = await f.store.getSnapshot({ includeNativeAccountMetadata: true, recoverNativeConnection: true });
+  expect(recovered.harnesses.find(row => row.id === f.harness.id)).toMatchObject({ enabled: true, authState: 'authenticated' });
+  expect(recovered.revision).toBe(before.revision + 1);
+  expect(await readFile(join(f.home, '.codex/auth.json'), 'utf8')).toBe(authBefore);
+  const requests = await readFile(join(f.home, 'requests'), 'utf8');
+  expect(requests).toContain('account/read'); expect(requests).toContain('config/read');
+  expect(requests).not.toContain('account/login/start');
+  expect(f.terminal.createTab).not.toHaveBeenCalled();
+});

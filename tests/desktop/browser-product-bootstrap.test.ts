@@ -10,14 +10,14 @@ const origin = "https://app.matrix-os.com";
 const path = "/apps/browser-lab/";
 const renewal = { url: "/api/apps/browser-lab/session", init: { method: "POST" as const, body: "{}" } };
 const capability = "pr-2526." + "a".repeat(43);
-function sessionCookie() {
-  const now = Math.floor(Date.now() / 1000);
+function sessionCookie(clockSkewMs = 0) {
+  const now = Math.floor((Date.now() + clockSkewMs) / 1000);
   return buildSetCookie("browser-lab", signAppSession(Buffer.alloc(32, 7), {
     v: 1, slug: "browser-lab", principal: "gateway-owner", scope: "personal", iat: now, exp: now + 600,
   }), { maxAge: 600, secure: false });
 }
-function headers(route = buildAppRouteCookie("pr-2526", path)!) {
-  const h = new Headers({ location: path }); h.append("set-cookie", sessionCookie());
+function headers(route = buildAppRouteCookie("pr-2526", path)!, clockSkewMs = 0) {
+  const h = new Headers({ location: path }); h.append("set-cookie", sessionCookie(clockSkewMs));
   if (route) h.append("set-cookie", route);
   return h;
 }
@@ -40,6 +40,55 @@ function fakeJar() {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("Browser canonical launch renewal", () => {
+  it.each([
+    [-5_000, 0], [0, 0], [350, 0], [1_000, 500], [5_000, 0], [1_000, 1_500],
+  ])("renews a real 60-second capability with Host skew %i ms and response delay %i ms", async (clockSkewMs, responseDelayMs) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-22T00:00:00.000Z"));
+    const { jar, values } = fakeJar();
+    const tokens = new MobileAppSessionTokenStore({ ttlMs: 60_000, maxEntries: 1 });
+    const fetchFn = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).endsWith("/session-token")) {
+        const minted = tokens.mint("browser-lab", Date.now() + clockSkewMs, { routingKey: "pr-2526" });
+        vi.setSystemTime(Date.now() + responseDelayMs);
+        return Response.json({ ...minted, launchUrl: path + "?session=" + minted.token });
+      }
+      const u = new URL(String(url));
+      expect(tokens.consume("browser-lab", u.searchParams.get("session")!, Date.now() + clockSkewMs)).toBe(true);
+      return new Response(null, { status: 302, headers: headers(undefined, clockSkewMs) });
+    });
+    const requester = createNativeAppGatewayRequester({ getGatewayOrigin: () => origin, getToken: () => "synthetic",
+      fetchFn, installBrowserSessionCookie: (h, o, current) => installBrowserProductSessionCookie(h, o, current, jar) });
+    await expect(requester("matrix-browser", renewal, "browser-lab")).resolves.toHaveProperty("expiresAt");
+    expect(tokens.size()).toBe(0);
+    expect(values.get("matrix_app_session__browser-lab")?.expirationDate).toBeGreaterThan(Date.now() / 1000);
+    expect(values.get("matrix_app_session__browser-lab")!.expirationDate * 1000).toBeLessThanOrEqual(Date.now() + 600_000);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a session timestamp beyond the bounded Host clock skew before writing cookies", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-22T00:00:00.000Z"));
+    const { jar } = fakeJar();
+    const fetchFn = vi.fn().mockResolvedValueOnce(launch())
+      .mockResolvedValueOnce(new Response(null, { status: 302, headers: headers(undefined, 6_000) }));
+    const requester = createNativeAppGatewayRequester({ getGatewayOrigin: () => origin, getToken: () => "synthetic",
+      fetchFn, installBrowserSessionCookie: (h, o, current) => installBrowserProductSessionCookie(h, o, current, jar) });
+    await expect(requester("matrix-browser", renewal, "browser-lab")).rejects.toThrow("Browser session unavailable");
+    expect(fetchFn).toHaveBeenCalledTimes(2); expect(jar.set).not.toHaveBeenCalled();
+  });
+
+  it.each([-1, 0, 65_001])("rejects an expired or excessively future launch expiry at offset %i ms", async expiresInMs => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const { jar } = fakeJar();
+    const fetchFn = vi.fn(async () => Response.json({ expiresAt: Date.now() + expiresInMs,
+      launchUrl: path + "?session=" + capability }));
+    const requester = createNativeAppGatewayRequester({ getGatewayOrigin: () => origin, getToken: () => "synthetic",
+      fetchFn, installBrowserSessionCookie: (h, o, current) => installBrowserProductSessionCookie(h, o, current, jar) });
+    await expect(requester("matrix-browser", renewal, "browser-lab")).rejects.toThrow("Browser session unavailable");
+    expect(fetchFn).toHaveBeenCalledOnce(); expect(jar.set).not.toHaveBeenCalled();
+  });
+
   it.each(["matrix-browser", "matrix-cloud-desktop"])("restores an expired preview route for %s without loading a document or changing runtime cookies", async identity => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const { jar, values } = fakeJar();

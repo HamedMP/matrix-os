@@ -123,6 +123,13 @@ export class BotRuntimeRegistry {
     return this.entries.size;
   }
 
+  /** Recovery cannot change execution identity while any live workload still owns this Chat. */
+  hasChatRuntime(ownerId: string, chatId: string): boolean {
+    this.sweep();
+    for (const entry of this.entries.values()) if (entry.ownerId === ownerId && entry.chatId === chatId) return true;
+    return false;
+  }
+
   /** Expired bindings are swept before the capacity check, so stale runs never block admission. */
   bind(input: PiRuntimeBinding): void {
     const parsed = (isManagedPiBinding(input) ? ManagedBindingSchema : BindingSchema).safeParse(input);

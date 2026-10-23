@@ -108,7 +108,10 @@ sudo() {
 reconcile_postgres_root_service
 `;
   try {
-    const result = spawnSync('bash', ['-c', `${syncAgentHarnessSource()}\n${invocation}`], {
+    // Inlined updater libraries exceed Linux's 128 KiB single-argument cap.
+    // Stream the exact script to bash rather than passing it through argv.
+    const result = spawnSync('bash', ['-s'], {
+      input: `${syncAgentHarnessSource()}\n${invocation}`,
       encoding: 'utf8',
       env: { ...process.env, TEST_ROOT: testRoot },
     });
@@ -171,7 +174,7 @@ describe('customer VPS PostgreSQL privilege boundary', () => {
 
   it('starts PostgreSQL through the root service when the bundle ships the helper', () => {
     const { result, calls } = runCloudInitPostgresBlock({ helper: true, unit: true });
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     expect(calls).toMatch(/install -o root -g root -m 0755 \S+\/opt\/matrix\/bin\/matrix-postgres-start \S+\/libexec\/matrix-postgres-start/);
     expect(calls).toContain('systemctl start matrix-postgres.service');
     expect(calls).not.toContain('docker ');
@@ -179,7 +182,7 @@ describe('customer VPS PostgreSQL privilege boundary', () => {
 
   it('keeps first boot working for bundles without the PostgreSQL helper', () => {
     const { result, calls } = runCloudInitPostgresBlock({ helper: false, unit: false });
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     expect(calls).not.toContain('matrix-postgres-start');
     expect(calls).not.toContain('systemctl start matrix-postgres.service');
     expect(calls).toContain('docker volume create matrix-postgres');
@@ -188,28 +191,28 @@ describe('customer VPS PostgreSQL privilege boundary', () => {
 
   it('leaves a running legacy PostgreSQL container alone when bootstrap is retried', () => {
     const { result, calls } = runCloudInitPostgresBlock({ helper: false, unit: false, running: 'matrix-postgres\n', existing: 'matrix-postgres\n' });
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     expect(calls).not.toContain('docker start');
     expect(calls).not.toContain('docker run');
   });
 
   it('starts a stopped legacy PostgreSQL container instead of recreating it', () => {
     const { result, calls } = runCloudInitPostgresBlock({ helper: false, unit: false, existing: 'matrix-postgres\n' });
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     expect(calls).toContain('docker start matrix-postgres');
     expect(calls).not.toContain('docker run');
   });
 
   it('falls back to inline startup when the helper ships without its unit', () => {
     const { result, calls } = runCloudInitPostgresBlock({ helper: true, unit: false });
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     expect(calls).not.toContain('systemctl start matrix-postgres.service');
     expect(calls).toContain('docker run -d');
   });
 
   it('installs the protected helper and starts PostgreSQL after a legacy updater installed the unit', () => {
     const { result, calls, helper, helperMode } = runPostgresRootServiceReconcile({ unit: true, bundleHelper: true });
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     expect(helper).toBe('#!/bin/sh\nexit 0\n');
     expect(helperMode).toBe(0o755);
     expect(calls).toContain('sudo systemctl start --no-block matrix-postgres.service');
@@ -217,14 +220,14 @@ describe('customer VPS PostgreSQL privilege boundary', () => {
 
   it('leaves an installed protected helper to the update transaction', () => {
     const { result, calls, helper } = runPostgresRootServiceReconcile({ unit: true, bundleHelper: true, protectedHelper: 'file' });
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     expect(helper).toBe('#!/bin/sh\nexit 7\n');
     expect(calls).toBe('');
   });
 
   it('does nothing on releases without the root PostgreSQL unit', () => {
     const { result, calls } = runPostgresRootServiceReconcile({ unit: false, bundleHelper: true });
-    expect(result.status, result.stderr).toBe(0);
+    expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     expect(calls).toBe('');
   });
 

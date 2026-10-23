@@ -19,6 +19,20 @@ const binding = (overrides: Partial<BotRuntimeBinding> = {}): BotRuntimeBinding 
 });
 
 describe("bot runtime registry", () => {
+  it("blocks recovery only for the same owner and Chat until release or expiry", () => {
+    let now = 0;
+    const registry = new BotRuntimeRegistry({ now: () => now, ttlMs: 1000 });
+    const value = binding(); registry.bind(value);
+    expect(registry.hasChatRuntime(value.ownerId, value.chatId)).toBe(true);
+    expect(registry.hasChatRuntime("other-owner", value.chatId)).toBe(false);
+    expect(registry.hasChatRuntime(value.ownerId, "chat_other")).toBe(false);
+    registry.cancelInference(value);
+    expect(registry.hasChatRuntime(value.ownerId, value.chatId)).toBe(true);
+    registry.release(value.runtimeHandle);
+    expect(registry.hasChatRuntime(value.ownerId, value.chatId)).toBe(false);
+    registry.bind(value); now = 1001;
+    expect(registry.hasChatRuntime(value.ownerId, value.chatId)).toBe(false);
+  });
   it("cancels inference only for an exact owner/chat/run/generation and keeps graceful broker authority", () => {
     const registry = new BotRuntimeRegistry();
     const first = binding(); const sibling = binding({ runtimeHandle: handle(2), ownerId: "other_owner", runId: "run_two" });

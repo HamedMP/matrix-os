@@ -11,6 +11,7 @@ import { createFundedHostActivationRoutes, readFundedHostActivation } from '../.
 
 const machineId = '12345678-1234-4234-8234-123456789abc';
 const secret = 'strong-platform-secret-for-test-only';
+const previewSecret = 'separate-preview-secret-for-test';
 const at = '2026-10-18T18:00:00.000Z';
 const relayOrigin = 'https://matrix-ai-relay-production-jqxkjdhtkq-ey.a.run.app';
 const identity = { handle: 'alice', machineId, runtimeSlot: 'primary' };
@@ -33,6 +34,54 @@ describe('permanent funded host activation policy', () => {
     expect(result.configuration).toMatchObject({ identity: { ...identity, ownerId: 'user_alice', runtimeTokenEpoch: 2 }, configuration: { enabled: true, platformOrigin: 'https://app.matrix-os.com', relayOrigin, runtimeToken: token() }, issuedAt: at, expiresAt: '2026-10-18T18:00:30.000Z' });
     expect(await db.executor.selectFrom('user_machines').selectAll().execute()).toEqual(before);
     for (const table of ['ai_funded_credit_ledger', 'ai_runtime_credentials', 'ai_funded_usage_reservations', 'ai_funded_runtime_balances'] as const) expect(await db.executor.selectFrom(table).selectAll().execute()).toEqual([]);
+  });
+  it.each([
+    { provisioningClass: 'preview' as const, previewSlot: 'pr-2383' },
+    { provisioningClass: 'private-preview' as const, previewSlot: 'pv-2383-deadbeef' },
+  ])('delivers an exact live $provisioningClass allocation only with the separate Preview proof secret', async ({ provisioningClass, previewSlot }) => {
+    const previewIdentity = { handle: previewSlot, machineId, runtimeSlot: previewSlot };
+    await db.executor.updateTable('user_machines').set({
+      handle: previewSlot,
+      runtime_slot: previewSlot,
+      provisioning_class: provisioningClass,
+      ...(provisioningClass === 'private-preview'
+        ? { source_pr: 2383, confirmed_bundle_version: 'v2026.10.18-pr2383-test' }
+        : {}),
+    }).where('machine_id', '=', machineId).execute();
+    await db.executor.updateTable('ai_funded_runtime_policies').set({
+      runtime_slot: previewSlot,
+      expires_at: '2026-10-18T19:00:00.000Z',
+    }).where('machine_id', '=', machineId).execute();
+    await db.executor.insertInto('preview_runtime_allocations').values({
+      machine_id: machineId,
+      owner_id: 'user_alice',
+      runtime_slot: previewSlot,
+      runtime_token_epoch: 2,
+      ai_budget_microusd: 100,
+      ai_request_limit: 2,
+      ai_requests_used: 0,
+      speech_request_limit: 2,
+      speech_requests_used: 0,
+      max_concurrency: 1,
+      expires_at: '2026-10-18T19:00:00.000Z',
+      created_at: at,
+      updated_at: at,
+    }).execute();
+    const previewToken = buildPlatformRuntimeVerificationToken(previewIdentity, previewSecret, 2);
+    const readPreview = (authorization: string, configuredSecret: string | null = previewSecret) =>
+      readFundedHostActivation({ db, platformSecret: secret,
+        ...(configuredSecret !== null ? { previewRuntimeSecret: configuredSecret } : {}),
+        relayOrigin, handle: previewSlot, runtimeSlot: previewSlot, authorization,
+        now: () => new Date(at) });
+
+    const result = await readPreview(`Bearer ${previewToken}`);
+    expect(result).toMatchObject({ status: 'ready', configuration: {
+      identity: { ownerId: 'user_alice', machineId, runtimeSlot: previewSlot, runtimeTokenEpoch: 2 },
+      configuration: { runtimeToken: previewToken },
+    } });
+    expect((await readPreview(`Bearer ${buildPlatformRuntimeVerificationToken(previewIdentity, secret, 2)}`)).status)
+      .toBe('unauthorized');
+    expect((await readPreview(`Bearer ${previewToken}`, null)).status).toBe('unauthorized');
   });
   it.each([() => token(1), () => buildPlatformVerificationToken('alice', secret), () => 'f'.repeat(64)])('rejects stale or differently scoped credentials', async bearer => {
     expect((await read(`Bearer ${bearer()}`)).status).toBe('unauthorized');
@@ -92,7 +141,7 @@ describe('permanent funded host activation policy', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toContain('no-store');
     expect((await response.json()).identity.machineId).toBe(machineId);
-    expect((await app.request(path + '?runtimeSlot=pr-1', { headers })).status).toBe(400);
+    expect((await app.request(path + '?runtimeSlot=pr-1', { headers })).status).toBe(401);
     expect((await app.request(path + '?runtimeSlot=primary&origin=https://evil.example', { headers })).status).toBe(400);
     expect((await app.request(path)).status).toBe(401);
   });

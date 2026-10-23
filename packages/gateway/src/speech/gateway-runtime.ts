@@ -1,6 +1,7 @@
 import type { Context, Hono } from "hono";
 import type { OwnerAudioTranscriber } from "@matrix-os/kernel";
 import type { SttProvider } from "../voice/stt/base.js";
+import type { RequestPrincipal } from "../request-principal.js";
 import {
   createFfmpegPcmWavConverter,
   createManagedChannelSttProvider,
@@ -14,7 +15,7 @@ import { createSpeechGatewayRoutes } from "./routes.js";
 
 interface GatewaySpeechRuntimeOptions {
   env: NodeJS.ProcessEnv;
-  getOwnerId(c: Context): string;
+  getPrincipal(c: Context): RequestPrincipal;
 }
 
 export interface GatewaySpeechRuntime {
@@ -37,7 +38,8 @@ export function createGatewaySpeechRuntime(
     : undefined;
 
   return {
-    routes: createSpeechGatewayRoutes({ client, getOwnerId: options.getOwnerId }),
+    routes: createSpeechGatewayRoutes({ client, getPrincipal: options.getPrincipal,
+      previewRuntime: options.env.MATRIX_PREVIEW_RUNTIME === "true" }),
     ownerAudioTranscriber: client && converter
       ? createManagedOwnerAudioTranscriber({ client, converter })
       : undefined,

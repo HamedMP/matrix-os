@@ -47,7 +47,7 @@ import { createJevGmailAccountLookup } from "./chat/jev-recipe-authority.js";
 import { createAgentSandbox } from "./agent-sandbox.js";
 import { createAgentSessionManager } from "./agent-session-manager.js";
 import { createAiGenerationRecorder } from "./ai-analytics.js";
-import { createAllowedOriginController } from "./allowed-origins.js";
+import { createGatewayAllowedOriginController } from "./server/browser-setup-origin.js";
 import type { AppRegistry } from "./app-db-registry.js";
 import type { AppDb } from "./app-db.js";
 import { listApps } from "./apps.js";
@@ -318,16 +318,13 @@ export async function createGateway(config: GatewayConfig) {
     : undefined;
   const speechRuntime = createGatewaySpeechRuntime({
     env: process.env,
-    getOwnerId: (c) => requireRequestPrincipal(c).userId,
+    getPrincipal: (c) => requireRequestPrincipal(c),
   });
   const runningVersion = getVersion(
     config.runningVersion ? { version: config.runningVersion } : undefined,
   );
   let syncReportSent = false;
-  const allowedOriginController = createAllowedOriginController({
-    shellOrigin: process.env.SHELL_ORIGIN,
-    proxyOrigin: process.env.PROXY_ORIGIN,
-  });
+  const allowedOriginController = createGatewayAllowedOriginController(process.env);
 
   const app = new Hono();
   const matrixMcpCapabilities = createMatrixMcpCapabilityRegistry({
@@ -1559,6 +1556,7 @@ export async function createGateway(config: GatewayConfig) {
   const {
     catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
   } = createGatewayChatProviderCatalog({
+    canRecoverNativeConnection: principal => codingAgentOwnerIds.includes(principal.userId),
     observationScope: canonicalPhaseDiscovery.observationScope,
     homePath,
     codexExecutable,

@@ -34,7 +34,7 @@ function app(env: NodeJS.ProcessEnv, ownerId = "user_alice") {
   const root = new Hono();
   root.route("/api/speech", createGatewaySpeechRuntimeRoutes({
     env,
-    getOwnerId: () => ownerId,
+    getPrincipal: () => ({ userId: ownerId, source: "jwt" }),
   }));
   return root;
 }
