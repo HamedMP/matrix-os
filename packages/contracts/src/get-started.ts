@@ -115,8 +115,11 @@ export type GetStartedChoiceGroup =
 
 const STARTER_GROUP = { kind: "starter", goal: "explore", title: "Sounds fun", options: GET_STARTED_STARTERS } as const;
 
-/** Coding agents are signed into in Settings, not connected as integrations, so step 3 asks for them. */
-const CODING_AGENT_IDS: ReadonlySet<GetStartedToolId> = new Set(["claude-code", "codex", "opencode"]);
+/**
+ * Coding agents are signed into in Settings, not connected as integrations, so step 3 asks for them.
+ * OpenCode has no sign-in there yet, so it is not offered (saved answers that include it still load).
+ */
+const CODING_AGENT_IDS: ReadonlySet<GetStartedToolId> = new Set(["claude-code", "codex"]);
 const CODING_AGENT_GROUP = {
   kind: "tools",
   goal: "code",
@@ -141,7 +144,7 @@ export function getStartedToolGroupsForGoals(goals: readonly GetStartedGoalId[])
 export type GetStartedAgentKind = "claude" | "codex";
 const TOOL_AGENTS: Partial<Record<GetStartedToolId, GetStartedAgentKind>> = { "claude-code": "claude", codex: "codex" };
 
-/** The picked coding agents that sign in on step 3, in pick order; OpenCode has no sign-in there. */
+/** The picked coding agents that sign in on step 3, in pick order. */
 export function getStartedAgentsForTools(tools: readonly GetStartedToolId[]): GetStartedAgentKind[] {
   return tools.flatMap((tool) => {
     const agent = TOOL_AGENTS[tool];

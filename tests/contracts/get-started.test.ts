@@ -39,7 +39,7 @@ describe("get started catalog", () => {
     expect(groups.map((group) => group.kind)).toEqual(["tools"]);
     const coding = groups.find((group) => group.kind === "tools");
     expect(coding).toMatchObject({ goal: "code", title: "Your coding agent" });
-    expect(coding?.kind === "tools" ? coding.tools.map((tool) => tool.id) : []).toEqual(["claude-code", "codex", "opencode"]);
+    expect(coding?.kind === "tools" ? coding.tools.map((tool) => tool.id) : []).toEqual(["claude-code", "codex"]);
     expect(getStartedToolGroupsForGoals(["business"])).toEqual([]);
     // The first app idea is picked on the App Gallery step, not here.
     expect(getStartedToolGroupsForGoals(["build"])).toEqual([]);

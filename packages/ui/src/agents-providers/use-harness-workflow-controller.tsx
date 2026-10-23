@@ -43,6 +43,8 @@ export type HarnessWorkflowPanelProps = {
   renderAccountActions?: (disabled: boolean) => ReactNode;
   advancedConfiguration?: ReactNode;
   connectRequest?: number;
+  /** False where Terminal cannot be shown (Get started): installs say they run in the background. */
+  terminalAvailable?: boolean;
 };
 
 export function useHarnessWorkflowController({

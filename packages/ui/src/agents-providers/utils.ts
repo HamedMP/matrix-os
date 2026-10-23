@@ -1,5 +1,6 @@
 import type {
   ProviderAccessSource,
+  ProviderAccount,
   ProviderAuthenticationState,
   ProviderDependencyCounts,
   ProviderGatewayPolicy,
@@ -44,6 +45,15 @@ const PROVIDER_NAMES: Record<string, string> = { anthropic: "Anthropic", openai:
 /** A provider's proper name for owner-facing copy; null for one we do not name. */
 export function providerName(providerId: string | null | undefined): string | null {
   return providerId ? PROVIDER_NAMES[providerId] ?? null : null;
+}
+
+/** How a connected agent is connected: an API key (billed per request) or the agent's own account. */
+export function connectedAccountLabel(harness: string, account?: Pick<ProviderAccount, "authMethod" | "providerId">, source?: Pick<ProviderAccessSource, "fundingKind" | "providerId">): { apiKey: boolean; label: string } {
+  const apiKey = account?.authMethod === "api_key" || source?.fundingKind === "owner_api_key";
+  const label = apiKey ? "API key"
+    : harness === "codex" ? "ChatGPT account"
+    : harness === "claude" ? "Claude account" : "Provider account";
+  return { apiKey, label };
 }
 
 export function titleCase(value: string): string {

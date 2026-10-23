@@ -137,6 +137,7 @@ export function GetStartedConnectTools({ goals, connect }: { goals: readonly Get
         failedIds={failedIds}
         leadingSection={leadingSection}
         lockWhileConnecting={false}
+        addAccounts={false}
         onConnect={connect.connect}
       />
     </section>

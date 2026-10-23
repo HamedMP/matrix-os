@@ -190,9 +190,8 @@ describe("GetStartedGate", () => {
     expect(screen.getByText("Sign in to codex")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Claude Code" }));
     expect(screen.queryByText("Sign in to claude")).not.toBeInTheDocument();
-    // OpenCode has no sign-in here.
-    fireEvent.click(screen.getByRole("button", { name: "OpenCode" }));
-    expect(screen.getAllByText(/^Sign in to/)).toHaveLength(1);
+    // OpenCode has no sign-in yet, so step 3 does not offer it.
+    expect(screen.queryByRole("button", { name: "OpenCode" })).not.toBeInTheDocument();
   });
 
   it("skips the whole setup from the first question", async () => {

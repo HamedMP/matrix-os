@@ -1,10 +1,10 @@
-import type { GetStartedAgentKind, ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import type { GetStartedAgentKind, ProviderAccessSource, ProviderAccount, ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { useEffect, useState, type ComponentType } from "react";
-import { ConnectedAccountCard } from "../agents-providers/ConnectedAccountCard.js";
 import { HarnessWorkflowPanel } from "../agents-providers/HarnessWorkflowPanel.js";
-import { resolveHarnessConnection } from "../agents-providers/harness-connection.js";
+import { hasConfiguredConnection, resolveHarnessConnection } from "../agents-providers/harness-connection.js";
 import { managedConnectionCapability } from "../agents-providers/managed-connection-capability.js";
 import type { ProviderWorkflowClient, ProviderWorkflowUICapability } from "../agents-providers/types.js";
+import { connectedAccountLabel, providerName } from "../agents-providers/utils.js";
 
 /** What a surface's Settings > Agents & providers already has: the V3 snapshot and the workflow client. */
 export interface GetStartedAgentLoginPort {
@@ -20,6 +20,20 @@ export type GetStartedAgentLoginHost = ComponentType<{ agent: GetStartedAgentKin
 
 const AGENT_NAMES: Record<GetStartedAgentKind, string> = { claude: "Claude Code", codex: "Codex" };
 
+/** The wizard cannot show Terminal, so only browser, device-code and API-key sign-ins are offered. */
+function withoutTerminal(capability: ProviderWorkflowUICapability): ProviderWorkflowUICapability {
+  return {
+    ...capability,
+    loginMethods: capability.loginMethods.filter((method) => method !== "terminal"),
+    ...(capability.connectionOptions ? { connectionOptions: capability.connectionOptions.filter((option) => option.method !== "terminal") } : {}),
+  };
+}
+
+function canSignInHere(capability: ProviderWorkflowUICapability): boolean {
+  return capability.loginMethods.length > 0 || capability.apiKeyProviders.length > 0
+    || Boolean(capability.connectionOptions?.some((option) => option.availability === "available"));
+}
+
 /** The agent's workflow capability, null while loading, or "unavailable" when this computer has none. */
 function useAgentCapability(client: ProviderWorkflowClient, agent: GetStartedAgentKind, refreshedAt: string | undefined) {
   const [capability, setCapability] = useState<ProviderWorkflowUICapability | "unavailable" | null>(null);
@@ -28,7 +42,7 @@ function useAgentCapability(client: ProviderWorkflowClient, agent: GetStartedAge
     client.capabilities(controller.signal).then((all) => {
       if (controller.signal.aborted) return;
       const found = all.find((item) => item.harness === agent);
-      setCapability(found ? managedConnectionCapability(found) : "unavailable");
+      setCapability(found ? withoutTerminal(managedConnectionCapability(found)) : "unavailable");
     }, (error: unknown) => {
       if (controller.signal.aborted) return;
       console.warn("[get-started] Agent sign-in unavailable:", error instanceof Error ? error.name : typeof error);
@@ -39,23 +53,41 @@ function useAgentCapability(client: ProviderWorkflowClient, agent: GetStartedAge
   return capability;
 }
 
+/** A green "Connected" and how: the agent's own account (with who) or an API key (with whose). */
+function AgentConnected({ agent, account, source }: { agent: GetStartedAgentKind; account?: ProviderAccount; source?: ProviderAccessSource }) {
+  const { apiKey, label } = connectedAccountLabel(agent, account, source);
+  const who = account?.connectionDetails?.email ?? account?.displayName;
+  const detail = apiKey
+    ? `${providerName(account?.providerId ?? source?.providerId) ?? "Provider"} API key`
+    : who ? `${label} · ${who}` : label;
+  return (
+    <div className="mxo-gs__agent-connected">
+      <span className="mxo-connected"><span className="mxo-dot mxo-dot--on" aria-hidden />Connected</span>
+      <span className="mxo-muted">{detail}</span>
+    </div>
+  );
+}
+
+const ignoreTerminal = () => undefined;
+
 /**
- * Spec 635, step 3: the Settings > Agents & providers sign-in for the coding agent the owner
- * picked, in place. It is the same panel and the same V3 provider state as Settings.
+ * Spec 635, step 3: the Settings > Agents & providers install and sign-in for the coding agent
+ * the owner picked, in place, from the same V3 provider state as Settings. The wizard cannot show
+ * Terminal: installs run in the background with progress here, and Terminal sign-ins are not offered.
  */
 export function GetStartedAgentLogin({ agent, port }: { agent: GetStartedAgentKind; port: GetStartedAgentLoginPort }) {
   const capability = useAgentCapability(port.workflowClient, agent, port.snapshot?.refreshedAt);
   const [operationId, setOperationId] = useState<string | null>(null);
-  // A Terminal window would open behind the wizard; the sign-in keeps running and Settings resumes it.
-  const [terminalPending, setTerminalPending] = useState(false);
   const name = capability && capability !== "unavailable" ? capability.displayName : AGENT_NAMES[agent];
-  if (port.failed || capability === "unavailable") {
-    return <p className="mxo-muted">You can log in to {name} later in Settings &gt; Agents &amp; providers.</p>;
-  }
+  const later = <p className="mxo-muted">You can log in to {name} later in Settings &gt; Agents &amp; providers.</p>;
+  if (port.failed || capability === "unavailable") return later;
   if (!port.snapshot || !capability) return <p className="mxo-muted" role="status">Checking {name}…</p>;
   const { snapshot } = port;
   const harness = snapshot.harnesses.find((item) => item.id === capability.harnessInstanceId);
   const { account, source } = harness ? resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources) : { account: undefined, source: undefined };
+  const connected = Boolean(harness && hasConfiguredConnection(harness, source));
+  if (connected) return <AgentConnected agent={agent} account={account} source={source} />;
+  if (capability.installState === "installed" && !canSignInHere(capability)) return later;
   return (
     <div className="matrix-agents-providers mxo-gs__agent-login">
       <HarnessWorkflowPanel
@@ -65,15 +97,12 @@ export function GetStartedAgentLogin({ agent, port }: { agent: GetStartedAgentKi
         client={port.workflowClient}
         disabled={false}
         onRefresh={port.refresh}
-        onOpenTerminal={() => setTerminalPending(true)}
+        onOpenTerminal={ignoreTerminal}
         onOpenAuthorizationUrl={port.openAuthorizationUrl}
         operationId={operationId ?? capability.activeOperationId ?? null}
         onOperationId={setOperationId}
-        renderConnection={(action) => (harness
-          ? <ConnectedAccountCard harness={harness} account={account} source={source} action={action} disabled={false} onRefresh={port.refresh} />
-          : null)}
+        terminalAvailable={false}
       />
-      {terminalPending ? <p className="mxo-muted" role="status">This sign-in continues in Terminal. After setup, finish it in Settings &gt; Agents &amp; providers.</p> : null}
     </div>
   );
 }

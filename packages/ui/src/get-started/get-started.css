@@ -311,3 +311,13 @@
   .mxo-gs__card,
   .mxo-gs__bot { animation: none; }
 }
+
+/* Step 3: a signed-in coding agent. */
+.mxo-gs__agent-connected {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mxo-dot--on { background: var(--mxo-green); }

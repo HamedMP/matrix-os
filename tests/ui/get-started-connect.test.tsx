@@ -111,7 +111,8 @@ describe("Connect the tools you use", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Connect Linear" }));
     expect(connect).toHaveBeenCalledWith("linear");
     update({ connectedServices: new Set(["linear"]) });
-    expect(within(screen.getByTestId("integration-card-linear")).getByText("✓ Connected")).toBeInTheDocument();
+    expect(within(screen.getByTestId("integration-card-linear")).getByText("Connected")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add another Linear account" })).not.toBeInTheDocument();
     for (const button of ["Next", "Next", "Next", "Finish"]) fireEvent.click(await screen.findByRole("button", { name: button }));
     fireEvent.click(await screen.findByRole("button", { name: "Enter your computer" }));
     await waitFor(() => expect(gatePort.saves.at(-1)).toMatchObject({ type: "complete", answers: { tools: ["linear"] } }));
