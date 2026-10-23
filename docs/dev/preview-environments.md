@@ -278,6 +278,37 @@ release scripts from `main`. `preview-vps` builds carry it once the PR branch
 includes the provenance flags, so rebase an older branch or add
 `preview-bundle`.
 
+### Browser automation previews
+
+The Browser stack additionally needs Chrome and its remote-viewer services on
+the preview host. Updating the PR bundle alone does not install them. Bundles
+with the [Browser setup fix](../../specs/627-browser-vps-comparison/private-preview-setup.md)
+include an explicit operator command, run **on the selected preview computer**:
+
+```bash
+# Private Preview: all three values must match its host metadata.
+sudo /opt/matrix/bin/matrix-install-browser-preview <exact-pv-handle> <machine-uuid> <owner-user-id>
+# Legacy shared PR preview:
+sudo /opt/matrix/bin/matrix-install-browser-preview <exact-pr-handle>
+```
+
+Private `pv-*` previews require the exact handle, machine UUID and Clerk owner
+ID; legacy `pr-*` previews retain the single-handle form. Missing, mismatched or
+duplicate identity metadata is rejected before locks, temporary files or service
+changes. The command installs the bundled viewer/runtime, and enables Browser on that computer.
+Rerunning it on an existing installation updates the viewer without replacing
+the signed-in Chrome profile or restarting Chrome/VNC. An authorized operator
+must run this command; the preview owner's normal terminal has no new sudo grant.
+No source checkout is needed. Older bundles without this helper must first be
+updated to the cumulative Browser setup PR.
+
+Reopen **Browser** from the launcher, then check navigation, a fresh agent
+snapshot and Pause → Take over → Resume. Connect only your own agent accounts.
+Supervised permission cards require separate signed-authority activation;
+this setup does not change that gate or Matrix AI readiness. See the
+[current review guide](https://github.com/HamedMP/matrix-os/pull/2583#issuecomment-6232562723)
+for live evidence and validation limits.
+
 ## One Chat against a production-data tagged Platform candidate
 
 When a Preview VPS needs a browser-authenticated Platform change before that

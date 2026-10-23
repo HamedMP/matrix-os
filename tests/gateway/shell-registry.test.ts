@@ -2,10 +2,28 @@ import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { inferAgentFromCommand, ShellRegistry } from "../../packages/gateway/src/shell/registry.js";
+import { inferAgentFromCommand, ShellRegistry as RuntimeShellRegistry } from "../../packages/gateway/src/shell/registry.js";
 import { AgentSessionStateStore } from "../../packages/gateway/src/shell/agent-session-state.js";
 
 const roots: string[] = [];
+const registryInitializations: Promise<string>[] = [];
+
+// Test roots must outlive the registry's eager filesystem initialization.
+class ShellRegistry extends RuntimeShellRegistry {
+  constructor(options: ConstructorParameters<typeof RuntimeShellRegistry>[0]) {
+    super(options);
+    const initialization: unknown = Reflect.get(this, "resolvedHomePath");
+    if (!(initialization instanceof Promise)) {
+      throw new Error("Registry filesystem initialization is unavailable to the test fixture");
+    }
+    registryInitializations.push(initialization);
+  }
+}
+
+async function cleanupRegistryRoots() {
+  await Promise.all(registryInitializations.splice(0));
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+}
 
 async function tempRoot() {
   const root = await mkdtemp(join(tmpdir(), "matrix-shell-registry-"));
@@ -15,10 +33,31 @@ async function tempRoot() {
 
 afterEach(async () => {
   vi.useRealTimers();
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await cleanupRegistryRoots();
 });
 
 describe("shell registry", () => {
+  it("retains test roots until pending registry home initialization finishes", async () => {
+    const root = await tempRoot();
+    const resolvedRoot = await realpath(root);
+    let releaseHome = () => {};
+    const homeReady = new Promise<void>((resolve) => { releaseHome = resolve; });
+    const initialization = homeReady.then(() => realpath(root));
+    registryInitializations.push(initialization);
+    const cleanup = cleanupRegistryRoots();
+    try {
+      // Let filesystem deletion settle while the home lookup remains pending.
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      await expect(realpath(root)).resolves.toBe(resolvedRoot);
+    } finally {
+      releaseHome();
+      await Promise.allSettled([initialization, cleanup]);
+    }
+    await expect(initialization).resolves.toBe(resolvedRoot);
+    await cleanup;
+    await expect(realpath(root)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("reports trustworthy agent liveness through the managed terminal wrapper", async () => {
     const root = await tempRoot();
     const agentStateStore = new AgentSessionStateStore({ homePath: root });

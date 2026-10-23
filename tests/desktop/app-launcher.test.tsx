@@ -114,7 +114,7 @@ describe("AppLauncher", () => {
     const launcher = screen.getByTestId("desktop-launcher-grid");
     const names = Array.from(launcher.querySelectorAll("button"))
       .map((button) => button.getAttribute("aria-label"));
-    expect(names.slice(0, 12)).toEqual(["Create app", "Canvas", ...OS_VIEW_FIXED_APP_NAMES]);
+    expect(names.slice(0, 2 + OS_VIEW_FIXED_APP_NAMES.length)).toEqual(["Create app", "Canvas", ...OS_VIEW_FIXED_APP_NAMES]);
 
     fireEvent.click(screen.getByRole("button", { name: "Create app" }));
     expect(onCreateApp).toHaveBeenCalledOnce();

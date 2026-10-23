@@ -1,7 +1,12 @@
 import {
+  FundedAiStartRequestSchema,
+  FundedAiTerminalOutcomeRequestSchema,
+  FundedAiTerminalOutcomeResponseSchema,
   JEV_EMAIL_TRIAGE_ANSWER_IDS,
   JEV_EMAIL_TRIAGE_INSTRUCTIONS,
   JEV_MODEL_ID,
+  type FundedAiStartRequest,
+  type FundedAiTerminalOutcomeRequest,
 } from "@matrix-os/contracts";
 import { Hono } from "hono";
 import { KyselyPGlite } from "kysely-pglite";
@@ -32,6 +37,7 @@ describe("Jev local Gateway to funded relay", () => {
       promotionalBalanceMicrousd: 100_000, addonBalanceMicrousd: 0, creditBalanceMicrousd: 100_000,
       remainingBalanceMicrousd: 95_000, remainingBudgetMicrousd: 95_000,
     };
+    let executionId: string | undefined;
     const platformClient = {
       check: vi.fn(async () => ({ contractVersion: 1 as const, authorized: true as const, identity, policy })),
       authorize: vi.fn(async (input: { requestId: string }) => ({
@@ -45,12 +51,27 @@ describe("Jev local Gateway to funded relay", () => {
           status: "reserved" as const,
         },
       })),
-      start: vi.fn(async () => ({
-        contractVersion: 1 as const, reservationId: "reservation_123", requestId: "request_123",
-        tokenId: "credential_123", startedAt: now.toISOString(), expiresAt: "2026-09-22T10:30:00.000Z",
-        status: "in_flight" as const,
-      })),
+      start: vi.fn(async (input: FundedAiStartRequest) => {
+        const start = FundedAiStartRequestSchema.parse(input);
+        expect(start).toEqual({ reservationId: "reservation_123", tokenId: identity.tokenId, executionId: expect.any(String) });
+        executionId ??= start.executionId;
+        expect(start.executionId).toBe(executionId);
+        return {
+          contractVersion: 1 as const, reservationId: "reservation_123", requestId: "request_123",
+          tokenId: "credential_123", startedAt: now.toISOString(), expiresAt: "2026-09-22T10:30:00.000Z",
+          status: "in_flight" as const, executionId,
+        };
+      }),
       release: vi.fn(),
+      terminal: vi.fn(async (input: FundedAiTerminalOutcomeRequest) => {
+        const terminal = FundedAiTerminalOutcomeRequestSchema.parse(input);
+        expect(terminal).toEqual({ contractVersion: 1, reservationId: "reservation_123", requestId: "request_123",
+          tokenId: identity.tokenId, ownerId: identity.ownerId, machineId: identity.machineId, runtimeSlot: identity.runtimeSlot,
+          startedAt: now.toISOString(), expiresAt: "2026-09-22T10:30:00.000Z", executionId,
+          terminalState: "failed", terminalAt: now.toISOString(), outcome: "usage_unknown" });
+        return FundedAiTerminalOutcomeResponseSchema.parse({ contractVersion: 1, outcomeAccepted: true,
+          usageKnown: false, receivedAt: now.toISOString() });
+      }),
       finalize: vi.fn(async (input: { actualCostMicrousd?: number }) => ({
         contractVersion: 1 as const, reservationId: "reservation_123", requestId: "request_123",
         tokenId: "credential_123", actualCostMicrousd: input.actualCostMicrousd ?? 5_000,
@@ -137,6 +158,8 @@ describe("Jev local Gateway to funded relay", () => {
         jevProvenance: { resolvedModel: "jev-1.13.0", pricingVersion: "typesafe-jev-input-2026-09" } }),
       expect.any(AbortSignal),
     ));
+    expect(platformClient.terminal).not.toHaveBeenCalled();
+    expect(platformClient.release).not.toHaveBeenCalled();
     expect(upstream).toHaveBeenCalledTimes(1);
     const upstreamBody = JSON.parse(String(upstream.mock.calls[0]?.[1]?.body));
     expect(upstreamBody).toEqual({

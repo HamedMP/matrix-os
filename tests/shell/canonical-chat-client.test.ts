@@ -295,3 +295,11 @@ it("opts navigation into immutable import source projection", async () => {
   await createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn }).navigation!();
   expect(fetchFn).toHaveBeenCalledWith("https://matrix.test/api/chat-navigation?version=1&limit=1000", expect.objectContaining({ headers: { "X-Matrix-Chat-Import-Source": "1" } }));
 });
+
+it("preserves the separate owner browser intent in canonical approval submissions", async () => {
+  const fetchFn = vi.fn(async () => Response.json({ approvalId: "approval_1", decision: "approve", submission: "accepted" }));
+  const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+  const browser = { kind: "shared_chrome" as const, decision: "allow_in_chat" as const, leaseEpoch: "178ca19d-9760-4e67-a221-62bedf393b90", challengeRevision: 0, scopeVersion: 1 as const };
+  await client.submitApproval("chat_shell_test", "run_shell", "approval_1", "approve", "req_browser", "b".repeat(64), browser);
+  expect(JSON.parse(String(fetchFn.mock.calls[0]?.[1]?.body))).toMatchObject({ browserApproval: browser });
+});

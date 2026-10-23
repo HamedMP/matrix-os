@@ -1,19 +1,28 @@
 /** Mount integration/app runtime routes and metrics after gateway auth. */
+import type { Kysely } from "kysely";
+import { registerSiteRuntime } from "../sites/wiring.js";
 import { randomBytes } from "node:crypto";
 import type { Context, Hono } from "hono";
+import type { createNodeWebSocket } from "@hono/node-ws";
 import { bodyLimit } from "hono/body-limit";
 import { installPostHogHonoErrorTracking } from "@matrix-os/observability";
 import { registerCustomMcpGatewayRoutes, type CustomMcpGatewayRegistration } from "../integrations/custom-mcp/gateway-routes.js";
 import { resolveCustomMcpRuntimeRouting } from "../integrations/custom-mcp/preview-routing.js";
 import { httpRequestDuration, httpRequestsTotal, metricsRegistry, normalizePath } from "../metrics.js";
+import { createBrowserSetupClient, registerBrowserSetupRoutes, resolveBrowserSetupOwner } from "../browser-lab/setup.js";
 import { registerAppRuntimeRoutes } from "./app-runtime-routes.js";
 import { authorizeChatIntegrationRequest } from "../integrations/chat-action-guard.js";
+import type { SharedBrowserBroker } from "../shared-browser/broker.js";
 
 const INTEGRATION_PROXY_BODY_LIMIT = 64 * 1024;
 
 export interface DeferredRuntimeRouteOptions {
   app: Hono;
   homePath: string;
+  ownerDatabase: Kysely<any> | null;
+  upgradeWebSocket?: ReturnType<typeof createNodeWebSocket>["upgradeWebSocket"];
+  isAllowedBrowserLabOrigin?: (origin: string) => boolean;
+  sharedBrowser?: { broker: SharedBrowserBroker; ownerId: string };
   integrationRoutes: Hono | null;
   internalIntegrationBaseUrl: string | null;
   internalPlatformToken: string | undefined;
@@ -28,13 +37,15 @@ export interface DeferredRuntimeRouteOptions {
 export interface DeferredRuntimeRoutes {
   processManager: ReturnType<typeof registerAppRuntimeRoutes>;
   customMcp: CustomMcpGatewayRegistration;
+  browserLab: { close(): void };
 }
 
-export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptions): DeferredRuntimeRoutes {
+export async function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptions): Promise<DeferredRuntimeRoutes> {
   const { app, homePath, integrationRoutes, internalIntegrationBaseUrl,
     internalPlatformToken, internalPlatformUrl, internalHandle,
     proxyIntegrationRequest, posthogErrorTracker, ownerTelemetryDistinctId } = options;
   const APP_AUTH_DEV_BYPASS = options.devAppAuthBypass;
+  await registerSiteRuntime(app, { homePath, db: options.ownerDatabase, platformUrl: internalPlatformUrl, handle: internalHandle });
   // HKDF master secret for per-app session cookies. In production MATRIX_AUTH_TOKEN
   // is the source. When it is absent (local dev, .env.example default) we mint an
   // ephemeral process-scoped secret so the HKDF input is never predictable — an
@@ -105,10 +116,23 @@ export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptio
       : {}),
   });
 
+  const setupOwnerId = resolveBrowserSetupOwner(process.env);
+  if (setupOwnerId) registerBrowserSetupRoutes(app, { ownerId: setupOwnerId, client: createBrowserSetupClient(),
+    isAllowedOrigin: options.isAllowedBrowserLabOrigin ?? (() => false) });
+  let browserLab: { close(): void } = { close() {} };
   const processManager = registerAppRuntimeRoutes(app, {
     homePath,
     appSessionMasterSecret,
     devAppAuthBypass: APP_AUTH_DEV_BYPASS,
+    browserLab: {
+      enabled: process.env.MATRIX_BROWSER_LAB === "true",
+      setupOwnerId,
+      viewerAuthorization: process.env.MATRIX_BROWSER_LAB_VIEWER_AUTH,
+      upgradeWebSocket: options.upgradeWebSocket,
+      isAllowedOrigin: options.isAllowedBrowserLabOrigin ?? (() => false),
+      onRegistered: (lab) => { browserLab = lab; },
+      ...(options.sharedBrowser ? { sharedBrowser: options.sharedBrowser } : {}),
+    },
     publicHost: process.env.PUBLIC_HOST ?? "localhost",
     onAppError: ({ errorKind, appSlug }) => {
       void posthogErrorTracker.captureEvent("gateway_app_runtime", {
@@ -141,5 +165,5 @@ export function registerDeferredRuntimeRoutes(options: DeferredRuntimeRouteOptio
     });
   });
 
-  return { processManager, customMcp };
+  return { processManager, customMcp, browserLab };
 }

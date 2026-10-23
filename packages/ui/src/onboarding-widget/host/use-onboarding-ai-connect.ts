@@ -1,6 +1,7 @@
 import type { OnboardingAiProvider, OnboardingWidgetEvent } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProviderWorkflowClient } from "../../agents-providers/types.js";
+import { ProviderWorkflowClientError } from "../../agents-providers/provider-workflow-client.js";
 import { pickProviderConnectionOption } from "./catalog.js";
 import { onboardingRequestId } from "./chat-port.js";
 
@@ -178,7 +179,9 @@ export function useOnboardingAiConnect(
       console.warn("[onboarding-widget] AI key save failed:", error instanceof Error ? error.name : typeof error);
       if (!isCurrent()) return;
       keySave.current = null;
-      if (port.isIdentityCurrent()) dispatch({ type: "ai.failed" });
+      const failure = error instanceof ProviderWorkflowClientError && error.reason === "rejected" ? "rejected"
+        : error instanceof ProviderWorkflowClientError && error.reason === "key_workspace_required" ? "workspace_required" : "unavailable";
+      if (port.isIdentityCurrent()) dispatch({ type: "ai.failed", failure });
     });
   }, [dispatch, finish, port]);
 

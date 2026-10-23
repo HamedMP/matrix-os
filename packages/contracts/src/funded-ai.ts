@@ -383,6 +383,8 @@ export const FundedAiFinalizationRequestSchema = z.discriminatedUnion("mode", [
 export const FundedAiStartRequestSchema = z.object({
   reservationId: canonicalReferenceId(160),
   tokenId: TokenIdSchema,
+  /** New Relay attempts are immutable; legacy callers retain the v1 shape. */
+  executionId: canonicalReferenceId(160).optional(),
 }).strict();
 
 export const FundedAiStartResponseSchema = z.object({
@@ -393,6 +395,7 @@ export const FundedAiStartResponseSchema = z.object({
   startedAt: IsoTimestampSchema,
   expiresAt: IsoTimestampSchema,
   status: z.literal("in_flight"),
+  executionId: canonicalReferenceId(160).optional(),
 }).strict();
 
 export const FundedAiSettlementResponseSchema = z.object({

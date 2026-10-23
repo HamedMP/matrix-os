@@ -869,7 +869,7 @@ jobs:
         run: |
           set -euo pipefail
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
-          pnpm exec vitest run tests/platform/ai-funded-usage-postgres.test.ts tests/platform/ai-funded-model-probes-postgres.test.ts tests/platform/ai-funded-recovery-migration.test.ts tests/platform/ai-funded-usage-waiver.test.ts tests/platform/ai-funded-usage-waiver-cli.test.ts tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+          pnpm exec vitest run tests/platform/ai-funded-usage-postgres.test.ts tests/platform/ai-funded-model-probes-postgres.test.ts tests/platform/ai-funded-recovery-migration.test.ts tests/platform/ai-funded-terminal-concurrency.test.ts tests/platform/ai-funded-usage-waiver.test.ts tests/platform/ai-funded-usage-waiver-cli.test.ts tests/platform/ai-funded-usage-waiver-locks-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
       - name: Verify reviewed paid starter recovery on PostgreSQL
         run: |
@@ -891,6 +891,11 @@ jobs:
         run: |
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/platform/preview-drive-postgres-concurrency.test.ts --maxWorkers=1 --no-file-parallelism
+
+      - name: Browser approval owner transactions and revocation races
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          pnpm exec vitest run tests/gateway/browser-approval-repository.test.ts --maxWorkers=1 --no-file-parallelism
 
   collaboration-postgres:
     name: Collaboration PostgreSQL
@@ -1157,6 +1162,12 @@ jobs:
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
         run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts
+
+      - name: Run required Desktop project deletion regression
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/project-deletion.e2e.test.ts
 
       - name: Run required Desktop terminal clipboard regression
         if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'

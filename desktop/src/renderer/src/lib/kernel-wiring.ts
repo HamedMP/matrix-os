@@ -183,7 +183,7 @@ export function wireKernel(): () => void {
     );
     if (route.target === "chat") {
       useThreads.getState().setActiveThread(route.select);
-      useTabs.getState().openTab({ kind: "chat", title: "Hermes", closable: false });
+      useTabs.getState().openTab({ kind: "chat", title: "Chat", closable: false });
       return;
     }
     void openCodingAgentThread(route.select);

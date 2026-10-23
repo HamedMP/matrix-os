@@ -1,3 +1,4 @@
+import { BrowserPermissionCard } from "@matrix-os/ui";
 import { ConversationNotice } from "./notice";
 import { BotRunMessageBody, BotUnassignedMessageBody, ChatAttachments, ChatContextReceipt, CanonicalChatInputForm, SupervisedToolApprovalCard, type ChatMessageAttachment } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
@@ -25,7 +26,7 @@ import type {
   ConversationWorkPresentation,
 } from "./presentation";
 import { supervisedToolApproval, type SupervisedToolApproval } from "@matrix-os/contracts";
-import { offeredApprovalAction } from "./approval-actions";
+import { offeredApprovalAction, offeredBrowserApprovalAction } from "./approval-actions";
 
 function formatTurnDuration(durationMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000));
@@ -256,6 +257,15 @@ function Request({
   ));
   const inputAction = availableActions.find((action) => action.kind === "input");
   const label = `${request.requestKind === "approval" ? "Approval" : "Input"} ${request.state === "waiting" ? "required" : "resolved"}: ${request.label}`;
+  if (request.browserApproval) return <ConversationItem messageId={`request:${request.id}`}>
+    <BrowserPermissionCard chatId={callbacks.browserChatId} approval={request.browserApproval} client={callbacks.browserPermissions} onOpenPermissionMode={callbacks.openPermissionMode}
+      onDecision={offeredBrowserApprovalAction(request, callbacks, "allow_once") || offeredBrowserApprovalAction(request, callbacks, "not_now")
+        ? async choice => {
+          const action = offeredBrowserApprovalAction(request, callbacks, choice);
+          if (!action || !callbacks.performAction) throw new Error("Approval unavailable");
+          await callbacks.performAction(action);
+        } : undefined}/>
+  </ConversationItem>;
   if (request.input) return (
     <ConversationItem messageId={`request:${request.id}`}>
       <CanonicalChatInputForm request={request.input} onSubmit={callbacks.submitInput

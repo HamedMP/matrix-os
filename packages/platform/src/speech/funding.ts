@@ -1,3 +1,4 @@
+import { readFundedRecoveryAudit } from "../ai-funded-recovery-audit.js";
 import { createHash, createHmac } from "node:crypto";
 import type { Transaction } from "kysely";
 import { sql } from "kysely";
@@ -174,6 +175,7 @@ export function createAiFundedSpeechFundingPort(options: {
     const checkedAt = checked.toISOString();
     const periodStart = utcMonthStart(checked);
     try {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${input.identity.ownerId}`}, 0))`.execute(trx);
       const machine = await trx.selectFrom("user_machines").select([
         "clerk_user_id", "runtime_slot", "status", "activation_state", "deleted_at",
       ]).where("machine_id", "=", input.identity.machineId).forUpdate().executeTakeFirst();
@@ -322,6 +324,10 @@ export function createAiFundedSpeechFundingPort(options: {
     reservationId: string,
     activeAt?: string,
   ) {
+    const locator = await trx.selectFrom("ai_funded_usage_reservations").select("owner_id")
+      .where("reservation_id", "=", ReservationIdSchema.parse(reservationId)).executeTakeFirst();
+    if (!locator) return undefined;
+    await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${locator.owner_id}`}, 0))`.execute(trx);
     let query = trx.selectFrom("ai_funded_usage_reservations as reservation")
       .innerJoin("ai_runtime_credentials as credential", "credential.token_id", "reservation.token_id")
       .selectAll("reservation")
@@ -340,6 +346,7 @@ export function createAiFundedSpeechFundingPort(options: {
     const checkedAt = checked.toISOString();
     const row = await speechReservation(trx, reservationId, checkedAt);
     if (!row) throw new SpeechFundingError("unavailable");
+    if (row.execution_admission_release !== null || row.charge_waiver !== null) throw new SpeechFundingError("unavailable");
     if (row.status === "in_flight") return;
     if (row.status !== "reserved" || Date.parse(row.expires_at) <= checked.getTime()) {
       throw new SpeechFundingError("unavailable");
@@ -361,6 +368,8 @@ export function createAiFundedSpeechFundingPort(options: {
   ): Promise<void> {
     const row = await speechReservation(trx, reservationId);
     if (!row) throw new SpeechFundingError("unavailable");
+    if (row.execution_admission_release !== null) readFundedRecoveryAudit(row);
+    if (row.execution_admission_release !== null && input.mode !== "exact") throw new SpeechFundingError("unavailable");
     const reserved = exactInteger(row.reserved_microusd);
     const actual = input.mode === "exact" ? MoneySchema.parse(input.actualCostMicrousd) : reserved;
     if (actual > reserved) throw new SpeechFundingError("unavailable");

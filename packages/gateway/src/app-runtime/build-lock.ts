@@ -1,0 +1,39 @@
+import { realpath } from 'node:fs/promises';
+import { BuildError } from './errors.js';
+
+const MAX_LIVE_DIRECTORIES = 128;
+const MAX_CALLERS_PER_DIRECTORY = 17; // One holder plus sixteen queued callers.
+interface BuildOwnership { tail: Promise<void>; callers: number }
+interface BuildLockOptions { deadlineAt?: number }
+// All orchestrators in this gateway share ownership, including install/publish instances.
+// Only live holders/waiters remain in this capped registry; settled keys are removed.
+const ownership = new Map<string, BuildOwnership>();
+export async function withAppBuildLock<T>(appDir: string, operation: (canonicalDir: string) => Promise<T>, options: BuildLockOptions = {}): Promise<T> {
+ let key: string;
+ try { key = await realpath(appDir); }
+ catch (error) {
+  console.warn('[build] App directory unavailable', error instanceof Error ? error.name : 'UnknownError');
+  throw new BuildError('build_failed', 'prepare', null, 'App directory unavailable');
+ }
+ let entry = ownership.get(key);
+ if (!entry) {
+  if (ownership.size >= MAX_LIVE_DIRECTORIES) throw new BuildError('build_failed', 'prepare', null, 'App build queue unavailable');
+  entry = { tail: Promise.resolve(), callers: 0 }; ownership.set(key, entry);
+ }
+ if (entry.callers >= MAX_CALLERS_PER_DIRECTORY) throw new BuildError('build_failed', 'prepare', null, 'App build queue unavailable');
+ const previous = entry.tail;
+ const finished = Promise.withResolvers<void>();
+ entry.tail = finished.promise; entry.callers++;
+ try {
+  await previous;
+  if (options.deadlineAt !== undefined && Date.now() >= options.deadlineAt) {
+   throw new BuildError('timeout', 'prepare', null, 'Build deadline expired while queued');
+  }
+  return await operation(key);
+ }
+ finally {
+  // Resolve only after the real callback settles; a timer must never unlock live IO.
+  finished.resolve(); entry.callers--;
+  if (!entry.callers) ownership.delete(key);
+ }
+}

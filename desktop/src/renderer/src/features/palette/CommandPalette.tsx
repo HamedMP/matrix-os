@@ -313,7 +313,7 @@ export default function CommandPalette() {
               onSelect={() =>
                 run(() => {
                   useThreads.getState().setActiveThread(null);
-                  openTab({ kind: "chat", title: "Hermes", closable: false });
+                  openTab({ kind: "chat", title: "Chat", closable: false });
                 })
               }
             />

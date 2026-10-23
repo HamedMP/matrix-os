@@ -47,7 +47,7 @@ const REPOS = [{ name: "portfolio", url: "https://github.com/sahar/portfolio", u
 
 function Harness({
   actions, initial, runView = null, creditsExhausted = false, events = [], aiSignInNeedsCode = false,
-  appsUnavailable = false, apps = APPS, repos = REPOS, activeAi = "matrix", followUpAi = null, matrixAvailable = true, connectedProviders = [],
+  appsUnavailable = false, apps = APPS, repos = REPOS, activeAi = "matrix", followUpAi = null, matrixAvailable = true, connectedProviders = [], aiDetail, connectionLabels,
   prefs = { keepInCorner: true, position: DEFAULT_ONBOARDING_POSITION, showOnLogin: true }, onSizeChange,
 }: {
   prefs?: OnboardingWidgetPrefs;
@@ -65,6 +65,8 @@ function Harness({
   followUpAi?: OnboardingAiChoice | null;
   matrixAvailable?: boolean;
   connectedProviders?: readonly OnboardingAiProvider[];
+  aiDetail?: string | null;
+  connectionLabels?: OnboardingWidgetProps["connectionLabels"];
 }) {
   const [state, dispatch] = useReducer(
     reduceOnboardingWidget,
@@ -90,6 +92,8 @@ function Harness({
       followUpAi={followUpAi}
       matrixAvailable={matrixAvailable}
       connectedProviders={connectedProviders}
+      aiDetail={aiDetail}
+      connectionLabels={connectionLabels}
       creditsExhausted={creditsExhausted}
       aiSignInNeedsCode={aiSignInNeedsCode}
       appsUnavailable={appsUnavailable}
@@ -321,6 +325,36 @@ describe("OnboardingWidget", () => {
     expect(matrix).toBeDisabled();
     expect(within(matrix).getByText("Not available on this computer")).toBeInTheDocument();
     expect(within(menu).getByRole("menuitemradio", { name: /Claude/ })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("names the model and how a connected provider is reached, and keeps the Matrix AI line unchanged", () => {
+    render(<Harness actions={makeActions()} activeAi="claude" matrixAvailable={false} connectedProviders={["claude"]}
+      aiDetail="Claude Opus 5.5 · Anthropic API key" connectionLabels={{ claude: "Anthropic API key" }} />);
+    expect(screen.getByText(/Claude Opus 5\.5 · Anthropic API key ·/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    const menu = screen.getByRole("menu", { name: "Change AI" });
+    expect(within(within(menu).getByRole("menuitemradio", { name: /Claude/ })).getByText("Anthropic API key")).toBeInTheDocument();
+    expect(within(within(menu).getByRole("menuitemradio", { name: /ChatGPT/ })).getByText("Use your ChatGPT plan")).toBeInTheDocument();
+    expect(within(within(menu).getByRole("menuitemradio", { name: /Matrix AI/ })).getByText("Not available on this computer")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["rejected", "Anthropic didn't accept this key"],
+    ["workspace_required", "This key isn't in a workspace"],
+    ["unavailable", "Couldn't connect right now. Try again."],
+  ] as const)("explains a %s key failure", (failure, text) => {
+    const events: OnboardingWidgetEvent[] = [{ type: "ai.menuToggled" }, { type: "ai.providerPicked", provider: "claude" },
+      { type: "ai.methodPicked", method: "api_key" }, { type: "ai.keySubmitted" }, { type: "ai.failed", failure }];
+    render(<Harness actions={makeActions()} activeAi="matrix" events={events} />);
+    expect(screen.getByText(text)).toBeInTheDocument();
+    expect(screen.queryByText("That key didn't work")).not.toBeInTheDocument();
+  });
+
+  it("keeps the plan wording when the connection is not known", () => {
+    render(<Harness actions={makeActions()} activeAi="claude" matrixAvailable={false} connectedProviders={["claude"]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Change" }));
+    const menu = screen.getByRole("menu", { name: "Change AI" });
+    expect(within(within(menu).getByRole("menuitemradio", { name: /Claude/ })).getByText("Use your Claude plan")).toBeInTheDocument();
   });
 
   it("says so when no AI can run here yet", () => {

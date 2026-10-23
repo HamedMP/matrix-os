@@ -56,8 +56,10 @@ describe("Codex control client", () => {
       name: "CodexControlUnavailableError",
     });
     const stalledHome = await mkdtemp(join(socketTempRoot, "mx-ack-"));
-    const received = await listen(stalledHome, input.sessionId);
-    await expect(createCodexControlClient({ homePath: stalledHome, timeoutMs: 25 }).submitTurn(input)).rejects.toMatchObject({
+    // Record the request before closing without an acknowledgement. A timeout
+    // alone does not guarantee the server has observed the request yet.
+    const received = await listen(stalledHome, input.sessionId, "");
+    await expect(createCodexControlClient({ homePath: stalledHome }).submitTurn(input)).rejects.toMatchObject({
       name: "CodexControlTransportError",
     });
     expect(received).toHaveLength(1);

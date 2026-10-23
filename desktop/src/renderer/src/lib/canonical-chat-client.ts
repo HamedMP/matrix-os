@@ -1,3 +1,4 @@
+import { createBrowserPermissionClient, type BrowserPermissionClient } from "@matrix-os/ui";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
 import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { postWithProviderCatalogRecovery } from "../features/chat/provider-catalog-admission";
@@ -130,6 +131,7 @@ export type ChatCredentialOccurrence = z.infer<typeof ChatCredentialOccurrenceSc
 
 export interface CanonicalChatClient {
   agents?: ChatAgentClient;
+  browserPermissions?: BrowserPermissionClient;
   navigation?(): Promise<CanonicalChatNavigationResponse>;
   list(input?: z.input<typeof CanonicalChatListInputSchema>): Promise<CanonicalChatListResponse>;
   search(
@@ -228,6 +230,7 @@ export function createCanonicalChatClient(
   };
   const trackEvent = options.trackEvent ?? trackDesktopEvent;
   return {
+    browserPermissions: createBrowserPermissionClient((path, method, body) => method === "GET" ? transport.get(path) : transport.delete(path, body)),
     agents: createChatAgentClient((path, method, body) => method === "GET" ? transport.get(path)
       : method === "POST" ? transport.post(path, body)
         : method === "DELETE" ? transport.delete(path)

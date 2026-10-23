@@ -1,9 +1,11 @@
+import { resolvePlatformObjectStorage } from '../object-storage-config.js';
+import { resolveSitesObjectStorage } from '../sites/storage-config.js';
 import type { PlatformDB } from '../db.js';
 import type { CustomerVpsService } from '../customer-vps.js';
 import { createHetznerClient } from '../customer-vps-hetzner.js';
 import { loadCustomerVpsConfig } from '../customer-vps-config.js';
 import { createAccountDeletionAdapters, type AccountDeletionAdapterOptions } from './adapters.js';
-import { createAccountDeletionObjectStore } from './storage.js';
+import { createAccountDeletionObjectStore, type AccountDeletionObjectStore } from './storage.js';
 import { listAccountExportFiles, exportOwnerPlatformData } from './export.js';
 import { createAccountDeletionService } from './service.js';
 import { registerNativeAppleAuthorization } from './native-apple.js';
@@ -28,20 +30,21 @@ export async function createConfiguredAccountDeletionRuntime(input:{
  customMcp?:AccountDeletionAdapterOptions['customMcp'];
 }):Promise<AccountDeletionRuntime|undefined> {
  const env=input.env;
- if(env.ACCOUNT_DELETION_ENABLED!=='true')return undefined;
+ if(env.ACCOUNT_DELETION_CONFIGURED!=='true')return undefined;
  const secret=env.ACCOUNT_DELETION_SECRET;
  const clerkSecretKey=env.CLERK_SECRET_KEY;
  if(!secret||secret.length<32||!clerkSecretKey)throw Error('Account deletion configuration unavailable');
- const accessKeyId=env.S3_ACCESS_KEY_ID??env.R2_ACCESS_KEY_ID;
- const secretAccessKey=env.S3_SECRET_ACCESS_KEY??env.R2_SECRET_ACCESS_KEY;
- if(!accessKeyId||!secretAccessKey)throw Error('Account deletion storage configuration unavailable');
+ const primaryStorage=resolvePlatformObjectStorage(env).primary;
+ if(!primaryStorage)throw Error('Account deletion storage configuration unavailable');
  const root=env.R2_PREFIX_ROOT??'matrixos-sync';
- const store=createAccountDeletionObjectStore({accessKeyId,secretAccessKey,bucket:env.S3_BUCKET??env.R2_BUCKET??'matrixos-sync',
- endpoint:env.S3_ENDPOINT??env.R2_ENDPOINT,accountId:env.R2_ACCOUNT_ID,forcePathStyle:env.S3_FORCE_PATH_STYLE==='true'});
+ const store=createAccountDeletionObjectStore(primaryStorage);
+ let sitesStore:AccountDeletionObjectStore|undefined;
  try {
+ const sitesStorage=resolveSitesObjectStorage(env);
+ if(sitesStorage)sitesStore=createAccountDeletionObjectStore(sitesStorage);
  const appleValues=[env.APPLE_TEAM_ID,env.APPLE_KEY_ID,env.APPLE_PRIVATE_KEY,env.APPLE_SERVICES_ID,env.APPLE_NATIVE_CLIENT_ID];
  if(appleValues.some(Boolean)&&!appleValues.every(Boolean))throw Error('Account deletion Apple configuration unavailable');
- const adapters=createAccountDeletionAdapters({db:input.db,clerkSecretKey,credentialSecret:secret,r2PrefixRoot:root,objectStore:store,
+ const adapters=createAccountDeletionAdapters({db:input.db,clerkSecretKey,credentialSecret:secret,r2PrefixRoot:root,objectStore:store,sitesObjectStore:sitesStore,env,
  ownerHash:owner=>hashAccountDeletionOwner(owner,secret),
  customerVpsService:input.customerVpsService,
  hetzner:input.customerVpsService?createHetznerClient(loadCustomerVpsConfig(env)):undefined,
@@ -53,7 +56,7 @@ export async function createConfiguredAccountDeletionRuntime(input:{
  const service=createAccountDeletionService({db:input.db.kysely,adapters,secret});
  const worker=input.backgroundWorkersEnabled===false?undefined:startAccountDeletionWorker({service});
  return {service,
- async exportData(owner,cursor){const result=await listAccountExportFiles(store,owner,root,cursor);return {
+ async exportData(owner,cursor){const result=await listAccountExportFiles(store,owner,root,cursor,sitesStore);return {
  downloads:result.files.map(file=>({name:file.path,url:file.downloadUrl})),migrationUrl:'/runtime',
  instructions:[result.migrationInstructions],nextCursor:result.nextCursor};},
  exportPlatformData:owner=>exportOwnerPlatformData(input.db,owner),
@@ -62,6 +65,6 @@ export async function createConfiguredAccountDeletionRuntime(input:{
    await withAccountDeletionAdmission(input.db,owner,async()=>registerNativeAppleAuthorization({clerkSecretKey,credentialSecret:secret,
      apple:{teamId:env.APPLE_TEAM_ID!,keyId:env.APPLE_KEY_ID!,privateKey:env.APPLE_PRIVATE_KEY!,serviceId:env.APPLE_SERVICES_ID!,nativeClientId:env.APPLE_NATIVE_CLIENT_ID!}},owner,code),env);
  },
- stop(){worker?.stop();},async drain(){await worker?.drain();},close(){store.destroy?.();}};
- }catch(error:unknown){store.destroy?.();throw error;}
+ stop(){worker?.stop();},async drain(){await worker?.drain();},close(){sitesStore?.destroy?.();store.destroy?.();}};
+ }catch(error:unknown){sitesStore?.destroy?.();store.destroy?.();throw error;}
 }

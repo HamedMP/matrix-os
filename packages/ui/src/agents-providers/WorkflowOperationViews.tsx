@@ -1,5 +1,6 @@
 import { WorkflowLoadingSpinner } from "./WorkflowLoadingSpinner.js";
 import type { HarnessWorkflowController } from "./use-harness-workflow-controller.js";
+import { keyFormatFailure } from "./key-format.js";
 const providerNames = { openai: "OpenAI", anthropic: "Anthropic", openrouter: "OpenRouter" };
 export function WorkflowKeyForm({ state }: { state: HarnessWorkflowController }) {
   const { selectedOption, harness, capability, client, disabled, onRefresh, method, setMethod, providerId, setProviderId, apiKey, setApiKey, pending, failure, setFailure, run, back } = state;
@@ -10,6 +11,8 @@ export function WorkflowKeyForm({ state }: { state: HarnessWorkflowController })
               onSubmit={(event) => {
                 event.preventDefault();
                 if (!apiKey.trim()) return;
+                const formatFailure = keyFormatFailure(selectedOption?.providerId ?? providerId, apiKey);
+                if (formatFailure) { setFailure(formatFailure); return; }
                 void run(async (signal) => {
                   if (capability.connectionOptions) {
                     if (!selectedOption || !client.submitConnectionKey || !capability.connectionOptions.some(item =>

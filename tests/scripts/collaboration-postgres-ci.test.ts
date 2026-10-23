@@ -142,7 +142,9 @@ describe("required collaboration PostgreSQL workflow", () => {
     expect(job.needs).toBe("changes"); expect(job["timeout-minutes"]).toBe(10);
     expect(job.if).not.toMatch(/dedicated|ci-backend/);
     expect(job.steps[0].with.ref).toBe("${{ needs.changes.outputs.source_sha }}");
-    expect(job.steps.filter((step: { run?: string }) => step.run?.includes("pnpm exec vitest run"))).toHaveLength(5);
+    const fundedTestSteps = job.steps.filter((step: { run?: string }) => step.run?.includes("pnpm exec vitest run"));
+    expect(fundedTestSteps).toHaveLength(6);
+    expect(fundedTestSteps[5].run).toContain("tests/gateway/browser-approval-repository.test.ts --maxWorkers=1 --no-file-parallelism");
     expect(job.steps.find((step: { name?: string }) => step.name === "Build test prerequisites once").run).toBe("bun run test:prepare");
     const collaboration = workflow.jobs["collaboration-postgres"];
     expect(collaboration).toBeDefined();

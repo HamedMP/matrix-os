@@ -822,6 +822,7 @@ describe("canonical Chat Provider catalog", () => {
         aiProviderSource,
         harnessSettingsSource: harnessSettings([{
           ...configuredHarness("codex", true), accessSourceId: "owner_openai_profile",
+          selectedAccountId: "owner_anthropic",
         }]),
         executableDriverKinds: ["codex"],
       });
@@ -890,7 +891,17 @@ describe("canonical Chat Provider catalog", () => {
       supports: { approvals: true, tools: ["integrations", "custom_mcp"] } });
   });
 
-  it.each(["matrix_included", "owner_anthropic_key"])("does not advertise native Claude with the saved %s source", async accessSourceId => {
+  it("advertises native Claude on the explicitly selected owner API key", async () => {
+    const settings = await harnessSettings([{ ...configuredHarness("claude", true), accessSourceId: "owner_anthropic_key", selectedAccountId: "owner_anthropic" }]).getSnapshot();
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider(), codingProvider({ id: "claude", kind: "claude" })]),
+      agentRuntimeSource: runtimeSource(), harnessSettingsSource: { getSnapshot: async () => settings },
+    });
+    expect((await service.getCatalog(principal)).instances.find(instance => instance.id === "claude_code_default"))
+      .toMatchObject({ availability: "available", connectionLabel: "Anthropic API key" });
+  });
+
+  it.each(["matrix_included"])("does not advertise native Claude with the saved %s source", async accessSourceId => {
     const settings = await harnessSettings([{ ...configuredHarness("claude", true), accessSourceId }]).getSnapshot();
     const before = structuredClone(settings);
     const service = createChatProviderCatalogService({

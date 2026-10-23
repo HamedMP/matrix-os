@@ -1,3 +1,6 @@
+import { registerBrowserApprovalRun } from "./browser-approval-registration.js";
+import type { BrowserApprovalControl } from "./browser-approval-control.js";
+import { submitCanonicalApproval, type ApprovalProvenance } from "./approval-submission.js";
 import type { ExecutionAdmissionFence } from "../execution-admission-fence.js";
 import { contextForChatSession } from "./session-history.js";
 import { admitCanonicalRetry } from "./retry-admission.js";
@@ -15,7 +18,6 @@ import {
   CanonicalChatRunActivitySchema,
   CanonicalChatRunSteeringResponseSchema,
   CanonicalQueueChatTurnRequestSchema,
-  CanonicalSubmitChatApprovalRequestSchema,
   CanonicalSteerChatRunRequestSchema,
   CanonicalSteerQueuedChatTurnRequestSchema,
   type CanonicalChatMessage,
@@ -193,6 +195,7 @@ export class CanonicalChatOrchestrator {
     >;
     catalog: Pick<ChatProviderCatalogService, "getCatalog">;
     adapters: CanonicalChatProviderRegistry;
+    browserApprovals?: BrowserApprovalControl;
     executionRoots?: ChatExecutionRootResolver;
     agentContext?: ChatAgentContext;
     collaborationGuard?: {
@@ -514,6 +517,7 @@ export class CanonicalChatOrchestrator {
     let cleanupUnconfirmed = false;
     let lastKnownState: unknown;
     let failureStage: ChatRunFailureDiagnostic["stage"] = "preparation";
+    let browserRegistration: ReturnType<BrowserApprovalControl["registerRun"]> | undefined;
     try {
       if (!sharedScopeId) {
         await this.assertPersonalExecutionAllowed(owner, run.chatId);
@@ -556,6 +560,8 @@ export class CanonicalChatOrchestrator {
         onCleanupUnconfirmed: () => { cleanupUnconfirmed = true; },
         onCleanupConfirmed: () => { cleanupUnconfirmed = false; },
       };
+      browserRegistration = registerBrowserApprovalRun(this.options.browserApprovals, input, run.driverKind,
+        async event => { await this.persistActivities(owner, run, [CanonicalProviderRunEventSchema.parse(event)]); });
       let text = "";
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
       failureStage = "provider";
@@ -727,6 +733,8 @@ export class CanonicalChatOrchestrator {
       } catch (finishError: unknown) {
         if (!(finishError instanceof ChatRunNotActiveError)) throw finishError;
       }
+    } finally {
+      await browserRegistration?.close().catch(error => console.warn("[browser-approval] Run cleanup unavailable", error instanceof Error ? error.name : "UnknownError"));
     }
   }
 
@@ -1046,52 +1054,13 @@ export class CanonicalChatOrchestrator {
     runId: string,
     approvalId: string,
     inputValue: CanonicalSubmitChatApprovalRequest,
-    provenance?: { platformApprovalProof?: string },
+    provenance?: ApprovalProvenance,
   ): Promise<CanonicalChatApprovalSubmissionResponse> {
     await this.assertPersonalExecutionAllowed(owner, chatId);
-    const input = CanonicalSubmitChatApprovalRequestSchema.parse(inputValue);
-    const active = this.active.get(runId) ?? await recoverBackgroundRunControl({ owner, chatId, runId, repository: this.options.repository, adapters: this.options.adapters });
-    if (!active || active.chatId !== chatId || active.owner.type !== owner.type
-      || active.owner.ownerId !== owner.ownerId || !active.adapter.submitApproval) {
-      throw new CanonicalChatOrchestrationError(
-        safeError("capability_mismatch", "This approval is no longer available."),
-        409,
-      );
-    }
-    const pending = await this.options.repository.getPendingApproval(owner, { chatId, runId, approvalId });
-    if (!pending || !pending.allowedDecisions.includes(input.decision)) {
-      throw new CanonicalChatOrchestrationError(
-        safeError("capability_mismatch", "This approval decision is no longer available."),
-        409,
-      );
-    }
-    const state = await this.options.repository.getAdapterState(owner, {
-      runId,
-      driverKind: active.adapter.driverKind,
-      instanceId: active.instanceId,
-    });
-    try {
-      await active.adapter.submitApproval({
-        owner,
-        chatId,
-        runId,
-        approvalId,
-        decision: input.decision,
-        clientRequestId: input.clientRequestId,
-        ...(provenance?.platformApprovalProof ? { platformApprovalProof: provenance.platformApprovalProof } : {}),
-        ...(state ? { state: active.adapter.parseState(state.state) } : {}),
-      });
-    } catch (error: unknown) {
-      console.warn(
-        "[chat/orchestrator] Provider approval callback failed:",
-        error instanceof Error ? error.name : "UnknownError",
-      );
-      throw new CanonicalChatOrchestrationError(
-        safeError("run_unavailable", "The approval could not be submitted. Try again.", true, ["retry"]),
-        503,
-      );
-    }
-    return { approvalId, decision: input.decision, submission: "accepted" };
+    return submitCanonicalApproval({ repository: this.options.repository,
+      active: this.active.get(runId) ?? await recoverBackgroundRunControl({ owner, chatId, runId, repository: this.options.repository, adapters: this.options.adapters }),
+      browserApprovals: this.options.browserApprovals,
+    }, owner, chatId, runId, approvalId, inputValue, provenance);
   }
 
   async reconcileActiveRuns(owner: ChatOwner): Promise<number> {

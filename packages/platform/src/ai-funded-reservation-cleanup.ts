@@ -1,3 +1,4 @@
+import { readFundedRecoveryAudit } from "./ai-funded-recovery-audit.js";
 import { FundedAiSettlementResponseSchema } from "@matrix-os/contracts";
 import { NoResultError, sql } from "kysely";
 import { z } from "zod/v4";
@@ -47,8 +48,9 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
     atOrBefore?: CleanupCursor,
   ) => {
     let query = options.db.executor.selectFrom("ai_funded_usage_reservations")
-      .select(["reservation_id", "expires_at"])
+      .select(["reservation_id", "expires_at", "owner_id"])
       .where("status", "in", ["reserved", "in_flight"]).where("expires_at", "<=", checkedAt)
+      .where("execution_admission_release", "is", null)
       // Exact provider usage is the only safe release signal after a usage-mode
       // request starts. Never-started reservations have no provider liability,
       // so their bounded authorization hold can expire normally.
@@ -71,17 +73,21 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
   for (const candidate of candidates) {
     try {
       const didClean = await options.db.transaction(async (trx) => {
+        // Match admission/recovery before locking a reservation or any financial rows.
+        await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`funded-ai-owner:${candidate.owner_id}`}, 0))`.execute(trx.executor);
         const reservation = await trx.executor.selectFrom("ai_funded_usage_reservations")
-          .select([
-            "reservation_id", "request_id", "token_id", "owner_id", "machine_id", "runtime_slot",
-            "period_start", "reserved_microusd", "promotional_reserved_microusd",
-            "addon_reserved_microusd", "authorization_response", "status",
-          ])
+          .selectAll()
           .where("reservation_id", "=", candidate.reservation_id)
           .where("status", "in", ["reserved", "in_flight"]).where("expires_at", "<=", checkedAt)
           .where(sql<boolean>`(status <> 'in_flight' OR authorization_response::jsonb #>> '{reservation,billingMode}' IS DISTINCT FROM 'usage')`)
           .forUpdate().skipLocked().executeTakeFirst();
         if (!reservation) return false;
+        // A candidate may have been recovered after the unlocked scan. Its hold
+        // stays unknown; neither ordinary expiry nor a cleanup retry may charge it.
+        if (reservation.execution_admission_release !== null) {
+          readFundedRecoveryAudit(reservation);
+          return false;
+        }
         const reservationIdentity = {
           ownerId: reservation.owner_id,
           machineId: reservation.machine_id,
@@ -101,7 +107,7 @@ export async function cleanupExpiredReservations(options: AiFundedReservationCle
         const claimedStatus = reservation.status === "in_flight" ? "settling" : "expired";
         const claimed = await trx.executor.updateTable("ai_funded_usage_reservations")
           .set({ status: claimedStatus }).where("reservation_id", "=", reservation.reservation_id)
-          .where("status", "=", reservation.status).returning("reservation_id").executeTakeFirst();
+          .where("status", "=", reservation.status).where("execution_admission_release", "is", null).returning("reservation_id").executeTakeFirst();
         if (!claimed) return false;
         const reserved = exactInteger(reservation.reserved_microusd);
         const currentBalance = speechMonthly

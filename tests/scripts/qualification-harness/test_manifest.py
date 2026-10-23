@@ -6,11 +6,11 @@ import manifest
 
 class PublicManifestContracts(unittest.TestCase):
  def test_repository_is_fixed(self):self.assertEqual(manifest.REPOSITORY,'HamedMP/matrix-os')
- def test_exact_fifty_five_phases_and_fourteen_guards(self):
+ def test_exact_fifty_six_phases_and_fourteen_guards(self):
   from contract import PHASES,PROVENANCE,ELECTRON
-  self.assertEqual(sum(len(v) for v in PHASES.values()),55)
+  self.assertEqual(sum(len(v) for v in PHASES.values()),56)
   self.assertEqual(len(PROVENANCE),14)
-  self.assertEqual(len(set(p for v in ELECTRON.values() for p in v)),14) # thirteen Electron + one grid
+  self.assertEqual(len(set(p for v in ELECTRON.values() for p in v)),15) # fourteen Electron + one grid
  def test_sha_rejects_shell_and_traversal(self):
   for value in ('../main','main','A'*40,'0'*39,'0'*40+';id'):
    with self.assertRaises(ValueError):manifest.sha(value)
@@ -20,7 +20,7 @@ from unittest.mock import patch
 import copy
 class PublicAPIContracts(unittest.TestCase):
  def test_inventory_is_derived_from_public_source(self):
-  value=inventory();self.assertEqual(value['unit'],['tests/a.test.ts','tests/a.test.tsx']);self.assertEqual(len(value['general']),14);self.assertEqual(value['tools']['icons'],'4.3.0')
+  value=inventory();self.assertEqual(value['unit'],['tests/a.test.ts','tests/a.test.tsx']);self.assertEqual(len(value['general']),15);self.assertEqual(value['tools']['icons'],'4.3.0')
  def test_wrong_commit_or_parent_order_rejected(self):
   for field in ('sha','parents'):
    api,commit,_,_=api_fixture();commit[field]='a'*40 if field=='sha' else list(reversed(commit['parents']))

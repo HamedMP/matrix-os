@@ -1,5 +1,5 @@
 import { canonicalChatSubscriptionSelectionMatches } from "@matrix-os/ui";
-import { isLegacyMatrixSdkProvider, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID } from "@matrix-os/contracts";
+import { canonicalChatTurnModes, type CanonicalChatExecutionControls, isLegacyMatrixSdkProvider, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID, MATRIX_PI_ANTHROPIC_API_INSTANCE_ID } from "@matrix-os/contracts";
 import type { CanonicalChatSummary, CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -33,6 +33,7 @@ export function useCanonicalComposerSelection({
   chatId,
   currentSelection,
   boundInstanceId,
+  executionControls,
 }: {
   catalog: CanonicalProviderCatalog;
   catalogReady: boolean;
@@ -40,6 +41,7 @@ export function useCanonicalComposerSelection({
   chatId: string | null;
   currentSelection?: CanonicalChatSummary["currentSelection"];
   boundInstanceId?: string;
+  executionControls?: CanonicalChatExecutionControls;
 }) {
   const [selection, setSelection] = useState<CanonicalComposerSelection | null>(() => (
     initializeImmediately && !chatId && useProviderPreferences.getState().hydrated
@@ -53,6 +55,8 @@ export function useCanonicalComposerSelection({
   const composerSelectionTouched = useRef(false);
   const selectionChatId = useRef<string | null>(null);
   const observedCatalog = useRef(false);
+  const controlsRunId = executionControls?.chatId === chatId ? executionControls.runId : undefined;
+  const observedControlsRunId = useRef(controlsRunId);
 
   useEffect(() => {
     void useProviderPreferences.getState().hydrate();
@@ -62,7 +66,9 @@ export function useCanonicalComposerSelection({
     const scopeChanged = selectionIdentityKey.current !== identityKey;
     selectionIdentityKey.current = identityKey;
     const chatChanged = selectionChatId.current !== chatId;
-    if (chatChanged || scopeChanged) {
+    const acceptedControlsChanged = observedControlsRunId.current !== controlsRunId;
+    observedControlsRunId.current = controlsRunId;
+    if (chatChanged || scopeChanged || acceptedControlsChanged) {
       selectionChatId.current = chatId;
       composerSelectionTouched.current = false;
     }
@@ -86,11 +92,14 @@ export function useCanonicalComposerSelection({
         : chatId
           ? selectedChatInstance ?? currentInstance
           : rememberedInstance ?? currentInstance;
+      const boundModes = canonicalChatTurnModes(catalog, currentSelection,
+        executionControls?.chatId === chatId ? executionControls : undefined);
       const currentIsSupported = current && currentInstance?.availability === "available" && !isLegacyMatrixSdkProvider(currentInstance)
         && (!boundInstanceId || current.instanceId === boundInstanceId)
         && currentInstance.models.some((model) => (
           model.id === current.model && model.availability === "available"
         ))
+        && currentInstance.supports.interactionModes.includes(current.interactionMode)
         && currentInstance.supports.permissionModes.includes(current.permissionMode)
         && rememberedOptions(catalog, current).length === current.options.length
         && canonicalChatSubscriptionSelectionMatches(currentInstance, current.options);
@@ -116,8 +125,8 @@ export function useCanonicalComposerSelection({
           instanceId: boundInstanceId ?? currentSelection.instanceId,
           model: currentSelection.model,
           options: currentSelection.options ?? [],
-          interactionMode: current?.interactionMode ?? "default",
-          permissionMode: current?.permissionMode ?? "supervised",
+          interactionMode: boundModes?.interactionMode ?? "default",
+          permissionMode: boundModes?.permissionMode ?? "supervised",
         };
       }
       // A remembered personal model is explicit intent too. Restore its exact
@@ -158,6 +167,7 @@ export function useCanonicalComposerSelection({
       return currentSelection && rememberedModel
         ? {
             ...preferred,
+            ...boundModes,
             model: currentSelection.model,
             options: rememberedOptions(catalog, {
               ...preferred,
@@ -173,6 +183,8 @@ export function useCanonicalComposerSelection({
     catalogReady,
     chatId,
     currentSelection,
+    controlsRunId,
+    executionControls,
     lastComposerInstanceId,
     providerPreferencesHydrated,
   ]);

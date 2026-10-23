@@ -28,7 +28,7 @@ gcloud() {
 }
 ${script}
 `], { encoding: "utf8", timeout: 10_000, env: {
-    ...process.env, GITHUB_SHA: "a".repeat(40),
+    ...process.env, GITHUB_SHA: "a".repeat(40), CANDIDATE_TAG: `relay-${"a".repeat(12)}`,
     GATEWAY_TOKEN_SECRET: "cloudflare-ai-gateway-token", GATEWAY_TOKEN_VERSION: "latest",
     WORKERS_TOKEN_SECRET: "cloudflare-workers-ai-token-preview", WORKERS_TOKEN_VERSION: "latest",
     CONTROL_TOKEN_SECRET: "ai-relay-control-token", CONTROL_TOKEN_VERSION: "latest",
@@ -238,7 +238,7 @@ describe("funded relay Cloud Run service", () => {
     expect(workflow).toContain("AI_RELAY_CONTROL_TOKEN=${CONTROL_TOKEN_SECRET}:${CONTROL_TOKEN_VERSION}");
     expect(workflow).toContain("AI_RELAY_METADATA_SECRET=${METADATA_SECRET_SECRET}:${METADATA_SECRET_VERSION}");
     expect(workflow).toContain("--allow-unauthenticated");
-    expect(workflow).toContain("traffic_flags=(--tag candidate --no-traffic)");
+    expect(workflow).toContain('traffic_flags=(--tag "$CANDIDATE_TAG" --no-traffic)');
     expect(workflow).toContain("for _attempt in {1..10}; do");
     expect(workflow).toContain('gcloud run services describe "$AI_RELAY_CLOUD_RUN_SERVICE"');
     expect(workflow).toContain('gcloud run revisions describe "$candidate_revision"');
@@ -309,7 +309,7 @@ function runDeploymentValidation(reviewedAt: string, validThrough: string, extra
     .split("- name: Authenticate to Google Cloud")[0]!.split("run: |\n")[1]!;
   const script = block.split("\n").map(line => line.replace(/^          /, "")).join("\n");
   return spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 10_000, env: {
-    ...process.env, DEPLOY_ENVIRONMENT: "staging", GITHUB_ENV: "/dev/null", GCP_PROJECT_ID: "fixture", GCP_REGION: "fixture",
+    ...process.env, DEPLOY_ENVIRONMENT: "staging", GITHUB_ENV: "/dev/null", GITHUB_SHA: "a".repeat(40), GCP_PROJECT_ID: "fixture", GCP_REGION: "fixture",
     ARTIFACT_REPOSITORY: "fixture", AI_RELAY_CLOUD_RUN_SERVICE: "fixture",
     AI_RELAY_CLOUD_RUN_SERVICE_ACCOUNT: "fixture", PLATFORM_INTERNAL_URL: "https://platform.example.test",
     CLOUDFLARE_AI_GATEWAY_URL: enabledEnv().CLOUDFLARE_AI_GATEWAY_URL!,

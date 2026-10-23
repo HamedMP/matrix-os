@@ -49,12 +49,14 @@ function permissionModeLabel(mode: string): string {
 }
 
 function CompactSelect({
+  openRequest = 0,
   label,
   value,
   options,
   menuSide,
   onChange,
 }: {
+  openRequest?: number;
   label: string;
   value: string;
   options: Array<{ value: string; label: string }>;
@@ -62,6 +64,8 @@ function CompactSelect({
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (openRequest > 0 && trigger.current?.getClientRects().length) setOpen(true); }, [openRequest]);
   if (options.length <= 1) return null;
   const selected = options.find((option) => option.value === value) ?? options[0]!;
   return (
@@ -69,6 +73,7 @@ function CompactSelect({
       <Popover.Trigger asChild>
         <button
           type="button"
+          ref={trigger}
           aria-label={label}
           aria-haspopup="menu"
           aria-expanded={open}
@@ -149,6 +154,7 @@ function SuggestionMenu({
 }
 
 export function SharedChatComposer({
+  permissionModeRequest = 0,
   value,
   onChange,
   draftScopeKey,
@@ -187,6 +193,7 @@ export function SharedChatComposer({
   layout = "default",
   speech,
 }: {
+  permissionModeRequest?: number;
   value: string;
   onChange: (value: string) => void;
   draftScopeKey?: string;
@@ -230,6 +237,8 @@ export function SharedChatComposer({
   speech?: { scopeKey: string; onDraft: (text: string) => void };
 }) {
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (permissionModeRequest > 0 && settingsTrigger.current?.getClientRects().length) setSettingsMenuOpen(true); }, [permissionModeRequest]);
   const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<string | null>(null);
   const suggestionMenuRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
@@ -545,6 +554,7 @@ export function SharedChatComposer({
               ) : null) : null}
               {selection && (instance?.supports.permissionModes.length ?? 0) > 1 ? (
                 <CompactSelect
+                  openRequest={permissionModeRequest}
                   label="Permission mode"
                   value={selection.permissionMode}
                   options={permissionModeOptions}
@@ -558,6 +568,7 @@ export function SharedChatComposer({
                 <Popover.Trigger asChild>
                   <button
                     type="button"
+                    ref={settingsTrigger}
                     aria-label="Chat settings"
                     aria-haspopup="dialog"
                     aria-expanded={settingsMenuOpen}
@@ -594,7 +605,8 @@ export function SharedChatComposer({
                       ) : null)}
                       {(instance?.supports.permissionModes.length ?? 0) > 1 ? (
                         <CompactSelect
-                          label="Permission mode"
+                          openRequest={permissionModeRequest}
+                  label="Permission mode"
                           value={selection.permissionMode}
                           options={permissionModeOptions}
                           menuSide={menuSide}

@@ -1,0 +1,36 @@
+.matrix-browser-surface {
+  --browser-background: var(--bg-surface, var(--background, #fffefc));
+  --browser-surface: var(--bg-sunken, var(--muted, #faf9f7));
+  --browser-text: var(--text-primary, var(--foreground, #242323));
+  --browser-muted: var(--text-secondary, var(--muted-foreground, #635f5f));
+  --browser-border: var(--border-subtle, var(--border, #f3f2f2));
+  --browser-focus: var(--brand-gold, #f1c379);
+  --browser-success: var(--surface-success-emphasis, #288a5b);
+  display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0;
+  overflow: hidden; background: var(--browser-background); color: var(--browser-text);
+  font-family: var(--font-geist-sans, Geist), system-ui, sans-serif; font-size: 14px; line-height: 20px;
+}
+.matrix-browser-surface *, .matrix-browser-surface *::before, .matrix-browser-surface *::after { box-sizing: border-box; }
+.matrix-browser-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: 0 0 auto; padding: 6px 12px; border-bottom: 1px solid var(--browser-border); }
+.matrix-browser-identity { display: flex; align-items: center; gap: 8px; font-weight: 500; white-space: nowrap; }
+.matrix-browser-state { color: var(--browser-muted); font-size: 12px; white-space: nowrap; }
+.matrix-browser-state[data-connected="true"] { color: var(--browser-success); }
+.matrix-browser-control-state { border-radius: 6px; padding: 2px 6px; background: var(--surface-success, #eef7f2); color: var(--browser-text); font-size: 12px; }
+.matrix-browser-actions { display: flex; align-items: center; gap: 6px; min-width: 0; margin-left: auto; overflow-x: auto; }
+.matrix-browser-surface button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; height: 44px; border: 1px solid var(--browser-border); border-radius: 10px; padding: 0 12px; color: var(--browser-text); background: var(--browser-background); font: inherit; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background 160ms; }
+.matrix-browser-surface button:hover:enabled { background: var(--browser-surface); }
+.matrix-browser-surface button:disabled { opacity: .45; cursor: default; }
+.matrix-browser-surface button:focus-visible { outline: 2px solid var(--browser-focus); outline-offset: 2px; }
+.matrix-browser-surface .matrix-browser-icon-button { width: 44px; padding: 0; }
+.matrix-browser-error { flex: 0 0 auto; margin: 0; padding: 8px 12px; color: var(--text-danger, var(--destructive, #ba5236)); background: var(--browser-surface); font-size: 13px; }
+.matrix-browser-viewport { position: relative; flex: 1; min-width: 0; min-height: 0; overflow: hidden; background: var(--browser-surface); }
+.matrix-browser-viewport iframe { display: block; width: 100%; height: 100%; border: 0; }
+.matrix-browser-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; height: 100%; padding: 20px; text-align: center; }
+.matrix-browser-placeholder p { color: var(--browser-muted); font-size: 14px; margin: 0; max-width: 340px; }
+.matrix-browser-recovery { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; background: var(--browser-background); padding: 20px; }
+.matrix-browser-settings { position: absolute; z-index: 2; top: 12px; right: 12px; width: min(340px, calc(100% - 24px)); padding: 16px; border: 1px solid var(--browser-border); border-radius: 14px; background: var(--browser-background); }
+.matrix-browser-settings > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.matrix-browser-settings p { margin: 12px 0 0; color: var(--browser-muted); font-size: 14px; line-height: 20px; }
+.matrix-browser-settings-actions { margin-top: 16px; justify-content: flex-start !important; flex-wrap: wrap; }
+@media (max-width: 760px) { .matrix-browser-surface[data-surface="desktop"] .matrix-browser-actions { width: 100%; margin-left: 0; } }
+@media (prefers-reduced-motion: reduce) { .matrix-browser-surface button { transition: none; } }

@@ -9,6 +9,8 @@ import {
   OS_VIEW_LABELS,
   isOsViewDestinationPath,
   otherOsViewMode,
+  remoteBrowserSurfaceForPath,
+  REMOTE_BROWSER_PATHS,
 } from "@matrix-os/contracts";
 
 /** Reveal the desktop without discarding open apps or their saved geometry. */
@@ -21,6 +23,11 @@ export function showWebDesktop(minimizeWindow: (id: string) => void = useWindowM
   }
 }
 
+/** Canonical window-manager opening reveals the destination in one state change. */
+export function openWebAppBridgeWindow(name: string, path: string, openWindow: (name: string, path: string) => void): void {
+  openWindow(name, path);
+}
+
 export type WebDesktopBuiltInLaunch =
   | { kind: "external"; url: string }
   | { kind: "external-code" }
@@ -30,12 +37,9 @@ export type WebDesktopBuiltInLaunch =
 export { isOsViewDestinationPath };
 
 export function resolveWebDesktopBuiltInLaunch(path: string): WebDesktopBuiltInLaunch | null {
-  if (
-    path === "__browser__"
-    || path === "apps/browser/index.html"
-    || path === "apps/browser/dist/index.html"
-  ) {
-    return { kind: "external", url: "https://www.google.com" };
+  const browserSurface = remoteBrowserSurfaceForPath(path);
+  if (browserSurface) {
+    return { kind: "app", name: browserSurface === "browser" ? "Browser" : "Cloud desktop", path: REMOTE_BROWSER_PATHS[browserSurface] };
   }
   if (path === "__vscode__") {
     return { kind: "external-code" };
@@ -57,7 +61,7 @@ function findCanonicalApp(apps: readonly AppEntry[], paths: readonly string[]): 
 }
 
 function namedDesktopApp(app: AppEntry | undefined, fallback: AppEntry): AppEntry {
-  return app ? { ...app, name: fallback.name } : fallback;
+  return app ? { ...app, name: fallback.name, path: fallback.path } : fallback;
 }
 
 export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
@@ -74,11 +78,13 @@ export function buildWebDesktopIconApps(apps: readonly AppEntry[]): AppEntry[] {
     { name: "Settings", path: "__settings__" },
     { name: "Connect Apps", path: "__plugins__" },
     namedDesktopApp(findCanonicalApp(apps, browserPaths), { name: "Browser", path: "__browser__" }),
+    { name: "Cloud desktop", path: REMOTE_BROWSER_PATHS.desktop },
     namedDesktopApp(findCanonicalApp(apps, notesPaths), { name: "Notes", path: "apps/notes/index.html" }),
     namedDesktopApp(findCanonicalApp(apps, whiteboardPaths), { name: "Whiteboard", path: "apps/whiteboard/index.html" }),
   ];
   const firstClassPaths = new Set([
     ...DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
+    REMOTE_BROWSER_PATHS.desktop,
     ...browserPaths,
     ...notesPaths,
     ...whiteboardPaths,

@@ -32,6 +32,7 @@ async function fixture(account: boolean | 'lookup-error' = true) {
   const source = (await readFile(sourcePath, 'utf8')).replaceAll("/usr/bin/python3 -I -c 'import cryptography'", `"${bin}/crypto-present"`);
   const script = join(root, 'prerequisites');
   await writeFile(script, source);
+  await writeFile(join(root, 'matrix-configure-sites-nginx'), await readFile('distro/customer-vps/host-bin/matrix-configure-sites-nginx'));
   const run = (args: string[] = []) => exec('bash', [script, ...args], {
     env: { ...process.env, MATRIX_HOST_PREREQUISITES_ROOT: root, PATH: `${bin}:${process.env.PATH ?? ''}` }, timeout: 10_000,
   });

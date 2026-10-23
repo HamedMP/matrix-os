@@ -77,7 +77,7 @@ export async function commitCodexKey(input: {
       console.warn("[provider-workflow] Codex key rollback unavailable:", rollbackError instanceof Error ? rollbackError.name : "UnknownError");
       throw new CodexKeyRollbackFailedError();
     }
-    console.warn("[provider-workflow] Codex Connect rejected after key staging:", error instanceof Error ? error.name : "UnknownError");
+    console.warn("[provider-workflow] Codex Connect rejected after key staging:", error instanceof Error ? error.name : "UnknownError", error instanceof Error ? (error as { code?: unknown }).code : undefined);
     throw new NativeProviderWriteRestoredError();
   }
 }

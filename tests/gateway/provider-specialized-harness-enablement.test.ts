@@ -96,7 +96,7 @@ describe("specialized harness enablement", () => {
       instance.defaultModelId = null;
     }
     const on = await store.mutate({ type: "set_harness_enabled", harnessInstanceId: selected.id, expectedRevision: off.snapshot.revision, idempotencyKey: "unknown_access_on", enabled: true });
-    expect(on.snapshot.harnesses.find((h) => h.id === selected.id)).toMatchObject({ configuredEnabled: true, enabled: true, authState: "unknown", selectedAccountId: selected.selectedAccountId, accessSourceId: selected.accessSourceId, route: selected.route });
+    expect(on.snapshot.harnesses.find((h) => h.id === selected.id)).toMatchObject({ configuredEnabled: true, enabled: kind === "claude", authState: "unknown", selectedAccountId: selected.selectedAccountId, accessSourceId: selected.accessSourceId, route: selected.route });
     expect(source.state).toBe("unknown");
   });
 

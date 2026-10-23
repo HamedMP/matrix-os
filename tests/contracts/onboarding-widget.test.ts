@@ -328,6 +328,9 @@ describe("reduceOnboardingWidget", () => {
     expect(run(waiting, { type: "ai.failed" }).ai).toEqual({ step: "waiting", provider: "claude", status: "failed" });
     const key = run(method, { type: "ai.methodPicked", method: "api_key" });
     expect(key.ai).toEqual({ step: "key", provider: "claude", status: "idle" });
+    const keyFailed = run(run(key, { type: "ai.keySubmitted" }), { type: "ai.failed", failure: "workspace_required" });
+    expect(keyFailed.ai).toEqual({ step: "key", provider: "claude", status: "failed", failure: "workspace_required" });
+    expect(run(keyFailed, { type: "ai.keySubmitted" }).ai).toEqual({ step: "key", provider: "claude", status: "saving" });
     const connected = run(key, { type: "ai.connected", provider: "claude" });
     expect(connected.ai).toBeNull();
     expect(connected.aiChoice).toBe("claude");

@@ -1,4 +1,5 @@
 import { ChatRunContextSchema } from "#chat-agent-context";
+import { BrowserApprovalIntentSchema, browserCanonicalDecision } from "#browser-chat-approval";
 import { z } from "zod/v4";
 import {
   CanonicalChatMessagePartSchema,
@@ -266,7 +267,12 @@ export const CanonicalSubmitChatApprovalRequestSchema = z.object({
   clientRequestId: CanonicalChatRequestIdSchema,
   decision: CanonicalChatApprovalDecisionSchema,
   actionDigest: CanonicalChatActionDigestSchema.optional(),
-}).strict();
+  browserApproval: BrowserApprovalIntentSchema.optional(),
+}).strict().superRefine((request, context) => {
+  if (request.browserApproval && (!request.actionDigest || request.decision !== browserCanonicalDecision(request.browserApproval.decision))) {
+    context.addIssue({ code: "custom", path: ["browserApproval"], message: "Browser decision must match its exact action and scope" });
+  }
+});
 
 const PreviewDriveActionSchema = z.object({
   service: z.literal("google_drive"),

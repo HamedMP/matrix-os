@@ -210,6 +210,11 @@ jest.mock(
 // suite unmocks it.
 jest.mock("@/lib/use-session-token-warmup", () => ({ useSessionTokenWarmup: () => () => undefined }));
 
+// Dictation needs the microphone's native module and the computer's speech
+// routes. Screen tests get a composer without it; the hook's own suite and the
+// composer's speech tests unmock or pass it.
+jest.mock("@/lib/speech/use-composer-speech", () => ({ useComposerSpeech: () => undefined }));
+
 // PostHog pulls in optional native modules (expo-file-system/application/device,
 // the session-replay plugin) at import time. Stub it globally so screen tests that
 // transitively import lib/analytics never load the real SDK. The provider and mask

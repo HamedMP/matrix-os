@@ -1,3 +1,4 @@
+import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
 import { useChatReadState, mergeChatReadState } from "@matrix-os/ui";
 import { canonicalChatApprovals, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { useCanonicalInputSubmission } from "./use-canonical-input-submission";
@@ -806,6 +807,7 @@ export function useCanonicalChatRouteController({
   const submitApproval = useCallback(async (
     approvalId: string,
     decision: CanonicalChatApprovalDecision,
+    browserChoice?: BrowserPermissionChoice,
   ) => {
     const current = detailRef.current;
     const activeRun = current?.record.activeRun;
@@ -815,7 +817,8 @@ export function useCanonicalChatRouteController({
     try {
       const approval = canonicalChatApprovals(current).find(item =>
         item.pending && item.runId === activeRun.runId && item.approvalId === approvalId);
-      await client.submitApproval(current.record.chat.id, activeRun.runId, approvalId, {
+      if (approval?.browserApproval && !browserChoice) throw new Error("Browser scope required");
+      await client.submitApproval(current.record.chat.id, activeRun.runId, approvalId, browserChoice ? browserPermissionRequest(approval, browserChoice, canonicalChatRequestId()) : {
         clientRequestId: canonicalChatRequestId(),
         decision,
         ...(approval?.actionDigest !== undefined ? { actionDigest: approval.actionDigest } : {}),

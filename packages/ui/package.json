@@ -10,6 +10,7 @@
     "./default-organization": "./src/collaboration/default-organization.ts",
     "./speech": "./src/speech/index.ts",
     "./styles.css": "./src/styles.css",
+    "./browser.css": "./src/browser/browser.css",
     "./agents-providers.css": "./src/agents-providers/agents-providers.css",
     "./chat-agents.css": "./src/chat-agents/chat-agents.css",
     "./appearance": "./src/appearance/index.ts",

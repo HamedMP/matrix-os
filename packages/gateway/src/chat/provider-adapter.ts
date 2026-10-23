@@ -1,3 +1,4 @@
+import { BrowserApprovalLifecycleSchema, BrowserGrantViewSchema } from "@matrix-os/contracts";
 import { PlaintextToolPreviewSchema } from "./plaintext-tool-preview.js";
 import {
   UserInputQuestionListSchema,
@@ -82,11 +83,14 @@ export const CanonicalProviderRunEventSchema = z.discriminatedUnion("type", [
     safeDescription: z.string().min(1).max(4_000).optional(),
     allowedDecisions: z.array(CanonicalChatApprovalDecisionSchema).min(1).max(4),
     actionDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    browserApproval: BrowserApprovalLifecycleSchema.optional(),
   }).strict(),
   z.object({
     type: z.literal("approval.resolved"),
     approvalId: SafeProviderRefSchema,
     decision: CanonicalChatApprovalDecisionSchema,
+    browserApproval: BrowserApprovalLifecycleSchema.optional(),
+    browserGrant: BrowserGrantViewSchema.optional(),
     reason: z.enum(["expired"]).optional(),
   }).strict(),
   z.object({

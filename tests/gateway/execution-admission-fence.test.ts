@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +11,7 @@ import { SharedChatExecutionCoordinator, type SharedChatExecutionCoordinatorOpti
 import { createManagedFeatureRestartCoordinator } from "../../packages/gateway/src/managed-feature-restart.js";
 import { createExecutionAdmissionFence } from "../../packages/gateway/src/execution-admission-fence.js";
 import { createTestPGlite } from "../helpers/pglite-test-helper.js";
+import { removeTestDirectory } from "../helpers/remove-test-directory.js";
 
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -40,7 +41,7 @@ async function canonicalFixture(fence = createExecutionAdmissionFence(), onCatal
 describe("shared execution admission fence",()=>{
   it("blocks legacy dispatch and batch before queueing or starting work, then admits after release",async()=>{
     const homePath=await mkdtemp(join(tmpdir(),"matrix-dispatch-fence-"));
-    cleanups.push(()=>rm(homePath,{recursive:true,force:true}));
+    cleanups.push(()=>removeTestDirectory(homePath));
     await mkdir(join(homePath,"system")); await writeFile(join(homePath,"system/config.json"),JSON.stringify({kernel:{anthropicApiKey:"owner-test-key"}}));
     const fence=createExecutionAdmissionFence(); const spawn=vi.fn<SpawnFn>(async function*(){yield {type:"result",data:{sessionId:"fence",cost:0,turns:1}};});
     const dispatcher=createDispatcher({homePath,spawnFn:spawn,executionAdmissionFence:fence});

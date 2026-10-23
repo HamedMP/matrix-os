@@ -27,7 +27,9 @@ import { isRequestPrincipalError, mapRequestPrincipalError, ownerScopeFromPrinci
 import { createWorkspaceEventPublisher, type WorkspaceEventPublisher } from "./workspace-event-publisher.js";
 import { createWorkspaceSessionOrchestrator, type WorkspaceSessionOrchestrator } from "./workspace-session-orchestrator.js";
 import { requestHasBody } from "./http-body.js";
-import { createProjectLifecycleService, ProjectLifecycleActionSchema } from "./project-lifecycle.js";
+import { createProjectLifecycleService } from "./project-lifecycle.js";
+import { registerProjectLifecycleRoutes } from "./project-lifecycle-routes.js";
+import type { OwnerProjectDeletion, OwnerProjectDeletionDependencies } from "./collaboration/owner-project-deletion.js";
 import type { CodingAgentThreadStore } from "./coding-agents/thread-store.js";
 import {
   ProjectFenceError,
@@ -157,10 +159,6 @@ const SendSessionInputSchema = z.object({
 
 const EmptyObjectSchema = z.object({}).passthrough();
 const ProjectVisibilitySchema = z.enum(["active", "archived", "all"]);
-const ProjectDeleteCompatibilitySchema = z.object({
-  confirmation: z.string().min(1).max(128),
-  confirmTerminate: z.boolean().optional(),
-}).strict();
 
 const CreateReviewSchema = z.object({
   projectSlug: z.string().min(1).max(63),
@@ -253,6 +251,7 @@ export function createWorkspaceRoutes(options: {
   startSession?: WorkspaceSessionOrchestrator["startSession"];
   projectLifecycleService?: ProjectLifecycleService;
   projectOperationAdmission?: LegacyProjectOperationAdmission;
+  configureSharedProjectDeletion?: (input: OwnerProjectDeletionDependencies) => OwnerProjectDeletion;
   deleteProjectChats?: ProjectChatCleanup;
   codingAgentThreadStore?: Pick<CodingAgentThreadStore, "getProjectLifecycleState" | "deleteProjectThreads">;
   getOwnerScope?: (c: Context) => OwnerScope;
@@ -336,10 +335,6 @@ export function createWorkspaceRoutes(options: {
     }),
   });
 
-  function lifecyclePrincipal(ownerScope: OwnerScope) {
-    return { userId: ownerScope.id, source: "configured-container" as const };
-  }
-
   function principalError(c: Context, err: unknown) {
     if (!isRequestPrincipalError(err)) throw err;
     const mapped = mapRequestPrincipalError(err, "Workspace request failed");
@@ -353,6 +348,7 @@ export function createWorkspaceRoutes(options: {
   async function withLegacyProjectOperation<T>(input: {
     ownerScope: OwnerScope;
     projectSlug: string;
+    projectId?: string;
     kind: "write" | "run";
     operation(projectId?: string): Promise<T>;
   }): Promise<
@@ -362,17 +358,19 @@ export function createWorkspaceRoutes(options: {
     if (!options.projectOperationAdmission) {
       return { ok: true, value: await input.operation() };
     }
-    const project = await projectManager.getProject(input.projectSlug, input.ownerScope);
-    if (!project.ok) {
-      return { ok: false, status: project.status, body: { error: project.error } };
+    let projectId = input.projectId;
+    if (!projectId) {
+      const project = await projectManager.getProject(input.projectSlug, input.ownerScope);
+      if (!project.ok) return { ok: false, status: project.status, body: { error: project.error } };
+      projectId = project.project.id;
     }
     try {
       const value = await options.projectOperationAdmission.withLegacyAdmission({
         ownerType: input.ownerScope.type === "org" ? "organization" : "personal",
         ownerId: input.ownerScope.id,
-        projectId: project.project.id,
+        projectId,
         kind: input.kind,
-      }, () => input.operation(project.project.id));
+      }, () => input.operation(projectId));
       return { ok: true, value };
     } catch (err: unknown) {
       if (err instanceof ProjectFenceError) {
@@ -526,105 +524,10 @@ export function createWorkspaceRoutes(options: {
     return c.json({ project: result.project });
   });
 
-  app.post("/api/projects/:slug/actions", limited, async (c) => {
-    const body = await parseJson(c, ProjectLifecycleActionSchema);
-    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    let ownerScope: OwnerScope;
-    try {
-      ownerScope = getOwnerScope(c);
-    } catch (err: unknown) {
-      return principalError(c, err);
-    }
-    if (body.value.type === "delete") {
-      const project = await projectManager.getProjectForLifecycle({ slug: c.req.param("slug"), ownerScope });
-      if (!project.ok) return c.json({ error: project.error }, status(project.status));
-      const confirmation = await requireTerminalDeletionConfirmation(
-        c,
-        project.project.id,
-        body.value.confirmTerminate ?? false,
-      );
-      if (confirmation) return confirmation;
-    }
-    const admitted = await withLegacyProjectOperation({
-      ownerScope,
-      projectSlug: c.req.param("slug"),
-      kind: "write",
-      operation: () => projectLifecycleService.applyProjectLifecycleAction(
-        lifecyclePrincipal(ownerScope),
-        c.req.param("slug"),
-        body.value,
-      ),
-    });
-    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
-    const result = admitted.value;
-    if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json(result);
-  });
-
-  async function requireTerminalDeletionConfirmation(
-    c: Context,
-    projectId: string,
-    confirmTerminate: boolean,
-  ) {
-    try {
-      const workspace = (await terminalRuntime.listWorkspaces())
-        .find((candidate) => candidate.scope === "project" && candidate.projectId === projectId);
-      if (workspace) {
-        const impact = await terminalRuntime.deletionImpact(workspace.id);
-        if (impact.runningTabs > 0 && !confirmTerminate) {
-          return c.json({
-            error: {
-              code: "terminal_termination_confirmation_required",
-              message: "Project has running terminal tabs",
-            },
-            ...impact,
-          }, 409);
-        }
-      }
-    } catch (error: unknown) {
-      console.error("[workspace-routes] Terminal workspace deletion failed", error);
-      return c.json(errorBody("terminal_runtime_unavailable", "Project could not be deleted"), 503);
-    }
-    return null;
-  }
-
-  app.delete("/api/projects/:slug", limited, async (c) => {
-    const body = await parseJson(c, ProjectDeleteCompatibilitySchema);
-    if (!body.ok) return c.json(errorBody(body.code, body.message), status(body.status));
-    let ownerScope: OwnerScope;
-    try {
-      ownerScope = getOwnerScope(c);
-    } catch (err: unknown) {
-      return principalError(c, err);
-    }
-    const project = await projectManager.getProjectForLifecycle({ slug: c.req.param("slug"), ownerScope });
-    if (!project.ok) return c.json({ error: project.error }, status(project.status));
-    const confirmation = await requireTerminalDeletionConfirmation(
-      c,
-      project.project.id,
-      body.value.confirmTerminate ?? false,
-    );
-    if (confirmation) return confirmation;
-    const admitted = await withLegacyProjectOperation({
-      ownerScope,
-      projectSlug: c.req.param("slug"),
-      kind: "write",
-      operation: () => projectLifecycleService.applyProjectLifecycleAction(
-        lifecyclePrincipal(ownerScope),
-        c.req.param("slug"),
-        {
-          type: "delete",
-          confirmation: body.value.confirmation,
-          ...(body.value.confirmTerminate === undefined
-            ? {}
-            : { confirmTerminate: body.value.confirmTerminate }),
-        },
-      ),
-    });
-    if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
-    const result = admitted.value;
-    if (!result.ok) return c.json({ error: result.error }, status(result.status));
-    return c.json(result);
+  const sharedDeletion = options.configureSharedProjectDeletion?.({ projectManager, localLifecycle: projectLifecycleService });
+  registerProjectLifecycleRoutes(app, {
+    limited, projectManager, localLifecycle: projectLifecycleService, sharedDeletion,
+    terminalRuntime, getOwnerScope, principalError, admit: withLegacyProjectOperation,
   });
 
   app.get("/api/projects/:slug/prs", async (c) => {

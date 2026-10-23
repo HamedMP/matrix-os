@@ -124,10 +124,10 @@ export function WidgetHeader({ status, prefs, actions, dragHandle, moreOpen, onM
   );
 }
 
-export function ModelLine({ state, actions, activeAi, matrixAvailable }: Pick<OnboardingWidgetProps, "state" | "actions" | "activeAi" | "matrixAvailable">) {
+export function ModelLine({ state, actions, activeAi, matrixAvailable, aiDetail }: Pick<OnboardingWidgetProps, "state" | "actions" | "activeAi" | "matrixAvailable" | "aiDetail">) {
   return (
     <p className="mxo-model-line">
-      {activeAiName(activeAi, matrixAvailable) ?? "Matrix AI isn't available here"} · <button type="button" className="mxo-inline-link" aria-expanded={state.ai?.step === "menu"} data-mxo-menu-toggle="ai" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Change</button>
+      {aiDetail ?? activeAiName(activeAi, matrixAvailable) ?? "Matrix AI isn't available here"} · <button type="button" className="mxo-inline-link" aria-expanded={state.ai?.step === "menu"} data-mxo-menu-toggle="ai" onClick={() => actions.dispatch({ type: "ai.menuToggled" })}>Change</button>
     </p>
   );
 }

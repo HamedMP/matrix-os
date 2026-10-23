@@ -76,6 +76,7 @@ import { desktopDevHostResolverRules, resolveDesktopRendererUrl } from "./render
 import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/ipc-contract";
 import { createNativeAppCapabilityRequester, createNativeAppAiRoutesRequester } from "./embeds/native-app-capabilities";
 import { createNativeAppOpenResolver } from "./embeds/native-app-open";
+import { installBrowserProductSessionCookie } from "./embeds/browser-product-session";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const DESKTOP_APP_NAME = "Matrix OS";
@@ -347,6 +348,9 @@ if (!gotLock) {
         gatewayRequest: createNativeAppGatewayRequester({
           getGatewayOrigin: () => auth.getGatewayOrigin(),
           getToken: () => auth.getToken(),
+          getAuthGeneration: () => auth.getStatus().authGeneration,
+          installBrowserSessionCookie: (headers, origin, isCurrent) => installBrowserProductSessionCookie(
+            headers, origin, isCurrent, session.fromPartition("persist:app-browser-lab").cookies),
         }),
         gatewayOrigin: () => auth.getGatewayOrigin(),
         request: createNativeAppQueryRequester({
@@ -364,6 +368,16 @@ if (!gotLock) {
         emitState: (embedId, state) => sendEvent("embed:state", { embedId, state }),
         appBridge: nativeAppBridge,
         appPreloadPath: join(__dirname, "../preload/index.cjs"),
+        browserLabViewerAuth: {
+          getGatewayOrigin: () => auth.getGatewayOrigin(),
+          getToken: () => auth.getToken(),
+          getAuthGeneration: () => auth.getStatus().authGeneration,
+        },
+        renewBrowserProductSession: () => createNativeAppGatewayRequester({
+          getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken(),
+          getAuthGeneration: () => auth.getStatus().authGeneration,
+          installBrowserSessionCookie: (headers, origin, isCurrent) => installBrowserProductSessionCookie(headers, origin, isCurrent, session.fromPartition("persist:app-browser-lab").cookies),
+        })("matrix-browser", { url: "/api/apps/browser-lab/session", init: { method: "POST", body: "{}" } }, "browser-lab"),
       });
       const updater = createUpdater({
         onAvailable: (version) => {

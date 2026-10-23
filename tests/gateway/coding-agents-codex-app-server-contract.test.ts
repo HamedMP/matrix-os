@@ -7,7 +7,7 @@ import {
 
 describe("Codex app-server contract", () => {
   it("pins the bounded server requests used by Matrix", () => {
-    expect(CODEX_VERIFIED_VERSION).toBe("0.156.1");
+    expect(CODEX_VERIFIED_VERSION).toBe("0.162.1");
     expect(CODEX_APP_SERVER_CONTRACT).toMatchObject({
       packageName: "@openai/codex",
       latestVerifiedVersion: "0.163.0",

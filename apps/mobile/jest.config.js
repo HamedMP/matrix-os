@@ -24,6 +24,9 @@ module.exports = {
   moduleNameMapper: {
     "^\\./canonical-chat-api\\.js$": "<rootDir>/../../packages/contracts/src/canonical-chat-api.ts",
     "^\\./canonical-chat-inputs\\.js$": "<rootDir>/../../packages/contracts/src/canonical-chat-inputs.ts",
+    // The shared speech hook (@matrix-os/ui/speech) imports its siblings by their built names.
+    "^\\./use-platform-speech-draft\\.js$": "<rootDir>/../../packages/ui/src/speech/use-platform-speech-draft.ts",
+    "^\\./pcm\\.js$": "<rootDir>/../../packages/ui/src/speech/pcm.ts",
     "^react$": "<rootDir>/node_modules/react",
     "^@/(.*)$": "<rootDir>/$1",
   },

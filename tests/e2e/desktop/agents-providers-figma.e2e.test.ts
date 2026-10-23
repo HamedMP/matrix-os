@@ -195,7 +195,7 @@ suite("Electron Desktop Agents & providers Figma workflows (synthetic gateway)",
       expect(await key.getAttribute("type")).toBe("password");
       await key.fill("invalid-key-for-fixture");
       await codex.getByRole("button", { name: "Connect", exact: true }).click();
-      await codex.getByRole("alert").getByText("The key could not be verified. Check it and try again.", { exact: true }).waitFor();
+      await codex.getByRole("alert").getByText("OpenAI didn't accept this key. Check that you copied all of it, or create a new key in your OpenAI account.", { exact: true }).waitFor();
       expect(await key.getAttribute("aria-invalid")).toBe("true");
       await capture("06-key-rejected");
       await key.fill("sk-safe-fixture-valid");

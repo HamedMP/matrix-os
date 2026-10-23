@@ -30,7 +30,8 @@ export async function ensureFundedReservationIndexes(db: Kysely<PlatformDatabase
     WHERE execution_admission_release IS NOT NULL AND actual_microusd IS NULL AND charge_waiver IS NULL
     GROUP BY owner_id
     HAVING COUNT(*) > ${FUNDED_EXECUTION_RECOVERY_MAX_UNKNOWN}
-      OR SUM((authorization_response::jsonb #>> '{reservation,maxCostMicrousd}')::bigint)
+      OR SUM(CASE WHEN authorization_response::jsonb ->> 'capability' = 'speech:transcribe'
+        THEN reserved_microusd ELSE (authorization_response::jsonb #>> '{reservation,maxCostMicrousd}')::bigint END)
         > ${FUNDED_EXECUTION_RECOVERY_MAX_LIABILITY_MICROUSD}
     LIMIT 1
   `.execute(db);

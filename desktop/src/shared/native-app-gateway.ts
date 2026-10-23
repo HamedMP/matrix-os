@@ -1,11 +1,13 @@
 import { z } from "zod/v4";
 import { isAllowedAppGalleryBridgeRequest, isAppGalleryIdentity, isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
 import { parseGalleryInventory } from "@matrix-os/contracts/app-gallery-inventory";
+import { nativeBrowserProduct } from "./browser-products";
 
 export const NATIVE_APP_GATEWAY_CHANNEL = "native-app:gateway-fetch";
 export const NATIVE_APP_ACTIVITY_BRIDGE_ARG = "--matrix-app-activity-bridge";
 export const NATIVE_APP_GALLERY_BRIDGE_ARG = "--matrix-app-gallery-bridge";
 export const NATIVE_APP_INTEGRATIONS_BRIDGE_ARG = "--matrix-app-integrations-bridge";
+export const NATIVE_APP_BROWSER_BRIDGE_ARG = "--matrix-app-browser-bridge";
 export const NATIVE_APP_GATEWAY_TIMEOUT_MS = 10_000;
 export const NATIVE_APP_GALLERY_INSTALL_TIMEOUT_MS = 35_000;
 
@@ -16,6 +18,9 @@ const ActivityQuerySchema = z.strictObject({
   processLimit: z.string().regex(/^(?:[1-9][0-9]?|100)$/).optional(),
   includeSuggestions: z.enum(["true", "false"]).optional(),
 });
+function isBrowserSetup(url: string, method: string): boolean {
+  return url === "/api/browser/setup" && method === "GET" || url === "/api/browser/setup/retry" && method === "POST";
+}
 function isActivityRead(url: string, method: string): boolean {
   if (method !== "GET" || !/^\/api\/system\/activity(?:\?[^#]*)?$/.test(url)) return false;
   const params = new URLSearchParams(url.split("?")[1]);
@@ -42,18 +47,21 @@ export const NativeAppGatewayRequestSchema = z.strictObject({
   }).optional(),
 }).refine(({ url, init }) => {
   const method = init?.method ?? "GET";
-  if (!isActivityRead(url, method) && !isAllowedAppGalleryBridgeRequest(url, method)) return false;
+  if (!isActivityRead(url, method) && !isAllowedAppGalleryBridgeRequest(url, method)
+    && !(url === "/api/apps/browser-lab/session" && method === "POST") && !isBrowserSetup(url, method)) return false;
   return method === "POST" ? init?.body !== undefined : init?.body === undefined && init?.headers === undefined;
 });
 export type NativeAppGatewayRequest = z.infer<typeof NativeAppGatewayRequestSchema>;
 
 export function isAllowedNativeAppGatewayRequest(appIdentity: string, routeSlug: string, request: NativeAppGatewayRequest): boolean {
   const method = request.init?.method ?? "GET";
+  if (nativeBrowserProduct(appIdentity, routeSlug)) return request.url === "/api/apps/browser-lab/session" && method === "POST" || isBrowserSetup(request.url, method);
   if (isNativeAppActivityIdentity(appIdentity, routeSlug)) return isActivityRead(request.url, method);
   if (isAppGalleryIdentity(appIdentity, routeSlug)) return isAllowedAppGalleryBridgeRequest(request.url, method);
   return isAppGalleryInventoryIdentity(appIdentity, routeSlug) && request.url === "/api/integrations" && method === "GET";
 }
 export function nativeAppGatewayTimeout(request: NativeAppGatewayRequest): number {
+  if (request.url === "/api/apps/browser-lab/session" || isBrowserSetup(request.url, request.init?.method ?? "GET")) return NATIVE_APP_GATEWAY_TIMEOUT_MS;
   return request.init?.method === "POST" ? NATIVE_APP_GALLERY_INSTALL_TIMEOUT_MS : NATIVE_APP_GATEWAY_TIMEOUT_MS;
 }
 export function createNativeAppGatewayFetch(invoke: (request: NativeAppGatewayRequest) => Promise<unknown>) {

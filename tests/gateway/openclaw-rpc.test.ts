@@ -100,6 +100,49 @@ describe("OpenClaw gateway RPC", () => {
     expect(socketFactory).not.toHaveBeenCalled();
   });
 
+  it("accepts bounded Matrix browser lease methods and a 30 minute agent run", async () => {
+    const active = await beginCall();
+    active.socket.receive({ type: "res", id: active.request.id, ok: true, payload: { ok: true } });
+    await active.call;
+    const bind = active.client.call("matrix.browser.bind", {
+      runId: "run_qa", sessionKey: "agent:main:qa", token: "a".repeat(43), expiresAt: Date.now() + 60_000, bindingId: "b".repeat(32),
+    }, new AbortController().signal);
+    await vi.waitFor(() => expect(active.socket.sent).toHaveLength(3));
+    const bindRequest = JSON.parse(active.socket.sent[2]!);
+    expect(bindRequest.method).toBe("matrix.browser.bind");
+    expect(bindRequest.params.bindingId).toBe("b".repeat(32));
+    active.socket.receive({ type: "res", id: bindRequest.id, ok: true, payload: { bound: true } });
+    await expect(bind).resolves.toEqual({ bound: true });
+
+    const agent = active.client.call("agent", {
+      message: "Use the shared browser", idempotencyKey: "run_qa", timeout: 1800,
+    }, new AbortController().signal, { timeoutMs: 1_800_000 });
+    await vi.waitFor(() => expect(active.socket.sent).toHaveLength(4));
+    const agentRequest = JSON.parse(active.socket.sent[3]!);
+    expect(agentRequest.params.timeout).toBe(1800);
+    active.socket.receive({ type: "res", id: agentRequest.id, ok: true, payload: { status: "ok" } });
+    await expect(agent).resolves.toEqual({ status: "ok" });
+    const revoke = active.client.call("matrix.browser.revoke", { runId: "run_qa", bindingId: "b".repeat(32), nativeNotStarted: true }, new AbortController().signal);
+    await vi.waitFor(() => expect(active.socket.sent).toHaveLength(5));
+    const revokeRequest = JSON.parse(active.socket.sent[4]!);
+    expect(revokeRequest.method).toBe("matrix.browser.revoke");
+    expect(revokeRequest.params).toEqual({ runId: "run_qa", bindingId: "b".repeat(32), nativeNotStarted: true });
+    active.socket.receive({ type: "res", id: revokeRequest.id, ok: true, payload: { revoked: true } });
+    await expect(revoke).resolves.toEqual({ revoked: true });
+    await active.client.close();
+  });
+
+  it("rejects unbound or malformed never-dispatched cleanup proof before connecting", async () => {
+    const socketFactory = vi.fn(() => new FakeSocket());
+    const client = createOpenClawRpcClient({ url: "ws://127.0.0.1:18789", token: "b".repeat(64), socketFactory });
+    for (const params of [{ runId: "run_qa", nativeNotStarted: true },
+      { runId: "run_qa", nativeNotStarted: true, bindingId: "invalid" }]) {
+      await expect(client.call("matrix.browser.revoke", params, new AbortController().signal))
+        .rejects.toMatchObject({ kind: "agent_config_invalid" });
+    }
+    expect(socketFactory).not.toHaveBeenCalled(); await client.close();
+  });
+
   it("rejects oversized and malformed method requests before connecting", async () => {
     const socketFactory = vi.fn(() => new FakeSocket());
     const client = createOpenClawRpcClient({
@@ -292,11 +335,14 @@ describe("OpenClaw gateway RPC", () => {
     const active = await beginCall({ maxPending: 2 });
     const healthOutcome = active.call.catch((error: unknown) => error);
     active.socket.throwOnSend = true;
+    const onDispatched = vi.fn();
     await expect(active.client.call(
       "models.list",
       {},
       new AbortController().signal,
+      { onDispatched },
     )).rejects.toMatchObject({ kind: "runtime_unavailable" });
+    expect(onDispatched).toHaveBeenCalledOnce();
     expect(active.socket.readyState).toBe(3);
     await expect(active.client.call(
       "models.list",
@@ -307,6 +353,17 @@ describe("OpenClaw gateway RPC", () => {
       kind: "runtime_unavailable",
     });
     await active.client.close();
+  });
+
+  it("does not signal native dispatch when cancellation stops connection admission", async () => {
+    const socket = new FakeSocket(), onDispatched = vi.fn(), controller = new AbortController();
+    const client = createOpenClawRpcClient({ url: "ws://127.0.0.1:18789", token: "b".repeat(64), socketFactory: () => socket });
+    const call = client.call("agent", { message: "Synthetic", idempotencyKey: "run_qa" }, controller.signal, { onDispatched });
+    const rejected = expect(call).rejects.toMatchObject({ kind: "runtime_unavailable" });
+    controller.abort(); await rejected;
+    expect(onDispatched).not.toHaveBeenCalled();
+    expect(socket.sent.map(frame => JSON.parse(frame).method)).not.toContain("agent");
+    await client.close();
   });
 
   it("ignores bounded server events and duplicate challenges after handshake", async () => {

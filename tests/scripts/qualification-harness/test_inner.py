@@ -98,7 +98,7 @@ if fail=='pgstop' and name=='pgmock' and args==['stop']:sys.exit(1)
   build=next(i for i,c in enumerate(calls) if c['cmd']=='bun' and c['args']==['run','build:desktop'])
   self.assertLess(general,grid);self.assertLess(grid,build)
   groups=[c for c in calls if c['cmd']=='pnpm' and '--config' in c['args'] and c['required']=='1']
-  self.assertEqual(len(groups),9)
+  self.assertEqual(len(groups),10)
   actual=[arg for c in groups for arg in c['args'] if arg.startswith('tests/')]
   expected=[path for name,paths in REPORT_FILES.items() if name!='grid' for path in paths]
   self.assertEqual(set(actual),set(expected));self.assertEqual(len(actual),len(expected))

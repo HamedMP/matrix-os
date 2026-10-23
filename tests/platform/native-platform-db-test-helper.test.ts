@@ -505,7 +505,7 @@ describe.skipIf(!liveUrl)('native platform fixtures against disposable PostgreSQ
       expect((await sql`SELECT policy_id,enabled,revision FROM ai_funded_global_policy`.execute(sqlDb(fixture))).rows)
         .toEqual([{ policy_id: 'default', enabled: false, revision: 0 }]);
       expect((await sql`SELECT scope FROM platform_schema_revisions ORDER BY scope`.execute(sqlDb(fixture))).rows)
-        .toEqual([{ scope: 'billing-google-purchases' }, { scope: 'core' }, { scope: 'funded-probe-cache' }, { scope: 'whatsapp' }]);
+        .toEqual([{ scope: 'billing-google-purchases' }, { scope: 'core' }, { scope: 'funded-probe-cache' }, { scope: 'sites' }, { scope: 'whatsapp' }]);
       const user = (await sql`INSERT INTO users(clerk_id,handle,display_name,email,container_id)
         VALUES('same','same','Fixture','fixture@example.test','same') RETURNING id,plan,status`.execute(sqlDb(fixture))).rows[0];
       expect(user).toMatchObject({ id: expect.any(String), plan: 'free', status: 'active' });

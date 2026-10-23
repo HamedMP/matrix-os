@@ -7,6 +7,7 @@ import { proxyMetricsRegistry, apiCallsTotal, apiCostTotal, quotaRejections } fr
 import { isAuthorizedProxyAdminRequest, parseProxyApiKey } from './auth.js';
 import { createFundedRelay, resolveFundedRelayConfig } from './funded-relay.js';
 import { configureProxyServerTimeouts } from './server-timeouts.js';
+import { RELAY_SHUTDOWN_FORCE_EXIT_MS, RELAY_SHUTDOWN_TIMEOUT_MS, waitForRelayWork } from './funded-relay-lifecycle.js';
 
 const ANTHROPIC_API = process.env.ANTHROPIC_API_URL ?? 'https://api.anthropic.com';
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY ?? '';
@@ -337,15 +338,19 @@ async function shutdown(signal: NodeJS.Signals): Promise<void> {
   isShuttingDown = true;
   console.log(`[proxy] Received ${signal}, shutting down`);
   server.close();
-  const forceExit = setTimeout(() => process.exit(1), 6_000);
+  const deadline = AbortSignal.timeout(RELAY_SHUTDOWN_TIMEOUT_MS);
+  const forceExit = setTimeout(() => process.exit(1), RELAY_SHUTDOWN_FORCE_EXIT_MS);
+  let completed = false;
   try {
-    await fundedRelay.close();
-    await posthogErrorTracker.shutdown();
+    const drained = await fundedRelay.close(deadline);
+    const tracked = !deadline.aborted && await waitForRelayWork(posthogErrorTracker.shutdown(), deadline);
+    completed = drained && tracked && !deadline.aborted;
   } catch (err: unknown) {
     console.warn('[proxy] Failed during shutdown:', err instanceof Error ? err.message : String(err));
   } finally {
     clearTimeout(forceExit);
-    process.exit(0);
+    if (!completed) console.warn('[proxy] Shutdown incomplete');
+    process.exit(completed ? 0 : 1);
   }
 }
 

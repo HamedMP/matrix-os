@@ -10,22 +10,30 @@ import {
 } from "../../shell/src/lib/web-desktop-app-launch.js";
 
 describe("web Desktop built-in app launch routing", () => {
-  it("routes the fallback Browser launcher to a public browser URL", () => {
+  it("routes the Browser launcher to the persistent Chrome app", () => {
     expect(resolveWebDesktopBuiltInLaunch("__browser__")).toEqual({
-      kind: "external",
-      url: "https://www.google.com",
+      kind: "app",
+      name: "Browser",
+      path: "__browser__",
     });
   });
 
   it("routes the installed Browser catalog entry through the dedicated Browser launch", () => {
     expect(resolveWebDesktopBuiltInLaunch("apps/browser/index.html")).toEqual({
-      kind: "external",
-      url: "https://www.google.com",
+      kind: "app",
+      name: "Browser",
+      path: "__browser__",
     });
     expect(resolveWebDesktopBuiltInLaunch("apps/browser/dist/index.html")).toEqual({
-      kind: "external",
-      url: "https://www.google.com",
+      kind: "app",
+      name: "Browser",
+      path: "__browser__",
     });
+  });
+
+  it("keeps Cloud desktop available as a distinct launcher destination", () => {
+    expect(resolveWebDesktopBuiltInLaunch("__cloud-desktop__")).toEqual({ kind: "app", name: "Cloud desktop", path: "__cloud-desktop__" });
+    expect(buildWebDesktopLauncherApps([])).toContainEqual(expect.objectContaining({ name: "Cloud desktop", path: "__cloud-desktop__" }));
   });
 
   it("does not hijack a user app that is merely named Browser", () => {
@@ -70,14 +78,14 @@ describe("web Desktop built-in app launch routing", () => {
     expect(buildWebDesktopIconApps([]).some((app) => app.path.startsWith("__os-view-"))).toBe(false);
   });
 
-  it("uses canonical durable paths for all ten default Desktop icons", () => {
-    expect(buildWebDesktopIconApps([]).slice(0, 10).map((app) => app.path)).toEqual(
+  it("uses canonical durable paths for all default Desktop icons", () => {
+    expect(buildWebDesktopIconApps([]).slice(0, DEFAULT_OS_VIEW_DESKTOP_APP_PATHS.length).map((app) => app.path)).toEqual(
       DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
     );
     expect(buildWebDesktopIconApps([
       { name: "Notes", path: "apps/notes/dist/index.html" },
       { name: "Whiteboard", path: "apps/whiteboard/dist/index.html" },
-    ]).slice(0, 10).map((app) => normalizeOsViewDesktopAppPath(app.path))).toEqual(
+    ]).slice(0, DEFAULT_OS_VIEW_DESKTOP_APP_PATHS.length).map((app) => normalizeOsViewDesktopAppPath(app.path))).toEqual(
       DEFAULT_OS_VIEW_DESKTOP_APP_PATHS,
     );
   });

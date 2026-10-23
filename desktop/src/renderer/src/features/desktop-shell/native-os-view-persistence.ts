@@ -3,14 +3,20 @@ import type { MatrixApp } from "../apps/apps.api";
 import type { DesktopSurface } from "../../stores/desktop-surfaces";
 import type { Tab } from "../../stores/tabs";
 import { FIXED_DESKTOP_APPS } from "./desktop-apps";
+import { nativeBrowserProduct } from "../../../../shared/browser-products";
 
 export function nativeTabOsViewPath(tab: Tab, installedApps: readonly MatrixApp[]): string | null {
   if (tab.kind === "terminal" && tab.sessionName) return `__terminal__:${tab.sessionName}`;
   if (tab.kind === "app" && tab.slug) {
+    const product = nativeBrowserProduct(tab.appIdentity ?? "", tab.slug);
+    if (product) return product.path;
     return installedApps.find((app) => app.slug === tab.slug)?.path
       ?? FIXED_DESKTOP_APPS.find((app) => app.slug === tab.slug)?.path
       ?? null;
   }
+  // Generic embedded browser tabs retain their own local tab history; their
+  // URLs must not restore as the distinct VPS Chrome destination.
+  if (tab.kind === "browser") return null;
   if (tab.kind === "settings" && (tab.title === "Plugins" || tab.title === "Connect Apps")) return "__plugins__";
   return FIXED_DESKTOP_APPS.find((app) => app.kind === tab.kind)?.path
     ?? (tab.kind === "terminal" ? "__terminal__" : null);

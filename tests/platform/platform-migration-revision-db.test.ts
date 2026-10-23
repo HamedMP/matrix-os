@@ -212,7 +212,7 @@ it.each([false, ...(process.env.MATRIX_TEST_POSTGRES_URL ? [true] : [])])("upgra
       expect(indexes).toEqual(baseline.indexes);
       const constraints = (await sql`SELECT c.conrelid::regclass::text AS table_name,c.conname AS name,
         c.contype AS type,pg_get_constraintdef(c.oid) AS definition FROM pg_constraint c
-        JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname=current_schema() ORDER BY 1,2`.execute(db)).rows;
+        JOIN pg_namespace n ON n.oid=c.connamespace WHERE n.nspname=current_schema() ORDER BY (c.conrelid::regclass::text) COLLATE "C", c.conname COLLATE "C"`.execute(db)).rows;
       expect(constraints).toEqual(baseline.constraints);
     }
     const old = async () => { throw new Error("older main must skip DDL"); };

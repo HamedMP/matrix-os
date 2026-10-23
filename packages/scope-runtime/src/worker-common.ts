@@ -8,7 +8,9 @@ import { access, constants, lstat, open, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
 export const SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION = "2.1.240";
-export const SCOPE_RUNTIME_CODEX_HARNESS_VERSION = "0.154.0";
+// Keep the standalone worker free of contracts/runtime dependencies; the
+// qualification regression fences this pin against CODEX_VERIFIED_VERSION.
+export const SCOPE_RUNTIME_CODEX_HARNESS_VERSION = "0.162.1";
 export const SCOPE_RUNTIME_WORKER_HARNESS_VERSION = SCOPE_RUNTIME_CLAUDE_HARNESS_VERSION;
 
 export const SCOPE_RUNTIME_HANDLE_PATTERN = /^runtime_[a-f0-9]{32}$/;

@@ -18,6 +18,8 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
   const logBestEffortFailure = vi.fn();
   const dependencies = {
     appAiRuntime, closeAppAiCapabilities, logBestEffortFailure,
+    browserLab: service("browser lab"), sharedBrowserRuntime: service("shared browser"),
+    supervisedBrowserRuntime: service("browser approvals"),
     managedFeatureRestart: service("managed feature restart"),
     jevInboxRuntime: null, chatDriveContext: service("drive"), matrixMcpCapabilities: service("mcp"),
     workspaceStartupRecoveryController: service("recovery"), terminalPasteAssetCleanup: service("paste"),
@@ -64,8 +66,9 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
   expect(shutdown.logBestEffortFailure).toHaveBeenCalledWith("App AI adapter shutdown failed", failure);
   expect(shutdown.calls).toEqual(expect.arrayContaining([
     "anthropic.close", "chats.close", "bots.close", "providers.close", "Chat database.release",
-    "app database.destroy", "platform database.destroy", "telemetry.shutdown", "HTTP.close",
+    "app database.destroy", "platform database.destroy", "telemetry.shutdown", "browser lab.close", "shared browser.close", "browser approvals.close", "HTTP.close",
   ]));
+  expect(shutdown.calls.indexOf("browser approvals.close")).toBeLessThan(shutdown.calls.indexOf("platform database.destroy"));
   expect(shutdown.calls.at(-1)).toBe("HTTP.close");
   expect(shutdown.calls[0]).toBe("managed feature restart.close");
 });

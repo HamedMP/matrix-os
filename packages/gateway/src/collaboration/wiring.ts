@@ -15,6 +15,7 @@ import { CollaborationAuthority, CollaborationAuthorizationError } from "./autho
 import { CollaborationCapabilityRepository } from "./capability-repository.js";
 import { CollaborationCapabilityEvaluator } from "./capability-evaluator.js";
 import { drainActiveSharedRunsForCutover, GatewayCollaborationCutover } from "./cutover.js";
+import { createOwnerProjectDeletion, type OwnerProjectDeletion, type OwnerProjectDeletionDependencies } from "./owner-project-deletion.js";
 import { createCollaborationCutoverRoutes } from "./cutover-route.js";
 import { createProjectGitBroker, type ProjectGitDriver, type ProjectGitOwnerIdentity } from "./project-git-broker.js";
 import { createProjectAccessReadiness } from "./project-access-readiness.js";
@@ -265,9 +266,10 @@ export async function createGatewayCollaboration(options: {
       { type: "personal", ownerId }, event),
   });
   const projectFence = createProjectFence({ db: options.db, transitions: projectTransitions });
-  const projectLifecycle = options.projectLifecycleDrivers
+  let projectLifecycle = options.projectLifecycleDrivers
     ? createCollaborationProjectLifecycle({ db: options.db, ...options.projectLifecycleDrivers })
     : undefined;
+  let ownerProjectDeletion: OwnerProjectDeletion | undefined;
   if (projectLifecycle) await projectLifecycle.recoverPending();
   const projectScope = options.projectSource ? new CollaborationProjectScopeService(options.db, {
     runtimeId: options.config.runtimeId,
@@ -342,6 +344,35 @@ export async function createGatewayCollaboration(options: {
   }
 
   return {
+    async resolveChatDeletionScope(owner: { type: "personal" | "organization"; ownerId: string }, chatId: string) {
+      const scopes = await options.db.selectFrom("collaboration_scopes").select("id")
+        .where("owner_type", "=", owner.type).where("owner_id", "=", owner.ownerId)
+        .where("kind", "=", "chat").where("resource_id", "=", chatId)
+        .where("lifecycle", "in", ["shared", "archived", "deleting"])
+        .where("deleted_at", "is", null).limit(2).execute();
+      if (scopes.length > 1) throw new Error("Chat deletion scope conflict");
+      return scopes[0]?.id;
+    },
+    enableProjectDeletion(input: OwnerProjectDeletionDependencies) {
+      if (registered || closing || !options.config.ownerId) throw new Error("Project deletion configuration unavailable");
+      const deletion = createOwnerProjectDeletion({ ...input, db: options.db,
+        ownerId: options.config.ownerId, runtimeId: options.config.runtimeId, organizationPrecondition,
+        assertWritable: scopeId => cutoverGuard.assertWritable(scopeId),
+        notify: async scopeId => {
+          directSessions.revoke({ scopeId });
+          await eventRegistry.broadcastScope(scopeId);
+        },
+      });
+      projectLifecycle = { ...deletion.lifecycle, apply: input => {
+        if (input.type !== "delete") throw new CollaborationAuthorizationError("unavailable", "Project lifecycle action unavailable");
+        return deletion.lifecycle.apply(input);
+      } };
+      ownerProjectDeletion = deletion;
+      return deletion;
+    },
+    canRecoverProjectDeletion: (project: Parameters<OwnerProjectDeletion["canRecoverLocally"]>[0]) =>
+      ownerProjectDeletion?.canRecoverLocally(project) ?? Promise.resolve(false),
+    recoverProjectDeletions: () => projectLifecycle?.recoverPending() ?? Promise.resolve({ recovered: 0, failed: 0 }),
     repository,
     capabilities,
     executionPolicies,

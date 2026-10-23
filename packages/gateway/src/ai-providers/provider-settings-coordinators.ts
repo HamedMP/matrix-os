@@ -68,6 +68,8 @@ export interface ProviderSettingsRuntimeMutationInput {
   snapshot?: ProviderSettingsSnapshot;
   /** Trusted server completion, never populated from a public mutation request. */
   claudeNativeCompletion?: boolean;
+  /** Trusted server completion after the key workflow verified and saved the owner key. */
+  claudeKeyCompletion?: boolean;
   codexNativeCompletion?: boolean;
 }
 

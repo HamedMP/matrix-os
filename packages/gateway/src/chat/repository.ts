@@ -1,5 +1,6 @@
 import { readChatImportSource } from "./import-source.js";
 import { listChats, updateChat, renameChat } from "./metadata-repository.js";
+import { ownerSharedProjection, sharedBindingScopeId } from "./owner-shared-projection.js";
 import type { CanonicalUpdateChatTitleRequest } from "@matrix-os/contracts";
 import { projectChatReadState, writeChatReadState } from "./read-state-repository.js";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
@@ -381,89 +382,6 @@ async function projectPersonalProviderSelection(
   return { ...row, current_selection: bindingRun.selection };
 }
 
-function sharedBindingScopeId(value: unknown): string | undefined {
-  if (value === null) return undefined;
-  try {
-    const parsed = typeof value === "string" ? JSON.parse(value) as unknown : value;
-    if (!parsed || typeof parsed !== "object") return undefined;
-    const binding = parsed as { scopeId?: unknown; mode?: unknown; executionFenced?: unknown };
-    return (binding.mode === "discussion_only" || binding.mode === "shared_ai")
-      && binding.executionFenced === true
-      ? z.uuid().safeParse(binding.scopeId).data
-      : undefined;
-  } catch (error: unknown) {
-    if (!(error instanceof SyntaxError)) {
-      console.warn("[chat/repository] collaboration binding decode failed",
-        error instanceof Error ? error.name : "UnknownError");
-    }
-    return undefined;
-  }
-}
-
-async function ownerSharedProjection(
-  executor: Executor,
-  owner: ChatOwner,
-  scopeId: string,
-  chatId: string,
-): Promise<CanonicalChatCollaboration | undefined> {
-  const collaborationExecutor = executor as unknown as Kysely<OwnerCollaborationDatabase>;
-  const scope = await collaborationExecutor.selectFrom("collaboration_scopes")
-    .select(["id", "parent_scope_id", "membership_mode", "lifecycle", "authority_runtime_id"])
-    .where("id", "=", scopeId)
-    .where("owner_type", "=", owner.type)
-    .where("owner_id", "=", owner.ownerId)
-    .where("kind", "=", "chat")
-    .where("resource_id", "=", chatId)
-    .where("lifecycle", "in", ["shared", "archived"])
-    .where("deleted_at", "is", null)
-    .executeTakeFirst();
-  if (!scope) return undefined;
-
-  let membershipScopeId: string;
-  if (scope.membership_mode === "direct") {
-    if (scope.parent_scope_id !== null) return undefined;
-    membershipScopeId = scope.id;
-  } else {
-    if (!scope.parent_scope_id) return undefined;
-    const parent = await collaborationExecutor.selectFrom("collaboration_scopes")
-      .select("id")
-      .where("id", "=", scope.parent_scope_id)
-      .where("owner_type", "=", owner.type)
-      .where("owner_id", "=", owner.ownerId)
-      .where("kind", "=", "project")
-      .where("membership_mode", "=", "direct")
-      .where("parent_scope_id", "is", null)
-      .where("lifecycle", "=", scope.lifecycle)
-      .where("authority_runtime_id", "=", scope.authority_runtime_id)
-      .where("deleted_at", "is", null)
-      .executeTakeFirst();
-    if (!parent) return undefined;
-    membershipScopeId = parent.id;
-  }
-
-  const ownerMember = await collaborationExecutor.selectFrom("collaboration_members")
-    .select("actor_id")
-    .where("scope_id", "=", membershipScopeId)
-    .where("actor_id", "=", owner.ownerId)
-    .where("role", "=", "owner")
-    .where("status", "=", "accepted")
-    .where((eb) => eb.or([
-      eb("expires_at", "is", null),
-      eb("expires_at", ">", sql<Date | string>`clock_timestamp()`),
-    ]))
-    .executeTakeFirst();
-  if (!ownerMember) return undefined;
-  const members = await collaborationExecutor.selectFrom("collaboration_members")
-    .select(({ fn }) => fn.countAll<number>().as("count"))
-    .where("scope_id", "=", membershipScopeId)
-    .where("status", "=", "accepted")
-    .where((eb) => eb.or([
-      eb("expires_at", "is", null),
-      eb("expires_at", ">", sql<Date | string>`clock_timestamp()`),
-    ]))
-    .executeTakeFirstOrThrow();
-  return { mode: "shared", membership: { role: "owner", memberCount: Number(members.count) } };
-}
 
 async function hydrateAdmission(
   executor: Executor,

@@ -37,7 +37,21 @@ except Exception:
     sys.exit(1)
 `;
 await mkdir(componentPath, { recursive: true });
-await writeFile(join(componentPath, "reconcile.py"), `${bootstrap}\n${runtime}\n${epoch}\n${recovery}\n${syncInitialization}\nREPAIR_SOURCE = ${JSON.stringify(repair)}\n${entry}`, "utf8");
+const core = `${bootstrap}\n${runtime}\n${epoch}\n${recovery}\n${syncInitialization}\nREPAIR_SOURCE = ${JSON.stringify(repair)}\n`;
+await writeFile(join(componentPath, "reconcile.py"), core + entry, "utf8");
+// Independent operator entrypoint: old installed verifiers cannot admit their
+// own replacement. Obtain these bytes from an independently verified bundle.
+const resealEntry = `
+try:
+    require(os.geteuid() == 0 and len(sys.argv) == 2 and sys.argv[1] in ('--check', '--apply'))
+    raw = sys.stdin.buffer.read(4097)
+    require(len(raw) <= 4096)
+    recovery_proof(reseal=json_bytes(raw), commit=sys.argv[1] == '--apply')
+except Exception:
+    print('{"error":"configuration_deferred"}', file=sys.stderr)
+    sys.exit(1)
+`;
+await writeFile(join(dirname(agentPath), "matrix-reseal-funded-speech.py"), core + resealEntry, "utf8");
 await copyFile(join(source, "matrix-funded-host-config.service"), join(componentPath, "matrix-funded-host-config.service"));
 const invocation = `
 import sys

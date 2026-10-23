@@ -14,6 +14,7 @@ else
 fi
 
 skills=(
+  accounting-preparation
   animate
   animation-accessibility
   animation-performance
@@ -21,12 +22,14 @@ skills=(
   app-builder
   app-ui-patterns
   apple-design
+  browser-admin
   chat-import
   css-animations
   debug-app
   design-system
   dev-vps
   emil-design-eng
+  information-collection
   integrations
   jev-email-triage
   landing-design

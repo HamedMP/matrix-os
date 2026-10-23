@@ -1,0 +1,12 @@
+{
+  "target": "pv-2687-22950040",
+  "setupSource": "4a4e74802a8bbef379698a6ebaf6d3297d9d6aca",
+  "surface": "Live Kasm viewer served by the unchanged cc96719 private preview gateway; operator credential and direct DNS mapping, no Clerk login impersonation",
+  "canvas": {
+    "width": 1440,
+    "height": 900
+  },
+  "viewerFramesReceived": 442,
+  "viewerSocketError": false,
+  "capturedAt": "2026-10-20T12:40:10.900Z"
+}

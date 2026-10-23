@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { HermesGatewayRequestError } from "./hermes-failure-diagnostic.js";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod/v4";
 
@@ -58,6 +59,7 @@ export type HermesGatewaySpawn = (
 ) => HermesGatewayProcess;
 
 interface PendingRequest {
+  method: string;
   resolve(value: unknown): void;
   reject(error: Error): void;
   timer: NodeJS.Timeout;
@@ -238,7 +240,7 @@ export function createHermesStdioClient(options: {
     if (!request) return;
     pending.delete(response.data.id);
     clearTimeout(request.timer);
-    if (response.data.error) request.reject(safeError("Hermes gateway request failed"));
+    if (response.data.error) request.reject(new HermesGatewayRequestError(request.method, response.data.error.code));
     else request.resolve(response.data.result);
   }
 
@@ -307,7 +309,7 @@ export function createHermesStdioClient(options: {
           reject(safeError("Hermes gateway request timed out"));
         }, timeoutMs);
         timer.unref?.();
-        pending.set(id, { resolve, reject, timer });
+        pending.set(id, { method, resolve, reject, timer });
         try {
           child.stdin.write(frame);
         } catch (error: unknown) {

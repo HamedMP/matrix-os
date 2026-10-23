@@ -238,8 +238,10 @@ export function DesktopWindow({
                 onSubmit={chat.submitMessage}
               agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
                 onSubmitApproval={chat.submitApproval}
+                browserPermissions={chat.browserPermissions}
                 onSubmitInput={chat.submitInput}
                 providerSelection={chat.providerSelection}
+              executionControls={chat.executionControls}
                 boundProviderInstanceId={chat.boundProviderInstanceId}
                 composerDraftRequest={chat.composerDraftRequest}
                 onComposerDraftConsumed={chat.consumeComposerDraft}
@@ -249,7 +251,8 @@ export function DesktopWindow({
         ) : win.path === "__activity-monitor__" ? (
           <ActivityMonitorApp />
         ) : (
-          <AppViewer path={win.path} onOpenApp={onAppOpen} />
+          <AppViewer path={win.path} active={focusedWindowId === win.id && !win.minimized}
+            onOpenApp={onAppOpen} visible={!isHidden && !isMinimizing} />
         )}
         {interacting && (
           <div className="absolute inset-0 z-10" />

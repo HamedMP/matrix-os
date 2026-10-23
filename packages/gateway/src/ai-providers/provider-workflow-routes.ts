@@ -26,8 +26,8 @@ export function createProviderWorkflowRoutes(options: {
     }
     catch (error) {
       if (error instanceof ProviderWorkflowError) {
-        const status = { unavailable: 503, not_found: 404, conflict: 409, rejected: 400, forbidden: 403 } as const;
-        return c.json({ error: { code: error.code, message: error.code === 'rejected' ? 'The key could not be verified. Check it and try again.' : 'This operation is unavailable. Refresh and try again.' } }, status[error.code]);
+        const status = { unavailable: 503, not_found: 404, conflict: 409, rejected: 400, key_workspace_required: 400, forbidden: 403 } as const;
+        return c.json({ error: { code: error.code, message: error.code === 'rejected' ? 'The key could not be verified. Check it and try again.' : error.code === 'key_workspace_required' ? 'This key is not in a workspace. Create a key inside a workspace, then try again.' : 'This operation is unavailable. Refresh and try again.' } }, status[error.code]);
       }
       console.warn('[provider-workflow] Request failed:', error instanceof Error ? error.name : 'UnknownError');
       return c.json({ error: { code: 'unavailable', message: 'This operation is unavailable. Refresh and try again.' } }, 503);

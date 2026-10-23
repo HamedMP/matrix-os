@@ -37,6 +37,20 @@ const client = (socketPath: string, timeoutMs = 2_000) => createBotBrokerClient(
 });
 
 describe("bot broker client", () => {
+  it("allows a bounded browser pause without widening ordinary tools or explicit timeouts", async () => {
+    const { socketPath } = broker(() => JSON.stringify({ version: 1, requestId: REQUEST_ID, ok: true,
+      result: { ok: true, content: [{ type: "text", text: "resumed; observe again" }] } }));
+    const timeout = vi.spyOn(Socket.prototype, "setTimeout");
+    try {
+      const defaultClient = createBotBrokerClient({ socketPath, runtimeHandle: RUNTIME, executionGeneration: "3", runId: "run_abc", requestIdFactory: () => REQUEST_ID });
+      await defaultClient.tool({ toolCallId: "call_browser", capability: "browser.action", args: { action: "snapshot" } });
+      expect(timeout.mock.calls.at(-1)?.[0]).toBe(390_000);
+      await defaultClient.tool({ toolCallId: "call_read", capability: "artifact.read", args: { relPath: "fixture.txt" } });
+      expect(timeout.mock.calls.at(-1)?.[0]).toBe(30_000);
+      await client(socketPath, 1000).tool({ toolCallId: "call_override", capability: "browser.action", args: { action: "status" } });
+      expect(timeout.mock.calls.at(-1)?.[0]).toBe(1000);
+    } finally { timeout.mockRestore(); }
+  });
   it("allows the bounded Jev evaluation deadline without widening ordinary reads or explicit overrides", async () => {
     const { socketPath } = broker(() => JSON.stringify({ version: 1, requestId: REQUEST_ID, ok: true,
       result: { ok: true, content: [{ type: "text", text: "confirmed" }] } }));

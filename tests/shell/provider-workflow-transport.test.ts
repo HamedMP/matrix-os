@@ -35,6 +35,10 @@ describe("web provider workflow transport", () => {
       Response.json({ error: { code: "rejected", message: "safe rejection" } }, { status: 400 }),
     ) });
     await expect(rejected.submitKey(input, new AbortController().signal)).rejects.toMatchObject({ reason: "rejected" });
+    const workspace = createWebProviderWorkflowClient({ fetcher: vi.fn().mockResolvedValue(
+      Response.json({ error: { code: "key_workspace_required", message: "safe rejection" } }, { status: 400 }),
+    ) });
+    await expect(workspace.submitKey(input, new AbortController().signal)).rejects.toMatchObject({ reason: "key_workspace_required" });
     const uncertain = createWebProviderWorkflowClient({ fetcher: vi.fn().mockRejectedValue(new TypeError("private network details")) });
     await expect(uncertain.submitKey(input, new AbortController().signal)).rejects.toMatchObject({
       reason: "unavailable", message: "Provider action is unavailable.",

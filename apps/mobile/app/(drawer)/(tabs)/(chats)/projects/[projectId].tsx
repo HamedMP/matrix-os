@@ -18,6 +18,7 @@ import { defaultCatalogSelection, defaultTurnModes } from "@/lib/canonical-chat-
 import { supportedAttachmentKinds } from "@/lib/chat-attachments";
 import { useChatProviderCatalog } from "@/lib/queries/use-chat-provider-catalog";
 import { useProjectChats } from "@/lib/queries/use-project-chats";
+import { useComposerSpeech } from "@/lib/speech/use-composer-speech";
 import { useArchiveProject, useRenameProject } from "@/lib/queries/use-project-mutations";
 import type { ProjectSummary } from "@/lib/requests/projects";
 import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
@@ -89,6 +90,13 @@ export default function ProjectRoute() {
     warmSessionToken();
   };
 
+  const speech = useComposerSpeech({
+    draftKey: `project:${project?.id ?? ""}`,
+    draft: composer.draft,
+    onChangeDraft: changeDraft,
+    enabled: project !== null,
+  });
+
   const reload = async () => {
     try {
       await Promise.all([list.reload(), project ? chats.refetch() : null]);
@@ -156,6 +164,7 @@ export default function ProjectRoute() {
           canSend: composer.canSend,
           onSend: composer.send,
           running: composer.isSending,
+          speech,
           ...composerAddProps({
             catalog,
             selection,

@@ -1,3 +1,4 @@
+import type { ApprovalProvenance } from "./approval-submission.js";
 import { CanonicalChatNavigationQuerySchema, CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationQuery, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { projectChatRecipeSources } from "./recipe-source-wire.js";
 import { ChatMetadataVersionSchema, projectChatMetadata, ChatImportSourceVersionSchema, projectChatImportSource } from "./metadata-wire.js";
@@ -222,7 +223,7 @@ export interface CanonicalChatRouteService {
     runId: string,
     approvalId: string,
     input: CanonicalSubmitChatApprovalRequest,
-    provenance?: { platformApprovalProof?: string },
+    provenance?: ApprovalProvenance,
   ): Promise<CanonicalChatApprovalSubmissionResponse>;
   retryTurn(
     principal: RequestPrincipal,
@@ -751,13 +752,14 @@ export function createCanonicalChatRoutes(options: {
       const parsed = CanonicalSubmitChatApprovalRequestSchema.safeParse(await context.req.json());
       if (!parsed.success) return validationError(context);
       const proof = context.req.header("x-matrix-custom-mcp-approval-proof");
+      const browserProof = context.req.header("x-matrix-browser-approval-proof");
       const result = await options.service.submitApproval(
         ownerFromPrincipal(options.getPrincipal(context)),
         chatId,
         runId,
         approvalId,
         parsed.data,
-        ...(proof ? [{ platformApprovalProof: proof }] : []),
+        { ...(proof ? { platformApprovalProof: proof } : {}), ...(browserProof ? { browserApprovalProof: browserProof } : {}) },
       );
       return chatJson(context, CanonicalChatApprovalSubmissionResponseSchema.parse(result));
     } catch (error: unknown) {
