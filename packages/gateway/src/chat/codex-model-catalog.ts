@@ -1,13 +1,18 @@
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
+import { realpath, stat } from "node:fs/promises";
+import { join } from "node:path";
 import { z } from "zod/v4";
 import type { AgentProviderSummary } from "@matrix-os/contracts";
 import type { CodingModelCatalogProjection } from "./provider-catalog.js";
+import { performance } from "node:perf_hooks";
+import { recordCodexCatalogTiming } from "./send-timing.js";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_MODELS = 64;
 const MAX_OPTIONS = 32;
 const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_CACHE_TTL_MS = 60_000;
+const DEFAULT_STALE_TTL_MS = 5 * 60_000;
 // A cold app-server start, one dropped handshake, or a momentary scheduling
 // hiccup are all ordinary and should not immediately degrade Codex to
 // "unavailable" for a full cache window. One bounded retry after a short
@@ -248,6 +253,30 @@ function wait(ms: number): Promise<void> {
   });
 }
 
+async function fileIdentity(path: string): Promise<string> {
+  try {
+    const resolved = await realpath(path);
+    const info = await stat(resolved, { bigint: true });
+    return `${resolved}:${info.dev}:${info.ino}:${info.size}:${info.ctimeNs}`;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return `${path}:missing`;
+    throw error;
+  }
+}
+
+/** Local metadata only: never read, retain, or log the account credential. */
+async function codexCacheIdentity(options: { executable: string; cwd: string; environment?: Record<string, string> }): Promise<string> {
+  const home = options.environment?.CODEX_HOME ?? process.env.CODEX_HOME
+    ?? join(options.environment?.HOME ?? process.env.HOME ?? options.cwd, ".codex");
+  const [executable, account, settings] = await Promise.all([
+    fileIdentity(options.executable), fileIdentity(join(home, "auth.json")),
+    // Native account selection and consent changes persist here, including
+    // profiles backed by an OS keyring rather than auth.json.
+    fileIdentity(join(options.cwd, "system", "ai-providers", "settings.json")),
+  ]);
+  return `${executable}|${account}|${settings}`;
+}
+
 async function fetchCodexModelsWithRetry(input: {
   executable: string;
   cwd: string;
@@ -289,14 +318,17 @@ export function createCodexModelCatalogSource(options: {
   environment?: Record<string, string>;
   timeoutMs?: number;
   cacheTtlMs?: number;
+  staleTtlMs?: number;
   failureCacheTtlMs?: number;
   maxAttempts?: number;
   retryDelayMs?: number;
   terminateGraceMs?: number;
   spawnProcess?: SpawnProcess;
+  cacheIdentity?: () => Promise<string>;
 }) {
   const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, 30_000));
   const cacheTtlMs = Math.max(1, Math.min(options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS, 5 * 60_000));
+  const staleTtlMs = Math.max(cacheTtlMs, Math.min(options.staleTtlMs ?? DEFAULT_STALE_TTL_MS, 10 * 60_000));
   const failureCacheTtlMs = Math.max(
     1,
     Math.min(options.failureCacheTtlMs ?? DEFAULT_FAILURE_CACHE_TTL_MS, cacheTtlMs),
@@ -308,53 +340,102 @@ export function createCodexModelCatalogSource(options: {
     Math.min(options.terminateGraceMs ?? DEFAULT_TERMINATE_GRACE_MS, 5_000),
   );
   const spawnProcess = options.spawnProcess ?? (nodeSpawn as SpawnProcess);
-  let cached: { expiresAt: number; value: CodingModelCatalogProjection } | null = null;
+  let cached: { expiresAt: number; staleUntil: number; value: CodingModelCatalogProjection } | null = null;
   let failedUntil = 0;
   let unconfirmedChildExit: Promise<void> | null = null;
   let pending: Promise<CodingModelCatalogProjection> | null = null;
+  let pendingEpoch = -1;
+  let identity: string | null = null;
+  let epoch = 0;
 
-  return async (provider: AgentProviderSummary): Promise<CodingModelCatalogProjection | null> => {
+  const refresh = () => {
+    const startedAt = performance.now();
+    const startEpoch = epoch;
+    pendingEpoch = startEpoch;
+    pending = fetchCodexModelsWithRetry({
+      executable: options.executable,
+      cwd: options.cwd,
+      environment: options.environment,
+      timeoutMs,
+      terminateGraceMs,
+      maxAttempts,
+      retryDelayMs,
+      spawnProcess,
+    }).then((value) => {
+      if (epoch === startEpoch) {
+        const now = Date.now();
+        cached = { expiresAt: now + cacheTtlMs, staleUntil: now + staleTtlMs, value };
+        failedUntil = 0;
+      }
+      return value;
+    }).catch((error: unknown) => {
+      if (epoch === startEpoch) failedUntil = Date.now() + failureCacheTtlMs;
+      if (error instanceof CodexCatalogChildExitTimeoutError) {
+        // Never overlap an app-server whose termination is unconfirmed.
+        const exited = error.exited;
+        unconfirmedChildExit = exited;
+        void exited.then(() => {
+          if (unconfirmedChildExit === exited) unconfirmedChildExit = null;
+        });
+      }
+      throw error;
+    }).finally(() => {
+      recordCodexCatalogTiming("refresh", performance.now() - startedAt);
+      pending = null;
+      pendingEpoch = -1;
+    });
+    return pending;
+  };
+
+  const source = async (provider: AgentProviderSummary): Promise<CodingModelCatalogProjection | null> => {
+    const startedAt = performance.now();
     if (provider.kind !== "codex" && provider.id !== "codex") return null;
     // Do not launch an app-server (or return a previously ready catalog) after
     // the canonical provider inventory reports that this connection is unavailable.
-    if (provider.availability !== "available") return null;
+    if (provider.availability !== "available") {
+      cached = null;
+      identity = null;
+      failedUntil = 0;
+      epoch += 1;
+      return null;
+    }
+    const observedIdentity = `${provider.authStatus}:${provider.installStatus}:`
+      + await (options.cacheIdentity?.() ?? codexCacheIdentity(options));
+    if (identity !== observedIdentity) {
+      identity = observedIdentity;
+      cached = null;
+      failedUntil = 0;
+      epoch += 1;
+    }
+    // A prior identity's child must finish before another app-server starts.
+    if (pending && pendingEpoch !== epoch) {
+      await pending.catch((error: unknown) => {
+        console.warn("[chat-providers] Superseded Codex catalog lookup failed", error instanceof Error ? error.name : "UnknownError");
+      });
+      return source(provider);
+    }
     const now = Date.now();
-    if (cached && cached.expiresAt > now) return cached.value;
+    if (cached && cached.expiresAt > now) {
+      recordCodexCatalogTiming("cache_hit", performance.now() - startedAt);
+      return cached.value;
+    }
+    if (cached && cached.staleUntil > now) {
+      if (!pending && failedUntil <= now && !unconfirmedChildExit) {
+        // Observe rejection: a stale read must not create an unhandled rejection.
+        void refresh().catch((error: unknown) => {
+          console.warn("[chat-providers] Codex catalog background refresh failed", error instanceof Error ? error.name : "UnknownError");
+        });
+      }
+      recordCodexCatalogTiming("stale_hit", performance.now() - startedAt);
+      return cached.value;
+    }
     if (!pending && (failedUntil > now || unconfirmedChildExit)) {
       throw new Error("Codex model catalog unavailable");
     }
-    if (!pending) {
-      pending = fetchCodexModelsWithRetry({
-        executable: options.executable,
-        cwd: options.cwd,
-        environment: options.environment,
-        timeoutMs,
-        terminateGraceMs,
-        maxAttempts,
-        retryDelayMs,
-        spawnProcess,
-      }).then((value) => {
-        cached = { expiresAt: Date.now() + cacheTtlMs, value };
-        failedUntil = 0;
-        return value;
-      }).catch((error: unknown) => {
-        // Cache the failure only briefly (see DEFAULT_FAILURE_CACHE_TTL_MS)
-        // so repeated polling while Codex is down or mid-install cannot
-        // retry-storm it with a fresh spawn+retry sequence on every request.
-        failedUntil = Date.now() + failureCacheTtlMs;
-        if (error instanceof CodexCatalogChildExitTimeoutError) {
-          // Never overlap an app-server whose termination is unconfirmed.
-          const exited = error.exited;
-          unconfirmedChildExit = exited;
-          void exited.then(() => {
-            if (unconfirmedChildExit === exited) unconfirmedChildExit = null;
-          });
-        }
-        throw error;
-      }).finally(() => {
-        pending = null;
-      });
-    }
-    return pending;
+    const shared = Boolean(pending);
+    const value = await (pending ?? refresh());
+    recordCodexCatalogTiming(shared ? "lookup_shared" : "lookup", performance.now() - startedAt);
+    return value;
   };
+  return source;
 }

@@ -13,6 +13,7 @@ import { type CanonicalSubmitChatInputRequest, type CanonicalChatInputSubmission
 import { BackgroundProjectionDetached, recoverBackgroundRunControl } from "./background-run-control.js";
 import { activityPersistenceId } from "./activity-persistence.js";
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { assistantMessageId } from "./assistant-credential-crypto.js";
 import {
   CanonicalChatRunActivitySchema,
@@ -563,6 +564,8 @@ export class CanonicalChatOrchestrator {
       browserRegistration = registerBrowserApprovalRun(this.options.browserApprovals, input, run.driverKind,
         async event => { await this.persistActivities(owner, run, [CanonicalProviderRunEventSchema.parse(event)]); });
       let text = "";
+      let firstDisplayableTextRecorded = false;
+      const dispatchStartedAt = performance.now();
       let terminal: Extract<CanonicalProviderRunEvent, { type: "run.completed" }> | undefined;
       failureStage = "provider";
       const events = resumeState !== undefined && adapter.resume
@@ -603,6 +606,16 @@ export class CanonicalChatOrchestrator {
             createdAt: (this.options.now ?? (() => new Date()))().toISOString(),
           });
           await this.sharedExecution.notify(sharedScopeId);
+          if (run.driverKind === "codex" && process.env.MATRIX_CODEX_SEND_TIMINGS === "1"
+            && event.delta.length > 0 && !firstDisplayableTextRecorded) {
+            firstDisplayableTextRecorded = true;
+            console.info("[chat-send-timing]", JSON.stringify({
+              runId: run.id,
+              stage: "first_displayable_text",
+              durationMs: Math.max(0, Math.round(performance.now() - dispatchStartedAt)),
+              from: "dispatch_start",
+            }));
+          }
         } else if (event.type === "assistant.attachment") {
           failureStage = "persistence";
           await this.options.repository.appendAssistantAttachment(owner, {
