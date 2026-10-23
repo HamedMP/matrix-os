@@ -6,6 +6,7 @@ import type { PlatformDb } from "../../platform-db.js";
 import type { PipedreamConnectClient } from "../pipedream.js";
 import type { VerifiedConnectedWebhookAdmission } from "../connected-webhook.js";
 import type { IntegrationBroadcast } from "../routes.js";
+import { nativeMobileTargetPolicy, type NativeMobileTarget } from "@matrix-os/contracts";
 
 export interface PipedreamGmailAttemptConfig { callbackUrl: string; environment: "production" | "development" }
 const id = z.uuid();
@@ -16,7 +17,7 @@ const callbackSchema = z.discriminatedUnion("event", [
     external_id: z.string().min(1).max(256), healthy: z.literal(true), dead: z.boolean().nullable().optional(), app: z.object({ name_slug: z.literal("gmail") }) }) }),
   z.object({ ...base, event: z.literal("CONNECTION_ERROR") }),
 ]);
-const connectSchema = z.object({ service: z.string(), label: z.string().trim().min(1).max(100).optional(), redirectUri: z.literal("matrixos://integrations").optional() });
+const createConnectSchema = (target?: NativeMobileTarget) => z.object({ service: z.string(), label: z.string().trim().min(1).max(100).optional(), redirectUri: z.literal(nativeMobileTargetPolicy(target).integrationRedirectUri).optional() });
 const hash = (secret: string) => createHash("sha256").update(secret).digest("hex");
 const matches = (secret: string, expected: string) => timingSafeEqual(Buffer.from(hash(secret), "hex"), Buffer.from(expected, "hex"));
 const unavailable = { error: "Connection unavailable" };
@@ -25,10 +26,12 @@ const GMAIL_CONNECT_SCOPE = "connect:accounts:read connect:accounts:write";
 class InvalidReceiptAccount extends Error {}
 
 export function createPipedreamGmailAttemptRoutes(options: {
+  nativeMobileTarget?: NativeMobileTarget;
   db: PlatformDb; pipedream: PipedreamConnectClient; config: PipedreamGmailAttemptConfig;
   resolveUserId(c: Context): Promise<string | null>; admit?: VerifiedConnectedWebhookAdmission; emit: IntegrationBroadcast;
   isEligible(userId: string): Promise<boolean>;
 }) {
+  const connectSchema = createConnectSchema(options.nativeMobileTarget);
   const app = new Hono(); const store = options.db.pipedreamGmailAttempts;
   if (!store || !options.pipedream.inspectAccount || !options.admit) throw new Error("Gmail connection receipts unavailable");
   // The shared native/legacy connect router applies bodyLimit before selecting either transport.

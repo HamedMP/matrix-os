@@ -66,6 +66,23 @@ describe("Gmail Pipedream attempt receipts", () => {
     }) });
   }
   const status = async (id: string) => (await app.request("/gmail/pipedream/attempts/" + id));
+  it.each(['production', 'gmail-pilot'] as const)('enforces the exact %s callback through receipt and legacy factories', async nativeMobileTarget => {
+    for (const receipts of [false, true]) {
+      const router = createIntegrationRoutes({ db, pipedream, nativeMobileTarget, webhookSecret: 'test', resolveUserId: async () => owner,
+        nativeGmailEligible: async () => receipts, verifiedConnectedWebhook: (input, persist) => admit(input, persist),
+        ...(receipts ? { pipedreamGmailAttempts: { callbackUrl, environment: 'production' as const } } : {}) });
+      const expected = nativeMobileTarget === 'production' ? 'matrixos://integrations' : 'matrixos-gmail-pilot://integrations';
+      const wrong = nativeMobileTarget === 'production' ? 'matrixos-gmail-pilot://integrations' : 'matrixos://integrations';
+      for (const redirectUri of [wrong, expected + '/', expected + '?next=evil', 'https://untrusted.invalid', 'matrixos-gmail-pilot://sso-callback']) {
+        expect((await router.request('/connect', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ service: 'gmail', connectionMethod: 'pipedream', redirectUri }) })).status).toBe(400);
+      }
+      const before = issued.length;
+      const response = await router.request('/connect', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ service: 'gmail', connectionMethod: 'pipedream', redirectUri: expected }) });
+      expect(response.status).toBe(200); expect(issued).toHaveLength(before + 1);
+      expect(pipedream.createConnectToken).toHaveBeenLastCalledWith('pd_owner', expect.objectContaining({ successRedirectUri: expected, errorRedirectUri: expected }));
+      if (receipts) expect((await response.json()).attemptId).toBeDefined();
+    }
+  });
   it('fixes receipt token scope server-side and ignores browser-requested capabilities', async () => {
     const response = await app.request('/connect', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ service: 'gmail', connectionMethod: 'pipedream', scope: 'connect:*' }) });
     expect(response.status).toBe(200);

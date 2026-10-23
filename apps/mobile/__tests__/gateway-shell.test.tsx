@@ -7,6 +7,9 @@ jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn()
 type GatewayContext = ReturnType<typeof import("../app/_layout").useGateway>;
 
 const mockUseAuth = jest.fn();
+const mockClerkProviderMount = jest.fn();
+const mockApplication = { applicationId: "com.matrixos.mobile" };
+jest.mock("expo-application", () => ({ __esModule: true, get applicationId() { return mockApplication.applicationId; } }));
 const mockGetSelectedGatewayConnection = jest.fn();
 let mockGatewayContext: GatewayContext | null = null;
 
@@ -26,7 +29,7 @@ jest.mock("expo-router", () => {
 });
 
 jest.mock("@clerk/clerk-expo", () => ({
-  ClerkProvider: ({ children }: { children: ReactNode }) => children,
+  ClerkProvider: ({ children }: { children: ReactNode }) => { mockClerkProviderMount(); return children; },
   useAuth: () => mockUseAuth(),
 }));
 
@@ -130,6 +133,7 @@ function signedInAuth() {
     getToken: jest.fn(async () => "clerk-token"),
   };
   mockUseAuth.mockReturnValue(auth);
+  return auth;
 }
 
 function signedOutAuth() {
@@ -182,6 +186,8 @@ describe("GatewayShell", () => {
   }
 
   beforeEach(() => {
+    mockApplication.applicationId = "com.matrixos.mobile";
+    mockClerkProviderMount.mockClear();
     mockGatewayContext = null;
     openedSocketUrls.length = 0;
     // The selected computer is read through the real storage module, backed
@@ -216,6 +222,20 @@ describe("GatewayShell", () => {
 
     expect(jest.requireMock<typeof import("expo-splash-screen")>("expo-splash-screen").setOptions)
       .toHaveBeenCalledWith({ fade: true, duration: 300 });
+  });
+
+  it("does not mount cached Clerk or gateway descendants in a mismatched native binary", async () => {
+    mockApplication.applicationId = "com.matrixos.mobile.gmailpilot";
+    const auth = signedInAuth();
+    const RootLayout = loadRootLayout();
+    const result = render(<RootLayout />);
+    expect(result.getByText("Mobile connection unavailable")).toBeTruthy();
+    await settle();
+    expect(mockClerkProviderMount).not.toHaveBeenCalled();
+    expect(auth.getToken).not.toHaveBeenCalled();
+    expect(mockGatewayContext).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(openedSocketUrls).toEqual([]);
   });
 
   it("gives a signed-in hosted computer a gateway client without opening the legacy chat socket", async () => {

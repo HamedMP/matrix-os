@@ -35,6 +35,8 @@ jest.mock("expo-apple-authentication", () => {
 });
 
 const mockStartSSOFlow = jest.fn();
+const mockApplication = { applicationId: "com.matrixos.mobile" };
+jest.mock("expo-application", () => ({ __esModule: true, get applicationId() { return mockApplication.applicationId; } }));
 const mockSetActive = jest.fn(() => Promise.resolve());
 const mockGetToken = jest.fn(() => Promise.resolve<string | null>("clerk-token"));
 const mockSignInCreate = jest.fn();
@@ -105,6 +107,7 @@ describe("SignInScreen Sign in with Apple", () => {
   let warn: jest.SpyInstance;
 
   beforeEach(() => {
+    mockApplication.applicationId = "com.matrixos.mobile";
     jest.clearAllMocks();
     warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     mockAppleIsAvailable.mockImplementation(() => Promise.resolve(true));
@@ -134,6 +137,17 @@ describe("SignInScreen Sign in with Apple", () => {
     expect(screen.getByTestId(APPLE_BUTTON)).toBeTruthy();
     expect(screen.getByLabelText("Continue with Google")).toBeTruthy();
     expect(screen.getByLabelText("Continue with GitHub")).toBeTruthy();
+  });
+
+  it("refuses the wrong native binary before requesting Apple credentials or a Clerk session", async () => {
+    mockApplication.applicationId = "com.matrixos.mobile.gmailpilot";
+    render(<SignInScreen />);
+    fireEvent.press(screen.getByTestId(APPLE_BUTTON));
+    expect(await screen.findByText("Mobile connection unavailable")).toBeTruthy();
+    expect(mockAppleSignInAsync).not.toHaveBeenCalled();
+    expect(mockSignInCreate).not.toHaveBeenCalled();
+    expect(mockSetActive).not.toHaveBeenCalled();
+    expect(mockGetToken).not.toHaveBeenCalled();
   });
 
   it("uses the black system style on the light theme the app ships with", () => {

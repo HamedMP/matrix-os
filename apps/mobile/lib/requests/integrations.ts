@@ -1,6 +1,8 @@
 import { parseIntegrationAttemptStatus, type IntegrationAttemptStatus } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { HOSTED_GATEWAY_URL } from "@/lib/hosted-origin";
+import { assertNativeCallbackTarget, MOBILE_INTEGRATIONS_REDIRECT_URI } from "@/lib/native-callback-target";
+export { MOBILE_INTEGRATIONS_REDIRECT_URI } from "@/lib/native-callback-target";
 import { GmailConnectionMethodSchema, GmailConnectionOptionsSchema, type GmailConnectionMethod, type GmailConnectionOptions } from "@matrix-os/contracts/integration-marketplace";
 
 import { buildGatewayRequestUrl, fetchAuthenticatedJson, fetchAuthenticatedResponse } from "@/lib/requests/http";
@@ -10,7 +12,6 @@ const INTEGRATION_REFRESH_ERROR = "Could not refresh connection. Try again.";
 const INTEGRATION_DELETE_ERROR = "Could not delete connection. Try again.";
 const INTEGRATION_CONNECT_ERROR = "Could not start connection. Try again.";
 const INTEGRATION_SYNC_ERROR = "Could not sync connections. Try again.";
-export const MOBILE_INTEGRATIONS_REDIRECT_URI = "matrixos://integrations";
 const MAX_INTEGRATIONS = 100;
 const SERVICE_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const CONNECTION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -167,6 +168,7 @@ export async function createIntegrationConnectUrl(
   serviceId: string,
   options: IntegrationConnectOptions = {},
 ): Promise<string> {
+  assertNativeCallbackTarget();
   if (!SERVICE_ID.test(serviceId)) throw new Error(INTEGRATION_CONNECT_ERROR);
   if (options.connectionMethod && (serviceId !== "gmail" || !GmailConnectionMethodSchema.safeParse(options.connectionMethod).success)) throw new Error(INTEGRATION_CONNECT_ERROR);
   const label = options.label?.trim();

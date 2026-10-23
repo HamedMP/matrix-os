@@ -34,6 +34,36 @@ describe("Matrix Google OAuth", () => {
   });
   afterEach(async () => db.destroy());
 
+  it("completes browser-only SQL NULL return state without redirecting or dropping consent", async () => {
+    const state = await start();
+    const pending = await db.raw('SELECT redirect_uri FROM native_gmail_oauth_states WHERE user_id=$1', [userId]);
+    expect(pending.rows).toEqual([{ redirect_uri: null }]);
+    fetcher.mockResolvedValueOnce(json(tokens())).mockResolvedValueOnce(json({ emailAddress: "mail@example.test" }));
+    const result = await complete(state, "code");
+    expect(result).not.toHaveProperty("redirectUri");
+    expect((await db.getConnectedService(result.connectionId))?.status).toBe("active");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    await expect(complete(state, "code")).rejects.toThrow();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows only its selected app return and refuses stale persisted policy before provider exchange", async () => {
+    const pilot = new NativeGmailOAuthManager({ store: db.nativeGmailStore!, clientId: "client", clientSecret: "secret",
+      redirectUri: "https://api.matrix-os.com/api/integrations/gmail/callback", encryptionKey: key, fetcher, now: () => now, nativeMobileTarget: "gmail-pilot" });
+    await expect(pilot.start({ userId, externalUserId: "external", redirectUri: "matrixos://integrations" })).rejects.toThrow();
+    const pilotStart = new URL((await pilot.start({ userId, externalUserId: "external", redirectUri: "matrixos-gmail-pilot://integrations" })).url);
+    expect(pilotStart.searchParams.get("redirect_uri")).toBe("https://api.matrix-os.com/api/integrations/gmail/callback");
+    const pilotState = pilotStart.searchParams.get("state")!;
+    const browser = await pilot.authorization(pilotState, { userId });
+    fetcher.mockResolvedValueOnce(json(tokens())).mockResolvedValueOnce(json({ emailAddress: "mail@example.test" }));
+    expect((await pilot.complete(pilotState, "code", browser.browserProof)).redirectUri).toBe("matrixos-gmail-pilot://integrations");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    fetcher.mockClear();
+    const old = new URL((await manager.start({ userId, externalUserId: "external", redirectUri: "matrixos://integrations" })).url).searchParams.get("state")!;
+    await expect(pilot.complete(old, "code", await proof(old))).rejects.toThrow();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("requests bounded single-use offline PKCE consent without exposing credentials", async () => {
     const url = new URL((await manager.start({ userId, externalUserId: "external", redirectUri: "matrixos://integrations" })).url);
     expect(url.origin).toBe("https://accounts.google.com");

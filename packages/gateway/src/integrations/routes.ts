@@ -1,3 +1,4 @@
+import { nativeMobileTargetPolicy, type NativeMobileTarget } from "@matrix-os/contracts";
 import type { GoogleManagedRouteResolver } from '../google-data/runtime/profile-resolution.js';
 import { createPipedreamGmailAttemptRoutes, type PipedreamGmailAttemptConfig } from "./pipedream-attempts/routes.js";
 import { registerGoogleDataOwnerRoutes } from "../google-data/register-owner-routes.js";
@@ -34,12 +35,11 @@ export { createGoogleCollectionAdmissionForPlatform } from "../google-data/regis
 // label the patch endpoint would later reject. trim() strips whitespace
 // padding so a value of "    " (100 spaces) still counts as empty.
 const LabelField = z.string().trim().min(1).max(100);
-const MOBILE_INTEGRATIONS_REDIRECT_URI = "matrixos://integrations";
 
-const ConnectBodySchema = z.object({
+const connectBodySchema = (target?: NativeMobileTarget) => z.object({
   service: z.string().min(1),
   label: LabelField.optional(),
-  redirectUri: z.literal(MOBILE_INTEGRATIONS_REDIRECT_URI).optional(),
+  redirectUri: z.literal(nativeMobileTargetPolicy(target).integrationRedirectUri).optional(),
 });
 
 const LabelPatchSchema = z.object({
@@ -130,6 +130,7 @@ export interface IntegrationBroadcast {
 }
 
 export interface IntegrationRoutesOpts {
+  nativeMobileTarget?: NativeMobileTarget;
   resolveManagedRoute?: GoogleManagedRouteResolver;
   googleCollection?: GoogleCollectionAdmission;
   pipedreamGmailAttempts?: PipedreamGmailAttemptConfig;
@@ -246,16 +247,17 @@ function createPendingLabelQueue() {
 }
 
 export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
+  const ConnectBodySchema = connectBodySchema(opts.nativeMobileTarget);
   const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker } = opts;
   const emit = broadcast ?? (() => {});
   const app = new Hono();
   registerGoogleDataOwnerRoutes(app, db, resolveUserId, { resolveManagedRoute: opts.resolveManagedRoute });
-  if (opts.nativeGmail) app.route("/", createNativeGmailRoutes({ db, oauth: opts.nativeGmail, resolveUserId, broadcast, isEligible: opts.nativeGmailEligible }));
-  if (!opts.nativeGmail) app.route("/", createNativeGmailConnectionRoutes({ db, resolveUserId, isEligible: opts.nativeGmailEligible ?? (async () => false) }));
+  if (opts.nativeGmail) app.route("/", createNativeGmailRoutes({ db, oauth: opts.nativeGmail, nativeMobileTarget: opts.nativeMobileTarget, resolveUserId, broadcast, isEligible: opts.nativeGmailEligible }));
+  if (!opts.nativeGmail) app.route("/", createNativeGmailConnectionRoutes({ db, nativeMobileTarget: opts.nativeMobileTarget, resolveUserId, isEligible: opts.nativeGmailEligible ?? (async () => false) }));
   if (!opts.nativeGmail && opts.nativeGmailCleanup) app.route("/", createNativeGmailDisconnectRoutes({ db, cleanup: opts.nativeGmailCleanup, resolveUserId, broadcast }));
   if (opts.pipedreamGmailAttempts) app.route("/", createPipedreamGmailAttemptRoutes({ db, pipedream,
     isEligible: opts.nativeGmailEligible ?? (async () => false),
-    config: opts.pipedreamGmailAttempts, resolveUserId, admit: opts.verifiedConnectedWebhook, emit }));
+    config: opts.pipedreamGmailAttempts, nativeMobileTarget: opts.nativeMobileTarget, resolveUserId, admit: opts.verifiedConnectedWebhook, emit }));
   app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId, presetBroker: mcpPresetBroker, googleCollection: opts.googleCollection }));
   app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
 

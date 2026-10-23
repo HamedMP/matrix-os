@@ -43,6 +43,7 @@ import { authenticateBiometric } from "@/lib/auth";
 import { addNotificationResponseListener, handleNotificationTap } from "@/lib/push";
 import { AppStatusBar } from "@/components/AppStatusBar";
 import { StartupLoading, StartupScreen } from "@/components/StartupScreen";
+import { NativeBuildBoundary } from "@/components/NativeBuildBoundary";
 import { startMobileThemeController } from "@/lib/theme-preference";
 import { motion } from "@/lib/theme-v2";
 import { useStartupColors } from "@/lib/use-startup-colors";
@@ -173,15 +174,17 @@ function RootContent({ fontsLoaded }: { fontsLoaded: boolean }) {
   }
 
   return (
-    <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
-      <QueryClientProvider client={mobileQueryClient}>
-        <AnalyticsProvider>
-          <BiometricGate>
-            <GatewayShell />
-          </BiometricGate>
-        </AnalyticsProvider>
-      </QueryClientProvider>
-    </ClerkProvider>
+    <NativeBuildBoundary>
+      <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
+        <QueryClientProvider client={mobileQueryClient}>
+          <AnalyticsProvider>
+            <BiometricGate>
+              <GatewayShell />
+            </BiometricGate>
+          </AnalyticsProvider>
+        </QueryClientProvider>
+      </ClerkProvider>
+    </NativeBuildBoundary>
   );
 }
 
