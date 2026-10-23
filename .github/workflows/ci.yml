@@ -876,6 +876,20 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/platform/customer-funded-paid-recovery-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
+      - name: Verify subscription credit and funded budgets on PostgreSQL
+        env:
+          MATRIX_PLATFORM_FIXTURE_POSTGRES_URL: postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_ci_platform_fixture_admin
+        run: |
+          set -euo pipefail
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          const pool = new pg.Pool({ connectionString: process.env.MATRIX_TEST_POSTGRES_URL });
+          try { await pool.query('CREATE DATABASE matrix_ci_platform_fixture_admin'); }
+          finally { await pool.end(); }
+          NODE
+          pnpm exec vitest run tests/platform/subscription-ai-credit-approved.test.ts tests/platform/subscription-ai-credit-webhook.test.ts tests/platform/funded-ai-addon-checkout.test.ts tests/platform/customer-funded-paid-recovery.test.ts --maxWorkers=1 --no-file-parallelism
+
       - name: Account deletion PostgreSQL races
         if: needs.changes.outputs.should_run == 'true'
         run: |
