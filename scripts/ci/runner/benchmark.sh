@@ -85,6 +85,7 @@ esac
 # These exact files gate their entire native suite on the Desktop build; browser
 # and flag-gated suites remain discoverable. The contract test verifies the list.
 general_native_suites=(
+  account-organization-picker
   agents-providers-figma
   bot-visual
   canonical-input
@@ -177,6 +178,7 @@ run_suite() {
       step "e2e-electron-$pass" env MATRIX_DESKTOP_E2E_REQUIRED=1 MATRIX_PROVIDER_AUTH_ELECTRON=1 \
         MATRIX_SETTINGS_EVIDENCE_DIR=output/playwright/settings-providers xvfb-run --auto-servernum \
         pnpm exec vitest run --config vitest.e2e.config.ts --maxWorkers=2 \
+        tests/e2e/desktop/account-organization-picker.e2e.test.ts \
         tests/e2e/desktop/file-download.e2e.test.ts tests/e2e/desktop/canonical-input.e2e.test.ts \
         tests/e2e/provider-authorization-electron.e2e.test.ts tests/e2e/desktop/provider-auth-terminal.e2e.test.ts \
         tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts \

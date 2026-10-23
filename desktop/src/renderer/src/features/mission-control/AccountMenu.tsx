@@ -151,7 +151,9 @@ export default function AccountMenu({
               background: "var(--bg-overlay)",
               boxShadow: "var(--shadow-2)",
               borderRadius: "12px",
-              overflow: "hidden",
+              maxHeight: "var(--radix-dropdown-menu-content-available-height)",
+              overflowY: "auto",
+              overflowX: "hidden",
             }}
           >
             <DropdownMenu.Label className="px-2 py-2">

@@ -220,7 +220,14 @@ function MountedUserButton({
           align={isMenubar ? "end" : "start"}
           side={isMenubar ? "bottom" : "top"}
           sideOffset={10}
-          style={{ zIndex: SHELL_Z_INDEX.popover }}
+          style={{
+            zIndex: SHELL_Z_INDEX.popover,
+            ...(isMenubar ? {
+              maxHeight: "var(--radix-dropdown-menu-content-available-height)",
+              overflowY: "auto" as const,
+              overflowX: "hidden" as const,
+            } : {}),
+          }}
           className={isMenubar ? "w-[224px] rounded-xl border bg-card p-1.5 text-foreground shadow-xl" : "w-[272px] overflow-hidden rounded-[20px] border border-border/60 bg-popover p-2 text-popover-foreground shadow-[0_24px_70px_rgba(50,53,46,0.28)]"}
         >
           {isMenubar ? <TopBarAccountContent

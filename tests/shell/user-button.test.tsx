@@ -322,6 +322,20 @@ describe("UserButton", () => {
     expect(screen.getByRole("menuitemradio", { name: "Matrix Main" }).getAttribute("aria-checked")).toBe("true");
   });
 
+  it("bounds a long menubar organization list and keeps account actions scrollable", async () => {
+    clerkState.memberships = Array.from({ length: 20 }, (_, index) => ({ organization: { id: `org_${index}`, name: `Organization ${index}` } }));
+    const { UserButton } = await import("../../shell/src/components/UserButton.js");
+    render(<UserButton variant="menubar" onOpenSettings={vi.fn()} />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Account menu for kongfupanda13" }), { button: 0, ctrlKey: false });
+    await screen.findByRole("menuitem", { name: "Log out" });
+    const menu = screen.getByRole("menu");
+    expect(menu.style.maxHeight).toBe("var(--radix-dropdown-menu-content-available-height)");
+    expect(menu.style.overflowY).toBe("auto");
+    expect(screen.getAllByRole("menuitemradio")).toHaveLength(20);
+    expect(screen.getByRole("menuitem", { name: "Settings" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Log out" })).toBeTruthy();
+  });
+
   it("omits the menubar organization section for a confirmed individual", async () => {
     const { UserButton } = await import("../../shell/src/components/UserButton.js");
     render(<UserButton variant="menubar" />);
