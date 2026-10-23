@@ -121,15 +121,21 @@ export function createGetStartedRoutes(opts: GetStartedRoutesOptions) {
   }
 
   /**
-   * Creates (or replays) the owner's saved bot choices. The saved answers are the durable
-   * intent and the fixed request IDs keep this idempotent: a retry never duplicates a bot and
-   * never brings back one the owner deleted. Each failure is logged and reported, never thrown.
+   * Creates the owner's saved bot choices that were never created. The saved answers are the
+   * durable intent and the fixed request IDs keep this idempotent: a retry never duplicates a
+   * bot and never brings back one the owner deleted. A bot already created is not requested
+   * again (that would conflict once its recipe version moves on). Each failure is logged and
+   * reported, never thrown.
    */
   async function ensureSavedBots(ownerId: string, answers: GetStartedAnswers): Promise<Record<string, "ready" | "failed">> {
     const results: Record<string, "ready" | "failed"> = {};
     if (!opts.ensureBot) return results;
     for (const job of savedBotJobs(answers)) {
       try {
+        if (opts.botStatus && await opts.botStatus(ownerId, job.recipeId) === "created") {
+          results[job.recipeId] = "ready";
+          continue;
+        }
         await opts.ensureBot(ownerId, job.recipeId, job.name);
         results[job.recipeId] = "ready";
       } catch (botError: unknown) {

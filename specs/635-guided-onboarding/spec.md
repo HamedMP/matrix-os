@@ -218,12 +218,12 @@ Neither path is on the public, webhook, collaboration, route-scoped bearer or We
 - Concurrent PUTs: serialised per home; the second terminal transition sees the first and returns idempotent `200` or `409`.
 - Crash mid-write: temp + rename leaves either the old or the new file; stray temp files are dot-prefixed in `system/` and overwritten never (unique names); they are removed on the failure path.
 - Connect sign-in doesn't finish: "Sign-in didn't finish" with Try again / Skip.
-- Bot creation fails (P2): enter the desktop anyway. The saved answers are the durable intent: reading the finished setup retries any saved bot (at most every 10 minutes per owner, bounded per-owner memory), `POST /bots` retries on request, and Getting started keeps a Create action for a chosen bot whose creation never finished (`GET /bots` says "pending"); a bot the owner removed stays hidden. Fixed request IDs make retries idempotent; a bot the owner deleted is never brought back.
+- Bot creation fails (P2): enter the desktop anyway. The saved answers are the durable intent: reading the finished setup retries any saved bot (at most every 10 minutes per owner, bounded per-owner memory), `POST /bots` retries on request, and Getting started keeps a Create action for a chosen bot whose creation never finished (`GET /bots` says "pending"); a bot the owner removed stays hidden. Fixed request IDs make retries idempotent; a bot the owner deleted is never brought back, and a bot already created is never requested again (its recipe version may have moved on).
 - Gateway unreachable on desktop load: don't show the wizard this session; try again on next load.
 
 ## Resource management
 
-- No in-memory caches; state is one small file per home.
+- State is one small file per home. The only in-memory state is the bot-retry cooldown: one timestamp per owner, capped at 256 owners with the oldest evicted.
 - Request bodies capped at 8 KiB; persisted draft capped at 4 KiB.
 - Connect polling (Section 4) keeps the widget's existing hard deadline and clears on unmount.
 

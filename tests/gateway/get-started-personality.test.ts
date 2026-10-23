@@ -168,6 +168,18 @@ describe("get started personality", () => {
     expect(ensureBot.mock.calls.map((call) => call[1])).toEqual(["writing-bot", "echo", "writing-bot", "echo"]);
   });
 
+  it("only re-requests saved bots whose creation never finished", async () => {
+    // Re-requesting a created bot would conflict once its recipe version moves on.
+    const botStatus = vi.fn(async (_owner: string, recipeId: string) => (recipeId === "echo" ? "pending" as const : "created" as const));
+    app = new Hono();
+    app.route("/api/settings/get-started", createGetStartedRoutes({ homePath, enabled: true, getOwnerId: () => "user_owner", ensureBot, botStatus }));
+    await complete(ATLAS, ["writing-bot", "echo"]);
+    expect(ensureBot.mock.calls.map((call) => call[1])).toEqual(["echo"]);
+    const res = await app.request("/api/settings/get-started/bots", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    expect(await res.json()).toEqual({ bots: { "matrix-bot": "ready", "writing-bot": "ready", echo: "ready" } });
+    expect(ensureBot.mock.calls.map((call) => call[1])).toEqual(["echo", "echo"]);
+  });
+
   it("reports which saved bots finished being created, so removed bots stay removed", async () => {
     const botStatus = vi.fn(async (_owner: string, recipeId: string) => (recipeId === "echo" ? "pending" as const : "created" as const));
     const statusOf = () => app.request("/api/settings/get-started/bots");
