@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { KyselyPlugin } from "kysely";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { createCanonicalChatService } from "../../packages/gateway/src/chat/service.js";
 import { ChatConflictError, ChatNotFoundError } from "../../packages/gateway/src/chat/errors.js";
@@ -20,6 +21,8 @@ const MEMBER_ID = "user_project_member";
 const OWNER = { type: "personal" as const, ownerId: OWNER_ID };
 const PROJECT_ID = "project_alpha";
 const PROJECT_SCOPE = "10000000-0000-4000-8000-000000000a71";
+const SECOND_PROJECT_ID = "project_beta";
+const SECOND_PROJECT_SCOPE = "10000000-0000-4000-8000-000000000a72";
 const ORGANIZATION_ID = "org_matrix_team";
 const RUNTIME_ID = "vps:runtime_project_shared";
 const NOW = new Date("2026-10-05T15:00:00.000Z");
@@ -316,6 +319,52 @@ describe("shared project Chat assignment", () => {
       .where("scope_id", "=", child.id).where("event_type", "=", "scope.deleted").execute())
       .toHaveLength(1);
     expect(endedScopes).toEqual([child.id]);
+  });
+
+  it("locks the original and current Projects together when a create request is retried after a move", async () => {
+    await fixture.db.insertInto("collaboration_scopes").values({
+      id: SECOND_PROJECT_SCOPE, owner_type: "personal", owner_id: OWNER_ID, organization_id: ORGANIZATION_ID,
+      kind: "project", resource_id: SECOND_PROJECT_ID, parent_scope_id: null, membership_mode: "direct",
+      lifecycle: "shared", revision: 1, auth_epoch: 1, authority_runtime_id: RUNTIME_ID,
+      authority_generation: 2, execution_generation: null, execution_eligibility: null,
+      created_at: NOW, updated_at: NOW, deleted_at: null,
+    }).execute();
+    const chatService = service();
+    const created = await chatService.create(OWNER, {
+      clientRequestId: "req_retry_after_project_move",
+      projectId: PROJECT_ID,
+    });
+    await chatService.updateProject(OWNER, created.chat.id, {
+      baseRevision: created.chat.revision,
+      projectId: SECOND_PROJECT_ID,
+    });
+    const projectLockQueries: string[] = [];
+    const plugin: KyselyPlugin = {
+      transformQuery(args) {
+        const query = JSON.stringify(args.node);
+        if (query.includes('"modifier":"ForUpdate"') && query.includes('"name":"collaboration_scopes"')
+          && (query.includes(PROJECT_ID) || query.includes(SECOND_PROJECT_ID))) {
+          projectLockQueries.push(query);
+        }
+        return args.node;
+      },
+      async transformResult(args) { return args.result; },
+    };
+    const retryDb = fixture.db.withPlugin(plugin);
+    const retryRepository = new ChatRepository(retryDb);
+    const assignments = createProjectChatAssignmentCoordinator({
+      db: retryDb,
+      chatRepository: retryRepository,
+      now: () => NOW,
+    });
+
+    await expect(service(assignments).create(OWNER, {
+      clientRequestId: "req_retry_after_project_move",
+      projectId: PROJECT_ID,
+    })).resolves.toMatchObject({ chat: { id: created.chat.id }, projectId: SECOND_PROJECT_ID });
+
+    expect(projectLockQueries[0]).toContain(PROJECT_ID);
+    expect(projectLockQueries[0]).toContain(SECOND_PROJECT_ID);
   });
 
   it("reparents a directly shared Chat when it moves into a shared project", async () => {

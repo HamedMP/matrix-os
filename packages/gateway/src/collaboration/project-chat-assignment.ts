@@ -473,10 +473,20 @@ export function createProjectChatAssignmentCoordinator(options: {
         try {
           const orderedRepository: AssignmentRepository = {
             create: async (operationOwner, input) => {
+              // Idempotent create may return a Chat that has since moved to a
+              // different Project. Resolve that Chat before taking any Project
+              // locks so the original and current Projects are locked together
+              // in the same canonical order.
+              const existing = await repository.kysely.selectFrom("chats")
+                .select("id")
+                .where("owner_type", "=", operationOwner.type)
+                .where("owner_id", "=", operationOwner.ownerId)
+                .where("create_request_id", "=", input.clientRequestId)
+                .executeTakeFirst();
               await lockAssignmentRows(
                 repository.kysely as unknown as CollaborationTransaction,
                 operationOwner,
-                undefined,
+                existing?.id,
                 input.projectId,
               );
               return repository.create(operationOwner, input);
