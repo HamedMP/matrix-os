@@ -34,11 +34,20 @@ still apply.
 
 ## Schema, resources and rollback
 
-Schema generation 23 widens `execution_recovery_slot` from SMALLINT to INTEGER
+Schema generation 24 widens `execution_recovery_slot` from SMALLINT to INTEGER
 and replaces `IN (0, 1)` with a nonnegative check in the locked migration.
 Unresolved owner/slot uniqueness and one-live-execution uniqueness remain.
 The migration validates existing receipts and the new liability bound before
 changing constraints; invalid legacy data rolls the transaction back.
+
+The reviewed predecessor PR #2886 (`2cc608b90a5a08ede5fe61551a60cfcd816421aa`)
+allocates generation 23 with fingerprint
+`588aa2cb52e99cfd8d48cf0ddd92f5f663aa266f2a5a1b40b099f7b92af5d3f0`.
+Its core DDL matches generation 22; its separate deployment wiring is retained
+when composing the changes. Let that PR land first. This recovery change uses
+generation 24 so startup never reuses its generation with a different schema.
+Test upgrades from both exact predecessor markers; old-generation startup must
+skip DDL after the upgrade without rewriting receipts or balances.
 
 Inventory validation and terminal candidate scans use 100-row keyset pages.
 Free-slot allocation stays in SQL, so process memory does not grow with the

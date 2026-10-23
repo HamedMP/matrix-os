@@ -108,20 +108,27 @@ describe('bounded recovery of repeated failed funded requests', () => {
       .where('reservation_id', '=', second.reservation_id).execute()).rejects.toThrow();
   });
 
-  it('upgrades generation22 two-slot databases without rewriting existing receipts or financial rows', async () => {
+  it.each([22, 23])('upgrades generation%i two-slot databases without rewriting existing receipts or financial rows', async generation => {
     for (const key of ['legacy-a', 'legacy-b']) await end(await start(key));
     await sql`ALTER TABLE ai_funded_usage_reservations
       DROP CONSTRAINT ai_funded_execution_recovery_slot_check,
       ALTER COLUMN execution_recovery_slot TYPE SMALLINT,
       ADD CONSTRAINT ai_funded_execution_recovery_slot_check CHECK (execution_recovery_slot IN (0, 1))`.execute(db.executor);
-    await sql`UPDATE platform_schema_revisions SET generation=22,
+    await sql`UPDATE platform_schema_revisions SET generation=${generation},
       fingerprint='588aa2cb52e99cfd8d48cf0ddd92f5f663aa266f2a5a1b40b099f7b92af5d3f0'
       WHERE scope='core'`.execute(db.executor);
     const beforeRows = await rows(); const beforeFinance = await finance();
+    expect(PLATFORM_SCHEMA_REVISION.generation).toBeGreaterThan(generation);
     await runPlatformMigration(db.executor, migratePlatformSchema, { revision: PLATFORM_SCHEMA_REVISION });
     expect(await rows()).toEqual(beforeRows); expect(await finance()).toEqual(beforeFinance);
     await end(await start('after-upgrade'));
     expect((await rows())[2].execution_recovery_slot).toBe(2);
+    const recoveredRows = await rows(), recoveredFinance = await finance();
+    await runPlatformMigration(db.executor, async () => { throw new Error('Old source must not execute DDL'); }, {
+      revision: { generation, fingerprint: '588aa2cb52e99cfd8d48cf0ddd92f5f663aa266f2a5a1b40b099f7b92af5d3f0' },
+    });
+    expect(await rows()).toEqual(recoveredRows);
+    expect(await finance()).toEqual(recoveredFinance);
     await db.executor.updateTable('ai_funded_usage_reservations').set({ execution_recovery_slot: 99 })
       .where('reservation_id', '=', beforeRows[0].reservation_id).execute();
     expect((await rows())[0].execution_recovery_slot).toBe(99);
