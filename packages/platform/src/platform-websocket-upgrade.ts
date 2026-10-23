@@ -1,4 +1,5 @@
 import { buildPreviewTerminalAccess } from "./preview-terminal-access.js";
+import { isPilotCohortMember, loadPilotCohortPolicy } from '@matrix-os/contracts';
 import { createConnection, type Socket } from 'node:net';
 import { connect as createTlsConnection } from 'node:tls';
 import type { IncomingMessage, Server } from 'node:http';
@@ -89,6 +90,7 @@ export interface RegisterPlatformWebSocketUpgradeHandlerOpts {
 export function registerPlatformWebSocketUpgradeHandler(
   opts: RegisterPlatformWebSocketUpgradeHandlerOpts,
 ): void {
+  const pilotCohortPolicy = loadPilotCohortPolicy(opts.env);
   const {
     server,
     app,
@@ -241,6 +243,14 @@ export function registerPlatformWebSocketUpgradeHandler(
       return;
     }
 
+    if (pilotCohortPolicy.status !== 'disabled'
+      && !(identity.source === 'static-route' && explicitVmRoute
+        && hasExplicitVmNativeAppStreamCapability(req.method ?? '', explicitVmRoute))
+      && !isPilotCohortMember(pilotCohortPolicy, identity.userId)) {
+      refuse(pilotCohortPolicy.status === 'invalid' ? 503 : 403);
+      return;
+    }
+
     let directUpgrade: Awaited<ReturnType<NonNullable<typeof collaborationDirect>["relay"]["prepareSocket"]>> | undefined;
     let runtimeSlot = identity.runtimeSlot ?? requestRuntimeSlot;
     let requestedActiveMachine: UserMachineRecord | undefined;
@@ -317,6 +327,11 @@ export function registerPlatformWebSocketUpgradeHandler(
       ? await getContainer(db, identity.handle)
       : undefined;
     if (!runningMachine && !record) { refuse(404); return; }
+    if (pilotCohortPolicy.status === 'enabled' && !identity.userId
+      && !isPilotCohortMember(pilotCohortPolicy, runningMachine?.clerkUserId ?? record?.clerkUserId)) {
+      refuse(403);
+      return;
+    }
     const entitlement = runningMachine
       ? await getRuntimeEntitlementDecisionForUser(
         db,

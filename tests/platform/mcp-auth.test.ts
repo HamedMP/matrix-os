@@ -1,6 +1,9 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from "jose";
 import { createMcpTokenVerifier, McpAuthError } from "../../packages/platform/src/mcp-auth.js";
+import { loadPilotCohortPolicy } from '@matrix-os/contracts';
+import { Hono } from 'hono';
+import { createPilotCohortAccessGuard } from '../../packages/platform/src/pilot-cohort-access.js';
 
 const issuer = "https://login.example.com";
 const resourceUrl = "https://api.matrix-os.com/mcp";
@@ -26,7 +29,53 @@ function setup(fetchMock = vi.fn().mockImplementation(async () => Response.json(
   return { fetchMock, verify: createMcpTokenVerifier({ issuer, resourceUrl, jwksUrl, fetch: fetchMock }) };
 }
 
+async function sizedCohortToken(bytes: number): Promise<string> {
+  const base = await sign({ sub: 'user_pilotA', padding: '' }, { padding: '' });
+  const estimate = Math.floor((bytes - base.length) * 3 / 4);
+  // Base64url omits padding; varying one signed header field covers its
+  // length residues without weakening the actual JWT signature verifier.
+  for (let headerBytes = 0; headerBytes < 3; headerBytes++) {
+    for (let delta = -6; delta <= 6; delta++) {
+      const token = await sign({ sub: 'user_pilotA', padding: 'x'.repeat(estimate + delta) }, { padding: 'x'.repeat(headerBytes) });
+      if (token.length === bytes) return token;
+    }
+  }
+  throw new Error('Sized JWT fixture unavailable');
+}
+
 describe("hosted MCP OAuth access token verification", () => {
+  it('preserves the real MCP token size contract through the global cohort guard', async () => {
+    const policy = loadPilotCohortPolicy({ MATRIX_PILOT_ACCESS_ENABLED: 'true', MATRIX_PILOT_ALLOWED_CLERK_IDS: 'user_pilotA' });
+    const verify = createMcpTokenVerifier({ issuer, resourceUrl, jwksUrl,
+      fetch: vi.fn(async () => Response.json({ keys: [jwk] })), pilotCohortPolicy: policy });
+    const consumed = vi.fn(verify);
+    const app = new Hono();
+    app.use('*', createPilotCohortAccessGuard({ policy, jwtSecret: 'fictional-matrix-secret-at-least-32-characters' }));
+    app.get('/mcp', async c => c.json(await consumed(c.req.header('authorization')!.slice(7))));
+    for (const bytes of [8913, 16384]) {
+      const token = await sizedCohortToken(bytes);
+      expect(token.length).toBe(bytes);
+      expect(await verify(token)).toMatchObject({ userId: 'user_pilotA' });
+      const response = await app.request('/mcp', { headers: { authorization: `Bearer ${token}` } });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ userId: 'user_pilotA' });
+    }
+    const oversized = await sizedCohortToken(16385);
+    consumed.mockClear();
+    const response = await app.request('/mcp', { headers: { authorization: `Bearer ${oversized}` } });
+    expect(response.status).toBe(401);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.json()).toEqual({ error: 'Access unavailable' });
+    expect(consumed).not.toHaveBeenCalled();
+  });
+  it('refuses valid noncohort OAuth identities after resource/signature verification', async () => {
+    const verify = createMcpTokenVerifier({ issuer, resourceUrl, jwksUrl,
+      fetch: vi.fn(async () => Response.json({ keys: [jwk] })),
+      pilotCohortPolicy: loadPilotCohortPolicy({ MATRIX_PILOT_ACCESS_ENABLED: 'true', MATRIX_PILOT_ALLOWED_CLERK_IDS: 'user_pilotA' }),
+    });
+    await expect(verify(await sign())).rejects.toMatchObject({ status: 403, code: 'insufficient_scope' });
+    await expect(verify(await sign({ sub: 'user_pilotA' }))).resolves.toMatchObject({ userId: 'user_pilotA' });
+  });
   it("verifies signed resource-bound access tokens through trusted JWKS and caches bounded keys", async () => {
     const { verify, fetchMock } = setup();
     const exp = Math.floor(Date.now() / 1000) + 300;

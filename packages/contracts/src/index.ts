@@ -1481,3 +1481,4 @@ export * from '#managed-google-route';
 export * from '#managed-google-route-control';
 export * from '#google-qualified-funded';
 export * from '#google-qualified-authorization';
+export * from '#pilot-cohort';

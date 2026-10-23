@@ -22,6 +22,7 @@
     "./command-preview-policy": "./src/command-preview-policy.mjs"
   },
   "imports": {
+    "#pilot-cohort": "./src/pilot-cohort.ts",
     "#google-qualified-authorization": "./src/google-qualified-authorization.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
     "#chatgpt-plan-wire": "./src/chatgpt-plan-wire.ts",
