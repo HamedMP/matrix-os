@@ -10,6 +10,7 @@ const scripts = JSON.parse(readFileSync("package.json", "utf8")).scripts;
 const electronSuites = [
   "tests/e2e/desktop/file-download.e2e.test.ts",
   "tests/e2e/desktop/canonical-input.e2e.test.ts",
+  "tests/e2e/desktop/chat-large-transcript.e2e.test.ts",
   "tests/e2e/provider-authorization-electron.e2e.test.ts",
   "tests/e2e/desktop/provider-auth-terminal.e2e.test.ts",
   "tests/e2e/desktop/agents-providers-figma.e2e.test.ts",
@@ -245,7 +246,7 @@ describe("isolated cold and warm benchmark execution", () => {
     const { result, calls } = invoke("full");
     expect(result.status, result.stderr).toBe(0);
     const gated = buildGatedElectronSuites();
-    expect(gated).toHaveLength(35);
+    expect(gated).toHaveLength(36);
     const general = calls.filter((call) => call.includes("--config vitest.e2e.config.ts") && call.includes("--exclude="));
     expect(general).toHaveLength(2);
     for (const call of general) {

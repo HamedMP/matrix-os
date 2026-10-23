@@ -224,13 +224,13 @@ suite("large canonical Chat viewport recovery", () => {
   it("keeps a maximum-sized Chat visible through terminal collapse and renderer reload", async () => {
     await page.getByRole("button", { name: "Chat", exact: true }).first().dblclick();
     await page.getByRole("button", { name: "Large transcript recovery", exact: true }).click();
+    await page.getByText("Step 500", { exact: true }).waitFor();
+    publishCompletion();
+    await page.getByText(finalText, { exact: true }).waitFor();
     const worked = page.getByRole("button", { name: /Worked for/ });
     await worked.waitFor();
     if (await worked.getAttribute("aria-expanded") !== "true") await worked.click();
     await page.getByText("Step 500", { exact: true }).waitFor();
-
-    publishCompletion();
-    await page.getByText(finalText, { exact: true }).waitFor();
     await worked.click();
     await expect.poll(() => worked.getAttribute("aria-expanded")).toBe("false");
     await expectValidGeometry();
