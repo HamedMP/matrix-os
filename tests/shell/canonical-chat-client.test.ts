@@ -21,6 +21,12 @@ const record = {
 };
 
 describe("canonical shell Chat client", () => {
+  it("does not propagate Bot creation reasons on ordinary Chat paths", async () => {
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test",
+      fetchFn: vi.fn(async () => new Response(JSON.stringify({ code: "invalid_request", reason: "unsupported_skill" }),
+        { status: 400, headers: { "content-type": "application/json" } })) });
+    await expect(client.list()).rejects.toMatchObject({ status: 400, reason: undefined });
+  });
   it("opens the canonical HTTP event stream with lifecycle cancellation and resume cursor", async () => {
     const response = new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } });
     const fetchFn = vi.fn(async () => response);

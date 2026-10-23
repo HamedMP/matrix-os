@@ -110,9 +110,11 @@ it("retains preset setup and its cancel path beside scratch", async () => {
 });
 
 it("keeps the scratch form open and rejects cancel and duplicate submit while creation is pending", async () => {
-  const { client } = fixture();
-  let complete!: (value: typeof saved) => void;
-  client.create.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+  const { client, bots } = fixture();
+  const response = { agent: { id: saved.id, name: "Pending bot", avatarSeed: "a".repeat(32), revision: 1, status: "active" },
+    chatId: "chat_pending01", operation: "created" };
+  let complete!: (value: typeof response) => void;
+  bots.createCustom.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
   render(<ChatAgentsPanel client={client} view="recipes" onClose={vi.fn()}/>);
   await waitFor(() => expect(scratch()).toBeEnabled());
   fireEvent.click(scratch());
@@ -127,8 +129,11 @@ it("keeps the scratch form open and rejects cancel and duplicate submit while cr
   fireEvent(screen.getByRole("dialog"), new Event("cancel", { bubbles: false, cancelable: true }));
   fireEvent.submit(screen.getByRole("textbox", { name: "Name" }).closest("form")!);
   expect(screen.getByRole("dialog")).toBeVisible();
-  expect(client.create).toHaveBeenCalledTimes(1);
-  await act(async () => { complete({ ...saved, name: "Pending bot" }); });
+  expect(bots.createCustom).toHaveBeenCalledTimes(1);
+  expect(client.create).not.toHaveBeenCalled();
+  client.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, name: "Pending bot", description: "", instructions: "Write drafts",
+    selection: { instanceId: "matrix_pi_default", model: "sonnet" }, recipeRef: { recipeId: "custom-coordinator", version: "1" } }] });
+  await act(async () => { complete(response); });
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.getByRole("heading", { name: "Your AI team" })).toBeVisible();
 });

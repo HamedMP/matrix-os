@@ -118,6 +118,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
       botChats: botServices.botChats,
       tasks: botServices.tasks,
       instantiation: botServices.instantiation,
+      recovery: botServices.recovery,
       interactions: botServices.interactions,
       memory: botServices.memory,
       grants: botServices.grants,

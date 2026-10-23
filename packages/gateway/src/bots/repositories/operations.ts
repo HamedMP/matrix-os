@@ -7,7 +7,8 @@
  */
 import { sql, type Selectable } from "kysely";
 import type { BotOperationsTable, BotOperationStatus } from "../database.js";
-import { BotStateError, isoTimestamp, newBotStateId, toSafeInteger, type BotExecutor } from "./shared.js";
+import { BotStateError, isUniqueViolation, isoTimestamp, newBotStateId, toSafeInteger, type BotExecutor } from "./shared.js";
+import { isManagedCustomRecoveryRequestId, MANAGED_CUSTOM_RECOVERY_PREFIX } from "../custom-creation-authority.js";
 
 const MAX_UNFINISHED_LIST = 100;
 
@@ -91,6 +92,25 @@ export function createBotOperationsRepository(db: BotExecutor) {
 
   return {
     get,
+    /** Existing identities are supplied only by the explicit, locked recovery service. */
+    async reserveRecovery(input: { ownerId: string; clientRequestId: string; botId: string; chatId: string; payloadHash: string; now: string },
+      executor: BotExecutor): Promise<BotOperation> {
+      if (!isManagedCustomRecoveryRequestId(input.clientRequestId)) throw new BotStateError("invalid_input");
+      let inserted;
+      try {
+        inserted = await executor.insertInto("bot_operations").values({ owner_id: input.ownerId, client_request_id: input.clientRequestId,
+          bot_id: input.botId, chat_id: input.chatId, workspace_rel_path: `bots/${input.botId}`, payload_hash: input.payloadHash,
+          status: "reserved", failure_code: null, created_at: input.now, updated_at: input.now,
+        }).onConflict(conflict => conflict.columns(["owner_id", "client_request_id"]).doNothing()).returningAll().executeTakeFirst();
+      } catch (error) {
+        if (isUniqueViolation(error)) throw new BotStateError("conflict");
+        throw error;
+      }
+      if (inserted) return fromRow(inserted);
+      const existing = await get(input.ownerId, input.clientRequestId, executor);
+      if (!existing || existing.botId !== input.botId || existing.chatId !== input.chatId || existing.payloadHash !== input.payloadHash) throw new BotStateError("conflict");
+      return existing;
+    },
     /**
      * Reserves a creation, or returns the existing one for the same request.
      * A different payload under the same request ID is a conflict (409).
@@ -134,12 +154,13 @@ export function createBotOperationsRepository(db: BotExecutor) {
      * reconciliation. `maxAttempts` leaves out operations that already failed
      * that many times, so they cannot crowd every batch.
      */
-    async listUnfinished(input: { olderThan: string; limit?: number; maxAttempts?: number }, executor: BotExecutor = db): Promise<BotOperation[]> {
+    async listUnfinished(input: { olderThan: string; limit?: number; maxAttempts?: number; excludeRecovery?: boolean }, executor: BotExecutor = db): Promise<BotOperation[]> {
       const limit = Math.max(1, Math.min(Math.trunc(input.limit ?? MAX_UNFINISHED_LIST), MAX_UNFINISHED_LIST));
       let query = executor.selectFrom("bot_operations").selectAll()
         .where("status", "<>", "active")
         .where("updated_at", "<", input.olderThan);
       if (input.maxAttempts !== undefined) query = query.where("attempts", "<", input.maxAttempts);
+      if (input.excludeRecovery) query = query.where(sql<boolean>`left(client_request_id, ${MANAGED_CUSTOM_RECOVERY_PREFIX.length}) <> ${MANAGED_CUSTOM_RECOVERY_PREFIX}`);
       const rows = await query
         .orderBy("updated_at", "asc")
         .limit(limit)
