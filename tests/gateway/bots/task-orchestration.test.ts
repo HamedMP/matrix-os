@@ -54,6 +54,7 @@ function setup(options: {
   admit?: () => Promise<never>;
   executorReady?: (ownerId: string, botId: string) => Promise<boolean>;
   cancelDelivered?: boolean;
+  steerReply?: Record<string, unknown>;
   cancelGraceMs?: number;
   agent?: Record<string, unknown> | null;
   resolveProcedure?: Parameters<typeof createBotTaskOrchestrator>[0]["resolveProcedure"];
@@ -88,7 +89,7 @@ function setup(options: {
         const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
         expect(registry.inferenceSignal(binding)?.aborted).toBe(true);
       }
-      return { ok: options.cancelDelivered !== false, reply: {} };
+      return { ok: options.cancelDelivered !== false, reply: input.command.kind === "bot.steer" ? options.steerReply ?? { acknowledged: true } : {} };
     }
     const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
     const publish = (seq: number, event: Record<string, unknown>) => orchestrator.eventSink.publish(binding, { seq, event } as never);
@@ -763,6 +764,19 @@ describe("bot turns through the matrix_bot adapter", () => {
     expect(activities).toHaveLength(MAX_BOT_ACTIVITY_EVENTS);
     expect(activities.at(-1)).toMatchObject({ type: "agent.activity", label: "More steps were not shown" });
     expect(events).toContainEqual({ type: "assistant.delta", delta: "Done." });
+  });
+
+  it.each([{ acknowledged: false }, {}])("rejects an unacknowledged steer even when its transport succeeds: %j", async steerReply => {
+    const gate = Promise.withResolvers<unknown>();
+    const { adapter, commands } = setup({ steerReply, worker: () => gate.promise });
+    const running = collect(adapter.start(turn()));
+    try {
+      await vi.waitFor(() => expect(commands).toHaveLength(1));
+      await expect(adapter.steer!({ ...turn(), clientRequestId: "req_undelivered" })).rejects.toThrow();
+    } finally {
+      gate.resolve({ runId: "run_turn1", status: "completed", toolActions: 0 });
+      await running;
+    }
   });
 
   it("relays steering to the running worker only", async () => {

@@ -341,19 +341,27 @@ describe("bot agent loop", () => {
     expect(saved.split("make it shorter")).toHaveLength(2);
   });
 
-  it("saves an accepted steer as a person message when the turn stops before answering it", async () => {
+  it("refuses steering throughout a blocking question handoff instead of saving it unanswered", async () => {
     const { route } = scripted([
       fauxAssistantMessage(fauxToolCall("ask_person", { header: "Company", question: "Which one?", blocking: true }, { id: "call_ask" }), { stopReason: "toolUse" }),
       fauxAssistantMessage(fauxText("unreachable")),
     ]);
     let control!: BotTurnControl;
+    let atToolEnd: boolean | undefined;
+    let duringHandoff: boolean | undefined;
     const { broker, saves } = memoryBroker({ tool: async () => {
-      expect(control.steer("Acme, please")).toBe(true);
+      duringHandoff = control.steer("Acme, please");
       return { ok: true, content: [{ type: "text", text: "asked" }] };
     } });
-    const outcome = await run({ broker, route, onControl: (value) => { control = value; } });
+    const outcome = await run({ broker, route, onControl: value => { control = value; },
+      onAgent: agent => agent.subscribe(event => {
+        if (event.type === "tool_execution_end") atToolEnd = control.steer("Still too late");
+      }) });
     expect(outcome.status).toBe("waiting_person");
-    expect(saves[0]!.messages.at(-1)).toMatchObject({ role: "user", content: "Acme, please" });
+    expect(duringHandoff).toBe(false);
+    expect(atToolEnd).toBe(false);
+    expect(JSON.stringify(saves[0]!.messages)).not.toContain("Acme, please");
+    expect(JSON.stringify(saves[0]!.messages)).not.toContain("Still too late");
   });
 
   it("strips an invented memory source URL and names fields the broker would still refuse", async () => {

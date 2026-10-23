@@ -181,6 +181,8 @@ const SPECS: ToolSpec[] = [
 ];
 
 export interface BotToolsState {
+  /** A blocking question may already be visible while its broker reply is in flight. */
+  askingPerson?: boolean;
   /** Set when a blocking question ended the turn. */
   waitingForPerson: boolean;
   /** Set when a run was cancelled while a broker call was outstanding; its effect is unknown. */
@@ -251,10 +253,11 @@ export function createBotTools(input: {
       });
       if (!checked.success) throw new Error(invalidArgumentsGuidance(checked.error.issues.map((issue) => issue.path)));
       const request: BotToolRequest = checked.data;
+      const terminate = spec.terminates?.(params as Record<string, unknown>) === true;
+      if (terminate) input.state.askingPerson = true;
       try {
         const result = await untilCancelled(input.broker.tool(request), signal, input.state);
         if (!result.ok) throw new Error(REFUSAL_GUIDANCE[result.code]);
-        const terminate = spec.terminates?.(params as Record<string, unknown>) === true;
         if (terminate) input.state.waitingForPerson = true;
         return { content: result.content, details: undefined, ...(terminate ? { terminate: true } : {}) };
       } catch (error: unknown) {
@@ -263,6 +266,8 @@ export function createBotTools(input: {
         if (error instanceof Error && Object.values(REFUSAL_GUIDANCE).some((guidance) => error.message.startsWith(guidance))) throw error;
         console.warn("[bot-runtime] tool dispatch failed:", error instanceof Error ? error.name : "UnknownError");
         throw new Error(REFUSAL_GUIDANCE.unavailable);
+      } finally {
+        if (terminate) input.state.askingPerson = false;
       }
     },
   }));

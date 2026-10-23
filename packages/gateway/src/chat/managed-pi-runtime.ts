@@ -270,11 +270,12 @@ export function createManagedPiRuntime(deps: {
     },
     async steer(input) {
       const run = active.get(input.runId);
-      if (!run?.binding || run.isolated || run.ownerId !== input.owner.ownerId || run.chatId !== input.chatId || run.stopping) throw new Error("Matrix AI run unavailable");
+      if (!run?.binding || run.isolated || input.owner.type !== "personal" || run.ownerId !== input.owner.ownerId
+        || run.chatId !== input.chatId || run.stopping || run.finished || run.signal?.aborted) throw new Error("Matrix AI run unavailable");
       assertTextOnlySteering(input.parts);
       const reply = await deps.host.client.runBot({ runtimeHandle: run.binding.runtimeHandle, executionGeneration: run.binding.executionGeneration,
         command: { version: 1, kind: "bot.steer", runId: input.runId, text: input.prompt.slice(0, 8192) } });
-      if (!reply.ok) throw new Error("Matrix AI steering unavailable");
+      if (!reply.ok || reply.reply.acknowledged !== true) throw new Error("Matrix AI steering unavailable");
     },
     async recover(input) { await deps.ownerTools?.closeRun(input.runId); await deps.admission.release(input.state.runtimeHandle); return { outcome: "failed", messages: [] }; },
   };

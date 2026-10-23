@@ -505,9 +505,10 @@ export function createBotTaskOrchestrator(deps: {
     /** Relays a person's steering message to the running worker. */
     async steer(runId: string, text: string): Promise<boolean> {
       const run = active.get(runId);
-      if (!run?.runtime || run.spec?.isolatedTurn || !deps.registry.lookupRun({ ...run.runtime, runId })) return false;
+      if (!run?.runtime || run.finished || run.stopping || run.signal.aborted || run.spec?.isolatedTurn
+        || !deps.registry.lookupRun({ ...run.runtime, runId })) return false;
       const reply = await deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.steer", runId, text: text.slice(0, 8 * 1024) } });
-      return reply.ok;
+      return reply.ok && reply.reply.acknowledged === true;
     },
     async cancel(runId: string): Promise<void> {
       const run = active.get(runId);

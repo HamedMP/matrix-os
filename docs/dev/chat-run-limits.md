@@ -73,6 +73,12 @@ These changes do not implement universal lossless backpressure. Shared CLI, mana
 
 Large durable results should be explicit artifacts with their own owner access, retention and quotas. Unified complete raw-log archival, output download and parser recovery are not delivered by this preview truncation change.
 
+## Bot answers and steering
+
+A blocking Bot question ends its current worker turn. Clicking Answer submits a validated continuation under an interaction-derived request ID. It starts the next Bot turn directly when idle. If the asking worker is still finishing a broker exchange, the server durably holds that answer and dispatches it automatically when the worker releases. Web and Electron show the submitted answer with an automatic-continuation status, rather than offering manual Steer, edit or reorder controls. Pending-answer cancellation remains available. Queue placement does not bypass owner, responder, expiry, revision or budget validation.
+
+Retries first reconcile the same owner-scoped queued/claimed admission and payload. An asking turn that finishes between direct admission and queue admission gets one fresh-revision retry; the answer is never converted into a steer. A worker refuses new steering while publishing a blocking question, waiting for the person, stopping, or closing. Corrections acknowledged before that question drain at the next safe phase boundary under the existing cancellation and inference/tool budgets; the question remains unresolved and steering grants no approval. Both Recipe Bot and ordinary managed Matrix AI Chat require the worker's explicit `acknowledged: true`; successful command transport alone is insufficient. Refused queued steering retains the original queued message, and uncertain transport is not automatically replayed.
+
 ## Attachments
 
 Native Mobile applies the shared managed-input policy using the current selected instance, model and options before upload or optimistic draft clearing. Retry applies the current selection policy again. The same server admission and actual-file validation remain authoritative across Web Canvas, Web Desktop, Electron Desktop, Web Mobile and Native Mobile.
