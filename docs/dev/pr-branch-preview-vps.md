@@ -12,11 +12,11 @@ Vercel previews only test the website/platform preview surface. Customer runtime
 
 Do not use this as the normal production rollout path. A preview VPS is a temporary branch runtime and should have its own handle and runtime slot.
 
-For a same-repository PR that needs Matrix-funded Chat or dictation, prefer the
-`preview-vps` label workflow documented in
+For a same-repository PR that needs Matrix-funded Chat or dictation, use the
+`preview-vps` label workflow or an owner-only Private Preview documented in
 [Preview Environments](preview-environments.md#bounded-funded-chat-and-dictation).
-It creates a server-classified Preview machine and performs the protected,
-exact-generation activation automatically. The legacy manual
+Both create an explicitly server-classified Preview machine and perform the
+protected, exact-generation activation automatically. The legacy manual
 `/containers/provision` flow below is not Preview funded-access admission and
 must not be made eligible by its handle, runtime slot, or a host edit.
 
@@ -161,8 +161,9 @@ Add checks for the branch under test. Examples:
 | Integrations | Verify platform-owned secrets stay on platform and customer VPS calls proxy through the platform route. |
 | Default apps | Confirm app manifests, icons, and built `dist` assets load from the preview VPS. |
 
-For a workflow-provisioned `preview-vps` runtime, also verify the following
-without printing credentials or private host configuration:
+For a workflow-provisioned `preview-vps` runtime or a newly registered Private
+Preview, also verify the following without printing credentials or private host
+configuration:
 
 - Matrix AI Settings shows a Preview Chat request allowance and expiry.
 - Chat shows a Preview dictation request allowance; one real recording inserts
@@ -174,10 +175,12 @@ without printing credentials or private host configuration:
 - The exact PR commit and bundle version match the workflow output.
 
 Do not activate funded access manually on the host. If Platform reports the
-machine as anything other than running, authorized, and
-`provisioning_class=preview`, or if the protected activation step did not
-succeed, the correct state is unavailable. Fix the provisioning/control-plane
-path and rerun the workflow.
+machine as anything other than running, authorized, and explicitly
+`provisioning_class=preview` or `provisioning_class=private-preview`, or if the
+protected activation step did not succeed, the correct state is unavailable.
+Fix the provisioning/control-plane path and rerun the workflow, or destroy and
+start the Private Preview again. Never infer eligibility from a `pr-*` or
+`pv-*` handle.
 
 ## Cleanup
 

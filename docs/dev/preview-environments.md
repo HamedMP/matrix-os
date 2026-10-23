@@ -121,21 +121,23 @@ closed; active connection draining is intentionally deferred.
 
 ### Bounded funded Chat and dictation
 
-Ordinary same-repository `preview-vps` deployments receive a Preview-specific
-allowance only when the production Platform has explicitly opted into bounded
-Preview runtime access. Platform must have funded AI and Platform speech
-enabled, and its deployment must bind a dedicated Preview runtime secret that
-is distinct from the production Platform secret. The default allowance is six
-hours, 25 Chat requests, 25 dictation requests, a $1 AI ceiling, and one active
-operation; deployment variables may reduce those values and hard maximums cap
-them at 24 hours, 100 requests per capability, $5, and one active operation.
+Same-repository shared `preview-vps` deployments and owner-only Private
+Previews receive a Preview-specific allowance only when the production Platform
+has explicitly opted into bounded Preview runtime access. Platform must have
+funded AI and Platform speech enabled, and its deployment must bind a dedicated
+Preview runtime secret that is distinct from the production Platform secret.
+The default allowance is six hours, 25 Chat requests, 25 dictation requests, a
+$1 AI ceiling, and one active operation; deployment variables may reduce those
+values and hard maximums cap them at 24 hours, 100 requests per capability, $5,
+and one active operation.
 
 The Platform database row is authoritative. Activation binds the canonical
 owner, exact machine ID, runtime slot, and current runtime token epoch for a
-running, authorized `provisioning_class=preview` machine. A `pr-*` handle alone
-never grants access. Rerunning the workflow does not refill or extend an
-allowance. Expiry, deletion, or a token-epoch rotation invalidates old access,
-and teardown deletes the allocation with the machine.
+running, authorized machine whose explicit class is `preview` or
+`private-preview`. A `pr-*` or `pv-*` handle alone never grants access.
+Rerunning activation does not refill or extend an allowance. Expiry, deletion,
+or a token-epoch rotation invalidates old access, and teardown deletes the
+allocation with the machine.
 
 The Preview host receives only exact-generation runtime tokens. It never
 receives provider keys, the Preview root secret, or access to the owner's
@@ -143,9 +145,9 @@ customer-primary balance. Speech uses a zero-charge Preview counter and never
 falls back to paid owner credit. Preview Chat cannot use top-ups or configured
 owner promotions. Shared users receive the same bounded machine capability but
 do not gain access to the owner's personal Integrations, Custom MCP accounts,
-or billing state. Matrix OS shows the remaining Preview Chat and dictation
-request counts; treat missing or exhausted quota as unavailable, not as a cue
-to edit the host.
+or billing state. Private Preview routing remains owner-only. Matrix OS shows
+the remaining Preview Chat and dictation request counts; treat missing or
+exhausted quota as unavailable, not as a cue to edit the host.
 
 Platform deployment configuration:
 
@@ -255,6 +257,16 @@ reach it, it can use your personal Integrations and Custom MCP from Settings,
 Chat agents, and Terminal agent CLIs. Spec:
 [537](../../specs/537-private-preview/spec.md).
 
+When bounded Preview runtime access is enabled in production Platform, a newly
+registered Private Preview also receives the independent funded Chat and
+zero-charge dictation allowance described above. Platform activates it from the
+exact owner, machine ID, runtime slot, and token epoch recorded during
+registration; no workflow secret or host edit is required. The allowance never
+uses the owner's primary-machine balance, and the UI shows its own remaining
+requests and expiry. An existing Private Preview created before this host marker
+and registration hook must be destroyed and started again after the Platform
+change is deployed.
+
 Who can use it: members of the internal Clerk organization named by
 `MATRIX_INTERNAL_CLERK_ORG_ID`. Membership is read through the collaboration
 organization projection, so the platform needs collaboration configured; without
@@ -306,6 +318,9 @@ What keeps it safe:
   organization. When a PR with either preview label closes, the Preview
   workflow destroys its Private Previews, and the daily reaper catches any
   whose PR closed without that run.
+- Funded access is Preview-only: deletion, expiry, or recreation invalidates
+  the old generation's Chat and speech credentials and allocation. Replaying
+  them against another owner, machine, or runtime slot is denied.
 
 It still runs the PR's unmerged code as your production account, much like
 running the branch locally with your own credentials. Only start it for PRs
