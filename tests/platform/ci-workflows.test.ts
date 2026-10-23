@@ -17,7 +17,7 @@ import { sourceChangeScript } from '../../scripts/ci/dedicated-changes.mjs';
 
 it('runs subscription and credit regressions on disposable native PostgreSQL in required CI', () => {
   const job = parse(readFileSync('.github/workflows/ci.yml', 'utf8')).jobs['funded-postgres'];
-  const step = job.steps.find((entry: { name?: string }) => entry.name === 'Verify subscription credit and funded budgets on PostgreSQL');
+  const step = job.steps.find((entry: { name?: string }) => entry.name === 'Verify reviewed paid starter recovery on PostgreSQL');
   expect(step?.env.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL).toBe('postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_ci_platform_fixture_admin');
   expect(step?.run).toContain('CREATE DATABASE matrix_ci_platform_fixture_admin');
   for (const suite of ['subscription-ai-credit-approved', 'subscription-ai-credit-webhook',
