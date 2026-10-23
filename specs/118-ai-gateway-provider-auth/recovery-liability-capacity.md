@@ -44,7 +44,8 @@ The reviewed predecessor PR #2886 (`2cc608b90a5a08ede5fe61551a60cfcd816421aa`)
 allocates generation 23 with fingerprint
 `588aa2cb52e99cfd8d48cf0ddd92f5f663aa266f2a5a1b40b099f7b92af5d3f0`.
 Its core DDL matches generation 22; its separate deployment wiring is retained
-when composing the changes. Let that PR land first. This recovery change uses
+when composing the changes. That PR landed as `27740ebf4416e93b8fe762e5e6c98222d34a091e`;
+this branch retains its deployment wiring. This recovery change uses
 generation 24 so startup never reuses its generation with a different schema.
 Test upgrades from both exact predecessor markers; old-generation startup must
 skip DDL after the upgrade without rewriting receipts or balances.
@@ -64,7 +65,7 @@ This source change does not authorize or perform production rollout.
 
 Regression tests exercise the original third-request failure, 105 unresolved
 records, a corrupt receipt after the first page, settled-slot reuse, exactly
-$20 and one microUSD above, operator replay, schema-22 upgrade, and independent
+$20 and one microUSD above, operator replay, schema-22/23 upgrades, and independent
 PostgreSQL-pool races. Financial snapshots must remain unchanged by recovery.
 
 Deliver a separate public-documentation PR in `FinnaAI/matrix-os-site` describing

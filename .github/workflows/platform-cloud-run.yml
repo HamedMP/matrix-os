@@ -131,6 +131,12 @@ jobs:
       MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT || '0' }}
       MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT: ${{ vars.MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT || '0' }}
       MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED: ${{ vars.MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED || 'false' }}
+      MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED: ${{ vars.MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED || 'false' }}
+      MATRIX_PREVIEW_RUNTIME_TTL_MS: ${{ vars.MATRIX_PREVIEW_RUNTIME_TTL_MS || '21600000' }}
+      MATRIX_PREVIEW_AI_BUDGET_MICROUSD: ${{ vars.MATRIX_PREVIEW_AI_BUDGET_MICROUSD || '1000000' }}
+      MATRIX_PREVIEW_AI_REQUEST_LIMIT: ${{ vars.MATRIX_PREVIEW_AI_REQUEST_LIMIT || '25' }}
+      MATRIX_PREVIEW_SPEECH_REQUEST_LIMIT: ${{ vars.MATRIX_PREVIEW_SPEECH_REQUEST_LIMIT || '25' }}
+      MATRIX_PREVIEW_MAX_CONCURRENCY: '1'
       STRIPE_PRICE_AI_CREDIT_USD_5: ${{ vars.STRIPE_PRICE_AI_CREDIT_USD_5 }}
       STRIPE_PRICE_AI_CREDIT_USD_10: ${{ vars.STRIPE_PRICE_AI_CREDIT_USD_10 }}
       STRIPE_PRICE_AI_CREDIT_USD_25: ${{ vars.STRIPE_PRICE_AI_CREDIT_USD_25 }}
@@ -239,8 +245,8 @@ jobs:
             echo "MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE must be a positive integer." >&2
             exit 1
           fi
-          for name in MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED MATRIX_FUNDED_AI_RUNTIME_ENABLED MATRIX_FUNDED_HOST_CONFIG_ENABLED; do
-            case "${!name}" in
+          for name in MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED MATRIX_FUNDED_AI_RUNTIME_ENABLED MATRIX_FUNDED_HOST_CONFIG_ENABLED MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED; do
+            case "${!name:-false}" in
               true|false) ;;
               *)
                 echo "$name must be true or false." >&2
@@ -248,6 +254,15 @@ jobs:
                 ;;
             esac
           done
+          if [ "${MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED:-false}" = "true" ] && {
+            [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" != "true" ] ||
+            [ "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" != "true" ] ||
+            [ "$PLATFORM_SPEECH_ENABLED" != "true" ] ||
+            [ "$MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED" != "true" ];
+          }; then
+            echo "Preview runtime access requires funded AI and platform speech." >&2
+            exit 1
+          fi
           if [ "$MATRIX_FUNDED_AI_RUNTIME_ENABLED" = "true" ] &&
              [ "$MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED" != "true" ]; then
             echo "Funded AI runtime provisioning requires the control plane." >&2
@@ -456,6 +471,9 @@ jobs:
             ai-relay-control-token
             ai-funded-credential-hash-secret
           )
+          if [ "${MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED:-false}" = "true" ]; then
+            required_funded_ai_secrets+=(matrix-preview-runtime-secret)
+          fi
           accessor_member="serviceAccount:${CLOUD_RUN_SERVICE_ACCOUNT}"
           validate_access_policy() {
             jq -e '
@@ -960,6 +978,7 @@ jobs:
           fi
 
           funded_ai_env_bindings="|MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED=${MATRIX_FUNDED_AI_CONTROL_PLANE_ENABLED}|MATRIX_FUNDED_AI_RUNTIME_ENABLED=${MATRIX_FUNDED_AI_RUNTIME_ENABLED}|MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED=${MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED}"
+          funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED=${MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED}"
           funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_HOST_CONFIG_ENABLED=${MATRIX_FUNDED_HOST_CONFIG_ENABLED}"
           if [ "$MATRIX_FUNDED_HOST_CONFIG_ENABLED" = "true" ]; then
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS=${MATRIX_FUNDED_HOST_CONFIG_MACHINE_IDS}|MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH=${MATRIX_FUNDED_HOST_CONFIG_VALID_THROUGH}|MATRIX_FUNDED_HOST_CONFIG_SOURCE_SHA=${GITHUB_SHA}"
@@ -969,6 +988,10 @@ jobs:
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_RELAY_URL=${MATRIX_FUNDED_AI_RELAY_URL}"
             funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT=${MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT}|MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT=${MATRIX_FUNDED_AI_MODEL_PROBE_MINUTE_LIMIT}"
             funded_ai_secret_bindings=",AI_RELAY_CONTROL_TOKEN=ai-relay-control-token:latest,AI_FUNDED_CREDENTIAL_HASH_SECRET=ai-funded-credential-hash-secret:latest"
+          fi
+          if [ "$MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED" = "true" ]; then
+            funded_ai_env_bindings="${funded_ai_env_bindings}|MATRIX_PREVIEW_RUNTIME_TTL_MS=${MATRIX_PREVIEW_RUNTIME_TTL_MS}|MATRIX_PREVIEW_AI_BUDGET_MICROUSD=${MATRIX_PREVIEW_AI_BUDGET_MICROUSD}|MATRIX_PREVIEW_AI_REQUEST_LIMIT=${MATRIX_PREVIEW_AI_REQUEST_LIMIT}|MATRIX_PREVIEW_SPEECH_REQUEST_LIMIT=${MATRIX_PREVIEW_SPEECH_REQUEST_LIMIT}|MATRIX_PREVIEW_MAX_CONCURRENCY=${MATRIX_PREVIEW_MAX_CONCURRENCY}"
+            funded_ai_secret_bindings="${funded_ai_secret_bindings},MATRIX_PREVIEW_RUNTIME_SECRET=matrix-preview-runtime-secret:latest"
           fi
           if [ "$MATRIX_FUNDED_AI_ADDON_CHECKOUT_ENABLED" = "true" ]; then
             funded_ai_env_bindings="${funded_ai_env_bindings}|STRIPE_PRICE_AI_CREDIT_USD_5=${STRIPE_PRICE_AI_CREDIT_USD_5}|STRIPE_PRICE_AI_CREDIT_USD_10=${STRIPE_PRICE_AI_CREDIT_USD_10}|STRIPE_PRICE_AI_CREDIT_USD_25=${STRIPE_PRICE_AI_CREDIT_USD_25}"
