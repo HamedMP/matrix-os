@@ -12,7 +12,8 @@ import { z } from "zod/v4";
 import { createBotClient, type BotClient } from "./bots/client.js";
 import { canonicalChatProviderCatalogPath } from "../provider-projection-paths.js";
 
-export type ChatAgentDraftRequest = { id: number; text: string; resources?: CanonicalChatResourceReference[] };
+/** `keepExisting`: leave text or resources the owner already started in the composer alone. */
+export type ChatAgentDraftRequest = { id: number; text: string; resources?: CanonicalChatResourceReference[]; keepExisting?: boolean };
 export type StartAgentChat = (text: string, resources?: CanonicalChatResourceReference[]) => void;
 
 const MAX_RECIPE_CONNECTIONS = 200;

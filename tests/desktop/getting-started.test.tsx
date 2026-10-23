@@ -212,6 +212,13 @@ describe("GettingStartedPopover", () => {
       expect(useTabs.getState().tabs.some((tab) => tab.kind === "settings")).toBe(false);
     });
 
+    it("says when a sign-in did not finish", async () => {
+      vi.spyOn(useIntegrations.getState(), "startConnect").mockResolvedValue(null);
+      const { dialog } = await openWith({});
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Connect GitHub" }));
+      expect(await within(dialog).findByText("Sign-in didn't finish. Click to try again.")).not.toBeNull();
+    });
+
     it("shows email & calendar as half done and connects the missing app", async () => {
       const startConnect = vi.spyOn(useIntegrations.getState(), "startConnect").mockResolvedValue(null);
       const { dialog } = await openWith({ "/api/integrations": [{ id: CONNECTION_ID, service: "gmail", status: "active" }] });

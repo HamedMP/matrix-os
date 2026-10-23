@@ -294,7 +294,7 @@ function GettingStartedPopoverContent({
   const [refreshRequest, setRefreshRequest] = useState(0);
   const requestRefresh = useCallback(() => setRefreshRequest((request) => (request + 1) % 1_000_000), []);
   // Rows start an app's own sign-in, like the onboarding widget, and reload when any connection changes.
-  const { connectApp, connectingService, appsUnavailable } = useGettingStartedConnections(requestRefresh);
+  const { connectApp, connectingService, failedServices, appsUnavailable } = useGettingStartedConnections(requestRefresh);
   const [snapshot, setSnapshot] = useState(emptyGettingStartedSnapshot);
   // Spec 635: lead with the steps that fit the owner's Get started answers.
   const getStartedAnswers = useGetStartedAnswers();
@@ -542,7 +542,7 @@ function GettingStartedPopoverContent({
               <span className="min-w-0 flex-1 truncate">{getStartedAppGalleryLabel(getStartedAnswers)} in App Gallery</span>
             </button>
             {rows.map((row) => (
-              <ChecklistRow key={row.id} row={row} view={gettingStartedRowView(row, connectingService)} onActivate={() => activateRow(row)} />
+              <ChecklistRow key={row.id} row={row} view={gettingStartedRowView(row, connectingService, failedServices)} onActivate={() => activateRow(row)} />
             ))}
           </div>
         </PopoverPrimitive.Content>

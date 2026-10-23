@@ -1,7 +1,8 @@
 import { getStartedAppGalleryLabel, gettingStartedRows, type GettingStartedRow, type GettingStartedStepStatus, type OnboardingWidgetEvent } from "@matrix-os/contracts";
 import {
   useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded,
-  openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, gettingStartedRowAction, gettingStartedRowView, type GettingStartedRequest, type GettingStartedRowView,
+  openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, useGetStartedConnectFailures, gettingStartedRowAction, gettingStartedRowView,
+  type GettingStartedRequest, type GettingStartedRowView,
 } from "@matrix-os/ui";
 import * as Popover from "@radix-ui/react-popover";
 import { onboardingChecklist } from "@matrix-os/brand";
@@ -139,10 +140,18 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
   const requestRefresh = useCallback(() => setRefreshRequest((request) => (request + 1) % 1_000_000), []);
   const [snapshot, setSnapshot] = useState(emptyGettingStartedSnapshot);
   // Rows start an app's own sign-in, like the onboarding widget, and reload as soon as it lands.
+  // A sign-in that fails, is blocked or times out is remembered per app until it is tried again.
+  const failures = useGetStartedConnectFailures();
+  const { onEvent: recordFailure, clear: clearFailure, failedServices } = failures;
   const onConnectEvent = useCallback((event: OnboardingWidgetEvent) => {
+    recordFailure(event);
     if (event.type === "connect.succeeded") requestRefresh();
-  }, [requestRefresh]);
-  const { connectApp, connectingService, appsUnavailable } = useOnboardingAppConnect(api, onConnectEvent);
+  }, [recordFailure, requestRefresh]);
+  const { connectApp: startConnect, connectingService, appsUnavailable } = useOnboardingAppConnect(api, onConnectEvent);
+  const connectApp = useCallback((service: string) => {
+    clearFailure(service);
+    startConnect(service);
+  }, [clearFailure, startConnect]);
   // Spec 635: lead with the steps that fit the owner's Get started answers.
   const getStartedAnswers = useGetStartedAnswers();
   const botRequest = useMemo<GettingStartedRequest | null>(() => (
@@ -389,7 +398,7 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
               <span className="min-w-0 flex-1 truncate">{getStartedAppGalleryLabel(getStartedAnswers)} in App Gallery</span>
             </button>
             {rows.map((row) => (
-              <ChecklistRow key={row.id} row={row} view={gettingStartedRowView(row, connectingService)} onActivate={() => activateRow(row)} />
+              <ChecklistRow key={row.id} row={row} view={gettingStartedRowView(row, connectingService, failedServices)} onActivate={() => activateRow(row)} />
             ))}
           </div>
         </Popover.Content>

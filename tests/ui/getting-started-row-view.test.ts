@@ -23,6 +23,14 @@ describe("Getting started row view", () => {
   });
 });
 
+describe("Getting started row failures", () => {
+  it("says when a sign-in did not finish, until it is tried again", () => {
+    expect(gettingStartedRowView(email({ connect: "gmail" }), null, new Set(["gmail"])))
+      .toEqual({ label: "Connect email & calendar", done: false, struck: false, detail: "Sign-in didn't finish. Click to try again.", trailing: "icon" });
+    expect(gettingStartedRowView(email({ connect: "gmail" }), "gmail", new Set(["gmail"])).trailing).toBe("waiting");
+  });
+});
+
 describe("Getting started row action", () => {
   it("tries a finished step, connects an unfinished one, and falls back to the step", () => {
     expect(gettingStartedRowAction(email({ status: "complete", try: TRY }), { canConnect: true })).toEqual({ type: "try", prompt: TRY.prompt });

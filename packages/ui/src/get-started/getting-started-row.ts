@@ -9,11 +9,20 @@ export interface GettingStartedRowView {
   trailing: "icon" | "try" | "waiting";
 }
 
-export function gettingStartedRowView(row: GettingStartedRow, connectingService: string | null): GettingStartedRowView {
+const NONE: ReadonlySet<string> = new Set();
+
+export function gettingStartedRowView(
+  row: GettingStartedRow,
+  connectingService: string | null,
+  failedServices: ReadonlySet<string> = NONE,
+): GettingStartedRowView {
   const done = row.status === "complete";
   if (done && row.kind !== "bot" && row.try) return { label: row.try.label, done, struck: false, trailing: "try" };
   if (row.kind !== "bot" && row.connect && row.connect === connectingService) {
     return { label: row.label, done, struck: false, detail: "Waiting for sign-in…", trailing: "waiting" };
+  }
+  if (row.kind !== "bot" && row.connect && failedServices.has(row.connect)) {
+    return { label: row.label, done, struck: false, detail: "Sign-in didn't finish. Click to try again.", trailing: "icon" };
   }
   const detail = row.kind === "step" && row.detail ? { detail: row.detail } : {};
   return { label: row.label, done, struck: done, ...detail, trailing: "icon" };

@@ -7,6 +7,7 @@ import { GetStartedAnswersProvider, GetStartedGate, type GetStartedPort } from "
 const connections = vi.hoisted(() => ({
   connectApp: vi.fn(),
   connectingService: null as string | null,
+  failedServices: new Set<string>() as ReadonlySet<string>,
   appsUnavailable: false,
   onChanged: null as (() => void) | null,
 }));
@@ -265,6 +266,17 @@ describe("web getting started status", () => {
       const before = reads();
       act(() => connections.onChanged?.());
       await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    });
+
+    it("says when a sign-in did not finish", async () => {
+      installFetch([]);
+      connections.failedServices = new Set(["github"]);
+      try {
+        const dialog = await openPopover();
+        expect(await within(dialog).findByText("Sign-in didn't finish. Click to try again.")).toBeTruthy();
+      } finally {
+        connections.failedServices = new Set();
+      }
     });
 
     it("shows email & calendar as half done and connects the missing app", async () => {

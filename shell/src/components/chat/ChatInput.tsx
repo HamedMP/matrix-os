@@ -138,10 +138,15 @@ export function ChatInput({
   useEffect(() => {
     if (!draftRequest || consumedDraftRequest.current === draftRequest.id) return;
     consumedDraftRequest.current = draftRequest.id;
+    const started = inputRef.current.trim().length > 0 || resources.length > 0;
+    if (draftRequest.keepExisting && started) {
+      onDraftConsumed?.(draftRequest.id);
+      return;
+    }
     setDraft({ text: draftRequest.text, resources: draftRequest.resources ?? [] });
     textareaRef.current?.focus();
     onDraftConsumed?.(draftRequest.id);
-  }, [draftRequest, onDraftConsumed, setDraft]);
+  }, [draftRequest, onDraftConsumed, resources.length, setDraft]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
