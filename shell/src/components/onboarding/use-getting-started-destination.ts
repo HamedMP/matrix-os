@@ -19,8 +19,8 @@ export function useGettingStartedDestination(chat: ChatState | undefined, openAp
     if (destination?.prompt && chat) {
       // A fresh chat with the prompt typed in; nothing is sent until the owner sends it.
       const prompt = destination.prompt;
-      // keepExisting: a draft the owner already started is never replaced.
-      void chat.newChat().then(() => chat.requestComposerDraft(prompt, { keepExisting: true }), (error: unknown) => {
+      // merge: the owner's own unsent text stays, with the suggestion below it.
+      void chat.newChat().then(() => chat.requestComposerDraft(prompt, { merge: true }), (error: unknown) => {
         console.warn("[getting-started] unable to start a chat:", error instanceof Error ? error.name : typeof error);
       });
     }

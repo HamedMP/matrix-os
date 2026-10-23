@@ -12,20 +12,24 @@ function Composer({ request }: { request: ChatAgentDraftRequest | null }) {
     onSubmit={vi.fn()} attachmentsEnabled={false} draftRequest={request} onDraftConsumed={vi.fn()} />;
 }
 
+const value = () => (screen.getByPlaceholderText("Ask anything...") as HTMLTextAreaElement).value;
+
 afterEach(cleanup);
 
 describe("chat input draft requests", () => {
-  it("fills an empty composer with a requested prompt", () => {
-    render(<Composer request={{ id: 1, text: "Find emails that need a reply.", keepExisting: true }} />);
-    expect((screen.getByPlaceholderText("Ask anything...") as HTMLTextAreaElement).value).toBe("Find emails that need a reply.");
+  it("fills an empty composer and swaps an untouched earlier suggestion", () => {
+    const view = render(<Composer request={{ id: 1, text: "Find emails that need a reply.", merge: true }} />);
+    expect(value()).toBe("Find emails that need a reply.");
+    view.rerender(<Composer request={{ id: 2, text: "List my GitHub repos.", merge: true }} />);
+    expect(value()).toBe("List my GitHub repos.");
   });
 
-  it("keeps what the owner already typed when the request asks to", () => {
+  it("keeps what the owner typed and adds the suggestion below it", () => {
     const view = render(<Composer request={null} />);
     fireEvent.change(screen.getByPlaceholderText("Ask anything..."), { target: { value: "my unsent idea" } });
-    view.rerender(<Composer request={{ id: 2, text: "Find emails that need a reply.", keepExisting: true }} />);
-    expect((screen.getByPlaceholderText("Ask anything...") as HTMLTextAreaElement).value).toBe("my unsent idea");
+    view.rerender(<Composer request={{ id: 2, text: "Find emails that need a reply.", merge: true }} />);
+    expect(value()).toBe("my unsent idea\n\nFind emails that need a reply.");
     view.rerender(<Composer request={{ id: 3, text: "Replace it." }} />);
-    expect((screen.getByPlaceholderText("Ask anything...") as HTMLTextAreaElement).value).toBe("Replace it.");
+    expect(value()).toBe("Replace it.");
   });
 });

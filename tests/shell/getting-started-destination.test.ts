@@ -14,7 +14,7 @@ describe("web Getting started destinations", () => {
     const { result } = renderHook(() => useGettingStartedDestination(state as never, open));
     result.current({ kind: "chat", prompt: "Find emails that need a reply. Don't send anything." });
     expect(open).toHaveBeenCalledWith("__chat__", "Chat");
-    await waitFor(() => expect(state.requestComposerDraft).toHaveBeenCalledWith("Find emails that need a reply. Don't send anything.", { keepExisting: true }));
+    await waitFor(() => expect(state.requestComposerDraft).toHaveBeenCalledWith("Find emails that need a reply. Don't send anything.", { merge: true }));
     expect(state.newChat).toHaveBeenCalled();
   });
 

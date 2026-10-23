@@ -37,22 +37,28 @@ function rememberDraft(
   return next;
 }
 
+// The text of the last seeded suggestion, to tell an untouched suggestion from the owner's own words.
+let lastSeededDraft: string | null = null;
+
 /**
- * Puts text in a new Chat's composer, for a surface that opens Chat with a ready prompt. It never
- * sends, and it leaves a draft the owner already started alone.
+ * Puts a ready prompt in a new Chat's composer without sending it. The owner's own unsent text
+ * stays, with the prompt below it; an earlier suggestion they have not touched is swapped.
  */
 function hasStartedDraft(draft: ComposerDraft | undefined): boolean {
   return Boolean(draft && (draft.text.trim() || draft.referenceTokens.length));
 }
 
-export function seedNewChatDraft(text: string): boolean {
+export function seedNewChatDraft(text: string): void {
   const identity = desktopComposerDraftIdentity(useConnection.getState());
   const scope = newChatDraftScope(null);
   const retained = useRetainedComposerDrafts.getState();
-  if (retained.identity === identity && hasStartedDraft(retained.drafts[scope])) return false;
-  retained.update(identity, (current, revision) => (hasStartedDraft(current[scope]) ? current
-    : rememberDraft(current, scope, { text, referenceTokens: [], projectId: null, requestIdentity: revision }, null, revision)));
-  return true;
+  const existing = retained.identity === identity ? retained.drafts[scope] : undefined;
+  const untouched = !hasStartedDraft(existing) || existing?.text === lastSeededDraft;
+  const next = untouched || !existing ? text : `${existing.text.trimEnd()}\n\n${text}`;
+  lastSeededDraft = next;
+  retained.update(identity, (current, revision) => rememberDraft(current, scope, {
+    text: next, referenceTokens: current[scope]?.referenceTokens ?? [], projectId: null, requestIdentity: revision,
+  }, null, revision));
 }
 
 export function useChatComposerDrafts({

@@ -20,6 +20,7 @@ import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useDesktopSurfaces } from "@desktop/renderer/src/stores/desktop-surfaces";
 import { useIntegrations } from "@desktop/renderer/src/features/integrations/integrations-store";
 import { useRetainedComposerDrafts } from "@desktop/renderer/src/features/chat/retained-composer-drafts";
+import { desktopComposerDraftIdentity, seedNewChatDraft } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
 
 function render(ui: React.ReactNode) {
   return rtlRender(ui, { wrapper: ({ children }) => <GettingStartedVisibilityProvider scope="test">{children}</GettingStartedVisibilityProvider> });
@@ -241,6 +242,18 @@ describe("GettingStartedPopover", () => {
       fireEvent.click(await within(dialog).findByRole("button", { name: /Find emails that need a reply/ }));
       expect(useTabs.getState().tabs).toContainEqual(expect.objectContaining({ kind: "work", workRoute: "chat", chatView: "draft" }));
       expect(useRetainedComposerDrafts.getState().drafts["new:global"]?.text).toMatch(/still need a reply from me.*Don't send anything\./);
+    });
+
+    it("keeps an unsent draft and swaps an untouched earlier suggestion", () => {
+      useConnection.setState({ userId: "user_1" } as never);
+      const draft = () => useRetainedComposerDrafts.getState().drafts["new:global"]?.text;
+      seedNewChatDraft("Find emails that need a reply.");
+      seedNewChatDraft("List my GitHub repos.");
+      expect(draft()).toBe("List my GitHub repos.");
+      const identity = desktopComposerDraftIdentity(useConnection.getState() as never);
+      useRetainedComposerDrafts.getState().update(identity, (current) => ({ ...current, "new:global": { ...current["new:global"]!, text: "my unsent idea" } }));
+      seedNewChatDraft("Find emails that need a reply.");
+      expect(draft()).toBe("my unsent idea\n\nFind emails that need a reply.");
     });
   });
 

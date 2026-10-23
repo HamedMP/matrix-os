@@ -100,6 +100,8 @@ export function ChatInput({
   const inputRef = useRef(input);
   const pendingCursor = useRef<number|null>(null);
   const consumedDraftRequest = useRef<number | null>(null);
+  // The text of the last merged suggestion, to tell an untouched suggestion from the owner's own words.
+  const mergedDraft = useRef<string | null>(null);
   const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
   const botMention = useBotMentionNavigation(agentClient, `${scope}:${composer.requestId}`, onOpenBotMention, attachments.length ? BOT_ATTACHMENT_HANDOFF_REASON : undefined);
   const [defaultSpeechClient] = useState(() => createBrowserSpeechClient());
@@ -138,15 +140,20 @@ export function ChatInput({
   useEffect(() => {
     if (!draftRequest || consumedDraftRequest.current === draftRequest.id) return;
     consumedDraftRequest.current = draftRequest.id;
-    const started = inputRef.current.trim().length > 0 || resources.length > 0;
-    if (draftRequest.keepExisting && started) {
-      onDraftConsumed?.(draftRequest.id);
-      return;
+    if (draftRequest.merge) {
+      // The owner's own text stays; an earlier suggestion they have not touched is swapped.
+      const current = inputRef.current;
+      const untouched = current.trim() === "" || current === mergedDraft.current;
+      const text = untouched ? draftRequest.text : `${current.trimEnd()}\n\n${draftRequest.text}`;
+      mergedDraft.current = text;
+      setDraft({ text, resources });
+    } else {
+      mergedDraft.current = null;
+      setDraft({ text: draftRequest.text, resources: draftRequest.resources ?? [] });
     }
-    setDraft({ text: draftRequest.text, resources: draftRequest.resources ?? [] });
     textareaRef.current?.focus();
     onDraftConsumed?.(draftRequest.id);
-  }, [draftRequest, onDraftConsumed, resources.length, setDraft]);
+  }, [draftRequest, onDraftConsumed, resources, setDraft]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();

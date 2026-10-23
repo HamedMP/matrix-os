@@ -138,7 +138,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     eventSource.connectionState(),
   );
   const [botEventRevision, setBotEventRevision] = useState(0);
-  const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string; keepExisting?: boolean } | null>(null);
+  const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string; merge?: boolean } | null>(null);
   // One active input attempt per hook; bounded and retained for ambiguous retries.
   const inputAttempt = useRef<{ key: string; clientRequestId: string; inFlight: boolean } | null>(null);
   const composerDraftSequence = useRef(0);
@@ -768,7 +768,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     renameConversation,
     composerDraftRequest: sameAuthority && previousComposerIdentity.current === composerIdentity ? composerDraftRequest : null,
     requestComposerDraft: (text, options) => {
-      if (isCurrent()) setComposerDraftRequest({ id: ++composerDraftSequence.current, text, ...(options?.keepExisting ? { keepExisting: true } : {}) });
+      if (isCurrent()) setComposerDraftRequest({ id: ++composerDraftSequence.current, text, ...(options?.merge ? { merge: true } : {}) });
     },
     consumeComposerDraft: (id) => { if (isCurrent()) setComposerDraftRequest((current) => current?.id === id ? null : current); },
     submitMessage,
