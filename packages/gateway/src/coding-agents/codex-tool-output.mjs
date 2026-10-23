@@ -1,3 +1,4 @@
+import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
 import { sealToolOutput } from "./protected-tool-output.mjs";
 // This runs in the detached Codex process, before anything is persisted. Keep
 // plaintext result out of the event journal. Unmatched text is still private,
@@ -20,6 +21,13 @@ export function codexToolHasPrivateContext(item) {
 
 /** @param {Record<string, any>} item */
 export function codexToolOutput(item, privateContext = false, protection) {
+  // A durable attachment identity is not a filesystem path or a download URL.
+  // Preserve known file/inline artifacts; make unsupported output explicit.
+  if (item.type === "imageGeneration" && item.status === "completed" && !item.failure
+    && typeof item.fileId === "string" && item.fileId.length > 0
+    && extractCodexArtifactRecords(item).length === 0) return {
+    text: "Generated image output is unavailable in this Matrix version.", truncated: true,
+  };
   const value = item.aggregatedOutput ?? item.aggregated_output ?? item.result;
   const text = typeof value === "string" ? value
     : Array.isArray(value?.content) ? value.content
@@ -42,6 +50,7 @@ export function codexToolOutput(item, privateContext = false, protection) {
  * @param {string} text */
 export function coarseToolOutputText(text) {
   return ["Command produced output.", "Tool returned a result.",
+    "Generated image output is unavailable in this Matrix version.",
     "Output withheld because it may contain private data.",
     "Tool output is private to its owner."].includes(text)
     ? text : "Tool output is private to its owner.";
