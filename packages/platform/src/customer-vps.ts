@@ -670,12 +670,15 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         );
         previewAccessChecked = previewAccessMachineIds.length;
         for (const machineId of previewAccessMachineIds) {
+          const activationNow = now();
           const result = await activatePendingPrivatePreviewRuntimeAccess({
             db: deps.db,
             machineId,
             activate: deps.activatePreviewRuntimeAccess,
-            now: reconciliationNow,
-            staleBefore,
+            now: activationNow,
+            staleBefore: new Date(
+              activationNow.getTime() - deps.config.reconciliationStaleAfterMs,
+            ).toISOString(),
           });
           if (result.status === 'ready') {
             running += 1;
