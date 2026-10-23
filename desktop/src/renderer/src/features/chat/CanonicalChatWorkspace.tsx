@@ -977,7 +977,7 @@ function CanonicalChatWorkspaceContent({
             <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id} visible={live && !inspectorExclusive}
               client={client.agents} directBotId={directBotId} detailsContainer={frameDetailsContainer ?? botDetailsContainer} headerContainer={botHeaderContainer}
               headerActions={chatSharingAction}
-              onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision}>
+              onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={botEventRevision}>
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{
