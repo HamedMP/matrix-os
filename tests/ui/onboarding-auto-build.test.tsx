@@ -68,4 +68,25 @@ describe("onboarding auto build", () => {
     admit(result);
     expect(openChat).not.toHaveBeenCalled();
   });
+
+  it("still opens Chat when the build is retried after the computer was briefly unreachable", () => {
+    const openChat = vi.fn();
+    const { result } = renderHook(() => useHarness({ finishedNow: true, aiReady: true, openChat }));
+    act(() => result.current.dispatch({ type: "computer.waiting" }));
+    expect(result.current.state.screen).toMatchObject({ kind: "run", phase: "waiting_computer" });
+    act(() => result.current.dispatch({ type: "computer.ready" }));
+    expect(result.current.state.screen).toMatchObject({ kind: "run", phase: "starting" });
+    admit(result);
+    expect(openChat).toHaveBeenCalledOnce();
+  });
+
+  it("drops the handoff when the owner leaves a build that waits for the computer", () => {
+    const openChat = vi.fn();
+    const { result } = renderHook(() => useHarness({ finishedNow: true, aiReady: true, openChat }));
+    act(() => result.current.dispatch({ type: "computer.waiting" }));
+    act(() => result.current.dispatch({ type: "tasks.requested" }));
+    act(() => result.current.dispatch({ type: "build.requested", title: "Recipe box", prompt: "Build a recipe box." }));
+    admit(result);
+    expect(openChat).not.toHaveBeenCalled();
+  });
 });

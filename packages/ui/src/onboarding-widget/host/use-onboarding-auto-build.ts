@@ -3,8 +3,11 @@ import { useEffect, useRef } from "react";
 
 type AutoBuild =
   | { phase: "waiting" }
-  /** `requestId` is the build's run, known once the reducer has started it. */
-  | { phase: "started"; requestId: number | null }
+  /**
+   * `requestId` is the build's run, known once the reducer has started it. While the run waits
+   * for the computer, `computer.ready` retries it under a new request ID; that is still the build.
+   */
+  | { phase: "started"; requestId: number | null; waitingForComputer: boolean }
   | { phase: "done" };
 
 /**
@@ -31,7 +34,7 @@ export function useOnboardingAutoBuild({ suggestion, finishedNow, aiReady, state
       return;
     }
     if (!aiReady) return;
-    auto.current = { phase: "started", requestId: null };
+    auto.current = { phase: "started", requestId: null, waitingForComputer: false };
     dispatch({ type: "build.requested", title: suggestion.title, prompt: suggestion.prompt });
   }, [aiReady, dispatch, finishedNow, idle, suggestion]);
 
@@ -41,10 +44,12 @@ export function useOnboardingAutoBuild({ suggestion, finishedNow, aiReady, state
   useEffect(() => {
     const current = auto.current;
     if (current.phase !== "started") return;
-    if (current.requestId === null) {
+    const retried = current.waitingForComputer && runRequest !== null && runPhase === "starting";
+    let requestId = current.requestId;
+    if (requestId === null || retried) {
       if (runRequest === null) return;
-      auto.current = { phase: "started", requestId: runRequest };
-    } else if (runRequest !== current.requestId) {
+      requestId = runRequest;
+    } else if (runRequest !== requestId) {
       // The build was left or replaced; a later task never opens Chat on its behalf.
       auto.current = { phase: "done" };
       return;
@@ -54,6 +59,8 @@ export function useOnboardingAutoBuild({ suggestion, finishedNow, aiReady, state
     } else if (runPhase === "running" && hasChat) {
       auto.current = { phase: "done" };
       openChat();
+    } else {
+      auto.current = { phase: "started", requestId, waitingForComputer: runPhase === "waiting_computer" };
     }
   }, [hasChat, openChat, runPhase, runRequest]);
 }
