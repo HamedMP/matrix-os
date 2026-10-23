@@ -3,7 +3,9 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
   MatrixComputerRuntimeSlotSchema,
+  type PilotCohortPolicy,
 } from '@matrix-os/contracts';
+import { assertPilotCohortActor, PilotCohortDenied } from './pilot-cohort-access.js';
 import {
   createDeviceFlow,
   DeviceApprovalError,
@@ -39,6 +41,7 @@ const RATE_LIMIT_MAX_KEYS = 10_000;
 export interface AuthRoutesConfig {
   db: PlatformDB;
   clerkAuth?: ClerkAuth;
+  pilotCohortPolicy?: PilotCohortPolicy;
   jwtSecret: string;
   platformUrl: string; // e.g. https://platform.matrix-os.com
   gatewayUrlForHandle: (handle: string) => string;
@@ -236,6 +239,7 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       return machine ? { handle: machine.handle, runtimeSlot: machine.runtimeSlot } : null;
     },
     issueToken: async ({ clerkUserId, runtimeSlot, handle: approvedHandle }) => {
+      assertPilotCohortActor(config.pilotCohortPolicy ?? { status: 'disabled' }, clerkUserId);
       const container = config.ignoreLegacyContainers || runtimeSlot
         ? undefined
         : await getContainerByClerkId(config.db, clerkUserId);
@@ -375,6 +379,10 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
             });
         }
       } catch (err) {
+        if (err instanceof PilotCohortDenied) {
+          c.header('Cache-Control', 'no-store');
+          return c.json({ error: 'Access unavailable' }, 403);
+        }
         console.error('[device/token] failed:', err instanceof Error ? err.message : String(err));
         return c.json({ error: 'server_error' }, 500);
       }
@@ -440,6 +448,13 @@ export function createAuthRoutes(config: AuthRoutesConfig): Hono {
       if (!verifyResult.authenticated || !verifyResult.userId) {
         logDeviceApprovalAuthFailure(c, 'verify_failed', true, false);
         return c.json({ error: 'unauthorized' }, 401);
+      }
+      try {
+        assertPilotCohortActor(config.pilotCohortPolicy ?? { status: 'disabled' }, verifyResult.userId);
+      } catch (err: unknown) {
+        if (!(err instanceof PilotCohortDenied)) throw err;
+        c.header('Cache-Control', 'no-store');
+        return c.json({ error: 'Access unavailable' }, 403);
       }
 
       const cookieCsrf = readCsrfCookie(c.req.header('cookie'));

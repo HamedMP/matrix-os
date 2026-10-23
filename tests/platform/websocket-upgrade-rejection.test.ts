@@ -61,12 +61,12 @@ let db: PlatformDB;
 beforeEach(async () => { db = await setupProxyRoutingTest(); tls.upstreams.length = 0; });
 afterEach(async () => { await cleanupProxyRoutingTest(db); });
 
-function listen(overrides: { runtimeProxyAllowed?: boolean } = {}) {
+function listen(overrides: { runtimeProxyAllowed?: boolean; env?: Record<string, string> } = {}) {
   const server = new EventEmitter();
   const decision = { runtimeProxyAllowed: overrides.runtimeProxyAllowed ?? true } as never;
   registerPlatformWebSocketUpgradeHandler({
     server: server as Server, app: { capturePlatformEvent: vi.fn() }, db,
-    env: {}, platformSecret: "platform-secret-upgrade-rejection", platformJwtSecret: JWT_SECRET, legacyContainerRoutingEnabled: false,
+    env: overrides.env ?? {}, platformSecret: "platform-secret-upgrade-rejection", platformJwtSecret: JWT_SECRET, legacyContainerRoutingEnabled: false,
     codeServerPort: 8080, getRuntimeEntitlementDecision: () => decision, getRuntimeEntitlementDecisionForUser: async () => decision,
   });
   return server.listeners("upgrade")[0] as (req: IncomingMessage, socket: ClientSocket, head: Buffer) => Promise<void>;
@@ -101,6 +101,34 @@ function statusLine(socket: ClientSocket): string | undefined {
 }
 
 describe("platform WebSocket upgrade refusals", () => {
+  it('refuses valid signed noncohort bearer, cookie and query JWTs before opening an upstream', async () => {
+    await seedRunningMachine();
+    const token = await ownerToken();
+    const listener = listen({ env: { MATRIX_PILOT_ACCESS_ENABLED: 'true', MATRIX_PILOT_ALLOWED_CLERK_IDS: 'user_pilotA' } });
+    for (const request of [
+      { url: '/ws', headers: { host: 'app.matrix-os.com', authorization: `Bearer ${token}` } },
+      { url: '/ws', headers: { host: 'app.matrix-os.com', cookie: `matrix_app_session=${token}` } },
+      { url: `/vm/owner-handle/ws?token=${token}`, headers: { host: 'app.matrix-os.com' } },
+      { url: `/ws?token=${token}`, headers: { host: 'code.matrix-os.com' } },
+    ]) {
+      const socket = await upgrade(listener, request);
+      expect(statusLine(socket)).toBe('HTTP/1.1 403 Forbidden');
+      expect([...socket.writes, ...socket.ended].join('')).toContain('Cache-Control: no-store');
+    }
+    expect(tls.upstreams).toHaveLength(0);
+  });
+
+  it('keeps admitted native query-token forwarding bound to the signed cohort actor', async () => {
+    await seedRunningMachine();
+    const socket = await upgrade(listen({ env: { MATRIX_PILOT_ACCESS_ENABLED: 'true', MATRIX_PILOT_ALLOWED_CLERK_IDS: 'user_owner' } }), {
+      url: `/vm/owner-handle/ws?token=${await ownerToken()}`, headers: { host: 'app.matrix-os.com', 'x-platform-user-id': 'user_forged', 'x-platform-verified': 'forged' },
+    });
+    await vi.waitFor(() => expect(tls.upstreams.at(-1)?.writes.length).toBeGreaterThan(0));
+    expect(tls.upstreams[0].writes[0]).toContain('x-platform-user-id: user_owner');
+    expect(tls.upstreams[0].writes[0]).not.toContain('forged');
+    socket.destroy(); tls.upstreams[0].destroy();
+  });
+
   it("answers an unauthenticated upgrade with 401 before closing", async () => {
     const socket = await upgrade(listen(), { url: "/ws", headers: { host: "app.matrix-os.com", upgrade: "websocket" } });
     expect(statusLine(socket)).toBe("HTTP/1.1 401 Unauthorized");
@@ -148,7 +176,7 @@ describe("platform WebSocket upgrade refusals", () => {
     } finally {
       warn.mockRestore();
     }
-    expect(socket.ended).toEqual(["HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"]);
+    expect(socket.ended).toEqual(["HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Length: 0\r\n\r\n"]);
     expect(socket.destroyed).toBe(false);
     await vi.waitFor(() => expect(socket.destroyed).toBe(true));
   });
@@ -181,7 +209,7 @@ describe("rejectWebSocketUpgrade", () => {
   it("writes a bodyless status response with Connection: close", () => {
     const socket = new ClientSocket();
     rejectWebSocketUpgrade(socket as never, 503);
-    expect(socket.ended).toEqual(["HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"]);
+    expect(socket.ended).toEqual(["HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Length: 0\r\n\r\n"]);
   });
 });
 

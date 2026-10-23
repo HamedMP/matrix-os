@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, customFetch, decodeJwt, decodeProtectedHeader, errors, jwtVerify } from "jose";
 import { z } from "zod/v4";
+import { isPilotCohortMember, type PilotCohortPolicy } from '@matrix-os/contracts';
 
 export interface McpPrincipal {
   userId: string;
@@ -18,6 +19,7 @@ export class McpAuthError extends Error {
 }
 
 interface McpTokenVerifierOptions {
+  pilotCohortPolicy?: PilotCohortPolicy;
   issuer: string;
   resourceUrl: string;
   jwksUrl: string;
@@ -244,6 +246,9 @@ export function createMcpTokenVerifier(options: McpTokenVerifierOptions): (token
         throw new Rejection("claims");
       }
       requireScope({ scope: payload.scope, scp: payload.scp }, requiredScopes);
+      if (options.pilotCohortPolicy && !isPilotCohortMember(options.pilotCohortPolicy, payload.sub)) {
+        throw new Rejection("scope", "insufficient_scope");
+      }
       return { userId: payload.sub, clientId: payload.client_id, expiresAt: payload.exp! };
     } catch (error) {
       if (error instanceof Rejection) throw rejected(token, error.reason, error.code);

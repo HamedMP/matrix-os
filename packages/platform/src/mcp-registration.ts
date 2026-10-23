@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { loadPilotCohortPolicy } from '@matrix-os/contracts';
 import { bodyLimit } from 'hono/body-limit';
 import type { PlatformDB } from './db.js';
 import { createMcpTokenVerifier, parseMcpRequiredScopes } from './mcp-auth.js';
@@ -42,7 +43,8 @@ export function createPlatformMcpRoutes(options: { db: PlatformDB; env: NodeJS.P
     if (rawOrigins.length > 20) throw new Error('Too many MCP origins');
     const allowedOrigins = rawOrigins.map(value => secureUrl(value, '/').origin);
     const scopes = parseMcpRequiredScopes(env.MATRIX_MCP_REQUIRED_SCOPES);
-    const verify = createMcpTokenVerifier({ resourceUrl, issuer, jwksUrl, requiredScopes: scopes });
+    const verify = createMcpTokenVerifier({ resourceUrl, issuer, jwksUrl, requiredScopes: scopes,
+      pilotCohortPolicy: loadPilotCohortPolicy(env) });
     return createMcpRoutes({ resourceUrl, issuer, scopes, allowedOrigins, verify,
       context: principal => createMcpRuntimeContext({ db: options.db, principal, gatewayOrigin, jwtSecret, env }),
       extendServer: async (server, principal, signal) => {
