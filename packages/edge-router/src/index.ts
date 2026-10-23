@@ -1,3 +1,4 @@
+import { aiCreditCandidateOrigin, type AiCreditCandidateEnv } from './ai-credit-candidate.js';
 export const UPSTREAM_TIMEOUT_MS = 30_000;
 const WORKER_BODY_LIMIT = 10 * 1024 * 1024;
 const ATS_MAIL_BODY_LIMIT = 32 * 1024 * 1024;
@@ -9,7 +10,7 @@ const PREVIEW_BROWSER_GRANT_PATH = /^browser-grants\/[a-f0-9]{8}-[a-f0-9]{4}-[a-
 
 export type EdgeRouteClass = "platform" | "app" | "code" | "unknown";
 
-export interface EdgeRouterEnv {
+export interface EdgeRouterEnv extends AiCreditCandidateEnv {
   EDGE_ROUTER_SECRET?: string;
   PLATFORM_ORIGIN?: string;
   /** Temporary, exact-chat route to a zero-traffic production-data Platform candidate. */
@@ -65,7 +66,9 @@ export async function handleEdgeRouterRequest(
     ? ATS_MAIL_BODY_LIMIT : WORKER_BODY_LIMIT;
   const body = await readRequestBody(request, bodyLimit);
   if (body instanceof Response) return body;
-  const candidateOrigin = previewChatCandidateOrigin(request, url, routeClass, env, platformOrigin);
+  const creditOrigin = aiCreditCandidateOrigin({ request, url, env, platformOrigin, body });
+  const chatOrigin = previewChatCandidateOrigin(request, url, routeClass, env, platformOrigin);
+  const candidateOrigin = creditOrigin ?? chatOrigin;
   const upstreamUrl = `${candidateOrigin ?? platformOrigin}${url.pathname}${url.search}`;
   const upstreamRequest = buildPlatformRequest(request, upstreamUrl, url.host, edgeSecret, body);
 
@@ -92,7 +95,9 @@ export async function handleEdgeRouterRequest(
   }
 
   const result = withEdgeHeaders(response, routeClass, url.pathname);
-  if (candidateOrigin) result.headers.set("x-matrix-preview-platform-route", "candidate");
+  if (chatOrigin) result.headers.set("x-matrix-preview-platform-route", "candidate");
+  result.headers.delete("x-matrix-ai-credit-route");
+  if (creditOrigin) result.headers.set("x-matrix-ai-credit-route", "candidate");
   return result;
 }
 

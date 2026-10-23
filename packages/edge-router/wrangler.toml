@@ -21,3 +21,9 @@ PLATFORM_ORIGIN = "https://matrix-platform-jqxkjdhtkq-ey.a.run.app"
 # All four must validate together. They route only one Chat's POST turn and
 # approval requests on one Preview handle; the route expires within two hours.
 # Never put real Chat IDs or candidate URLs in this tracked file.
+
+# Optional AI_CREDIT_CANDIDATE_ORIGIN / AI_CREDIT_CANDIDATE_HANDLE /
+# AI_CREDIT_CANDIDATE_EXPIRES_AT temporarily route primary Checkout and one
+# main funding-summary to a tagged Platform. Expires within two hours; Platform
+# owner/runtime authentication and its exact machine allowlist remain required.
+# Keep real handles, candidate URLs and activation dates out of this file.

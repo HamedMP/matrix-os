@@ -1,3 +1,9 @@
+## Web Desktop and Electron Desktop entry activation (23 October 2026)
+
+The requester explicitly requires the normal main purchase entry to work in both clients. Candidate-only API verification is insufficient. Minimal approach: add an expiring selector in the existing edge router for the configured main handle's POST funding-summary (`runtimeSlot=primary`) and canonical POST credit Checkout requests selecting primary. Platform still verifies runtime HMAC or owner session and its existing exact machine allowlist. Preserve every other route, existing Preview Chat selector, binding and default Platform traffic; do not rotate credentials or add resources. A default Platform rollout would affect unrelated functionality; Host/Electron rebuilds would not fix the canonical browser billing route.
+
+TDD: first prove failing actual edge routing cases for both app/api origins, exact main funding reads, strict method/path/slot/body/expiry/origin fences, request body and auth-header preservation, no response-marker spoofing, and coexistence with Preview Chat. Implement a focused selector helper, run edge-router regressions and type checks/dry build, update the separate public docs PR for both supported entries. Commit/push in this existing worktree/PR. Inspect live edge metadata and preserve existing secrets/bindings. Deploy only this existing Worker with explicit expiring config, then verify public funding headers, actual Web Desktop and Electron Desktop main purchase options. Stop before payment. Rollback the selector values or exact prior Worker version, preserving ledger and default Platform. Subscription grants and main budget changes remain independently disabled/unapplied.
+
 # AI credit and managed-model closeout
 
 ## Main-only purchase acceptance increment (23 October 2026)
