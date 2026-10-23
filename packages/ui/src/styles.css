@@ -63,3 +63,17 @@
   outline: 2px solid var(--matrix-ring, var(--ring, var(--text-primary)));
   outline-offset: 2px;
 }
+
+.matrix-slack-guide-link {
+  color: inherit;
+  text-underline-offset: 4px;
+}
+
+.matrix-slack-guide-link:hover {
+  color: var(--matrix-accent, var(--accent));
+}
+
+.matrix-slack-guide-link:focus-visible {
+  outline: 2px solid var(--matrix-ring, var(--ring, var(--text-primary)));
+  outline-offset: 2px;
+}

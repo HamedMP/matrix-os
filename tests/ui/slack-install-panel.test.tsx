@@ -57,6 +57,14 @@ it.each(['disabled', 'busy', 'invalid origin'] as const)('keeps %s install contr
  fireEvent.click(control);
  expect(click).not.toHaveBeenCalled();
 });
+it('gives the Slack connection guide visible hover and keyboard focus feedback', () => {
+ render(<SlackInstallPanel />);
+ const guide = screen.getByRole('link', { name: 'Slack connection guide →' });
+ const hoverRules = interactionRules(guide, 'hover');
+ expect(hoverRules.some((rule) => /var\(--matrix-/.test(rule.style.getPropertyValue('color')))).toBe(true);
+ const focusRules = interactionRules(guide, 'focus-visible');
+ expect(focusRules.some((rule) => /[1-9][0-9]*px solid var\(--matrix-/.test(rule.style.getPropertyValue('outline')))).toBe(true);
+});
 it('preserves a configured HTTPS operator port in the actual installation entry',()=>{
  render(<SlackInstallPanel platformOrigin="https://platform.example.com:8443" />);
  expect(screen.getByRole('link',{name:'Add to Slack'}).getAttribute('href')).toBe('https://platform.example.com:8443/slack/install');
