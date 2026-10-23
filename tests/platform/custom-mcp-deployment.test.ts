@@ -40,6 +40,9 @@ function deploy(enabled: boolean) {
   return spawnSync('bash', ['-c', `gcloud() { if [ "$2 $3" = "services describe" ]; then return 1; fi; printf '%s\\n' "$@"; }\n${script}\nprintf '%s\\n' "$deploy_json"`], {
     encoding: 'utf8', env: { PATH: process.env.PATH, ...Object.fromEntries(
       Object.keys(workflow.jobs.deploy.env).map((key) => [key, 'fixture'])),
+      MATRIX_AI_SUBSCRIPTION_CREDIT_ENABLED: 'false',
+      MATRIX_AI_CREDIT_STRIPE_TAX_REGISTRATIONS_VERIFIED: 'false',
+      MATRIX_FUNDED_AI_ADDON_CHECKOUT_ALLOWED_MACHINE_IDS: '',
       DEPLOY_ENVIRONMENT: 'staging', IMAGE_DIGEST: 'image@sha256:fixture',
       MATRIX_CARD_TRIAL_DAYS: '3', MATRIX_STARTER_TRIAL_DAYS: '14',
       GOOGLE_TAG_MANAGER_ID: 'GTM-TEST123', GOOGLE_ANALYTICS_MEASUREMENT_ID: '',

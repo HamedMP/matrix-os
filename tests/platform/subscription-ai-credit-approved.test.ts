@@ -6,7 +6,9 @@ import { createAiFundedPolicyRepository } from '../../packages/platform/src/ai-f
 import { issueConfiguredSubscriptionAiCredit, loadSubscriptionAiCreditPolicy, shortenSubscriptionCreditCycle } from '../../packages/platform/src/subscription-ai-credit-policy.js';
 import { createPlatformDb, insertUserMachine, upsertBillingCustomer, upsertBillingSubscription, type PlatformDB } from '../../packages/platform/src/db.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
+import { subscriptionCreditCycle } from '../../packages/platform/src/subscription-ai-credit-cycle.js';
 
+{
 const identity = { ownerId: 'approved_owner', machineId: 'approved_machine', runtimeSlot: 'primary' };
 const anchor = '2026-01-31T10:00:00.000Z';
 const env = { MATRIX_AI_SUBSCRIPTION_CREDIT_ENABLED: 'true' };
@@ -233,3 +235,33 @@ describe('approved subscription-month allowances', () => {
     expect(await issue()).toBe('ineligible'); expect(await entries()).toEqual([]);
   });
 });
+}
+
+{
+it('keeps subscription allowances disabled until explicitly activated', () => {
+  expect(loadSubscriptionAiCreditPolicy({})).toEqual({ enabled: false });
+  expect(loadSubscriptionAiCreditPolicy({ MATRIX_AI_SUBSCRIPTION_CREDIT_ENABLED: 'false',
+    MATRIX_AI_SUBSCRIPTION_CREDIT_POLICY_JSON: '{arbitrary legacy input' })).toEqual({ enabled: false });
+});
+it('uses only the approved concrete tier amounts', () => {
+  expect(loadSubscriptionAiCreditPolicy({ MATRIX_AI_SUBSCRIPTION_CREDIT_ENABLED: 'true' })).toEqual({
+    enabled: true, amountsMicrousd: { matrix_starter: 5_000_000, matrix_builder: 10_000_000, matrix_max: 20_000_000 },
+  });
+});
+it('fails closed if an operator tries to activate the obsolete arbitrary policy format', () => {
+  expect(() => loadSubscriptionAiCreditPolicy({ MATRIX_AI_SUBSCRIPTION_CREDIT_ENABLED: 'true',
+    MATRIX_AI_SUBSCRIPTION_CREDIT_POLICY_JSON: '{}' })).toThrow(/reviewed/);
+});
+
+it.each([
+  ['2026-01-31T10:00:00.000Z', '2026-02-28T09:59:59.999Z', '2026-01-31T10:00:00.000Z', '2026-02-28T10:00:00.000Z'],
+  ['2026-01-31T10:00:00.000Z', '2026-02-28T10:00:00.000Z', '2026-02-28T10:00:00.000Z', '2026-03-31T10:00:00.000Z'],
+  ['2028-01-31T10:00:00.000Z', '2028-02-29T10:00:00.000Z', '2028-02-29T10:00:00.000Z', '2028-03-31T10:00:00.000Z'],
+  ['2024-02-29T10:00:00.000Z', '2025-02-28T10:00:00.000Z', '2025-02-28T10:00:00.000Z', '2025-03-29T10:00:00.000Z'],
+])('keeps the original anniversary after short months and leap years (%s, %s)', (anchor, now, start, end) => {
+  expect(subscriptionCreditCycle(anchor, new Date(now))).toEqual({ start, end });
+});
+it('does not issue before the subscription anchor', () => {
+  expect(subscriptionCreditCycle('2026-10-23T10:00:00.000Z', new Date('2026-10-22T10:00:00.000Z'))).toBeNull();
+});
+}

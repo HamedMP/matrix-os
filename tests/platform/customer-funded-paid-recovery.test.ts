@@ -45,7 +45,16 @@ describe('explicit paid-primary missing starter recovery', () => {
     expect(after.speechAllowances).toEqual(before.speechAllowances);
     expect(after.balances.map(row => Number(row.credit_balance_microusd))).toEqual([6_000_000, 6_000_000, 6_000_000]);
     expect(after.policies).toHaveLength(3);
-    expect(after.policies.every(row => row.enabled && row.revision === 1 && Number(row.monthly_budget_microusd) === 5_000_000)).toBe(true);
+    expect(after.policies.every(row => row.enabled && row.budget_mode === 'credit_backed'
+      && row.revision === 2 && Number(row.monthly_budget_microusd) === 6_000_000)).toBe(true);
+    for (const target of targets) {
+      const identity = { ownerId: target.ownerId, machineId: target.machineId, runtimeSlot: 'primary' };
+      expect(await repository().getRuntimeFundingSummary(identity, { includeChatAvailability: true }))
+        .toMatchObject({ chatAvailability: { eligibleBalanceMicrousd: 5_000_000, availableBalanceMicrousd: 5_000_000 } });
+      const issued = await repository().issueRuntimeCredential(identity);
+      await expect(repository().authorize({ credential: issued.credential.token, requestId: `speech-excluded-${target.machineId}`,
+        modelId: model, maxCostMicrousd: 5_000_001 })).rejects.toMatchObject({ code: 'insufficient_credit' });
+    }
     expect(await db.executor.selectFrom('user_machines').select('runtime_token_epoch').execute())
       .toEqual([{ runtime_token_epoch: 1 }, { runtime_token_epoch: 1 }, { runtime_token_epoch: 1 }]);
   });

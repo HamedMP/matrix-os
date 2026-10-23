@@ -6,6 +6,11 @@ import { describe, expect, it } from "vitest";
 const workflow = parse(readFileSync(".github/workflows/platform-cloud-run.yml", "utf8"));
 const steps = workflow.jobs.deploy.steps as { name: string; run?: string }[];
 const step = (name: string) => steps.find((entry) => entry.name === name)!.run!;
+const creditReleaseDefaults = {
+  MATRIX_AI_SUBSCRIPTION_CREDIT_ENABLED: 'false',
+  MATRIX_AI_CREDIT_STRIPE_TAX_REGISTRATIONS_VERIFIED: 'false',
+  MATRIX_FUNDED_AI_ADDON_CHECKOUT_ALLOWED_MACHINE_IDS: '',
+};
 const env = {
   PATH: process.env.PATH,
   GCP_PROJECT_ID: "fixture", GCP_REGION: "europe-west3", ARTIFACT_REPOSITORY: "fixture",
@@ -65,6 +70,7 @@ describe("Matrix AI credit Cloud Run deployment", () => {
       printf '%s\\n' "$deploy_json"
     `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
       Object.keys(workflow.jobs.deploy.env).map((key) => [key, "fixture"])),
+      ...creditReleaseDefaults,
       MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14",
       GOOGLE_TAG_MANAGER_ID: "GTM-TEST123", GOOGLE_ANALYTICS_MEASUREMENT_ID: "",
       GOOGLE_ANALYTICS_API_SECRET_VERSION: "1",
@@ -149,6 +155,7 @@ describe("Matrix AI route-probe deployment wiring", () => {
       printf '%s\\n' "$deploy_json"
     `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
       Object.keys(workflow.jobs.deploy.env).map(name => [name, "fixture"])),
+      ...creditReleaseDefaults,
       MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14",
       GOOGLE_TAG_MANAGER_ID: "GTM-TEST123", GOOGLE_ANALYTICS_MEASUREMENT_ID: "",
       GOOGLE_ANALYTICS_API_SECRET_VERSION: "1",
@@ -178,6 +185,7 @@ describe("Matrix AI route-probe deployment wiring", () => {
         printf '%s\\n' "$deploy_json"
       `], { encoding: "utf8", env: { ...env, ...Object.fromEntries(
         Object.keys(workflow.jobs.deploy.env).map((name) => [name, "fixture"])),
+        ...creditReleaseDefaults,
         MATRIX_CARD_TRIAL_DAYS: "3", MATRIX_STARTER_TRIAL_DAYS: "14",
         GOOGLE_TAG_MANAGER_ID: "GTM-TEST123", GOOGLE_ANALYTICS_MEASUREMENT_ID: "",
         GOOGLE_ANALYTICS_API_SECRET_VERSION: "1",
