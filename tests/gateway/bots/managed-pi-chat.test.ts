@@ -393,6 +393,7 @@ it("replays a stopped managed tool as stopped after canonical cancellation witho
       runtimeHandle: `runtime_${"a".repeat(32)}`, executionGeneration: "1", workspace: { kind: "chat_workspace" }, rootFingerprint: "a".repeat(64),
       ...resolved, capabilities: ["mcp.call"], requestClass: "interactive" }, release: async () => undefined,
     toolAuthority: async () => ({ permissionMode: "full_access" }), workspace: async () => "/owned/chat",
+    startRenewal: () => ({ stop: async () => undefined }),
   }, host, providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal, forgetRun: () => undefined, cancelInference: () => undefined });
   const repository = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
   const catalog = { getCatalog: async () => ({ revision: "cancel_test", drivers: [{ kind: "matrix_pi" as const, displayName: "Pi", adapterVersion: "1", capabilityClass: "system_agent" as const }],
