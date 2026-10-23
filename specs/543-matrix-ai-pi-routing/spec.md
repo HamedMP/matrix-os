@@ -639,3 +639,22 @@ refreshes, preserve identity/generation fences and failed-read behavior, and
 cover concurrent lifecycle events while a read is pending. Live acceptance must
 record the exact native package and Main host version; a backend 200 received
 after the renderer deadline does not count as successful model discovery.
+
+## Gateway entry must retain a pointer gesture during catalog updates
+
+Hamed's October23 recording shows an open model picker where clicking the Matrix
+rabbit sometimes leaves the prior provider pane visible. It does not establish a
+quota or loading failure. An isolated real-component browser reproduction finds
+that a catalog rerender between mouse press and release replaces the rabbit SVG
+when its `dangerouslySetInnerHTML` object is freshly allocated. Chromium then
+loses the pending click even though the button position and permissions are
+unchanged. Both Web and Desktop reproduce this independently.
+
+Keep the trusted static rabbit markup object stable in each renderer so React
+retains the pressed DOM node. Do not add pointerdown navigation, readiness or
+balance bypasses. The original source must fail the press-refresh-release
+regression; fixed Web and Desktop must open Matrix while preserving the selected
+model. Also cover slow loading, missing/failed catalog recovery, repeated entry
+clicks, reopen and credit-restricted model selection. These offline component
+fixtures prove the event path, not Hamed's exact installed build or live funded
+inference. Existing model-inventory and policy checks remain authoritative.
