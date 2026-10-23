@@ -83,4 +83,3 @@ export function getStartedConnectOrder(goals: readonly GetStartedGoalId[]): stri
   });
   return [...new Set(services)];
 }
-

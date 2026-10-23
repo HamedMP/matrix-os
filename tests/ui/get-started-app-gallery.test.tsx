@@ -111,6 +111,19 @@ describe("Apps ready with your data", () => {
     expect(await screen.findByRole("button", { name: "Folio added" })).toBeDisabled();
   });
 
+  it("keeps the owner on the step while an app is being added, so a failure is never missed", async () => {
+    const gallery = galleryPort();
+    let finish: (value: unknown) => void = () => undefined;
+    gallery.install.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    setup({}, { gallery, services: ["gmail"] });
+    fireEvent.click(await screen.findByRole("button", { name: "Add Folio" }));
+    for (const name of ["Back", "Skip", "Next"]) expect(screen.getByRole("button", { name })).toBeDisabled();
+    finish({ status: "installed", slug: "folio", name: "Folio", path: "apps/folio/index.html" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Next" })).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Back" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Skip" })).toBeEnabled();
+  });
+
   it("shows apps already installed as added", async () => {
     setup({}, { gallery: galleryPort([app("folio", "Folio", [{ id: "gmail", name: "Gmail" }], true)]), services: ["gmail"] });
     expect(await screen.findByRole("button", { name: "Folio added" })).toBeDisabled();

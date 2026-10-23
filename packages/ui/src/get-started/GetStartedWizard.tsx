@@ -224,6 +224,8 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
   const botNameInvalid = wizard.step === "ai" && getStartedBotFromWizard(wizard.bot) === null;
   const ready = useReadyApps(gallery, connect);
   useReportConnections(connect, dispatch);
+  // An app still being added keeps the owner here, so a failure and its retry are never missed.
+  const leaving = submitting || (wizard.step === "gallery" && Boolean(gallery?.installing));
 
   // Each step change moves focus to its field, or its heading, for keyboard and screen reader users.
   useEffect(() => {
@@ -284,7 +286,7 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
         {wizard.step === "name" ? (
           <button type="button" className="mxo-link" onClick={onSkipAll} disabled={endBlocked}>Skip setup</button>
         ) : (
-          <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => dispatch({ type: "back" })} disabled={submitting}>Back</button>
+          <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => dispatch({ type: "back" })} disabled={leaving}>Back</button>
         )}
         <ButtonRow>
           {isSummary ? (
@@ -293,8 +295,8 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
             </button>
           ) : (
             <>
-              <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => dispatch({ type: "skip" })}>Skip</button>
-              <button type="button" className="mxo-btn mxo-btn--dark" disabled={botNameInvalid} onClick={() => dispatch({ type: "next" })}>
+              <button type="button" className="mxo-btn mxo-btn--ghost" disabled={leaving} onClick={() => dispatch({ type: "skip" })}>Skip</button>
+              <button type="button" className="mxo-btn mxo-btn--dark" disabled={botNameInvalid || leaving} onClick={() => dispatch({ type: "next" })}>
                 {wizard.step === "bots" ? "Finish" : "Next"}
               </button>
             </>
