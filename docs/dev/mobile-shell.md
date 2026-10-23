@@ -225,9 +225,10 @@ the Mac on LAN, retry Metro with `--host tunnel`.
 
 ## Workspace Gotchas (read before debugging tooling)
 
-`pnpm-workspace.yaml` keeps each checkout's virtual store inside its own
-`node_modules` so native build outputs cannot be replaced by another project's
-Node ABI. pnpm still enforces declared dependency edges: a package that
+Normal host checkouts share pnpm's dependency-graph-addressed virtual store
+(`enableGlobalVirtualStore: true`). Metro explicitly watches that shared store.
+Docker and parity installs disable it explicitly to isolate their native
+build outputs. pnpm still enforces declared dependency edges: a package that
 `require()`s a dependency it never declared cannot resolve it.
 
 **`packageExtensions` only work in the root `package.json`.** pnpm silently

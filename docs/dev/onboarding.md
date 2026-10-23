@@ -199,8 +199,8 @@ command does not start platform or either stateful dependency.
 ```bash
 cp .env.example .env
 cp shell/.env.example shell/.env
-# Fill in ANTHROPIC_API_KEY in .env
-# Optional: add provider keys to .env for AI-backed features
+# Set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY in shell/.env (public frontend key)
+# Optional: add ANTHROPIC_API_KEY or other provider keys to .env for AI-backed features
 
 bun run dev:source
 ```
@@ -208,8 +208,10 @@ bun run dev:source
 `bun run dev:source` starts PostgreSQL and the local S3-compatible object store in
 Docker, waits for both to be ready, initializes the sync bucket, and then starts
 gateway (`:4000`), proxy (`:8080`), platform (`:9000`), and shell (`:3000`) from
-source. Local auth bypass is enabled explicitly, so this path does not require
-Clerk credentials or initialize Clerk. Press Ctrl-C to stop the source processes; infrastructure
+source. Local auth bypass is enabled explicitly. The shell retains Clerk context
+for Files and shared views and needs its public publishable key, but no Clerk
+secret key or interactive sign-in. The gateway native addon is built before
+services start. Press Ctrl-C to stop the source processes; infrastructure
 continues in Docker and can be stopped with `bun run dev:infra:stop`.
 
 Use `bun run dev:infra` when you only need ready PostgreSQL and object storage.

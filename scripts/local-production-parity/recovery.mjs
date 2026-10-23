@@ -148,6 +148,13 @@ export async function recoverLocalParity({ root = projectRoot, saved = resolvePa
     }
     remote(startServices);
     restoreServices = false;
+    await waitForCommand("Platform HTTP", "docker", ["exec", "-i", platform, "node", "--input-type=module"], {
+      timeout: 8000,
+      input: `const response = await fetch("http://127.0.0.1:9000/health", {
+        signal: AbortSignal.timeout(5000), redirect: "error"
+      });
+      if (response.status !== 200 || (await response.json())?.status !== "ok") process.exitCode = 1;`,
+    }, 24);
     run("docker", ["exec", "-i", platform, "node", "--input-type=module"], { timeout: 270_000,
       input: parityRouteProbeScript() });
     log("Ready: VM services and platform -> router -> gateway health. Browser auth and provider turns are not verified.");

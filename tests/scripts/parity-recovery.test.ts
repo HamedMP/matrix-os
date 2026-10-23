@@ -34,6 +34,7 @@ function savedEnvironment() {
   const services = new Set(["matrix-gateway", "matrix-shell"]);
   let volumeMissing = false;
   let routeFailure = false;
+  let platformHealthFailure = false;
   let processes = "";
   let failRestart = false;
   const run = (command: string, args: string[], options: { env?: Record<string, string>; input?: string } = {}) => {
@@ -51,7 +52,12 @@ function savedEnvironment() {
     if (args.includes("config")) return JSON.stringify({ name: "demo", services: { postgres: {}, minio: {} },
       volumes: { pgdata: { name: "retained-postgres" }, "minio-data": { name: "retained-minio" } } });
     if (args[0] === "image") return "retained-image";
-    if (args[0] === "exec") { if (routeFailure) throw new Error("route unreachable"); return "routed gateway ready"; }
+    if (args[0] === "exec") {
+      const routed = options.input?.includes("192.0.2.2");
+      if (routed && routeFailure) throw new Error("route unreachable");
+      if (!routed && platformHealthFailure) throw new Error("platform HTTP unavailable");
+      return "routed gateway ready";
+    }
     if (command === "ssh") {
       if (options.input?.includes("systemctl stop matrix-shell matrix-gateway")) services.clear();
       if (options.input?.includes("systemctl start matrix-gateway matrix-shell")) {
@@ -94,6 +100,7 @@ function savedEnvironment() {
   return { root, saved, options, containers, containerEnvironments, effects, services, preserved,
     missingVolume: () => { volumeMissing = true; }, brokenRoute: () => { routeFailure = true; },
     restoreRoute: () => { routeFailure = false; },
+    brokenPlatform: () => { platformHealthFailure = true; },
     duplicateVm: () => { processes = `10 qemu-system-x86_64 -drive file=${saved}/runtime/disk.qcow2\n11 qemu-system-x86_64 -drive file=${saved}/runtime/disk.qcow2`; },
     interruptedRestart: () => { failRestart = true; } };
 }
@@ -182,6 +189,15 @@ it("preserves user data on route failure and allows a later retry", async () => 
   expect(env.containers.get("matrix-os-parity-platform")?.running).toBe(true);
   env.restoreRoute();
   await recoverLocalParity(env.options);
+  env.preserved();
+});
+
+it("cannot report ready when the VM is reachable but the platform HTTP server is not", async () => {
+  const env = savedEnvironment();
+  env.brokenPlatform();
+  const log = vi.fn();
+  await expect(recoverLocalParity({ ...env.options, log })).rejects.toThrow(/Platform HTTP/);
+  expect(log.mock.calls.some(([message]) => message.startsWith("Ready:"))).toBe(false);
   env.preserved();
 });
 

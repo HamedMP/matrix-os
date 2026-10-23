@@ -7,6 +7,7 @@ import { createConnection, createServer as createTcpServer } from "node:net";
 import { resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { writeParityState } from "./local-production-parity/state.mjs";
 import {
   root, stateDirectory, statePath, cloudInitPath, bundlePath, bundleChecksumPath,
   machineName, launcherLockPath, runtimeDirectory, runtimeDiskPath, runtimeSeedPath,
@@ -542,7 +543,7 @@ export function loadState({ projectRoot = root } = {}) {
     postgresPassword: randomBytes(24).toString("base64url"),
   };
   mkdirSync(directory, { recursive: true });
-  writeFileSync(path, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  writeParityState(path, state);
   return state;
 }
 
@@ -840,7 +841,7 @@ async function up() {
     prepareBaseImage();
     prepareStorageTlsCertificate();
     state.bundleSha256 = readFileSync(bundleChecksumPath, "utf8").trim().split(/\s+/)[0];
-    writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+    writeParityState(statePath, state);
     const template = readFileSync(resolve(root, "distro/customer-vps/cloud-init.yaml"), "utf8");
     const rendered = renderLocalParityCloudInit(template, {
       ...state,
@@ -865,7 +866,7 @@ async function up() {
     });
     state.seededMachineId = state.machineId;
     delete state.previousMachineId;
-    writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+    writeParityState(statePath, state);
     artifactServer = await startArtifactServer(state);
     startPlatformContainer(env);
     run("docker", storageTlsProxyArguments({ name: platformTlsProxyName, port: platformTlsPort, targetPort: platformPort }));
