@@ -86,7 +86,8 @@ export function createPlanNativePeer(deps: PeerDependencies) {
         const encoded = JSON.stringify(body);
         if (path === 'reply' && Buffer.byteLength(encoded) > CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT)
             throw new Error('peer reply too large');
-        const deadline = AbortSignal.any([signal, AbortSignal.timeout(isPoll ? 15000 : 10000)]);
+        const requestDeadline = AbortSignal.timeout(isPoll ? 15000 : 10000);
+        const deadline = AbortSignal.any([signal, requestDeadline]);
         let interrupted!: () => void;
         const interruption = new Promise<never>((_, reject) => { interrupted = () => reject(deadline.reason); });
         deadline.addEventListener('abort', interrupted, { once: true });
@@ -120,8 +121,12 @@ export function createPlanNativePeer(deps: PeerDependencies) {
             if (error instanceof PlanFailure) throw error;
             const reason = deadline.aborted ? deadline.reason : error;
             if (reason instanceof DOMException) {
+                // Only our exact POST deadline earns receipt recovery. A caller
+                // abort or a coincident foreign error must never borrow its phase.
+                const ownDeadline = requestDeadline.aborted && !signal.aborted && error === requestDeadline.reason;
                 throw new PlanFailure(stage, reason.name === 'TimeoutError' ? 'timeout'
-                    : reason.name === 'AbortError' ? 'cancelled' : 'transport_error');
+                    : reason.name === 'AbortError' ? 'cancelled' : 'transport_error',
+                    undefined, undefined, ownDeadline ? { phase } : undefined);
             }
             if (error instanceof SyntaxError || error instanceof z.ZodError) throw new PlanFailure(stage, 'invalid_schema');
             const network = planPeerNetworkFailureDiagnostic(error, phase);

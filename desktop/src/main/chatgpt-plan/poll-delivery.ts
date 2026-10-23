@@ -20,9 +20,14 @@ export function blocksPollDeliveryRecovery(error: unknown): boolean {
   }
 }
 export function retryableDeliveryFailure(error: unknown, stage: 'peer_poll' | 'peer_reply') {
-  if (!(error instanceof PlanFailure) || error.stage !== stage || error.category !== 'network_error') return false;
+  if (!(error instanceof PlanFailure) || error.stage !== stage) return false;
   const diagnostic = error.networkDiagnostic;
   if (!diagnostic || !['before_headers', 'body_read'].includes(diagnostic.phase ?? '')) return false;
+  // post() attaches this phase only for its own deadline's exact exception.
+  // Keep unknown/certificate causes ineligible, including coincident failures.
+  if (error.category === 'timeout') return diagnostic.code === undefined
+    && diagnostic.causeCode === undefined && diagnostic.chromiumCode === undefined;
+  if (error.category !== 'network_error') return false;
   // Certificate/trust/unknown causes win over generic SSL matching.
   for (const code of [diagnostic.code, diagnostic.causeCode]) if (code !== undefined && !preconnectNode.has(code)) return false;
   if (diagnostic.chromiumCode !== undefined) return diagnostic.chromiumCode === 'ERR_SSL_PROTOCOL_ERROR'
