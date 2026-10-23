@@ -256,6 +256,9 @@ describe("GettingStartedPopover", () => {
       expect(draft()).toBe("my unsent idea\n\nFind emails that need a reply.");
       // The project the owner picked for this draft stays picked.
       expect(useRetainedComposerDrafts.getState().drafts["new:global"]?.projectId).toBe("proj_work");
+      // A second Try swaps only the suggestion; the owner's words stay.
+      seedNewChatDraft("List my GitHub repos.");
+      expect(draft()).toBe("my unsent idea\n\nList my GitHub repos.");
     });
   });
 

@@ -140,6 +140,21 @@ export function personalizeGettingStartedSteps(
 // Services the five steps already check, so they never get a second row.
 const STEP_SERVICES = new Set(["github", "gmail", "google_calendar"]);
 
+/** A composer draft after a "Try" suggestion: the owner's own words, and the full text shown. */
+export interface TrySuggestionDraft {
+  own: string;
+  text: string;
+}
+
+/**
+ * Puts a "Try" suggestion in the composer below the owner's own unsent words. While the owner has
+ * not touched the last result, a new suggestion swaps only the suggestion; their words never go.
+ */
+export function mergeTrySuggestion(current: string, previous: TrySuggestionDraft | null, suggestion: string): TrySuggestionDraft {
+  const own = previous && current === previous.text ? previous.own : current;
+  return { own, text: own.trim() ? `${own.trimEnd()}\n\n${suggestion}` : suggestion };
+}
+
 /** Something useful to ask once a connection is done; it opens Chat with the prompt, unsent. */
 export interface GettingStartedTry {
   label: string;

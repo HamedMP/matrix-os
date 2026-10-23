@@ -32,4 +32,12 @@ describe("chat input draft requests", () => {
     view.rerender(<Composer request={{ id: 3, text: "Replace it." }} />);
     expect(value()).toBe("Replace it.");
   });
+
+  it("keeps what the owner typed when Try is clicked twice", () => {
+    const view = render(<Composer request={null} />);
+    fireEvent.change(screen.getByPlaceholderText("Ask anything..."), { target: { value: "my unsent idea" } });
+    view.rerender(<Composer request={{ id: 2, text: "Find emails that need a reply.", merge: true }} />);
+    view.rerender(<Composer request={{ id: 3, text: "List my GitHub repos.", merge: true }} />);
+    expect(value()).toBe("my unsent idea\n\nList my GitHub repos.");
+  });
 });

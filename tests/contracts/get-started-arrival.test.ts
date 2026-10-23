@@ -9,6 +9,7 @@ import {
   deriveGettingStartedSnapshot,
   emptyGettingStartedSnapshot,
   gettingStartedRows,
+  mergeTrySuggestion,
 } from "../../packages/contracts/src/index.js";
 
 describe("personalised arrival order", () => {
@@ -216,5 +217,19 @@ describe("widget tasks from the owner's choices", () => {
     expect(getStartedTaskOrder(["explore"], { starter: "ask-anything" })[0]).toBe("research");
     expect(getStartedTaskOrder(["explore"], { starter: "build-something-small" })[0]).toBe("build-website");
     expect(getStartedTaskOrder(["code"], { tools: ["google-calendar"] }).slice(0, 2)).toEqual(["plan-week", "work-on-code"]);
+  });
+
+  it("merges a Try suggestion without ever losing the owner's own text", () => {
+    let draft = mergeTrySuggestion("", null, "A");
+    expect(draft.text).toBe("A");
+    draft = mergeTrySuggestion(draft.text, draft, "B");
+    expect(draft.text).toBe("B");
+    draft = mergeTrySuggestion("my idea", draft, "C");
+    expect(draft.text).toBe("my idea\n\nC");
+    draft = mergeTrySuggestion(draft.text, draft, "D");
+    expect(draft.text).toBe("my idea\n\nD");
+    // An edit after the suggestion is the owner's text now.
+    draft = mergeTrySuggestion("my idea\n\nD, and more", draft, "E");
+    expect(draft.text).toBe("my idea\n\nD, and more\n\nE");
   });
 });

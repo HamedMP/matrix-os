@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState, type SetStateAction } from "react";
+import { mergeTrySuggestion, type TrySuggestionDraft } from "@matrix-os/contracts";
 import { useRetainedComposerDrafts, MAX_COMPOSER_DRAFTS, type ComposerDraft, type ComposerDrafts } from "./retained-composer-drafts";
 import { useConnection } from "../../stores/connection";
 import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
@@ -37,25 +38,20 @@ function rememberDraft(
   return next;
 }
 
-// The text of the last seeded suggestion, to tell an untouched suggestion from the owner's own words.
-let lastSeededDraft: string | null = null;
+// The last seeded draft, to tell an untouched suggestion from the owner's own words.
+let lastSeededDraft: TrySuggestionDraft | null = null;
 
 /**
  * Puts a ready prompt in a new Chat's composer without sending it. The owner's own unsent text
  * stays, with the prompt below it; an earlier suggestion they have not touched is swapped.
  */
-function hasStartedDraft(draft: ComposerDraft | undefined): boolean {
-  return Boolean(draft && (draft.text.trim() || draft.referenceTokens.length));
-}
-
 export function seedNewChatDraft(text: string): void {
   const identity = desktopComposerDraftIdentity(useConnection.getState());
   const scope = newChatDraftScope(null);
   const retained = useRetainedComposerDrafts.getState();
   const existing = retained.identity === identity ? retained.drafts[scope] : undefined;
-  const untouched = !hasStartedDraft(existing) || existing?.text === lastSeededDraft;
-  const next = untouched || !existing ? text : `${existing.text.trimEnd()}\n\n${text}`;
-  lastSeededDraft = next;
+  lastSeededDraft = mergeTrySuggestion(existing?.text ?? "", lastSeededDraft, text);
+  const next = lastSeededDraft.text;
   retained.update(identity, (current, revision) => rememberDraft(current, scope, {
     // The owner's references and chosen project stay with their draft.
     text: next, referenceTokens: current[scope]?.referenceTokens ?? [], projectId: current[scope]?.projectId ?? null, requestIdentity: revision,
