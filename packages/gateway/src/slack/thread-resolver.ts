@@ -55,9 +55,9 @@ export function createSlackThreadResolver(options: SlackThreadResolverOptions) {
     const eligibility = parseCollaborationAiEligibility(capability.eligibility);
     if (!eligibility.matrixBot || !Number.isSafeInteger(capability.generation) || capability.generation < 1) throw new SlackCompanyError("unavailable");
     await options.db.transaction().execute(async (trx) => {
-      // Match canonical admission and source-capture ordering: child before inherited parent.
-      const child = await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", binding.resourceScopeId!).forUpdate().executeTakeFirst();
+      // Match Project assignment and Company Brain writes: inherited parent before child.
       const parent = await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", project.scopeId).forUpdate().executeTakeFirst();
+      const child = await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", binding.resourceScopeId!).forUpdate().executeTakeFirst();
       const chat = await trx.selectFrom("chats").selectAll().where("id", "=", chatId).where("owner_type", "=", "personal").where("owner_id", "=", project.ownerId).forUpdate().executeTakeFirst();
       if (!parent || !child || !chat || parent.deleted_at || child.deleted_at || parent.lifecycle !== "shared" || child.lifecycle !== "shared"
         || parent.owner_id !== project.ownerId || parent.organization_id !== project.organizationId || parent.resource_id !== project.resourceId

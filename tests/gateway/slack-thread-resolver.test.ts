@@ -2,7 +2,7 @@ import { signSlackBridgeRequest } from "@matrix-os/contracts/slack-bridge";
 import { createSlackBridgeRoutes } from "../../packages/gateway/src/startup/slack-bridge.js";
 import { bootstrapCompanyBrainDatabase, type CompanyBrainDatabase } from "../../packages/gateway/src/company-brain/database.js";
 import { CompanyBrainService } from "../../packages/gateway/src/company-brain/service.js";
-import { sql, type Kysely } from "kysely";
+import { sql, type Kysely, type KyselyPlugin } from "kysely";
 import { bootstrapSlackCompanyDatabase, type SlackCompanyDatabase } from "../../packages/gateway/src/slack/database.js";
 import { SlackCompanyService } from "../../packages/gateway/src/slack/company-service.js";
 import { createSlackCanonicalReaders } from "../../packages/gateway/src/slack/canonical-readers.js";
@@ -52,6 +52,54 @@ describe("Slack thread creation inherits live Project authority", () => {
     expect(await fixture.db.selectFrom("collaboration_members").selectAll().where("scope_id", "=", first.scopeId).execute()).toEqual([]);
     expect(resolveCompanyBot).toHaveBeenCalledWith(expect.objectContaining({ chatId: first.chatId, projectScopeId: ids.scope, projectId: "company_project" }));
   });
+  it("locks the Project before its inherited Chat when fencing a Slack thread", async () => {
+    const project = await authority.authorize({ scopeId: ids.scope, actorId: actors.owner, action: "read" });
+    const binding = await resolver()({ envelope, project });
+    const lockOrder: string[] = [];
+    const plugin: KyselyPlugin = {
+      transformQuery(args) {
+        const query = JSON.stringify(args.node);
+        if (query.includes('"modifier":"ForUpdate"') && query.includes('"name":"collaboration_scopes"')) {
+          lockOrder.push(query.includes(ids.scope) ? "project" : query.includes(binding.scopeId) ? "chat" : "other");
+        }
+        return args.node;
+      },
+      async transformResult(args) { return args.result; },
+    };
+    await resolver({ db: fixture.db.withPlugin(plugin) })({ envelope, project });
+    expect(lockOrder).toEqual(["project", "chat"]);
+  });
+  it.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("does not deadlock against Project-before-Chat assignment on PostgreSQL", async () => {
+    const project = await authority.authorize({ scopeId: ids.scope, actorId: actors.owner, action: "read" });
+    const binding = await resolver()({ envelope, project });
+    let projectLocked!: (pid: number) => void;
+    const held = new Promise<number>((resolve) => { projectLocked = resolve; });
+    let continueAssignment!: () => void;
+    const proceed = new Promise<void>((resolve) => { continueAssignment = resolve; });
+    const assignment = fixture.db.transaction().execute(async (trx) => {
+      const { rows: [backend] } = await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(trx);
+      if (!backend) throw new Error("PostgreSQL backend unavailable");
+      await trx.selectFrom("collaboration_scopes").select("id").where("id", "=", ids.scope).forUpdate().executeTakeFirstOrThrow();
+      projectLocked(backend.pid);
+      await proceed;
+      await trx.selectFrom("collaboration_scopes").select("id").where("id", "=", binding.scopeId).forUpdate().executeTakeFirstOrThrow();
+    });
+    const assignmentPid = await held;
+    const resolution = resolver()({ envelope, project });
+    const settled = Promise.allSettled([assignment, resolution]);
+    try {
+      let resolverBlocked = false;
+      for (let attempt = 0; attempt < 100 && !resolverBlocked; attempt++) {
+        const result = await sql<{ blocked: boolean }>`SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE ${assignmentPid} = ANY(pg_blocking_pids(pid))) AS blocked`.execute(fixture.db);
+        resolverBlocked = result.rows[0]?.blocked === true;
+        if (!resolverBlocked) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(resolverBlocked).toBe(true);
+    } finally { continueAssignment(); }
+    const results = await settled;
+    for (const result of results) if (result.status === "rejected") throw result.reason;
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
+  }, 10_000);
   it("passes a verified Slack event through inherited Chat admission, canonical Pi queue and completed output", async()=>{
     const chats=new ChatRepository(fixture.db as unknown as Kysely<ChatDatabase>);
     chats.setSharedAuthorizer((scopeId,actorId,action)=>authority.authorize({scopeId,actorId,action}));
