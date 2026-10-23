@@ -124,6 +124,15 @@ describe("merged platform schema upgrade", () => {
       expect(recoveryColumn.rows).toEqual([{
         data_type: "text", is_nullable: "YES", column_default: null,
       }]);
+      expect((await sql<{ name: string | null }>`SELECT to_regclass('ai_funded_upstream_preferences')::text AS name`
+        .execute(db)).rows[0]?.name).toBe("ai_funded_upstream_preferences");
+      expect((await sql<{ name: string | null }>`SELECT to_regclass('ai_funded_upstream_preference_audit')::text AS name`
+        .execute(db)).rows[0]?.name).toBe("ai_funded_upstream_preference_audit");
+      expect((await sql<{ data_type: string; is_nullable: string }>`
+        SELECT data_type, is_nullable FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'ai_funded_usage_reservations'
+          AND column_name = 'selected_upstream'
+      `.execute(db)).rows).toEqual([{ data_type: "text", is_nullable: "YES" }]);
       const recoveryIndexes = await sql<{ indexname: string; indexdef: string }>`
         SELECT indexname, indexdef FROM pg_indexes
         WHERE schemaname = 'public' AND tablename = 'ai_funded_usage_reservations'

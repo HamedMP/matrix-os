@@ -4,10 +4,10 @@ export function canonicalChatProviderCatalogPath(refresh = false, settingsSetup 
 }
 
 export function providerSettingsSnapshotPath(refresh = false): string {
-  return `/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true&includeMatrixAnthropicConnection=true&includeClaudeAccountDetails=true${refresh ? "&refresh=true" : ""}`;
+  return `/api/ai/provider-settings?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeAccountDetails=true&includeMatrixAnthropicConnection=true&includeClaudeAccountDetails=true&includeUpstreamPreference=true${refresh ? "&refresh=true" : ""}`;
 }
 
-export const providerSettingsActionsPath = "/api/ai/provider-settings/actions?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeMatrixAnthropicConnection=true";
+export const providerSettingsActionsPath = "/api/ai/provider-settings/actions?includeCapabilities=true&includeFundingState=true&includeChatFunding=true&includeModelCapabilities=true&includeMatrixModelInventory=true&includeMatrixAnthropicConnection=true&includeUpstreamPreference=true";
 
 /** Fixed owner-only funding observation; no provider discovery options. */
 export const providerSettingsManagedCreditPath = "/api/ai/provider-settings/managed-credit";

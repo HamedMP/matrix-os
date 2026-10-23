@@ -35,7 +35,8 @@ describe("usage-based funded AI admission", () => {
     repo = createAiFundedPolicyRepository({ db, credentialHashSecret: "h".repeat(32),
       now: () => new Date(clock), tokenIdFactory: () => `usage_token_${++counter}`,
       tokenSecretFactory: () => "s".repeat(43), credentialTtlMs: 3_600_000,
-      issueCooldownMs: 1_000, reservationTtlMs: 300_000, inFlightTtlMs: 60_000 });
+      issueCooldownMs: 1_000, reservationTtlMs: 300_000, inFlightTtlMs: 60_000,
+      verifyUpstream: async () => true });
     await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
     credential = await fundRuntime();
   });
@@ -103,7 +104,10 @@ describe("usage-based funded AI admission", () => {
   });
 
   it("persists content-free upstream provenance and rejects conflicting replay", async () => {
-    const auth = await repo.authorize(request(credential.token, "bedrock_provenance"));
+    const upstreamSelection = { upstream: "aws_bedrock" as const, preferenceRevision: 1,
+      checkedAt: clock.toISOString(), staleAfter: new Date(clock.getTime() + 30_000).toISOString(), proof: "a".repeat(64) };
+    const auth = await repo.authorize({ ...request(credential.token, "bedrock_provenance"),
+      upstream: "aws_bedrock", upstreamSelection });
     const key = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId };
     await repo.startReservation(key);
     const upstreamProvenance = {
@@ -116,6 +120,8 @@ describe("usage-based funded AI admission", () => {
       providerRequestId: "aws-request-1",
     };
     const exact = { ...key, mode: "exact" as const, actualCostMicrousd: 120, upstreamProvenance };
+    await expect(repo.finalizeReservation({ ...key, mode: "exact", actualCostMicrousd: 120 }))
+      .rejects.toMatchObject({ code: "idempotency_conflict" });
     const settled = await repo.finalizeReservation(exact);
     expect(await repo.finalizeReservation(exact)).toEqual(settled);
     await expect(repo.finalizeReservation({ ...exact, upstreamProvenance: {

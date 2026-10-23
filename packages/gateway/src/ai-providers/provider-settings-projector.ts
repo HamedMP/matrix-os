@@ -602,6 +602,7 @@ export async function projectProviderSettings(input: {
     accounts,
     harnesses,
     gatewayPolicy,
+    ...(input.canonical.upstreamPreference ? { upstreamPreference: input.canonical.upstreamPreference } : {}),
   });
 }
 

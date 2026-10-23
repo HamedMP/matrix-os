@@ -87,6 +87,11 @@ import {
 import { loadAiCreditCheckoutConfig } from './ai-credit-checkout.js';
 import { createFundedModelProbeService, loadFundedModelProbeLimits, type FundedModelProbeService } from './ai-funded-model-probes.js';
 import {
+  createAiFundedUpstreamPreferenceRepository,
+  loadAiFundedUpstreamPreferenceConfig,
+  type AiFundedUpstreamPreferenceRepository,
+} from './ai-funded-upstream-preference.js';
+import {
   createR2CapabilityGate,
   createStorageGatedHetznerClient,
   type R2CapabilityGate,
@@ -359,13 +364,16 @@ async function startPlatformServerWithCleanup(
     : undefined;
   let fundedAiRepository: AiFundedPolicyRepository | undefined;
   let fundedModelProbes: FundedModelProbeService | undefined;
+  let fundedUpstreamPreferences: AiFundedUpstreamPreferenceRepository | undefined;
   if (fundedAiConfig.enabled) {
+    const upstreamPreferenceConfig = loadAiFundedUpstreamPreferenceConfig(process.env);
     fundedAiRepository = createAiFundedPolicyRepository({
       db,
       credentialHashSecret: fundedAiConfig.credentialHashSecret,
       credentialTtlMs: fundedAiConfig.credentialTtlMs,
       issueCooldownMs: fundedAiConfig.issueCooldownMs,
       policyFreshnessMs: fundedAiConfig.policyFreshnessMs,
+      verifyUpstream: input => fundedUpstreamPreferences?.verifyUpstream(input) ?? Promise.resolve(false),
     });
     const probeLimits = loadFundedModelProbeLimits(process.env);
     fundedModelProbes = createFundedModelProbeService({
@@ -373,8 +381,26 @@ async function startPlatformServerWithCleanup(
       credentials: fundedAiRepository,
       relayBaseUrl: process.env.MATRIX_FUNDED_AI_RELAY_URL,
       relayControlToken: fundedAiConfig.relayControlToken,
+      ...(upstreamPreferenceConfig.enabled
+        ? { bedrockModelIds: upstreamPreferenceConfig.bedrockModelIds }
+        : {}),
       ...probeLimits,
     });
+    if (upstreamPreferenceConfig.enabled) {
+      fundedUpstreamPreferences = createAiFundedUpstreamPreferenceRepository({
+        db,
+        config: upstreamPreferenceConfig,
+        selectionSecret: process.env.AI_FUNDED_UPSTREAM_SELECTION_SECRET ?? "",
+        readCachedBedrock: modelId => {
+          const deadlineAtMs = Date.now() + 1_500;
+          return fundedModelProbes!.readCached!(modelId, {
+            upstream: "aws_bedrock",
+            signal: AbortSignal.timeout(1_500),
+            deadlineAtMs,
+          });
+        },
+      });
+    }
     internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
       db,
       platformSecret: fundedAiConfig.platformSecret,
@@ -384,10 +410,12 @@ async function startPlatformServerWithCleanup(
       promotionalGrant: fundedAiConfig.promotionalGrant,
       routeProbes: fundedModelProbes,
       isolatedChat: parseIsolatedChatEnvelope(process.env.MATRIX_ISOLATED_CHAT_ENVELOPE),
+      upstreamPreferences: fundedUpstreamPreferences,
     });
     internalFundedAiRelayRoutes = createAiFundedRelayRoutes({
       relayControlToken: fundedAiConfig.relayControlToken,
       repository: fundedAiRepository,
+      upstreamPreferences: fundedUpstreamPreferences,
     });
     internalFundedAiOperatorRoutes = createAiFundedOperatorRoutes({
       db,

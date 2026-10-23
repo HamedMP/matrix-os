@@ -151,12 +151,14 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   app.route("/api/ai", createAiProviderRoutes({
     service: aiProviderService,
     canReadMatrixConnections: (c) => Boolean(options.runtimeOwnerId) && requireRequestPrincipal(c).userId === options.runtimeOwnerId,
+    canAccessUpstreamPreference: (c) => Boolean(options.runtimeOwnerId) && requireRequestPrincipal(c).userId === options.runtimeOwnerId,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   app.route("/api/ai", createProviderSettingsRoutes({
     store: providerSettingsStore,
     canReadManagedCredit: createManagedCreditOwnerAuthorization(options.runtimeOwnerId, requireRequestPrincipal),
     canReadNativeAccountMetadata: (c) => Boolean(options.runtimeOwnerId) && requireRequestPrincipal(c).userId === options.runtimeOwnerId,
+    canAccessUpstreamPreference: (c) => Boolean(options.runtimeOwnerId) && requireRequestPrincipal(c).userId === options.runtimeOwnerId,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   return localImports;
