@@ -649,11 +649,113 @@ cleanup_staged_update_artifacts() {
   fi
 }
 
+# Snapshot contents stay root-owned and immutable, while bin payloads retain
+# the original Matrix read/execute group required when cp -a restores them.
+seal_update_transaction_permissions() {
+  sudo /usr/bin/timeout --signal=KILL 10 /usr/bin/python3 -I - "$UPDATE_TRANSACTION_DIR" <<'PY_TRANSACTION_PERMISSIONS'
+import os
+import pwd
+import stat
+import sys
+
+MAX_ENTRIES = 32768
+MAX_DEPTH = 8
+
+
+def seal_transaction(path, matrix_uid, matrix_gid):
+    if os.geteuid() != 0 or not (0 < matrix_uid < 2**31 and 0 < matrix_gid < 2**31):
+        raise ValueError('invalid transaction authority')
+    if not os.path.isabs(path):
+        raise ValueError('invalid transaction path')
+    parts = path.split('/')[1:]
+    if not parts or len(parts) > 128 or any(part in ('', '.', '..') for part in parts):
+        raise ValueError('invalid transaction path')
+    anchors = []
+    held = []
+    count = 0
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        parent = os.open('/', flags)
+        held.append(parent)
+        for name in parts:
+            child = os.open(name, flags, dir_fd=parent)
+            held.append(child)
+            anchors.append((parent, name, child))
+            parent = child
+
+        def seal_directory(directory, relative, depth):
+            nonlocal count
+            if depth > MAX_DEPTH:
+                raise ValueError('transaction depth exceeded')
+            info = os.fstat(directory)
+            if info.st_uid not in (0, matrix_uid) or info.st_gid not in (0, matrix_gid):
+                raise ValueError('unexpected transaction owner')
+            # Seal each parent before inspecting its children so the Matrix
+            # account cannot replace child names during privileged traversal.
+            os.fchown(directory, 0, 0)
+            os.fchmod(directory, stat.S_IMODE(info.st_mode) & 0o755)
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    count += 1
+                    if count > MAX_ENTRIES:
+                        raise ValueError('transaction entries exceeded')
+                    before = os.stat(entry.name, dir_fd=directory, follow_symlinks=False)
+                    if not (stat.S_ISDIR(before.st_mode) or stat.S_ISREG(before.st_mode)):
+                        raise ValueError('unsupported transaction entry')
+                    child_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                    if stat.S_ISDIR(before.st_mode):
+                        child_flags |= os.O_DIRECTORY
+                    child = os.open(entry.name, child_flags, dir_fd=directory)
+                    try:
+                        info = os.fstat(child)
+                        if (info.st_dev, info.st_ino) != (before.st_dev, before.st_ino):
+                            raise ValueError('transaction entry changed')
+                        if stat.S_ISDIR(info.st_mode):
+                            seal_directory(child, relative + (entry.name,), depth + 1)
+                        else:
+                            if info.st_nlink != 1 or info.st_uid not in (0, matrix_uid) or info.st_gid not in (0, matrix_gid):
+                                raise ValueError('unsafe transaction file')
+                            payload = relative == ('bin',)
+                            if payload and (info.st_uid != 0 or info.st_mode & 0o7022):
+                                raise ValueError('unsafe privileged payload')
+                            # Control/metadata files remain root:root. Preserve
+                            # only an already-root-owned flat bin payload's group.
+                            group = info.st_gid if payload else 0
+                            os.fchown(child, 0, group)
+                            os.fchmod(child, stat.S_IMODE(info.st_mode) & 0o755)
+                            os.fsync(child)
+                        live = os.stat(entry.name, dir_fd=directory, follow_symlinks=False)
+                        if (info.st_dev, info.st_ino) != (live.st_dev, live.st_ino):
+                            raise ValueError('transaction entry changed')
+                    finally:
+                        os.close(child)
+            os.fsync(directory)
+
+        seal_directory(parent, (), 0)
+        for directory, name, child in anchors:
+            info = os.fstat(child)
+            live = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            if (info.st_dev, info.st_ino) != (live.st_dev, live.st_ino):
+                raise ValueError('transaction anchor changed')
+    finally:
+        for descriptor in reversed(held):
+            os.close(descriptor)
+
+
+if __name__ == '__main__':
+    try:
+        account = pwd.getpwnam('matrix')
+        seal_transaction(sys.argv[1], account.pw_uid, account.pw_gid)
+    except (OSError, ValueError, KeyError, IndexError):
+        print('ERROR: update transaction permissions unavailable', file=sys.stderr)
+        sys.exit(1)
+PY_TRANSACTION_PERMISSIONS
+}
+
 seal_update_transaction() {
   [ "$(cat "$UPDATE_TRANSACTION_STATE" 2>/dev/null || true)" = prepared ] || return 1
   write_update_transaction_state mutating || return 1
-  sudo chown -R root:root "$UPDATE_TRANSACTION_DIR" || return 1
-  sudo chmod -R go-w "$UPDATE_TRANSACTION_DIR" || return 1
+  seal_update_transaction_permissions || return 1
   if sudo /usr/bin/test -f /var/lib/matrix-funded-host-config/applied.json \
     && [ "$version" = "$(current_version)" ]; then
     # Only an explicit immutable same-version reinstall gets this authority.
