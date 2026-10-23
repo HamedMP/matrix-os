@@ -48,6 +48,15 @@ finally { await dispatcher.close(); }
 `;
 }
 
+export function platformHealthProbeScript() {
+  return `const port = Number(process.env.PLATFORM_PORT ?? "8080");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Platform HTTP health unavailable");
+  const response = await fetch("http://127.0.0.1:" + port + "/health", {
+    signal: AbortSignal.timeout(5000), redirect: "error"
+  });
+  if (response.status !== 200 || (await response.json())?.status !== "ok") process.exitCode = 1;`;
+}
+
 const startServices = `set -euo pipefail
 wait_http() {
   local url="$1" deadline=$((SECONDS + $2))
@@ -150,10 +159,7 @@ export async function recoverLocalParity({ root = projectRoot, saved = resolvePa
     restoreServices = false;
     await waitForCommand("Platform HTTP", "docker", ["exec", "-i", platform, "node", "--input-type=module"], {
       timeout: 8000,
-      input: `const response = await fetch("http://127.0.0.1:9000/health", {
-        signal: AbortSignal.timeout(5000), redirect: "error"
-      });
-      if (response.status !== 200 || (await response.json())?.status !== "ok") process.exitCode = 1;`,
+      input: platformHealthProbeScript(),
     }, 24);
     run("docker", ["exec", "-i", platform, "node", "--input-type=module"], { timeout: 270_000,
       input: parityRouteProbeScript() });

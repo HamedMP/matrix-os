@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
 import { runPreflight } from "../../scripts/dev-preflight.mjs";
-import { waitForParityRoute } from "../../scripts/local-production-parity/recovery.mjs";
+import { waitForParityRoute, platformHealthProbeScript } from "../../scripts/local-production-parity/recovery.mjs";
 
 const servers: ReturnType<typeof createServer>[] = [];
 afterEach(async () => { for (const server of servers.splice(0)) await new Promise<void>(resolve => server.close(() => resolve())); });
@@ -66,4 +68,19 @@ it("rejects HTTP success without gateway readiness on the actual routed health c
   await expect(waitForParityRoute((_url: string, options: RequestInit) => fetch(server.url, options), async () => {}, 2))
     .rejects.toThrow();
   expect(server.requests).toEqual(["GET /health", "GET /health"]);
+});
+
+it.each(["ok", "starting"])("checks the actual platform HTTP port and readiness status=%s", async (status) => {
+  const server = await healthServer(status);
+  const script = `const actualFetch = globalThis.fetch;
+globalThis.fetch = (url, options) => {
+  if (new URL(url).port !== process.env.PLATFORM_PORT) throw new Error("Wrong platform port");
+  return actualFetch(url, options);
+};\n${platformHealthProbeScript()}`;
+  const run = promisify(execFile)(process.execPath, ["--input-type=module", "--eval", script], {
+    env: { ...process.env, PLATFORM_PORT: new URL(server.url).port }, timeout: 3000, killSignal: "SIGKILL",
+  });
+  if (status === "ok") await expect(run).resolves.toMatchObject({ stdout: "" });
+  else await expect(run).rejects.toThrow();
+  expect(server.requests).toEqual(["GET /health"]);
 });
