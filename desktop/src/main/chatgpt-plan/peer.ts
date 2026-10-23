@@ -2,6 +2,7 @@ import { sign } from 'node:crypto';
 import { z } from 'zod/v4';
 import { CHATGPT_PLAN_PEER_POLL_BYTE_LIMIT, CHATGPT_PLAN_PEER_CLOCK_SKEW_MS, CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS, chatGptPlanPeerRequestId, ChatGptPlanPeerChallengeSchema, ChatGptPlanPeerSessionSchema, ChatGptPlanPeerReplySchema, ChatGptPlanPeerPollSchema, chatGptPlanPeerProof, type ChatGptPlanPeerSnapshot, type ChatGptPlanPeerRequest } from '@matrix-os/contracts';
 import { logPlanFailure, PlanFailure, planPeerNetworkFailureDiagnostic, type PlanNetworkDiagnostic } from './diagnostics';
+import { sendNativeStreamReply } from './reply-delivery';
 import { blocksPollDeliveryRecovery, createNativePollDelivery } from './poll-delivery';
 const POST_CONFLICT = Symbol('reply already settled');
 // A failed poll may already have dequeued a cancel. Only failures establishing
@@ -77,6 +78,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
         if (!deps.current(binding))
             throw new PlanFailure(`peer_${path}`, 'stale_source', undefined, undefined, { phase: 'before_headers' });
         const url = new URL(`/api/chatgpt-plan/device/${path}`, binding.origin);
+        if (path === 'capabilities' && deps.deliveryVersion === 2) url.searchParams.set('includeReplyDeliveryV2', 'true');
         if (binding.runtimeSlot !== 'primary')
             url.searchParams.set('runtime', binding.runtimeSlot);
         if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname)))
@@ -123,7 +125,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
             }
             if (error instanceof SyntaxError || error instanceof z.ZodError) throw new PlanFailure(stage, 'invalid_schema');
             const network = planPeerNetworkFailureDiagnostic(error, phase);
-            if (path === 'poll-v2' && blocksPollDeliveryRecovery(error)) network.causeCode = 'unknown';
+            if ((path === 'poll-v2' || path === 'reply') && blocksPollDeliveryRecovery(error)) network.causeCode = 'unknown';
             if (error instanceof Error && error.message === 'response too large')
                 throw new PlanFailure(stage, 'response_oversize', undefined, undefined, network);
             if (error instanceof TypeError || network.chromiumCode && network.chromiumCode !== 'unknown' || network.code || network.causeCode)
@@ -181,7 +183,8 @@ export function createPlanNativePeer(deps: PeerDependencies) {
         const delivery = deps.deliveryVersion === 2 ? createNativePollDelivery({ sessionId: session.sessionId, signal: controller.signal,
             current: () => connection === value && deps.current(binding) && qualified(),
             post: (path, body, signal, limit) => post(binding, path, body, signal, limit) }) : undefined;
-        try { await delivery?.negotiate(); }
+        let replyDeliveryV2 = false;
+        try { replyDeliveryV2 = await delivery?.negotiate() ?? false; }
         catch (error: unknown) { controller.abort(); if (connection === value) { connection = null; deps.connected(false); } throw error; }
         deps.connected(true);
         let lastSequence = 0; // Session-scoped high-water mark, never evicted.
@@ -249,7 +252,10 @@ export function createPlanNativePeer(deps: PeerDependencies) {
                                     if (!deps.inferStream) throw new Error('stream inference unavailable');
                                     let sequence = 0;
                                     const send = async (reply: unknown) => {
-                                        const ack = await post(binding, 'reply', ChatGptPlanPeerReplySchema.parse(reply), signal);
+                                        const frame = Object.freeze(ChatGptPlanPeerReplySchema.parse(reply));
+                                        const ack = await sendNativeStreamReply({ enabled: replyDeliveryV2, signal,
+                                            current: () => connection === value && deps.current(binding) && qualified(),
+                                            post: () => post(binding, 'reply', frame, signal) });
                                         if (ack === POST_CONFLICT) return false;
                                         const validated = z.object({ version: z.literal(1), ok: z.literal(true), sessionId: z.literal(session.sessionId),
                                             id: z.literal(request.id), sequence: z.literal(sequence) }).strict().safeParse(ack);

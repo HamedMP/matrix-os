@@ -1,4 +1,4 @@
-import { CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT } from '@matrix-os/contracts';
+import { CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT, ChatGptPlanPeerReplySchema } from '@matrix-os/contracts';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { HTTPException } from 'hono/http-exception';
@@ -7,6 +7,8 @@ import type { RequestPrincipal } from '../request-principal.js';
 import { hasVerifiedRuntimeBearer, isRequestPrincipalError, mapRequestPrincipalError } from '../request-principal.js';
 import { ChatGptPlanPeerError, type ChatGptPlanPeers } from './chatgpt-plan-peers.js';
 import { emitPeerPoll, readPeerControlBody } from './chatgpt-plan-poll-route.js';
+
+import { createPeerReplyIngress } from './chatgpt-plan-reply-route.js';
 
 const challengeBody = z.object({}).strict();
 const failureStatus = { forbidden: 403, invalid_request: 400, unavailable: 503, conflict: 409 } as const;
@@ -21,6 +23,8 @@ export function createChatGptPlanPeerRoutes(options: {
     c.header('Cache-Control', 'private, no-store');
     await next();
   });
+  const replyIngress = createPeerReplyIngress();
+  routes.use(`${root}/reply`, replyIngress.guard(c => { const { ownerId, peers } = authorized(c); peers.authorizeReply(ownerId); }));
   routes.use(`${root}/reply`, bodyLimit({
     maxSize: CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT,
     onError: c => c.json({ code: 'invalid_request', message: 'The request is too large.' }, 413),
@@ -31,7 +35,8 @@ export function createChatGptPlanPeerRoutes(options: {
     return bodyLimit({ maxSize: small ? 512 : 1100000, onError: c => c.json({ code: 'invalid_request', message: 'The request is too large.' }, 413) })(c, next);
   });
   routes.onError((error: unknown, c) => {
-    if (error instanceof HTTPException && error.status === 413) {
+    if (replyIngress.interrupted(c)) return c.json({ code: 'unavailable', message: 'This connection is unavailable.' }, 503);
+    if (replyIngress.oversized(c) || error instanceof HTTPException && error.status === 413) {
       return c.json({ code: 'invalid_request', message: 'The request is too large.' }, 413);
     }
     if (isRequestPrincipalError(error)) {
@@ -76,7 +81,9 @@ export function createChatGptPlanPeerRoutes(options: {
   });
   routes.post(`${root}/capabilities`, async c => {
     const { ownerId, peers } = authorized(c);
-    return c.json(peers.capabilities(ownerId, await readPeerControlBody(c.req.raw)));
+    const values = c.req.queries('includeReplyDeliveryV2');
+    if (values && (values.length !== 1 || values[0] !== 'true')) throw new ChatGptPlanPeerError('invalid_request');
+    return c.json(peers.capabilities(ownerId, await readPeerControlBody(c.req.raw), Boolean(values)));
   });
   routes.post(`${root}/poll-v2`, async c => {
     const { ownerId, peers } = authorized(c);
@@ -85,7 +92,9 @@ export function createChatGptPlanPeerRoutes(options: {
   });
   routes.post(`${root}/reply`, async c => {
     const { ownerId, peers } = authorized(c);
-    return c.json(await peers.reply(ownerId, await c.req.json()));
+    const reply = ChatGptPlanPeerReplySchema.parse(await c.req.json());
+    const ack = await replyIngress.wait(c, reply.sessionId, reply.id, () => peers.reply(ownerId, reply, replyIngress.signal(c)));
+    return replyIngress.emit(c, ack);
   });
   routes.post(`${root}/disconnect`, async c => {
     const { ownerId, peers } = authorized(c);

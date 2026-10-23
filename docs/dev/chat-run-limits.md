@@ -116,11 +116,17 @@ or the generic Chromium SSL protocol error, with strict HTTPS verification.
 Certificate/trust/auth/source/abort and unknown causes fail closed before any
 positive match. Both poll versions retain 15-second response deadlines and the
 same byte cap. V1 keeps its narrow preconnect-only recovery. Model inference,
-reply/chunk POSTs, credentials and tool operations are never replayed. Poll/ACK
+credentials and tool operations are never replayed. Stream replies have their own opt-in receipt protocol below; poll-v2 support alone never authorizes their retransmission. Poll/ACK
 does not count as progress or extend inference idle, approval or funded limits.
 Repeated control failure still ends the run; this does not diagnose or repair
 an external TLS fault. See the dedicated v2 design/plan under
 `specs/633-agent-waiting-policy/` for compatibility and rollback.
+
+The same authenticated capabilities request can explicitly opt into reply delivery with `includeReplyDeliveryV2=true`. Only a matching `replyDeliveryVersion: 2` response authorizes one retransmission of the current immutable stream chunk or end, after a 100ms abortable delay. Old clients receive the original strict response; old Hosts lacking the flag get no reply retransmission. Negotiation must precede the first poll; already queued, unpolled work is allowed. Each POST retains its 10-second deadline and source/Cancel checks. The narrow poll-v2 network classifier applies, with certificate, authorization and unknown causes taking precedence. A second failure still fails closed; no model or tool is executed again.
+
+Host retains only the current chunk sequence, UTF-8 SHA-256 and consumption ACK. An identical replay does not enqueue bytes twice or renew idle. Each chunk admits at most two HTTP ACK subscriptions in total, including timed-out/aborted attempts, so abandoned Promise reactions cannot grow under sequential disconnects. The authenticated reply route reserves at most eight input/emission slots before buffering, at most two concurrent ACK waiters per stream, and a fixed 10-second body/ACK/emission deadline. Actual bytes are bounded even without an accurate Content-Length. Aborting an HTTP waiter preserves accepted bytes; it does not cancel inference. Slots release on response emission completion/abort or an earlier error.
+
+At most 32 final transport receipts per peer expire after 120 seconds, with FIFO eviction and session/shutdown cleanup. They acknowledge only an already accepted ordered end, independently of normal EOF cleanup of the old inference signal. Cancellation before end acceptance creates no receipt; a receipt never asserts canonical run success, renews credentials or re-enrolls another session. This negotiated extension changes Host/Gateway and Native readers, not the central Relay. See `specs/633-agent-waiting-policy/reply-delivery-v2-plan.md` for compatibility and rollout gates.
 
 Electron Desktop keeps failure-only subscription diagnostics in a dedicated, profile-isolated subdirectory of its application logs. The recorder accepts fixed error categories, stages, HTTP statuses, strict request/run/computer IDs and a generated UTC timestamp; it does not persist prompts, responses, credentials, account labels, raw errors or filesystem paths. Records are capped at 128 entries and 64 KiB, have a 24-hour TTL with recurring cleanup, and use a single asynchronous writer. Shutdown drains for at most one second; an atomic filesystem rename already in progress may still complete afterward. Storage failure does not fail inference or prevent exit, and diagnostics are never uploaded automatically.
 

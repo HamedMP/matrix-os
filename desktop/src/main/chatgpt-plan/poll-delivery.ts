@@ -19,8 +19,8 @@ export function blocksPollDeliveryRecovery(error: unknown): boolean {
     return true;
   }
 }
-function retryable(error: unknown) {
-  if (!(error instanceof PlanFailure) || error.stage !== 'peer_poll' || error.category !== 'network_error') return false;
+export function retryableDeliveryFailure(error: unknown, stage: 'peer_poll' | 'peer_reply') {
+  if (!(error instanceof PlanFailure) || error.stage !== stage || error.category !== 'network_error') return false;
   const diagnostic = error.networkDiagnostic;
   if (!diagnostic || !['before_headers', 'body_read'].includes(diagnostic.phase ?? '')) return false;
   // Certificate/trust/unknown causes win over generic SSL matching.
@@ -47,6 +47,7 @@ export function createNativePollDelivery(deps: {
         sessionId: deps.sessionId }, deps.signal, 512));
       verify();
       if (!capability.success || capability.data.sessionId !== deps.sessionId) throw new PlanFailure('peer_capabilities', 'invalid_schema');
+      return capability.data.replyDeliveryVersion === 2;
     },
     async poll() {
       while (true) {
@@ -72,7 +73,7 @@ export function createNativePollDelivery(deps: {
           } };
         } catch (error: unknown) {
           attempt.abort(); verify();
-          if (failures !== 0 || !retryable(error)) throw error;
+          if (failures !== 0 || !retryableDeliveryFailure(error, 'peer_poll')) throw error;
           failures = 1; logPlanFailure('peer_poll', error);
         } finally { attempt.abort(); }
       }

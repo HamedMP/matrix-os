@@ -4,6 +4,7 @@ import type { BotExecutor } from './repositories/shared.js';
 import type { PiRuntimeBinding } from './runtime-registry.js';
 import { BotRouteError } from './route-resolver.js';
 import type { ChatGptPlanAuthority } from './chatgpt-plan.js';
+import { createChunkReceipt, createPeerReplyReceipts } from './chatgpt-plan-reply-receipts.js';
 import { createPeerPollDelivery } from './chatgpt-plan-poll-delivery.js';
 import { ChatGptPlanPeerError } from './chatgpt-plan-peer-error.js';
 export { ChatGptPlanPeerError } from './chatgpt-plan-peer-error.js';
@@ -20,7 +21,7 @@ type PendingBase = {
 };
 type Pending = PendingBase & (
     { kind: 'legacy'; resolve(reply: InferenceReply): void }
-    | { kind: 'stream'; chunk(sequence: number, body: string): Promise<void>; end(sequence: number): void }
+    | { kind: 'stream'; chunk(sequence: number, body: string, http: boolean): Promise<void>; end(sequence: number): void }
 );
 type Peer = {
     sessionId: string;
@@ -31,6 +32,7 @@ type Peer = {
     pending: Map<string, Pending>;
     wake?: () => void;
     polling: boolean;
+    replyReceipts?: ReturnType<typeof createPeerReplyReceipts>;
     mode?: 1 | 2;
     delivery?: ReturnType<typeof createPeerPollDelivery>;
 };
@@ -62,6 +64,7 @@ export function createChatGptPlanPeers(deps: {
             return;
         previous.wake?.();
         previous.delivery?.close();
+        previous.replyReceipts?.close();
         for (const p of previous.pending.values()) {
             clearTimeout(p.timer);
             p.signal.removeEventListener('abort', p.abort);
@@ -112,9 +115,15 @@ export function createChatGptPlanPeers(deps: {
         return request;
     };
     const service = {
-        capabilities(owner: string, input: unknown) {
+        authorizeReply(owner: string) { scope(owner); },
+        capabilities(owner: string, input: unknown, includeReplyDeliveryV2 = false) {
             const p = session(owner, input, false);
-            return { version: 1 as const, sessionId: p.sessionId, pollDeliveryVersion: 2 as const };
+            if (includeReplyDeliveryV2 && !p.replyReceipts) {
+                if (p.mode !== undefined) throw new ChatGptPlanPeerError('conflict');
+                p.replyReceipts = createPeerReplyReceipts(now);
+            }
+            return { version: 1 as const, sessionId: p.sessionId, pollDeliveryVersion: 2 as const,
+                ...(includeReplyDeliveryV2 ? { replyDeliveryVersion: 2 as const } : {}) };
         },
         challenge(owner: string) {
             scope(owner);
@@ -236,22 +245,27 @@ export function createChatGptPlanPeers(deps: {
                 return result.then(emission => { emission.verify(); p.lastTouched = now(); return emission; });
             } catch (error: unknown) { if (!p.delivery) delivery.close(); throw error; }
         },
-        reply(owner: string, input: unknown) {
+        reply(owner: string, input: unknown, httpSignal?: AbortSignal) {
+            httpSignal?.throwIfAborted();
             const parsed = ChatGptPlanPeerReplySchema.safeParse(input);
             if (!parsed.success)
                 throw new ChatGptPlanPeerError('invalid_request');
             const p = session(owner, { version: 1, sessionId: parsed.data.sessionId });
             const pending = p.pending.get(parsed.data.id);
-            if (!pending)
-                throw new ChatGptPlanPeerError('conflict');
             const reply = parsed.data;
+            if (!pending) {
+                if (reply.ok && 'stream' in reply && reply.stream === 'end' && p.replyReceipts?.ended(reply.id, reply.sequence))
+                    return { version: 1 as const, ok: true as const, sessionId: reply.sessionId, id: reply.id, sequence: reply.sequence };
+                throw new ChatGptPlanPeerError('conflict');
+            }
             if (reply.ok && 'stream' in reply) {
                 if (pending.kind !== 'stream') throw new ChatGptPlanPeerError('conflict');
                 if (reply.stream === 'chunk') {
                     const { sessionId, id, sequence } = reply;
-                    return pending.chunk(sequence, reply.body).then(() => ({ version: 1 as const, ok: true as const, sessionId, id, sequence }));
+                    return pending.chunk(sequence, reply.body, Boolean(httpSignal)).then(() => ({ version: 1 as const, ok: true as const, sessionId, id, sequence }));
                 }
                 pending.end(reply.sequence);
+                p.replyReceipts?.remember(reply.id, reply.sequence);
                 return { version: 1 as const, ok: true as const, sessionId: reply.sessionId, id: reply.id, sequence: reply.sequence };
             }
             if (reply.ok && (pending.kind !== 'legacy' || !('status' in reply))) throw new ChatGptPlanPeerError('conflict');
@@ -343,6 +357,7 @@ export function createChatGptPlanPeers(deps: {
             type Chunk = { value: string; acknowledge(): void; reject(error: unknown): void };
             let waiting: Read | undefined;
             let buffered: Chunk | undefined;
+            const receiptChunk = createChunkReceipt();
             let nextSequence = 0;
             let ended = false;
             let failure: unknown;
@@ -398,22 +413,25 @@ export function createChatGptPlanPeers(deps: {
             const timer = setTimeout(abort, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS);
             const pending: Pending = {
                 kind: 'stream', signal, abort, timer, reject: fail,
-                chunk(chunkSequence, value) {
-                    if (chunkSequence !== nextSequence || buffered || ended || failure)
-                        throw new ChatGptPlanPeerError('conflict');
-                    nextSequence += 1;
-                    return new Promise<void>((acknowledge, reject) => {
-                        if (waiting) {
-                            if (value.length) resumeIdle();
-                            const read = waiting;
-                            waiting = undefined;
-                            read.resolve({ value, done: false });
-                            acknowledge();
-                        } else {
-                            if (value.length) clearTimeout(pending.timer);
-                            buffered = { value, acknowledge, reject };
-                        }
-                    });
+                chunk(chunkSequence, value, http) {
+                    const accept = () => {
+                        if (chunkSequence !== nextSequence || buffered || ended || failure || signal.aborted)
+                            throw new ChatGptPlanPeerError('conflict');
+                        nextSequence += 1;
+                        return new Promise<void>((acknowledge, reject) => {
+                            if (waiting) {
+                                if (value.length) resumeIdle();
+                                const read = waiting;
+                                waiting = undefined;
+                                read.resolve({ value, done: false });
+                                acknowledge();
+                            } else {
+                                if (value.length) clearTimeout(pending.timer);
+                                buffered = { value, acknowledge, reject };
+                            }
+                        });
+                    };
+                    return p.replyReceipts ? receiptChunk(chunkSequence, value, accept, http) : accept();
                 },
                 end(endSequence) {
                     if (endSequence !== nextSequence || buffered || ended || failure)
