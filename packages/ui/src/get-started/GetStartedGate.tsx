@@ -1,5 +1,6 @@
-import { useEffect, useState, type ComponentType, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from "react";
 import { productScales } from "@matrix-os/brand/tokens";
+import { getStartedSuggestedName, type GetStartedWizardEvent, type GetStartedWizardState } from "@matrix-os/contracts";
 import { useGettingStartedAutoOpenSuppression, useGettingStartedBlocker } from "../getting-started-visibility.js";
 import { usePublishGetStartedAnswers } from "./answers-context.js";
 import type { GetStartedConnect, GetStartedConnector } from "./connect.js";
@@ -83,6 +84,22 @@ function useBlockBackgroundShortcuts(active: boolean): void {
   }, [active]);
 }
 
+/**
+ * Offers the account's first name once, when both the wizard and the account have loaded. It only
+ * fills a fresh, empty name step, so a typed, cleared or saved name is never replaced.
+ */
+function usePrefillName(wizard: GetStartedWizardState | null, dispatch: (event: GetStartedWizardEvent) => void, accountName: string | null) {
+  const offered = useRef(false);
+  const name = getStartedSuggestedName(accountName);
+  const loaded = wizard !== null;
+  const empty = wizard?.step === "name" && wizard.name === "";
+  useEffect(() => {
+    if (offered.current || !loaded || !name) return;
+    offered.current = true;
+    if (empty) dispatch({ type: "name", value: name });
+  }, [loaded, name, empty, dispatch]);
+}
+
 /** Covers the desktop before the wallpaper loads. */
 const BACKDROP_FALLBACK: CSSProperties = { backgroundColor: productScales.neutral[800] };
 
@@ -100,6 +117,8 @@ export interface GetStartedGateProps {
   gallery?: GetStartedGalleryPort;
   /** The element that paints the desktop background; the wizard draws a blurred copy of it. */
   backdropSource?: GetStartedBackdropSource;
+  /** The sign-in account's name (Google, GitHub); its first name pre-fills an empty name step once. */
+  suggestedName?: string | null;
 }
 
 /**
@@ -108,11 +127,12 @@ export interface GetStartedGateProps {
  * It cannot be closed or minimized; it ends only when the owner finishes or skips it.
  * Any load failure falls back to today's desktop.
  */
-export function GetStartedGate({ port, zIndex, children, connector: Connector, whileActive: WhileActive, backdropSource, gallery: galleryPort }: GetStartedGateProps) {
+export function GetStartedGate({ port, zIndex, children, connector: Connector, whileActive: WhileActive, backdropSource, gallery: galleryPort, suggestedName = null }: GetStartedGateProps) {
   const getStarted = useGetStarted(port);
   const active = getStarted.phase === "active";
   const backdrop = useDesktopBackdrop(backdropSource, active);
   const gallery = useGetStartedGallery(galleryPort, active);
+  usePrefillName(getStarted.wizard, getStarted.dispatch, suggestedName);
   useBlockBackgroundShortcuts(active);
   useGettingStartedBlocker(active);
   useGettingStartedAutoOpenSuppression(getStarted.phase !== "done");

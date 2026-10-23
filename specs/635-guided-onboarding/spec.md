@@ -25,6 +25,7 @@ Why: today a new member pays, waits on a progress screen, and lands on a generic
 | Stefan | The bot is a plus; the video flow is the most important part. | P0/P1 cover the video; the bot setup is P2. |
 | Hamed | Tool selection and connecting should come earlier, not on the last screen: "Connect the tools you use", connected directly, in the exact Integrations design with icons. | Step 3 is "Connect the tools you use" and renders the shared `IntegrationMarketplace` from Settings > Integrations (search, filters, icons, Connect / waiting / Connected). The summary no longer has a connect list. |
 | Hamed | Suggest Matrix apps: "because you connected x, y, z, these apps are ready with your data", in a nice listing with icons. | Step 5 lists App Gallery apps whose required services are connected (App Gallery's own readiness rule), with their icons and Add. |
+| Nima | People sign up with Clerk (Google, GitHub), so we may already have their name. | Step 1 is pre-filled with the sign-in account's first name (Clerk on Web, the signed-in display name on Electron), still editable. Usernames and emails are skipped, and a typed or saved name is never replaced. |
 
 
 ## Customer feedback (22 October 2026)

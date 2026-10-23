@@ -1,6 +1,7 @@
 import {
   GET_STARTED_NAME_MAX_CHARS,
   GET_STARTED_TOOL_IDS,
+  GetStartedAnswersSchema,
   getStartedToolGroupsForGoals,
   type GetStartedAnswers,
   type GetStartedAppIdeaId,
@@ -80,6 +81,17 @@ function clearStep(state: GetStartedWizardState): GetStartedWizardState {
     case "bots": return { ...state, bots: [] };
     case "summary": return state;
   }
+}
+
+/**
+ * The first name to pre-fill from the sign-in account (Google, GitHub), or null. Usernames and
+ * emails are left out, and the result must pass the same check as a typed name.
+ */
+export function getStartedSuggestedName(accountName: string | null | undefined): string | null {
+  const first = accountName?.trim().split(/\s+/)[0] ?? "";
+  if (!first || /[\d@._]/.test(first)) return null;
+  const parsed = GetStartedAnswersSchema.shape.name.safeParse(first);
+  return parsed.success && parsed.data ? parsed.data : null;
 }
 
 export function initialGetStartedWizard(draft?: GetStartedDraft): GetStartedWizardState {

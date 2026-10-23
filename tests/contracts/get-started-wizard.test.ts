@@ -7,6 +7,7 @@ import {
   getStartedAnswersFromWizard,
   getStartedDraftFromWizard,
   getStartedQuestionProgress,
+  getStartedSuggestedName,
   initialGetStartedWizard,
   reduceGetStartedWizard,
   type GetStartedWizardEvent,
@@ -158,5 +159,15 @@ describe("get started wizard", () => {
   it("reports progress across the questions only", () => {
     expect(getStartedQuestionProgress(initialGetStartedWizard())).toEqual({ current: 0, total: 6 });
     expect(getStartedQuestionProgress(initialGetStartedWizard({ step: 6, goals: [], tools: [] }))).toEqual({ current: 6, total: 6 });
+  });
+
+  it("suggests the first name from the sign-in account, only when it is a plain name", () => {
+    expect(getStartedSuggestedName("Sam Lee")).toBe("Sam");
+    expect(getStartedSuggestedName("  Jean-Luc  Picard ")).toBe("Jean-Luc");
+    expect(getStartedSuggestedName("Zoë")).toBe("Zoë");
+    // Usernames and emails are not names; the owner types their own.
+    for (const value of [null, undefined, "", "   ", "sam_lee", "sam42", "sam@example.com", "sam.lee", "<!--x", "a\u0007b", "x".repeat(GET_STARTED_NAME_MAX_CHARS + 1)]) {
+      expect(getStartedSuggestedName(value)).toBeNull();
+    }
   });
 });

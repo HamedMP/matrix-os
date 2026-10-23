@@ -17,10 +17,12 @@ function GetStartedOverlayLease() {
 const desktopBackdrop = () => document.querySelector<HTMLElement>('[data-testid="desktop-background"]');
 
 function DesktopGetStartedGate({ api, runtimeSlot, platformHost, children }: { api: ApiClient; runtimeSlot: string; platformHost: string; children: ReactNode }) {
+  // The sign-in account's name (from Google or GitHub) pre-fills the name step.
+  const displayName = useConnection((state) => state.displayName);
   const port = useMemo(() => createDesktopGetStartedPort(api, runtimeSlot), [api, runtimeSlot]);
   const gallery = useMemo(() => createDesktopGetStartedGalleryPort(api, runtimeSlot, platformHost), [api, runtimeSlot, platformHost]);
   return (
-    <GetStartedGate port={port} zIndex={DESKTOP_Z_INDEX.getStarted} connector={DesktopGetStartedConnector} whileActive={GetStartedOverlayLease} gallery={gallery} backdropSource={desktopBackdrop}>
+    <GetStartedGate port={port} zIndex={DESKTOP_Z_INDEX.getStarted} connector={DesktopGetStartedConnector} whileActive={GetStartedOverlayLease} gallery={gallery} backdropSource={desktopBackdrop} suggestedName={displayName}>
       {children}
     </GetStartedGate>
   );

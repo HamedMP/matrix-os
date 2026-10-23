@@ -21,6 +21,10 @@ function isStyledJsxAttributeWarning(message: unknown, args: unknown[]): boolean
   );
 }
 
+vi.mock("@clerk/nextjs", () => ({
+  useUser: () => ({ user: null }),
+}));
+
 vi.mock("../../shell/src/hooks/useFileWatcher.js", () => ({
   useFileWatcher: () => undefined,
 }));

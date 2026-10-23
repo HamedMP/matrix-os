@@ -154,6 +154,23 @@ describe("GetStartedGate", () => {
     expect(screen.getByRole("button", { name: "Habit tracker" })).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("fills the name from the sign-in account, and never replaces one the owner typed or saved", async () => {
+    const { port } = makePort({ status: "pending" });
+    const view = render(<GetStartedGate port={port} zIndex={690} suggestedName={null}><div /></GetStartedGate>);
+    const name = await screen.findByPlaceholderText("Your first name");
+    expect(name).toHaveValue("");
+    // The account loads after the wizard: the field fills once, still editable.
+    view.rerender(<GetStartedGate port={port} zIndex={690} suggestedName="Sam Lee"><div /></GetStartedGate>);
+    await waitFor(() => expect(name).toHaveValue("Sam"));
+    fireEvent.change(name, { target: { value: "" } });
+    view.rerender(<GetStartedGate port={port} zIndex={690} suggestedName="Samuel Lee"><div /></GetStartedGate>);
+    expect(name).toHaveValue("");
+    cleanup();
+
+    render(<GetStartedGate port={makePort({ status: "in_progress", updatedAt: AT, draft: { step: 0, name: "Alex", goals: [], tools: [] } }).port} zIndex={690} suggestedName="Sam Lee"><div /></GetStartedGate>);
+    expect(await screen.findByPlaceholderText("Your first name")).toHaveValue("Alex");
+  });
+
   it("skips the whole setup from the first question", async () => {
     const { port, saves } = makePort({ status: "pending" });
     renderGate(port);
