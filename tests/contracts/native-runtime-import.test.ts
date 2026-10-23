@@ -43,10 +43,11 @@ describe("contracts native Node runtime", () => {
         acceptUnknownUpstreamLiability: true,
       };
       console.log(FundedAiExecutionRecoveryRequestSchema.safeParse(request).success,
-        FundedAiExecutionRecoveryRequestSchema.safeParse({ ...request, maximumLiabilityMicrousd: 500001 }).success,
+        FundedAiExecutionRecoveryRequestSchema.safeParse({ ...request, maximumLiabilityMicrousd: 20_000_000 }).success,
+        FundedAiExecutionRecoveryRequestSchema.safeParse({ ...request, maximumLiabilityMicrousd: 20_000_001 }).success,
         FUNDED_EXECUTION_RECOVERY_MIN_AGE_MS);
     `], { cwd: process.cwd(), encoding: "utf8", timeout: 10_000, env: { ...process.env, NODE_OPTIONS: "" } });
-    expect(output.trim()).toBe("true false 960000");
+    expect(output.trim()).toBe("true true false 960000");
   });
   it("loads managed activation schemas through the public entrypoint without a TypeScript resolver", () => {
     const output = execFileSync(process.execPath, ["--input-type=module", "-e", `
