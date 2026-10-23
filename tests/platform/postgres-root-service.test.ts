@@ -108,13 +108,15 @@ sudo() {
 reconcile_postgres_root_service
 `;
   try {
-    // Inlined updater libraries exceed Linux's 128 KiB single-argument cap.
-    // Stream the exact script to bash rather than passing it through argv.
-    const result = spawnSync('bash', ['-s'], {
-      input: `${syncAgentHarnessSource()}\n${invocation}`,
+    // The complete updater can exceed Linux's per-argument size limit.
+    const script = join(testRoot, 'reconcile.sh');
+    writeFileSync(script, `${syncAgentHarnessSource()}\n${invocation}`);
+    const result = spawnSync('bash', [script], {
       encoding: 'utf8',
       env: { ...process.env, TEST_ROOT: testRoot },
+      timeout: 10_000,
     });
+    if (result.error) throw result.error;
     const calls = existsSync(join(testRoot, 'calls')) ? readFileSync(join(testRoot, 'calls'), 'utf8') : '';
     const helperExists = existsSync(protectedHelper);
     const helper = helperExists && options.protectedHelper !== 'symlink' ? readFileSync(protectedHelper, 'utf8') : '';
