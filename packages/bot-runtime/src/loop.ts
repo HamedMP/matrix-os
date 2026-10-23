@@ -104,7 +104,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   let eventFailure: BotToolErrorCode | undefined;
   let runFailed = false;
 
-  const agent = new Agent({
+  const agent: Agent = new Agent({
     initialState: {
       systemPrompt: command.systemPrompt,
       model,
