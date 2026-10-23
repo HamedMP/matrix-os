@@ -1,4 +1,6 @@
 import { isGmailOAuthCallback, isGmailPipedreamCallback } from './integration-public-path.js';
+import { loadPilotCohortPolicy } from '@matrix-os/contracts';
+import { createPilotCohortAccessGuard, restrictClerkAuthToPilot } from './pilot-cohort-access.js';
 import { registerFundedHostConfigRoutes } from "./funded-host-config-registration.js";
 import { registerBrowserChatApprovalRoutes } from "./browser-chat-approval-registration.js";
 import type { BrowserApprovalMachineLookup } from "./browser-approval-machine-lookup.js";
@@ -291,8 +293,13 @@ export function createApp(deps: {
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   env?: NodeJS.ProcessEnv;
 }) {
-  const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
+  const { db, docker, orchestrator, matrixProvisioner } = deps;
   const appEnv = deps.env ?? process.env;
+  const pilotCohortPolicy = loadPilotCohortPolicy(appEnv);
+  if (pilotCohortPolicy.status === 'invalid' || (pilotCohortPolicy.status === 'enabled' && !deps.clerkAuth)) {
+    throw new Error('Pilot access configuration unavailable');
+  }
+  const clerkAuth = restrictClerkAuthToPilot(deps.clerkAuth, pilotCohortPolicy);
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !deps.customerVpsService;
   const platformSecret = deps.platformSecret ?? appEnv.PLATFORM_SECRET ?? '';
@@ -397,6 +404,9 @@ export function createApp(deps: {
     }
   });
 
+  app.use('*', createPilotCohortAccessGuard({ policy: pilotCohortPolicy, clerkAuth: deps.clerkAuth,
+    jwtSecret: process.env.PLATFORM_JWT_SECRET ?? '' }));
+
   app.route('/', createAccountDeletionRoutes({service:deps.accountDeletion?.service,
     verify:async(token)=>{const result=await clerkAuth?.verify(token);return result?.authenticated?result.userId??null:null;},
     webhookSecret:appEnv.CLERK_USER_WEBHOOK_SIGNING_SECRET, publishableKey:appEnv.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
@@ -465,6 +475,7 @@ export function createApp(deps: {
       createAuthRoutes({
         db,
         clerkAuth,
+        pilotCohortPolicy,
         jwtSecret: platformJwtSecret,
         supportIdentitySecret: appEnv.POSTHOG_CONVERSATIONS_IDENTITY_SECRET,
         platformUrl: deviceAuthPublicUrl,

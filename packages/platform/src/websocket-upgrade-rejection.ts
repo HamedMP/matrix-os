@@ -34,7 +34,7 @@ export function rejectWebSocketUpgrade(socket: Duplex, status: WebSocketUpgradeR
     socket.destroy();
   });
   socket.end(
-    `HTTP/1.1 ${status} ${UPGRADE_REJECTION_STATUS_TEXT[status]}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+    `HTTP/1.1 ${status} ${UPGRADE_REJECTION_STATUS_TEXT[status]}\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Length: 0\r\n\r\n`,
     () => socket.destroy(),
   );
 }

@@ -1,5 +1,7 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { isPilotCohortMember, loadPilotCohortPolicy } from '@matrix-os/contracts';
+import { canPilotPlatformActorAccessShell, isPublicPilotShellPath } from './lib/pilot-cohort-access';
 import {
   MATRIX_NATIVE_APP_SESSION_HEADER,
   MATRIX_PLATFORM_SESSION_HEADER,
@@ -24,6 +26,11 @@ const expectedClerkUserId = process.env.MATRIX_CLERK_USER_ID;
 const platformUpgradeToken = process.env.UPGRADE_TOKEN;
 const configuredSignInUrl = process.env.NEXT_PUBLIC_CLERK_SIGN_IN_URL;
 const selfHostedMode = process.env.MATRIX_SELF_HOSTED === "1";
+const pilotCohort = loadPilotCohortPolicy(process.env);
+
+function pilotAccessUnavailable(status: 403 | 503): NextResponse {
+  return new NextResponse('Access unavailable', { status, headers: { 'Cache-Control': 'no-store' } });
+}
 
 interface ProxyRequestLike {
   headers: Headers;
@@ -80,6 +87,10 @@ function platformVerifiedResponse(request: ProxyRequestLike): NextResponse | nul
 
   const platformUserId = request.headers.get("x-platform-user-id");
   const platformUserProof = request.headers.get("x-platform-verified");
+  if (!canPilotPlatformActorAccessShell({ policy: pilotCohort, userId: platformUserId,
+    proof: platformUserProof, token: platformUpgradeToken })) {
+    return pilotAccessUnavailable(403);
+  }
   const mobileAppSessionRequest = isPlatformMobileAppSessionRequest(
     request.nextUrl.pathname,
     request.nextUrl.search,
@@ -115,6 +126,14 @@ function platformVerifiedResponse(request: ProxyRequestLike): NextResponse | nul
 
 // Clerk handler for authenticated routes
 const withClerk = clerkMiddleware(async (auth, request) => {
+  const publicPath = pilotCohort.status === 'enabled'
+    ? isPublicPilotShellPath(request.nextUrl.pathname)
+    : isPublicShellPath(request.nextUrl.pathname, request.nextUrl.search);
+  if (pilotCohort.status === 'enabled') {
+    const { userId } = await auth();
+    if ((userId || isSignUpShellPath(request.nextUrl.pathname))
+      && !isPilotCohortMember(pilotCohort, userId)) return pilotAccessUnavailable(403);
+  }
   // Clerk normally performs this navigation in the browser after signup. If
   // that one-shot redirect is interrupted, Clerk has already established the
   // session and its <SignUp> component renders nothing. Recover at the request
@@ -126,7 +145,7 @@ const withClerk = clerkMiddleware(async (auth, request) => {
   }
 
   // Layer 1: Clerk authentication (skip public routes)
-  if (!isPublicShellPath(request.nextUrl.pathname, request.nextUrl.search)) {
+  if (!publicPath) {
     const { userId } = await auth();
     if (!userId) {
       const publicOrigin = getPublicOrigin(request);
@@ -141,7 +160,7 @@ const withClerk = clerkMiddleware(async (auth, request) => {
   }
 
   // Layer 2: Owner verification -- fail closed when configured (skip public routes)
-  if (expectedClerkUserId && !isPublicShellPath(request.nextUrl.pathname, request.nextUrl.search)) {
+  if (expectedClerkUserId && !publicPath) {
     const { userId } = await auth();
     if (userId !== expectedClerkUserId) {
       return new NextResponse("Forbidden: you do not own this instance", {
@@ -162,10 +181,12 @@ export function proxy(
   request: Parameters<typeof withClerk>[0],
   event: Parameters<typeof withClerk>[1],
 ) {
+  if (pilotCohort.status === 'invalid') return pilotAccessUnavailable(503);
+  if (pilotCohort.status === 'enabled' && selfHostedMode) return pilotAccessUnavailable(503);
   // E2E screenshot tests run against `next start`, which always serves the
   // built app with production semantics. Use the explicit bypass flag alone so
   // screenshot runs can skip auth without depending on NODE_ENV.
-  if (process.env.E2E_TEST_BYPASS === "1") {
+  if (pilotCohort.status === 'disabled' && process.env.E2E_TEST_BYPASS === "1") {
     if (isGatewayProxy(request)) {
       return rewriteGatewayRequest(request);
     }
@@ -199,7 +220,8 @@ export function proxy(
     return new NextResponse("Forbidden", { status: 403 });
   }
   if (
-    isPublicShellPath(request.nextUrl.pathname, request.nextUrl.search) &&
+    (pilotCohort.status === 'enabled' ? isPublicPilotShellPath(request.nextUrl.pathname)
+      : isPublicShellPath(request.nextUrl.pathname, request.nextUrl.search)) &&
     !isSignUpShellPath(request.nextUrl.pathname)
   ) {
     return NextResponse.next();
