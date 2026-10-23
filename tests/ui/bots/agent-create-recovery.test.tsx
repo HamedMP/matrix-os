@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, act } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, act, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { ChatAgentsPanel } from "../../../packages/ui/src/chat-agents/ChatAgentsEntry.js";
 import type { BotClient } from "../../../packages/ui/src/chat-agents/bots/client.js";
@@ -131,27 +131,35 @@ it("offers model retry from a failed chooser and coalesces its pending requests"
 
 it("retries failed model discovery without losing a draft or reusing stale model authority", async () => {
   const x = fixture(); await draft(x);
-  fireEvent.click(screen.getByRole("button", { name: "Add recipe" }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "Personal Daily Brief" }));
-  fireEvent.change(screen.getByRole("textbox", { name: "Expected output" }), { target: { value: "A verified report" } });
-  const model = (screen.getByRole("combobox", { name: "Model" }) as HTMLSelectElement).value;
+  const dialog = screen.getByRole("dialog", { name: "New Agent" });
+  expect(dialog).toHaveAttribute("open");
+  const editor = within(dialog);
+  fireEvent.click(editor.getByRole("button", { name: "Add recipe" }));
+  fireEvent.click(editor.getByRole("checkbox", { name: "Personal Daily Brief" }));
+  fireEvent.change(editor.getByRole("textbox", { name: "Expected output" }), { target: { value: "A verified report" } });
+  const model = (editor.getByRole("combobox", { name: "Model" }) as HTMLSelectElement).value;
   x.client.catalog.mockRejectedValueOnce(new Error("private discovery failure"));
-  fireEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+  const retry = editor.getByRole("button", { name: "Refresh models" });
+  expect(retry).toBeVisible();
+  fireEvent.click(retry);
   await screen.findByText("Models could not be refreshed. Your draft is still here.");
-  const retry = await screen.findByRole("button", { name: "Retry models" });
-  expect(screen.getByRole("button", { name: "Create Agent" })).toBeDisabled();
+  // Native modal editors make the chooser's outer Retry models button inert.
+  expect(editor.queryByRole("button", { name: "Retry models" })).toBeNull();
+  expect(dialog).toContainElement(retry);
+  expect(retry).toBeEnabled();
+  expect(editor.getByRole("button", { name: "Create Agent" })).toBeDisabled();
   let resolve!: (value: Awaited<ReturnType<typeof x.client.catalog>>) => void;
   x.client.catalog.mockReturnValueOnce(new Promise(value => { resolve = value; }));
   fireEvent.click(retry);
-  expect(retry).toBeDisabled(); expect(screen.getByRole("button", { name: "Create Agent" })).toBeDisabled();
+  expect(retry).toBeDisabled(); expect(editor.getByRole("button", { name: "Create Agent" })).toBeDisabled();
   const catalog = await clientFixture({ matrix: true }).catalog();
   await act(async () => resolve(catalog));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Create Agent" })).toBeEnabled());
-  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(agent.name);
-  expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue(agent.instructions);
-  expect(screen.getByRole("textbox", { name: "Expected output" })).toHaveValue("A verified report");
-  expect(screen.getByRole("checkbox", { name: "Personal Daily Brief" })).toBeChecked();
-  expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(model);
+  await waitFor(() => expect(editor.getByRole("button", { name: "Create Agent" })).toBeEnabled());
+  expect(editor.getByRole("textbox", { name: "Name" })).toHaveValue(agent.name);
+  expect(editor.getByRole("textbox", { name: "Instructions" })).toHaveValue(agent.instructions);
+  expect(editor.getByRole("textbox", { name: "Expected output" })).toHaveValue("A verified report");
+  expect(editor.getByRole("checkbox", { name: "Personal Daily Brief" })).toBeChecked();
+  expect(editor.getByRole("combobox", { name: "Model" })).toHaveValue(model);
   expect(x.createCustom).not.toHaveBeenCalled();
 });
 
