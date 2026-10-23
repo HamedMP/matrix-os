@@ -84,12 +84,3 @@ export function getStartedConnectOrder(goals: readonly GetStartedGoalId[]): stri
   return [...new Set(services)];
 }
 
-/** The marketplace catalog with the integrations that fit the goals first; the rest keep catalog order. */
-export function orderConnectCatalog<T extends { id: string }>(catalog: readonly T[], goals: readonly GetStartedGoalId[]): T[] {
-  const order = getStartedConnectOrder(goals);
-  const rank = new Map(order.map((service, index) => [service, index]));
-  return catalog
-    .map((service, index) => ({ service, rank: rank.get(service.id) ?? order.length + index }))
-    .sort((left, right) => left.rank - right.rank)
-    .map(({ service }) => service);
-}

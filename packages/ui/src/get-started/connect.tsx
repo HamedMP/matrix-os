@@ -1,5 +1,5 @@
 import {
-  orderConnectCatalog,
+  getStartedConnectOrder,
   type AvailableIntegration,
   type ConnectedIntegration,
   type GetStartedGoalId,
@@ -20,6 +20,8 @@ export interface GetStartedConnect {
   logoUrls: ReadonlyMap<string, string>;
   /** The computer's integration catalog, as Settings > Integrations lists it. */
   catalog: readonly AvailableIntegration[];
+  /** The surface has read its connections at least once; until then they are unknown, not empty. */
+  connectionsLoaded: boolean;
   /** This computer has no app connection service. */
   unavailable: boolean;
   /** Opens the provider's own sign-in; the wizard never sees tokens or URLs. */
@@ -49,10 +51,11 @@ export function useGetStartedConnectFailures() {
 }
 
 /** Builds the wizard's connect value from a host's integration lists and its widget connect hook. */
-export function useGetStartedConnect({ failures, available, connections, connectingService, appsUnavailable, connectApp }: {
+export function useGetStartedConnect({ failures, available, connections, connectionsLoaded, connectingService, appsUnavailable, connectApp }: {
   failures: ReturnType<typeof useGetStartedConnectFailures>;
   available: readonly AvailableIntegration[];
   connections: readonly ConnectedIntegration[];
+  connectionsLoaded: boolean;
   connectingService: string | null;
   appsUnavailable: boolean;
   connectApp(service: string): void;
@@ -72,8 +75,8 @@ export function useGetStartedConnect({ failures, available, connections, connect
     connectApp(service);
   }, [clear, connectApp]);
   return useMemo(() => ({
-    availableServices, connectedServices, connectingService, failedServices, logoUrls, catalog: available, unavailable: appsUnavailable, connect,
-  }), [availableServices, connectedServices, connectingService, failedServices, logoUrls, available, appsUnavailable, connect]);
+    availableServices, connectedServices, connectingService, failedServices, logoUrls, catalog: available, connectionsLoaded, unavailable: appsUnavailable, connect,
+  }), [availableServices, connectedServices, connectingService, failedServices, logoUrls, available, connectionsLoaded, appsUnavailable, connect]);
 }
 
 /** Connect, waiting, connected and retry states for one app, used by the suggested bots. */
@@ -112,14 +115,24 @@ export function ServiceConnectAction({ service, label, connect, text = "Connect"
  * fit the owner's goals first. Connect opens the app's own sign-in through the surface's host.
  */
 export function GetStartedConnectTools({ goals, connect }: { goals: readonly GetStartedGoalId[]; connect: GetStartedConnect | null }) {
-  const services = useMemo(() => (connect ? orderConnectCatalog(connect.catalog, goals) : []), [connect, goals]);
+  const services = connect?.catalog ?? [];
   const connectedIds = useMemo(() => [...(connect?.connectedServices ?? [])], [connect]);
+  const failedIds = useMemo(() => [...(connect?.failedServices ?? [])], [connect]);
+  // The integrations that fit the goals lead; the marketplace's category sections follow as in Settings.
+  const leadingSection = useMemo(() => ({ title: "Suggested for your goals", ids: getStartedConnectOrder(goals) }), [goals]);
   if (!connect || connect.unavailable || services.length === 0) {
     return <p className="mxo-muted">You can connect apps later in Settings.</p>;
   }
   return (
     <section className="mxo-gs__marketplace" aria-label="Integrations">
-      <IntegrationMarketplace services={services} connectedIds={connectedIds} connectingId={connect.connectingService} onConnect={connect.connect} />
+      <IntegrationMarketplace
+        services={services}
+        connectedIds={connectedIds}
+        connectingId={connect.connectingService}
+        failedIds={failedIds}
+        leadingSection={leadingSection}
+        onConnect={connect.connect}
+      />
     </section>
   );
 }

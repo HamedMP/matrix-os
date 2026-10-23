@@ -42,12 +42,14 @@ function useReadyApps(gallery: GetStartedGallery | null, connect: GetStartedConn
   );
 }
 
-/** Reports live connections, so the connected integrations become the owner's tools. */
+/** Reports live connections once read, so the connected integrations become the owner's tools. */
 function useReportConnections(connect: GetStartedConnect | null, dispatch: (event: GetStartedWizardEvent) => void): void {
-  const services = connect ? [...connect.connectedServices].sort().join(",") : "";
+  const loaded = connect?.connectionsLoaded === true;
+  const services = loaded ? [...connect.connectedServices].sort().join(",") : "";
   useEffect(() => {
-    dispatch({ type: "connected", services: services ? services.split(",") : [] });
-  }, [services, dispatch]);
+    // Unread connections are unknown, not empty: the saved tools stand until they are read.
+    if (loaded) dispatch({ type: "connected", services: services ? services.split(",") : [] });
+  }, [loaded, services, dispatch]);
 }
 
 /** The services the ready apps use, in the order they first appear. */

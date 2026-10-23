@@ -78,6 +78,15 @@ describe("get started wizard", () => {
     expect(getStartedAnswersFromWizard(run(state, { type: "toggle-goal", goal: "code" })).tools).toEqual([]);
   });
 
+  it("keeps saved tools until the surface has actually read its connections", () => {
+    // Resumed at the summary: tools saved earlier, connections not read yet.
+    const resumed = initialGetStartedWizard({ step: 6, goals: ["code"], tools: ["codex", "github", "linear"] });
+    expect(getStartedAnswersFromWizard(resumed).tools).toEqual(["codex", "github", "linear"]);
+    // Once read, the real connections replace the saved ones.
+    expect(getStartedAnswersFromWizard(run(resumed, { type: "connected", services: ["github"] })).tools).toEqual(["codex", "github"]);
+    expect(getStartedAnswersFromWizard(run(resumed, { type: "connected", services: [] })).tools).toEqual(["codex"]);
+  });
+
   it("records connected integrations as tools, after the coding agents picked", () => {
     let state = run(initialGetStartedWizard(), { type: "toggle-goal", goal: "code" }, { type: "toggle-tool", tool: "codex" });
     state = run(state, { type: "connected", services: ["linear", "github", "twitter"] });

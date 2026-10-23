@@ -4,7 +4,6 @@ import {
   getStartedConnectOrder,
   getStartedToolConnect,
   getStartedToolForService,
-  orderConnectCatalog,
 } from "../../packages/contracts/src/index.js";
 
 describe("get started connect step", () => {
@@ -34,8 +33,4 @@ describe("get started connect step", () => {
     expect(new Set(order).size).toBe(order.length);
   });
 
-  it("orders a catalog by that list and keeps everything else after, in catalog order", () => {
-    const catalog = ["twitter", "slack", "github", "notion"].map((id) => ({ id }));
-    expect(orderConnectCatalog(catalog, ["code"]).map((service) => service.id)).toEqual(["github", "slack", "twitter", "notion"]);
-  });
 });

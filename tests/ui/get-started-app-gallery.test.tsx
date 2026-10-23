@@ -31,7 +31,7 @@ function connected(services: string[]) {
   return function Connector({ children }: { children: (connect: GetStartedConnect) => React.ReactNode }) {
     return <>{children({
       availableServices: new Set(services), connectedServices: new Set(services), failedServices: new Set(), connectingService: null,
-      logoUrls: new Map(), catalog: [], unavailable: false, connect: vi.fn(),
+      logoUrls: new Map(), catalog: [], connectionsLoaded: true, unavailable: false, connect: vi.fn(),
     })}</>;
   };
 }

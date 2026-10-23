@@ -50,6 +50,7 @@ function makeConnector(initial: Partial<GetStartedConnect>) {
       connectingService: null,
       logoUrls: new Map([["github", "https://example.test/github.png"]]),
       catalog: CATALOG,
+      connectionsLoaded: true,
       unavailable: false,
       connect,
       ...state,
@@ -88,8 +89,11 @@ describe("Connect the tools you use", () => {
     expect(await screen.findByRole("heading", { name: "Connect the tools you use" })).toBeInTheDocument();
     const marketplace = screen.getByTestId("integrations-grid");
     expect(within(marketplace).getByRole("searchbox", { name: "Search integrations" })).toBeInTheDocument();
-    const cards = within(marketplace).getAllByTestId(/^integration-card-/).map((card) => card.dataset.testid);
-    expect(cards.indexOf("integration-card-github")).toBeLessThan(cards.indexOf("integration-card-twitter"));
+    // The tools that fit the goals lead, ahead of the category sections.
+    const suggested = within(marketplace).getByRole("region", { name: "Suggested for your goals" });
+    expect(within(suggested).getAllByTestId(/^integration-card-/).map((card) => card.dataset.testid))
+      .toEqual(["integration-card-github", "integration-card-linear", "integration-card-slack"]);
+    expect(within(marketplace).getAllByRole("region")[0]).toBe(suggested);
     expect(screen.getByTestId("integration-card-github").querySelector("img")).toHaveAttribute("src", "https://example.test/github.png");
     // Coding agents are not integrations, so they stay as choices above the list.
     expect(screen.getByText("Your coding agent")).toBeInTheDocument();
@@ -106,6 +110,22 @@ describe("Connect the tools you use", () => {
     update({ connectedServices: new Set(["linear"]) });
     expect(within(screen.getByTestId("integration-card-linear")).getByText("✓ Connected")).toBeInTheDocument();
     for (const button of ["Next", "Next", "Next", "Finish"]) fireEvent.click(await screen.findByRole("button", { name: button }));
+    fireEvent.click(await screen.findByRole("button", { name: "Enter your computer" }));
+    await waitFor(() => expect(gatePort.saves.at(-1)).toMatchObject({ type: "complete", answers: { tools: ["linear"] } }));
+  });
+
+  it("explains a sign-in that did not finish and offers to try again", async () => {
+    const { Connector, connect } = makeConnector({ failedServices: new Set(["linear"]) });
+    render(<GetStartedGate port={port({ goals: ["code"], tools: [] })} zIndex={1} connector={Connector} />);
+    expect(await screen.findByText("Sign-in didn't finish")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Try connecting Linear again" }));
+    expect(connect).toHaveBeenCalledWith("linear");
+  });
+
+  it("keeps saved tools when the connections have not loaded", async () => {
+    const { Connector } = makeConnector({ connectionsLoaded: false });
+    const gatePort = port({ step: 6, name: "Sam", goals: ["code"], tools: ["linear"] });
+    render(<GetStartedGate port={gatePort} zIndex={1} connector={Connector} />);
     fireEvent.click(await screen.findByRole("button", { name: "Enter your computer" }));
     await waitFor(() => expect(gatePort.saves.at(-1)).toMatchObject({ type: "complete", answers: { tools: ["linear"] } }));
   });
@@ -151,6 +171,7 @@ describe("useGetStartedConnect", () => {
           { id: "2", service: "slack", accountLabel: "b", accountEmail: null, status: "pending", connectedAt: AT },
         ],
         connectingService: null,
+        connectionsLoaded: true,
         appsUnavailable: false,
         connectApp,
       });
@@ -158,6 +179,7 @@ describe("useGetStartedConnect", () => {
     });
     expect([...result.current.connect.availableServices]).toEqual(["github"]);
     expect(result.current.connect.catalog).toEqual([{ id: "github", name: "GitHub", category: "dev" }]);
+    expect(result.current.connect.connectionsLoaded).toBe(true);
     expect([...result.current.connect.connectedServices]).toEqual(["gmail"]);
     act(() => result.current.failures.onEvent({ type: "connect.failed", service: "github" }));
     expect(result.current.connect.failedServices.has("github")).toBe(true);

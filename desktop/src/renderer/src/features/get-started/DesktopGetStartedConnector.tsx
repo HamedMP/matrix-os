@@ -9,8 +9,9 @@ export function DesktopGetStartedConnector({ children }: { children: (connect: G
   const api = useConnection((state) => state.api);
   const available = useIntegrations((state) => state.available);
   const connections = useIntegrations((state) => state.connections);
+  const connectionsLoaded = useIntegrations((state) => state.status === "ready");
   const failures = useGetStartedConnectFailures();
   const appConnect = useOnboardingAppConnect(api, failures.onEvent);
-  const connect = useGetStartedConnect({ failures, available, connections, ...appConnect });
+  const connect = useGetStartedConnect({ failures, available, connections, connectionsLoaded, ...appConnect });
   return <>{children(connect)}</>;
 }

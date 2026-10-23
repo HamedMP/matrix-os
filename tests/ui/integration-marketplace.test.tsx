@@ -25,6 +25,22 @@ describe("integration marketplace", () => {
     expect(buildIntegrationSections(services, { oauthOnly: true }).flatMap(s => s.services).map(s => s.id)).not.toContain("stripe");
     expect(buildIntegrationSections(services, { connectedOnly: true, connectedIds: ["gmail"] }).flatMap(s => s.services).map(s => s.id)).toEqual(["gmail"]);
   });
+  it("can lead with a section of chosen apps, in that order, without repeating them", () => {
+    const sections = buildIntegrationSections(services, { leading: { title: "Suggested for your goals", ids: ["stripe", "gmail", "missing"] } });
+    expect(sections.map((section) => [section.title, section.services.map((service) => service.id)]))
+      .toEqual([["Suggested for your goals", ["stripe", "gmail"]], ["Productivity", ["asana"]]]);
+    expect(buildIntegrationSections(services, { query: "asana", leading: { title: "Suggested for your goals", ids: ["gmail"] } })
+      .map((section) => section.title)).toEqual(["Productivity"]);
+  });
+  it("shows the leading section in full and explains a sign-in that did not finish", () => {
+    const onConnect = vi.fn();
+    render(<IntegrationMarketplace services={services} connectedIds={[]} failedIds={["gmail"]} onConnect={onConnect}
+      leadingSection={{ title: "Suggested for your goals", ids: ["gmail"] }} />);
+    expect(screen.getByRole("region", { name: "Suggested for your goals" })).toBeTruthy();
+    expect(screen.getByText("Sign-in didn't finish")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try connecting Gmail again" }));
+    expect(onConnect).toHaveBeenCalledWith("gmail");
+  });
   it("connects in one click with no label form and disables all actions while connecting", () => {
     const onConnect = vi.fn();
     const view = render(<IntegrationMarketplace services={services} connectedIds={[]} onConnect={onConnect} />);

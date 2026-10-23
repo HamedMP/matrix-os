@@ -16,7 +16,7 @@ import {
   GetStartedBotSchema,
   type GetStartedBot,
 } from "#get-started-bot";
-import { getStartedToolForService } from "#get-started-connect";
+import { getStartedToolConnect, getStartedToolForService } from "#get-started-connect";
 import { getStartedRecipeBotIdsForGoals, type GetStartedRecipeBotId } from "#get-started-recipe-bots";
 
 // Spec 635, Section 3: the wizard's client state machine. It is shared by
@@ -38,8 +38,11 @@ export interface GetStartedWizardState {
   botChosen: boolean;
   /** Ready-made bots added on the last screen. */
   bots: GetStartedRecipeBotId[];
-  /** Integration services connected right now; reported by the surface, never saved in a draft. */
-  connected: string[];
+  /**
+   * Integration services connected right now, reported by the surface and never saved in a draft;
+   * null until the surface has read them, so a resumed draft keeps its saved tools meanwhile.
+   */
+  connected: string[] | null;
 }
 
 export type GetStartedWizardEvent =
@@ -91,7 +94,7 @@ export function initialGetStartedWizard(draft?: GetStartedDraft): GetStartedWiza
     bot: draft?.bot ?? DEFAULT_GET_STARTED_BOT,
     botChosen: Boolean(draft?.bot),
     bots: [...(draft?.bots ?? [])],
-    connected: [],
+    connected: null,
   };
 }
 
@@ -122,7 +125,10 @@ export function getStartedAnswersFromWizard(state: GetStartedWizardState): GetSt
   const visibleTools = new Set(groups.flatMap((group) => (group.kind === "tools" ? group.tools.map((tool) => tool.id) : [])));
   const name = state.name.replace(/\p{Cc}/gu, "").replaceAll("<!--", "").replaceAll("-->", "").trim();
   // Picked coding agents, then every connected integration the catalog knows, in catalog order.
-  const connectedTools = new Set(state.connected.map(getStartedToolForService));
+  // Until the surface has read its connections, the saved integration tools stand in for them.
+  const connectedTools = new Set(state.connected
+    ? state.connected.map(getStartedToolForService)
+    : state.tools.filter((tool) => getStartedToolConnect(tool).kind === "app"));
   const answers: GetStartedAnswers = {
     goals: [...state.goals],
     tools: [...new Set([

@@ -17,6 +17,7 @@ export function ShellGetStartedConnector({ children }: { children: (connect: Get
     failures,
     available: integrations.available,
     connections: integrations.connections,
+    connectionsLoaded: integrations.connectionsLoaded,
     connectingService: integrations.connectingService,
     appsUnavailable: integrations.appsUnavailable,
     connectApp: integrations.connectApp,
