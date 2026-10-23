@@ -2,7 +2,6 @@ import { stubLegacyChatFetch } from "./legacy-navigation-fetch-fixture";
 // @vitest-environment jsdom
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canonicalChatSafeFailureReason } from "@matrix-os/contracts";
 import { useCanonicalChatState } from "../../shell/src/hooks/useCanonicalChatState.js";
 
 vi.mock("@/hooks/useSocket", () => ({ useSocket: () => ({ connected: true }) }));
@@ -135,7 +134,7 @@ describe("Web Desktop and Web Mobile shared Chat refresh", () => {
     try {
       await tick();
       expect(hook.result.current.messages.map((message) => message.content)).toEqual([
-        "Prompt 1", canonicalChatSafeFailureReason("run_failed"), "Prompt 2",
+        "Prompt 1", "The agent stopped without reporting a reason.", "Prompt 2",
       ]);
       expect(hook.result.current.busy).toBe(false);
       recovered = true;
