@@ -3,6 +3,8 @@ const production = "https://app.matrix-os.com";
 const originalTarget = process.env.EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN;
 const computer = { handle: "pilot-box", runtimeSlot: "primary", label: "Main Computer", availability: "available", kind: "customer", versionLabel: "v1.0.0", gatewayPath: "/vm/pilot-box", capabilities: ["matrixComputerInventoryV1"] };
 let mockCache: Record<string, string> = {};
+const mockApplication = { applicationId: "com.matrixos.mobile.gmailpilot" };
+jest.mock("expo-application", () => ({ __esModule: true, get applicationId() { return mockApplication.applicationId; } }));
 jest.mock("@react-native-async-storage/async-storage", () => ({
   __esModule: true,
   default: { getItem: jest.fn(async (key: string) => mockCache[key] ?? null),
@@ -10,7 +12,7 @@ jest.mock("@react-native-async-storage/async-storage", () => ({
     removeItem: jest.fn(async (key: string) => { delete mockCache[key]; }) },
 }));
 
-beforeEach(() => { jest.resetModules(); process.env.EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN = pilot; mockCache = {}; });
+beforeEach(() => { jest.resetModules(); process.env.EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN = pilot; mockApplication.applicationId = "com.matrixos.mobile.gmailpilot"; mockCache = {}; });
 afterEach(() => {
   jest.restoreAllMocks();
   if (originalTarget === undefined) delete process.env.EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN;
@@ -120,6 +122,7 @@ it("keeps persisted journey readiness and sign-out cleanup separate from product
 
 it("preserves the default production cache keys and ignores pilot snapshots", async () => {
   delete process.env.EXPO_PUBLIC_MATRIX_HOSTED_ORIGIN;
+  mockApplication.applicationId = "com.matrixos.mobile";
   const key = "matrix_os_query_cache_v1:active-computer";
   const snapshot = (data: typeof computer) => JSON.stringify({ userId: "user_fixture", queryKey: ["mobile", "computers", "active", "user_fixture"], updatedAt: Date.now(), data });
   mockCache[key] = snapshot(computer);

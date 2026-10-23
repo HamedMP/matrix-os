@@ -45,6 +45,7 @@ import { NotificationRouter } from "@/components/NotificationRouter";
 import { PushRegistrationSync } from "@/components/PushRegistrationSync";
 import { AppStatusBar } from "@/components/AppStatusBar";
 import { StartupLoading, StartupScreen } from "@/components/StartupScreen";
+import { NativeBuildBoundary } from "@/components/NativeBuildBoundary";
 import { startMobileThemeController } from "@/lib/theme-preference";
 import { createNotificationChannelsAtStartup } from "@/lib/notification-channels";
 import { motion } from "@/lib/theme-v2";
@@ -177,15 +178,17 @@ function RootContent({ fontsLoaded }: { fontsLoaded: boolean }) {
   }
 
   return (
-    <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
-      <QueryClientProvider client={mobileQueryClient}>
-        <AnalyticsProvider>
-          <BiometricGate>
-            <GatewayShell />
-          </BiometricGate>
-        </AnalyticsProvider>
-      </QueryClientProvider>
-    </ClerkProvider>
+    <NativeBuildBoundary>
+      <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
+        <QueryClientProvider client={mobileQueryClient}>
+          <AnalyticsProvider>
+            <BiometricGate>
+              <GatewayShell />
+            </BiometricGate>
+          </AnalyticsProvider>
+        </QueryClientProvider>
+      </ClerkProvider>
+    </NativeBuildBoundary>
   );
 }
 

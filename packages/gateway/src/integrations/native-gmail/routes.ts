@@ -9,6 +9,7 @@ import type { PlatformDb } from '../../platform-db.js';
 import type { IntegrationBroadcast } from '../routes.js';
 import { isNativeGmailAccount } from './request.js';
 import { logNativeGmailFailure } from './failure-log.js';
+import { nativeMobileTargetPolicy, type NativeMobileTarget } from '@matrix-os/contracts';
 
 export interface NativeGmailLifecycle {
   start(input: { userId: string; externalUserId: string; label?: string; redirectUri?: string }): Promise<{ url: string }>;
@@ -26,12 +27,14 @@ const success = '<!doctype html><html lang="en"><meta charset="utf-8"><title>Gma
 
 /** Intercept native lifecycle only. Existing action selection, approvals and bot policy stay upstream. */
 export function createNativeGmailRoutes(options: {
+  nativeMobileTarget?: NativeMobileTarget;
   db: Pick<PlatformDb, 'getUserById' | 'updatePipedreamExternalId' | 'getConnectedService'>;
   oauth: NativeGmailLifecycle;
   isEligible?: (userId: string) => Promise<boolean>;
   resolveUserId(c: Context): Promise<string | null>;
   broadcast?: IntegrationBroadcast;
 }): Hono {
+  const returnUri = nativeMobileTargetPolicy(options.nativeMobileTarget).integrationRedirectUri;
   const app = new Hono().route('/', createNativeGmailConnectionRoutes({ ...options, isEligible: options.isEligible ?? (async () => false) })).route('/', createNativeGmailDisconnectRoutes({ db: options.db, cleanup: options.oauth, resolveUserId: options.resolveUserId, broadcast: options.broadcast }));
   const notify = (event: { type: 'integration:connected'; service: string; accountLabel: string } | { type: 'integration:disconnected'; service: string; id: string }) => {
     try { if (event.type === 'integration:connected') options.broadcast?.(event); else options.broadcast?.(event); }
@@ -54,8 +57,9 @@ export function createNativeGmailRoutes(options: {
         return c.json({ error: 'Gmail connection was not completed' }, 400);
       }
       const result = await options.oauth.complete(parsed.data.state, parsed.data.code!, cookie);
+      if (result.redirectUri !== undefined && result.redirectUri !== returnUri) throw new Error('Connection unavailable');
       notify({ type: 'integration:connected', service: 'gmail', accountLabel: result.accountLabel });
-      if (result.redirectUri === 'matrixos://integrations') return c.redirect(result.redirectUri);
+      if (result.redirectUri === returnUri) return c.redirect(result.redirectUri);
       return c.html(success);
     } catch (error) { logNativeGmailFailure('oauth_callback', error); return c.json({ error: 'Connection unavailable. Start again from Matrix.' }, 502); }
   });

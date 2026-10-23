@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { assertNativeCallbackTarget, NativeCallbackTargetError } from "./native-callback-target";
 import { useSignIn } from "@clerk/clerk-expo";
 import {
   PasswordUnavailableError,
@@ -123,6 +124,7 @@ export function useEmailCodeSignIn({
     inFlightRef.current = true;
     setVerifying(true);
     try {
+      assertNativeCallbackTarget();
       let createdSessionId: string;
       try {
         createdSessionId = await submitEmailCode(attempt, code);
@@ -135,6 +137,7 @@ export function useEmailCodeSignIn({
       // The attempt is spent once it verifies; drop it before activating so a
       // failing setActive cannot leave a completed attempt to be retried.
       attemptRef.current = null;
+      assertNativeCallbackTarget();
       try {
         await setActive({ session: createdSessionId });
       } catch (err: unknown) {
@@ -149,7 +152,7 @@ export function useEmailCodeSignIn({
     } catch (err: unknown) {
       console.warn("[mobile] email code verification failed:", err);
       onError(
-        err instanceof SignInStepError
+        err instanceof SignInStepError || err instanceof NativeCallbackTargetError
           ? err.message
           : describeSignInFailure(err, "Sign-in did not complete. Try again in a moment."),
       );

@@ -28,6 +28,8 @@ jest.mock("expo-apple-authentication", () => ({
 }));
 
 const mockStartSSOFlow = jest.fn();
+const mockApplication = { applicationId: "com.matrixos.mobile" };
+jest.mock("expo-application", () => ({ __esModule: true, get applicationId() { return mockApplication.applicationId; } }));
 const mockSetActive = jest.fn(() => Promise.resolve());
 const mockCreate = jest.fn();
 const mockPrepareFirstFactor = jest.fn(() => Promise.resolve({ status: "needs_first_factor" }));
@@ -77,9 +79,60 @@ function attemptWithEmailCodeFactor() {
 
 describe("SignInScreen email code flow", () => {
   beforeEach(() => {
+    mockApplication.applicationId = "com.matrixos.mobile";
     jest.clearAllMocks();
     mockNormalizeGatewayUrl.mockImplementation((url: string) => url);
     mockCreate.mockImplementation(() => Promise.resolve(attemptWithEmailCodeFactor()));
+  });
+
+  it("refuses SSO from the wrong native binary before calling Clerk", async () => {
+    mockApplication.applicationId = "com.matrixos.mobile.gmailpilot";
+    render(<SignInScreen />);
+    fireEvent.press(screen.getByLabelText("Continue with Google"));
+    await waitFor(() => expect(screen.getByText("Check the mobile OAuth redirect URL and try again.")).toBeTruthy());
+    expect(mockStartSSOFlow).not.toHaveBeenCalled();
+  });
+
+  it.each(["password", "email-code"])("refuses %s from the wrong native binary before calling Clerk", async method => {
+    mockApplication.applicationId = "com.matrixos.mobile.gmailpilot";
+    render(<SignInScreen />);
+    fireEvent.changeText(screen.getByLabelText("Email address"), "person@example.invalid");
+    if (method === "password") {
+      fireEvent.changeText(screen.getByLabelText("Password"), "test-password");
+      fireEvent.press(screen.getByText("Sign in"));
+    } else fireEvent.press(screen.getByLabelText("Email me a code instead"));
+    expect(await screen.findByText("Mobile connection unavailable")).toBeTruthy();
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockSetActive).not.toHaveBeenCalled();
+  });
+
+  it("refuses a saved email-code attempt under the wrong native target", async () => {
+    render(<SignInScreen />);
+    fireEvent.changeText(screen.getByLabelText("Email address"), "person@example.invalid");
+    fireEvent.press(screen.getByLabelText("Email me a code instead"));
+    await screen.findByLabelText("Verification code");
+    mockApplication.applicationId = "com.matrixos.mobile.gmailpilot";
+    fireEvent.changeText(screen.getByLabelText("Verification code"), "123456");
+    fireEvent.press(screen.getByText("Verify and sign in"));
+    expect(await screen.findByText("Mobile connection unavailable")).toBeTruthy();
+    expect(mockAttemptFirstFactor).not.toHaveBeenCalled();
+    expect(mockSetActive).not.toHaveBeenCalled();
+  });
+
+  it("rechecks the native target after email-code verification before activation", async () => {
+    let release!: (value: unknown) => void;
+    mockAttemptFirstFactor.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    render(<SignInScreen />);
+    fireEvent.changeText(screen.getByLabelText("Email address"), "person@example.invalid");
+    fireEvent.press(screen.getByLabelText("Email me a code instead"));
+    await screen.findByLabelText("Verification code");
+    fireEvent.changeText(screen.getByLabelText("Verification code"), "123456");
+    fireEvent.press(screen.getByText("Verify and sign in"));
+    await waitFor(() => expect(mockAttemptFirstFactor).toHaveBeenCalledTimes(1));
+    mockApplication.applicationId = "com.matrixos.mobile.gmailpilot";
+    release({ status: "complete", createdSessionId: "sess_1" });
+    expect(await screen.findByText("Mobile connection unavailable")).toBeTruthy();
+    expect(mockSetActive).not.toHaveBeenCalled();
   });
 
   it("signs in with a password in one call, without emailing a code", async () => {

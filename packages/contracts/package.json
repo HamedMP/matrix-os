@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./native-mobile-target": "./src/native-mobile-target.ts",
     ".": "./src/index.ts",
     "./notifications": "./src/notifications.ts",
     "./chat-subagent": "./src/chat-subagent.ts",
@@ -41,6 +42,7 @@
     "#notifications": "./src/notifications.ts",
     "#messaging-origin": "./src/messaging-origin.ts",
     "#inference-response-limits": "./src/inference-response-limits.ts",
+    "#native-mobile-target": "./src/native-mobile-target.ts",
     "#pilot-cohort": "./src/pilot-cohort.ts",
     "#google-qualified-authorization": "./src/google-qualified-authorization.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",

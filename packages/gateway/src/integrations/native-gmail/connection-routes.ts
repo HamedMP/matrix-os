@@ -5,17 +5,20 @@ import { GmailConnectionMethodSchema, GmailConnectionOptionsSchema } from '@matr
 import type { PlatformDb } from '../../platform-db.js';
 import type { NativeGmailLifecycle } from './routes.js';
 import { logNativeGmailFailure } from './failure-log.js';
-const Connect = z.object({ service: z.string().min(1).max(100), label: z.string().trim().min(1).max(100).optional(),
-  redirectUri: z.literal('matrixos://integrations').optional(), connectionMethod: GmailConnectionMethodSchema.optional() })
+import { nativeMobileTargetPolicy, type NativeMobileTarget } from '@matrix-os/contracts';
+const connectSchema = (target?: NativeMobileTarget) => z.object({ service: z.string().min(1).max(100), label: z.string().trim().min(1).max(100).optional(),
+  redirectUri: z.literal(nativeMobileTargetPolicy(target).integrationRedirectUri).optional(), connectionMethod: GmailConnectionMethodSchema.optional() })
   .refine(value => value.connectionMethod === undefined || value.service === 'gmail');
 
 /** Select consent before the legacy handler; explicit Matrix can never fall through. */
 export function createNativeGmailConnectionRoutes(options: {
+  nativeMobileTarget?: NativeMobileTarget;
   db: Pick<PlatformDb, 'getUserById' | 'updatePipedreamExternalId'>;
   oauth?: NativeGmailLifecycle;
   isEligible(userId: string): Promise<boolean>;
   resolveUserId(c: Context): Promise<string | null>;
 }): Hono {
+  const Connect = connectSchema(options.nativeMobileTarget);
   const app = new Hono();
   app.get('/gmail/connection-options', async c => {
     const userId = await options.resolveUserId(c);

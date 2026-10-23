@@ -59,6 +59,25 @@ describe("platform integration resource startup", () => {
     PIPEDREAM_PROJECT_ID: "project",
   };
 
+  it("fails closed on an invalid native target before creating resources", async () => {
+    const createDb = vi.fn();
+    await expect(initializePlatformIntegrations({ env: { ...configuredEnv, MATRIX_NATIVE_MOBILE_TARGET: 'arbitrary://return' }, broadcast: () => undefined, createDb })).rejects.toThrow('Native mobile target unavailable');
+    expect(createDb).not.toHaveBeenCalled();
+  });
+
+  it("propagates the fixed pilot return into actual local connect routes", async () => {
+    const createConnectToken = vi.fn(async () => ({ connectLinkUrl: 'https://pipedream.com/connect', token: 'fixture', expiresAt: '2099-01-01' }));
+    const db = { migrate: vi.fn(async () => {}), getUserByClerkId: vi.fn(async () => ({ id: 'owner', pipedream_external_id: 'external' })), getUserById: vi.fn(async () => ({ id: 'owner', pipedream_external_id: 'external' })) } as unknown as PlatformDb;
+    const services = await initializePlatformIntegrations({ env: { ...configuredEnv, NODE_ENV: 'production', MATRIX_NATIVE_MOBILE_TARGET: 'gmail-pilot' }, broadcast: () => undefined,
+      createDb: () => db, createClient: async () => ({ createConnectToken, getAppInfo: vi.fn(async () => null), getOAuthUrl: (url: string) => url, discoverActions: vi.fn(async () => []) } as any) });
+    const app = new Hono(); app.use('*', authMiddleware('machine', { resolveMatrixMcpCapability: token => token === 'clerk-token' ? 'user_owner' : null })); app.route('/', services.routes!);
+    const call = (redirectUri: string) => app.request('/connect', { method: 'POST', headers: { authorization: 'Bearer clerk-token', 'content-type': 'application/json' }, body: JSON.stringify({ service: 'github', redirectUri }) });
+    expect((await call('matrixos://integrations')).status).toBe(400);
+    expect((await call('matrixos-gmail-pilot://integrations')).status).toBe(200);
+    expect(createConnectToken).toHaveBeenCalledOnce();
+    expect(createConnectToken).toHaveBeenCalledWith('external', { successRedirectUri: 'matrixos-gmail-pilot://integrations', errorRedirectUri: 'matrixos-gmail-pilot://integrations' });
+  });
+
   it("does not open a database when integration configuration is incomplete", async () => {
     const createDb = vi.fn();
     const result = await initializePlatformIntegrations({
