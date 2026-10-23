@@ -71,9 +71,17 @@ export async function withPinnedSystemDir<T>(homePath: string, use: (dir: Pinned
         try {
           const opened = await file.stat();
           if (!opened.isFile() || !sameFile(before, opened) || opened.size > maxBytes) throw new UnsafeOwnerSystemDirError();
-          const text = await file.readFile("utf-8");
+          // A fixed-size read: a file that grows past the cap after the checks is refused, not buffered.
+          const buffer = Buffer.alloc(maxBytes + 1);
+          let bytes = 0;
+          while (bytes < buffer.length) {
+            const { bytesRead } = await file.read(buffer, bytes, buffer.length - bytes, bytes);
+            if (bytesRead === 0) break;
+            bytes += bytesRead;
+          }
+          if (bytes > maxBytes) throw new UnsafeOwnerSystemDirError();
           await assertUnchanged();
-          return text;
+          return buffer.subarray(0, bytes).toString("utf-8");
         } finally { await file.close(); }
       },
       async writeAtomic(name, text, mode) {

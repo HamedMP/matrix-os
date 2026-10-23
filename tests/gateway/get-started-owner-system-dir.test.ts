@@ -32,6 +32,13 @@ describe("withPinnedSystemDir", () => {
     expect(await readFile(join(homePath, "system", "a.json"), "utf-8")).toBe('{"b":1}\n');
   });
 
+  it("reads a file right at the size cap and refuses one byte more", async () => {
+    await writeFile(join(homePath, "system", "edge.json"), "x".repeat(1024));
+    expect(await withPinnedSystemDir(homePath, (dir) => dir.readFile("edge.json", 1024))).toBe("x".repeat(1024));
+    await writeFile(join(homePath, "system", "edge.json"), "x".repeat(1025));
+    await expect(withPinnedSystemDir(homePath, (dir) => dir.readFile("edge.json", 1024))).rejects.toBeInstanceOf(UnsafeOwnerSystemDirError);
+  });
+
   it("returns null when the home has no system directory", async () => {
     await rm(join(homePath, "system"), { recursive: true });
     expect(await withPinnedSystemDir(homePath, async () => "used")).toBeNull();
