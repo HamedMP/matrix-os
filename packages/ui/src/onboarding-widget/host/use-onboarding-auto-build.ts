@@ -1,10 +1,17 @@
-import { onboardingRunInFlight, type OnboardingWidgetEvent, type OnboardingWidgetState } from "@matrix-os/contracts";
+import type { OnboardingWidgetEvent, OnboardingWidgetState } from "@matrix-os/contracts";
 import { useEffect, useRef } from "react";
+
+type AutoBuild =
+  | { phase: "waiting" }
+  /** `requestId` is the build's run, known once the reducer has started it. */
+  | { phase: "started"; requestId: number | null }
+  | { phase: "done" };
 
 /**
  * Spec 635 (team feedback): the first app the owner picked in Get started starts building as
  * soon as they arrive and an AI can run it, then its chat opens so they can watch. Picking it
- * was the go-ahead. Without a ready AI it stays a one-click task in the widget. Once per arrival.
+ * was the go-ahead. It starts only from the idle task list: if the owner picks something else
+ * while it waits for an AI, it stays the widget's one-click task. Once per arrival.
  */
 export function useOnboardingAutoBuild({ suggestion, finishedNow, aiReady, state, dispatch, openChat }: {
   suggestion: { title: string; prompt: string } | null;
@@ -15,18 +22,38 @@ export function useOnboardingAutoBuild({ suggestion, finishedNow, aiReady, state
   dispatch: (event: OnboardingWidgetEvent) => void;
   openChat: () => void;
 }): void {
-  const phase = useRef<"waiting" | "started" | "opened">("waiting");
-  const busy = onboardingRunInFlight(state);
+  const auto = useRef<AutoBuild>({ phase: "waiting" });
+  const idle = state.screen.kind === "tasks";
   useEffect(() => {
-    if (phase.current !== "waiting" || !finishedNow || !suggestion || !aiReady || busy) return;
-    phase.current = "started";
+    if (auto.current.phase !== "waiting" || !finishedNow || !suggestion) return;
+    if (!idle) {
+      auto.current = { phase: "done" };
+      return;
+    }
+    if (!aiReady) return;
+    auto.current = { phase: "started", requestId: null };
     dispatch({ type: "build.requested", title: suggestion.title, prompt: suggestion.prompt });
-  }, [aiReady, busy, dispatch, finishedNow, suggestion]);
+  }, [aiReady, dispatch, finishedNow, idle, suggestion]);
 
-  const admitted = state.screen.kind === "run" && state.screen.phase === "running" && state.chatId !== null;
+  const runRequest = state.screen.kind === "run" ? state.screen.requestId : null;
+  const runPhase = state.screen.kind === "run" ? state.screen.phase : null;
+  const hasChat = state.chatId !== null;
   useEffect(() => {
-    if (phase.current !== "started" || !admitted) return;
-    phase.current = "opened";
-    openChat();
-  }, [admitted, openChat]);
+    const current = auto.current;
+    if (current.phase !== "started") return;
+    if (current.requestId === null) {
+      if (runRequest === null) return;
+      auto.current = { phase: "started", requestId: runRequest };
+    } else if (runRequest !== current.requestId) {
+      // The build was left or replaced; a later task never opens Chat on its behalf.
+      auto.current = { phase: "done" };
+      return;
+    }
+    if (runPhase === "failed") {
+      auto.current = { phase: "done" };
+    } else if (runPhase === "running" && hasChat) {
+      auto.current = { phase: "done" };
+      openChat();
+    }
+  }, [hasChat, openChat, runPhase, runRequest]);
 }

@@ -43,4 +43,29 @@ describe("onboarding auto build", () => {
     expect(none.result.current.state.screen.kind).toBe("tasks");
     expect(openChat).not.toHaveBeenCalled();
   });
+
+  it("never replaces a task the owner started while the build waited for an AI", () => {
+    const openChat = vi.fn();
+    const { result, rerender } = renderHook((props: { aiReady: boolean }) => useHarness({ finishedNow: true, aiReady: props.aiReady, openChat }), { initialProps: { aiReady: false } });
+    act(() => result.current.dispatch({ type: "task.selected", taskId: "research", connectedServices: [] }));
+    const picked = result.current.state.screen;
+    expect(picked.kind).not.toBe("tasks");
+    rerender({ aiReady: true });
+    expect(result.current.state.screen).toEqual(picked);
+    // Back on the task list later, the build stays a one-click task.
+    act(() => result.current.dispatch({ type: "tasks.requested" }));
+    rerender({ aiReady: true });
+    expect(result.current.state.screen.kind).toBe("tasks");
+  });
+
+  it("opens only the automatic build's chat, never a later task's", () => {
+    const openChat = vi.fn();
+    const { result } = renderHook(() => useHarness({ finishedNow: true, aiReady: true, openChat }));
+    expect(result.current.state.screen).toMatchObject({ kind: "run", phase: "starting" });
+    act(() => result.current.dispatch({ type: "run.failedToStart" }));
+    act(() => result.current.dispatch({ type: "tasks.requested" }));
+    act(() => result.current.dispatch({ type: "build.requested", title: "Recipe box", prompt: "Build a recipe box." }));
+    admit(result);
+    expect(openChat).not.toHaveBeenCalled();
+  });
 });
