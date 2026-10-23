@@ -251,9 +251,11 @@ describe("GettingStartedPopover", () => {
       seedNewChatDraft("List my GitHub repos.");
       expect(draft()).toBe("List my GitHub repos.");
       const identity = desktopComposerDraftIdentity(useConnection.getState() as never);
-      useRetainedComposerDrafts.getState().update(identity, (current) => ({ ...current, "new:global": { ...current["new:global"]!, text: "my unsent idea" } }));
+      useRetainedComposerDrafts.getState().update(identity, (current) => ({ ...current, "new:global": { ...current["new:global"]!, text: "my unsent idea", projectId: "proj_work" } }));
       seedNewChatDraft("Find emails that need a reply.");
       expect(draft()).toBe("my unsent idea\n\nFind emails that need a reply.");
+      // The project the owner picked for this draft stays picked.
+      expect(useRetainedComposerDrafts.getState().drafts["new:global"]?.projectId).toBe("proj_work");
     });
   });
 

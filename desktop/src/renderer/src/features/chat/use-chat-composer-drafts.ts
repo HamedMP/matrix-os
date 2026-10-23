@@ -57,7 +57,8 @@ export function seedNewChatDraft(text: string): void {
   const next = untouched || !existing ? text : `${existing.text.trimEnd()}\n\n${text}`;
   lastSeededDraft = next;
   retained.update(identity, (current, revision) => rememberDraft(current, scope, {
-    text: next, referenceTokens: current[scope]?.referenceTokens ?? [], projectId: null, requestIdentity: revision,
+    // The owner's references and chosen project stay with their draft.
+    text: next, referenceTokens: current[scope]?.referenceTokens ?? [], projectId: current[scope]?.projectId ?? null, requestIdentity: revision,
   }, null, revision));
 }
 
