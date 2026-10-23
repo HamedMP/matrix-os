@@ -20,7 +20,7 @@ export function SlackInstallPanel({onInstall,platformOrigin,allowDevelopmentOrig
         <li>Return to Slack and say hi. Your Matrix computer and AI access must be ready.</li>
       </ol>
       <p style={{fontSize:13,lineHeight:1.6,marginTop:16,color:'var(--matrix-muted-fg, var(--text-secondary, var(--muted-foreground)))'}}>An existing installation? Start at step 2. Company channels are connected separately by your administrator.</p>
-      <a href="https://matrix-os.com/docs/slack-company-brain" target="_blank" rel="noopener noreferrer" style={{display:'inline-block',marginTop:16,color:'inherit',textUnderlineOffset:4}}>Slack connection guide →</a>
+      <a className="matrix-slack-guide-link" href="https://matrix-os.com/docs/slack-company-brain" target="_blank" rel="noopener noreferrer" style={{display:'inline-block',marginTop:16}}>Slack connection guide →</a>
     </div>
   </section>;
 }
