@@ -70,13 +70,10 @@ describe("curated gallery presentation", () => {
 });
 
 describe("gallery packaged artwork", () => {
-  it("tries the installed PNG first, then historical SVG and glyph fallbacks", () => {
+  it("tries the installed PNG first, then the current vector and glyph fallbacks", () => {
     const { container, rerender } = render(<AppIdentity app={apps[0]} />);
     let image = container.querySelector("img")!;
     expect(image.getAttribute("src")).toBe(galleryArtwork(`icons/${apps[0].id}.png`));
-    fireEvent.error(image);
-    image = container.querySelector("img")!;
-    expect(image.getAttribute("src")).toBe(galleryArtwork(`clay/${apps[0].id}.svg`));
     fireEvent.error(image);
     image = container.querySelector("img")!;
     expect(image.getAttribute("src")).toBe(galleryArtwork(`icons/${apps[0].icon}.svg`));
@@ -88,8 +85,6 @@ describe("gallery packaged artwork", () => {
     expect(image.getAttribute("src")).toBe(galleryArtwork(`icons/${apps[1].id}.png`));
     fireEvent.error(image);
     image = container.querySelector("img")!;
-    expect(image.getAttribute("src")).toBe(galleryArtwork(`clay/${apps[1].id}.svg`));
-    fireEvent.error(image);
     expect(container.querySelector("img")!.getAttribute("src")).toBe(galleryArtwork(`icons/${apps[1].icon}.svg`));
   });
 });

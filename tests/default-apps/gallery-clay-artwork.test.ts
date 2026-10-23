@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { galleryArtwork, galleryIdentitySources } from "../../home/apps/app-gallery/src/artwork";
@@ -6,12 +6,8 @@ import { galleryArtwork, galleryIdentitySources } from "../../home/apps/app-gall
 const supplied = ["atlas", "folio", "subscriptions", "agenda", "focus", "workout-coach", "expense-tracker", "todo", "game-center"];
 
 describe("Gallery identity artwork", () => {
-  it.each(supplied)("packages the original %s SVG with its master dimensions", (slug) => {
-    const text = readFileSync(resolve("home/apps/app-gallery/src/assets/clay", `${slug}.svg`), "utf8");
-    const root = text.match(/<svg\b[^>]*>/)?.[0];
-    expect(root).toMatch(/width="128"/);
-    expect(root).toMatch(/height="128"/);
-    expect(text).not.toContain("www.figma.com/api/mcp/asset/");
+  it.each(supplied)("retires the old %s clay fallback", (slug) => {
+    expect(existsSync(resolve("home/apps/app-gallery/src/assets/clay", `${slug}.svg`))).toBe(false);
   });
 
   it("keeps the required design skill aligned with the generator's distinct icon default", () => {
@@ -22,9 +18,9 @@ describe("Gallery identity artwork", () => {
     expect(skill).not.toContain("light premium iOS/macOS skeuomorphic artwork");
   });
 
-  it("prefers the supplied semantic icon and retains both existing fallback formats", () => {
+  it("prefers the supplied semantic icon and uses the current vector fallback", () => {
     expect(galleryIdentitySources({ id: "folio", icon: "folio" })).toEqual([
-      galleryArtwork("icons/folio.png"), galleryArtwork("clay/folio.svg"), galleryArtwork("icons/folio.svg"),
+      galleryArtwork("icons/folio.png"), galleryArtwork("icons/folio.svg"),
     ]);
   });
 
