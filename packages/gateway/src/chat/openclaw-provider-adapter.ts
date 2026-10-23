@@ -385,8 +385,9 @@ export function createOpenClawChatProviderAdapter(
         onDispatched() { active.dispatched = true; active.browserMarkDispatched?.(); },
         onAccepted: accept, ...(subscription ? {} : { onEvent }),
       })
-      : requestOpenClawTurn({ rpc: options.rpc, params, signal: active.cancellation!.signal,
-        requestTimeoutMs: timeoutMs, accept, ...(subscription ? {} : { onEvent }) });
+      : requestOpenClawTurn({ rpc: options.rpc, params, signal: agentController.signal,
+        requestTimeoutMs: timeoutMs, accept, onDispatched() { active.dispatched = true; },
+        ...(subscription ? {} : { onEvent }) });
     void call.then(
       (value) => { terminalValue = value; settled = true; wake.resolve(); },
       (error: unknown) => { terminalError = error; settled = true; wake.resolve(); },

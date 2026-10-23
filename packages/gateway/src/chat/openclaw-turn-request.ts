@@ -7,6 +7,7 @@ export async function requestOpenClawTurn(options: {
   signal: AbortSignal;
   requestTimeoutMs: number;
   accept(value: unknown): string | undefined;
+  onDispatched?(): void;
   onEvent?: (event: OpenClawRpcEvent) => void;
 }): Promise<unknown> {
   let acceptedRunId: string | undefined;
@@ -22,7 +23,7 @@ export async function requestOpenClawTurn(options: {
       return await Promise.race([
         options.rpc.call(method, params, signal, {
           timeoutMs,
-          ...(method === "agent" ? { onAccepted: accept } : {}),
+          ...(method === "agent" ? { onAccepted: accept, onDispatched: options.onDispatched } : {}),
           ...(options.onEvent ? { onEvent: options.onEvent } : {}),
         }),
         new Promise<never>((_resolve, reject) => {
