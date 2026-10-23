@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { chmod, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -231,6 +231,37 @@ describe("/api/settings/get-started", () => {
     });
   });
 
+  describe("owner system directory", () => {
+    async function linkSystemOutside() {
+      const outside = join(homePath, "..", `${homePath.split("/").pop()}-outside`);
+      await mkdir(outside, { recursive: true });
+      await writeFile(join(outside, "get-started.json"), JSON.stringify({ version: 1, status: "pending" }));
+      await rename(join(homePath, "system"), join(homePath, "system-real"));
+      await symlink(outside, join(homePath, "system"));
+      return outside;
+    }
+
+    it("never reads setup state through a symlinked system directory", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const outside = await linkSystemOutside();
+      const res = await get();
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ error: "Unable to load your setup" });
+      expect(warn).toHaveBeenCalled();
+      await rm(outside, { recursive: true, force: true });
+    });
+
+    it("never writes setup state or the onboarding marker through a symlinked system directory", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const outside = await linkSystemOutside();
+      const res = await put({ type: "skip" });
+      expect(res.status).toBe(500);
+      expect(JSON.parse(await readFile(join(outside, "get-started.json"), "utf-8"))).toEqual({ version: 1, status: "pending" });
+      expect(existsSync(join(outside, "onboarding-complete.json"))).toBe(false);
+      await rm(outside, { recursive: true, force: true });
+    });
+  });
+
   describe("write failures", () => {
     it("returns a generic 500 and keeps the previous state when the write fails", async () => {
       if (process.getuid?.() === 0) return;
@@ -243,7 +274,7 @@ describe("/api/settings/get-started", () => {
       expect(await res.json()).toEqual({ error: "Unable to save your setup" });
       expect((await readState()).status).toBe("in_progress");
       expect(warn.mock.calls.flat().join(" ")).not.toContain("Sam");
-      expect((await readdir(join(homePath, "system"))).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+      expect((await readdir(join(homePath, "system"))).filter((name) => name.includes(".tmp"))).toEqual([]);
     });
   });
 });

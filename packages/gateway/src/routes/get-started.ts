@@ -1,7 +1,5 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { lstat, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import {
   GetStartedStateSchema,
   GetStartedUpdateSchema,
@@ -9,13 +7,14 @@ import {
   type GetStartedState,
   type GetStartedUpdate,
 } from "@matrix-os/contracts";
+import { withPinnedSystemDir, type PinnedSystemDir } from "../get-started/owner-system-dir.js";
 import { OwnerFileMutationBusyError, withOwnerFileMutation } from "../owner-file-mutations.js";
-import { atomicWriteJson } from "../state-ops.js";
 
 // Spec 635, Section 1. The state file is only ever created for new homes
-// (Section 2), so a missing file means "not eligible", never "pending".
-const STATE_FILE = join("system", "get-started.json");
-const ONBOARDING_COMPLETE_FILE = join("system", "onboarding-complete.json");
+// (Section 2), so a missing file means "not eligible", never "pending". Both files
+// live in the owner's `system` directory, read and written only through its pin.
+const STATE_FILE = "get-started.json";
+const ONBOARDING_COMPLETE_FILE = "onboarding-complete.json";
 const PUT_BODY_LIMIT = 8 * 1024;
 const STATE_FILE_MAX_BYTES = 16 * 1024;
 
@@ -40,26 +39,16 @@ type Transition =
   | { kind: "unchanged"; state: GetStartedState }
   | { kind: "conflict" };
 
-function isErrnoCode(err: unknown, code: string): boolean {
-  return err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === code;
-}
-
 function errorName(err: unknown): string {
   return err instanceof Error ? err.name : "UnknownError";
 }
 
-async function readState(path: string): Promise<GetStartedState | null> {
-  try {
-    const stats = await lstat(path);
-    if (!stats.isFile()) throw new GetStartedStateCorruptError("not a regular file");
-    if (stats.size > STATE_FILE_MAX_BYTES) throw new GetStartedStateCorruptError("too large");
-  } catch (err) {
-    if (isErrnoCode(err, "ENOENT")) return null;
-    throw err;
-  }
+async function readState(dir: PinnedSystemDir): Promise<GetStartedState | null> {
+  const text = await dir.readFile(STATE_FILE, STATE_FILE_MAX_BYTES);
+  if (text === null) return null;
   let raw: unknown;
   try {
-    raw = JSON.parse(await readFile(path, "utf-8"));
+    raw = JSON.parse(text);
   } catch (err) {
     if (err instanceof SyntaxError) throw new GetStartedStateCorruptError("invalid JSON");
     throw err;
@@ -100,28 +89,19 @@ function isTerminal(state: GetStartedState): boolean {
 }
 
 /** Marks the legacy first-run flag too, without ever replacing an existing one. */
-async function ensureOnboardingMarker(homePath: string, at: string): Promise<void> {
-  try {
-    await writeFile(
-      join(homePath, ONBOARDING_COMPLETE_FILE),
-      `${JSON.stringify({ completedAt: at, source: "get-started" })}\n`,
-      { flag: "wx" },
-    );
-  } catch (err) {
-    if (!isErrnoCode(err, "EEXIST")) throw err;
-  }
+async function ensureOnboardingMarker(dir: PinnedSystemDir, at: string): Promise<void> {
+  await dir.createExclusive(ONBOARDING_COMPLETE_FILE, `${JSON.stringify({ completedAt: at, source: "get-started" })}\n`);
 }
 
 export function createGetStartedRoutes(opts: GetStartedRoutesOptions) {
   const { homePath, enabled } = opts;
   const now = opts.now ?? (() => new Date());
-  const statePath = join(homePath, STATE_FILE);
   const app = new Hono();
 
   app.get("/", async (c) => {
     if (!enabled) return c.json({ status: "not_eligible" } satisfies GetStartedResponse);
     try {
-      const state = await readState(statePath);
+      const state = await withPinnedSystemDir(homePath, readState);
       return c.json(state ? toResponse(state) : ({ status: "not_eligible" } satisfies GetStartedResponse));
     } catch (err) {
       console.warn("[get-started] Failed to read state:", errorName(err));
@@ -145,14 +125,17 @@ export function createGetStartedRoutes(opts: GetStartedRoutesOptions) {
 
     try {
       const result = await withOwnerFileMutation(homePath, async () => {
-        const current = await readState(statePath);
-        if (!current) return { kind: "not_eligible" } as const;
-        const transition = transitionGetStarted(current, update, now());
-        if (transition.kind === "write") await atomicWriteJson(statePath, transition.state);
-        if (transition.kind !== "conflict" && isTerminal(transition.state)) {
-          await ensureOnboardingMarker(homePath, now().toISOString());
-        }
-        return transition;
+        const saved = await withPinnedSystemDir(homePath, async (dir) => {
+          const current = await readState(dir);
+          if (!current) return null;
+          const transition = transitionGetStarted(current, update, now());
+          if (transition.kind === "write") await dir.writeAtomic(STATE_FILE, `${JSON.stringify(transition.state, null, 2)}\n`, 0o644);
+          if (transition.kind !== "conflict" && isTerminal(transition.state)) {
+            await ensureOnboardingMarker(dir, now().toISOString());
+          }
+          return transition;
+        });
+        return saved ?? ({ kind: "not_eligible" } as const);
       });
       if (result.kind === "not_eligible") return c.json({ error: "Get started is not available" }, 404);
       if (result.kind === "conflict") return c.json({ error: "Your setup is already finished" }, 409);
