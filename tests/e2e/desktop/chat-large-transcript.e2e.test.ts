@@ -247,6 +247,8 @@ suite("large canonical Chat viewport recovery", () => {
   });
 
   it("keeps a maximum-sized Chat visible through terminal collapse and renderer reload", async () => {
+    const output = join(root, "output/chat-large-transcript");
+    await mkdir(output, { recursive: true });
     await page.getByRole("button", { name: "Chat", exact: true }).first().dblclick();
     await page.getByRole("button", { name: "Large transcript recovery", exact: true }).click();
     await page.getByText("Step 500", { exact: true }).waitFor();
@@ -256,19 +258,37 @@ suite("large canonical Chat viewport recovery", () => {
     await worked.waitFor();
     if (await worked.getAttribute("aria-expanded") !== "true") await worked.click();
     await page.getByText("Step 500", { exact: true }).waitFor();
+    await page.screenshot({ path: join(output, "expanded-500.png") });
+    const viewport = page.locator('[data-slot="message-scroller-viewport"]');
+    const maximum = await viewport.evaluate((element) => {
+      element.scrollTop = 0;
+      return element.scrollHeight - element.clientHeight;
+    });
+    expect(maximum).toBeGreaterThan(100);
+    await expect.poll(() => viewport.evaluate((element) => element.scrollTop)).toBe(0);
+    await page.screenshot({ path: join(output, "manual-scroll.png") });
+    await viewport.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await expectValidGeometry();
     await worked.click();
     await expect.poll(() => worked.getAttribute("aria-expanded")).toBe("false");
     await expectValidGeometry();
+    await page.screenshot({ path: join(output, "collapsed.png") });
 
     const requestsBeforeReload = detailRequests;
-    await Promise.all([
-      page.waitForEvent("load"),
-      page.keyboard.press(process.platform === "darwin" ? "Meta+R" : "Control+R"),
-    ]);
+    await app.evaluate(async ({ BrowserWindow, Menu }) => {
+      const win = BrowserWindow.getAllWindows()[0]!;
+      const viewMenu = Menu.getApplicationMenu()?.items.find((item) => item.label === "View");
+      const reload = viewMenu?.submenu?.items.find((item) => item.label === "Reload");
+      if (!reload?.click) throw new Error("Electron Reload menu item is unavailable");
+      const loaded = new Promise<void>((resolve) => win.webContents.once("did-finish-load", () => resolve()));
+      reload.click(reload, win, {} as never);
+      await loaded;
+    });
     await page.getByRole("button", { name: "Chat", exact: true }).first().dblclick();
     await page.getByRole("button", { name: "Large transcript recovery", exact: true }).click();
     await page.getByText(finalText, { exact: true }).waitFor();
     expect(detailRequests).toBeGreaterThan(requestsBeforeReload);
     await expectValidGeometry();
+    await page.screenshot({ path: join(output, "reloaded.png") });
   }, 45_000);
 });
