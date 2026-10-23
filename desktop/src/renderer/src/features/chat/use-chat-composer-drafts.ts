@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState, type SetStateAction } from "react";
 import { mergeTrySuggestion, type TrySuggestionDraft } from "@matrix-os/contracts";
+import { useCloseAgentsOnDraftRequest } from "@matrix-os/ui";
 import { useRetainedComposerDrafts, MAX_COMPOSER_DRAFTS, type ComposerDraft, type ComposerDrafts } from "./retained-composer-drafts";
 import { useConnection } from "../../stores/connection";
 import { desktopProviderIdentityKey } from "../../lib/provider-settings-identity";
@@ -97,6 +98,8 @@ export function useChatComposerDrafts({
   const draftsRef = useRef(drafts);
   useLayoutEffect(() => { draftsRef.current = drafts; }, [drafts]);
   const draft = drafts[scope];
+  // A newly requested draft (Getting started's Try, Create app, New chat) closes Agents so its composer shows.
+  useCloseAgentsOnDraftRequest(draft?.requestIdentity);
 
   const updateScope = useCallback((targetScope: string, patch: Partial<ComposerDraft>) => {
     setDrafts((current, revision) => rememberDraft(current, targetScope, patch, projectId, revision));
