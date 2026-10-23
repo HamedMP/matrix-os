@@ -14,6 +14,16 @@ Web Desktop, Web Canvas, Electron Desktop and applicable mobile controls share m
 selection derivation. Saved unavailable choices stay visible and require a deliberate
 change or retry. Model editing must preserve omitted metadata, bot identity, and memory.
 
+Funded model discovery follows the fresh exact-owner policy inventory, in stable catalog
+order, independently of which models have current health receipts. A partial health
+observation keeps its unhealthy peers visible and disabled. Internal V3 source
+`discoverableModelIds` carries that inventory; existing `eligibleModelIds` and source
+readiness retain their execution meaning. Historical `/api/ai/providers` responses omit
+the internal discovery field for strict V3 clients. The canonical Chat catalog uses
+existing per-model availability fields, and every execution still revalidates its exact
+model, funding and authentication. A remembered funded choice survives cold opens and
+health changes without switching to a currently healthy peer.
+
 ## Runtime and authority
 
 The public `matrix_pi` driver and `matrix_pi_default` instance represent managed Chat;
