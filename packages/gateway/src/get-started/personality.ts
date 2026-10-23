@@ -1,6 +1,3 @@
-import { constants } from "node:fs";
-import { lstat, open } from "node:fs/promises";
-import { join } from "node:path";
 import {
   GET_STARTED_PERSONALITIES,
   renderGetStartedSoulSection,
@@ -10,7 +7,7 @@ import {
 } from "@matrix-os/contracts";
 import { readOwnerSoul } from "../bots/owner-personality.js";
 import { writeOwnerSoulAtomic } from "../bots/owner-personality-write.js";
-import { writeUtf8FileAtomic } from "../shell/atomic-write.js";
+import { withPinnedSystemDir } from "./owner-system-dir.js";
 
 // Spec 635, Section 7. Writes the owner's choices into the one owner SOUL
 // (`system/soul.md`) that the kernel, Matrix Bot and managed chats all read,
@@ -28,37 +25,21 @@ export function setProfileFields(text: string, fields: Record<string, string>): 
   }).join("\n");
 }
 
-/** Missing, or a link the owner placed: either way the profile is left alone. */
-function isSkippable(error: unknown): boolean {
-  return error instanceof Error && "code" in error && (error.code === "ENOENT" || error.code === "ELOOP");
-}
-
-/** Like the owner SOUL reader: refuses a symlinked system directory or file, and never reads through a link. */
+/**
+ * Fills the profile's name lines through the pinned owner `system` directory, like the owner
+ * SOUL writer: the read and the atomic commit both resolve through it, so a replaced or linked
+ * directory can never redirect the write. A missing file, a link the owner placed, or anything
+ * but a modest regular file is left alone.
+ */
 async function updateProfile(homePath: string, file: string, fields: Record<string, string>): Promise<void> {
-  const system = join(homePath, "system");
-  const parent = await lstat(system);
-  if (!parent.isDirectory() || parent.isSymbolicLink()) throw new Error("UnsafeProfileDirectory");
-  const path = join(system, file);
-  let handle;
-  try { handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
-  catch (error: unknown) {
-    if (isSkippable(error)) return;
-    throw error;
-  }
-  let before: string;
-  let mode: number;
-  try {
-    const stats = await handle.stat();
-    // Owner profile files are regular files of modest size; anything else is left alone.
-    if (!stats.isFile() || stats.size > MAX_PROFILE_BYTES) return;
-    mode = stats.mode & 0o777;
-    before = await handle.readFile("utf-8");
-  } finally {
-    await handle.close();
-  }
-  const after = setProfileFields(before, fields);
-  // The atomic rename replaces the path itself; it never writes through a link.
-  if (after !== before) await writeUtf8FileAtomic(path, after, mode);
+  await withPinnedSystemDir(homePath, async (dir) => {
+    const entry = await dir.lstat(file);
+    if (!entry || !entry.isFile() || entry.size > MAX_PROFILE_BYTES) return;
+    const before = await dir.readFile(file, MAX_PROFILE_BYTES);
+    if (before === null) return;
+    const after = setProfileFields(before, fields);
+    if (after !== before) await dir.writeAtomic(file, after, entry.mode & 0o777);
+  });
 }
 
 export async function applyGetStartedPersonality(homePath: string, answers: GetStartedAnswers & { bot: GetStartedBot }): Promise<void> {

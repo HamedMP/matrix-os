@@ -163,6 +163,7 @@ Personal Matrix Bot: at "Enter your computer", create it with `POST /api/chat-ag
 
 - `GET /api/settings/get-started` → `{ status: "not_eligible" }` or `{ status, draft? | answers? }`
 - `PUT /api/settings/get-started` → body `{ type: "draft" | "complete" | "skip", answers? }` (Zod discriminated union, strict)
+- `POST /api/settings/get-started/bots` → retries the saved bot choices of a finished setup → `{ bots: { [recipeId]: "ready" | "failed" } }`
 
 A dedicated endpoint instead of generic file writes: answers are validated against enums and caps, files are written to fixed paths only, SOUL is rendered by the server (P2), and completion is one idempotent call. The generic `/files` route is unchanged.
 
@@ -177,6 +178,8 @@ A dedicated endpoint instead of generic file writes: answers are validated again
 | `PUT skip` | `skipped` | `200`, existing record (idempotent) |
 | `PUT complete` / `skip` | the other terminal status | `409` |
 | any `PUT` | not eligible | `404 { error: "Get started is not available" }` |
+| `POST /bots` | `completed` | `200 { bots }`, each saved bot created or replayed |
+| `POST /bots` | not finished or not eligible | `404`; no request principal `401`; no bot service `503` |
 
 ## Security architecture
 
@@ -184,13 +187,14 @@ A dedicated endpoint instead of generic file writes: answers are validated again
 | -- | -- | -- | -- | -- | -- |
 | `/api/settings/get-started` | `GET` | Gateway global auth (owner runtime bearer or platform JWT) | No | n/a | none (no input) |
 | `/api/settings/get-started` | `PUT` | Gateway global auth (owner runtime bearer or platform JWT) | No | 8 KiB | strict Zod discriminated union |
+| `/api/settings/get-started/bots` | `POST` | Gateway global auth; request principal required (`401` without) | No | 8 KiB | none (body ignored); acts only on the saved answers |
 
 Neither path is on the public, webhook, collaboration, route-scoped bearer or WebSocket query-token allowlists, so scoped run tokens, collaborators and app iframes cannot reach it.
 
 - **Auth:** routes sit under `/api/settings`, behind the gateway's existing owner auth (request principal). No new public paths, no query-token WS.
 - **Input validation:** `bodyLimit` 8 KiB on PUT; strict Zod discriminated union; enums for goals, tools and app ideas; owner name ≤ 40 and bot name ≤ 24 characters, rules ≤ 500, all free text rejecting control characters and SOUL comment markers (`<!--`, `-->`); arrays capped; the largest valid draft stays ≤ 4 KiB (tested).
 - **Who can write:** only the owner. The route sits behind the gateway's global auth; scoped run tokens, Hermes capability tokens, collaborators and app iframes cannot reach it. Only the owner's own text reaches their SOUL.
-- **Profile files:** `identity.md` / `user.md` are read with `O_NOFOLLOW` under a non-symlinked `system/`; a linked profile is left untouched.
+- **Pinned `system/`:** every read and write of `get-started.json`, `onboarding-complete.json`, `identity.md` and `user.md` goes through `withPinnedSystemDir`, which opens `system/` with `O_DIRECTORY | O_NOFOLLOW` like the owner SOUL writer. On Linux reads, staging writes and renames resolve through the descriptor; every host revalidates the directory before trusting a read or committing a write, so a `system/` replaced by a symlink can never redirect them. A linked profile file is left untouched.
 - **Paths:** fixed `system/get-started.json` and `system/onboarding-complete.json` under the home; never derived from input.
 - **Writes:** temp file + `rename` for updates; `{ flag: "wx" }` for `onboarding-complete.json`; all mutations serialised per home with `withOwnerFileMutation`; no sync I/O.
 - **Errors:** clients get generic messages ("Unable to save your setup"); real errors are logged server-side without answer contents. A corrupt or unreadable state file is a 500 with a generic message, not `not_eligible` (misconfiguration is not not-found), and the shell fails closed to today's desktop.
@@ -209,7 +213,7 @@ Neither path is on the public, webhook, collaboration, route-scoped bearer or We
 - Concurrent PUTs: serialised per home; the second terminal transition sees the first and returns idempotent `200` or `409`.
 - Crash mid-write: temp + rename leaves either the old or the new file; stray temp files are dot-prefixed in `system/` and overwritten never (unique names); they are removed on the failure path.
 - Connect sign-in doesn't finish: "Sign-in didn't finish" with Try again / Skip.
-- Bot creation fails (P2): enter the desktop anyway; keep "Create your Matrix Bot" as a widget suggestion.
+- Bot creation fails (P2): enter the desktop anyway. The saved answers are the durable intent: reading the finished setup retries any saved bot (at most every 10 minutes per owner, bounded per-owner memory), `POST /bots` retries on request, and Getting started keeps a Create action for a chosen bot that is missing. Fixed request IDs make retries idempotent; a bot the owner deleted is never brought back.
 - Gateway unreachable on desktop load: don't show the wizard this session; try again on next load.
 
 ## Resource management

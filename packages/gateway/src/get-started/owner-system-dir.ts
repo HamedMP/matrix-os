@@ -12,6 +12,8 @@ export class UnsafeOwnerSystemDirError extends Error {
 }
 
 export interface PinnedSystemDir {
+  /** The entry itself (never followed), or null when it does not exist. */
+  lstat(name: string): Promise<Stats | null>;
   /** A regular file's text, or null when it does not exist. */
   readFile(name: string, maxBytes: number): Promise<string | null>;
   writeAtomic(name: string, text: string, mode: number): Promise<void>;
@@ -58,6 +60,13 @@ export async function withPinnedSystemDir<T>(homePath: string, use: (dir: Pinned
     const base = process.platform === "linux" ? `/proc/self/fd/${directory.fd}` : system;
     const path = (name: string) => join(base, name);
     return await use({
+      async lstat(name) {
+        try { return await lstat(path(name)); }
+        catch (error: unknown) {
+          if (errorCode(error) === "ENOENT") return null;
+          throw error;
+        }
+      },
       async readFile(name, maxBytes) {
         let before: Stats;
         try { before = await lstat(path(name)); }

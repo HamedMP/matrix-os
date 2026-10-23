@@ -81,6 +81,50 @@ describe("get started personality", () => {
     expect((await res.json()).status).toBe("completed");
   });
 
+  function retryBots() {
+    return app.request("/api/settings/get-started/bots", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  }
+
+  it("keeps a retry path when the Matrix Bot cannot be created at the end of setup", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    ensureMatrixBot.mockRejectedValueOnce(new Error("db down"));
+    expect((await complete()).status).toBe(200);
+    const res = await retryBots();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ bots: { "matrix-bot": "ready" } });
+    expect(ensureMatrixBot).toHaveBeenNthCalledWith(2, "user_owner", "Atlas");
+  });
+
+  it("reports a retry that fails again, and refuses retries before setup is finished or without the bot service", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect((await retryBots()).status).toBe(404);
+    await complete();
+    ensureMatrixBot.mockRejectedValueOnce(new Error("db down"));
+    expect(await (await retryBots()).json()).toEqual({ bots: { "matrix-bot": "failed" } });
+    mount({ owner: null });
+    expect((await retryBots()).status).toBe(401);
+    app = new Hono();
+    app.route("/api/settings/get-started", createGetStartedRoutes({ homePath, enabled: true, getOwnerId: () => "user_owner" }));
+    expect((await retryBots()).status).toBe(503);
+  });
+
+  it("retries the saved Matrix Bot when a finished setup is read, at most once per cooldown", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let at = Date.parse("2026-10-25T10:00:00.000Z");
+    app = new Hono();
+    app.route("/api/settings/get-started", createGetStartedRoutes({
+      homePath, enabled: true, getOwnerId: () => "user_owner", ensureMatrixBot, now: () => new Date(at),
+    }));
+    ensureMatrixBot.mockRejectedValueOnce(new Error("db down"));
+    await complete();
+    at += 11 * 60 * 1000;
+    await app.request("/api/settings/get-started");
+    await vi.waitFor(() => expect(ensureMatrixBot).toHaveBeenCalledTimes(2));
+    await app.request("/api/settings/get-started");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(ensureMatrixBot).toHaveBeenCalledTimes(2);
+  });
+
   it("replays safely: one managed section, and the bot request again", async () => {
     await complete();
     await complete();
