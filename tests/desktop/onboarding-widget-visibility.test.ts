@@ -49,22 +49,23 @@ describe("useChatMaximized", () => {
 
   it("ignores a floating Chat window, a maximized non-Chat app, and Canvas", () => {
     arrange({ tab: chatTab, mode: "window", workspaceView: "desktop" });
-    expect(renderHook(() => useChatMaximized()).result.current).toBe(false);
+    const { result } = renderHook(() => useChatMaximized());
+    expect(result.current).toBe(false);
 
-    arrange({ tab: terminalTab, mode: "tab" });
-    expect(renderHook(() => useChatMaximized()).result.current).toBe(false);
+    act(() => arrange({ tab: terminalTab, mode: "tab" }));
+    expect(result.current).toBe(false);
 
-    arrange({ tab: chatTab, mode: "tab", osView: "canvas" });
-    expect(renderHook(() => useChatMaximized()).result.current).toBe(false);
+    act(() => arrange({ tab: chatTab, mode: "tab", osView: "canvas" }));
+    expect(result.current).toBe(false);
   });
 
-  it("hides the widget over a full-screen project Chat, then restores it for the project Board", () => {
+  it("hides the widget over a full-screen project Chat even when saved project view state is stale", () => {
     arrange({ tab: projectTab, mode: "tab" });
-    useProjectView.getState().setView("demo", "chats");
+    useProjectView.getState().setView("demo", "board");
     const { result } = renderHook(() => useChatMaximized());
     expect(result.current).toBe(true);
 
-    act(() => useProjectView.getState().setView("demo", "board"));
+    act(() => arrange({ tab: terminalTab, mode: "tab" }));
     expect(result.current).toBe(false);
   });
 });
