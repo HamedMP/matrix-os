@@ -65,21 +65,21 @@ describe("Agent rail status", () => {
     await waitFor(() => expect(result.current[agent.id]?.state).toBe("completed"));
     expect(first.bots!.instantiate).not.toHaveBeenCalled(); expect(next.bots!.instantiate).not.toHaveBeenCalled();
   });
-  it("keeps custom Bot task status neutral without recipe reads and refreshes when recipe applicability changes", async () => {
+  it("labels legacy custom Bots as untracked without recipe reads and refreshes when recipe applicability changes", async () => {
     const client = fixture();
-    const custom = { ...saved, recipeRef: undefined };
+    const custom = { ...saved, recipe: { skills: ["matrix-integrations"],
+      integrations: [{ service: "gmail", accountLabel: "Work" }], output: "Email briefing" }, recipeRef: undefined } as ChatAgent;
     const { result, rerender } = renderHook(({ currentAgent }) => useBotRailStatuses(client, [currentAgent], "chat_one"),
-      { initialProps: { currentAgent: custom as ChatAgent } });
-    await waitFor(() => expect(result.current[custom.id]).toEqual({ state: "unavailable", label: "Status unavailable" }));
+      { initialProps: { currentAgent: custom } });
+    expect(result.current[custom.id]).toEqual({ state: "untracked", label: "Task status not tracked" });
     expect(client.bots!.directChat).not.toHaveBeenCalled();
     expect(client.bots!.tasks).not.toHaveBeenCalled();
     expect(client.bots!.interactions).not.toHaveBeenCalled();
-    rerender({ currentAgent: agent });
+    act(() => rerender({ currentAgent: agent }));
     expect(result.current[agent.id]?.state).toBe("loading");
     await waitFor(() => expect(result.current[agent.id]?.state).toBe("working"));
-    rerender({ currentAgent: custom });
-    expect(result.current[custom.id]?.state).toBe("loading");
-    await waitFor(() => expect(result.current[custom.id]?.state).toBe("unavailable"));
+    act(() => rerender({ currentAgent: custom }));
+    expect(result.current[custom.id]).toEqual({ state: "untracked", label: "Task status not tracked" });
   });
   it("does not show successful task evidence when status reads fail", async () => {
     const client = fixture(); vi.mocked(client.bots!.interactions).mockRejectedValue(new Error("private runtime failure"));
