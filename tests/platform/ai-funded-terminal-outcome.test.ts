@@ -58,8 +58,8 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     await insertUserMachine(db, { machineId: identity.machineId, clerkUserId: identity.ownerId, handle: "terminal",
       runtimeSlot: identity.runtimeSlot, status: "running", imageVersion: "test", provisionedAt: clock.toISOString(), activationState: "authorized" });
     await repo.updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [modelId] });
-    await repo.setRuntimePolicy({ identity, expectedRevision: 0, enabled: true, allowedModelIds: [modelId], monthlyBudgetMicrousd: 1_000_000, expiresAt: null });
-    await repo.grantCredit({ entryId: "terminal-grant", identity, kind: "addon_grant", amountMicrousd: 1_000_000, sourceReference: "fixture" });
+    await repo.setRuntimePolicy({ identity, expectedRevision: 0, enabled: true, allowedModelIds: [modelId], monthlyBudgetMicrousd: 40_000_000, expiresAt: null });
+    await repo.grantCredit({ entryId: "terminal-grant", identity, kind: "addon_grant", amountMicrousd: 40_000_000, sourceReference: "fixture" });
     credential = (await repo.issueRuntimeCredential(identity)).credential;
     app = new Hono().route("/internal/ai/funded", createAiFundedRelayRoutes({ repository: repo, relayControlToken: controlToken }));
   });
@@ -183,7 +183,7 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
   });
 
   it("fences old start and authorize replay even when the liability cap prevents execution release", async () => {
-    const auth = await authorize("cap-fenced", 500_001);
+    const auth = await authorize("cap-fenced", 20_000_001);
     const start = { reservationId: auth.reservation.reservationId, tokenId: credential.tokenId, executionId: "cap-attempt" };
     await repo.startReservation(start);
     clock = new Date(Date.parse(initialTime) + 30_000);
@@ -193,12 +193,12 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     expect((await terminal(proof)).status).toBe(200);
     expect((await row()).execution_admission_release).toBeNull();
     await expect(repo.startReservation(start)).rejects.toMatchObject({ code: "reservation_closed" });
-    await expect(authorize("cap-fenced", 500_001)).rejects.toMatchObject({ code: "reservation_closed" });
+    await expect(authorize("cap-fenced", 20_000_001)).rejects.toMatchObject({ code: "reservation_closed" });
     expect(await finance()).toEqual(before);
   });
 
   it("preserves slot_busy when a terminal receipt commits while authorization waits to enter its transaction", async () => {
-    const auth = await authorize("cap-waiting-a", 500_001);
+    const auth = await authorize("cap-waiting-a", 20_000_001);
     await repo.startReservation({ reservationId: auth.reservation.reservationId,
       tokenId: credential.tokenId, executionId: "cap-waiting-attempt" });
     const entered = Promise.withResolvers<void>(); const resume = Promise.withResolvers<void>();
@@ -313,7 +313,7 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
   it.each(["missing-proof", "minimum-age", "terminal-grace", "unexpired", "liability-cap", "machine-identity", "malformed-proof"])("keeps admission and every financial byte for automatic %s guard", async (guard) => {
     repo = makeRepo(guard === "unexpired" ? 30 * 60_000 : 60_000);
     app = new Hono().route("/internal/ai/funded", createAiFundedRelayRoutes({ repository: repo, relayControlToken: controlToken }));
-    const auth = await authorize("guard-request", guard === "liability-cap" ? 500_001 : 100);
+    const auth = await authorize("guard-request", guard === "liability-cap" ? 20_000_001 : 100);
     await repo.startReservation({ reservationId: auth.reservation.reservationId, tokenId: credential.tokenId });
     clock = new Date(Date.parse(initialTime) + (guard === "terminal-grace" ? 16 * 60_000 : 30_000));
     const proof = await receipt(); if (guard === "terminal-grace") proof.terminalAt = clock.toISOString();
@@ -330,9 +330,9 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     expect((await row()).execution_admission_release).toBeNull(); expect(await finance()).toEqual(before);
   });
 
-  it("saves exactly two unknown obligations, validates their audits and blocks a third terminal obligation", async () => {
+  it("bounds unknown provider liability at twenty dollars and validates every retained audit", async () => {
     for (let index = 0; index < 3; index++) {
-      const auth = await authorize(`unknown-${index}`, 100);
+      const auth = await authorize(`unknown-${index}`, [12_000_000, 8_000_000, 100][index]);
       const start = await repo.startReservation({ reservationId: auth.reservation.reservationId, tokenId: credential.tokenId, executionId: `execution-${index}` });
       clock = new Date(clock.getTime() + 30_000);
       expect((await terminal({ contractVersion: 1, ...identity, reservationId: start.reservationId, requestId: start.requestId,
@@ -341,7 +341,7 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
     }
     const before = await finance();
     await expect(authorize("fourth-unknown")).rejects.toMatchObject({ code: "rate_limited" });
-    const saved = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().orderBy("request_id").execute();
+    const saved = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll().orderBy("created_at").execute();
     expect(saved.filter((r) => r.execution_admission_release !== null).map((r) => r.execution_recovery_slot).sort()).toEqual([0, 1]);
     expect(saved[2].execution_admission_release).toBeNull();
     const after = await finance();
@@ -356,7 +356,7 @@ describe("durable unknown terminal outcomes across Relay and Platform", () => {
   it.each([false, true])("exact settlement reconciles pending terminal release after commit; unrelated corrupt audit=%s", async (corrupt) => {
     const saved = [];
     for (let index = 0; index < 3; index++) {
-      const auth = await authorize(`pending-${index}`);
+      const auth = await authorize(`pending-${index}`, [12_000_000, 8_000_000, 100][index]);
       const start = await repo.startReservation({ reservationId: auth.reservation.reservationId, tokenId: credential.tokenId, executionId: `pending-attempt-${index}` });
       clock = new Date(clock.getTime() + 30_000);
       const proof = { contractVersion: 1, ...identity, reservationId: start.reservationId, requestId: start.requestId,

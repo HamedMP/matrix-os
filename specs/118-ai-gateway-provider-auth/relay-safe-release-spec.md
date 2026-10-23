@@ -33,7 +33,8 @@ financial reservations, or other service writers.
   cancellation, zero-cost finalization, financial release, refund, waiver, new
   reservation, replacement execution or another upstream dispatch.
 - Preserve ordinary running-request limits, prices, policies, existing
-  two-reservation/$0.50 recovery caps and Platform's accounting authority.
+  recovery liability ceiling and Platform's accounting authority. The current
+  $20 policy is specified in [recovery capacity](./recovery-liability-capacity.md).
 
 ## Candidate construction and promotion
 

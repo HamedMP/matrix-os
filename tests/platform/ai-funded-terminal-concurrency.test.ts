@@ -19,7 +19,7 @@ describe.skipIf(!url)("funded terminal owner lock with independent PostgreSQL po
   let sequence = 0;
   const repo = (db: PlatformDB) => createAiFundedPolicyRepository({ db, credentialHashSecret: "h".repeat(32), now: () => new Date(clock),
     credentialTtlMs: 3_600_000, inFlightTtlMs: 60_000 });
-  const authorize = (r: typeof repoA, requestId: string) => r.authorize({ credential: credential.token, requestId, modelId, billingMode: "usage", maxCostMicrousd: 100 });
+  const authorize = (r: typeof repoA, requestId: string, maximum = 100) => r.authorize({ credential: credential.token, requestId, modelId, billingMode: "usage", maxCostMicrousd: maximum });
   const rows = () => a.executor.selectFrom("ai_funded_usage_reservations").selectAll().orderBy("reservation_id").execute();
   const financial = async () => ({ balances: await a.executor.selectFrom("ai_funded_runtime_balances").selectAll().execute(),
     ledger: await a.executor.selectFrom("ai_funded_credit_ledger").selectAll().execute(),
@@ -44,8 +44,8 @@ describe.skipIf(!url)("funded terminal owner lock with independent PostgreSQL po
     await insertUserMachine(a, { machineId: identity.machineId, clerkUserId: identity.ownerId, handle: "race", runtimeSlot: identity.runtimeSlot,
       status: "running", imageVersion: "test", provisionedAt: clock.toISOString(), activationState: "authorized" });
     const policy = await repoA.getGlobalPolicy(); await repoA.updateGlobalPolicy({ expectedRevision: policy.revision, enabled: true, allowedModelIds: [modelId] });
-    await repoA.setRuntimePolicy({ identity, expectedRevision: 0, enabled: true, allowedModelIds: [modelId], monthlyBudgetMicrousd: 10_000, expiresAt: null });
-    await repoA.grantCredit({ entryId: "race-credit", identity, kind: "addon_grant", amountMicrousd: 10_000, sourceReference: "fixture" });
+    await repoA.setRuntimePolicy({ identity, expectedRevision: 0, enabled: true, allowedModelIds: [modelId], monthlyBudgetMicrousd: 40_000_000, expiresAt: null });
+    await repoA.grantCredit({ entryId: "race-credit", identity, kind: "addon_grant", amountMicrousd: 40_000_000, sourceReference: "fixture" });
     credential = (await repoA.issueRuntimeCredential(identity)).credential;
     const old = await authorize(repoA, "old-glm"); await repoA.startReservation({ reservationId: old.reservation.reservationId, tokenId: credential.tokenId });
     speech = createAiFundedSpeechFundingPort({ allowedSources: ["addon"], credentialHashSecret: "s".repeat(32), now: () => new Date(clock),
@@ -56,11 +56,11 @@ describe.skipIf(!url)("funded terminal owner lock with independent PostgreSQL po
     const r = await reserveSpeech(a, "old-speech"); await a.transaction((trx) => speech.start(trx.executor as Transaction<PlatformDatabase>, r.reservationId));
     clock = new Date(clock.getTime() + 20 * 60_000); return batch();
   }
-  async function strongStart(requestId: string) {
+  async function strongStart(requestId: string, maximum = 100) {
     const initial = (await rows()).find(row => row.request_id === "old-glm")!;
     if (initial.status === "in_flight") await repoA.finalizeReservation({ reservationId: initial.reservation_id,
       tokenId: initial.token_id, mode: "exact", actualCostMicrousd: 0 });
-    const authorized = await authorize(repoA, requestId);
+    const authorized = await authorize(repoA, requestId, maximum);
     return repoA.startReservation({ reservationId: authorized.reservation.reservationId,
       tokenId: credential.tokenId, executionId: `attempt-${requestId}` });
   }
@@ -130,16 +130,16 @@ describe.skipIf(!url)("funded terminal owner lock with independent PostgreSQL po
   it("serializes cap-blocked receipt replay, exact settlement and future admission across pools", async () => {
     const attempts = [];
     for (let index = 0; index < 3; index++) {
-      const start = await strongStart(`cap-${index}`); clock = new Date(clock.getTime() + 30_000);
+      const start = await strongStart(`cap-${index}`, [12_000_000, 8_000_000, 100][index]); clock = new Date(clock.getTime() + 30_000);
       const terminal = proof(start); await repoA.recordTerminalOutcome(terminal); attempts.push({ start, terminal });
     }
-    const third = attempts[2];
-    expect((await rows()).find(row => row.reservation_id === third.start.reservationId)!.execution_admission_release).toBeNull();
+    const pending = attempts[2];
+    expect((await rows()).find(row => row.reservation_id === pending.start.reservationId)!.execution_admission_release).toBeNull();
     const settlement = { reservationId: attempts[0].start.reservationId, tokenId: credential.tokenId, mode: "exact" as const, actualCostMicrousd: 10 };
-    const outcomes = await Promise.allSettled([repoA.finalizeReservation(settlement), repoB.recordTerminalOutcome(third.terminal), authorize(repoB, "cap-future")]);
+    const outcomes = await Promise.allSettled([repoA.finalizeReservation(settlement), repoB.recordTerminalOutcome(pending.terminal), authorize(repoB, "cap-future")]);
     expect(outcomes[0].status).toBe("fulfilled"); expect(outcomes[1].status).toBe("fulfilled");
     const saved = await rows();
-    expect(saved.find(row => row.reservation_id === third.start.reservationId)!.execution_admission_release).not.toBeNull();
+    expect(saved.find(row => row.reservation_id === pending.start.reservationId)!.execution_admission_release).not.toBeNull();
     const unknown = saved.filter(row => row.execution_admission_release !== null && row.actual_microusd === null);
     expect(unknown.map(row => row.execution_recovery_slot).sort()).toEqual([0, 1]);
     expect(await repoA.finalizeReservation(settlement)).toMatchObject({ actualCostMicrousd: 10 });
