@@ -85,6 +85,8 @@ Invalid attachments remain available for removal or editing with a safe error. P
 
 ## Qualification
 
+Current submitted-file aliases remain authoritative for their request. Availability notes for a specific historical sequence do not invalidate a current upload with the same label. Previously captured aliases still fail closed after their bound request ends; filenames never confer read authority.
+
 ### Native receipt delivery
 
 New Electron service composition explicitly selects the session-bound v2 peer;
