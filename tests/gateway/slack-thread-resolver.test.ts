@@ -49,11 +49,14 @@ describe("Slack thread creation inherits live Project authority", () => {
     const chat = await fixture.db.selectFrom("chats").selectAll().executeTakeFirstOrThrow();
     expect(chat.project_id).toBe("company_project"); expect(chat.current_selection).toEqual(MATRIX_BOT_SELECTION);
     expect(chat.collaboration).toMatchObject({ scopeId: first.scopeId, executionFenced: true });
+    await expect(new ChatRepository(fixture.db as unknown as Kysely<ChatDatabase>).get(
+      { type: "personal", ownerId: project.ownerId }, first.chatId,
+    )).resolves.toMatchObject({ chat: { collaboration: { mode: "shared" } } });
     expect(await authority.authorize({ scopeId: first.scopeId, actorId: actors.owner, action: "request_ai" })).toMatchObject({ membershipScopeId: ids.scope });
     expect(await fixture.db.selectFrom("collaboration_members").selectAll().where("scope_id", "=", first.scopeId).execute()).toEqual([]);
     expect(resolveCompanyBot).toHaveBeenCalledWith(expect.objectContaining({ chatId: first.chatId, projectScopeId: ids.scope, projectId: "company_project" }));
   });
-  it("locks the Chat row before its Project and inherited scope when fencing a Slack thread", async () => {
+  it("locks the Project and inherited scope before the Chat row when fencing a Slack thread", async () => {
     const project = await authority.authorize({ scopeId: ids.scope, actorId: actors.owner, action: "read" });
     const binding = await resolver()({ envelope, project });
     const lockOrder: string[] = [];
@@ -70,9 +73,38 @@ describe("Slack thread creation inherits live Project authority", () => {
       async transformResult(args) { return args.result; },
     };
     await resolver({ db: fixture.db.withPlugin(plugin) })({ envelope, project });
-    expect(lockOrder).toEqual(["chat", "project", "child"]);
+    expect(lockOrder).toEqual(["project", "child", "chat"]);
   });
-  it.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("does not deadlock against the real Chat-before-Project assignment coordinator on PostgreSQL", async () => {
+  it("locks an owner assignment's Project and inherited scope before its Chat row", async () => {
+    const project = await authority.authorize({ scopeId: ids.scope, actorId: actors.owner, action: "read" });
+    const binding = await resolver()({ envelope, project });
+    const owner = { type: "personal" as const, ownerId: project.ownerId };
+    const current = await fixture.db.selectFrom("chats").select("revision").where("id", "=", binding.chatId).executeTakeFirstOrThrow();
+    const lockOrder: string[] = [];
+    const plugin: KyselyPlugin = {
+      transformQuery(args) {
+        const query = JSON.stringify(args.node);
+        if (query.includes('"modifier":"ForUpdate"') && query.includes('"name":"chats"')) {
+          lockOrder.push("chat");
+        } else if (query.includes('"modifier":"ForUpdate"') && query.includes('"name":"collaboration_scopes"')) {
+          lockOrder.push("scope");
+        }
+        return args.node;
+      },
+      async transformResult(args) { return args.result; },
+    };
+    const assignmentDb = fixture.db.withPlugin(plugin);
+    const assignments = createProjectChatAssignmentCoordinator({
+      db: assignmentDb,
+      chatRepository: new ChatRepository(assignmentDb as unknown as Kysely<ChatDatabase>),
+      now: () => at,
+    });
+    await assignments.run(owner, repository => repository.update(owner, binding.chatId, {
+      baseRevision: Number(current.revision), title: "Owner update with ordered locks",
+    }));
+    expect(lockOrder.slice(0, 3)).toEqual(["scope", "scope", "chat"]);
+  });
+  it.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("does not deadlock against the real Project-first assignment coordinator on PostgreSQL", async () => {
     const project = await authority.authorize({ scopeId: ids.scope, actorId: actors.owner, action: "read" });
     const binding = await resolver()({ envelope, project });
     const owner = { type: "personal" as const, ownerId: project.ownerId };
@@ -114,6 +146,70 @@ describe("Slack thread creation inherits live Project authority", () => {
     } finally { continueAssignment(); }
     const settled = Promise.allSettled([assignment, resolution]);
     const results = await settled;
+    for (const result of results) if (result.status === "rejected") throw result.reason;
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
+  }, 10_000);
+  it.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("does not deadlock against real Project-first queue admission on PostgreSQL", async () => {
+    const project = await authority.authorize({ scopeId: ids.scope, actorId: actors.owner, action: "read" });
+    const binding = await resolver()({ envelope, project });
+    const owner = { type: "personal" as const, ownerId: project.ownerId };
+    const current = await fixture.db.selectFrom("chats").select("revision").where("id", "=", binding.chatId).executeTakeFirstOrThrow();
+    let childLocked!: () => void;
+    const held = new Promise<void>((resolve) => { childLocked = resolve; });
+    let continueQueue!: () => void;
+    const proceed = new Promise<void>((resolve) => { continueQueue = resolve; });
+    const pausedQueries = new Set<string>();
+    let paused = false;
+    const plugin: KyselyPlugin = {
+      transformQuery(args) {
+        const query = JSON.stringify(args.node);
+        if (!paused && query.includes('"modifier":"ForUpdate"') && query.includes('"name":"collaboration_scopes"')
+          && query.includes(binding.scopeId)) pausedQueries.add(args.queryId);
+        return args.node;
+      },
+      async transformResult(args) {
+        if (pausedQueries.delete(args.queryId)) {
+          paused = true;
+          childLocked();
+          await proceed;
+        }
+        return args.result;
+      },
+    };
+    const queueDb = fixture.db.withPlugin(plugin);
+    const queue = new ChatRepository(queueDb as unknown as Kysely<ChatDatabase>);
+    queue.setSharedAuthorizer((scopeId, actorId, action) => authority.authorize({ scopeId, actorId, action }));
+    const admission = queue.enqueueSharedQueuedTurn(owner, {
+      chatId: binding.chatId,
+      scopeId: binding.scopeId,
+      queuedTurnId: "qturn_slack_lock_overlap",
+      clientRequestId: "70000000-0000-4000-8000-000000000001",
+      requestingActorId: actors.owner,
+      acceptedAuthEpoch: project.authEpoch,
+      payloadHash: "a".repeat(64),
+      expectedRevision: Number(current.revision),
+      parts: [{ type: "text", text: "Overlap queue admission with Slack resolution" }],
+      interactionMode: "default",
+      permissionMode: "supervised",
+      acceptedAt: at.toISOString(),
+      canonicalProviderAuthority: { driverKind: "matrix_bot", selection: MATRIX_BOT_SELECTION },
+      executionRoot: { kind: "project", projectId: project.resourceId },
+      executionRootFingerprint: "a".repeat(64),
+      capabilitySnapshot: {
+        revision: "shared-catalog-1", rootChat: true, attachments: [], resources: [], tools: [], approvals: true,
+        userInput: false, resume: true, cancellation: true, steering: "none", worktrees: "none",
+        interactionModes: ["default"], permissionModes: ["supervised"],
+      },
+    });
+    await held;
+    const resolution = resolver()({ envelope, project });
+    let resolverSettled = false;
+    void resolution.then(() => { resolverSettled = true; }, () => { resolverSettled = true; });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(resolverSettled).toBe(false);
+    } finally { continueQueue(); }
+    const results = await Promise.allSettled([admission, resolution]);
     for (const result of results) if (result.status === "rejected") throw result.reason;
     expect(results.map((result) => result.status)).toEqual(["fulfilled", "fulfilled"]);
   }, 10_000);

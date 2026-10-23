@@ -55,12 +55,11 @@ export function createSlackThreadResolver(options: SlackThreadResolverOptions) {
     const eligibility = parseCollaborationAiEligibility(capability.eligibility);
     if (!eligibility.matrixBot || !Number.isSafeInteger(capability.generation) || capability.generation < 1) throw new SlackCompanyError("unavailable");
     await options.db.transaction().execute(async (trx) => {
-      // Owner Chat updates take this row before reconciling Project inheritance.
-      // Keep the same Chat -> parent -> child order so Slack admission cannot
-      // deadlock an owner update that is moving or refreshing this Chat.
-      const chat = await trx.selectFrom("chats").selectAll().where("id", "=", chatId).where("owner_type", "=", "personal").where("owner_id", "=", project.ownerId).forUpdate().executeTakeFirst();
+      // Queue admission, dispatch, Company Brain, and owner assignment all take
+      // the inherited Project and Chat scope before the canonical Chat row.
       const parent = await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", project.scopeId).forUpdate().executeTakeFirst();
       const child = await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", binding.resourceScopeId!).forUpdate().executeTakeFirst();
+      const chat = await trx.selectFrom("chats").selectAll().where("id", "=", chatId).where("owner_type", "=", "personal").where("owner_id", "=", project.ownerId).forUpdate().executeTakeFirst();
       if (!parent || !child || !chat || parent.deleted_at || child.deleted_at || parent.lifecycle !== "shared" || child.lifecycle !== "shared"
         || parent.owner_id !== project.ownerId || parent.organization_id !== project.organizationId || parent.resource_id !== project.resourceId
         || Number(parent.auth_epoch) !== project.authEpoch || parent.authority_runtime_id !== project.authorityRuntimeId || Number(parent.authority_generation) !== project.authorityGeneration
@@ -72,7 +71,7 @@ export function createSlackThreadResolver(options: SlackThreadResolverOptions) {
       if (!selection || typeof selection !== "object" || (selection as {instanceId?: unknown}).instanceId !== MATRIX_BOT_SELECTION.instanceId) throw new SlackCompanyError("forbidden");
       await trx.updateTable("collaboration_scopes").set({ execution_generation: capability.generation, execution_eligibility: sql`${JSON.stringify(eligibility)}::jsonb`, updated_at: now() })
         .where("id", "=", child.id).where("auth_epoch", "=", Number(child.auth_epoch)).execute();
-      await trx.updateTable("chats").set({ collaboration: sql`${JSON.stringify({ scopeId: child.id, membershipScopeId: project.scopeId, executionFenced: true })}::jsonb`, updated_at: now() })
+      await trx.updateTable("chats").set({ collaboration: sql`${JSON.stringify({ scopeId: child.id, mode: "shared_ai", executionFenced: true })}::jsonb`, updated_at: now() })
         .where("id", "=", chatId).where("revision", "=", Number(chat.revision)).execute();
     });
     // Never fabricate provider binding. Optional owner initialization uses the canonical queue.
