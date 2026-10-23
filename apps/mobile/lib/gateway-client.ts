@@ -1,4 +1,5 @@
 import { encodeAppSlugPath } from "@/lib/app-slugs";
+import { HOSTED_GATEWAY_URL, isMatrixHostedHostname } from "@/lib/hosted-origin";
 import {
   isSafeSessionId,
   parseTerminalSessions,
@@ -79,7 +80,7 @@ function randomShellSuffix(): string {
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
 /** Canonical hosted platform origin; `/vm/<handle>` computer routes share it. */
-const HOSTED_PLATFORM_ORIGIN = "https://app.matrix-os.com";
+const HOSTED_PLATFORM_ORIGIN = HOSTED_GATEWAY_URL;
 
 const ConversationMetaSchema = z.object({
   id: z.string().min(1).max(128),
@@ -1745,7 +1746,7 @@ export function assertSecureTokenTransport(baseUrl: string): void {
 
 function isMatrixCloudHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
-  return host === "app.matrix-os.com";
+  return isMatrixHostedHostname(host);
 }
 
 function isCleartextSelfHostedHost(hostname: string): boolean {

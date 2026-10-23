@@ -7,9 +7,10 @@ import {
 } from "@matrix-os/contracts";
 
 import { SETTINGS_KEY } from "./initial-theme";
+import { HOSTED_GATEWAY_URL, isMatrixHostedOrigin, mobileHostedStorageKey } from "./hosted-origin";
+export { HOSTED_GATEWAY_URL } from "./hosted-origin";
 
-const GATEWAY_CONNECTION_KEY = "matrix_os_gateway_connection";
-export const HOSTED_GATEWAY_URL = "https://app.matrix-os.com";
+const GATEWAY_CONNECTION_KEY = mobileHostedStorageKey("matrix_os_gateway_connection");
 const HOSTED_GATEWAY_ID = "matrix-os-hosted";
 const CUSTOM_GATEWAY_ID = "matrix-os-custom";
 
@@ -117,6 +118,9 @@ export function normalizeGatewayUrl(input: string): string {
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error("Matrix OS URL must start with http:// or https://.");
   }
+  if (isMatrixHostedOrigin(parsed.origin) && parsed.origin !== HOSTED_GATEWAY_URL) {
+    throw new Error("Use this app’s Matrix OS Cloud target.");
+  }
   parsed.pathname = parsed.pathname.replace(/\/+$/, "");
   parsed.search = "";
   parsed.hash = "";
@@ -208,7 +212,7 @@ export async function saveSelectedHostedComputer(input: MatrixComputer): Promise
 
 export async function saveSelectedGatewayBasicAuth(input: string, username: string, password: string): Promise<GatewayConnection> {
   const url = normalizeGatewayUrl(input);
-  if (url === HOSTED_GATEWAY_URL) {
+  if (isMatrixHostedOrigin(new URL(url).origin)) {
     throw new Error("Use Google or GitHub for Matrix OS Cloud.");
   }
   const cleanUsername = username.trim();
