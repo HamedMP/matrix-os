@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron, type ElectronApplication, type Page } from "playwright";
-import { BotDirectChatResponseSchema, ChatAgentListResponseSchema, CanonicalChatDetailResponseSchema, CanonicalChatListResponseSchema } from "@matrix-os/contracts";
+import { BotDirectChatResponseSchema, ChatAgentListResponseSchema, CanonicalChatDetailResponseSchema, CanonicalChatListResponseSchema, CanonicalChatNavigationResponseSchema } from "@matrix-os/contracts";
 import { createCanonicalChatFixture } from "../../contracts/fixtures/canonical-chat";
 import { closeElectronApp } from "./fixtures/close-electron";
 import { startStubGateway, type StubGateway } from "./fixtures/stub-gateway";
@@ -116,6 +116,21 @@ const server = createServer((req, res) => {
   }
   if (url.pathname === "/api/chat-providers") {
     return json(canonicalFixture.providerCatalog);
+  }
+  if (url.pathname === "/api/chat-navigation") {
+    const current = record();
+    const { id, title, titleVersion, activityAt, lifecycle, attention, revision, messageCount, userState, createdAt, updatedAt } = current.chat;
+    return json(CanonicalChatNavigationResponseSchema.parse({
+      version: 1,
+      items: [{
+        chat: { id, title, titleVersion, activityAt, lifecycle, attention, revision, messageCount, userState, createdAt, updatedAt },
+        ...(current.activeRun ? { activeRun: current.activeRun } : {}),
+        readState: { version: 0, unread: false, markedUnread: false, latestIncomingSeq: 0, readThroughSeq: 0 },
+        classification: { kind: "ordinary" },
+        persistence: "personal",
+      }],
+      truncated: false,
+    }));
   }
   if (url.pathname === "/api/chats") {
     return json(CanonicalChatListResponseSchema.parse({ items: [record()] }));
