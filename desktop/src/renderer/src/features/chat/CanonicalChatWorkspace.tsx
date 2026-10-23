@@ -19,6 +19,7 @@ import {
   BotDraftRecoveryPanel,
   SharedChatPanel,
   sharedChatMembershipFromProjection,
+  useCloseAgentsOnDraftRequest,
 } from "@matrix-os/ui";
 import type { ChatAgentDraftRequest } from "@matrix-os/ui";
 import { createChatMentionRequestTracker } from "@matrix-os/ui";
@@ -243,6 +244,7 @@ function CanonicalChatWorkspaceContent({
     projectId,
     conversation: globalView === "conversation",
   });
+  useCloseAgentsOnDraftRequest(draftRequestIdentity);
   const draftScope = globalView === "conversation" && routedComposerChatId
     ? `chat:${routedComposerChatId}` : `new:${projectId ?? "global"}`;
   const composerOwner = useRef({ client, draftScope, draftRevision, identity: desktopProviderIdentityKey(useConnection.getState()) });
