@@ -14,7 +14,7 @@ export const BotModelRouteSchema = z.object({
   input: z.array(z.enum(["text", "image"])).min(1).max(2)
     .refine((input) => input.includes("text"), { message: "Routes must accept text" }),
   contextWindow: z.number().int().min(8_192).max(2_000_000),
-  /** Bounded so one buffered bridge response stays under the broker's 512 KiB cap. */
+  /** Model work budget; independent of the raw response and encoded transport byte limits. */
   maxOutputTokens: z.number().int().min(256).max(16_384),
 }).strict();
 
