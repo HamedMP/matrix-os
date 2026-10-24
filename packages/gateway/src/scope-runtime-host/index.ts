@@ -48,7 +48,7 @@ export interface ScopeRuntimeAuthorizer {
    * workloads use their own frame shapes). Resolve undefined to drop an
    * invalid frame.
    */
-  handleFrame?(raw: unknown): Promise<Record<string, unknown> | undefined>;
+  handleFrame?(raw: unknown, signal?: AbortSignal): Promise<Record<string, unknown> | undefined>;
 }
 
 const FrameOwnerSchema = z.object({
@@ -120,13 +120,13 @@ export async function createScopeRuntimeHost(options: {
     botImageFrames: true,
     socketPath: options.brokerSocket ?? BROKER_SOCKET,
     broker,
-    routeFrame(raw) {
+    routeFrame(raw, signal) {
       if (closed) return undefined;
       const frame = FrameOwnerSchema.safeParse(raw);
       if (!frame.success) return undefined;
       const owners = [...authorizers.values()].filter((authorizer) => authorizer.owns(frame.data));
       const owner = owners.length === 1 ? owners[0] : undefined;
-      return owner?.handleFrame ? owner.handleFrame(raw) : undefined;
+      return owner?.handleFrame ? owner.handleFrame(raw, signal) : undefined;
     },
   });
   try {
