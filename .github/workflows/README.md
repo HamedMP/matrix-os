@@ -38,25 +38,22 @@ Docs-only changes still run targeted docs contract tests through `Docs Contract 
 Source-only jobs (including the unit-test matrix) are skipped before runner allocation for docs-only changes. Documentation and OS-view parity jobs run only when their respective path planners select them; `CI Results` accepts intentional skips and still fails on a selected check's failure.
 Expensive jobs remain path-aware.
 
-### Main CI queue and coverage frontier
+### Main and PR concurrency
 
 Every main push runs CI to completion in its own concurrency group
 (`ci-refs/heads/main-<sha>`), so a newer merge never cancels or delays an
-older commit's run and each main commit keeps its own green or red result.
-Ordinary manual dispatches on `main` share one FIFO queue. Exact-source refreshes
-with a PR number, head SHA, base SHA, and source SHA use an independent queue per
-tuple; duplicates share that queue across execution modes. Each queue retains
-the platform's 100-run `queue: max` limit. This changes scheduling only: trusted
-source validation, receipts, and runner admission remain unchanged. Runs already
-queued under an older workflow keep their original group; a fresh dispatch after
-this workflow lands uses the new grouping.
+older commit's run and each main commit keeps its own green or red result. Main plans
+against the commit before the push: docs-only pushes skip source lanes, and a
+first push or unreachable base runs everything. A new PR head cancels that PR's
+older run through native `cancel-in-progress`. Title and body edits do not start
+CI; stack retargets arrive with a rebase push.
 
-When a main run starts, `scripts/ci/main-ci-coverage.mjs` finds the latest
-successful `CI coverage-v1` ancestor and treats it as the coverage frontier. The
-run plans against the complete frontier-to-head diff, not only the newest commit.
-Consequently, a failed or cancelled predecessor is automatically absorbed into
-the successor's source, docs-contract, pattern-scan, and React Doctor scope. If
-no trusted frontier exists, the run bootstraps from Git's empty tree.
+### Affected tests on PRs
+
+Ordinary PRs run only the unit tests their change can reach (Vitest's import
+graph plus tests that name a changed path) and skip E2E when no E2E-relevant
+path changed. Lockfile, config, `ci.yml` and non-code source-tree changes run
+the full suite. Main, merge-queue and manual runs always run everything.
 
 ### Parallel validation and profiling
 
@@ -81,16 +78,11 @@ target. Duration-based shard balancing, a timing manifest and profile-refresh
 tooling are planned in a separate follow-up; they are not included in this
 hosted-workflow layer.
 
-`ci-pr-supersede.yml` cancels obsolete CI heads for an admitted PR. It runs only
-trusted base-branch code with no checkout, validates the current live PR head,
-and cannot cancel main or another PR. Main per-commit runs and the coverage frontier
-remain unchanged. A denied or failed cancellation does not remove validation.
-
-Core workflows stay GitHub-hosted. An isolated Linux benchmark bridge is planned
-in a separate follow-up; this layer includes no dedicated dispatch workflow or
-runner tools. A public repository must not expose a reusable self-hosted runner
-label to PR workflow code. An 8-vCPU/32-GB host has been provisioned in Falkenstein;
-Linux validation and any automatic dedicated dispatch remain pending.
+Heavy lanes can run on the dedicated host's ephemeral runner pool
+([`scripts/ci/runner-pool/`](../../scripts/ci/runner-pool/README.md),
+[spec 633](../../specs/633-ci-runner-pool/spec.md)) while it publishes a fresh
+heartbeat; otherwise everything runs on GitHub-hosted runners. Fork PRs never
+route to the pool.
 
 ## Release Artifacts
 
@@ -124,7 +116,6 @@ OTA payloads.
 | --- | --- | --- | --- |
 | `ci.yml` | Core code validation | Every non-draft PR head, merge queue, `main`, manual | Yes, via `CI Results` |
 | `codeql.yml` | CodeQL code scanning (TypeScript and workflow definitions) | Weekly (Sunday 03:17 UTC), manual | No; findings land in Security → Code scanning |
-| `ci-pr-supersede.yml` | Safe PR-CI supersession | New heads on admitted PRs; trusted base workflow only | No; optimization only |
 | `docker-test.yml` | Legacy/local Docker scenario validation | Docker/local-runtime changes on every non-draft PR head and `main`; every merge queue, nightly, and manual run | Required when Docker/local-runtime paths are touched |
 | `host-bundle-release.yml` | VPS-native customer runtime release | `main`, `v*` tags, manual | Required for host bundle publishing |
 | `platform-cloud-run.yml` | Platform/app-shell Cloud Run deployment | `main` when platform/auth-shell inputs change, manual | Required for app.matrix-os.com platform changes |
