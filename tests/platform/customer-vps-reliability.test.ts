@@ -11,6 +11,7 @@ import {
 } from '../../packages/platform/src/db.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
 import type { BillingEntitlement } from '../../packages/platform/src/billing.js';
@@ -72,6 +73,7 @@ describe('platform/customer-vps reliability', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
+        MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
         PLATFORM_PORT: '9000',
         PLATFORM_SECRET: 'platform-secret',
         HETZNER_API_TOKEN: 'token',
