@@ -305,7 +305,10 @@ export class GitHubIntegrationBroker {
     });
     if (!await this.options.db.updateGitHubCredentialsIfCurrent(
       row.id, row.user_id, row.revision, row.encrypted_credentials, encrypted,
-    )) throw new GitHubIntegrationError("conflict");
+    )) {
+      await this.bestEffortRevoke(next.accessToken);
+      throw new GitHubIntegrationError("conflict");
+    }
     row.encrypted_credentials = encrypted;
     return next;
   }

@@ -107,6 +107,31 @@ describe("GitHub integration broker", () => {
     expect(client.requestApi).toHaveBeenCalledWith(expect.objectContaining({ accessToken: "gho_rotated" }));
   });
 
+  it("revokes a rotated token that loses the credential persistence CAS", async () => {
+    const now = new Date("2026-10-24T02:00:00.000Z");
+    const client = provider();
+    vi.mocked(client.exchangeCode).mockResolvedValueOnce({
+      accessToken: "gho_access",
+      refreshToken: "ghr_refresh",
+      scopes: ["repo", "notifications"],
+      expiresAt: new Date(now.getTime() + 30_000).toISOString(),
+      refreshTokenExpiresAt: new Date(now.getTime() + 60_000).toISOString(),
+    });
+    const { broker: integration } = broker(client, now);
+    const url = new URL(integration.start(userId, { redirectTarget: "web" }));
+    const completed = await integration.complete(url.searchParams.get("state")!, "code-1");
+    vi.spyOn(db, "updateGitHubCredentialsIfCurrent").mockResolvedValueOnce(false);
+
+    await expect(integration.call({
+      userId,
+      connectionId: completed.connection.id,
+      action: getAction("github", "list_repos")!,
+      params: {},
+    })).rejects.toMatchObject({ code: "conflict" });
+    expect(client.revokeToken).toHaveBeenCalledWith("gho_rotated");
+    expect(client.requestApi).not.toHaveBeenCalled();
+  });
+
   it("hides a disconnect immediately, retains a failed revocation for retry, and cannot delete a reconnect", async () => {
     const client = provider();
     const { broker: integration } = broker(client);
