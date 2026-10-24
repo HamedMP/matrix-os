@@ -1,14 +1,16 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
-import { botToolDisplayInput, botToolDisplayOutput, botToolDisplayMcpResult, type BotToolDisplay, type BotEvent, type BotToolCapability } from "@matrix-os/contracts";
+import { BOT_OUTPUT_MAX_ENCODED_BYTES, BOT_OUTPUT_LIMIT_NOTICE, botOutputEncodedBytes, botOutputPrefix,
+  botToolDisplayInput, botToolDisplayOutput, botToolDisplayMcpResult, type BotToolDisplay, type BotEvent, type BotToolCapability } from "@matrix-os/contracts";
 import { bridgeToolCallId } from "./tool-call-id.js";
 
 /** Leaves room for the event envelope inside the 16 KiB assistant delta bound. */
 const MAX_DELTA_BYTES = 12 * 1024;
 /** Small deltas are combined, so a chatty stream costs a few broker requests per second. */
 const DELTA_FLUSH_INTERVAL_MS = 250;
-/** Per-turn cap on forwarded events; the saved transcript still holds the full reply. */
-export const MAX_EVENTS_PER_TURN = 2_000;
-const PAUSED_LABEL = "Live updates paused. The full reply appears when this step finishes.";
+const MAX_TOOLS = 60;
+export const LIVE_TEXT_EVENTS = 1_600;
+const BATCHED_FLUSH_INTERVAL_MS = 1_000;
+const BATCHED_LABEL = "Live text updates refresh once per second. Tool progress continues.";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -42,9 +44,10 @@ export interface EventProjector {
  * snapshots cross only the private broker; the gateway seals them before Chat. Text deltas
  * are buffered and sent within 250 ms (a timer covers pauses in the stream),
  * when the buffer fills, or at a message or tool boundary. Every send goes
- * through one serial chain, so events leave in `seq` order. After
- * MAX_EVENTS_PER_TURN events the projector sends one activity notice and
- * stops forwarding for the rest of the turn.
+ * through one serial chain, so events leave in `seq` order. Chatty text
+ * switches to a one-second refresh. Total encoded text is bounded independently
+ * of the number of updates; a long turn cannot spend future tool progress slots.
+ * Canonical Chat retains the same bounded output using continuation messages.
  */
 export function createEventProjector(options: {
   send(event: BotEvent): Promise<void>;
@@ -60,23 +63,24 @@ export function createEventProjector(options: {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let chain: Promise<void> = Promise.resolve();
   let failure: unknown;
+  let textEvents = 0;
+  let outputBytes = 0;
+  let previewPaused = false;
   // At most the run action budget; terminal events evict immediately.
   const tools = new Map<string, { display: BotToolDisplay; privateContext: boolean; updates: number; lastUpdate: number }>();
-  const MAX_TOOLS = 60;
   let toolStarts = 0;
 
   const emit = async (event: BotEvent["event"]) => {
-    const terminal = event.type === "tool_progress" && ["completed", "failed", "cancelled"].includes(event.phase);
-    const started = event.type === "tool_progress" && event.phase === "started";
-    // Reserve one slot per outstanding tool; text/update floods cannot lose its result.
-    const limit = MAX_EVENTS_PER_TURN - (terminal ? 0 : tools.size);
-    if (seq >= limit) return;
-    if (!terminal && !started && seq === limit - 1) {
-      await options.send({ seq: seq++, event: { type: "activity", label: PAUSED_LABEL, state: "started" } });
-      return;
-    }
     await options.send({ seq: seq++, event });
   };
+  const emitText = async (text: string) => {
+    textEvents += 1;
+    await emit({ type: "assistant_delta", text });
+    if (textEvents === LIVE_TEXT_EVENTS) {
+      await emit({ type: "activity", label: BATCHED_LABEL, state: "completed" });
+    }
+  };
+  const flushInterval = () => textEvents < LIVE_TEXT_EVENTS ? DELTA_FLUSH_INTERVAL_MS : BATCHED_FLUSH_INTERVAL_MS;
   const flush = async () => {
     if (timer) {
       clearTimeout(timer);
@@ -87,7 +91,7 @@ export function createEventProjector(options: {
     const text = buffered;
     buffered = "";
     bufferedBytes = 0;
-    for (const chunk of splitUtf8(text)) await emit({ type: "assistant_delta", text: chunk });
+    for (const chunk of splitUtf8(text)) await emitText(chunk);
   };
   /** Runs sends one at a time; the first failure is kept and rethrown to the next caller. */
   const serial = (task: () => Promise<void>): Promise<void> => {
@@ -108,18 +112,35 @@ export function createEventProjector(options: {
       void serial(flush).catch((error: unknown) => {
         console.warn("[bot-runtime] timed event flush failed:", error instanceof Error ? error.name : "UnknownError");
       });
-    }, Math.max(0, DELTA_FLUSH_INTERVAL_MS - (now() - lastFlushAt)));
+    }, Math.max(0, flushInterval() - (now() - lastFlushAt)));
     timer.unref?.();
   };
 
   const project = async (event: AgentEvent) => {
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-      buffered += event.assistantMessageEvent.delta;
-      bufferedBytes += encoder.encode(event.assistantMessageEvent.delta).byteLength;
-      if (bufferedBytes >= MAX_DELTA_BYTES || now() - lastFlushAt >= DELTA_FLUSH_INTERVAL_MS) {
+      if (previewPaused) return;
+      const delta = event.assistantMessageEvent.delta;
+      const retained = botOutputPrefix(delta, BOT_OUTPUT_MAX_ENCODED_BYTES - outputBytes);
+      outputBytes += botOutputEncodedBytes(retained);
+      // Even control characters fit the encoded event envelope. The SDK awaits
+      // this listener, and every full buffer waits for its broker send.
+      for (const chunk of splitUtf8(retained, 2 * 1024)) {
+        const bytes = botOutputEncodedBytes(chunk);
+        if (bufferedBytes + bytes > MAX_DELTA_BYTES) await serial(flush);
+        buffered += chunk;
+        bufferedBytes += bytes;
+      }
+      if (bufferedBytes >= MAX_DELTA_BYTES || now() - lastFlushAt >= flushInterval()) {
         await serial(flush);
       } else {
         schedule();
+      }
+      if (retained.length < delta.length) {
+        await serial(async () => {
+          await flush();
+          previewPaused = true;
+          await emit({ type: "activity", label: BOT_OUTPUT_LIMIT_NOTICE.trim(), state: "completed" });
+        });
       }
       return;
     }
@@ -135,11 +156,6 @@ export function createEventProjector(options: {
         const id = bridgeToolCallId(event.toolCallId);
         if (event.type === "tool_execution_start") {
           if (tools.has(id) || toolStarts >= MAX_TOOLS) return;
-          // Track only a display whose start and terminal both fit beside pending results.
-          if (seq + tools.size + 2 > MAX_EVENTS_PER_TURN) {
-            await emit({ type: "activity", label: PAUSED_LABEL, state: "started" });
-            return;
-          }
           toolStarts += 1;
           tools.set(id, { ...botToolDisplayInput(event.toolName, event.args), updates: 0, lastUpdate: -Infinity });
         }

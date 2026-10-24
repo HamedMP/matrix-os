@@ -104,7 +104,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   let eventFailure: BotToolErrorCode | undefined;
   let runFailed = false;
 
-  const agent = new Agent({
+  const agent: Agent = new Agent({
     initialState: {
       systemPrompt: command.systemPrompt,
       model,
@@ -125,8 +125,10 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
       ...(isolated ? { reasoning: undefined } : {}),
     }); },
     toolExecution: "sequential",
-    // A blocking question or a spent budget ends the turn even if a steer is queued; the steer is saved instead.
-    finishTurn: () => isolated || tools.waitingForPerson || budgetExhausted ? { action: "end" } : undefined,
+    // Already-ACKed corrections drain at the next safe boundary before a
+    // question releases the worker. They do not answer or authorize it.
+    finishTurn: () => isolated || input.signal?.aborted || eventFailure || budgetExhausted
+      || (tools.waitingForPerson && !agent.hasQueuedMessages()) ? { action: "end" } : undefined,
     // Fail closed: the hook cannot throw, and anything past the budget is blocked.
     beforeToolCall: async () => {
       if (isolated || toolActions >= command.limits.maxToolActions) {
@@ -159,7 +161,8 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   let steeringOpen = true;
   input.onControl?.({
     steer(text) {
-      if (isolated || !steeringOpen) return false;
+      if (isolated || !steeringOpen || tools.askingPerson || tools.waitingForPerson || budgetExhausted
+        || inferenceCalls >= maxInferenceCalls || input.signal?.aborted || eventFailure || agent.state.errorMessage) return false;
       const message: AgentMessage = { role: "user", content: text, timestamp: now() };
       steered.push(message);
       agent.steer(message);
@@ -167,7 +170,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     },
   });
   const stopped = () => Boolean(eventFailure) || input.signal?.aborted === true || budgetExhausted
-    || tools.waitingForPerson || Boolean(agent.state.errorMessage);
+    || Boolean(agent.state.errorMessage);
 
   try {
     if (command.turn.kind === "prompt") {
