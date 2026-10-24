@@ -130,6 +130,32 @@ describe("web onboarding widget host", () => {
     expect(await screen.findByRole("button", { name: /portfolio/ })).toBeTruthy();
   });
 
+  it("offers the Gmail method chooser from Connect apps first before opening consent", async () => {
+    HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
+    HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.open = false; });
+    stubGateway();
+    const gateway = vi.mocked(fetch);
+    const answer = gateway.getMockImplementation()!;
+    gateway.mockImplementation(async (input) => {
+      if (String(input).endsWith("/api/integrations/available")) return json({ services: [{ id: "gmail", name: "Gmail", category: "personal" }] });
+      if (String(input).endsWith("/gmail/connection-options")) return json({ methods: ["matrix", "pipedream"], defaultMethod: "pipedream" });
+      return answer(input);
+    });
+    vi.spyOn(window, "open").mockReturnValue(null);
+    renderHost();
+    await screen.findByRole("button", { name: "Connect apps first" });
+    act(() => screen.getByRole("button", { name: "Connect apps first" }).click());
+    await screen.findByText("Gmail");
+    act(() => screen.getByRole("button", { name: "Connect" }).click());
+    expect(await screen.findByRole("dialog", { name: "Connect Gmail" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Connect with Matrix (internal preview)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Connect with Pipedream" })).toBeTruthy();
+    expect(window.open).not.toHaveBeenCalled();
+    act(() => screen.getByRole("button", { name: "Cancel" }).click());
+    expect(screen.queryByRole("dialog", { name: "Connect Gmail" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Connect" }).hasAttribute("disabled")).toBe(false);
+  });
+
   it("retries a failed identity read instead of keeping the fallback owner", async () => {
     stubGateway();
     const gateway = vi.mocked(fetch);
@@ -397,11 +423,11 @@ describe("web onboarding app connect", () => {
     const fetchFn = vi.fn(async () => json([]));
     const dispatch = vi.fn();
     const { result } = renderHook(() => useShellOnboardingIntegrations(dispatch, { gatewayUrl: GATEWAY, fetchFn, pollIntervals: [0] }));
-    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(3));
 
     act(() => result.current.connectApp("github"));
     expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed", service: "github" });
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn).toHaveBeenCalledTimes(3);
     expect(result.current.connectingService).toBeNull();
   });
 
@@ -410,12 +436,12 @@ describe("web onboarding app connect", () => {
     const fetchFn = vi.fn(async () => json([]));
     const dispatch = vi.fn();
     const { result } = renderHook(() => useShellOnboardingIntegrations(dispatch, { gatewayUrl: GATEWAY, fetchFn, pollIntervals: [0] }));
-    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(3));
 
     act(() => result.current.connectApp("../admin"));
     expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed", service: "../admin" });
     expect(window.open).not.toHaveBeenCalled();
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn).toHaveBeenCalledTimes(3);
   });
 
   it("closes the popup and fails when the consent URL is not HTTPS", async () => {
@@ -443,7 +469,7 @@ describe("web onboarding app connect", () => {
     expect(dispatch).toHaveBeenCalledWith({ type: "connect.unavailable", service: "github" });
     expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.started" });
     expect(window.open).not.toHaveBeenCalled();
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn).toHaveBeenCalledTimes(3);
   });
 
   it("switches to unavailable when the connect request finds no integration service", async () => {
@@ -452,7 +478,7 @@ describe("web onboarding app connect", () => {
     const fetchFn = vi.fn(async (url: string) => (url.endsWith("/connect") ? json({ error: "Not Found" }, 404) : json({ error: "busy" }, 503)));
     const dispatch = vi.fn();
     const { result } = renderHook(() => useShellOnboardingIntegrations(dispatch, { gatewayUrl: GATEWAY, fetchFn, pollIntervals: [0] }));
-    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(3));
     expect(result.current.appsUnavailable).toBe(false);
 
     act(() => result.current.connectApp("github"));
@@ -484,6 +510,7 @@ describe("web onboarding app connect", () => {
       [{ id: "conn_old", service: "gmail", status: "active" }, { id: "conn_new", service: "github", status: "active" }],
     ];
     const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith("/gmail/connection-options")) return json({ methods: ["pipedream"], defaultMethod: "pipedream" });
       if (url.endsWith("/api/integrations/available")) return json(services);
       if (url.endsWith("/api/integrations")) return json([{ id: "conn_old", service: "gmail", status: "auth_required" }]);
       if (url.endsWith("/api/integrations/connect")) return json({ url: "https://consent.example.test/app" });
@@ -498,6 +525,7 @@ describe("web onboarding app connect", () => {
     await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.succeeded", service: "github" }));
     expect(syncs).toHaveLength(1);
 
+    await waitFor(() => expect(result.current.gmailChoice.loading).toBe(false));
     act(() => result.current.connectApp("gmail"));
     await waitFor(() => expect(dispatch).toHaveBeenCalledWith({ type: "connect.succeeded", service: "gmail" }));
   });
