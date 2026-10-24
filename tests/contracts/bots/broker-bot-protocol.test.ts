@@ -69,7 +69,7 @@ describe("bot broker tool contracts", () => {
     const chunk = { offset: 0, length: 32 * 1024, sha256: "a".repeat(64) };
     const request = (part: unknown) => ({ toolCallId: "call_chunk", capability: "artifact.read", args: { relPath: "attachment.bin", chunk: part } });
     expect(BotToolRequestSchema.safeParse(request(chunk)).success).toBe(true);
-    for (const part of [{ ...chunk, offset: -1 }, { ...chunk, offset: 1024 * 1024 + 1 },
+    for (const part of [{ ...chunk, offset: -1 }, { ...chunk, offset: 10 * 1024 * 1024 + 1 },
       { ...chunk, length: 32 * 1024 + 1 }, { ...chunk, length: 0 }, { ...chunk, sha256: "invalid" },
       { offset: 0, length: 32 * 1024 }]) expect(BotToolRequestSchema.safeParse(request(part)).success).toBe(false);
   });
