@@ -37,6 +37,57 @@ describe("project-manager", () => {
     });
   });
 
+  it("reports developer access ready only after GitHub, SSH, and owner identity are verified", async () => {
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === "gh" && args[0] === "--version") {
+        return { stdout: "gh version 2.86.0\n", stderr: "" };
+      }
+      if (command === "gh" && args[0] === "auth" && args[1] === "status") {
+        return { stdout: "", stderr: "" };
+      }
+      if (command === "gh" && args[0] === "config" && args.includes("git_protocol")) {
+        return { stdout: "ssh\n", stderr: "" };
+      }
+      if (command === "gh" && args[0] === "api" && args[1] === "user") {
+        return { stdout: "octocat\n", stderr: "" };
+      }
+      if (command === "git" && args.includes("user.name")) {
+        return { stdout: "The Octocat\n", stderr: "" };
+      }
+      if (command === "git" && args.includes("user.email")) {
+        return { stdout: "583231+octocat@users.noreply.github.com\n", stderr: "" };
+      }
+      if (command === "ssh") {
+        expect(args).toEqual(expect.arrayContaining([
+          "-T",
+          "-o",
+          "BatchMode=yes",
+          "-o",
+          "StrictHostKeyChecking=yes",
+          "git@github.com",
+        ]));
+        expect(args.some((arg) => arg.startsWith("UserKnownHostsFile="))).toBe(true);
+        return { stdout: "", stderr: "Hi octocat! You've successfully authenticated, but GitHub does not provide shell access.\n" };
+      }
+      throw new Error(`Unexpected command: ${command} ${args.join(" ")}`);
+    });
+    const manager = createProjectManager({ homePath, runCommand });
+
+    await expect(manager.getGithubStatus()).resolves.toEqual({
+      installed: true,
+      authenticated: true,
+      user: "octocat",
+      gitProtocol: "ssh",
+      sshStatus: "verified",
+      commitIdentity: {
+        status: "ready",
+        label: "The Octocat <583231+octocat@users.noreply.github.com>",
+      },
+      ready: true,
+      errorCode: null,
+    });
+  });
+
   it("creates a project through safe clone staging and writes owner-scoped config", async () => {
     const runCommand = vi.fn(async (command: string, args: string[], options) => {
       expect(command).toMatch(/^(gh|git)$/);
