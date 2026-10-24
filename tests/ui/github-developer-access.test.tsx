@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import React from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   GithubDeveloperAccessCard,
@@ -91,6 +91,31 @@ describe("GitHub developer access card", () => {
       fireEvent.click(screen.getByRole("button", { name: "Refresh GitHub developer access" }));
     });
     expect(status).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps setup locked while refresh completes during a pending terminal handoff", async () => {
+    let releaseSetup!: (opened: boolean) => void;
+    const startSetup = vi.fn(() => new Promise<boolean>((resolve) => { releaseSetup = resolve; }));
+    const status = vi.fn().mockResolvedValue({
+      ...readyStatus,
+      sshStatus: "setup_required",
+      ready: false,
+    });
+    render(<GithubDeveloperAccessCard identityKey="alice:primary" client={{ status, startSetup }} />);
+
+    const finish = await screen.findByRole("button", { name: "Finish setup" });
+    fireEvent.click(finish);
+    expect(finish).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh GitHub developer access" }));
+    await waitFor(() => expect(status).toHaveBeenCalledTimes(2));
+    const refreshedFinish = await screen.findByRole("button", { name: "Finish setup" });
+    expect(refreshedFinish).toBeDisabled();
+    fireEvent.click(refreshedFinish);
+    expect(startSetup).toHaveBeenCalledTimes(1);
+
+    await act(async () => { releaseSetup(true); });
+    expect(refreshedFinish).toBeEnabled();
   });
 
   it("ignores a late status response after the owner/runtime identity changes", async () => {
