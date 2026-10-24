@@ -4,6 +4,19 @@ import type { CredentialStore, StoredCredential } from "@desktop/main/auth/crede
 
 const HOUR_MS = 3_600_000;
 
+it("keeps the main-owned authenticated profile authority when operator config differs", async () => {
+  const auth = new AuthService({
+    credentialStore: makeCredentialStore({ accessToken: "synthetic",
+      userId: "user-owner", handle: "owner", expiresAt: Date.now() + HOUR_MS }).store,
+    platformHost: "https://messaging-stage.example.com",
+    runtimeSelectionOrigin: "https://messaging-stage.example.com",
+    loadProfile: async () => ({ handle: "owner", userId: "user-owner", platformHost: "https://app.matrix-os.com", runtimeSlot: "review" }),
+    saveProfile: async () => {}, clearProfile: async () => {}, onAuthChanged: () => {},
+  });
+  await auth.init();
+  expect(auth.getStatus()).toMatchObject({ signedIn: true, platformHost: "https://app.matrix-os.com", runtimeSlot: "review" });
+});
+
 function makeCredentialStore(
   initial: StoredCredential | null = null,
   beforeSave?: (credential: StoredCredential) => Promise<void>,

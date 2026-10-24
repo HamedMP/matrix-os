@@ -7,6 +7,10 @@ import {
 import type { CreateAgentThreadRequest } from "@matrix-os/contracts";
 
 describe("IPC contract", () => {
+  it("does not allow the renderer to write auth profile or choose a device-auth origin", () => {
+    expect(INVOKE_CHANNELS["state:set"].request.safeParse({ key: "profile", value: { platformHost: "https://attacker.example" } }).success).toBe(false);
+    expect(INVOKE_CHANNELS["auth:start-device-flow"].request.safeParse({ intent: "sign-in", platformHost: "https://attacker.example" }).success).toBe(false);
+  });
   it("matches the shared drive folder byte range at the IPC boundary",()=>{
     const input={scopeId:"00000000-0000-4000-8000-000000000001",organizationId:"org_example",runtimeSlot:"primary",authGeneration:1,folder:"f".repeat(798)};
     const schema=INVOKE_CHANNELS["runtime:organization-drive-upload"].request;

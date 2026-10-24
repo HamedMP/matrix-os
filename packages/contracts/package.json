@@ -40,6 +40,7 @@
     "#runtime-compatibility": "./src/runtime-compatibility.ts",
     "#chat-message-wire": "./src/chat-message-wire.ts",
     "#chat-links": "./src/chat-links.ts",
+    "#messaging-settings": "./src/messaging-settings.ts",
     "#chat-artifacts": "./src/chat-artifacts.ts",
     "#file-preview": "./src/file-preview.ts",
     "#chat-sharing": "./src/chat-sharing.ts",

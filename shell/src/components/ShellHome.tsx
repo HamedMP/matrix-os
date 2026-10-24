@@ -1,5 +1,6 @@
 "use client";
 
+import { CanonicalChatIdSchema } from "@matrix-os/contracts";
 import { GettingStartedVisibilityProvider, resolveRecipeHandoff, type ChatCollaborationView } from "@matrix-os/ui";
 import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { useAuth } from "@clerk/nextjs";
@@ -32,7 +33,9 @@ const LAUNCHABLE_BUILT_IN_PATHS = new Set([
 
 function readLaunchPathFromLocation(): string | null {
   if (typeof window === "undefined") return null;
-  if (readRecipePromptFromLocation()) return "__chat__";
+  const chatIds = new URLSearchParams(window.location.search).getAll("chat");
+  const chatId = CanonicalChatIdSchema.safeParse(chatIds.length === 1 ? chatIds[0] : null);
+  if (readRecipePromptFromLocation() || chatId.success) return "__chat__";
   const launch = new URLSearchParams(window.location.search).get("launch");
   return launch && LAUNCHABLE_BUILT_IN_PATHS.has(launch) ? launch : null;
 }
@@ -106,6 +109,15 @@ function ShellHomeBody({
     navigationGeneration: sessionId ?? "self-hosted",
   });
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const handoffConsumed = useRef<string | null>(null);
+  useEffect(() => {
+    const values = new URLSearchParams(window.location.search).getAll("chat");
+    const target = CanonicalChatIdSchema.safeParse(values.length === 1 ? values[0] : null);
+    const key = JSON.stringify([userId, sessionId, target.success ? target.data : null]);
+    if (!userId || !target.success || initialCollaborationView || handoffConsumed.current === key) return;
+    handoffConsumed.current = key;
+    chat.switchConversation(target.data);
+  }, [userId, sessionId, initialCollaborationView, chat.switchConversation]);
   const locationLaunchAppPath = useSyncExternalStore(
     subscribeLaunchPathNoop,
     readLaunchPathFromLocation,

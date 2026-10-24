@@ -52,11 +52,14 @@ describe("SettingsView", () => {
     expect(screen.queryByRole("button", { name: "Agent (Hermes)" })).toBeNull();
   });
 
-  it("offers Slack installation in Messaging through the system browser", async () => {
+  it.each(["https://x.test", "https://app.matrix-os.com"])("uses the authenticated %s authority for Slack href and system-browser open", async (platformHost) => {
+    useConnection.setState({ platformHost });
     render(<SettingsView />);
     fireEvent.click(screen.getByRole("button", {name:"Messaging"}));
-    fireEvent.click(screen.getByRole("link", {name:"Add to Slack"}));
-    await waitFor(() => expect(window.operator!.invoke).toHaveBeenCalledWith("shell:open-external", {url:"https://app.matrix-os.com/slack/install"}));
+    const link = screen.getByRole("link", {name:"Add to Slack"});
+    expect(link.getAttribute("href")).toBe(`${platformHost}/slack/install`);
+    fireEvent.click(link);
+    await waitFor(() => expect(window.operator!.invoke).toHaveBeenCalledWith("shell:open-external", {url:`${platformHost}/slack/install`}));
   });
 
   it.each(["agent", "providers"] as const)("maps the legacy %s deep link to Agents & providers and consumes it", async (legacySection) => {
