@@ -348,8 +348,7 @@ describe("coding agent thread lifecycle", () => {
     "classifies a %s background initial-run deadline as a provider failure",
     async (providerId) => {
       const homePath = await mkdtemp(join(tmpdir(), `matrix-${providerId}-initial-run-timeout-`));
-      const deadlineController = new AbortController();
-      const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadlineController.signal);
+      vi.useFakeTimers();
       const pendingCredentialProvider: CodingAgentProviderAdapter = {
         providerId,
         initialRunExecution: "background",
@@ -370,7 +369,7 @@ describe("coding agent thread lifecycle", () => {
           return {
             then(resolve: (result: typeof abortedResult) => void) {
               resolve(abortedResult);
-              queueMicrotask(() => deadlineController.abort());
+              queueMicrotask(() => vi.advanceTimersByTime(1_000));
             },
           } as unknown as Promise<typeof abortedResult>;
         },
@@ -411,8 +410,8 @@ describe("coding agent thread lifecycle", () => {
         ]));
       } finally {
         subscription.dispose();
-        timeoutSpy.mockRestore();
         await threads.shutdownTurns();
+        vi.useRealTimers();
       }
     },
   );

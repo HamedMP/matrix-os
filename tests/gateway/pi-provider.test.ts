@@ -928,6 +928,7 @@ describe("pi provider adapter — event normalization", () => {
 
     expect(started).toHaveLength(10);
     expect(completed).toHaveLength(10);
+    expect(parsed.events.filter(event => event.type === "assistant.text.delta" && event.delta === "Some output was omitted from this preview.")).toHaveLength(1);
     expect(completed.map((event) => event.type === "tool.completed" && event.toolCallId))
       .toEqual(started.map((event) => event.type === "tool.started" && event.toolCallId));
   });

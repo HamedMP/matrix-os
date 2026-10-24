@@ -160,6 +160,31 @@ describe("OpenCode coding-agent provider", () => {
     });
   });
 
+  it("bounds accumulated preview across a steering continuation and reports truncation once", async () => {
+    const records = (scope: string) => Array.from({ length: 150 }, (_, index) => line("text", {
+      part: { id: `${scope}_${index}`, type: "text", text: "x", time: { end: 1 } },
+    }));
+    const second = fakeSpawn(records("second"));
+    let calls = 0;
+    const spawnFn: OpenCodeSpawnFn = (command, args, options) => {
+      if (calls++ > 0) return second.spawnFn(command, args, options);
+      const stdout = new EventEmitter();
+      const lifecycle = new EventEmitter();
+      queueMicrotask(() => { for (const record of records("first")) stdout.emit("data", Buffer.from(`${record}\n`)); });
+      return { stdout, stderr: new EventEmitter(), once: lifecycle.once.bind(lifecycle), kill: () => {
+        queueMicrotask(() => { stdout.emit("end"); lifecycle.emit("exit", null); });
+      } };
+    };
+    const adapter = provider(spawnFn);
+    const pending = adapter.startThread({ principal, thread: thread(), request: request(), now: () => now, nextEventId: ids() });
+    await vi.waitFor(() => expect(calls).toBe(1));
+    await adapter.steerTurn!({ principal, thread: thread(), message: "Continue", clientRequestId: "req_bounded_steer" });
+    const result = await pending;
+    expect(result.events.length).toBeLessThanOrEqual(500);
+    expect(result.events).toContainEqual(expect.objectContaining({ type: "thread.completed", outcome: "completed" }));
+    expect(result.events.filter(event => event.type === "assistant.text.delta" && event.delta === "Some output was omitted from this preview.")).toHaveLength(1);
+  });
+
   it.each([
     ["https://relay.example.test", "https://relay.example.test/v1"],
     ["https://relay.example.test/", "https://relay.example.test/v1"],
@@ -869,7 +894,7 @@ describe("OpenCode coding-agent provider", () => {
     }
   });
 
-  it("terminates a flood of unique unsupported part records without growing dedup state", async () => {
+  it("consumes unsupported records without growing retained output", async () => {
     const fake = fakeSpawn(Array.from({ length: 4_200 }, (_, index) =>
       line("step_start", { part: { id: `unsupported_${index}`, type: "step-start" } })
     ));
@@ -878,13 +903,13 @@ describe("OpenCode coding-agent provider", () => {
       principal, thread: thread(), request: request(), now: () => now, nextEventId: ids(),
     });
 
-    expect(fake.kills).toContain("SIGTERM");
+    expect(fake.kills).not.toContain("SIGTERM");
     expect(result.events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "thread.completed", outcome: "failed" }),
+      expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
     ]));
   });
 
-  it("fails and terminates when supported records exceed the event cap", async () => {
+  it("truncates supported display records without terminating a successful turn", async () => {
     const fake = fakeSpawn(Array.from({ length: 481 }, (_, index) =>
       line("text", {
         part: {
@@ -900,18 +925,21 @@ describe("OpenCode coding-agent provider", () => {
       principal, thread: thread(), request: request(), now: () => now, nextEventId: ids(),
     });
 
-    expect(fake.kills).toContain("SIGTERM");
-    expect(result.events).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        type: "thread.error",
-        error: expect.objectContaining({ code: "provider_run_failed", safeMessage: expect.any(String) }),
-      }),
-      expect.objectContaining({ type: "thread.completed", outcome: "failed" }),
-    ]));
-    expect(result.events).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "thread.completed", outcome: "completed" }),
-    ]));
+    expect(fake.kills).not.toContain("SIGTERM");
+    expect(result.events).toContainEqual(expect.objectContaining({ type: "thread.completed", outcome: "completed" }));
+    expect(result.events.length).toBeLessThanOrEqual(500);
     expect(JSON.stringify(result)).not.toContain("private overflow detail");
+    expect(result.events.filter(event => event.type === "assistant.text.delta" && event.delta === "Some output was omitted from this preview.")).toHaveLength(1);
+  });
+
+  it("consumes more than the former total record allowance before finishing", async () => {
+    const fake = fakeSpawn([
+      ...Array.from({ length: 4097 }, () => line("step_start", { part: { type: "step-start" } })),
+      line("text", { part: { id: "last_part", type: "text", text: "Done", time: { end: 1 } } }),
+    ]);
+    const result = await provider(fake.spawnFn).startThread({ principal, thread: thread(), request: request(), now: () => now, nextEventId: ids() });
+    expect(fake.kills).not.toContain("SIGTERM");
+    expect(result.events).toContainEqual(expect.objectContaining({ type: "thread.completed", outcome: "completed" }));
   });
 
   it("waits for stdout to drain after exit before classifying a cap-crossing tail", async () => {

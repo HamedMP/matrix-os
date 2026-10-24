@@ -1,3 +1,4 @@
+import { createCodingRunLifetime, explicitCodingRunTimeout } from "./coding-run-lifetime.js";
 import { randomUUID } from "node:crypto";
 import type { AgentThreadEvent, AgentThreadSummary, CreateAgentTurnRequest } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
@@ -9,7 +10,6 @@ import {
 } from "./provider-adapter.js";
 
 const DEFAULT_MAX_DISPATCHES = 100;
-const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
 interface DispatchEntry {
   controller: AbortController;
@@ -45,6 +45,7 @@ export interface CodingAgentTurnDispatcherOptions {
   now(): Date;
   logFailure(scope: string, err: unknown): void;
   maxDispatches?: number;
+  /** Optional trusted caller timebox; omitted for ordinary owner turns. */
   timeoutMs?: number;
 }
 
@@ -68,14 +69,14 @@ export function createCodingAgentTurnDispatcher(options: CodingAgentTurnDispatch
     options.maxDispatches ?? DEFAULT_MAX_DISPATCHES,
     DEFAULT_MAX_DISPATCHES,
   ));
-  const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, 10 * 60_000));
+  const timeoutMs = explicitCodingRunTimeout(options.timeoutMs);
   const active = new Map<string, DispatchEntry>();
   let closed = false;
 
   function sweepExpired(): void {
-    const cutoff = Date.now() - timeoutMs;
+    if (timeoutMs === undefined) return;
     for (const entry of active.values()) {
-      if (entry.startedAtMs <= cutoff) {
+      if (entry.startedAtMs <= Date.now() - timeoutMs) {
         entry.abortReason ??= "timeout";
         entry.controller.abort();
       }
@@ -83,12 +84,13 @@ export function createCodingAgentTurnDispatcher(options: CodingAgentTurnDispatch
   }
 
   async function dispatch(input: CodingAgentTurnDispatchInput, entry: DispatchEntry): Promise<void> {
-    const signal = entry.controller.signal;
+    const lifetime = createCodingRunLifetime(entry.controller.signal, timeoutMs);
+    const signal = lifetime.signal;
     try {
       await options.markRunning(input.principal.userId, input.thread.id, input.turn.turnId);
       const provider = options.getProvider(input.thread.providerId);
       if (!provider.resumeTurn) throw new Error("Provider turn resume unavailable");
-      const combinedSignal = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
+      const combinedSignal = signal;
       const providerPromise = Promise.resolve().then(() => provider.resumeTurn!({
         principal: input.principal,
         thread: input.thread,
@@ -136,11 +138,11 @@ export function createCodingAgentTurnDispatcher(options: CodingAgentTurnDispatch
         threadId: input.thread.id,
         turnId: input.turn.turnId,
         providerEvents: [],
-        outcome: entry.abortReason === "explicit" || entry.abortReason === "shutdown"
+        outcome: !lifetime.timedOut() && (entry.abortReason === "explicit" || entry.abortReason === "shutdown")
           ? "aborted"
           : "failed",
       });
-    }
+    } finally { lifetime.dispose(); }
   }
 
   return {
