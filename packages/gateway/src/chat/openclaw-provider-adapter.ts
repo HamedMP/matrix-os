@@ -62,7 +62,6 @@ interface ActiveRun {
   lateAcceptTimer?: ReturnType<typeof setTimeout>;
   browserClose?: () => Promise<void>;
   browserMarkDispatched?: () => void;
-  cancellation?: AbortController;
 }
 
 interface OpenClawChatProviderOptions {
@@ -246,7 +245,6 @@ export function createOpenClawChatProviderAdapter(
     // Broker revocation starts immediately. Native cancellation must not wait
     // for a browser action drain or the best-effort lease cleanup RPC.
     const browserClose = active.browserClose?.();
-    active.cancellation?.abort();
     const sessionKey = active.sessionKey ?? state?.sessionKey;
     if (!sessionKey) { await browserClose; return; }
     const agentId = active.agentId ?? state?.agentId;
@@ -294,7 +292,6 @@ export function createOpenClawChatProviderAdapter(
       sessionKey: requestedSessionKey,
       agentId: input.resumeState?.agentId,
       cancelled: false,
-      cancellation: new AbortController(),
     };
     track(input.runId, active);
     if (options.sharedBrowser && input.owner.type === "personal" && !input.sharedScopeId && input.permissionMode === "full_access") {
@@ -347,7 +344,6 @@ export function createOpenClawChatProviderAdapter(
     } catch (error: unknown) {
       console.warn("[chat-openclaw] event subscription unavailable", error instanceof Error ? error.name : "UnknownError");
       input.signal.removeEventListener("abort", onAbort);
-      active.cancellation?.abort();
       activeRuns.delete(input.runId);
       await active.browserClose?.();
       yield failure();
@@ -434,7 +430,6 @@ export function createOpenClawChatProviderAdapter(
     } finally {
       subscription?.dispose();
       if (!confirmedTerminal && !active.cancelled) scheduleAbort();
-      active.cancellation?.abort();
       input.signal.removeEventListener("abort", onAbort);
       if (active.lateAcceptTimer) clearTimeout(active.lateAcceptTimer);
       activeRuns.delete(input.runId);
