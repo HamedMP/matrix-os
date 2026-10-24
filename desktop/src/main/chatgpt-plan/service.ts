@@ -7,7 +7,7 @@ import type { ChatGptPlanPeerRequest } from '@matrix-os/contracts';
 import type { AuthService } from '../auth/auth-service';
 import { CHATGPT_PLAN_INVOKE, type ChatgptPlanSession, type ChatgptPlanStatus, type ChatgptPlanModel } from '../../shared/chatgpt-plan-ipc';
 import { PLAN_RESOURCE, planJson, validatePlanTokens } from './oauth';
-import { requestPlanResponse } from './responses';
+import { requestPlanResponse, requestPlanResponseStream } from './responses';
 import { planCatalog, planJwks, revokePlanAccount } from './provider';
 import { startPlanLoopback } from './loopback';
 import { createPlanNativePeer, type PlanPeerBinding } from './peer';
@@ -246,8 +246,9 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             const next = {
                 deviceId: record.deviceId, accountId: account.id, grantRevision: permission.revision, enabled: permission.enabled, background: false, models
             };
+            const catalogSignature = JSON.stringify(models);
             const qualified = () => authorized() && current(value) && epoch === generation && active()?.id === account.id
-                && models === next.models && catalogAt > 0 && grant(value.computerId).revision === permission.revision;
+                && JSON.stringify(models) === catalogSignature && catalogAt > 0 && grant(value.computerId).revision === permission.revision;
             const signature = JSON.stringify(next);
             if (bridgeConnected && peerSignature === signature)
                 return;
@@ -282,9 +283,9 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
                 peerSyncTask = null;
         }
     }
-    async function infer(request: Extract<ChatGptPlanPeerRequest, {
+    function prepareInference(request: Extract<ChatGptPlanPeerRequest, {
         action: 'infer';
-    }>, signal: AbortSignal) {
+    }>, signal: AbortSignal, streaming = false) {
         const live = deps.auth.getStatus();
         const value = bound(live);
         const permission = grant(value.computerId);
@@ -302,19 +303,40 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             throw new Error('request capacity');
         const controller = new AbortController();
         requests.add(controller);
-        const operationSignal = AbortSignal.any([signal, controller.signal, AbortSignal.timeout(120000)]);
-        try {
-            return await requestPlanResponse({
+        const operationSignal = AbortSignal.any(streaming ? [signal, controller.signal]
+            : [signal, controller.signal, AbortSignal.timeout(120000)]);
+        return {
+            controller,
+            input: {
                 fetchFn, body: request.body, model: request.model, signal: operationSignal, validate,
                 accessToken: async () => (await freshTokens(value, operationSignal)).accessToken,
-            });
+            },
+        };
+    }
+    async function infer(request: Extract<ChatGptPlanPeerRequest, {
+        action: 'infer';
+    }>, signal: AbortSignal) {
+        const { controller, input } = prepareInference(request, signal);
+        try {
+            return await requestPlanResponse(input);
         }
         finally {
             requests.delete(controller);
         }
     }
+    async function* inferStream(request: Extract<ChatGptPlanPeerRequest, {
+        action: 'infer';
+    }>, signal: AbortSignal, progress: () => void): AsyncGenerator<string> {
+        const { controller, input } = prepareInference(request, signal, true);
+        try {
+            yield* requestPlanResponseStream(input, true, progress);
+        } finally {
+            requests.delete(controller);
+        }
+    }
     const peer = createPlanNativePeer({
-        fetchFn, current: currentPeer, infer, connected: value => {
+        deliveryVersion: 2,
+        fetchFn, current: currentPeer, infer, inferStream, connected: value => {
             bridgeConnected = value;
             if (!value)
                 peerSignature = null;
