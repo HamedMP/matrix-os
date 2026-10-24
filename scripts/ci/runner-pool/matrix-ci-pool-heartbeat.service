@@ -1,0 +1,12 @@
+[Unit]
+Description=Matrix CI runner pool heartbeat
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/opt/matrix-ci-pool/pool.sh heartbeat
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
