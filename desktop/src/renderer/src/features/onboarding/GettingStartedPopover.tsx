@@ -134,6 +134,9 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
   const activateStep = useCallback((id: GettingStartedStepId) => {
     switch (id) {
       case "github":
+        requestSettingsSection("agents-providers");
+        openTab({ kind: "settings", title: "Settings" });
+        break;
       case "email-calendar":
         openSettings("services");
         break;
@@ -147,7 +150,7 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
         openSettings("billing");
         break;
     }
-  }, [openSettings, openTab]);
+  }, [openSettings, openTab, requestSettingsSection]);
 
   useEffect(() => {
     // A manual opening counts too, even while status is loading: a later

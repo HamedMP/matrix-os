@@ -26,7 +26,16 @@ const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
 function successfulResponse(path: string): unknown {
   switch (path) {
     case "/api/github/status":
-      return { installed: true, authenticated: true, user: "octocat", errorCode: null };
+      return {
+        installed: true,
+        authenticated: true,
+        user: "octocat",
+        gitProtocol: "ssh",
+        sshStatus: "verified",
+        commitIdentity: { status: "ready", label: "The Octocat <octocat@users.noreply.github.com>" },
+        ready: true,
+        errorCode: null,
+      };
     case "/api/integrations":
       return [
         { id: CONNECTION_ID, service: "gmail", account_label: "Mail", status: "active" },
@@ -114,7 +123,7 @@ describe("getting started status", () => {
     expect(snapshot.completedCount).toBe(0);
   });
 
-  it("marks GitHub complete when it is connected through Services", async () => {
+  it("does not mark GitHub complete from a legacy Services connection", async () => {
     const snapshot = await loadGettingStartedSnapshot(makeApi({
       "/api/github/status": { installed: true, authenticated: false, user: null, errorCode: null },
       "/api/integrations": [
@@ -122,7 +131,27 @@ describe("getting started status", () => {
       ],
     }) as never);
 
-    expect(snapshot.steps.find((step) => step.id === "github")?.status).toBe("complete");
+    expect(snapshot.steps.find((step) => step.id === "github")?.status).toBe("unavailable");
+  });
+
+  it("keeps GitHub incomplete until developer access is fully ready", async () => {
+    const snapshot = await loadGettingStartedSnapshot(makeApi({
+      "/api/github/status": {
+        installed: true,
+        authenticated: true,
+        user: "octocat",
+        gitProtocol: "ssh",
+        sshStatus: "setup_required",
+        commitIdentity: { status: "ready", label: "The Octocat <octocat@users.noreply.github.com>" },
+        ready: false,
+        errorCode: null,
+      },
+      "/api/integrations": [
+        { id: CONNECTION_ID, service: "github", account_label: "octocat", status: "active" },
+      ],
+    }) as never);
+
+    expect(snapshot.steps.find((step) => step.id === "github")?.status).toBe("incomplete");
   });
 
   it("loads platform-owned billing status through the primary route", async () => {
@@ -296,6 +325,8 @@ describe("GettingStartedPopover", () => {
       expect.objectContaining({ kind: "settings", title: "Settings" }),
     ]);
     expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" }));
+    expect(useUi.getState().requestedSettingsSection).toBe("agents-providers");
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(12));
   });
 });

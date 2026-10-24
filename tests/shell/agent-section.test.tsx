@@ -13,6 +13,10 @@ const providerControllerState = vi.hoisted(() => ({
   error: null as string | null,
   mutate: vi.fn(),
   addCredit: null as null | ((source: string, packageId: "usd_5", requestId: string) => Promise<void>),
+  githubDeveloperAccess: null as null | {
+    identityKey: string;
+    client: { status(signal: AbortSignal): Promise<unknown>; startSetup(): Promise<boolean> };
+  },
 }));
 
 vi.mock("@matrix-os/ui", async () => ({
@@ -23,13 +27,16 @@ vi.mock("@matrix-os/ui", async () => ({
     onOpenBrowser,
     onMutate,
     onAddCredit,
+    githubDeveloperAccess,
   }: {
     onOpenTerminal: (sessionId: string) => void;
     onOpenBrowser: (path: string) => void;
     onMutate: (intent: unknown) => Promise<boolean>;
     onAddCredit: (source: string, packageId: "usd_5", requestId: string) => Promise<void>;
+    githubDeveloperAccess: NonNullable<typeof providerControllerState.githubDeveloperAccess>;
   }) => {
     providerControllerState.addCredit = onAddCredit;
+    providerControllerState.githubDeveloperAccess = githubDeveloperAccess;
     return (
     <div>
       <h2>Agents &amp; providers</h2>
@@ -64,12 +71,38 @@ afterEach(() => {
   providerControllerState.error = null;
   providerControllerState.mutate.mockReset();
   providerControllerState.addCredit = null;
+  providerControllerState.githubDeveloperAccess = null;
   window.history.replaceState({}, "", "/");
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 describe("Canvas settings sections", () => {
+  it("binds GitHub developer status and fixed setup to the active web computer", async () => {
+    window.history.replaceState({}, "", "/vm/alice?runtime=studio");
+    const fetcher = vi.fn().mockResolvedValue(Response.json({
+      installed: true, authenticated: false, user: null, gitProtocol: null,
+      sshStatus: "setup_required", commitIdentity: { status: "missing", label: null },
+      ready: false, errorCode: null,
+    }));
+    vi.stubGlobal("fetch", fetcher);
+    const openGithubSetup = vi.fn();
+    render(<AgentSection onOpenGithubDeveloperTerminal={openGithubSetup} />);
+    const access = providerControllerState.githubDeveloperAccess!;
+
+    await expect(access.client.status(new AbortController().signal)).resolves.toMatchObject({ ready: false });
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.stringMatching(/\/vm\/alice\/~runtime\/studio\/api\/github\/status$/),
+      expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
+    );
+    await expect(access.client.startSetup()).resolves.toBe(true);
+    expect(openGithubSetup).toHaveBeenCalledTimes(1);
+
+    window.history.replaceState({}, "", "/vm/bob?runtime=other");
+    await expect(access.client.startSetup()).resolves.toBe(false);
+    expect(openGithubSetup).toHaveBeenCalledTimes(1);
+  });
+
   it("preserves the active checkout callback and settlement across ordinary snapshot rerenders", async () => {
     window.history.replaceState({}, "", "/vm/alice?runtime=studio");
     let release!: (response: Response) => void;

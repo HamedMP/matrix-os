@@ -27,6 +27,7 @@ import { ConnectionChoices } from "./ConnectionChoices.js";
 import { settingsErrorPresentation } from "./settings-error-presentation.js";
 import type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
 import { selectedHarness, titleCase } from "./utils.js";
+import { GithubDeveloperAccessCard } from "./GithubDeveloperAccessCard.js";
 
 export type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
 
@@ -55,6 +56,7 @@ export function AgentsProvidersView({
   matrixAnthropicClient,
   onOpenAuthorizationUrl,
   onLoadUsageHistory,
+  githubDeveloperAccess,
 }: AgentsProvidersViewProps) {
   const root = useRef<HTMLDivElement>(null);
   const [localChatgptRefreshRevision, setLocalChatgptRefreshRevision] = useState(0);
@@ -171,6 +173,8 @@ export function AgentsProvidersView({
           <span>{errorPresentation.message}</span>
         </div>
       ) : null}
+
+      {githubDeveloperAccess ? <GithubDeveloperAccessCard {...githubDeveloperAccess} /> : null}
 
       {historyLoader && historyLoader === onLoadUsageHistory ? <UsageHistoryDialog load={historyLoader} onClose={() => setHistoryLoader(undefined)} /> : null}
       <div className="matrix-ap-workspace">

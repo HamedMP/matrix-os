@@ -159,6 +159,39 @@ describe("desktop shared agents and providers adapter", () => {
     expect(useConnection.getState().api?.forRuntime).toHaveBeenCalledWith("vm-2");
   });
 
+  it("binds GitHub developer status and fixed setup to the active Electron computer", async () => {
+    const get = vi.fn().mockResolvedValue({
+      installed: true, authenticated: false, user: null, gitProtocol: null,
+      sshStatus: "setup_required", commitIdentity: { status: "missing", label: null },
+      ready: false, errorCode: null,
+    });
+    const forRuntime = vi.fn(() => ({ get, post: vi.fn() }));
+    useConnection.setState({ api: { forRuntime } as never });
+    const openSetup = vi.spyOn(providerActions, "openDesktopGithubDeveloperSetup").mockResolvedValue(true);
+    render(<AgentsProvidersAdapter />);
+    const props = mocks.view.mock.calls.at(-1)![0] as unknown as {
+      githubDeveloperAccess: {
+        identityKey: string;
+        client: { status(signal: AbortSignal): Promise<unknown>; startSetup(): Promise<boolean> };
+      };
+    };
+
+    const signal = new AbortController().signal;
+    await expect(props.githubDeveloperAccess.client.status(signal)).resolves.toMatchObject({ ready: false });
+    expect(get).toHaveBeenCalledExactlyOnceWith("/api/github/status", {
+      maxBytes: 16 * 1024,
+      timeoutMs: 10_000,
+      signal,
+      cache: "no-store",
+      omitErrorBody: true,
+    });
+    await expect(props.githubDeveloperAccess.client.startSetup()).resolves.toBe(true);
+    expect(openSetup).toHaveBeenCalledWith(expect.anything(), expect.any(Function));
+
+    act(() => useConnection.setState({ runtimeSlot: "other" }));
+    await expect(props.githubDeveloperAccess.client.status(signal)).rejects.toThrow("unavailable");
+  });
+
   it("revalidates Chat once when Settings first observes provider state changed outside Electron", () => {
     const view = render(<AgentsProvidersAdapter />);
 

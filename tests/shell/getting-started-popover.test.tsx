@@ -21,7 +21,16 @@ const CONNECTION_ID = "11111111-1111-4111-8111-111111111111";
 
 function responseFor(url: string): unknown {
   if (url.endsWith("/api/github/status")) {
-    return { installed: true, authenticated: false, user: null };
+    return {
+      installed: true,
+      authenticated: true,
+      user: "octocat",
+      gitProtocol: "ssh",
+      sshStatus: "verified",
+      commitIdentity: { status: "ready", label: "The Octocat <octocat@users.noreply.github.com>" },
+      ready: true,
+      errorCode: null,
+    };
   }
   if (url.endsWith("/api/integrations")) {
     return [
@@ -189,6 +198,9 @@ describe("web getting started status", () => {
     expect(onOpenSettings).toHaveBeenCalledWith("integrations");
     expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
 
+    fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" }));
+    expect(onOpenSettings).toHaveBeenCalledWith("agents-providers");
+
     fireEvent.click(trigger);
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull());
   });
@@ -255,7 +267,16 @@ describe("web getting started status", () => {
           : url.endsWith("/api/workspace/projects") ? { projects: completed ? [{}] : [] }
             : url.endsWith("/api/chats?limit=1") ? { items: [] }
               : url.includes("/billing/status") ? { access: { runtimeProxyAllowed: completed } }
-                : { authenticated: completed };
+                : completed ? {
+                  installed: true,
+                  authenticated: true,
+                  user: "octocat",
+                  gitProtocol: "ssh",
+                  sshStatus: "verified",
+                  commitIdentity: { status: "ready", label: "The Octocat <octocat@users.noreply.github.com>" },
+                  ready: true,
+                  errorCode: null,
+                } : { installed: true, authenticated: false, user: null, ready: false, errorCode: null };
       return new Response(JSON.stringify(body), { status: 200 });
     });
 
