@@ -108,7 +108,7 @@ describe("audited owner execution recovery without financial settlement", () => 
     return { ...payload(), expectedRequestId: requestId, maximumLiabilityMicrousd: maximum };
   };
 
-  it("recovers two bounded unknowns, preserves money and refuses a third", async () => {
+  it("recovers three unknowns without changing money and still permits only one live execution", async () => {
     const first = payload();
     expect((await send(first)).status).toBe(200);
     const second = await nextExpired("second_request");
@@ -120,19 +120,20 @@ describe("audited owner execution recovery without financial settlement", () => 
     expect(unknowns.map((row) => row.execution_recovery_slot).sort()).toEqual([0, 1]);
     const third = await nextExpired("third_request");
     const beforeThird = await finance();
-    expect((await send(third)).status).toBe(429);
+    expect((await send(third)).status).toBe(200);
     expect(await finance()).toEqual(beforeThird);
     expect((await send(first)).status).toBe(200);
     credential = (await repo.issueRuntimeCredential(identity)).credential;
+    await authorization("one_live_execution");
     await expect(authorization("blocked_again")).rejects.toMatchObject({ code: "rate_limited" });
   });
 
-  it.each([499_900, 499_901])("bounds saved provider maxima at %s despite a small hold", async (maximum) => {
+  it.each([19_999_900, 19_999_901])("bounds saved provider maxima at %s despite a small hold", async (maximum) => {
     expect((await send()).status).toBe(200);
     const second = await nextExpired("second_request", maximum);
     expect(Number((await rows()).reserved_microusd)).toBe(900);
     const before = await finance();
-    expect((await send(second)).status).toBe(maximum === 499_900 ? 200 : 429);
+    expect((await send(second)).status).toBe(maximum === 19_999_900 ? 200 : 429);
     expect(await finance()).toEqual(before);
   });
 
@@ -167,7 +168,7 @@ describe("audited owner execution recovery without financial settlement", () => 
       amountMicrousd: 1_000, sourceReference: "peer-test", expiresAt: "2026-10-04T00:00:00.000Z" });
     const token = (await repo.issueRuntimeCredential(peer)).credential;
     const next = await repo.authorize({ credential: token.token, requestId: "peer_request", modelId,
-      maxCostMicrousd: 499_901, billingMode: "usage" });
+      maxCostMicrousd: 19_999_901, billingMode: "usage" });
     await repo.startReservation({ reservationId: next.reservation.reservationId, tokenId: token.tokenId });
     const row = await db.executor.selectFrom("ai_funded_usage_reservations").selectAll()
       .where("reservation_id", "=", next.reservation.reservationId).executeTakeFirstOrThrow();
@@ -175,7 +176,7 @@ describe("audited owner execution recovery without financial settlement", () => 
     const before = await finance();
     await expect(repo.releaseExecutionAdmission(peer, { ...payload(), reservationId: row.reservation_id,
       tokenId: token.tokenId, expectedRequestId: row.request_id, expectedStartedAt: row.started_at!,
-      expectedExpiresAt: row.expires_at, maximumLiabilityMicrousd: 499_901,
+      expectedExpiresAt: row.expires_at, maximumLiabilityMicrousd: 19_999_901,
       localRunEndedAt: new Date(Date.parse(row.started_at!) + 10_000).toISOString(), localRunState: "failed",
       acceptUnknownUpstreamLiability: true })).rejects.toMatchObject({ code: "rate_limited" });
     expect(await finance()).toEqual(before);
@@ -201,7 +202,7 @@ describe("audited owner execution recovery without financial settlement", () => 
 
   it("rejects nonterminal evidence, missing acceptance and unknown fields", async () => {
     for (const patch of [{ localRunState: "running" }, { acceptUnknownUpstreamLiability: false },
-      { maximumLiabilityMicrousd: 500_001 }, { actualCostMicrousd: 0 }, { ownerId: identity.ownerId },
+      { maximumLiabilityMicrousd: 20_000_001 }, { actualCostMicrousd: 0 }, { ownerId: identity.ownerId },
       { localRunEndedAt: new Date(clock.getTime() + 1).toISOString() }]) {
       expect((await send({ ...payload(), ...patch })).status).toBe(400);
     }
