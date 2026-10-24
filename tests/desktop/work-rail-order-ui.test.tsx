@@ -11,6 +11,36 @@ import { WorkRailScrollArea } from "@desktop/renderer/src/features/work/work-rai
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 const records = ["chat_a","chat_b"].map((id,index)=>({chat:{id,createdAt:`2026-10-0${index+1}T00:00:00Z`,updatedAt:`2026-10-0${index+2}T00:00:00Z`}} as CanonicalChatRecord));
 afterEach(()=>{cleanup();vi.useRealTimers();localStorage.clear();useConnection.setState(useConnection.getInitialState(),true);});
+it("keeps working Chats in user-activity order as background updates arrive", () => {
+  const first = { ...records[0]!, chat: {
+    ...records[0]!.chat,
+    activityAt: "2026-10-03T00:00:00Z",
+    updatedAt: "2026-10-03T00:00:00Z",
+  } };
+  const second = { ...records[1]!, chat: {
+    ...records[1]!.chat,
+    activityAt: "2026-10-02T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z",
+  } };
+  const rail = renderHook(({ chats }) => useWorkRailOrder(chats, []), {
+    initialProps: { chats: [first, second] },
+  });
+  const ids = () => rail.result.current.chats.map((chat) => chat.chat.id);
+  expect(ids()).toEqual(["chat_a", "chat_b"]);
+
+  rail.rerender({ chats: [first, { ...second, chat: {
+    ...second.chat,
+    updatedAt: "2026-10-04T00:00:00Z",
+  } }] });
+  expect(ids()).toEqual(["chat_a", "chat_b"]);
+
+  rail.rerender({ chats: [first, { ...second, chat: {
+    ...second.chat,
+    activityAt: "2026-10-04T00:00:00Z",
+    updatedAt: "2026-10-04T00:00:00Z",
+  } }] });
+  expect(ids()).toEqual(["chat_b", "chat_a"]);
+});
 it("persists manual reorder only for the same user and Computer",()=> {
   useConnection.setState({status:"signed-in",userId:"owner-a",platformHost:"https://platform.test",runtimeSlot:"pr2128"});
   const first = renderHook(()=>useWorkRailOrder(records,[]));
