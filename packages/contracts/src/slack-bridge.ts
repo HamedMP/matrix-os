@@ -1,5 +1,9 @@
 import { z } from "zod/v4";
 
+export const SLACK_INSTALL_PATH = '/slack/install';
+export const SLACK_INSTALL_URL = 'https://app.matrix-os.com/slack/install';
+export const SlackInstallRequestSchema = z.object({ organizationId: z.string().regex(/^org_[A-Za-z0-9_-]{1,124}$/) }).strict();
+
 export const SLACK_OAUTH_COMPLETION_PATH = '/slack/oauth/complete';
 export const SlackOAuthCallbackQuerySchema = z.object({
   state: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
