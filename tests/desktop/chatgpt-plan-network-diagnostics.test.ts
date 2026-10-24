@@ -173,3 +173,28 @@ it('persists the new metadata in the unchanged private 128-record/64KiB/24h stor
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual([{ observedAt: new Date(clock).toISOString(), stage: 'peer_reply', category: 'local_failure' }]);
   } finally { await store.close(); await rm(parent, { recursive: true, force: true }); }
 });
+
+
+it.each([
+  ['ERR_NAME_NOT_RESOLVED', 'ERR_NAME_NOT_RESOLVED'],
+  ['ERR_PROXY_CONNECTION_FAILED', 'ERR_PROXY_CONNECTION_FAILED'],
+  ['ERR_CERT_AUTHORITY_INVALID', 'ERR_CERT_AUTHORITY_INVALID'],
+  ['ERR_FUTURE_UNRECOGNIZED', 'unknown'],
+])('retains bounded Chromium %s before response headers without private error content', async (code, expected) => {
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const rows: unknown[] = [], unobserve = observePlanFailures(row => rows.push(row));
+  const fetchFn = vi.fn(async () => { throw new Error(`net::${code} https://private.invalid/${secret}`); });
+  try {
+    const failure = await requestPlanResponse({ fetchFn, body, model: 'fixture-model', signal: new AbortController().signal,
+      accessToken: async () => 'PRIVATE fixture access token', validate: () => {} }).catch(error => error);
+    expect(failure).toMatchObject({ stage: 'responses', category: 'network_error', networkDiagnostic: {
+      chromiumCode: expected, phase: 'before_headers', requestBodyBytes: Buffer.byteLength(body), elapsedMs: expect.any(Number),
+    } });
+    logPlanFailure('responses', failure, { runId });
+    expect(rows).toHaveLength(1);
+    expect(JSON.stringify(rows)).not.toContain('private.invalid');
+    expect(JSON.stringify(rows)).not.toContain('PRIVATE');
+    expect(JSON.stringify(warning.mock.calls)).not.toContain('PRIVATE');
+    expect(fetchFn).toHaveBeenCalledOnce();
+  } finally { unobserve(); }
+});
