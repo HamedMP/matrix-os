@@ -17,12 +17,24 @@ export const OWNER_ANTHROPIC_MODEL_IDS = [
   ...LEGACY_KERNEL_MODEL_IDS,
 ] as const;
 export const OWNER_OPENAI_MODEL_IDS = ["provider-default"] as const;
+export const OPENROUTER_MATRIX_PI_MODEL_IDS = [
+  "anthropic/claude-sonnet-5",
+  "openai/gpt-5.6-luna",
+  "openai/gpt-5.6-sol",
+] as const;
+export const OPENROUTER_ANTHROPIC_MODEL_IDS = ["anthropic/claude-sonnet-5"] as const;
+export const OPENROUTER_CODEX_MODEL_IDS = ["openai/gpt-5.6-luna", "openai/gpt-5.6-sol"] as const;
+export const OPENROUTER_MODEL_IDS = [...new Set([
+  ...OPENROUTER_MATRIX_PI_MODEL_IDS,
+  ...OPENROUTER_ANTHROPIC_MODEL_IDS,
+  ...OPENROUTER_CODEX_MODEL_IDS,
+])] as const;
 
 const CURRENT_STATUS = new Map<string, "current">(
   KERNEL_MODELS.map((model) => [model.id, "current"]),
 );
 
-export function buildBundledModelCatalog(): AiModelDescriptorView[] {
+export function buildBundledModelCatalog(options: { includeOpenRouter?: boolean } = {}): AiModelDescriptorView[] {
   const modelIds = [
     ...new Set([
       ...KERNEL_MODELS.map((model) => model.id),
@@ -71,6 +83,19 @@ export function buildBundledModelCatalog(): AiModelDescriptorView[] {
       aliases: [], catalogVersion: AI_PROVIDER_CATALOG_VERSION,
     })),
     ...anthropicModels,
+    ...(options.includeOpenRouter ? OPENROUTER_MODEL_IDS.map((id): AiModelDescriptorView => ({
+      id,
+      vendor: "openrouter",
+      displayName: id === "anthropic/claude-sonnet-5" ? "Claude Sonnet 5 via OpenRouter"
+        : id === "openai/gpt-5.6-luna" ? "GPT-5.6 Luna via OpenRouter" : "GPT-5.6 Sol via OpenRouter",
+      status: "current",
+      capabilities: ["tools", "reasoning", "long_context"],
+      effortControls: id.startsWith("openai/") ? [...KERNEL_EFFORTS] : [],
+      eligibleAccessSourceIds: ["owner_openrouter"],
+      dataPolicies: [{ accessSourceId: "owner_openrouter", route: "provider_router", disclosureKey: "owner-openrouter" }],
+      aliases: [],
+      catalogVersion: AI_PROVIDER_CATALOG_VERSION,
+    })) : []),
     {
       id: OWNER_OPENAI_MODEL_IDS[0],
       vendor: "openai",

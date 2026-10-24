@@ -70,6 +70,7 @@ export interface ProviderSettingsRuntimeMutationInput {
   claudeNativeCompletion?: boolean;
   /** Trusted server completion after the key workflow verified and saved the owner key. */
   claudeKeyCompletion?: boolean;
+  openRouterKeyCompletion?: boolean;
   codexNativeCompletion?: boolean;
 }
 

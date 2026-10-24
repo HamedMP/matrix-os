@@ -15,6 +15,7 @@ import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/
 import { createAgentLauncher } from "../../packages/gateway/src/agent-launcher.js";
 import type { GenericHarnessModelCatalogReader } from "../../packages/gateway/src/ai-providers/generic-harness-model-catalog.js";
 import { CODEX_VERIFIED_VERSION } from "../../packages/contracts/src/index.js";
+import { createOwnerOpenRouterKeySaver } from "../../packages/gateway/src/ai-providers/owner-openrouter-key.js";
 
 const NOW = new Date("2026-08-29T21:00:00.000Z");
 
@@ -54,6 +55,7 @@ describe("AiProviderService", () => {
       checkedAt: string | null;
       staleAfter: string | null;
     }>;
+    openRouterEnabled?: boolean;
   } = {}) {
     return new AiProviderService({
       homePath,
@@ -77,8 +79,45 @@ describe("AiProviderService", () => {
         : async () => options.driverInventory!(),
       codexLocalObservation: options.codexLocalObservation,
       codexNativeKeyReadiness: options.codexNativeKeyReadiness,
+      openRouterEnabled: options.openRouterEnabled,
     });
   }
+
+  it("projects one OpenRouter account into four exact owner-funded instances", async () => {
+    await createOwnerOpenRouterKeySaver({ homePath })("sk-or-test");
+    const service = createService({
+      openRouterEnabled: true,
+      healthProbe: async sourceId => sourceId === "owner_openrouter"
+        ? { state: "ready", checkedAt: NOW.toISOString(), staleAfter: null, action: "none", safeReason: null }
+        : null,
+      driverInventory: async () => [
+        { id: "claude_code", displayName: "Claude Code", kind: "cli", installState: "installed", health: "ready", capabilities: ["tools", "resume", "cancellation"], setupActions: [] },
+        { id: "codex", displayName: "Codex", kind: "cli", installState: "installed", health: "ready", capabilities: ["tools", "resume", "cancellation", "reasoning"], setupActions: [] },
+      ],
+    });
+    try {
+      const snapshot = await service.getSnapshot();
+      expect(snapshot.accessSources.find(source => source.id === "owner_openrouter")).toMatchObject({
+        state: "ready", fundingKind: "owner_api_key", vendor: "openrouter", accountLabel: "Billed by OpenRouter",
+      });
+      expect(snapshot.accounts.find(account => account.id === "owner_openrouter")).toMatchObject({
+        state: "ready", authMethod: "api_key", vendor: "openrouter",
+      });
+      const routes = snapshot.instances.filter(instance => instance.accessSourceId === "owner_openrouter");
+      expect(routes.map(route => route.id)).toEqual([
+        "matrix_pi_owner_openrouter",
+        "kernel_owner_openrouter",
+        "claude_code_owner_openrouter",
+        "codex_owner_openrouter",
+      ]);
+      expect(routes.every(route => route.accountId === "owner_openrouter" && route.vendor === "openrouter")).toBe(true);
+      expect(routes.find(route => route.id === "kernel_owner_openrouter")?.modelIds).toEqual(["anthropic/claude-sonnet-5"]);
+      expect(routes.find(route => route.id === "codex_owner_openrouter")?.modelIds).toEqual([
+        "openai/gpt-5.6-luna", "openai/gpt-5.6-sol",
+      ]);
+      expect(AiProviderSnapshotV3Schema.safeParse(snapshot).success).toBe(true);
+    } finally { service.close(); }
+  });
 
   it.each([
     { sourceId: "owner_openai_profile", checkedAt: NOW.toISOString(), staleAfter: new Date(NOW.getTime() + 5_000).toISOString(), expected: "present_unverified" },
