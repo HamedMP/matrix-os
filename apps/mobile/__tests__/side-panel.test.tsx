@@ -231,7 +231,7 @@ describe("SidePanel", () => {
       ]);
     });
 
-    it("counts every chat that needs the person", () => {
+    it("shows failed chats separately from chats that need the person", () => {
       renderPanel({
         chats: [
           chatRecord({ id: "a", title: "Alpha", attention: "input_required" }),
@@ -241,11 +241,13 @@ describe("SidePanel", () => {
       });
 
       const group = screen.getByTestId("side-panel-needs-you-group");
-      expect(within(screen.getByTestId("side-panel-needs-you")).getByText("2")).toBeTruthy();
-      expect(screen.getByLabelText("2 chats")).toBeTruthy();
+      expect(within(screen.getByTestId("side-panel-needs-you")).getByText("1")).toBeTruthy();
+      expect(screen.getByLabelText("1 chat")).toBeTruthy();
       expect(within(group).getAllByRole("button").map((row) => row.props.testID)).toEqual([
-        "side-panel-chat-a", "side-panel-chat-c",
+        "side-panel-chat-a",
       ]);
+      expect(within(screen.getByTestId("side-panel-failed-group")).getByTestId("side-panel-chat-c")).toBeTruthy();
+      expect(screen.getByLabelText("1 failed chat")).toBeTruthy();
       expect(within(group).queryByTestId("side-panel-chat-b")).toBeNull();
       expect(screen.getByTestId("side-panel-chat-b")).toBeTruthy();
     });

@@ -204,6 +204,20 @@ export function SidePanel({
               ))}
             </View>
           ) : null}
+          {!searchShown && groups.failed.length > 0 ? (
+            <View testID="side-panel-failed-group" style={styles.group}>
+              <View style={styles.groupHeader}>
+                <SectionLabel>Failed</SectionLabel>
+                <CountBadge
+                  count={groups.failed.length}
+                  accessibilityLabel={`${groups.failed.length} failed ${groups.failed.length === 1 ? "chat" : "chats"}`}
+                />
+              </View>
+              {groups.failed.map((record) => (
+                <SidePanelChatRow key={record.chat.id} record={record} now={now} onSelect={onSelectChat} />
+              ))}
+            </View>
+          ) : null}
           {recentLabelShown ? <SectionLabel>Recent</SectionLabel> : null}
         </View>
       }

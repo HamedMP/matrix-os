@@ -2,7 +2,7 @@ import { RailCollapse } from "./RailCollapse";
 import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 
-export function WorkRailSection({ label, expanded, onToggle, action, icon, count = 0, attention = false, children }: {
+export function WorkRailSection({ label, expanded, onToggle, action, icon, count = 0, attention = false, failure = false, children }: {
   label: string;
   expanded: boolean;
   onToggle: () => void;
@@ -10,6 +10,7 @@ export function WorkRailSection({ label, expanded, onToggle, action, icon, count
   icon?: ReactNode;
   count?: number;
   attention?: boolean;
+  failure?: boolean;
   divider?: boolean;
   children: ReactNode;
 }) {
@@ -23,7 +24,7 @@ export function WorkRailSection({ label, expanded, onToggle, action, icon, count
         <span className="work-rail-section-disclosure" aria-hidden>
           <ChevronRight size={11} className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} />
         </span>
-        {count > 0 && (attention || !expanded) ? <span className={`work-rail-section-count ${attention ? "work-rail-attention-count" : ""}`} aria-label={`${count} ${attention ? "chats need attention" : "hidden items"}`}>{count}</span> : null}
+        {count > 0 && (attention || failure || !expanded) ? <span className={`work-rail-section-count ${attention ? "work-rail-attention-count" : failure ? "work-rail-failure-count" : ""}`} aria-label={failure ? `${count} failed ${count === 1 ? "chat" : "chats"}` : `${count} ${attention ? "chats need you" : "hidden items"}`}>{count}</span> : null}
       </button>
       {action}
     </div>

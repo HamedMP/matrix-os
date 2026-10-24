@@ -248,7 +248,7 @@ describe("WorkRail", () => {
     expect(scroller.contains(screen.getByRole("button", { name: "New chat" }))).toBe(false);
     expect(scroller.contains(screen.getByRole("button", { name: "Search chats" }))).toBe(false);
     const labels = [...scroller.querySelectorAll('[data-slot="chat-sidebar-section-heading"] button')].map(button => button.getAttribute("aria-label"));
-    expect(labels.filter(label => label !== "Create project")).toEqual(["Pinned", "Projects", "Needs you", "Working", "Done"]);
+    expect(labels.filter(label => label !== "Create project")).toEqual(["Pinned", "Projects", "Needs you", "Failed", "Working", "Done"]);
   });
 
   it("moves projects between Projects and Pinned when pin state changes", async () => {
@@ -482,9 +482,14 @@ describe("WorkRail", () => {
 
     act(() => events.emit(chatChanged("chat_parallel_a", 4)));
     await waitFor(() => expect(screen.getByLabelText("Agent failed for Parallel A")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Failed" }).closest("section")?.contains(screen.getByRole("button", { name: "Parallel A" }))).toBe(true);
+    expect(screen.getByText("Agent failed")).toBeTruthy();
+    expect(screen.getByLabelText("1 failed chat")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Needs you" }).closest("section")?.contains(screen.getByRole("button", { name: "Parallel A" }))).toBe(false);
 
     act(() => events.emit(chatChanged("chat_parallel_a", 5)));
     await waitFor(() => expect(screen.queryByLabelText("Agent failed for Parallel A")).toBeNull());
+    expect(screen.queryByLabelText("1 failed chat")).toBeNull();
     expect(screen.queryByLabelText("Unseen completion for Parallel A")).toBeNull();
 
     act(() => events.emit({ type: "chat.full_refresh", cursor: 6 }));

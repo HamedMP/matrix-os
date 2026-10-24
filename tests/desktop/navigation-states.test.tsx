@@ -24,7 +24,7 @@ describe("Navigation section states", () => {
 
   it("keeps uppercase Projects creation in its header and quiet empty attention headings", () => {
     const create = vi.fn();
-    render(<WorkRailGroups model={buildWorkRailModel([], [])} sections={{ pinned: true, projects: false, needsYou: true, working: true, done: false }} onToggle={vi.fn()} onCreateProject={create} renderProject={() => null} renderChat={() => null} bots={[]} sharedProjects={[]} organizationDrives={null} />);
+    render(<WorkRailGroups model={buildWorkRailModel([], [])} sections={{ pinned: true, projects: false, needsYou: true, failed: true, working: true, done: false }} onToggle={vi.fn()} onCreateProject={create} renderProject={() => null} renderChat={() => null} bots={[]} sharedProjects={[]} organizationDrives={null} />);
     expect(screen.queryByRole("button", { name: "Pinned" })).toBeNull();
     expect(screen.getByRole("button", { name: "Working" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Needs you" })).toBeTruthy();
@@ -75,7 +75,7 @@ it("keeps Search fixed and Pinned above Projects while Done starts expanded and 
   await screen.findByRole("button", { name: "Pinned item" });
   const scroll = screen.getByTestId("work-rail-scroll");
   expect(scroll.contains(screen.getByRole("button", { name: "Search chats" }))).toBe(false);
-  expect([...scroll.querySelectorAll('[data-slot="chat-sidebar-section-heading"]')].map(header => header.querySelector("button")?.getAttribute("aria-label"))).toEqual(["Pinned", "Projects", "Needs you", "Working", "Done"]);
+  expect([...scroll.querySelectorAll('[data-slot="chat-sidebar-section-heading"]')].map(header => header.querySelector("button")?.getAttribute("aria-label"))).toEqual(["Pinned", "Projects", "Needs you", "Failed", "Working", "Done"]);
   expect(screen.getByRole("button", { name: menuChat.chat.title })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Done" }));
   expect(screen.queryByRole("button", { name: menuChat.chat.title })).toBeNull();

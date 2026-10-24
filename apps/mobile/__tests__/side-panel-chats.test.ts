@@ -9,12 +9,20 @@ import {
 import { C2_CHATS, chatRecord, ids } from "./side-panel-test-utils";
 
 describe("chatNeedsUser", () => {
-  it.each(["approval_required", "input_required", "failed"] as const)("is true for %s", (attention) => {
+  it.each(["approval_required", "input_required"] as const)("is true for %s", (attention) => {
     expect(chatNeedsUser(chatRecord({ id: "chat-1", attention }))).toBe(true);
   });
 
   it("is false when the chat asks for nothing", () => {
     expect(chatNeedsUser(chatRecord({ id: "chat-1" }))).toBe(false);
+    expect(chatNeedsUser(chatRecord({ id: "chat-2", attention: "failed" }))).toBe(false);
+  });
+
+  it("keeps an active input request ahead of a stale failure", () => {
+    const staleFailure = chatRecord({ id: "chat-3", attention: "failed" });
+    const waiting = { ...staleFailure, activeRun: { runId: "run", turnId: "turn", status: "waiting_for_input" as const } };
+    expect(ids(groupSidePanelChats([waiting]).needsYou)).toEqual(["chat-3"]);
+    expect(groupSidePanelChats([waiting]).failed).toEqual([]);
   });
 });
 
@@ -29,7 +37,8 @@ describe("groupSidePanelChats", () => {
 
     const groups = groupSidePanelChats(chats);
 
-    expect(ids(groups.needsYou)).toEqual(["b", "d"]);
+    expect(ids(groups.needsYou)).toEqual(["b"]);
+    expect(ids(groups.failed)).toEqual(["d"]);
     expect(ids(groups.recent)).toEqual(["a", "c"]);
   });
 
@@ -41,7 +50,7 @@ describe("groupSidePanelChats", () => {
   });
 
   it("has two empty groups for no chats", () => {
-    expect(groupSidePanelChats([])).toEqual({ needsYou: [], recent: [] });
+    expect(groupSidePanelChats([])).toEqual({ needsYou: [], failed: [], recent: [] });
   });
 });
 

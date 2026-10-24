@@ -86,6 +86,7 @@ describe("buildWorkRailModel", () => {
     const idle = chat("idle", "Idle", { updatedAt: "2026-10-02T10:00:00Z" });
     const model = buildWorkRailModel([approval, running, done, idle], []);
     expect(model.needsYou.map(record => record.chat.id)).toEqual(["approval"]);
+    expect(model.failed).toEqual([]);
     expect(model.working.map(record => record.chat.id)).toEqual(["running"]);
     expect(model.done.map(record => record.chat.id)).toEqual(["done"]);
     expect(model.recents.map(record => record.chat.id)).toEqual(["idle"]);
@@ -94,7 +95,9 @@ describe("buildWorkRailModel", () => {
   it("keeps acknowledged successful terminal chats in Done while failed or active work wins", () => {
     const completed = statusRecord({ unacknowledged: false });
     expect(buildWorkRailModel([completed], []).done).toEqual([completed]);
-    expect(buildWorkRailModel([statusRecord({ unacknowledged: false, attention: "failed" })], []).done).toEqual([]);
+    const failed = statusRecord({ unacknowledged: false, attention: "failed" });
+    expect(buildWorkRailModel([failed], []).failed).toEqual([failed]);
+    expect(buildWorkRailModel([failed], []).done).toEqual([]);
     expect(buildWorkRailModel([statusRecord({ unacknowledged: false, activeRunStatus: "running" })], []).done).toEqual([]);
   });
 

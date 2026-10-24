@@ -23,13 +23,14 @@ it('keeps acknowledged successful chats in Done with attention and active-run pr
  const running={...completed,id:'running',canonicalRecord:{...completed.canonicalRecord!,chat:{...completed.canonicalRecord!.chat,id:'running'},activeRun:{runId:'active',turnId:'turn',status:'running' as const}}};
  const groups=groupWebChats([completed,failed,running]);
  expect(groups.done.map(item=>item.id)).toEqual(['completed']);
- expect(groups.needsYou.map(item=>item.id)).toEqual(['failed']);
+ expect(groups.needsYou).toEqual([]);
+ expect(groups.failed.map(item=>item.id)).toEqual(['failed']);
  expect(groups.working.map(item=>item.id)).toEqual(['running']);
 });
 
 it('keeps all empty lifecycle headings visible and quiet on Web', () => {
  render(<WebChatLifecycleGroups conversations={[]} renderRow={item => <button>{item.id}</button>}/>);
- for (const label of ['Needs you', 'Working', 'Done']) {
+ for (const label of ['Needs you', 'Failed', 'Working', 'Done']) {
   const heading = screen.getByRole('button', {name:label});
   expect(heading.textContent).toBe(label);
   expect(heading.getAttribute('aria-expanded')).toBe('true');
