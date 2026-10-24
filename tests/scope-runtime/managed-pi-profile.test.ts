@@ -7,6 +7,11 @@ import { createSystemdScopeRuntimeLauncher } from "../../packages/scope-runtime/
 import { createScopeRuntimeController } from "../../packages/scope-runtime/src/supervisor.js";
 import { botSandboxRootsForHome, managedPiSandboxRootsForHome } from "../../packages/scope-runtime/src/sandbox.js";
 
+import { createScopeRuntimeClient } from "../../packages/gateway/src/collaboration/scope-runtime-client.js";
+import { deriveSharedAiEligibility, SHARED_AI_PROFILE_CATALOG } from "../../packages/gateway/src/collaboration/shared-ai-runtime.js";
+import { BOT_SCOPE_RUNTIME_PROFILE_CATALOG } from "../../packages/gateway/src/bots/scope-runtime-profile.js";
+import { MANAGED_PI_SCOPE_RUNTIME_PROFILE_CATALOG } from "../../packages/gateway/src/chat/managed-pi-profile.js";
+
 const MANAGED_PROFILE = "scope-runtime-managed-pi-v1";
 const RUNTIME = `runtime_${"2".repeat(32)}`;
 const SCOPE = `scope_${"1".repeat(32)}`;
@@ -44,6 +49,19 @@ async function setup() {
   return { root, home, paths, workspaces, runCommand, launcher };
 }
 
+async function sharedReadiness(controller: Awaited<ReturnType<typeof createScopeRuntimeController>>, root: string, name: string) {
+  const socketPath = join(root, `${name}.sock`);
+  const server = createServer({allowHalfOpen:true},socket=>{
+    let input="";socket.setEncoding("utf8");socket.on("data",chunk=>{input+=chunk;});
+    socket.once("end",()=>{void controller.handle(JSON.parse(input)).then(reply=>socket.end(JSON.stringify(reply)+"\n"));});
+  });
+  await new Promise<void>(resolve=>server.listen(socketPath,resolve));
+  cleanup.push(()=>new Promise<void>(resolve=>server.close(()=>resolve())));
+  const client=createScopeRuntimeClient({socketPath,profileCatalog:{...SHARED_AI_PROFILE_CATALOG,...BOT_SCOPE_RUNTIME_PROFILE_CATALOG,...MANAGED_PI_SCOPE_RUNTIME_PROFILE_CATALOG}});
+  cleanup.push(()=>client.close());await client.refreshCapability();
+  return {client,eligibility:await deriveSharedAiEligibility({client,matrixBotEnabled:true,sandboxManifests:{resolve:async()=>null}})};
+}
+
 const create = (hostPath: string, profileId = MANAGED_PROFILE, mode = "rw" as "rw" | "ro") => ({
   version: 1 as const, type: "runtime.create" as const, requestId: REQUEST, scopeHandle: SCOPE,
   profileId, workload: "bot_agent" as const, adapterId: "matrix-bot", harnessVersion: "1.0.0",
@@ -53,7 +71,7 @@ const create = (hostPath: string, profileId = MANAGED_PROFILE, mode = "rw" as "r
 
 describe("managed Pi supervisor and actual launcher boundary", () => {
   it("discovers the managed profile only from configured roots, independently of recipe Bot support", async () => {
-    const { launcher, paths, runCommand } = await setup();
+    const { root, launcher, paths, runCommand } = await setup();
     const controller = await createScopeRuntimeController({ launcher, executionGeneration: "7" });
     cleanup.push(() => controller.close());
     const request = { version: 1 as const, type: "capability.get" as const, requestId: REQUEST };
@@ -63,6 +81,9 @@ describe("managed Pi supervisor and actual launcher boundary", () => {
       { profileId: "scope-runtime-bot-v1" },
       { profileId: MANAGED_PROFILE, adapters: [{ adapterId: "matrix-bot", harnessVersion: "1.0.0", workloads: ["bot_agent"] }] },
     ] });
+    const ready=await sharedReadiness(controller,root,"with-managed");
+    expect(ready.eligibility?.matrixBot?.profileId).toBe(MANAGED_PROFILE);
+    expect(ready.client.profileCapability("scope-runtime-bot-v1")).toMatchObject({available:true});
     await expect(launcher.supportedAdapters?.("scope-runtime-forged-v1")).resolves.toEqual([]);
 
     const botOnlyLauncher = createSystemdScopeRuntimeLauncher({ ...paths, managedPiSandboxRoots: [], runCommand });
@@ -72,6 +93,9 @@ describe("managed Pi supervisor and actual launcher boundary", () => {
     expect(botOnlyResponse).toMatchObject({ ok: true, profiles: [
       { profileId: "scope-runtime-chat-v1" }, { profileId: "scope-runtime-bot-v1" },
     ] });
+    const unavailable=await sharedReadiness(botOnly,root,"without-managed");
+    expect(unavailable.eligibility?.matrixBot).toBeUndefined();
+    expect(unavailable.client.profileCapability("scope-runtime-bot-v1")).toMatchObject({available:true});
     await expect(botOnly.handle(create(paths.managedPiSandboxRoots[0]!)))
       .resolves.toMatchObject({ ok: false, error: "profile_unavailable" });
     expect(runCommand.mock.calls.some(([command]) => command === "/usr/bin/systemd-run")).toBe(false);

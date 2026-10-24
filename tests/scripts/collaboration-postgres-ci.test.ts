@@ -38,9 +38,9 @@ function passingRunner(root: string) {
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe("collaboration PostgreSQL CI inventory", () => {
-  it("covers the complete currently qualified 36-file cohort", () => {
+  it("covers the complete registered PostgreSQL cohort", () => {
     const files = collaborationPostgresFiles(process.cwd());
-    expect(files).toHaveLength(36);
+    expect(files.length).toBeGreaterThanOrEqual(39);
     expect(files).toContain("tests/gateway/direct-resource-policy-postgres.test.ts");
     expect(files).toContain("tests/platform/platform-migration-revision-db.test.ts");
     expect(files).toEqual([...files].sort());
@@ -81,7 +81,7 @@ describe("collaboration PostgreSQL CI execution", () => {
     const root = process.cwd(); const execute = passingRunner(root);
     const output = mkdtempSync(join(tmpdir(), "collaboration-pg-output-")); roots.push(output);
     expect(runCollaborationPostgres(root, env, execute, output)).toBe(0);
-    expect(execute).toHaveBeenCalledTimes(4);
+    expect(execute).toHaveBeenCalledTimes(Math.ceil(collaborationPostgresFiles(root).length / 9));
     const selected = execute.mock.calls.flatMap(([, args]) => args.slice(3, args.indexOf("--maxWorkers=1")));
     expect(selected).toEqual(collaborationPostgresFiles(root));
     for (const [command, args] of execute.mock.calls) {
@@ -92,7 +92,7 @@ describe("collaboration PostgreSQL CI execution", () => {
       expect(args.some(arg => /timeout|skip|passWithNoTests/.test(arg))).toBe(false);
     }
     const receipt = JSON.parse(readFileSync(join(output, "inventory.json"), "utf8"));
-    expect(receipt).toMatchObject({ files: selected, verifiedPassedAssertions: 36, qualified: true });
+    expect(receipt).toMatchObject({ files: selected, verifiedPassedAssertions: selected.length, qualified: true });
   });
   it("continues the remaining batches after a failed test process", () => {
     const root = fixture();
@@ -137,6 +137,14 @@ describe("collaboration PostgreSQL CI execution", () => {
 });
 
 describe("required collaboration PostgreSQL workflow", () => {
+  it("runs Slack deletion races in the required account-deletion PostgreSQL selection", () => {
+    const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8"));
+    expect(workflow.jobs["funded-postgres"].steps.some((step: { run?: string }) => step.run?.includes("tests/platform/account-deletion-*-postgres.test.ts"))).toBe(true);
+    const selected = spawnSync("bash", ["-c", "printf '%s\\n' tests/platform/account-deletion-*-postgres.test.ts"], { encoding: "utf8", timeout: 2000, env: { PATH: process.env.PATH } });
+    expect(selected.status, selected.stderr).toBe(0);
+    expect(selected.stdout.trim().split("\n")).toContain("tests/platform/account-deletion-slack-postgres.test.ts");
+  });
+
   it("retains the existing required job, exact-source checkout, commands and ten-minute bound", () => {
     const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8")); const job = workflow.jobs["funded-postgres"];
     expect(job.needs).toBe("changes"); expect(job["timeout-minutes"]).toBe(10);

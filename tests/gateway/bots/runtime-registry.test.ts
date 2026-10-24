@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BOT_RUNTIME_REGISTRY_CAPACITY, BotRuntimeRegistry, BotRuntimeRegistryError, type BotRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 
 const handle = (n: number) => `runtime_${n.toString(16).padStart(32, "0")}`;
@@ -32,6 +32,17 @@ describe("bot runtime registry", () => {
     expect(registry.hasChatRuntime(value.ownerId, value.chatId)).toBe(false);
     registry.bind(value); now = 1001;
     expect(registry.hasChatRuntime(value.ownerId, value.chatId)).toBe(false);
+  });
+
+  it.each(["release","replace","expire","shutdown"])("releases private tracking exactly once on %s without serializing callbacks", action => {
+    let now=1000;const registry=new BotRuntimeRegistry({now:()=>now,ttlMs:10});
+    const current=binding();const cleanup=vi.fn();registry.bind(current,cleanup);
+    expect(registry.lookupRun(current)).toEqual(current);
+    if(action==="release")registry.release(current.runtimeHandle);
+    if(action==="replace")registry.bind({...current,executionGeneration:"5"});
+    if(action==="expire"){now+=11;expect(registry.size).toBe(0);}
+    if(action==="shutdown")registry.shutdown();
+    expect(cleanup).toHaveBeenCalledOnce();registry.shutdown();expect(cleanup).toHaveBeenCalledOnce();
   });
   it("cancels inference only for an exact owner/chat/run/generation and keeps graceful broker authority", () => {
     const registry = new BotRuntimeRegistry();

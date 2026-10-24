@@ -26,6 +26,8 @@ interface RuntimeBinding {
   scopeId: string;
   actorId: string;
   runtimeHandle: string;
+  /** Abort paid inference synchronously before waiting for a physical stop. */
+  onStop?: () => void;
 }
 
 /**
@@ -98,10 +100,14 @@ export class SandboxRuntimeRegistry {
   }
 
   async stopForActor(scopeId: string, actorId: string): Promise<number> {
-    let stopped = 0;
-    for (const binding of [...this.bindings.values()]) {
-      if (binding.scopeId !== scopeId || binding.actorId !== actorId) continue;
+    const matching = [...this.bindings.values()].filter(binding => binding.scopeId === scopeId && binding.actorId === actorId);
+    // Revoke all model/frame authority before any asynchronous worker stop.
+    for (const binding of matching) {
       this.bindings.delete(binding.runtimeHandle);
+      this.notifyStop(binding);
+    }
+    let stopped = 0;
+    for (const binding of matching) {
       try {
         await this.options.client.stopRuntime({ runtimeHandle: binding.runtimeHandle });
         stopped += 1;
@@ -122,8 +128,17 @@ export class SandboxRuntimeRegistry {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
   }
 
+  private notifyStop(binding: RuntimeBinding): void {
+    try { binding.onStop?.(); }
+    catch (error: unknown) {
+      console.warn("[collaboration-revocation] inference cancellation failed", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+
   private evict(runtimeHandle: string): void {
+    const binding = this.bindings.get(runtimeHandle);
     this.bindings.delete(runtimeHandle);
+    if (binding) this.notifyStop(binding);
     const stop = this.options.client.stopRuntime({ runtimeHandle }).then(() => undefined, (error: unknown) => {
       console.warn("[collaboration-revocation] evicted sandbox runtime stop failed",
         error instanceof Error ? error.name : "UnknownError");
