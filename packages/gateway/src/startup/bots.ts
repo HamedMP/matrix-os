@@ -131,6 +131,7 @@ export interface BotServices {
   purgeGoogleAccount?(command: GooglePilotPurgeCommand, signal?: AbortSignal): Promise<GooglePilotPurgeReceipt>;
   providerConnections?: BotProviderConnectionsService;
   chatgptPlanPeers?: ChatGptPlanPeers;
+  cancelOpenAiInference?(): void;
   cancelAnthropicInference?(): void;
   recipes: BotRecipeCatalog;
   instantiation: BotInstantiation;
@@ -161,6 +162,7 @@ export async function startBots(options: {
   qualifiedFundedConfig?: FundedAiRuntimeConfig;
   computerId?: string | null;
   nativeProfileGuard?: NativeProviderProfileGuard;
+  matrixOpenAi?: import("../bots/matrix-openai-api.js").MatrixOpenAiAuthority;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   homePath: string;
   repository: Pick<ChatRepository, "kysely" | "withTransaction" | "withContextTransaction" | "publishCommittedExternalOutbox" | "get" | "getTurnRunContext" | "getDetailPage">;
@@ -218,7 +220,7 @@ export async function startBots(options: {
   startupCleanup.push(() => { chatgptPlanPeers?.close(); });
   // Prepared tool work must recheck both definition and current native source consent.
   const revalidateSource = createBotSourceRevalidator({ lifetime: lifetime.signal, revalidateDefinition: binding => procedures.revalidate(binding),
-    ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}) });
+    ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ...(options.matrixOpenAi ? { matrixOpenAi: options.matrixOpenAi } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}) });
   const providerConnections = createBotProviderConnections({ ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, ownerId: options.runtimeOwnerId ?? '', computerId: options.computerId ?? '',
     agentExists: async (ownerId, botId) => { const agent = await options.agents.get({ type: 'personal', ownerId }, botId); return Boolean(agent?.recipeRef && !agent.archived); },
     observeClaude: options.nativeProfileGuard && options.host?.available ? createClaudeTaskObserver({ homePath: options.homePath, providers: options.providers })
@@ -231,7 +233,7 @@ export async function startBots(options: {
     agents: options.agents,
     recipes,
     validateSelection: createBotCreationSelectionValidator({ available: () => Boolean(options.host?.available), providers: options.providers,
-      ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}) }),
+      ...(options.matrixOpenAi ? { matrixOpenAi: options.matrixOpenAi } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}) }),
     customRecipes,
     ensureWorkspace: (botId) => ensureBotWorkspace(options.homePath, botId),
   });
@@ -360,7 +362,7 @@ export async function startBots(options: {
   const googleData = await createGoogleBrokerRuntime({ database: options.repository.kysely, registry, pilotAdmission: pilot,
     ...(qualifiedCredentials ? { qualifiedCredentials } : {}),
     ...(options.googleCopies ? { admitContext: createGoogleContextAdmission({ registry, repository: options.repository, adapter: options.googleCopies.context }) } : {}),
-    ...(options.matrixAnthropic ? { credentials: options.matrixAnthropic } : {}),
+    ...(options.matrixOpenAi ? { openaiCredentials: options.matrixOpenAi } : {}), ...(options.matrixAnthropic ? { credentials: options.matrixAnthropic } : {}),
     ...(options.integrations ? { transport: options.integrations } : {}) });
   startupCleanup.push(() => googleData.close());
   const copyLifecycle = pilot.enabled ? await createGooglePilotCopyLifecycle({ database: options.repository.kysely,
@@ -386,7 +388,7 @@ export async function startBots(options: {
     ...(integrationClient ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
     ...(options.managedMcp ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
   ];
-  const managedAdmission = createManagedPiAdmission({ ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, homePath: options.homePath, host, registry, roots: options.executionRoots,
+  const managedAdmission = createManagedPiAdmission({ ...(options.matrixOpenAi ? { matrixOpenAi: options.matrixOpenAi } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), db, homePath: options.homePath, host, registry, roots: options.executionRoots,
     supervisedBrowser: typeof options.sharedBrowser?.authorizeAction === "function", toolCapabilities: managedCapabilities });
   const ownerTools = createManagedPiOwnerTools({ authorizeExternalEgress: googleData.assertToolEgressAllowed, googleCollection: { prepare: googleData.prepareCollection }, toolOutputKey: options.toolOutputKey, authority: managedAdmission.toolAuthority, signalFor: binding => registry.inferenceSignal(binding),
     ...(options.sharedBrowser ? { sharedBrowser: options.sharedBrowser } : {}),
@@ -407,7 +409,7 @@ export async function startBots(options: {
     recipes,
     resolveProcedure,
     resolveRoute: createBotModelRouteResolver({
-      ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}),
+      ...(options.matrixOpenAi ? { matrixOpenAi: options.matrixOpenAi } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}),
       providers: options.providers,
       ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}),
       ownerId: options.runtimeOwnerId ?? undefined,
@@ -428,7 +430,7 @@ export async function startBots(options: {
       forgetRun(runId);
     },
   });
-  const managed = createManagedPiRuntime({ ...(copyLifecycle ? { quiescence: { onStopped: copyLifecycle.onStopped } } : {}), toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+  const managed = createManagedPiRuntime({ ...(copyLifecycle ? { quiescence: { onStopped: copyLifecycle.onStopped } } : {}), toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixOpenAi ? { matrixOpenAi: options.matrixOpenAi } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   startupCleanup.push(() => managed.close());
   copyLifecycle?.bindManaged(managed);
@@ -468,7 +470,7 @@ export async function startBots(options: {
     inference: {
       googleData: googleData.inference,
       ...(isolatedChat ? { isolatedChat } : {}),
-      ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}),
+      ...(options.matrixOpenAi ? { matrixOpenAi: options.matrixOpenAi } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}),
       ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}),
       homePath: options.homePath,
       onFundedFailure: (binding, reason) => managed.recordFundedFailure(binding, reason),
@@ -511,6 +513,7 @@ export async function startBots(options: {
     tasks,
     adapter,
     managedAdapter: managed.adapter,
+    cancelOpenAiInference: () => registry.cancelOpenAiInference(),
     cancelAnthropicInference: () => registry.cancelAnthropicInference(),
     async close() {
       lifetime.abort();

@@ -259,7 +259,7 @@ export function createBotTaskOrchestrator(deps: {
     try {
       resolved = await deps.resolveRoute(isolatedModel ? selection : recipeCoordinatorSelection(input.selection, agent.selection));
       if (isolatedModel) {
-        if (resolved.accessSourceId !== "matrix_included" || resolved.subscription || resolved.anthropicApi
+        if (resolved.accessSourceId !== "matrix_included" || resolved.subscription || resolved.anthropicApi || resolved.openaiApi
           || !isolatedChatModelMatches(isolatedModel, resolved.route.modelId)) throw new BotRouteError("model_unavailable");
         resolved = { ...resolved, route: { ...resolved.route, maxOutputTokens: 256 } };
       }
@@ -313,7 +313,7 @@ export function createBotTaskOrchestrator(deps: {
         ownerId: input.ownerId, botId, chatId: input.chatId, taskId: task.taskId, runId: input.runId,
         ...(isolatedModel ? { recipeRef: agent.recipeRef } : {}),
         ...(isManagedCustomBot(agent) ? { managedDefinitionRevision: agent.revision } : {}),
-        route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), ...(resolved.anthropicApi ? { anthropicApi: resolved.anthropicApi } : {}), capabilities, requestClass: "interactive",
+        route: resolved.route, accessSourceId: resolved.accessSourceId, ...(resolved.subscription ? { subscription: resolved.subscription } : {}), ...(resolved.anthropicApi ? { anthropicApi: resolved.anthropicApi } : {}), ...(resolved.openaiApi ? { openaiApi: resolved.openaiApi } : {}), capabilities, requestClass: "interactive",
       });
     } catch (error: unknown) {
       if (!(error instanceof BotAdmissionError)) throw error;

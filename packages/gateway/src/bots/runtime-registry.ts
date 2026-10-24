@@ -46,6 +46,7 @@ export interface BotRuntimeBinding {
   recipeRef?: import("@matrix-os/contracts").BotRecipeRef;
   subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
   anthropicApi?: import("@matrix-os/contracts").MatrixAnthropicBinding;
+  openaiApi?: import("@matrix-os/contracts").MatrixOpenAiBinding;
   capabilities: readonly BotToolCapability[];
   /** Funded priority for this run: a person waiting in chat, or a routine. */
   requestClass: "interactive" | "background";
@@ -83,6 +84,7 @@ const BindingSchema = z.object({
   recipeRef: BotRecipeRefSchema.optional(),
   managedDefinitionRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
   subscription: z.object({peerId: z.uuid(), accountId: ReferenceSchema, computerId: ReferenceSchema, grantRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER)}).strict().optional(),
+  openaiApi: z.object({ connectionRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), credentialGeneration: z.uuid() }).strict().optional(),
   anthropicApi: z.object({ connectionRevision: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER), credentialGeneration: z.uuid() }).strict().optional(),
   capabilities: z.array(BotToolCapabilitySchema).max(16),
   requestClass: z.enum(["interactive", "background"]),
@@ -128,6 +130,8 @@ export class BotRuntimeRegistry {
     const parsed = (isManagedPiBinding(input) ? ManagedBindingSchema : BindingSchema).safeParse(input);
     if (!parsed.success || (parsed.data.accessSourceId === "matrix_chatgpt_plan") !== Boolean(parsed.data.subscription)
       || parsed.data.subscription && parsed.data.route.api !== "openai-responses"
+      || (parsed.data.accessSourceId === "owner_openai_key") !== Boolean(parsed.data.openaiApi)
+      || parsed.data.openaiApi && (parsed.data.route.api === "anthropic-messages" || parsed.data.subscription || parsed.data.anthropicApi)
       || parsed.data.anthropicApi && (parsed.data.accessSourceId !== "owner_anthropic_key" || parsed.data.route.api !== "anthropic-messages" || parsed.data.subscription)) throw new BotRuntimeRegistryError("invalid_binding");
     this.sweep();
     if (!this.entries.has(parsed.data.runtimeHandle) && this.entries.size >= this.capacity) {
@@ -171,6 +175,11 @@ export class BotRuntimeRegistry {
   cancelAnthropicInference(): void {
     this.sweep();
     for (const entry of this.entries.values()) if (entry.anthropicApi) entry.inference.abort();
+  }
+
+  cancelOpenAiInference(): void {
+    this.sweep();
+    for (const entry of this.entries.values()) if (entry.openaiApi) entry.inference.abort();
   }
 
   /** Inference only on the route's own action and model; bot runtimes never use egress. */

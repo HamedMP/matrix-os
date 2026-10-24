@@ -24,6 +24,7 @@ export async function createGoogleBrokerRuntime<DB>(options: {
   database: Kysely<DB>; registry: BotRuntimeRegistry; transport?: BotIntegrationTransport;
   /** The exact broker credential authority, not a caller-provided identity or a funded token lease. */
   credentials?: Pick<MatrixAnthropicAuthority, 'credential' | 'revalidate'>;
+  openaiCredentials?: Pick<import('../bots/matrix-openai-api.js').MatrixOpenAiAuthority, 'credential' | 'revalidate'>;
   qualifiedCredentials?: GoogleQualifiedCredentialManager;
   /** Production always supplies explicit host admission. Absence is library-level uninstalled composition. */
   pilotAdmission?: GoogleDataPilotConfig;
@@ -92,12 +93,12 @@ export async function createGoogleBrokerRuntime<DB>(options: {
       try { return await managed.resolveIdentity(binding, AbortSignal.any([signal, closing.signal])); }
       catch (error) { console.warn('[google-data] Managed processing identity unavailable'); return null; }
     }
-    const identity = observedIdentity(binding); const runSignal = live(binding); const credentials = options.credentials;
+    const identity = observedIdentity(binding); const runSignal = live(binding); const credentials = binding.openaiApi ? options.openaiCredentials : options.credentials;
     // Only the current explicit API-key broker exposes a durable credential generation.
     // Managed relay tokens and delegated/native subscriptions cannot stand in for processor evidence.
-    if (!identity || !runSignal || !credentials || binding.accessSourceId !== 'owner_anthropic_key' || !binding.anthropicApi
-      || binding.route.api !== 'anthropic-messages' || identity.api !== binding.route.api || identity.modelId !== binding.route.modelId
-      || identity.credential.kind !== 'api_key' || identity.credential.generation !== binding.anthropicApi.credentialGeneration) return null;
+    if (!identity || !runSignal || !credentials || !((binding.accessSourceId === 'owner_anthropic_key' && binding.anthropicApi && binding.route.api === 'anthropic-messages')
+        || (binding.accessSourceId === 'owner_openai_key' && binding.openaiApi && ['openai-completions', 'openai-responses'].includes(binding.route.api))) || identity.api !== binding.route.api || identity.modelId !== binding.route.modelId
+      || identity.credential.kind !== 'api_key' || identity.credential.generation !== (binding.openaiApi ?? binding.anthropicApi)?.credentialGeneration) return null;
     const current = () => {
       if (signal.aborted || live(binding) !== runSignal || !isDeepStrictEqual(observedIdentity(binding), identity)) deny();
     };

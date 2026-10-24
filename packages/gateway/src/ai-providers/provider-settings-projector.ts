@@ -562,6 +562,7 @@ export async function projectProviderSettings(input: {
   });
   return ProviderSettingsSnapshotSchema.parse({
     contractVersion: 1,
+    ...(input.canonical.matrixOpenAiConnection ? { matrixOpenAiConnection: input.canonical.matrixOpenAiConnection } : {}),
     ...(input.canonical.matrixAnthropicConnection ? { matrixAnthropicConnection: input.canonical.matrixAnthropicConnection } : {}),
     projectionOf: {
       contract: "AiProviderSnapshotV3",

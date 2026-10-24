@@ -147,7 +147,7 @@ export class ChatAgentContext {
       }
       if (!bot.recipeRef) directAgent = bot;
       else {
-        const explicit = ["matrix_pi_default", "matrix_chatgpt_plan", "matrix_anthropic_api", MATRIX_BOT_INSTANCE_ID].includes(input.selection.instanceId) ? input.selection : undefined;
+        const explicit = ["matrix_pi_default", "matrix_chatgpt_plan", "matrix_anthropic_api", "matrix_openai_api", MATRIX_BOT_INSTANCE_ID].includes(input.selection.instanceId) ? input.selection : undefined;
         let coordinator: ReturnType<typeof recipeCoordinatorSelection>;
         try { coordinator = recipeCoordinatorSelection(explicit, bot.selection); }
         catch (error: unknown) {
@@ -158,7 +158,7 @@ export class ChatAgentContext {
       }
     }
     // Only a bot's own chat can run the bot runtime.
-    if (["matrix_chatgpt_plan", "matrix_anthropic_api"].includes(input.selection.instanceId) || (!directAgent && input.selection.instanceId === MATRIX_BOT_INSTANCE_ID)) throw new ChatAgentContextError("context_unavailable");
+    if (["matrix_chatgpt_plan", "matrix_anthropic_api", "matrix_openai_api"].includes(input.selection.instanceId) || (!directAgent && input.selection.instanceId === MATRIX_BOT_INSTANCE_ID)) throw new ChatAgentContextError("context_unavailable");
     const agentReference = references.find((reference) => reference.kind === "agent");
     const chatReferences = references.filter((reference) => reference.kind === "chat");
     const driveReferences = references.flatMap((reference) => reference.kind === "organization_drive" && reference.drive ? [reference.drive] : []);
@@ -168,7 +168,7 @@ export class ChatAgentContext {
     if (chatReferences.some((reference) => reference.id === chatId)) throw new ChatAgentContextError("context_unavailable");
     const agent = directAgent ?? (agentReference ? await this.agent(owner, agentReference.id) : undefined);
     // Recipe bots are reached only through their own direct chat.
-    if (agent?.recipeRef || agent?.selection.instanceId === MATRIX_BOT_INSTANCE_ID || ["matrix_chatgpt_plan", "matrix_anthropic_api", "matrix_pi_anthropic_api"].includes(agent?.selection.instanceId ?? "")) throw new ChatAgentContextError("context_unavailable");
+    if (agent?.recipeRef || agent?.selection.instanceId === MATRIX_BOT_INSTANCE_ID || ["matrix_chatgpt_plan", "matrix_anthropic_api", "matrix_pi_anthropic_api", "matrix_openai_api", "matrix_pi_openai_api"].includes(agent?.selection.instanceId ?? "")) throw new ChatAgentContextError("context_unavailable");
     if (agent?.recipe?.skills.includes("matrix-jev-email-triage") &&
       (!agent.recipe.jevInboxTriage || agent.recipe.jevInboxTriage.ownerId !== owner.ownerId)) {
       throw new ChatAgentContextError("context_unavailable");
