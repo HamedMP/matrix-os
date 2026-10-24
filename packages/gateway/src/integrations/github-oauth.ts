@@ -182,29 +182,51 @@ export class GitHubOAuthClient {
   }
 
   async revokeToken(accessToken: string): Promise<void> {
+    const tokenUrl = `https://api.github.com/applications/${encodeURIComponent(this.options.clientId)}/token`;
+    const headers = {
+      accept: "application/vnd.github+json",
+      "x-github-api-version": GITHUB_API_VERSION,
+      authorization: `Basic ${Buffer.from(`${this.options.clientId}:${this.options.clientSecret}`, "utf8").toString("base64")}`,
+      "content-type": "application/json",
+      "user-agent": "Matrix-OS",
+    };
+    const body = JSON.stringify({ access_token: accessToken });
     let response: Response;
     try {
-      response = await this.fetchFn(`https://api.github.com/applications/${encodeURIComponent(this.options.clientId)}/token`, {
+      response = await this.fetchFn(tokenUrl, {
         method: "DELETE",
         redirect: "error",
         signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
-        headers: {
-          accept: "application/vnd.github+json",
-          "x-github-api-version": GITHUB_API_VERSION,
-          authorization: `Basic ${Buffer.from(`${this.options.clientId}:${this.options.clientSecret}`, "utf8").toString("base64")}`,
-          "content-type": "application/json",
-          "user-agent": "Matrix-OS",
-        },
-        body: JSON.stringify({ access_token: accessToken }),
+        headers,
+        body,
       });
     } catch {
       throw new GitHubOAuthError();
     }
-    if (response.status !== 204 && response.status !== 404) {
+    if (response.status === 204 || response.status === 404) {
+      await response.body?.cancel().catch(() => undefined);
+      return;
+    }
+    if (response.status !== 422) {
       await response.body?.cancel().catch(() => undefined);
       throw new GitHubOAuthError();
     }
     await response.body?.cancel().catch(() => undefined);
+    try {
+      const check = await this.fetchFn(tokenUrl, {
+        method: "POST",
+        redirect: "error",
+        signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
+        headers,
+        body,
+      });
+      const missing = check.status === 404;
+      await check.body?.cancel().catch(() => undefined);
+      if (!missing) throw new GitHubOAuthError();
+    } catch (error) {
+      if (error instanceof GitHubOAuthError) throw error;
+      throw new GitHubOAuthError();
+    }
   }
 
   private async requestToken(body: Record<string, string>): Promise<z.infer<typeof TokenResponseSchema>> {

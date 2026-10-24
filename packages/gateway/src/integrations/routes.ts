@@ -614,7 +614,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     return c.json({ url, service });
   });
 
-  app.get("/oauth/github/callback", async (c) => {
+  app.get("/oauth/github/callback", bodyLimit({ maxSize: 1024 }), async (c) => {
     if (!githubBroker || !opts.githubCompletionUrls) {
       return c.json({ error: "Integration service unavailable" }, 503);
     }

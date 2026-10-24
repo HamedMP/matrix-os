@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFile } from "node:fs/promises";
 import { Hono } from "hono";
 import type { PlatformDb } from "../../packages/gateway/src/platform-db.js";
 import { createIntegrationRoutes } from "../../packages/gateway/src/integrations/routes.js";
@@ -105,6 +106,13 @@ describe("Matrix-owned GitHub integration routes", () => {
       "https://app.matrix-os.com/integrations?service=github&status=connected",
     );
     expect(broker.complete).toHaveBeenCalledWith("opaque", "code-1");
+  });
+
+  it("keeps the state-mutating callback behind an explicit body limit", async () => {
+    const source = await readFile("packages/gateway/src/integrations/routes.ts", "utf8");
+    expect(source).toContain(
+      'app.get("/oauth/github/callback", bodyLimit({ maxSize: 1024 }), async (c) => {',
+    );
   });
 
   it("redirects provider denial to the state-bound target without exposing provider details", async () => {

@@ -185,4 +185,29 @@ describe("GitHub OAuth provider contract", () => {
       body: JSON.stringify({ access_token: "gho_rotated" }),
     })]);
   });
+
+  it("treats a revocation validation error as idempotent only after GitHub proves the token is gone", async () => {
+    const missingFetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: "Validation failed" }), { status: 422 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    const missingClient = new GitHubOAuthClient({
+      clientId: "client-123",
+      clientSecret: "secret-456",
+      callbackUrl: "https://app.matrix-os.com/api/integrations/oauth/github/callback",
+      fetch: missingFetch,
+    });
+    await expect(missingClient.revokeToken("gho_missing")).resolves.toBeUndefined();
+    expect(missingFetch.mock.calls.map(([, request]) => request?.method)).toEqual(["DELETE", "POST"]);
+
+    const liveFetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ message: "Validation failed" }), { status: 422 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 42 }), { status: 200 }));
+    const liveClient = new GitHubOAuthClient({
+      clientId: "client-123",
+      clientSecret: "secret-456",
+      callbackUrl: "https://app.matrix-os.com/api/integrations/oauth/github/callback",
+      fetch: liveFetch,
+    });
+    await expect(liveClient.revokeToken("gho_still_live")).rejects.toBeInstanceOf(GitHubOAuthError);
+  });
 });
