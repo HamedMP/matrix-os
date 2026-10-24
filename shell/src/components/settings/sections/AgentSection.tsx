@@ -20,8 +20,6 @@ export function AgentSection({
   const transport = useMemo(() => createProviderSettingsTransport(), []);
   const identityKey = getGatewayUrl();
   const runtimeSlot = currentAiCreditRuntimeSlot();
-  const githubSetupHandler = useRef(onOpenGithubDeveloperTerminal);
-  githubSetupHandler.current = onOpenGithubDeveloperTerminal;
   const workflowClient = useMemo(() => createWebProviderWorkflowClient({
     isIdentityCurrent: () => getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
   }), [identityKey, runtimeSlot]);
@@ -46,13 +44,13 @@ export function AgentSection({
       return value;
     },
     async startSetup() {
-      if (!githubSetupHandler.current
+      if (!onOpenGithubDeveloperTerminal
         || getGatewayUrl() !== identityKey
         || currentAiCreditRuntimeSlot() !== runtimeSlot) return false;
-      githubSetupHandler.current();
+      onOpenGithubDeveloperTerminal();
       return true;
     },
-  }), [identityKey, runtimeSlot]);
+  }), [identityKey, onOpenGithubDeveloperTerminal, runtimeSlot]);
   const loadUsageHistory = useCallback((cursor: string | null, signal: AbortSignal) => loadWebAiCreditHistory({ runtimeSlot, cursor, signal,
     isIdentityCurrent: () => getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot }), [identityKey, runtimeSlot]);
   const checkoutLifetime = useRef<AbortController | null>(null);
