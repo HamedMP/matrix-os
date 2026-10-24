@@ -115,7 +115,9 @@ describe("scope runtime systemd launcher bot profile", () => {
     };
     const launch = botLaunch("/home/matrix/home/bots/bot_abcdef12");
     const args = buildBotSystemdRunArgs(launch, paths, { sandboxProperties: ["PrivateNetwork=yes"] });
-    expect(args).toContain("--property=RuntimeMaxSec=900");
+    expect(args).toContain("--property=RuntimeMaxSec=infinity");
+    expect(args).toContain("--property=BindsTo=matrix-scope-runtime.service");
+    expect(args).toContain("--property=After=matrix-scope-runtime.service");
     expect(args).toContain("--property=BindReadOnlyPaths=/opt/matrix/app/packages/bot-runtime/dist:/opt/matrix/scope-sdk/bot-runtime");
     expect(args.join("\n")).not.toContain("scope-sdk/sdk");
     expect(args.slice(args.indexOf("--") + 1)).toEqual([

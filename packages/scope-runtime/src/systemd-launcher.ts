@@ -69,8 +69,7 @@ const MAX_PROVENANCE_BYTES = 2_048;
 const EXECUTION_GENERATION = /^(0|[1-9][0-9]{0,19})$/;
 const WORKER_SOCKET_FILE = "worker.sock";
 const MAX_WORKER_FRAME_BYTES = 128 * 1024;
-/** A bot turn may run until the unit's RuntimeMaxSec; control commands answer quickly. */
-const BOT_RUN_TIMEOUT_MS = 930_000;
+/** A busy bot turn ends with its caller/worker lease; controls remain bounded. */
 const BOT_CONTROL_TIMEOUT_MS = 15_000;
 const MAX_BOT_REPLY_FRAME_BYTES = 32 * 1024;
 const BOT_WORKER_ENTRY_FILE = "bot-worker.mjs";
@@ -457,13 +456,13 @@ async function validateBrokerSocket(path: string): Promise<void> {
 
 async function runWorkerBotCommand(
   socketPath: string,
-  input: { runtimeHandle: string; executionGeneration: string; command: ScopeRuntimeBotCommand },
+  input: { runtimeHandle: string; executionGeneration: string; command: ScopeRuntimeBotCommand; signal?: AbortSignal },
 ): Promise<ScopeRuntimeBotWorkerReply> {
-  const frame = `${JSON.stringify({ version: 1, type: "runtime.bot", ...input })}\n`;
+  const { signal, ...request } = input;
+  const frame = `${JSON.stringify({ version: 1, type: "runtime.bot", ...request })}\n`;
   if (Buffer.byteLength(frame, "utf8") > MAX_WORKER_FRAME_BYTES) {
     throw new Error("Scope runtime bot command exceeds capacity");
   }
-  const timeoutMs = input.command.kind === "bot.run" ? BOT_RUN_TIMEOUT_MS : BOT_CONTROL_TIMEOUT_MS;
   return new Promise((resolve, reject) => {
     const socket = createConnection({ path: socketPath });
     let response = "";
@@ -471,14 +470,22 @@ async function runWorkerBotCommand(
     const finish = (error?: Error, reply?: ScopeRuntimeBotWorkerReply) => {
       if (settled) return;
       settled = true;
+      signal?.removeEventListener("abort", aborted);
       socket.destroy();
       if (error || !reply) reject(error ?? new Error("Scope runtime bot command failed"));
       else resolve(reply);
     };
+    const aborted = () => finish(new Error("Scope runtime bot command cancelled"));
+    signal?.addEventListener("abort", aborted, { once: true });
+    if (signal?.aborted) { aborted(); return; }
     socket.setEncoding("utf8");
-    socket.setTimeout(timeoutMs, () => finish(new Error("Scope runtime bot command timed out")));
-    socket.once("connect", () => socket.end(frame));
+    socket.setTimeout(BOT_CONTROL_TIMEOUT_MS, () => finish(new Error("Scope runtime bot command timed out")));
+    socket.once("connect", () => {
+      if (input.command.kind === "bot.run") { socket.setTimeout(0); socket.write(frame); }
+      else socket.end(frame);
+    });
     socket.once("error", () => finish(new Error("Scope runtime worker unavailable")));
+    socket.once("close", () => finish(new Error("Scope runtime worker disconnected")));
     socket.on("data", (chunk) => {
       response += chunk;
       if (Buffer.byteLength(response, "utf8") > MAX_BOT_REPLY_FRAME_BYTES) {
