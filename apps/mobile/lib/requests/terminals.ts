@@ -58,7 +58,7 @@ export interface TerminalSession {
   id: string;
   workspaceId: string;
   tabId: string;
-  /** Tab revision the list last showed; a rename sends it as its base. */
+  /** Last observed tab revision; rename also compares the displayed name when available. */
   revision: number;
   name: string;
   cwd: string;
@@ -172,7 +172,7 @@ export async function createTerminalSession(
 export async function renameTerminalSession(
   clerkToken: string,
   computerGatewayUrl: string,
-  session: TerminalSessionRef & Pick<TerminalSession, "revision">,
+  session: TerminalSessionRef & Pick<TerminalSession, "revision"> & Partial<Pick<TerminalSession, "name">>,
   nextName: string,
 ): Promise<void> {
   if (!isTerminalSessionRef(session) || !isValidTerminalSessionName(nextName)) {
@@ -194,7 +194,7 @@ export async function renameTerminalSession(
     errorMessage: TERMINAL_RENAME_ERROR,
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: nextName, baseRevision: session.revision }),
+    body: JSON.stringify({ name: nextName, baseRevision: session.revision, expectedName: session.name }),
   });
 }
 

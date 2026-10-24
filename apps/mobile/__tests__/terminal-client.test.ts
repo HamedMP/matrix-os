@@ -104,7 +104,7 @@ describe("mobile terminal client", () => {
 
   it("builds token-authenticated terminal websocket URLs", () => {
     expect(buildTerminalWebSocketUrl("https://app.matrix-os.test/", SESSION_ID, "ws token")).toBe(
-      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&inputCapability=binary-input-v1&lease=exclusive&token=ws+token`,
+      `wss://app.matrix-os.test/ws/terminal/tab?workspaceId=${WORKSPACE_ID}&tabId=${TAB_ID}&client=mobile&inputCapability=binary-input-v1&activityCapability=input-activity-v1&lease=exclusive&token=ws+token`,
     );
     expect(isSafeSessionId(SESSION_ID)).toBe(true);
     expect(isSafeSessionId("../bad")).toBe(false);
@@ -126,6 +126,22 @@ describe("mobile terminal client", () => {
   function sentFrames(ws: WebSocket) {
     return (ws as unknown as MockWebSocket).sent.map((frame) => JSON.parse(frame));
   }
+
+  it("sends provenance only when the runtime advertises it", () => {
+    const ws = new MockWebSocket() as unknown as WebSocket;
+    const connection = new MobileTerminalConnection(ws, { sessionId: SESSION_ID, onMessage: () => undefined });
+    connection.attach(); (ws as unknown as MockWebSocket).onopen?.();
+    (ws as unknown as MockWebSocket).onmessage?.({ data: attachedFrame() });
+    connection.sendInput("\x1b[1;2R", false);
+    expect(sentFrames(ws).filter((frame) => frame.type === "input")).toEqual([{ type: "input", terminalRef: TERMINAL_REF, data: "\x1b[1;2R" }]);
+    (ws as unknown as MockWebSocket).onmessage?.({ data: attachedFrame({ capabilities: ["input-activity-v1"] }) });
+    connection.sendInput("\x1b[1;2R", false); connection.sendInput("\x1b[1;2R", true);
+    expect(sentFrames(ws).filter((frame) => frame.type === "input").slice(1)).toEqual([
+      { type: "input", terminalRef: TERMINAL_REF, data: "\x1b[1;2R", isUserInput: false },
+      { type: "input", terminalRef: TERMINAL_REF, data: "\x1b[1;2R", isUserInput: true },
+    ]);
+    connection.detach();
+  });
 
   it("sends input and detach frames with the canonical TerminalRef", () => {
     const ws = new MockWebSocket() as unknown as WebSocket;

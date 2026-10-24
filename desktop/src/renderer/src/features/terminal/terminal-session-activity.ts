@@ -1,8 +1,8 @@
 const SESSION_DAY_FORMATTER = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 
-export function relativeSessionActivity(updatedAt: string | undefined, now = Date.now()): string {
-  if (!updatedAt) return "Activity unknown";
-  const timestamp = Date.parse(updatedAt);
+export function relativeSessionActivity(activityAt: string | undefined, now = Date.now()): string {
+  if (!activityAt) return "Activity unknown";
+  const timestamp = Date.parse(activityAt);
   if (!Number.isFinite(timestamp)) return "Activity unknown";
   const elapsed = Math.max(0, now - timestamp);
   const minutes = Math.floor(elapsed / 60_000);

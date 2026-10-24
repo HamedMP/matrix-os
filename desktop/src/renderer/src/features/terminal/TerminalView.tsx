@@ -1,4 +1,5 @@
 import { Terminal } from "@xterm/xterm";
+import { observeTerminalData } from "@matrix-os/ui/terminal-input-provenance";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { createPortal } from "react-dom";
 import { TerminalControls, captureTerminalFileDrag, terminalDropFiles, terminalDropMimeType, MAX_TERMINAL_DROP_FILES, createTerminalNativeHistory, createTerminalGridPresentation, measureTerminalGridDimensions } from "@matrix-os/ui";
@@ -584,8 +585,9 @@ export default function TerminalView({
       },
     }, { cols: terminal.cols, rows: terminal.rows }, chatId);
     attachmentRef.current = attachment;
-    const dataDisposable = terminal.onData((data) => {
-      attachment.write(data);
+    const dataDisposable = observeTerminalData(terminal, (data, isUserInput) => {
+      if (isUserInput) attachment.write(data);
+      else attachment.write(data, false);
     });
     const binaryDisposable = terminal.onBinary((data) => {
       attachment.writeBinary(data);

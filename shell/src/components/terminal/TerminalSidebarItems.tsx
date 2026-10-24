@@ -888,6 +888,7 @@ function ShellCard({
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const renameCommittingRef = useRef(false);
+  const renameSubmitRef = useRef<typeof onRename | null>(null);
   const copiedTimerRef = useRef<number | null>(null);
   const mouseHoverTimerRef = useRef<number | null>(null);
   const lastTouchAtRef = useRef(0);
@@ -1015,6 +1016,7 @@ function ShellCard({
     }
   };
   const cancelRename = useCallback(() => {
+    renameSubmitRef.current = null;
     setRenameDraft(displayName);
     setRenaming(false);
   }, [displayName]);
@@ -1034,7 +1036,7 @@ function ShellCard({
     setRenameSaving(true);
     let renamed = false;
     try {
-      renamed = await onRename(nextName);
+      renamed = await (renameSubmitRef.current ?? onRename)(nextName);
     } catch (err: unknown) {
       console.warn("Failed to commit shell session rename:", err instanceof Error ? err.message : err);
     }
@@ -1057,6 +1059,7 @@ function ShellCard({
 
   const beginRename = () => {
     if (deleting) return;
+    renameSubmitRef.current = onRename;
     cancelHoverCardOpen();
     setRenameDraft(displayName);
     setRenaming(true);

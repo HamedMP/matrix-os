@@ -680,6 +680,7 @@ export class ZellijCliRuntimeAdapter implements ZellijRuntimeAdapter {
           ansi,
           viewport: parsed.data.viewport,
           scrollback,
+          ...(parsed.data.is_initial === undefined ? {} : { isInitial: parsed.data.is_initial }),
         });
       }).catch((error: unknown) => {
         console.error("[terminal-runtime] Zellij observer update failed", error);

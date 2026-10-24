@@ -743,6 +743,18 @@ describe("TerminalsTab", () => {
     expect(screen.getByRole<HTMLInputElement>("textbox", { name: "Terminal session name" }).value).toBe("Fix terminal actions");
   });
 
+  it("retains the edit-start name and revision after a competing rename refresh", async () => {
+    const rename = vi.fn().mockResolvedValue(false);
+    useShellSessions.setState({ sessions: [{ name: "matrix-main", status: "active", subtitle: "A", revision: 3 }], rename });
+    renderTab();
+    fireEvent.doubleClick(screen.getByTestId("terminal-session-title-matrix-main"));
+    act(() => useShellSessions.setState({ sessions: [{ name: "matrix-main", status: "active", subtitle: "B", revision: 4 }] }));
+    const input = screen.getByRole("textbox", { name: "Terminal session name" });
+    fireEvent.change(input, { target: { value: "C" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(rename).toHaveBeenCalledWith(useConnection.getState().api, "matrix-main", "C", { subtitle: "A", revision: 3 }));
+  });
+
   it("creates Claude, Codex, OpenCode, and Pi sessions from the new-terminal menu", async () => {
     const createShell = vi.fn().mockResolvedValue({ name: "matrix-created", status: "active" });
     useShellSessions.setState({
@@ -954,7 +966,7 @@ describe("TerminalsTab", () => {
   it("renders relative activity without lifecycle dots", () => {
     useShellSessions.setState({
       sessions: [
-        { name: "matrix-active", status: "active", visualStatus: "running", updatedAt: new Date(Date.now() - 120_000).toISOString() },
+        { name: "matrix-active", status: "active", visualStatus: "running", activityAt: new Date(Date.now() - 120_000).toISOString() },
         { name: "matrix-waiting", status: "degraded", visualStatus: "waiting" },
         { name: "matrix-closed", status: "exited", visualStatus: "idle" },
       ],

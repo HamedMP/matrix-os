@@ -49,7 +49,7 @@ export interface TerminalRuntimeControlApi {
     agent?: TerminalTab["agent"];
   }): Promise<TerminalTab>;
   getSnapshot(ref: { workspaceId: string; tabId: string }, expectedIncarnation?: string): Promise<TerminalSnapshot | undefined>;
-  renameTab(ref: { workspaceId: string; tabId: string }, input: { name: string; baseRevision: number }): Promise<TerminalTab>;
+  renameTab(ref: { workspaceId: string; tabId: string }, input: { name: string; baseRevision: number; expectedName?: string }): Promise<TerminalTab>;
   reorderTabs(workspaceId: string, input: { tabIds: string[]; baseRevision: number }): Promise<TerminalWorkspace>;
   terminateTab(ref: { workspaceId: string; tabId: string }, expectedIncarnation?: string): Promise<void>;
   deleteTab(ref: { workspaceId: string; tabId: string }): Promise<void>;
@@ -69,7 +69,7 @@ export interface TerminalRuntimeControlApi {
     expectedIncarnation?: string;
     send(data: Uint8Array): void | Promise<void>;
     onExit(exitCode: number | null): void | Promise<void>;
-  }): Promise<{ write(data: string | Uint8Array): Promise<void>; touch(): void; detach(): Promise<void> }>;
+  }): Promise<{ write(data: string | Uint8Array, isUserInput?: boolean): Promise<void>; touch(): void; detach(): Promise<void> }>;
 }
 
 type TerminalServerFrame = z.infer<typeof TerminalTabServerFrameSchema>;
@@ -277,7 +277,7 @@ export class TerminalRuntimeSocketServer {
       canonicalSize: resized.canonicalSize,
       revision,
       nextSeq,
-      capabilities: this.options.runtime.scrollState ? ["binary-input-v1", "native-scroll-v1"] : ["binary-input-v1"],
+      capabilities: this.options.runtime.scrollState ? ["binary-input-v1", "native-scroll-v1", "input-activity-v1"] : ["binary-input-v1", "input-activity-v1"],
     });
     const decoder = new TextDecoder();
     const output = createTerminalOutputHandoff((data) => {
@@ -376,7 +376,10 @@ export class TerminalRuntimeSocketServer {
         const state = await this.options.runtime.scrollState?.(ref, frame.line) ?? null;
         send({ type: "scroll-state", terminalRef: ref, revision, state });
       }
-      if (frame.type === "input") await viewer.write(frame.data);
+      if (frame.type === "input") {
+        if (frame.isUserInput === undefined) await viewer.write(frame.data);
+        else await viewer.write(frame.data, frame.isUserInput);
+      }
       if (frame.type === "binary") await viewer.write(Buffer.from(frame.dataBase64, "base64"));
       if (frame.type === "resize") {
         const workspace = await this.options.runtime.resize(ref, frame, request.input.viewerId);
@@ -418,7 +421,7 @@ export class TerminalRuntimeSocketServer {
       }
       case "RenameTab": return this.options.runtime.renameTab(
         { workspaceId: request.input.workspaceId, tabId: request.input.tabId },
-        { name: request.input.name, baseRevision: request.input.baseRevision },
+        { name: request.input.name, baseRevision: request.input.baseRevision, expectedName: request.input.expectedName },
       );
       case "ReorderTabs": return this.options.runtime.reorderTabs(request.input.workspaceId, request.input);
       case "TerminateTab": {

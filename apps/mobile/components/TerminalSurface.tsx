@@ -35,8 +35,8 @@ export interface TerminalSurfaceHandle {
 interface TerminalSurfaceProps {
   fontScale: number;
   /** Raw keystrokes typed directly into the emulator (hardware keyboard / tap). */
-  onInput: (data: string) => void;
-  /** Byte-valued xterm protocol replies such as OSC and binary mouse reports. */
+  onInput: (data: string, isUserInput?: boolean) => void;
+  /** Byte-valued mouse input emitted through xterm's onBinary event. */
   onBinary: (data: string) => void;
   /** Keys the surface presses for the user, such as the arrows that move the cursor to a tap. Defaults to onInput. */
   onKeys?: (data: string) => void;
@@ -283,7 +283,17 @@ function buildHtml(fontScale: number): string {
 
       reportViewport();
       window.addEventListener("resize", scheduleViewportReport);
-      term.onData(function (data) { post({ type: "input", data: data }); });
+      // Same pinned-xterm provenance hook as the Web/Electron helper; missing hooks default to user input.
+      var coreService = term._core && term._core.coreService;
+      var userInput = false;
+      var provenance = coreService && typeof coreService.onUserInput === "function"
+        ? coreService.onUserInput(function () { userInput = true; }) : null;
+      term.onData(function (data) {
+        var fromUser = provenance ? userInput : true;
+        userInput = false;
+        post({ type: "input", data: data, isUserInput: fromUser });
+      });
+      window.addEventListener("unload", function () { if (provenance) provenance.dispose(); });
       term.onBinary(function (data) { post({ type: "binary", data: data }); });
 
       // Cursor bottom edge in page pixels so the RN side can lift the view
@@ -469,6 +479,7 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
         let msg: {
           type?: string;
           data?: string;
+          isUserInput?: unknown;
           cols?: number;
           rows?: number;
           bottom?: number;
@@ -489,7 +500,8 @@ export const TerminalSurface = forwardRef<TerminalSurfaceHandle, TerminalSurface
           return;
         }
         if (msg.type === "input" && typeof msg.data === "string") {
-          onInput(msg.data);
+          if (typeof msg.isUserInput === "boolean") onInput(msg.data, msg.isUserInput);
+          else onInput(msg.data);
           return;
         }
         if (msg.type === "binary" && typeof msg.data === "string") {

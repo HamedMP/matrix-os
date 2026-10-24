@@ -126,10 +126,11 @@ export class ShellSocket {
   private detachPending = false;
   private failedAttempts = 0;
   private pendingInput: Array<
-    | { type: "input"; data: string }
+    | { type: "input"; data: string; isUserInput?: boolean }
     | { type: "binary"; data: string }
   > = [];
   private binaryInputSupported = false;
+  private inputActivitySupported = false;
   private hasWriteOwnership = false;
   private requestedOwnership: "exclusive" | "observe" = "exclusive";
   private lastKnownDims: Dims | null = null;
@@ -170,7 +171,7 @@ export class ShellSocket {
     this.openSocket(false);
   }
 
-  sendInput(data: string): void {
+  sendInput(data: string, isUserInput?: boolean): void {
     if (this.disposed || this.currentState === "ended" || this.currentState === "fatal") return;
     if (data.length === 0) return;
     for (let offset = 0; offset < data.length;) {
@@ -178,9 +179,9 @@ export class ShellSocket {
       const chunk = data.slice(offset, end);
       offset = end;
       if (this.currentState === "attached" && this.socket !== null && this.hasWriteOwnership) {
-        this.sendFrame({ type: "input", terminalRef: this.terminalRef, data: chunk });
+        this.sendInputChunk(chunk, isUserInput);
       } else if (this.currentState !== "attached") {
-        this.pendingInput.push({ type: "input", data: chunk });
+        this.pendingInput.push({ type: "input", data: chunk, isUserInput });
         if (this.pendingInput.length > PENDING_INPUT_MAX_CHUNKS) {
           this.pendingInput.shift();
         }
@@ -256,6 +257,7 @@ export class ShellSocket {
   private openSocket(isReconnect: boolean): void {
     if (this.disposed) return;
     this.binaryInputSupported = false;
+    this.inputActivitySupported = false;
     this.hasWriteOwnership = false;
     // Per-connection resize bookkeeping: a fresh attach starts a new startup
     // window and may need the last known dims resent.
@@ -323,7 +325,7 @@ export class ShellSocket {
     const size = this.lastKnownDims;
     const sizingSuffix = size ? `&cols=${size.cols}&rows=${size.rows}` : "";
     const leaseSuffix = `&lease=${this.requestedOwnership}`;
-    return `${base}/ws/terminal/tab?workspaceId=${encodeURIComponent(this.terminalRef.workspaceId)}&tabId=${encodeURIComponent(this.terminalRef.tabId)}&client=electron&fromSeq=${fromSeq}${chatSuffix}${runtimeSuffix}${sizingSuffix}${leaseSuffix}&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1`;
+    return `${base}/ws/terminal/tab?workspaceId=${encodeURIComponent(this.terminalRef.workspaceId)}&tabId=${encodeURIComponent(this.terminalRef.tabId)}&client=electron&fromSeq=${fromSeq}${chatSuffix}${runtimeSuffix}${sizingSuffix}${leaseSuffix}&inputCapability=binary-input-v1&scrollCapability=native-scroll-v1&activityCapability=input-activity-v1`;
   }
 
   private scheduleReconnect(): void {
@@ -463,6 +465,7 @@ export class ShellSocket {
     this.failedAttempts = 0;
     this.binaryInputSupported = Array.isArray(frame.capabilities)
       && frame.capabilities.includes("binary-input-v1");
+    this.inputActivitySupported = Array.isArray(frame.capabilities) && frame.capabilities.includes("input-activity-v1");
     this.hasWriteOwnership = frame.ownership !== "observer";
     this.requestedOwnership = this.hasWriteOwnership ? "exclusive" : "observe";
     this.handleCanonicalSize(frame.canonicalSize && typeof frame.canonicalSize === "object"
@@ -590,8 +593,13 @@ export class ShellSocket {
     this.pendingInput = [];
     for (const chunk of chunks) {
       if (chunk.type === "binary") this.sendBinaryChunk(chunk.data);
-      else this.sendFrame({ ...chunk, terminalRef: this.terminalRef });
+      else this.sendInputChunk(chunk.data, chunk.isUserInput);
     }
+  }
+
+  private sendInputChunk(data: string, isUserInput?: boolean): void {
+    this.sendFrame({ type: "input", terminalRef: this.terminalRef, data,
+      ...(this.inputActivitySupported && typeof isUserInput === "boolean" ? { isUserInput } : {}) });
   }
 
   private sendBinaryChunk(data: string): void {

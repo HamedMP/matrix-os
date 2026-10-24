@@ -15,6 +15,7 @@ describe("Terminal connection query", () => {
       client: "browser",
       inputCapability: "binary-input-v1",
       scrollCapability: "native-scroll-v1",
+      activityCapability: "input-activity-v1",
     });
   });
 

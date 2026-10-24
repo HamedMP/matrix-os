@@ -8,6 +8,7 @@ import {
   TerminalPaneActionSchema,
   TerminalRefSchema,
   TerminalTabIdSchema,
+  TerminalTabRenameInputSchema,
   TerminalWorkspaceIdSchema,
   ThreadIdSchema,
   type TerminalTab,
@@ -44,10 +45,7 @@ const CreateTabSchema = z.object({
   }).strict().optional(),
   chatId: CanonicalChatIdSchema.optional(),
 }).strict();
-const RenameTabSchema = z.object({
-  name: SafeDisplayStringSchema,
-  baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-}).strict();
+const RenameTabSchema = TerminalTabRenameInputSchema;
 const ReorderTabsSchema = z.object({
   tabIds: z.array(TerminalTabIdSchema).max(10_000),
   baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
@@ -80,7 +78,7 @@ export interface TerminalWorkspaceRouteRuntime {
     command?: string[];
     agent?: TerminalTab["agent"];
   }): Promise<TerminalTab>;
-  renameTab?(ref: { workspaceId: string; tabId: string }, input: { name: string; baseRevision: number }): Promise<TerminalTab>;
+  renameTab?(ref: { workspaceId: string; tabId: string }, input: { name: string; baseRevision: number; expectedName?: string }): Promise<TerminalTab>;
   reorderTabs?(workspaceId: string, input: { tabIds: string[]; baseRevision: number }): Promise<TerminalWorkspace>;
   terminateTab?(ref: { workspaceId: string; tabId: string }): Promise<void>;
   deleteTab?(ref: { workspaceId: string; tabId: string }): Promise<void>;

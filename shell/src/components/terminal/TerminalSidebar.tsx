@@ -324,6 +324,7 @@ export function LocalTerminalSidebar({
             agent: terminalTab.agent?.providerId as ShellSessionSummary["agent"],
             subtitle: terminalTab.name,
             updatedAt: terminalTab.updatedAt,
+            activityAt: terminalTab.activityAt,
           })))
         : [];
       commitShellRefreshState(applyShellRefreshSuccess(
@@ -434,7 +435,7 @@ export function LocalTerminalSidebar({
       const res = await fetch(`${getGatewayUrl()}/api/terminal/workspaces/${shell.workspaceId}/tabs/${shell.tabId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: nextName, baseRevision: shell.revision }),
+        body: JSON.stringify({ name: nextName, baseRevision: shell.revision, expectedName: shell.subtitle }),
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) {

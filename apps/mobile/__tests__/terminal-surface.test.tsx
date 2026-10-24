@@ -55,13 +55,13 @@ function fakeLine(text: string, cols: number) {
   return { getCell: (col: number) => cells[col] };
 }
 
-function renderSurface(onResize = jest.fn()) {
+function renderSurface(onResize = jest.fn(), onInput = jest.fn()) {
   const ref = React.createRef<TerminalSurfaceHandle>();
   render(
     <TerminalSurface
       ref={ref}
       fontScale={1}
-      onInput={jest.fn()}
+      onInput={onInput}
       onBinary={jest.fn()}
       onResize={onResize}
     />,
@@ -80,6 +80,15 @@ function injectedScripts(): string[] {
 describe("native mobile terminal surface", () => {
   beforeEach(() => {
     mockInjectJavaScript.mockClear();
+  });
+
+  it("preserves automatic-reply provenance and legacy input in the WebView bridge", () => {
+    const input = jest.fn();
+    const { emulatorSays } = renderSurface(jest.fn(), input);
+    emulatorSays({ type: "input", data: "\x1b[1;2R", isUserInput: false });
+    expect(input).toHaveBeenLastCalledWith("\x1b[1;2R", false);
+    emulatorSays({ type: "input", data: "hello" });
+    expect(input).toHaveBeenLastCalledWith("hello");
   });
 
   it("holds the grid and its output for an emulator that has not booted, in order", () => {

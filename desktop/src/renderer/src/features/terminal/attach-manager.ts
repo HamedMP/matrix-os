@@ -9,7 +9,7 @@ const DEFAULT_BUFFER_CACHE_CAP = 8;
 
 export interface SocketControl {
   connect(): void;
-  sendInput(data: string): void;
+  sendInput(data: string, isUserInput?: boolean): void;
   sendBinary(data: string): void;
   resize(cols: number, rows: number): void;
   scroll?(frame: { type: "scroll-query" } | { type: "scroll-to"; line: number }): void;
@@ -29,7 +29,7 @@ export interface AttachManagerOptions {
 
 export interface ActiveAttachment {
   sessionName: string;
-  write(data: string): void;
+  write(data: string, isUserInput?: boolean): void;
   writeBinary(data: string): void;
   resize(cols: number, rows: number): void;
   scroll?(frame: { type: "scroll-query" } | { type: "scroll-to"; line: number }): void;
@@ -102,8 +102,11 @@ export class AttachManager {
     socket.connect();
     return {
       sessionName,
-      write: (data: string) => {
-        if (this.isLive(generation)) socket.sendInput(data);
+      write: (data: string, isUserInput?: boolean) => {
+        if (this.isLive(generation)) {
+          if (isUserInput === undefined) socket.sendInput(data);
+          else socket.sendInput(data, isUserInput);
+        }
       },
       writeBinary: (data: string) => {
         if (this.isLive(generation)) socket.sendBinary(data);

@@ -197,10 +197,11 @@ export default function TerminalSessionScreen() {
     };
   }, [clearHandshakeTimeout, connect, exitedOnComputer, session, terminalClient]);
 
-  const sendData = useCallback((data: string) => {
+  const sendData = useCallback((data: string, isUserInput?: boolean) => {
     if (!data) return;
     if (status === "observer" || status === "ended") return;
-    if (!connectionRef.current?.sendInput(data)) {
+    const sent = isUserInput === undefined ? connectionRef.current?.sendInput(data) : connectionRef.current?.sendInput(data, isUserInput);
+    if (!sent) {
       setStatus("error");
       setError("Terminal unavailable. Try again.");
     }

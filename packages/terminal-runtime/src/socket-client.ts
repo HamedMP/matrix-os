@@ -80,7 +80,7 @@ export class TerminalRuntimeSocketClient {
     return TerminalTabSchema.parse(await this.call("ArchiveEndedTab", TerminalEndedTabArchiveRequestSchema.parse({ ...ref, ...input })));
   }
 
-  async renameTab(ref: { workspaceId: string; tabId: string }, input: { name: string; baseRevision: number }): Promise<TerminalTab> {
+  async renameTab(ref: { workspaceId: string; tabId: string }, input: { name: string; baseRevision: number; expectedName?: string }): Promise<TerminalTab> {
     return TerminalTabSchema.parse(await this.call("RenameTab", { ...ref, ...input }));
   }
 
