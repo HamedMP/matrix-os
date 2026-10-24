@@ -13,6 +13,7 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { GetStartedStateSchema } from '../../packages/contracts/src/index.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
 import {
   loadCustomerVpsCloudInitTemplate,
   renderCloudInitTemplate,
@@ -179,6 +180,7 @@ exit ${options.seedExit ?? 0}
 describe('Get started host.env flag', () => {
   function render(template: string, enabled: string | undefined) {
     const config = loadCustomerVpsConfig({
+      MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
       PLATFORM_PORT: '9000',
       PLATFORM_SECRET: 'platform-secret',
       ...(enabled === undefined ? {} : { MATRIX_GET_STARTED_ENABLED: enabled }),
