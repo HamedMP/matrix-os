@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 
 type Step = { name?: string; run?: string; uses?: string; if?: string; env?: Record<string, unknown>; with?: Record<string, unknown> };
-type Job = { needs?: string | string[]; 'runs-on': string; strategy?: { matrix?: Record<string, unknown> }; steps: Step[] };
+type Job = { 'timeout-minutes'?: number; needs?: string | string[]; 'runs-on': string; strategy?: { matrix?: Record<string, unknown> }; steps: Step[] };
 const source = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
 const workflow = parse(source) as { concurrency: Record<string, unknown>; jobs: Record<string, Job> };
 const scripts = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')).scripts;
@@ -72,6 +72,22 @@ describe('fast CI preserves validation while removing serialized work', () => {
       expect(step.if).toContain("matrix.lane == 'electron'");
       expect(step.run).toContain('xvfb-run --auto-servernum bun run test:e2e:run');
     }
+  });
+
+  it('runs the account organization picker after the required Electron build', () => {
+    const steps = workflow.jobs.e2e.steps;
+    const build = steps.findIndex(step => step.name === 'Build Desktop for Electron E2E');
+    const picker = steps.findIndex(step => step.name === 'Run required Desktop account organization picker');
+    expect(picker).toBeGreaterThan(build);
+    expect(steps[picker]?.if).toContain("matrix.lane == 'electron'");
+    expect(steps[picker]?.env?.MATRIX_DESKTOP_E2E_REQUIRED).toBe('1');
+    expect(steps[picker]?.run).toBe('xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/account-organization-picker.e2e.test.ts');
+  });
+
+  it('allows browser setup and general E2E execution to finish within the job budget', () => {
+    // The current lane exhausted its old 15-minute budget after over 11 minutes
+    // of browser setup, cancelling tests about 2.5 minutes into their execution.
+    expect(workflow.jobs.e2e['timeout-minutes']).toBe(30);
   });
 
   it('retains frozen installs and keyed Next and browser caches', () => {

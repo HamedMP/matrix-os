@@ -300,7 +300,10 @@ function projectHarness(input: {
   const source = input.stored.accessSourceId === null
     ? undefined
     : input.sources.find((candidate) => candidate.id === input.stored.accessSourceId);
-  const sourceEligible = source?.providerId === input.stored.route.providerId
+  // Keep historical saved intent, but never project Matrix funding as native
+  // Claude authentication or execution authority.
+  const forbiddenNativeMatrix = input.stored.harness === "claude" && source?.kind === "matrix_gateway";
+  const sourceEligible = !forbiddenNativeMatrix && source?.providerId === input.stored.route.providerId
     && source.eligibleModelIds.includes(input.stored.route.modelId)
     && (source.kind !== "harness_profile" || source.harness === input.stored.harness)
     && (source.kind !== "matrix_gateway" || input.allowedGatewayModels.has(input.stored.route.modelId));
@@ -324,7 +327,7 @@ function projectHarness(input: {
   const selectedAccountId = routeSourceEligible && source?.kind === "provider_account"
     && source.accountId && input.accounts.some((account) => account.id === source.accountId)
     ? source.accountId : null;
-  const readiness = source && !routeCatalogUnavailable
+  const readiness = source && !forbiddenNativeMatrix && !routeCatalogUnavailable
     && (source.kind === "matrix_gateway" || sourceEligible)
     ? source.readiness
     : {

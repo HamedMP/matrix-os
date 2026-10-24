@@ -1,4 +1,4 @@
-import { CreateManagedCustomBotRequestSchema, type CreateManagedCustomBotRequest } from "@matrix-os/contracts";
+import { CreateManagedCustomBotRequestSchema, RecoverManagedCustomBotRequestSchema, type CreateManagedCustomBotRequest } from "@matrix-os/contracts";
 import {createBotConnectionClient, type BotConnectionClient} from "./provider-connections-client.js";
 import {
   BotChatBindingResponseSchema, BotAuthorityViewSchema, BotDirectChatResponseSchema, BotGrantIdSchema, BotInteractionIdSchema, BotInteractionSchema,
@@ -11,6 +11,8 @@ import {
   type ResolveBotInteractionRequest, type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
+import { safeHttpStatus } from "../safe-http-status.js";
+import { botCreationFailureReason, type BotCreationFailureReason } from "../creation-error.js";
 
 type BotRequest = (path: string, method: "GET" | "POST" | "DELETE", body?: unknown) => Promise<unknown>;
 
@@ -27,17 +29,16 @@ const safeMessages: Record<number, string> = {
 const fallbackMessage = "Bots are temporarily unavailable.";
 
 export class BotClientError extends Error {
-  constructor(readonly status: number | null, message: string) {
+  constructor(readonly status: number | null, message: string, readonly reason?: BotCreationFailureReason) {
     super(message);
     this.name = "BotClientError";
   }
 }
 
 function safeError(error: unknown): BotClientError {
-  const status = typeof error === "object" && error !== null && "status" in error
-    && typeof error.status === "number" ? error.status
-    : typeof error === "object" && error !== null && "category" in error && error.category === "unauthorized" ? 401 : null;
-  return new BotClientError(status, status === null ? fallbackMessage : safeMessages[status] ?? fallbackMessage);
+  const status = safeHttpStatus(error)
+    ?? (typeof error === "object" && error !== null && "category" in error && error.category === "unauthorized" ? 401 : null);
+  return new BotClientError(status, status === null ? fallbackMessage : safeMessages[status] ?? fallbackMessage, botCreationFailureReason(error));
 }
 
 export interface BotClient extends Partial<BotConnectionClient> {
@@ -46,6 +47,7 @@ export interface BotClient extends Partial<BotConnectionClient> {
   directBot(chatId: string): Promise<string | null>;
   recipes(): Promise<BotRecipeSummary[]>;
   createCustom?(input: CreateManagedCustomBotRequest): Promise<InstantiateBotResponse>;
+  recoverManagedCustom?(agentId: string, input: { baseRevision: number }): Promise<InstantiateBotResponse>;
   instantiate(input: InstantiateBotRequest): Promise<InstantiateBotResponse>;
   interactions(chatId: string): Promise<BotInteraction[]>;
   tasks(chatId: string): Promise<BotTaskSummary[]>;
@@ -73,6 +75,7 @@ export function createBotClient(request: BotRequest): BotClient {
     directBot: async (chatId) => (await call(`${chatPath(chatId)}/bot`, "GET", BotDirectChatResponseSchema)).agentId,
     recipes: async () => (await call("/api/chat-agents/bot-recipes", "GET", BotRecipeListResponseSchema)).recipes,
     createCustom: (input) => call("/api/chat-agents/managed-custom", "POST", InstantiateBotResponseSchema, CreateManagedCustomBotRequestSchema.parse(input)),
+    recoverManagedCustom: (agentId, input) => call(`${agentPath(agentId)}/recover-managed-custom`, "POST", InstantiateBotResponseSchema, RecoverManagedCustomBotRequestSchema.parse(input)),
     instantiate: (input) => call("/api/chat-agents/instantiate", "POST", InstantiateBotResponseSchema, InstantiateBotRequestSchema.parse(input)),
     interactions: async (chatId) => (await call(`${chatPath(chatId)}/interactions`, "GET", z.object({ interactions: z.array(BotInteractionSchema).max(32) }).strict())).interactions,
     tasks: async (chatId) => (await call(`${chatPath(chatId)}/bot-tasks?includeRunIds=true`, "GET", BotTaskListResponseSchema)).tasks,

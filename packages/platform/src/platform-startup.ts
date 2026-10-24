@@ -92,6 +92,7 @@ import {
   type R2CapabilityGate,
 } from './r2-capability.js';
 import { bootstrapPlatformCollaboration } from './collaboration/bootstrap.js';
+import { bootstrapPlatformSlack } from './slack-startup.js';
 import type { PlatformCollaborationComposition } from './collaboration/wiring.js';
 import { getCustomMcpProjectionMachine, resolveCustomMcpUserIdForMachine } from './custom-mcp-route-registration.js';
 import { createSpeechRuntimeRoutes } from './speech/routes.js';
@@ -100,8 +101,11 @@ import {
   loadPlatformSpeechConfig,
 } from './speech/config.js';
 import { createConfiguredPlatformSpeechService } from './speech/wiring.js';
+import { loadPreviewRuntimeAccessConfig } from './preview-runtime-access.js';
+import { createPreviewRuntimeAccessActivator, type PreviewRuntimeAccessActivator } from './preview-runtime-activation.js';
 import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
 import { createAccountDeletionIntegrationWebhookAdmission } from './account-deletion/integration-webhook.js';
+import { appOrigin } from './origins.js';
 
 interface GatewayPlatformUser {
   id: string;
@@ -242,8 +246,10 @@ type CreatePlatformApp = (deps: {
   fundedAiRepository?: AiFundedPolicyRepository;
   fundedModelProbes?: FundedModelProbeService;
   collaboration?: PlatformCollaborationComposition;
+  slackRoutes?: Hono<any>;
   customerVpsService?: CustomerVpsService;
   activateManagedFeatures?: ManagedFeatureActivator;
+  activatePreviewRuntimeAccess?: PreviewRuntimeAccessActivator;
   goldenSnapshotService?: GoldenSnapshotService;
   goldenSnapshotConfig?: GoldenSnapshotRuntimeConfig;
   customerVpsObjectStore?: CustomerVpsObjectStore;
@@ -344,12 +350,15 @@ async function startPlatformServerWithCleanup(
     ...process.env,
     PLATFORM_SECRET: platformSecret,
   });
+  const previewRuntimeAccess = loadPreviewRuntimeAccessConfig({ ...process.env, PLATFORM_SECRET: platformSecret });
   let internalFundedAiRuntimeRoutes: Hono | undefined;
   let internalFundedAiRelayRoutes: Hono | undefined;
   let internalFundedAiOperatorRoutes: Hono | undefined;
-  const speechService = createConfiguredPlatformSpeechService({ db, config: speechConfig });
+  const speechService = createConfiguredPlatformSpeechService({ db, config: speechConfig, previewRuntimeAccess });
   const internalSpeechRuntimeRoutes = platformSecret.length >= 32
-    ? createSpeechRuntimeRoutes({ db, platformSecret, service: speechService })
+    ? createSpeechRuntimeRoutes({ db, platformSecret,
+      ...(previewRuntimeAccess.enabled ? { previewRuntimeSecret: previewRuntimeAccess.runtimeSecret } : {}),
+      service: speechService })
     : undefined;
   let fundedAiRepository: AiFundedPolicyRepository | undefined;
   let fundedModelProbes: FundedModelProbeService | undefined;
@@ -372,6 +381,7 @@ async function startPlatformServerWithCleanup(
     internalFundedAiRuntimeRoutes = createAiFundedRuntimeRoutes({
       db,
       platformSecret: fundedAiConfig.platformSecret,
+      ...(previewRuntimeAccess.enabled ? { previewRuntimeSecret: previewRuntimeAccess.runtimeSecret } : {}),
       repository: fundedAiRepository,
       topUpEnabled: loadAiCreditCheckoutConfig(process.env).enabled,
       promotionalGrant: fundedAiConfig.promotionalGrant,
@@ -462,6 +472,11 @@ async function startPlatformServerWithCleanup(
   });
   const privatePreviewAccess = createPrivatePreviewAccess({
     env: process.env, collaboration, logError: logPlatformRouteError,
+  });
+  const slack = await bootstrapPlatformSlack({
+    env: process.env, db, platformSecret, platformJwtSecret,
+    clerkAuth, collaboration, customerVpsProxyDispatcher,
+    startCleanup: backgroundWorkersEnabled,
   });
 
   let matrixProvisioner: MatrixProvisioner | undefined;
@@ -776,6 +791,7 @@ async function startPlatformServerWithCleanup(
 
   let customerVpsService: CustomerVpsService | undefined;
   let activateManagedFeatures: ManagedFeatureActivator | undefined;
+  let activatePreviewRuntimeAccess: PreviewRuntimeAccessActivator | undefined;
   let goldenSnapshotService: GoldenSnapshotService | undefined;
   let goldenSnapshotConfig: GoldenSnapshotRuntimeConfig | undefined;
   let customerVpsReconciliationWorker: CustomerVpsReconciliationWorker | undefined;
@@ -807,6 +823,16 @@ async function startPlatformServerWithCleanup(
       if (!primaryStorageGate) throw new Error('Primary storage unavailable');
       await primaryStorageGate.assertReady();
     });
+    if (previewRuntimeAccess.enabled && fundedAiRepository && speechConfig.enabled) {
+      activatePreviewRuntimeAccess = createPreviewRuntimeAccessActivator({
+        db, repository: fundedAiRepository, config: previewRuntimeAccess,
+        hostControlSecret: customerVpsConfig.platformSecret,
+        platformOrigin: appOrigin(),
+        speechPlatformOrigin: new URL(customerVpsConfig.platformRegisterUrl).origin,
+        relayOrigin: customerVpsConfig.fundedAiRelayUrl,
+        fetchDispatcher: customerVpsProxyDispatcher,
+      });
+    }
     customerVpsService = createCustomerVpsService({
       db,
       config: customerVpsConfig,
@@ -828,14 +854,17 @@ async function startPlatformServerWithCleanup(
             process.env,
           )
         : undefined,
+      ...(activatePreviewRuntimeAccess ? { activatePreviewRuntimeAccess } : {}),
     });
     activateManagedFeatures = createManagedFeatureActivator({ db, platformSecret: customerVpsConfig.platformSecret,
       relayOrigin: customerVpsConfig.fundedAiRelayUrl, fundedAiEnabled: customerVpsConfig.fundedAiEnabled,
       speechEnabled: customerVpsConfig.platformSpeechEnabled, activateSpeech: target => customerVpsService!.activateSpeech(target),
       fetchDispatcher: customerVpsProxyDispatcher });
-    if (customerVpsConfig.fundedAiEnabled && internalFundedAiRuntimeRoutes) {
+    if ((customerVpsConfig.fundedAiEnabled || previewRuntimeAccess.enabled) && internalFundedAiRuntimeRoutes) {
       internalFundedAiRuntimeRoutes.route('/', createFundedHostActivationRoutes({ db,
-        platformSecret: customerVpsConfig.platformSecret, relayOrigin: customerVpsConfig.fundedAiRelayUrl }));
+        platformSecret: customerVpsConfig.platformSecret,
+        ...(previewRuntimeAccess.enabled ? { previewRuntimeSecret: previewRuntimeAccess.runtimeSecret } : {}),
+        relayOrigin: customerVpsConfig.fundedAiRelayUrl }));
     }
     const reconcileManagedFeatures = createManagedFeatureReconciliationPass(activateManagedFeatures);
     if (backgroundWorkersEnabled) {
@@ -1058,8 +1087,10 @@ async function startPlatformServerWithCleanup(
     fundedAiRepository,
     fundedModelProbes,
     collaboration,
+    slackRoutes: slack.routes,
     customerVpsService,
     activateManagedFeatures,
+    activatePreviewRuntimeAccess,
     goldenSnapshotService,
     goldenSnapshotConfig,
     customerVpsObjectStore,
@@ -1117,6 +1148,7 @@ async function startPlatformServerWithCleanup(
         await Promise.allSettled([
           stopGooglePurchaseWorker(),
           collaboration?.shutdown(),
+          slack.close(),
           whatsappRuntime?.shutdown(),
           fundedReservationCleanupWorker?.shutdown(),
           Promise.resolve(speechService.shutdown()),

@@ -28,6 +28,8 @@ interface Options {
 export interface ShellOnboardingIntegrations extends OnboardingAppConnect {
   available: AvailableIntegration[];
   connections: ConnectedIntegration[];
+  /** The connections have been read at least once; before that they are unknown, not empty. */
+  connectionsLoaded: boolean;
 }
 
 class IntegrationsRequestError extends Error {
@@ -106,6 +108,7 @@ export function useShellOnboardingIntegrations(
 ): ShellOnboardingIntegrations {
   const [available, setAvailable] = useState<AvailableIntegration[]>([]);
   const [connections, setConnections] = useState<ConnectedIntegration[]>([]);
+  const [connectionsLoaded, setConnectionsLoaded] = useState(false);
   const [connectingService, setConnectingService] = useState<string | null>(null);
   const [appsUnavailable, setAppsUnavailable] = useState(false);
   const appsUnavailableRef = useRef(false);
@@ -127,6 +130,7 @@ export function useShellOnboardingIntegrations(
     connectionsRevisionRef.current += 1;
     connectionsRef.current = next;
     setConnections(next);
+    setConnectionsLoaded(true);
   }, []);
 
   const markAppsUnavailable = useCallback(() => {
@@ -259,5 +263,5 @@ export function useShellOnboardingIntegrations(
     });
   }, [applyConnections, dispatch, markAppsUnavailable, transport]);
 
-  return { available, connections, connectingService, connectApp, appsUnavailable };
+  return { available, connections, connectionsLoaded, connectingService, connectApp, appsUnavailable };
 }

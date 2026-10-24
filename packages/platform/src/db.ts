@@ -137,6 +137,23 @@ export interface AiRuntimeCredentialsTable {
   expires_at: string;
   revoked_at: string | null;
   request_class: Generated<"interactive" | "background">;
+  runtime_token_epoch: Generated<number>;
+}
+
+export interface PreviewRuntimeAllocationsTable {
+  machine_id: string;
+  owner_id: string;
+  runtime_slot: string;
+  runtime_token_epoch: number;
+  ai_budget_microusd: number;
+  ai_request_limit: number;
+  ai_requests_used: number;
+  speech_request_limit: number;
+  speech_requests_used: number;
+  max_concurrency: number;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface AiFundedPriorityClaimsTable {
@@ -823,6 +840,7 @@ export interface PlatformDatabase {
   ai_funded_global_policy: AiFundedGlobalPolicyTable;
   ai_funded_runtime_policies: AiFundedRuntimePoliciesTable;
   ai_runtime_credentials: AiRuntimeCredentialsTable;
+  preview_runtime_allocations: PreviewRuntimeAllocationsTable;
   ai_funded_priority_claims: AiFundedPriorityClaimsTable;
   ai_funded_usage_reservations: AiFundedUsageReservationsTable;
   ai_funded_reservation_promotional_allocations: AiFundedReservationPromotionalAllocationsTable;

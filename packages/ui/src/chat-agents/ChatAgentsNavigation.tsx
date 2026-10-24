@@ -1,5 +1,5 @@
 import type { StartAgentChat } from "./client.js";
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ChatAgentClient } from "./client.js";
 
 export type OpenAgents = {
@@ -65,4 +65,19 @@ export function ChatAgentsWorkspace({ children }: { children: ReactNode }) {
 
 export function useChatAgentsNavigation() {
   return useContext(Context);
+}
+
+/**
+ * A draft put into Chat's composer from elsewhere (Getting started's Try, Create app, New chat)
+ * closes Agents, so the composer it went to shows. `request` identifies the draft request; only
+ * a new one closes Agents, never the one already pending when this mounts.
+ */
+export function useCloseAgentsOnDraftRequest(request: number | null | undefined): void {
+  const close = useContext(Context)?.close;
+  const handled = useRef(request);
+  useEffect(() => {
+    if (!request || request === handled.current) return;
+    handled.current = request;
+    close?.();
+  }, [close, request]);
 }

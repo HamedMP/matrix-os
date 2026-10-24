@@ -17,7 +17,10 @@ import { bindJevInboxRecipe, isJevInboxRecipe, JevRecipeBindingError, type Gmail
 import { revokeHermesJevCapabilitiesForAgent } from "./hermes-integration-capability.js";
 import type { ChatRepository } from "./repository.js";
 import { validateChatProviderSelection, type ChatProviderCatalogService } from "./provider-catalog.js";
+import type { ManagedCustomRecovery } from "../bots/managed-custom-recovery.js";
 import { ManagedCustomDefinitionError, resolveManagedCustomDefinition } from "../bots/custom-definition.js";
+
+const ListSchema = z.object({ includeManagedCustomRecoveries: z.literal("true").optional() }).strict();
 
 const SearchSchema = z.object({
   query: z.string().trim().max(200).default(""),
@@ -31,6 +34,7 @@ function selectionIdentity(selection: CanonicalChatModelSelection) {
 
 export function createChatAgentRoutes(options: {
   agents?: ChatAgentStore;
+  recovery?: Pick<ManagedCustomRecovery, "projectUnfinished">;
   repository?: ChatRepository;
   context?: ChatAgentContext;
   recipes?: ChatAgentRecipeResolver;
@@ -91,9 +95,12 @@ export function createChatAgentRoutes(options: {
   }
   routes.get("/api/chat-agents", async (c) => {
     const scope = owner(c);
+    const query = ListSchema.parse(c.req.query());
     if (!options.enabled()) return c.json({ enabled: false, agents: [] });
     const { agents } = requireServices();
-    return c.json(ChatAgentListResponseSchema.parse({ enabled: true, agents: await agents.list(scope) }));
+    const listed = await agents.list(scope);
+    const projection = query.includeManagedCustomRecoveries && options.recovery ? { managedCustomRecoveries: await options.recovery.projectUnfinished(scope.ownerId, listed) } : {};
+    return c.json(ChatAgentListResponseSchema.parse({ enabled: true, agents: listed, ...projection }));
   });
   routes.get("/api/chat-agents/recipe-catalog", async (c) => {
     owner(c);

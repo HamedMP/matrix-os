@@ -26,6 +26,8 @@ export interface CustomerVpsConfig {
   fundedAiEnabled: boolean;
   fundedAiRelayUrl: string;
   platformSpeechEnabled: boolean;
+  /** Spec 635: new computers are offered the Get started wizard. */
+  getStartedEnabled: boolean;
   provisionEtaSeconds: number;
   registrationTokenTtlMs: number;
   reconciliationBatchSize: number;
@@ -128,6 +130,7 @@ export function loadCustomerVpsConfig(env: NodeJS.ProcessEnv = process.env): Cus
     posthogApiHost: env.NEXT_PUBLIC_POSTHOG_API_HOST ?? '',
     ...fundedAiRuntime,
     platformSpeechEnabled: enabledFromEnv(env.MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED),
+    getStartedEnabled: enabledFromEnv(env.MATRIX_GET_STARTED_ENABLED),
     provisionEtaSeconds: numberFromEnv(env.CUSTOMER_VPS_PROVISION_ETA_SECONDS, 90),
     // Clean-image bootstrap allows 15 minutes for the host bundle download
     // and 30 minutes for prerequisite preparation before Gateway can register.

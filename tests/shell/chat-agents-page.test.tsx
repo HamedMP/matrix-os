@@ -80,6 +80,21 @@ describe("Web Chat Agents page", () => {
     expect(submit).toHaveBeenCalledTimes(1);
     expect(botRequest.mock.calls.some(([path]) => /\/(authority|interactions|bot-tasks)$/.test(path))).toBe(false);
   });
+  it("closes Agents when Getting started puts a prompt in a new chat", async () => {
+    const client = clientFixture();
+    client.list.mockResolvedValue({ enabled: true, agents: [saved] });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(await client.catalog())));
+    const props = { messages: [], sessionId: undefined, busy: false, connected: true, conversations: [],
+      onNewChat: vi.fn(), onSwitchConversation: vi.fn(), onSubmit: vi.fn(), agentClient: client, onComposerDraftConsumed: vi.fn() };
+    const view = render(<ChatApp {...props} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Agents", exact: true }));
+    expect(await screen.findByRole("region", { name: "Agents", exact: true })).toBeTruthy();
+    // Try starts a new chat, which is already the open one here, with the prompt typed in.
+    view.rerender(<ChatApp {...props} composerDraftRequest={{ id: 1, text: "List my GitHub repos.", merge: true }} />);
+    expect(screen.queryByRole("region", { name: "Agents", exact: true })).toBeNull();
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Message chat" })).toHaveProperty("value", "List my GitHub repos."));
+  });
+
   it.each([false, true])("preserves the transcript and draft across Templates and Agents management (mobile=%s)", async (mobile) => {
     const client = clientFixture();
     client.list.mockResolvedValue({ enabled: true, agents: [saved] });

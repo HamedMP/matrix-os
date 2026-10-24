@@ -15,6 +15,11 @@ import { RuntimeSlotSchema } from "../customer-vps-schema.js";
 import { getRunningUserMachineByHandle, type PlatformDB } from "../db.js";
 import { buildPlatformSpeechRuntimeVerificationToken, timingSafeTokenEquals } from "../platform-token.js";
 import { SpeechServiceError, type PlatformSpeechService } from "./service.js";
+import {
+  isBoundedPreviewProvisioningClass,
+  readActivePreviewRuntimeAccess,
+  type PreviewRuntimeAccessSummary,
+} from "../preview-runtime-access.js";
 
 const MAX_DICTATION_BODY_BYTES = 10 * 1024 * 1024 + 64 * 1024;
 const CANCELLATION_BODY_BYTES = 1_024;
@@ -63,25 +68,37 @@ function query(c: Context) {
 
 async function runtimeIdentity(
   c: Context,
-  options: { db: PlatformDB; platformSecret: string },
+  options: { db: PlatformDB; platformSecret: string; previewRuntimeSecret?: string; now?: () => Date },
   runtimeSlot: string,
 ) {
   const handle = HandleSchema.safeParse(c.req.param("handle"));
   if (!handle.success) return undefined;
   const machine = await getRunningUserMachineByHandle(options.db, handle.data, runtimeSlot);
   if (!machine) return undefined;
+  let previewAccess: PreviewRuntimeAccessSummary | null = null;
+  let runtimeSecret = options.platformSecret;
+  if (isBoundedPreviewProvisioningClass(machine.provisioningClass)) {
+    previewAccess = await readActivePreviewRuntimeAccess(options.db, {
+      ownerId: machine.clerkUserId, machineId: machine.machineId, runtimeSlot: machine.runtimeSlot,
+    }, (options.now ?? (() => new Date()))());
+    if (!previewAccess || !options.previewRuntimeSecret) return undefined;
+    runtimeSecret = options.previewRuntimeSecret;
+  }
   const authorization = c.req.header("authorization");
   const actual = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;
   const expected = buildPlatformSpeechRuntimeVerificationToken({
     handle: handle.data,
     machineId: machine.machineId,
     runtimeSlot: machine.runtimeSlot,
-  }, options.platformSecret, machine.runtimeTokenEpoch);
+  }, runtimeSecret, machine.runtimeTokenEpoch);
   if (!timingSafeTokenEquals(actual, expected)) return undefined;
   return {
-    ownerId: machine.clerkUserId,
-    machineId: machine.machineId,
-    runtimeSlot: machine.runtimeSlot,
+    identity: {
+      ownerId: machine.clerkUserId,
+      machineId: machine.machineId,
+      runtimeSlot: machine.runtimeSlot,
+    },
+    previewAccess,
   };
 }
 
@@ -105,14 +122,14 @@ function serviceErrorResponse(c: Context, error: unknown) {
 
 async function authenticate(
   c: Context,
-  options: { db: PlatformDB; platformSecret: string },
+  options: { db: PlatformDB; platformSecret: string; previewRuntimeSecret?: string; now?: () => Date },
 ) {
   const parsedQuery = query(c);
   if (!parsedQuery.success) return { response: c.json(safeError("invalid_request"), 400) } as const;
   try {
     const identity = await runtimeIdentity(c, options, parsedQuery.data.runtimeSlot);
     if (!identity) return { response: c.json(safeError("unauthorized"), 401) } as const;
-    return { identity } as const;
+    return identity as NonNullable<typeof identity>;
   } catch (error: unknown) {
     console.warn("[platform-speech] runtime authentication failed", error instanceof Error ? error.name : "UnknownError");
     return { response: c.json(safeError("unavailable"), 503) } as const;
@@ -126,9 +143,13 @@ function singleField(value: string | File | (string | File)[] | undefined): stri
 export function createSpeechRuntimeRoutes(options: {
   db: PlatformDB;
   platformSecret: string;
+  previewRuntimeSecret?: string;
+  now?: () => Date;
   service: PlatformSpeechService;
 }): Hono {
-  if (!options.db || !options.service || options.platformSecret.length < 32) {
+  if (!options.db || !options.service || options.platformSecret.length < 32
+    || (options.previewRuntimeSecret !== undefined
+      && (options.previewRuntimeSecret.length < 32 || options.previewRuntimeSecret === options.platformSecret))) {
     throw new Error("Speech runtime routes are misconfigured");
   }
   const app = new Hono();
@@ -140,7 +161,18 @@ export function createSpeechRuntimeRoutes(options: {
   app.get("/capabilities", async (c) => {
     const runtime = await authenticate(c, options);
     if ("response" in runtime) return runtime.response;
-    return c.json(SpeechCapabilitiesResponseSchema.parse(options.service.capabilities()), 200);
+    const capabilities = options.service.capabilities();
+    return c.json(SpeechCapabilitiesResponseSchema.parse({
+      ...capabilities,
+      ...(runtime.previewAccess ? { previewQuota: {
+        mode: "preview",
+        requestLimit: runtime.previewAccess.speech.requestLimit,
+        requestsUsed: runtime.previewAccess.speech.requestsUsed,
+        requestsRemaining: runtime.previewAccess.speech.requestsRemaining,
+        maxConcurrency: runtime.previewAccess.maxConcurrency,
+        expiresAt: runtime.previewAccess.expiresAt,
+      } } : {}),
+    }), 200);
   });
 
   app.post("/transcriptions", bodyLimit({

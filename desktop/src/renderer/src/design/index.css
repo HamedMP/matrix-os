@@ -16,6 +16,7 @@
 @import "@fontsource/jetbrains-mono/500.css";
 @import "./tokens.css";
 @import "@matrix-os/ui/onboarding-widget.css";
+@import "@matrix-os/ui/get-started.css";
 @import "./brand-fonts.css";
 @import "@matrix-os/ui/chat-agents.css";
 @import "@matrix-os/ui/styles.css";

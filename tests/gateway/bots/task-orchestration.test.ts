@@ -25,6 +25,11 @@ import { BOT, OWNER, createBotStateDatabase, insertChat } from "./bot-state-supp
 // Reset must release fixture closures instead of restoring an original implementation.
 const fixtureMock = <T extends (...args: never[]) => unknown>(implementation: T) => vi.fn<T>().mockImplementation(implementation);
 
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, realpath: vi.fn(actual.realpath), open: vi.fn(actual.open) };
+});
+
 const CHAT = "chat_botdirect1";
 const RUNTIME = `runtime_${"f".repeat(32)}`;
 const ROUTE: BotModelRoute = { api: "anthropic-messages", modelId: "claude-sonnet-5", input: ["text"], contextWindow: 200_000, maxOutputTokens: 8_192 };
@@ -48,6 +53,8 @@ afterEach(async () => { vi.unstubAllEnvs(); try { await destroy(); } finally { v
 
 function setup(options: {
   homePath?: string;
+  inputHistory?: Parameters<typeof createBotTaskOrchestrator>[0]["inputHistory"];
+  resolveGroupRoute?: Parameters<typeof createBotTaskOrchestrator>[0]["resolveGroupRoute"];
   worker?: (input: RunBotInput, context: { publish(seq: number, event: Record<string, unknown>): Promise<void> }) => Promise<unknown>;
   resolveRoute?: (selection?: CanonicalChatModelSelection) => Promise<import("../../../packages/gateway/src/bots/route-resolver.js").ResolvedBotRoute>;
   admit?: () => Promise<never>;
@@ -59,12 +66,15 @@ function setup(options: {
   resolveProcedure?: Parameters<typeof createBotTaskOrchestrator>[0]["resolveProcedure"];
   memory?: string[];
   admitted?: () => Promise<string[]>;
+  resolveGroupRun?: (input: { ownerId: string; chatId: string; runId: string }) => Promise<unknown>;
+  authorizeGroup?: import("../../../packages/gateway/src/bots/runtime-registry.js").GroupBotAuthorizer;
   answerWithMessage?: () => Promise<void>;
 } = {}) {
   const registry = new BotRuntimeRegistry();
   const admission = {
     admit: fixtureMock(options.admit ?? (async (request: Parameters<typeof registry.bind>[0]) => {
-      registry.bind({ ...request, runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) });
+      const { expectedRootFingerprint: _fingerprint, signal: _signal, ...runtimeRequest } = request as typeof request & { expectedRootFingerprint?: string; signal?: AbortSignal };
+      registry.bind({ ...runtimeRequest, ...(request.group ? { group: { scopeId: "scope-company", actorId: "user_member", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime" } } : {}), runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) });
       return { runtimeHandle: RUNTIME, executionGeneration: "3", rootFingerprint: "f".repeat(64) };
     }) as never),
     release: fixtureMock(async (handle: string) => registry.release(handle)),
@@ -91,6 +101,7 @@ function setup(options: {
   const interactions = createBotInteractionService({ transact });
   orchestrator = createBotTaskOrchestrator({
     homePath: options.homePath, expectedOwnerId: OWNER,
+    inputHistory: options.inputHistory,
     bindings: createBotBindingsRepository(db),
     transact,
     interactions: options.answerWithMessage ? { answerWithMessage: options.answerWithMessage } : interactions,
@@ -98,9 +109,12 @@ function setup(options: {
     agents: { get: fixtureMock(async () => (options.agent === undefined ? AGENT : options.agent) as never) },
     recipes: createBotRecipeCatalog(),
     resolveProcedure: options.resolveProcedure,
+    resolveGroupRoute: options.resolveGroupRoute ?? (options.resolveGroupRun ? (async () => ({ route: ROUTE, accessSourceId: "matrix_included" as const })) : undefined),
     resolveRoute: options.resolveRoute ?? (async () => ({ route: ROUTE, accessSourceId: "matrix_included" as const })),
     executorReady: options.executorReady,
     admission,
+    resolveGroupRun: options.resolveGroupRun as never,
+    authorizeGroup: options.authorizeGroup,
     registry,
     client: { runBot: runBot as never },
     ...(options.activeDeadlineMs ? { activeDeadlineMs: options.activeDeadlineMs } : {}),
@@ -568,7 +582,8 @@ it("forwards image/file-only recipe Bot turns through the real broker and image-
     context => { expect(JSON.stringify(context.messages.at(-1))).toContain("RECIPE_FILE_MARKER"); return fauxAssistantMessage(fauxText("RECIPE_FILE_MARKER")); },
   ]);
   let actions: ReturnType<typeof createBotBrokerActions>;
-  const x = setup({ homePath: home, resolveRoute: async () => ({ route, accessSourceId: "matrix_included" }), worker: async input => {
+  const inputHistory = vi.fn(async () => ({ references: [], assertCurrent: async () => undefined }));
+  const x = setup({ homePath: home, inputHistory, resolveRoute: async () => ({ route, accessSourceId: "matrix_included" }), worker: async input => {
     const call = async (body: Record<string, unknown>) => {
       const reply = await actions.handleFrame({ version: 1, requestId: crypto.randomUUID(), runtimeHandle: input.runtimeHandle, executionGeneration: input.executionGeneration, runId: input.command.runId, ...body });
       if (!reply?.ok) throw new BotBrokerError((reply?.code ?? "unavailable") as never); return reply.result;
@@ -597,5 +612,155 @@ it("forwards image/file-only recipe Bot turns through the real broker and image-
       expect(events).toContainEqual({ type: "assistant.delta", delta: "RECIPE_FILE_MARKER" });
     }
     expect(observed).toBe(2); expect(faux.state.callCount).toBe(4); expect(x.registry.size).toBe(0);
+    expect(inputHistory).toHaveBeenCalledTimes(2);
   } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+describe("group Pi run isolation", () => {
+  it.each((["resolve", "authorize", "route"] as const).flatMap(stage => (["signal", "cancel", "deadline"] as const).map(stop => ({ stage, stop }))))("settles stalled group $stage on $stop before late authority", async ({ stage, stop }) => {
+    await insertChat(db, "chat_company1");
+    await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
+    const group = { scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project" as const, projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" };
+    const authority = { scopeId: "scope-company", actorId: "user_member", ownerId: OWNER, resourceId: "chat_company1", resourceKind: "chat" as const, organizationId: "org_company", membershipScopeId: "scope-company", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime", capability: "request_ai" as const, role: "editor" as const };
+    const input = new AbortController(), deadline = new AbortController();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const resolveGroupRun = vi.fn(async () => { if (stage === "resolve") await gate; return group; });
+    const authorizeGroup = vi.fn(async () => { if (stage === "authorize") await gate; return authority; });
+    const resolveGroupRoute = vi.fn(async () => { if (stage === "route") await gate; return { route: ROUTE, accessSourceId: "matrix_included" as const }; });
+    const service = setup({ resolveGroupRun, authorizeGroup, resolveGroupRoute });
+    const originalTimeout = AbortSignal.timeout;
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => ms === 10_000 ? deadline.signal : originalTimeout(ms));
+    const runId = `run_prelaunch_${stage}_${stop}`;
+    const handle = service.orchestrator.start({ ownerId: OWNER, chatId: "chat_company1", runId, text: "Synthetic group turn", signal: input.signal });
+    const result = handle.result.then(value => ({ kind: "settled" as const, value }));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let observed: Awaited<typeof result> | { kind: "still_waiting" };
+    let slotReleased = false;
+    try {
+      await vi.waitFor(() => expect(stage === "resolve" ? resolveGroupRun : stage === "authorize" ? authorizeGroup : resolveGroupRoute).toHaveBeenCalledOnce());
+      if (stop === "signal") input.abort();
+      else if (stop === "cancel") await service.orchestrator.cancel(runId);
+      else deadline.abort(new DOMException("Synthetic authorization deadline", "TimeoutError"));
+      observed = await Promise.race([result, new Promise<{ kind: "still_waiting" }>(resolve => { timer = setTimeout(() => resolve({ kind: "still_waiting" }), 750); })]);
+      if (observed.kind === "settled") {
+        const cancelled = new AbortController(); cancelled.abort();
+        const next = service.orchestrator.start({ ownerId: OWNER, chatId: "chat_company1", runId, text: "Already cancelled", signal: cancelled.signal });
+        slotReleased = true; await next.result;
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
+      release(); await result; timeout.mockRestore();
+    }
+    expect(observed!, stop).toMatchObject({ kind: "settled", value: stop === "deadline" ? { status: "blocked", blockedReason: "deadline_reached" } : { status: "cancelled" } });
+    expect(slotReleased, stop).toBe(true);
+    expect(service.admission.admit, stop).not.toHaveBeenCalled();
+    expect(service.commands, stop).not.toContainEqual(expect.objectContaining({ kind: "bot.run" }));
+  });
+  it.each(["cancel", "deadline"] as const)("bounds group steering authorization on %s without a late command", async stop => {
+    await insertChat(db, "chat_company1");
+    await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
+    let releaseAuthority!: () => void, finishWorker!: () => void;
+    const gate = new Promise<void>(resolve => { releaseAuthority = resolve; });
+    let calls = 0;
+    const service = setup({
+      resolveGroupRun: async () => ({ scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project", projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" }),
+      authorizeGroup: async () => {
+        if (++calls === 2) await gate;
+        return { scopeId: "scope-company", actorId: "user_member", ownerId: OWNER, resourceId: "chat_company1", resourceKind: "chat", organizationId: "org_company", membershipScopeId: "scope-company", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime", capability: "request_ai", role: "editor" };
+      },
+      worker: input => new Promise(resolve => { finishWorker = () => resolve({ runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 }); }),
+    });
+    const deadline = new AbortController(), originalTimeout = AbortSignal.timeout;
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => ms === 10_000 ? deadline.signal : originalTimeout(ms));
+    const runId = `run_steer_${stop}`;
+    const running = service.orchestrator.start({ ownerId: OWNER, chatId: "chat_company1", runId, text: "Synthetic group turn", signal: new AbortController().signal });
+    let pending: Promise<boolean> | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+    let observed: boolean | "still_waiting";
+    try {
+      await vi.waitFor(() => expect(service.commands).toContainEqual(expect.objectContaining({ kind: "bot.run" })));
+      pending = service.orchestrator.steer(runId, "Synthetic steering");
+      await vi.waitFor(() => expect(calls).toBe(2));
+      if (stop === "cancel") await service.orchestrator.cancel(runId);
+      else deadline.abort(new DOMException("Synthetic authorization deadline", "TimeoutError"));
+      observed = await Promise.race([pending, new Promise<"still_waiting">(resolve => { timer = setTimeout(() => resolve("still_waiting"), 750); })]);
+    } finally {
+      if (timer) clearTimeout(timer);
+      releaseAuthority(); if (pending) await pending;
+      finishWorker?.(); await running.result; timeout.mockRestore();
+    }
+    expect(observed!).toBe(false);
+    expect(service.commands).not.toContainEqual(expect.objectContaining({ kind: "bot.steer" }));
+  });
+  it.each(["text", "image", "file"] as const)("never calls owner history or upload resolution for a group %s turn", async kind => {
+    const fs = await import("node:fs/promises");
+    const { join } = await import("node:path"); const { tmpdir } = await import("node:os");
+    const home = await fs.realpath(await fs.mkdtemp(join(tmpdir(), "group-input-boundary-")));
+    const inputHistory = vi.fn(async () => ({ references: [], assertCurrent: async () => undefined }));
+    const resolveRoute = vi.fn(); const admitted = vi.fn(async () => ["PRIVATE OWNER FACT"]);
+    const executorReady = vi.fn(async () => true);
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==", "base64");
+    const file = kind === "image" ? "photo.png" : "marker.txt";
+    try {
+      await fs.mkdir(join(home, "temporary/desktop-chat"), { recursive: true });
+      await fs.writeFile(join(home, "temporary/desktop-chat", file), kind === "image" ? png : "PRIVATE_OWNER_UPLOAD");
+      await insertChat(db, "chat_company1");
+      await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
+      const service = setup({ homePath: home, inputHistory, admitted, executorReady, resolveRoute,
+        resolveGroupRoute: async () => ({ route: { ...ROUTE, input: ["text", "image"] }, accessSourceId: "matrix_included" }),
+        authorizeGroup: async () => ({ scopeId: "scope-company", actorId: "user_member", ownerId: OWNER, resourceId: "chat_company1", resourceKind: "chat", organizationId: "org_company", membershipScopeId: "scope-company", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime", capability: "request_ai", role: "editor" }),
+        resolveGroupRun: async () => ({ scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project", projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" }),
+      });
+      const beforeResolve = vi.mocked(fs.realpath).mock.calls.length;
+      const beforeOpen = vi.mocked(fs.open).mock.calls.length;
+      const parts: import("@matrix-os/contracts").CanonicalChatMessagePart[] = kind === "text" ? [{ type: "text", text: "Group request" }] : [{
+        type: "attachment_reference", attachmentId: `att_group_${kind}`, kind, mimeType: kind === "image" ? "image/png" : "text/plain",
+        label: file, ownerReference: `temporary/desktop-chat/${file}`,
+      }];
+      const result = await service.orchestrator.start({ ownerId: OWNER, chatId: "chat_company1", runId: `run_group_${kind}`, text: "Group request", parts, signal: new AbortController().signal }).result;
+      expect.soft(inputHistory).not.toHaveBeenCalled();
+      expect.soft(vi.mocked(fs.realpath).mock.calls.slice(beforeResolve).filter(args => args[0] === home)).toHaveLength(0);
+      expect.soft(vi.mocked(fs.open).mock.calls.slice(beforeOpen).filter(args => String(args[0]).startsWith(`${home}/temporary/desktop-chat/`))).toHaveLength(0);
+      expect.soft(resolveRoute).not.toHaveBeenCalled(); expect.soft(admitted).not.toHaveBeenCalled(); expect.soft(executorReady).not.toHaveBeenCalled();
+      if (kind === "text") expect.soft(result.status).toBe("completed");
+      else {
+        expect.soft(result).toMatchObject({ status: "blocked", blockedReason: "policy_denied" });
+        expect.soft(service.admission.admit).not.toHaveBeenCalled();
+      }
+    } finally { await fs.rm(home, { recursive: true, force: true }); }
+  });
+  it("uses an explicit group binding and omits all private context and capabilities", async () => {
+    await insertChat(db, "chat_company1");
+    await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
+    const admitted = vi.fn(async () => ["PRIVATE OWNER FACT"]);
+    const executorReady = vi.fn(async () => true);
+    let orchestrator: ReturnType<typeof createBotTaskOrchestrator>;
+    const service = setup({ admitted, executorReady,
+      authorizeGroup: async () => ({ scopeId: "scope-company", actorId: "user_member", ownerId: OWNER, resourceId: "chat_company1", resourceKind: "chat", organizationId: "org_company", membershipScopeId: "scope-company", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime", capability: "request_ai", role: "editor" }),
+      resolveGroupRun: async () => ({ scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project", projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" }),
+      worker: async (input) => {
+        const binding = service.registry.lookupRun({ runtimeHandle: input.runtimeHandle, executionGeneration: input.executionGeneration, runId: input.command.runId });
+        expect(binding).toBeDefined();
+        const spec = await orchestrator.runSource.loadRunSpec(binding!);
+        expect(spec.systemPrompt).not.toContain("PRIVATE OWNER FACT");
+        expect(spec.systemPrompt).toContain("shared company thread");
+        expect(spec.capabilities).toEqual([]);
+        return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+      },
+    });
+    orchestrator = service.orchestrator;
+    const events = await collect(service.adapter.start({ ...turn(), chatId: "chat_company1" }));
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "completed" });
+    expect(admitted).not.toHaveBeenCalled();
+    expect(executorReady).not.toHaveBeenCalled();
+    expect(service.admission.admit).toHaveBeenCalledWith(expect.objectContaining({ chatId: "chat_company1", expectedRootFingerprint: "f".repeat(64), group: expect.objectContaining({ actorId: "user_member" }) }));
+  });
+  it("refuses a group Chat when no explicit resolver is wired, without private fallback", async () => {
+    await insertChat(db, "chat_company1");
+    await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: "chat_company1", kind: "group", created_at: "2026-09-27T12:00:00.000Z", removed_at: null }).execute();
+    const service = setup();
+    const events = await collect(service.adapter.start({ ...turn(), chatId: "chat_company1" }));
+    expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
+    expect(service.admission.admit).not.toHaveBeenCalled();
+  });
 });

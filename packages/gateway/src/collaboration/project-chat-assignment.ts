@@ -152,6 +152,50 @@ export function createProjectChatAssignmentCoordinator(options: {
     };
   }
 
+  /**
+   * Shared Chat execution paths serialize Project -> Chat scope -> Chat row.
+   * Assignment operations must take those same rows before ChatRepository locks
+   * the Chat, otherwise an owner update can deadlock queue admission or claim.
+   */
+  async function lockAssignmentRows(
+    trx: CollaborationTransaction,
+    owner: ChatOwner,
+    chatId: string | undefined,
+    targetProjectId: string | null | undefined,
+  ): Promise<void> {
+    const current = chatId
+      ? await trx.selectFrom("chats").select("project_id")
+        .where("id", "=", chatId)
+        .where("owner_type", "=", owner.type)
+        .where("owner_id", "=", owner.ownerId)
+        .executeTakeFirst()
+      : undefined;
+    const projectIds = [...new Set([current?.project_id, targetProjectId]
+      .filter((projectId): projectId is string => typeof projectId === "string"))].sort();
+    if (projectIds.length > 0) {
+      await trx.selectFrom("collaboration_scopes").select("id")
+        .where("owner_type", "=", owner.type)
+        .where("owner_id", "=", owner.ownerId)
+        .where("kind", "=", "project")
+        .where("resource_id", "in", projectIds)
+        .where("deleted_at", "is", null)
+        .orderBy("id", "asc")
+        .forUpdate()
+        .execute();
+    }
+    if (chatId) {
+      await trx.selectFrom("collaboration_scopes").select("id")
+        .where("owner_type", "=", owner.type)
+        .where("owner_id", "=", owner.ownerId)
+        .where("kind", "=", "chat")
+        .where("resource_id", "=", chatId)
+        .where("deleted_at", "is", null)
+        .orderBy("id", "asc")
+        .forUpdate()
+        .execute();
+    }
+  }
+
   function bindingMatchesProject(current: BoundChat, target: ScopeRow): boolean {
     return current.projectScopeId === target.id
       && current.bindingAuthorityRuntimeId === target.authority_runtime_id
@@ -427,7 +471,37 @@ export function createProjectChatAssignmentCoordinator(options: {
       const result = await options.chatRepository.withTransaction(async (repository) => {
         let record: ChatRecord;
         try {
-          record = await operation(repository);
+          const orderedRepository: AssignmentRepository = {
+            create: async (operationOwner, input) => {
+              // Idempotent create may return a Chat that has since moved to a
+              // different Project. Resolve that Chat before taking any Project
+              // locks so the original and current Projects are locked together
+              // in the same canonical order.
+              const existing = await repository.kysely.selectFrom("chats")
+                .select("id")
+                .where("owner_type", "=", operationOwner.type)
+                .where("owner_id", "=", operationOwner.ownerId)
+                .where("create_request_id", "=", input.clientRequestId)
+                .executeTakeFirst();
+              await lockAssignmentRows(
+                repository.kysely as unknown as CollaborationTransaction,
+                operationOwner,
+                existing?.id,
+                input.projectId,
+              );
+              return repository.create(operationOwner, input);
+            },
+            update: async (operationOwner, chatId, input) => {
+              await lockAssignmentRows(
+                repository.kysely as unknown as CollaborationTransaction,
+                operationOwner,
+                chatId,
+                input.projectId,
+              );
+              return repository.update(operationOwner, chatId, input);
+            },
+          };
+          record = await operation(orderedRepository);
         } catch (error: unknown) {
           throw new AssignmentOperationError(error);
         }
@@ -493,6 +567,7 @@ export function createProjectChatAssignmentCoordinator(options: {
         try {
           const owner: ChatOwner = { type: row.owner_type, ownerId: row.owner_id };
           const repaired = await options.db.transaction().execute(async (trx) => {
+            await lockAssignmentRows(trx, owner, row.id, undefined);
             const chat = await trx.selectFrom("chats")
               .select(["id", "project_id", "revision"])
               .where("id", "=", row.id)

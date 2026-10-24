@@ -19,6 +19,7 @@ vi.mock("@desktop/renderer/src/lib/collaboration", () => ({
 
 import { useConnection } from "@desktop/renderer/src/stores/connection";
 import { DesktopOrganizationMenuItems } from "@desktop/renderer/src/features/mission-control/DesktopOrganizationMenuItems";
+import AccountMenu from "@desktop/renderer/src/features/mission-control/AccountMenu";
 import { DesktopDefaultOrganization } from "@desktop/renderer/src/features/collaboration/DesktopDefaultOrganization";
 
 const KEY = "matrix.desktop.selectedOrganization:";
@@ -133,6 +134,32 @@ describe("connection store organization selection", () => {
 
     expect(useConnection.getState().organizationId).toBeNull();
     expect(window.localStorage.getItem(KEY + "user_nima")).toBeNull();
+  });
+});
+
+describe("AccountMenu organization integration", () => {
+  it.each([false, true])("selects and preserves the active organization in the actual menu (compact=%s)", async (compact) => {
+    useConnection.setState({ organizationId: "org_finna" });
+    apiState.get.mockResolvedValue({ complete: true, organizations: [
+      organization("org_finna", "Finna"), organization("org_matrix", "Matrix Main"),
+    ] });
+    render(<AccountMenu collapsed={compact} compact={compact} />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Open account menu" }), { button: 0, ctrlKey: false });
+    expect((await screen.findByRole("menuitemradio", { name: "Finna" })).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Matrix Main" }));
+    expect(useConnection.getState().organizationId).toBe("org_matrix");
+    expect(screen.getByRole("menuitemradio", { name: "Matrix Main" }).getAttribute("aria-checked")).toBe("true");
+    expect(window.localStorage.getItem(KEY + "user_nima")).toBe("org_matrix");
+  });
+
+  it("omits the organization section in the actual menu for a confirmed individual", async () => {
+    apiState.get.mockResolvedValue({ complete: true, organizations: [] });
+    render(<AccountMenu collapsed={false} />);
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Open account menu" }), { button: 0, ctrlKey: false });
+    await screen.findByRole("menuitem", { name: "Log out" });
+    await waitFor(() => expect(apiState.get).toHaveBeenCalledWith("/api/organizations"));
+    expect(screen.queryByText("Organization")).toBeNull();
+    expect(screen.queryByRole("menuitemradio")).toBeNull();
   });
 });
 

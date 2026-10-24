@@ -4,13 +4,16 @@ import { CODING_AGENT_ARTWORK } from "@matrix-os/ui";
 import { Cpu } from "@renderer/lib/hugeicons";
 import hermesProviderIcon from "../../assets/providers/hermes-provider.png";
 
+// Stable markup identity preserves a pressed SVG across catalog refreshes.
+const MATRIX_RABBIT_HTML = { __html: rabbitMarkSvg("matrix-chat-rabbit-mark") };
+
 export function ProviderDriverGlyph({ kind, size = 15 }: {
   kind: CanonicalProviderDriverKind;
   size?: number;
 }) {
   if (kind === "kernel") {
     return <span aria-hidden data-provider-glyph={kind} className="inline-flex shrink-0 [&_svg]:size-full"
-      style={{ height: size, width: size }} dangerouslySetInnerHTML={{ __html: rabbitMarkSvg("matrix-chat-rabbit-mark") }} />;
+      style={{ height: size, width: size }} dangerouslySetInnerHTML={MATRIX_RABBIT_HTML} />;
   }
   if (kind === "hermes") {
     return <img aria-hidden alt="" data-provider-glyph={kind} src={hermesProviderIcon}

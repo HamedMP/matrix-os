@@ -121,6 +121,9 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
         (SELECT denial_id FROM collaboration_denials WHERE actor_id = ${owner})`.execute(trx.executor);
       await sql`DELETE FROM collaboration_denials WHERE actor_id = ${owner}`.execute(trx.executor);
     }
+    if (await hasTable(trx, 'slack_employee_links')) {
+      await sql`DELETE FROM slack_employee_links WHERE actor_id = ${owner}`.execute(trx.executor);
+    }
     await sql`DELETE FROM ai_funded_reservation_promotional_allocations WHERE reservation_id IN
       (SELECT reservation_id FROM ai_funded_usage_reservations WHERE owner_id = ${owner}) OR grant_entry_id IN
       (SELECT entry_id FROM ai_funded_credit_ledger WHERE owner_id = ${owner})`.execute(trx.executor);
@@ -139,7 +142,7 @@ export async function eraseOwnerPlatformData(db: PlatformDB, owner: string, owne
       if (!summary.rows.length) throw new Error('Accounting erasure tombstone unavailable');
     }
     await trx.executor.deleteFrom('ai_funded_credit_ledger').where('owner_id','=',owner).execute();
-    for (const table of ['ai_runtime_credentials', 'ai_funded_priority_claims', 'ai_funded_runtime_policies',
+    for (const table of ['ai_runtime_credentials', 'ai_funded_priority_claims', 'preview_runtime_allocations', 'ai_funded_runtime_policies',
       'ai_funded_promotional_grant_balances', 'ai_funded_runtime_balances', 'ai_funded_credit_restrictions',
       'speech_operations', 'speech_runtime_allowances', 'ai_credit_checkout_claims', 'ai_funded_usage_reservations'] as const) {
       await trx.executor.deleteFrom(table).where('owner_id','=',owner).execute();

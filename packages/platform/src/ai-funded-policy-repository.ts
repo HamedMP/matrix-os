@@ -20,6 +20,7 @@ import { createAiFundedMeteringRepository } from "./ai-funded-metering-repositor
 import { createFundedTerminalOutcome } from "./ai-funded-terminal-outcome.js";
 import { createFundedExecutionBatch } from "./ai-funded-execution-batch.js";
 import { createFundedExecutionRecovery } from "./ai-funded-execution-recovery.js";
+import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 
 export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
 
@@ -266,6 +267,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
       runtime_models: string;
       monthly_budget_microusd: number;
       token_id: string;
+      runtime_token_epoch: number;
     };
     const issued = await sql<IssuedRow>`
       WITH eligible AS (
@@ -274,6 +276,7 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
           runtime.revision AS runtime_revision,
           runtime.allowed_model_ids AS runtime_models,
           runtime.monthly_budget_microusd,
+          machine.runtime_token_epoch,
           global_policy.revision AS global_revision,
           global_policy.allowed_model_ids AS global_models
         FROM ai_funded_runtime_policies runtime
@@ -287,6 +290,21 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
           AND machine.status = 'running'
           AND machine.activation_state = 'authorized'
           AND machine.deleted_at IS NULL
+          AND (
+            machine.provisioning_class = 'customer'
+            OR (
+              machine.provisioning_class IN ('preview', 'private-preview')
+              AND EXISTS (
+                SELECT 1 FROM preview_runtime_allocations preview
+                WHERE preview.machine_id = machine.machine_id
+                  AND preview.owner_id = runtime.owner_id
+                  AND preview.runtime_slot = runtime.runtime_slot
+                  AND preview.runtime_token_epoch = machine.runtime_token_epoch
+                  AND preview.expires_at > ${checkedAt}
+                  AND preview.ai_requests_used < preview.ai_request_limit
+              )
+            )
+          )
           AND runtime.enabled = TRUE
           AND global_policy.enabled = TRUE
           AND (runtime.expires_at IS NULL OR runtime.expires_at > ${checkedAt})
@@ -308,15 +326,17 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
         WHERE runtime.machine_id = eligible.machine_id
           AND ${sql.ref(`runtime.${cooldownColumn}`)} <= ${checkedAt}
         RETURNING eligible.global_revision, eligible.runtime_revision,
-          eligible.global_models, eligible.runtime_models, eligible.monthly_budget_microusd
+          eligible.global_models, eligible.runtime_models, eligible.monthly_budget_microusd,
+          eligible.runtime_token_epoch
         `}
       ), inserted AS (
         INSERT INTO ai_runtime_credentials (
           token_id, token_hash, owner_id, machine_id, runtime_slot,
-          audience, scope, issued_at, expires_at, revoked_at, request_class
+          audience, scope, issued_at, expires_at, revoked_at, request_class, runtime_token_epoch
         )
         SELECT ${tokenId}, ${hashCredential(credential)}, ${identity.ownerId}, ${identity.machineId},
-          ${identity.runtimeSlot}, ${FUNDED_AI_AUDIENCE}, ${FUNDED_AI_SCOPE}, ${checkedAt}, ${expiresAt}, NULL, ${requestClass}
+          ${identity.runtimeSlot}, ${FUNDED_AI_AUDIENCE}, ${FUNDED_AI_SCOPE}, ${checkedAt}, ${expiresAt}, NULL, ${requestClass},
+          leased.runtime_token_epoch
         FROM leased
         RETURNING token_id
       )
@@ -325,12 +345,27 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     const row = issued.rows[0];
     if (!row) {
       const policy = await options.db.executor.selectFrom("ai_funded_runtime_policies as runtime")
+        .innerJoin("user_machines as machine", "machine.machine_id", "runtime.machine_id")
+        .leftJoin("preview_runtime_allocations as preview", "preview.machine_id", "runtime.machine_id")
         .innerJoin("ai_funded_global_policy as global_policy", (join) => join.onRef("global_policy.policy_id", "=", "global_policy.policy_id"))
         .select(["runtime.next_issue_at", "runtime.next_background_issue_at", "runtime.enabled as runtime_enabled", "runtime.expires_at",
-          "global_policy.enabled as global_enabled"])
+          "global_policy.enabled as global_enabled", "machine.provisioning_class", "machine.runtime_token_epoch",
+          "preview.runtime_token_epoch as preview_runtime_token_epoch", "preview.expires_at as preview_expires_at",
+          "preview.ai_requests_used", "preview.ai_request_limit"])
         .where("runtime.machine_id", "=", identity.machineId).where("runtime.owner_id", "=", identity.ownerId)
         .where("runtime.runtime_slot", "=", identity.runtimeSlot).where("global_policy.policy_id", "=", "default")
         .executeTakeFirst();
+      if (policy && isBoundedPreviewProvisioningClass(policy.provisioning_class)
+        && (policy.preview_runtime_token_epoch !== policy.runtime_token_epoch
+          || policy.preview_expires_at === null || policy.preview_expires_at <= checkedAt
+          || policy.ai_requests_used === null || policy.ai_request_limit === null
+          || policy.ai_requests_used >= policy.ai_request_limit)) {
+        throw new AiFundedPolicyError("access_disabled");
+      }
+      if (policy && policy.provisioning_class !== "customer"
+        && !isBoundedPreviewProvisioningClass(policy.provisioning_class)) {
+        throw new AiFundedPolicyError("access_disabled");
+      }
       if (policy && policy.global_enabled && policy.runtime_enabled
         && (policy.expires_at === null || Date.parse(policy.expires_at) > checked.getTime())
         && (requestClass === "background" ? policy.next_background_issue_at : policy.next_issue_at) > checkedAt) {

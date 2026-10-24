@@ -7,7 +7,7 @@ import {
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { PlatformSpeechClientError, type PlatformSpeechClient } from "./platform-client.js";
-import { isRequestPrincipalError, mapRequestPrincipalError } from "../request-principal.js";
+import { isRequestPrincipalError, mapRequestPrincipalError, type RequestPrincipal } from "../request-principal.js";
 
 const MAX_RECORDING_BYTES = 10 * 1024 * 1024;
 const MAX_MULTIPART_BYTES = MAX_RECORDING_BYTES + 64 * 1024;
@@ -92,9 +92,10 @@ function single(value: string | File | (string | File)[] | undefined) {
 
 export function createSpeechGatewayRoutes(options: {
   client?: PlatformSpeechClient;
-  getOwnerId(c: Context): string;
+  getPrincipal(c: Context): RequestPrincipal;
+  previewRuntime?: boolean;
 }): Hono {
-  if (typeof options.getOwnerId !== "function") throw new Error("Speech route owner resolver is missing");
+  if (typeof options.getPrincipal !== "function") throw new Error("Speech route principal resolver is missing");
   const app = new Hono();
   let activeTranscriptions = 0;
   const authorizedTranscriptions = new WeakMap<Context, PlatformSpeechClient>();
@@ -107,9 +108,9 @@ export function createSpeechGatewayRoutes(options: {
     | { client: PlatformSpeechClient | undefined }
     | { response: Response } {
     if (!options.client) return { client: undefined };
-    let ownerId: string;
+    let principal: RequestPrincipal;
     try {
-      ownerId = options.getOwnerId(c);
+      principal = options.getPrincipal(c);
     } catch (error: unknown) {
       if (isRequestPrincipalError(error)) {
         const mapped = mapRequestPrincipalError(error, "Speech request failed");
@@ -119,7 +120,9 @@ export function createSpeechGatewayRoutes(options: {
       console.warn("[gateway-speech] owner resolution failed", error instanceof Error ? error.name : "UnknownError");
       return { response: c.json(safeError("unavailable"), 503) };
     }
-    return { client: ownerId === options.client.ownerId ? options.client : undefined };
+    const previewCollaborator = principal.userId !== options.client.ownerId
+      && options.previewRuntime === true && principal.source === "platform-verified";
+    return { client: principal.userId === options.client.ownerId || previewCollaborator ? options.client : undefined };
   }
 
   app.get("/capabilities", async (c) => {

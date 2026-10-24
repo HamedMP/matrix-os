@@ -108,7 +108,7 @@ if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
     setVersion: (value: string) => writeFile(join(home, 'version'), value) };
 }
 
-it.each(["0.156.1", "0.162.1", "0.163.0"])("runs qualified %s Settings login through production HTTP composition, real native account/source commit, and natural receipt readback", async version => {
+it.each(["0.156.1", "0.162.1", "0.163.0", "0.164.0"])("runs qualified %s Settings login through production HTTP composition, real native account/source commit, and natural receipt readback", async version => {
   const f = await fixture(version);
   const response = await f.app.request(`${route}/capabilities`);
   expect(response.status).toBe(200);
@@ -125,7 +125,7 @@ it.each(["0.156.1", "0.162.1", "0.163.0"])("runs qualified %s Settings login thr
 });
 
 
-it.each(["0.156.2", "0.163.1"])("keeps unqualified installed %s on Terminal without starting app-server login", async version => {
+it.each(["0.156.2", "0.163.1", "0.164.1"])("keeps unqualified installed %s on Terminal without starting app-server login", async version => {
   const f = await fixture(version);
   const capabilities = await (await f.app.request(`${route}/capabilities`)).json();
   expect(capabilities[0].loginMethods).toEqual(["terminal"]);

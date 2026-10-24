@@ -70,6 +70,7 @@ export function statusResponse(row: UserMachineRecord): StatusResponse {
     clerkUserId: row.clerkUserId,
     handle: row.handle,
     runtimeSlot: row.runtimeSlot,
+    runtimeTokenEpoch: row.runtimeTokenEpoch,
     provisioningClass: row.provisioningClass,
     activationState: row.activationState,
     status: row.status as CustomerVpsStatus,

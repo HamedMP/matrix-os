@@ -1,5 +1,5 @@
 "use client";
-import type { CanonicalProviderInstanceDescriptor } from "@matrix-os/contracts";
+import { mergeTrySuggestion, type CanonicalProviderInstanceDescriptor, type TrySuggestionDraft } from "@matrix-os/contracts";
 import { matchChatSlashToken } from "@matrix-os/ui";
 import { ChatSlashPicker } from "./ChatSlashPicker";
 import {CompanyDriveContextControl} from "./CompanyDriveContextControl";
@@ -100,6 +100,8 @@ export function ChatInput({
   const inputRef = useRef(input);
   const pendingCursor = useRef<number|null>(null);
   const consumedDraftRequest = useRef<number | null>(null);
+  // The last merged suggestion, to tell an untouched suggestion from the owner's own words.
+  const mergedDraft = useRef<TrySuggestionDraft | null>(null);
   const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
   const botMention = useBotMentionNavigation(agentClient, `${scope}:${composer.requestId}`, onOpenBotMention, attachments.length ? BOT_ATTACHMENT_HANDOFF_REASON : undefined);
   const [defaultSpeechClient] = useState(() => createBrowserSpeechClient());
@@ -138,10 +140,17 @@ export function ChatInput({
   useEffect(() => {
     if (!draftRequest || consumedDraftRequest.current === draftRequest.id) return;
     consumedDraftRequest.current = draftRequest.id;
-    setDraft({ text: draftRequest.text, resources: draftRequest.resources ?? [] });
+    if (draftRequest.merge) {
+      // The owner's own text stays; an earlier suggestion they have not touched is swapped.
+      mergedDraft.current = mergeTrySuggestion(inputRef.current, mergedDraft.current, draftRequest.text);
+      setDraft({ text: mergedDraft.current.text, resources });
+    } else {
+      mergedDraft.current = null;
+      setDraft({ text: draftRequest.text, resources: draftRequest.resources ?? [] });
+    }
     textareaRef.current?.focus();
     onDraftConsumed?.(draftRequest.id);
-  }, [draftRequest, onDraftConsumed, setDraft]);
+  }, [draftRequest, onDraftConsumed, resources, setDraft]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();

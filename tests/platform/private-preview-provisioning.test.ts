@@ -3,7 +3,12 @@ import { sql } from 'kysely';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
 import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
-import { getProvisioningJobByMachineId } from '../../packages/platform/src/customer-vps-provisioning-jobs.js';
+import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
+import {
+  getProvisioningJobByMachineId,
+  insertProvisioningJob,
+  sealProvisioningPayload,
+} from '../../packages/platform/src/customer-vps-provisioning-jobs.js';
 import { PRIVATE_PREVIEW_HANDLE_PATTERN } from '../../packages/platform/src/customer-vps-schema.js';
 import { assertMachineProviderMutationAllowed } from '../../packages/platform/src/customer-vps-support.js';
 import { insertPrivatePreviewIfAbsent } from '../../packages/platform/src/database/private-previews.js';
@@ -155,6 +160,201 @@ describe('Private Preview provisioning', () => {
       new Date(),
     )).resolves.toBeUndefined();
     expect(resolveBillingEntitlement).not.toHaveBeenCalled();
+  });
+
+  it('activates an exact bounded runtime allocation when a Private Preview registers', async () => {
+    const activatePreviewRuntimeAccess = vi.fn(async () => ({
+      status: 'ready' as const,
+      allocation: {} as never,
+      fundedAiConfigured: true as const,
+      speechConfigured: true as const,
+    }));
+    const svc = createCustomerVpsService({
+      db,
+      config: loadCustomerVpsConfig({
+        PLATFORM_PORT: '9000',
+        PLATFORM_SECRET: 'platform-secret',
+        HETZNER_API_TOKEN: 'token',
+      }),
+      hetzner: createMockHetznerClient(),
+      systemStore: createMockCustomerVpsSystemStore(),
+      activatePreviewRuntimeAccess,
+      now: () => new Date('2026-09-28T00:00:00.000Z'),
+    });
+    const machineId = '00000000-0000-4000-8000-000000001907';
+    const runtimeSlot = 'pv-1907-deadbeef';
+    await insertUserMachine(db, {
+      machineId,
+      clerkUserId: owner,
+      handle: runtimeSlot,
+      runtimeSlot,
+      provisioningClass: 'private-preview',
+      activationState: 'authorized',
+      sourcePr: 1907,
+      confirmedBundleVersion: v1,
+      status: 'provisioning',
+      hetznerServerId: 1907,
+      imageVersion: v1,
+      registrationTokenHash: hashRegistrationToken('registration-token'),
+      registrationTokenExpiresAt: '2026-09-28T01:00:00.000Z',
+      provisionedAt: '2026-09-28T00:00:00.000Z',
+    });
+    await insertProvisioningJob(db, {
+      jobId: '50000000-0000-4000-8000-000000001907',
+      machineId,
+      encryptedPayload: sealProvisioningPayload({
+        registrationToken: 'registration-token',
+        postgresPassword: 'postgres-password',
+      }, 'platform-secret'),
+      availableAt: '2026-09-28T00:00:00.000Z',
+      createdAt: '2026-09-28T00:00:00.000Z',
+    });
+    await sql`UPDATE provisioning_jobs
+      SET status = 'completed', activation_step = 'created', completed_at = '2026-09-28T00:00:00.000Z'
+      WHERE machine_id = ${machineId}`.execute(db.kysely);
+
+    await expect(svc.register('registration-token', {
+      machineId,
+      hetznerServerId: 1907,
+      publicIPv4: '203.0.113.19',
+      imageVersion: v1,
+    })).resolves.toEqual({ registered: true, status: 'running' });
+    expect(activatePreviewRuntimeAccess).toHaveBeenCalledWith({
+      ownerId: owner,
+      machineId,
+      runtimeSlot,
+      expectedRuntimeTokenEpoch: 1,
+    });
+    await expect(getProvisioningJobByMachineId(db, machineId)).resolves.toMatchObject({
+      activationStep: 'preview_access_ready',
+    });
+  });
+
+  it('retries failed bounded runtime activation without reusing the registration token', async () => {
+    const machineId = '00000000-0000-4000-8000-000000001908';
+    const runtimeSlot = 'pv-1907-feedface';
+    const secondMachineId = '00000000-0000-4000-8000-000000001909';
+    let currentTime = new Date('2026-09-28T00:00:00.000Z');
+    let secondClaimedAt: string | null | undefined;
+    const activationReady = {
+      status: 'ready' as const,
+      allocation: {} as never,
+      fundedAiConfigured: true as const,
+      speechConfigured: true as const,
+    };
+    const activatePreviewRuntimeAccess = vi.fn()
+      .mockRejectedValueOnce(new Error('transient host configuration failure'))
+      .mockImplementationOnce(async () => {
+        currentTime = new Date('2026-09-28T00:22:00.000Z');
+        return activationReady;
+      })
+      .mockImplementationOnce(async () => {
+        secondClaimedAt = (await getProvisioningJobByMachineId(db, secondMachineId))?.claimedAt;
+        return activationReady;
+      });
+    const svc = createCustomerVpsService({
+      db,
+      config: loadCustomerVpsConfig({
+        PLATFORM_PORT: '9000',
+        PLATFORM_SECRET: 'platform-secret',
+        HETZNER_API_TOKEN: 'token',
+      }),
+      hetzner: createMockHetznerClient(),
+      systemStore: createMockCustomerVpsSystemStore(),
+      activatePreviewRuntimeAccess,
+      now: () => currentTime,
+    });
+    await insertUserMachine(db, {
+      machineId,
+      clerkUserId: owner,
+      handle: runtimeSlot,
+      runtimeSlot,
+      provisioningClass: 'private-preview',
+      activationState: 'authorized',
+      sourcePr: 1907,
+      confirmedBundleVersion: v1,
+      status: 'provisioning',
+      hetznerServerId: 1908,
+      imageVersion: v1,
+      registrationTokenHash: hashRegistrationToken('retry-registration-token'),
+      registrationTokenExpiresAt: '2026-09-28T01:00:00.000Z',
+      provisionedAt: '2026-09-28T00:00:00.000Z',
+    });
+    await insertProvisioningJob(db, {
+      jobId: '50000000-0000-4000-8000-000000001908',
+      machineId,
+      encryptedPayload: sealProvisioningPayload({
+        registrationToken: 'retry-registration-token',
+        postgresPassword: 'postgres-password',
+      }, 'platform-secret'),
+      availableAt: '2026-09-28T00:00:00.000Z',
+      createdAt: '2026-09-28T00:00:00.000Z',
+    });
+    await sql`UPDATE provisioning_jobs
+      SET status = 'completed', activation_step = 'created', completed_at = '2026-09-28T00:00:00.000Z'
+      WHERE machine_id = ${machineId}`.execute(db.kysely);
+
+    await expect(svc.register('retry-registration-token', {
+      machineId,
+      hetznerServerId: 1908,
+      publicIPv4: '203.0.113.20',
+      imageVersion: v1,
+    })).resolves.toEqual({
+      registered: true,
+      status: 'running',
+      warnings: ['preview_runtime_activation_failed'],
+    });
+    await expect(getProvisioningJobByMachineId(db, machineId)).resolves.toMatchObject({
+      activationStep: 'preview_access_pending',
+    });
+
+    // Simulate a process crash after a reconciler claims the pending job.
+    await sql`UPDATE provisioning_jobs
+      SET activation_step = 'preview_access_activating', claimed_at = '2026-09-28T00:00:00.000Z'
+      WHERE machine_id = ${machineId}`.execute(db.kysely);
+    await insertUserMachine(db, {
+      machineId: secondMachineId,
+      clerkUserId: owner,
+      handle: 'pv-1908-cafebabe',
+      runtimeSlot: 'pv-1908-cafebabe',
+      provisioningClass: 'private-preview',
+      activationState: 'authorized',
+      sourcePr: 1908,
+      confirmedBundleVersion: otherPr,
+      status: 'running',
+      hetznerServerId: 1909,
+      publicIPv4: '203.0.113.21',
+      imageVersion: otherPr,
+      provisionedAt: '2026-09-28T00:00:01.000Z',
+    });
+    await insertProvisioningJob(db, {
+      jobId: '50000000-0000-4000-8000-000000001909',
+      machineId: secondMachineId,
+      encryptedPayload: sealProvisioningPayload({
+        registrationToken: 'second-registration-token',
+        postgresPassword: 'postgres-password',
+      }, 'platform-secret'),
+      availableAt: '2026-09-28T00:00:01.000Z',
+      createdAt: '2026-09-28T00:00:01.000Z',
+    });
+    await sql`UPDATE provisioning_jobs
+      SET status = 'completed', activation_step = 'preview_access_pending',
+          completed_at = '2026-09-28T00:00:01.000Z', updated_at = '2026-09-28T00:00:01.000Z'
+      WHERE machine_id = ${secondMachineId}`.execute(db.kysely);
+
+    currentTime = new Date('2026-09-28T00:11:00.000Z');
+    await expect(svc.reconcileProvisioning()).resolves.toMatchObject({ checked: 2, failed: 0, running: 2 });
+    expect(activatePreviewRuntimeAccess).toHaveBeenCalledTimes(3);
+    expect(secondClaimedAt).toBe('2026-09-28T00:22:00.000Z');
+    await expect(getProvisioningJobByMachineId(db, machineId)).resolves.toMatchObject({
+      activationStep: 'preview_access_ready',
+    });
+    await expect(svc.register('retry-registration-token', {
+      machineId,
+      hetznerServerId: 1908,
+      publicIPv4: '203.0.113.20',
+      imageVersion: v1,
+    })).rejects.toMatchObject({ code: 'already_registered' });
   });
 
   describe('explicit update', () => {

@@ -30,6 +30,9 @@ import { getGatewayUrl } from "@/lib/gateway";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
 import { CalendarIcon, GithubIcon, MailIcon, MessageSquareIcon } from "@/lib/hugeicons";
 
+// Stable markup identity preserves a pressed SVG across catalog refreshes.
+const MATRIX_RABBIT_HTML = { __html: rabbitMarkSvg("matrix-chat-rabbit-mark") };
+
 const PROVIDER_SELECTION_STORAGE_KEY = "matrix:canonical-chat-provider-selection";
 const CHANNEL_OPTIONS = [
   { id: "shell", label: "Shell", icon: MessageSquareIcon },
@@ -359,7 +362,7 @@ export function ChatProviderSetupPanel({
         <div>
           <CompactChatProviderChoices loading={loading} catalog={catalog ?? undefined} choices={choices} selected={displaySelection ?? selected} lockedInstanceId={lockedInstanceId}
             renderDriverIcon={(kind) => kind === "kernel" || kind === "matrix_bot" || kind === "matrix_pi" ? <span aria-hidden="true" className="inline-flex size-5 [&_svg]:size-full"
-              dangerouslySetInnerHTML={{ __html: rabbitMarkSvg("matrix-chat-rabbit-mark") }} /> : (
+              dangerouslySetInnerHTML={MATRIX_RABBIT_HTML} /> : (
               <span className="inline-flex size-5 shrink-0 items-center justify-center [&_.matrix-ap-agent-logo]:!size-5 [&_.matrix-ap-agent-logo]:!rounded [&_img]:!size-3 [&_svg]:size-4">
                 <HarnessIcon harness={kind === "claude_code" ? "claude" : kind} />
               </span>
