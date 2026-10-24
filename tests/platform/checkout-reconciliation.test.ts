@@ -16,7 +16,7 @@ describe('checkout return reconciliation', () => {
       retrieveCheckoutSession: vi.fn().mockResolvedValue({ status: 'open', clerkUserId: 'owner', url: null, priceId: null, regionSlug: null }),
     };
   });
-  afterEach(async () => { await destroyTestPlatformDb(db); });
+  afterEach(async () => { vi.restoreAllMocks(); await destroyTestPlatformDb(db); });
   function app(user: string | null = 'owner', prebilling?: PrebillingCheckoutCoordinator) {
     return new Hono().route('/billing', createBillingRoutes({ db, stripe, env: {}, now,
       resolveClerkUserId: async () => user, prebilling }));
@@ -92,10 +92,13 @@ describe('checkout return reconciliation', () => {
   });
   it('returns a generic retryable failure on provider errors', async () => {
     await seed();
-    vi.mocked(stripe.retrieveCheckoutSession).mockRejectedValue(new Error('private provider detail'));
+    const failure = new Error('private provider detail');
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(stripe.retrieveCheckoutSession).mockRejectedValue(failure);
     const res = await request();
     expect(res.status).toBe(503);
     expect(await res.text()).not.toContain('private provider detail');
+    expect(log).toHaveBeenCalledWith('[billing] checkout reconciliation failed:', failure);
     expect((await getLatestCheckoutAttempt(db, 'owner'))?.status).toBe('open');
   });
   it('refuses a provider client whose timeout exceeds the budget', async () => {

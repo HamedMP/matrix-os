@@ -60,7 +60,7 @@ export function createCheckoutReconciliationHandler(options: {
       // local state next, including any webhook that won the conditional write.
       return c.json({ status: session.status }, 200);
     } catch (error: unknown) {
-      console.error('[billing] checkout reconciliation failed:', error instanceof Error ? error.name : typeof error);
+      console.error('[billing] checkout reconciliation failed:', error);
       return c.json(UNAVAILABLE, 503);
     }
   };

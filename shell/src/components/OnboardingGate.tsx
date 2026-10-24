@@ -19,6 +19,12 @@ import {
 
 const e2eBypass = process.env.NEXT_PUBLIC_E2E_TEST_BYPASS === "1";
 
+function shouldVerifyCheckoutReturn(searchParams: Pick<URLSearchParams, "get">): boolean {
+  // Add-computer restores its runtime slot from its draft in BillingGateRoute.
+  return searchParams.get("handoff") !== "add-computer"
+    && (searchParams.get("checkout") === "success" || searchParams.get("billing") === "canceled");
+}
+
 function DeviceReturnHandoff({ deviceReturnPath }: { deviceReturnPath: string }) {
   useEffect(() => {
     navigateForOnboarding(deviceReturnPath);
@@ -67,7 +73,7 @@ function OnboardingGateInner({
   // Return markers select a verification flow, never establish payment. The
   // legacy BillingGate can otherwise hide the authoritative journey behind a
   // purchase overlay while the completed subscription webhook is still pending.
-  if (checkoutReturnRequested || searchParams.get("billing") === "canceled") {
+  if (shouldVerifyCheckoutReturn(searchParams)) {
     return (
       <BootSequence
         platformSessionActive={platformSessionActive}

@@ -138,6 +138,13 @@ describe("OnboardingGate", () => {
     },
   );
 
+  it.each([false, true])('preserves the draft-aware add-computer checkout return with session=%s', async platformSessionActive => {
+    window.history.replaceState({}, '', '/?checkout=success&handoff=add-computer');
+    render(<OnboardingGate platformSessionActive={platformSessionActive}><div>Matrix workspace</div></OnboardingGate>);
+    expect(await screen.findByTestId('billing-gate')).toBeTruthy();
+    expect(billingGateRender).toHaveBeenCalledWith(expect.objectContaining({ platformSessionActive }));
+  });
+
   it("continues a paid device return through passive journey polling without another build decision", async () => {
     window.history.replaceState(
       {},

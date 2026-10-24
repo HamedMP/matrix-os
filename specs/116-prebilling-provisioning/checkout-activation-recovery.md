@@ -19,6 +19,10 @@ After 60 seconds following confirmed completion, offer support. Check again is
 available throughout activation and retries verification. URL success/cancel
 flags never establish checkout completion or subscription access.
 
+Additional-computer handoffs retain their existing draft-aware flow: the saved
+draft, not the checkout return URL, identifies the new computer's runtime slot.
+An already active primary computer must never short-circuit that handoff.
+
 ## Auth and persistence
 
 | Route | Auth | Input | Effect |
