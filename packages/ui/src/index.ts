@@ -291,4 +291,5 @@ export { chatAttachmentSubmissionError, chatAttachmentComposerPolicy } from "./c
 export { gatewayChatAvailableMicrousd } from "./agents-providers/utils.js";
 
 export { OwnerManagedUpdateNotice } from "./owner-managed-update-notice.js";
+export { SubmittedBotAnswers, isBotAnswerContinuation } from "./chat-agents/bots/SubmittedBotAnswers.js";
 export { botCreationFailureReason, type BotCreationFailureReason } from "./chat-agents/creation-error.js";
