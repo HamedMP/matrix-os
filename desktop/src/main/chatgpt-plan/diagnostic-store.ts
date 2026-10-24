@@ -73,6 +73,10 @@ export function createPlanDiagnosticStore(options: { directory: string; now?: ()
     })().catch((error: unknown) => { failed = true; warning(); });
     async function persist() {
         await ready;
+        // Maintenance shares the writer slot, so it cannot delete an active
+        // write. Recheck the exact regular, singly linked file before unlinking.
+        await directory();
+        if (await regular(temporary)) await unlink(temporary);
         while (dirty && !stopped) {
             dirty = false; prune();
             const body = JSON.stringify(rows);
@@ -104,7 +108,8 @@ export function createPlanDiagnosticStore(options: { directory: string; now?: ()
     });
     const timer = setInterval(() => {
         const count = rows.length; prune();
-        if (rows.length !== count) { dirty = true; start(); }
+        if (rows.length !== count) dirty = true;
+        start();
     }, 60 * 60 * 1000);
     timer.unref();
     async function flush(): Promise<boolean> {
