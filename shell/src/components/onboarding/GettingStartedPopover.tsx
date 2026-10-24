@@ -391,6 +391,8 @@ function GettingStartedPopoverContent({
   const activateStep = (id: GettingStartedStepId) => {
     switch (id) {
       case "github":
+        onOpenSettings("agents-providers");
+        break;
       case "email-calendar":
         onOpenSettings("integrations");
         break;

@@ -198,6 +198,18 @@ export async function openDesktopProviderAgentSetup(
   });
 }
 
+export async function openDesktopGithubDeveloperSetup(
+  api: ApiClient,
+  isIdentityCurrent: () => boolean,
+): Promise<boolean> {
+  if (!isIdentityCurrent()) return false;
+  const session = await useShellSessions.getState().create(api, {
+    cmd: "matrix-github-developer-login",
+  });
+  if (!session || !isIdentityCurrent()) return false;
+  return openExistingProviderTerminalSession(api, session.name, isIdentityCurrent);
+}
+
 type OpenExternal = (url: string) => Promise<unknown>;
 
 function isStripeCheckoutUrl(value: unknown): value is string {

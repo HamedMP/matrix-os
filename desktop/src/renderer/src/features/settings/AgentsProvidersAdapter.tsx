@@ -18,6 +18,7 @@ import {
   desktopProviderIdentityKey,
   openAiCreditCheckout,
   openDesktopProviderAgentSetup,
+  openDesktopGithubDeveloperSetup,
   openExistingProviderTerminalSession,
   openProviderAuthorizationPath,
 } from "./provider-settings-desktop-adapter";
@@ -116,6 +117,20 @@ function ConnectedAgentsProvidersAdapter({
   }, [controller.snapshot, isIdentityCurrent, onCatalogChanged]);
   const workflowClient = useMemo(() => createDesktopProviderWorkflowClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
   const matrixAnthropicClient = useMemo(() => createDesktopMatrixAnthropicClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
+  const githubDeveloperAccessClient = useMemo(() => ({
+    async status(signal: AbortSignal) {
+      const value = await runtimeApi.get<unknown>("/api/github/status", {
+        maxBytes: 16 * 1024,
+        timeoutMs: 10_000,
+        signal,
+        cache: "no-store",
+        omitErrorBody: true,
+      });
+      if (!isIdentityCurrent()) throw new Error("GitHub developer access is unavailable.");
+      return value;
+    },
+    startSetup: () => openDesktopGithubDeveloperSetup(runtimeApi, isIdentityCurrent),
+  }), [isIdentityCurrent, runtimeApi]);
   const authGeneration = useConnection((state) => state.authGeneration);
   const localChatgptClient = useMemo(() => createDesktopChatgptPlanClient({ runtimeSlot, authGeneration }, isIdentityCurrent,
     undefined, () => invalidateDesktopChatgptPlanCatalog(identityKey)),
@@ -214,6 +229,7 @@ function ConnectedAgentsProvidersAdapter({
       localChatgptClient={localChatgptClient}
       onLocalChatgptChanged={() => { if (isIdentityCurrent()) void controller.refresh({ refresh: false }); }}
       matrixAnthropicClient={matrixAnthropicClient}
+      githubDeveloperAccess={{ identityKey, client: githubDeveloperAccessClient }}
       onOpenAuthorizationUrl={(url) => {
         if (!isIdentityCurrent()) return;
         void openDesktopProviderWorkflowAuthorization(url).then(opened => {

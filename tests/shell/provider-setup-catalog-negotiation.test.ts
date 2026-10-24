@@ -3,10 +3,19 @@ import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openWebProviderAgentSetup } from "../../shell/src/lib/provider-settings-transport.js";
 import { useShellSessions } from "../../desktop/src/renderer/src/stores/shell-sessions";
-import { openDesktopProviderAgentSetup } from "../../desktop/src/renderer/src/features/settings/provider-settings-desktop-adapter.js";
+import { openDesktopGithubDeveloperSetup, openDesktopProviderAgentSetup } from "../../desktop/src/renderer/src/features/settings/provider-settings-desktop-adapter.js";
 
 describe("Settings catalog connection-label negotiation", () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+  it("creates GitHub setup with only the fixed developer-login command", async () => {
+    const create = vi.spyOn(useShellSessions.getState(), "create").mockResolvedValue(null);
+
+    await expect(openDesktopGithubDeveloperSetup({} as never, () => true)).resolves.toBe(false);
+
+    expect(create).toHaveBeenCalledExactlyOnceWith({}, {
+      cmd: "matrix-github-developer-login",
+    });
+  });
   it("opts Web Settings into labels while requesting a fresh catalog", async () => {
     const fetcher = vi.fn(async () => Response.json({ revision: "revision", drivers: [], instances: [] }));
     vi.stubGlobal("fetch", fetcher);

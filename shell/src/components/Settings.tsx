@@ -198,6 +198,7 @@ function SettingsFrame({
   billingCheckoutReturnPath,
   billingCheckoutRuntimeSlot,
   onboardingDefaultInstalls,
+  onOpenAgentTerminal,
   onOpenProviderTerminalSession,
   onOpenImportedChat,
   billingActive,
@@ -416,7 +417,10 @@ function SettingsFrame({
               {activeSection === "appearance" && <AppearanceSection />}
               {activeSection === "organization" && <OrganizationSection />}
               {activeSection === "agents-providers" && (
-                <AgentSection automaticCreditRefreshEnabled={open} onOpenTerminal={onOpenProviderTerminalSession} />
+                <AgentSection automaticCreditRefreshEnabled={open} onOpenTerminal={onOpenProviderTerminalSession}
+                  onOpenGithubDeveloperTerminal={onOpenAgentTerminal
+                    ? () => onOpenAgentTerminal("github-ssh-login")
+                    : undefined} />
               )}
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}
               {activeSection === "channels" && <ChannelsSection />}
