@@ -39,7 +39,7 @@ beforeEach(() => {
   HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.open = true; });
   HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.open = false; });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("onboarding Gmail connection", () => {
   it.each(["matrix", "pipedream"])("waits for the owner's explicit %s choice before opening consent", async method => {
@@ -78,6 +78,83 @@ describe("onboarding Gmail connection", () => {
     expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.succeeded", service: "gmail" });
     expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/sync"))).toBe(false);
     expect(screen.getByText("idle")).toBeTruthy();
+  });
+
+  it("ends a closed pending receipt after a short grace instead of waiting for the full poll window", async () => {
+    const consent = popup();
+    const fetchFn = transport({ url: "https://consent.example.test/gmail", attemptId: "10000000-0000-4000-8000-000000000001" },
+      { status: "pending" }, [{ id: "unrelated", service: "gmail", status: "active" }]);
+    const dispatch = vi.fn();
+    scene(fetchFn, dispatch, [0, 1_000, 1_000, 1_000, 1_000, 1_000, 600_000]);
+    fireEvent.click(screen.getByText("Connect Gmail app"));
+    const choose = await screen.findByRole("button", { name: /Connect with Pipedream/ });
+    vi.useFakeTimers();
+    await act(async () => fireEvent.click(choose));
+    consent.closed = true;
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByText("gmail")).toBeTruthy();
+    await act(async () => vi.advanceTimersByTimeAsync(4_999));
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.failed", service: "gmail" });
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(screen.getByText("idle")).toBeTruthy();
+    expect(dispatch).toHaveBeenCalledWith({ type: "connect.failed", service: "gmail" });
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.succeeded", service: "gmail" });
+    const receiptReads = fetchFn.mock.calls.filter(([url]) => String(url).includes("/attempts/")).length;
+    await act(async () => vi.advanceTimersByTimeAsync(600_000));
+    expect(fetchFn.mock.calls.filter(([url]) => String(url).includes("/attempts/"))).toHaveLength(receiptReads);
+    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/sync"))).toBe(false);
+  });
+
+  it("accepts its exact late receipt before cancelling a self-closed consent window", async () => {
+    const consent = popup();
+    let receipt: unknown = { status: "pending" };
+    const accountId = "20000000-0000-4000-8000-000000000001";
+    const base = transport({ url: "https://consent.example.test/gmail", attemptId: "10000000-0000-4000-8000-000000000001" },
+      undefined, [{ id: accountId, service: "gmail", status: "active" }]);
+    const fetchFn = vi.fn((input: RequestInfo | URL) => String(input).includes("/attempts/") ? Promise.resolve(json(receipt)) : base(input));
+    const dispatch = vi.fn();
+    scene(fetchFn, dispatch, [0, 1_000, 1_000, 1_000, 1_000, 1_000, 600_000]);
+    fireEvent.click(screen.getByText("Connect Gmail app"));
+    const choose = await screen.findByRole("button", { name: /Connect with Pipedream/ });
+    vi.useFakeTimers();
+    await act(async () => fireEvent.click(choose));
+    consent.closed = true;
+    await act(async () => vi.advanceTimersByTimeAsync(4_999));
+    expect(screen.getByText("gmail")).toBeTruthy();
+    receipt = { status: "succeeded", accountId };
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(dispatch).toHaveBeenCalledWith({ type: "connect.succeeded", service: "gmail" });
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.failed", service: "gmail" });
+    expect(screen.getByText("idle")).toBeTruthy();
+  });
+
+  it("ignores a late closed-window receipt after another connection supersedes it", async () => {
+    const consent = popup();
+    let release!: (response: Response) => void;
+    let reads = 0;
+    const base = transport({ url: "https://consent.example.test/gmail", attemptId: "10000000-0000-4000-8000-000000000001" });
+    const fetchFn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/attempts/")) return ++reads === 1 ? Promise.resolve(json({ status: "pending" }))
+        : new Promise<Response>(resolve => { release = resolve; });
+      if (String(input).endsWith("/connect") && String(init?.body).includes("github")) return Promise.resolve(json({ url: "https://consent.example.test/github" }));
+      return base(input);
+    });
+    const dispatch = vi.fn();
+    scene(fetchFn, dispatch, [0, 1_000, 1_000, 1_000, 1_000, 1_000, 600_000]);
+    fireEvent.click(screen.getByText("Connect Gmail app"));
+    const choose = await screen.findByRole("button", { name: /Connect with Pipedream/ });
+    vi.useFakeTimers();
+    await act(async () => fireEvent.click(choose));
+    consent.closed = true;
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(reads).toBe(2);
+    const inventoryReads = fetchFn.mock.calls.filter(([url]) => String(url).endsWith("/api/integrations")).length;
+    await act(async () => fireEvent.click(screen.getByText("Connect GitHub app")));
+    await act(async () => release(json({ status: "succeeded", accountId: "20000000-0000-4000-8000-000000000001" })));
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.failed", service: "gmail" });
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "connect.succeeded", service: "gmail" });
+    expect(fetchFn.mock.calls.filter(([url]) => String(url).endsWith("/api/integrations"))).toHaveLength(inventoryReads);
+    expect(screen.getByText("github")).toBeTruthy();
   });
 
   it("settles the exact successful receipt even for an already active account reconnect", async () => {
