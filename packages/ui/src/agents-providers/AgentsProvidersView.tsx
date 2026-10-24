@@ -266,12 +266,27 @@ export function AgentsProvidersView({
             };
             const connected = nativeSource && (hasConfiguredConnection(harness, source) || hasStaleHermesConnection(harness, source));
             const savedNativeAccount = nativeSource && harness.harness === "codex" && selectedAccount?.authState === "authenticated" && !connected;
+            const codexCliSource = harness.harness === "codex" ? snapshot.accessSources.find(candidate =>
+              candidate.id === "owner_openai_profile" && candidate.kind === "provider_account"
+              && candidate.providerId === "openai" && candidate.fundingKind === "owner_account") : undefined;
+            const codexCliAccount = snapshot.accounts.find(candidate => candidate.id === codexCliSource?.accountId
+              && candidate.accessSourceId === codexCliSource.id && candidate.authMethod === "terminal"
+              && candidate.authState === "authenticated");
+            const needsCodexConsent = Boolean(codexCliAccount && codexCliSource?.readiness.state === "auth_required"
+              && supports("complete_native_codex"));
             const catalog = snapshot.harnessCatalog?.find(item => item.harness === harness.harness);
             const connectionCard = (action?: ReactNode) => <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} action={action} disabled={mutationsDisabled} onRefresh={refreshSettings} />;
             return (
               <>
                 {workflowClient?.botConnections && harness.harness === "claude" ? <BotUseAuthorizationPanel key={`${harness.id}:bot-use`} client={workflowClient.botConnections} refreshKey={snapshot.refreshedAt} harness={harness.harness} disabled={mutationsDisabled || workflowPermission === "forbidden"} /> : null}
                 {savedNativeAccount ? <ConnectedAccountCard harness={harness} account={selectedAccount} source={source} saved disabled={mutationsDisabled} onRefresh={refreshSettings} /> : null}
+                {needsCodexConsent ? <div className="matrix-ap-notice" data-tone="warning">
+                  <p>Codex CLI is signed in. Matrix execution permission is still needed for this account.</p>
+                  <button type="button" className="matrix-ap-button" disabled={mutationsDisabled || workflowPermission === "forbidden"}
+                    onClick={() => void onMutate({ type: "complete_native_codex", harnessInstanceId: harness.id })}>
+                    Use this Codex account in Matrix
+                  </button>
+                </div> : null}
                 {!guided ? <ConnectionChoices
                   snapshot={snapshot}
                   harness={harness}

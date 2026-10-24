@@ -131,3 +131,15 @@ it("still queues an explicit Web Settings invalidation behind pending discovery"
   expect(String(fetcher.mock.calls[1][0])).toContain("refresh=true");
   expect(result.current.catalog?.revision).toBe("after_settings");
 });
+
+it("forces a Web catalog probe after returning from a manual Terminal login", async () => {
+  const catalog = createCanonicalProviderCatalogFixture();
+  const fetcher = vi.fn<typeof fetch>(async () => Response.json(catalog));
+  vi.stubGlobal("fetch", fetcher);
+  renderHook(() => useChatProviderState());
+  await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+  expect(String(fetcher.mock.calls[0]![0])).toContain("refresh=true");
+  act(() => window.dispatchEvent(new Event("focus")));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  expect(String(fetcher.mock.calls[1]![0])).toContain("refresh=true");
+});

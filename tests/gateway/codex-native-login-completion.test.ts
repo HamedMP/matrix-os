@@ -14,6 +14,7 @@ import { createCodexExecutionAdmission } from "../../packages/gateway/src/coding
 import { createChatProviderCatalogService } from "../../packages/gateway/src/chat/provider-catalog.js";
 import { createProviderSettingsRoutes } from "../../packages/gateway/src/ai-providers/provider-settings-routes.js";
 import { bindNativeAccountMetadata } from "../../packages/gateway/src/ai-providers/native-account-metadata-binding.js";
+import { createProviderSettingsRoutes } from "../../packages/gateway/src/ai-providers/provider-settings-routes.js";
 
 const roots: string[] = [], services: AiProviderService[] = [];
 afterEach(async () => { services.splice(0).forEach(service => service.close()); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -70,6 +71,28 @@ it("completes the production fixed Codex client, selects the verified subscripti
   expect(replay.snapshot.revision).toBe(off.snapshot.revision);
   expect(replay.snapshot.harnesses.find(row => row.id === connected.id)?.configuredEnabled).toBe(false);
   expect(f.systemRead).not.toHaveBeenCalled(); expect(f.systemUpdate).not.toHaveBeenCalled();
+});
+
+it("lets only the runtime owner explicitly connect a verified existing Codex CLI account", async () => {
+  const f = await fixture();
+  const before = await f.store.getSnapshot({ includeNativeAccountMetadata: true });
+  expect(before.supportedActions).toContain("complete_native_codex");
+  const body = JSON.stringify({ type: "complete_native_codex", harnessInstanceId: f.input.harnessInstanceId,
+    expectedRevision: before.revision, idempotencyKey: "owner-explicit-consent" });
+  const request = (app: ReturnType<typeof createProviderSettingsRoutes>) => app.request("/provider-settings/actions", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body,
+  });
+  const other = createProviderSettingsRoutes({ store: f.store, getPrincipal: () => ({ userId: "collaborator" }), canReadNativeAccountMetadata: () => false });
+  expect((await request(other)).status).toBe(403);
+  expect((await f.store.getSnapshot()).revision).toBe(before.revision);
+  const owner = createProviderSettingsRoutes({ store: f.store, getPrincipal: () => ({ userId: "owner" }), canReadNativeAccountMetadata: () => true });
+  const response = await request(owner);
+  expect(response.status).toBe(200);
+  const result = await response.json();
+  expect(result.snapshot.harnesses.find((row: { id: string }) => row.id === f.input.harnessInstanceId)).toMatchObject({
+    enabled: true, selectedAccountId: "owner_codex", accessSourceId: "owner_openai_profile",
+  });
+  expect(result.snapshot.accessSources.find((source: { id: string }) => source.id === "owner_openai_profile").readiness.state).toBe("ready");
 });
 
 it.each(["signed-out", "changed-principal", "missing-driver", "stale-revision", "wrong-harness"] as const)("preserves the previous key and Off when completion admission rejects %s", async mode => {

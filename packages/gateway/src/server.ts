@@ -1521,6 +1521,7 @@ export async function createGateway(config: GatewayConfig) {
   const providerAccountLifecycle = createDefaultProviderCliAccountLifecycleCoordinator({
     profileGuard: nativeProviderProfileGuard,
     homePath,
+    codexExecutable,
     enabledHarnesses: codingAgentWorkspaceAgents,
   });
   const providerGenericHarnessCoordinator = createProviderGenericHarnessCoordinator({

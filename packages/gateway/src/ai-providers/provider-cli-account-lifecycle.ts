@@ -144,6 +144,7 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
   profileGuard?: NativeProviderProfileGuard;
   readClaudeAccountUnderLease?: ClaudeAccountReaderUnderLease;
   readCodexAccountUnderLease?: () => Promise<CodexNativeAccountMetadata | null>;
+  codexExecutable?: string;
 }): ProviderAccountLifecycleCoordinator {
   if (!options.homePath) throw new Error("Provider lifecycle home path is required");
   const homePath = resolve(options.homePath);
@@ -154,7 +155,7 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
     ?? createClaudeAccountReaderUnderLease(homePath, lifecycleEnvironment(homePath));
   const readCodexUnderLease = options.readCodexAccountUnderLease ?? (async () => {
     const environment = codexNativeEnvironment(homePath, buildAgentRuntimeEnvironment(homePath), process.env.CODEX_HOME);
-    return createCodexNativeAccountMetadataReader({ executable: resolveCodexNativeExecutable(homePath, environment), cwd: homePath, environment })();
+    return createCodexNativeAccountMetadataReader({ executable: options.codexExecutable ?? resolveCodexNativeExecutable(homePath, environment), cwd: homePath, environment })();
   });
   if (typeof run !== "function") throw new Error("Provider lifecycle command runner is required");
   let tail: Promise<void> = Promise.resolve();
@@ -212,7 +213,11 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
         || input.account.id === "owner_codex" && input.account.accessSourceId === "owner_openai_profile");
       if (nativeCodex && (!options.profileGuard || input.account.id !== "owner_codex" || input.account.accessSourceId !== "owner_openai_profile"
         || (input.account.nativeCodexAccount?.authMethod === "api_key" && !hasNativeAccountCredentialIdentity(input.account.nativeCodexAccount))
-        || (input.account.authenticated ? !await verifyNativeAccountMetadata(input.account.nativeCodexAccount) : action !== "remove_account"))) throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+        || (input.account.authenticated ? !await verifyNativeAccountMetadata(input.account.nativeCodexAccount) : action !== "remove_account"))) {
+        console.warn("[provider-lifecycle] Native Codex sign-out proof unavailable:",
+          { phase: "admission", reason: "identity_unavailable", profile: "codex" });
+        throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
+      }
       const nativeClaude = isNativeClaudeLifecycleAccount(input.account);
       if (nativeClaude && (!options.profileGuard
         || !(input.account.authenticated
@@ -226,13 +231,17 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
             const current = await readCodexUnderLease();
             if (!current || !input.account.nativeCodexAccount || !sameBoundNativeAccountPrincipal(current, input.account.nativeCodexAccount)
               || current.authMethod === "api_key" && !hasNativeAccountCredentialIdentity(current)
-              || !await verifyNativeAccountMetadata(current)) throw new NativeProviderWriteNotStartedError();
+              || !await verifyNativeAccountMetadata(current)) {
+              console.warn("[provider-lifecycle] Native Codex sign-out proof unavailable:",
+                { phase: "under_lease", reason: current ? "principal_changed" : "identity_unavailable", profile: "codex" });
+              throw new NativeProviderWriteNotStartedError();
+            }
           } else {
             const env = codexNativeEnvironment(homePath, buildAgentRuntimeEnvironment(homePath), process.env.CODEX_HOME);
             let signedOut = false;
             let phase: "resolve_executable" | "login_status" = "resolve_executable";
             try {
-              const executable = resolveCodexNativeExecutable(homePath, env);
+              const executable = options.codexExecutable ?? resolveCodexNativeExecutable(homePath, env);
               phase = "login_status";
               await run(executable, ["login", "status"], {
                 cwd: homePath, env, timeoutMs: COMMAND_TIMEOUT_MS, maxOutputBytes: MAX_OUTPUT_BYTES,
@@ -290,7 +299,7 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
             await revokeOwnerAnthropicKey(homePath);
           } else {
           const command = COMMANDS[driver];
-          CommandResultSchema.parse(await run(driver === "claude_code" ? resolveClaudeNativeExecutable(homePath, lifecycleEnvironment(homePath)) : nativeCodex ? resolveCodexNativeExecutable(homePath, codexNativeEnvironment(homePath, buildAgentRuntimeEnvironment(homePath), process.env.CODEX_HOME)) : command.command, [...command.args], {
+          CommandResultSchema.parse(await run(driver === "claude_code" ? resolveClaudeNativeExecutable(homePath, lifecycleEnvironment(homePath)) : nativeCodex ? options.codexExecutable ?? resolveCodexNativeExecutable(homePath, codexNativeEnvironment(homePath, buildAgentRuntimeEnvironment(homePath), process.env.CODEX_HOME)) : command.command, [...command.args], {
             cwd: homePath,
             timeoutMs: COMMAND_TIMEOUT_MS,
             maxOutputBytes: MAX_OUTPUT_BYTES,
@@ -351,6 +360,7 @@ export function createDefaultProviderCliAccountLifecycleCoordinator(options: {
   profileGuard?: NativeProviderProfileGuard;
   readClaudeAccountUnderLease?: ClaudeAccountReaderUnderLease;
   readCodexAccountUnderLease?: () => Promise<CodexNativeAccountMetadata | null>;
+  codexExecutable?: string;
 }): ProviderAccountLifecycleCoordinator {
   const enabledHarnesses = z.enum(["codex", "claude", "opencode", "pi"]).array().max(4)
     .parse(options.enabledHarnesses);
@@ -364,6 +374,7 @@ export function createDefaultProviderCliAccountLifecycleCoordinator(options: {
     ...(options.run ? { run: options.run } : {}),
     ...(options.profileGuard ? { profileGuard: options.profileGuard } : {}),
     ...(options.readCodexAccountUnderLease ? { readCodexAccountUnderLease: options.readCodexAccountUnderLease } : {}),
+    ...(options.codexExecutable ? { codexExecutable: options.codexExecutable } : {}),
     ...(options.readClaudeAccountUnderLease ? { readClaudeAccountUnderLease: options.readClaudeAccountUnderLease } : {}),
   });
 }

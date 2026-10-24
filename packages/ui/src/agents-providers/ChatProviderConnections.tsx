@@ -11,9 +11,13 @@ export function deriveChatProviderConnectionState(snapshot: ProviderSettingsSnap
   const isUnverified = (observation: { state: string } | undefined) => observation !== undefined;
   const sourceForHarness = (harness: NonNullable<typeof snapshot>["harnesses"][number]) =>
     snapshot?.accessSources.find((source) => source.id === (harness.accessSourceId ?? harness.configuredAccessSourceId));
+  const executionConsentReady = (source: NonNullable<typeof snapshot>["accessSources"][number] | undefined) =>
+    source?.id !== "owner_openai_profile" || source.readiness.state !== "auth_required";
   if (snapshot?.accounts.some((account) => account.authState === "authenticated"
+      && executionConsentReady(sourceForAccount(account.accessSourceId))
       && !isUnverified(sourceForAccount(account.accessSourceId)?.localObservation))
     || snapshot?.harnesses.some((harness) => harness.authState === "authenticated"
+      && executionConsentReady(sourceForHarness(harness))
       && !isUnverified(harness.localObservation)
       && !isUnverified(sourceForHarness(harness)?.localObservation))
     || snapshot?.accessSources.some((source) => (source.readiness.state === "ready" && !isUnverified(source.localObservation))
@@ -136,7 +140,8 @@ export function ChatProviderOnboarding({ identityKey, transport, onCatalogChange
       return value;
     },
   }), [transport, isIdentityCurrent]);
-  const options = useMemo(() => ({ identityKey, transport: scopedTransport, onCatalogChanged }), [identityKey, scopedTransport, onCatalogChanged]);
+  const options = useMemo(() => ({ identityKey, transport: scopedTransport, onCatalogChanged,
+    initialRefresh: lifecycleRefresh }), [identityKey, scopedTransport, onCatalogChanged, lifecycleRefresh]);
   const controller = useProviderSettingsController(options);
   const refreshSettings = controller.refresh;
   const refreshing = useRef(false);
