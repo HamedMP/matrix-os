@@ -26,7 +26,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
     chatIdleReaper: null, chatAttachmentCleanup: service("attachments"),
     hookRunner: { fireVoidHook: vi.fn(async () => undefined) }, pluginRegistry: { getServices: () => [] },
     heartbeat: service("heartbeat"), watchdog: service("watchdog"), proactiveHeartbeat: service("proactive"), cronService: service("cron"),
-    localChatImportLifecycle: service("imports"), matrixAnthropicRuntime: service("anthropic"), providerWorkflowLifecycle: service("provider workflows"),
+    localChatImportLifecycle: service("imports"), matrixAnthropicRuntime: service("anthropic"), matrixOpenAiRuntime: service("openai"), providerWorkflowLifecycle: service("provider workflows"),
     backgroundChatProjection: service("projection"), canonicalChatOrchestrator: service("chats"), botServices: service("bots"),
     canonicalChatRuntime: { agents: service("agents") }, gatewayCollaboration: service("collaboration"), scopeRuntimeHost: service("scope"),
     backgroundAgentRuntime: service("background agents"), codingAgentWorkspaceRuntime: service("workspaces"),
@@ -65,7 +65,7 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
   expect(appAiRuntime.close).toHaveBeenCalledOnce();
   expect(shutdown.logBestEffortFailure).toHaveBeenCalledWith("App AI adapter shutdown failed", failure);
   expect(shutdown.calls).toEqual(expect.arrayContaining([
-    "anthropic.close", "chats.close", "bots.close", "providers.close", "Chat database.release",
+    "anthropic.close", "openai.close", "chats.close", "bots.close", "providers.close", "Chat database.release",
     "app database.destroy", "platform database.destroy", "telemetry.shutdown", "browser lab.close", "shared browser.close", "browser approvals.close", "HTTP.close",
   ]));
   expect(shutdown.calls.indexOf("browser approvals.close")).toBeLessThan(shutdown.calls.indexOf("platform database.destroy"));

@@ -9,6 +9,7 @@ import { BotRouteError, resolveBotRoute, resolveManagedPiRoute, type ResolvedBot
 export function createBotModelRouteResolver(options: {
   codexModel?: string;
   chatgptPlan?: import("./chatgpt-plan.js").ChatGptPlanAuthority;
+  matrixOpenAi?: import("./matrix-openai-api.js").MatrixOpenAiAuthority;
   matrixAnthropic?: import("./matrix-anthropic-api.js").MatrixAnthropicAuthority;
   ownerId?: string;
   providers: AiProviderSnapshotReader;
@@ -17,6 +18,10 @@ export function createBotModelRouteResolver(options: {
   lifetime?: AbortSignal;
 }): (selection?: CanonicalChatModelSelection) => Promise<ResolvedBotRoute> {
   return async (selection) => {
+    if (selection?.instanceId === "matrix_openai_api") {
+      if (!options.matrixOpenAi || !options.ownerId) throw new BotRouteError("model_unavailable");
+      return options.matrixOpenAi.resolve(selection, options.ownerId, "interactive");
+    }
     if (selection?.instanceId === "matrix_anthropic_api") {
       if (!options.matrixAnthropic || !options.ownerId) throw new BotRouteError("model_unavailable");
       return options.matrixAnthropic.resolve(selection, options.ownerId, "interactive");

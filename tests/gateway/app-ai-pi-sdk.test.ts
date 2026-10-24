@@ -48,6 +48,7 @@ export class ModelRuntime {
 `);
 });
 afterEach(async () => {
+  vi.unstubAllEnvs();
   cleanupFault.failNext = false;
   if (cleanupFault.scratch) await rm(cleanupFault.scratch, { recursive: true, force: true });
   cleanupFault.scratch = undefined;
@@ -96,7 +97,10 @@ it("reclaims settled credential update slots for subsequent batches", async () =
     expect(release).toHaveBeenCalledOnce();
   } finally { await value.close(); }
 });
-it("releases the real durable fence after a failed spawn and permits a fresh launch", async () => {
+it("releases the real durable fence after a failed direct OS spawn and permits a fresh launch", async () => {
+  // Exercise Node ENOENT before any process starts; an isolated wrapper that
+  // has already spawned requires its separate credential-drain receipt.
+  vi.stubEnv("MATRIX_PROVIDER_PROCESS_ISOLATION", "0");
   const discover = vi.fn()
     .mockResolvedValueOnce({ node: join(home, "missing-node"), entry: pathToFileURL(fixture).href, env: {}, cwd: home })
     .mockResolvedValue({ node: process.execPath, entry: pathToFileURL(fixture).href, env: {}, cwd: home });

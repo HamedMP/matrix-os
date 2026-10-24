@@ -1,3 +1,5 @@
+import { createMatrixOpenAiRuntime } from "./server/matrix-openai-runtime.js";
+import { withMatrixOpenAiProviderInstances } from "./bots/matrix-openai-provider-instance.js";
 import { loadGoogleDataPilotConfig } from './google-data/runtime/pilot-config.js';
 import { createSupervisedBrowserRuntime } from "./startup/browser-approvals.js";
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
@@ -1480,6 +1482,7 @@ export async function createGateway(config: GatewayConfig) {
       (agent): agent is "pi" | "opencode" => agent === "pi" || agent === "opencode",
     ),
   });
+  let matrixOpenAiRuntime: ReturnType<typeof createMatrixOpenAiRuntime> | undefined;
   let matrixAnthropicRuntime: ReturnType<typeof createMatrixAnthropicRuntime> | undefined;
   const appSubscriptionSource = () => terminalRuntimeOwnerId && botServices?.chatgptPlanPeers
     ? { ownerId: terminalRuntimeOwnerId, authority: botServices.chatgptPlanPeers }
@@ -1487,6 +1490,7 @@ export async function createGateway(config: GatewayConfig) {
   const aiProviderService = new AiProviderService({
     observationScope: canonicalPhaseDiscovery.observationScope,
     chatGptPlanObservation: createAppAiSubscriptionObservation(appSubscriptionSource),
+    matrixOpenAiConnection: async () => terminalRuntimeOwnerId ? matrixOpenAiRuntime?.service?.observe(terminalRuntimeOwnerId) : undefined,
     matrixAnthropicConnection: async () => terminalRuntimeOwnerId ? matrixAnthropicRuntime?.service?.observe(terminalRuntimeOwnerId) : undefined,
     exposeClaudeProfileAccount: true,
     codexNativeKeyReadiness: createCodexNativeKeyReadinessReader({ homePath }),
@@ -1595,6 +1599,11 @@ export async function createGateway(config: GatewayConfig) {
       supports: { rootChat: Boolean(scopeRuntimeHost?.available), recipeBots: Boolean(scopeRuntimeHost?.available) },
       onSourceChanged: () => botServices?.cancelAnthropicInference?.(),
     });
+    matrixOpenAiRuntime = createMatrixOpenAiRuntime({ app, homePath, ownerId: terminalRuntimeOwnerId ?? null, providerSnapshotReader: aiProviderService,
+      profileGuard: nativeProviderProfileGuard, getPrincipal: getOptionalRequestPrincipal,
+      supports: { rootChat: Boolean(scopeRuntimeHost?.available), recipeBots: Boolean(scopeRuntimeHost?.available) },
+      onSourceChanged: () => botServices?.cancelOpenAiInference?.(),
+    });
     const chatAgents = new ChatAgentStore({ homePath, db: chatRepository.kysely });
     await chatAgents.bootstrap();
     botServices = await startBots({
@@ -1604,6 +1613,7 @@ export async function createGateway(config: GatewayConfig) {
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}),
       runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,
       providers: aiProviderService,
+      ...(matrixOpenAiRuntime.service ? { matrixOpenAi: matrixOpenAiRuntime.service } : {}),
       ...(matrixAnthropicRuntime.service ? { matrixAnthropic: matrixAnthropicRuntime.service } : {}),
       ...(jevInboxRuntime ? { jev: jevInboxRuntime.botWorkflow } : {}),
       managedMcp: managedPiMcpDependencies({ env: process.env, platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle,
@@ -1619,9 +1629,11 @@ export async function createGateway(config: GatewayConfig) {
       const sourceCatalog = matrixAnthropicRuntime?.service
         ? withMatrixAnthropicProviderInstances(base, aiProviderService,
           () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available), terminalRuntimeOwnerId ?? null) : base;
+      const apiCatalog = matrixOpenAiRuntime?.service ? withMatrixOpenAiProviderInstances(sourceCatalog, aiProviderService,
+        () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available), terminalRuntimeOwnerId ?? null) : sourceCatalog;
       return botServices?.chatgptPlanPeers
-        ? withChatGptPlanProviderInstance(sourceCatalog, botServices.chatgptPlanPeers,
-          () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available)) : sourceCatalog;
+        ? withChatGptPlanProviderInstance(apiCatalog, botServices.chatgptPlanPeers,
+          () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available)) : apiCatalog;
     });
     const canonicalAdapters = createInitialChatAdapters({ homePath, dispatcher, toolOutputKey, rpc: openClawRpc,
       ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}),
@@ -1781,6 +1793,9 @@ export async function createGateway(config: GatewayConfig) {
   matrixAnthropicRuntime ??= createMatrixAnthropicRuntime({ app, homePath, ownerId: terminalRuntimeOwnerId ?? null, providerSnapshotReader: aiProviderService,
     profileGuard: nativeProviderProfileGuard, getPrincipal: getOptionalRequestPrincipal,
     supports: { rootChat: false, recipeBots: false },
+  });
+  matrixOpenAiRuntime ??= createMatrixOpenAiRuntime({ app, homePath, ownerId: terminalRuntimeOwnerId ?? null, providerSnapshotReader: aiProviderService,
+    profileGuard: nativeProviderProfileGuard, getPrincipal: getOptionalRequestPrincipal, supports: { rootChat: false, recipeBots: false },
   });
   const providerWorkflowLifecycle = await createNativeProviderWorkflowRuntime({
     app, homePath, store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard,
@@ -1983,6 +1998,7 @@ export async function createGateway(config: GatewayConfig) {
       await closeAppAiCapabilities(appAiRuntime, (error) => {
         logBestEffortFailure("App AI adapter shutdown failed", error);
       });
+      await matrixOpenAiRuntime.close();
       await matrixAnthropicRuntime.close();
       await providerWorkflowLifecycle.close();
       await backgroundChatProjection.close();

@@ -116,6 +116,7 @@
     "#ai-credit-history": "./src/ai-credit-history.ts",
     "#provider-workflows": "./src/provider-workflows.ts",
     "#matrix-anthropic-connection": "./src/matrix-anthropic-connection.ts",
+    "#matrix-openai-connection": "./src/matrix-openai-connection.ts",
     "#app-capabilities": "./src/app-capabilities.ts",
     "#remote-browser": "./src/remote-browser.ts",
     "#shared-browser": "./src/shared-browser.ts",

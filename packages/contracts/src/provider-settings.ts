@@ -1,3 +1,4 @@
+import { MatrixOpenAiConnectionSchema } from "#matrix-openai-connection";
 import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
@@ -404,6 +405,7 @@ export const ProviderSettingsSnapshotSchema = z.object({
   contractVersion: z.literal(1),
   /** Returned only to clients opting into extended runtime capabilities. */
   atomicConnectSupported: z.boolean().optional(),
+  matrixOpenAiConnection: MatrixOpenAiConnectionSchema.optional(),
   matrixAnthropicConnection: MatrixAnthropicConnectionSchema.optional(),
   projectionOf: z.object({
     contract: z.literal("AiProviderSnapshotV3"),

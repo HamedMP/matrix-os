@@ -50,6 +50,7 @@ export interface PrivateBotRunRequest {
   recipeRef?: import("@matrix-os/contracts").BotRecipeRef;
   subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
   anthropicApi?: import("@matrix-os/contracts").MatrixAnthropicBinding;
+  openaiApi?: import("@matrix-os/contracts").MatrixOpenAiBinding;
   capabilities: readonly BotToolCapability[];
   requestClass: "interactive" | "background";
   /** The fingerprint stored with the task; a drift blocks the run as `root_changed`. */
@@ -153,7 +154,7 @@ export function createPrivateBotAdmission(deps: {
           ...(input.recipeRef ? { recipeRef: input.recipeRef } : {}),
           ...(input.managedDefinitionRevision !== undefined ? { managedDefinitionRevision: input.managedDefinitionRevision } : {}),
           ...(input.subscription ? { subscription: input.subscription } : {}),
-          ...(input.anthropicApi ? { anthropicApi: input.anthropicApi } : {}),
+          ...(input.anthropicApi ? { anthropicApi: input.anthropicApi } : {}), ...(input.openaiApi ? { openaiApi: input.openaiApi } : {}),
           capabilities: input.capabilities,
           requestClass: input.requestClass,
         });

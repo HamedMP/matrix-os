@@ -56,7 +56,7 @@ export function matchesGoogleObservedRoute(route: ResolvedGoogleRoute, identity:
       && route.harnessId === GOOGLE_POLICY_HARNESS_ID[identity.api] && route.harnessRevision === identity.harnessVersion
       && isDeepStrictEqual(route.recipientChain, descriptor.recipientChain);
   }
-  return route.credentialKind === 'byo' && identity.api === 'anthropic-messages' && identity.credential.kind === 'api_key'
+  return route.credentialKind === 'byo' && ['anthropic-messages', 'openai-completions', 'openai-responses'].includes(identity.api) && identity.credential.kind === 'api_key'
     && identity.credential.generation !== null && route.credentialGeneration === identity.credential.generation
     && route.credentialFingerprint === identity.credential.fingerprint && route.endpoint === identity.endpoint
     && route.model === identity.modelId && route.harnessId === GOOGLE_POLICY_HARNESS_ID[identity.api]
@@ -87,7 +87,8 @@ export async function resolveGooglePolicyProfile(repository: GoogleDataRepositor
   if (binding.data.accessSourceId === 'matrix_included') {
     if (!identity.managed || !options.resolveManagedRoute || binding.data.requestClass !== identity.managed.requestClass) throw new GoogleDataAuthorityError();
     recheck = () => revalidateManaged(identity, options.resolveManagedRoute!, signal, now); await recheck();
-  } else if (binding.data.accessSourceId !== 'owner_anthropic_key' || identity.managed || identity.api !== 'anthropic-messages'
+  } else if (!((binding.data.accessSourceId === 'owner_anthropic_key' && identity.api === 'anthropic-messages')
+    || (binding.data.accessSourceId === 'owner_openai_key' && ['openai-completions', 'openai-responses'].includes(identity.api))) || identity.managed
     || identity.credential.kind !== 'api_key' || identity.credential.generation === null) throw new GoogleDataAuthorityError();
   const profiles = await repository.listReviewedProfiles(ownerId);
   const matches = profiles.filter(({ input }) => input.purposeId === purpose.data && input.allowedModels.includes(identity.modelId)

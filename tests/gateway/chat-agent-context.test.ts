@@ -5,6 +5,7 @@ import { createTestPGlite } from "../helpers/pglite-test-helper.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { createCanonicalChatRoutes, type CanonicalChatRouteService } from "../../packages/gateway/src/chat/routes.js";
+import { enqueueCanonicalQueuedTurn } from "../../packages/gateway/src/chat/queue-admission.js";
 import { admitCanonicalTurn } from "../../packages/gateway/src/chat/turn-admission.js";
 import { CanonicalChatProviderRegistry } from "../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
@@ -286,7 +287,33 @@ describe("server-resolved Chat mention context", () => {
         .rejects.toMatchObject({ code: "context_unavailable" });
     });
 
+    it.each(["openai-completions", "openai-responses"])("preserves the exact explicit OpenAI coordinator through recipe admission: %s", async api => {
+      const id = "bot_openaicontext";
+      await agents.createRecipeBot(owner, { id, createHash: "f".repeat(64),
+        fields: { name: "Writing Bot", description: "", instructions: "Revise.", selection: botSelection },
+        recipeRef: { recipeId: "writing-bot", version: "1" } });
+      const selection = { instanceId: "matrix_openai_api", model: "gpt-4.1", options: [
+        { id: "connectionRevision", value: "3" }, { id: "credentialGeneration", value: "e16625fe-cad7-4983-a9db-e808bbf104cc" }, { id: "api", value: api },
+      ] };
+      const bots = botContext(chat => chat === "chat_current" ? id : null);
+      // The same preparation is rerun by queued-turn admission; neither pass may use saved Automatic.
+      for (let pass = 0; pass < 2; pass += 1) expect((await bots.prepare(owner, "chat_current", { ...request, selection })).selection)
+        .toEqual({ ...selection, instanceId: "matrix_bot_default" });
+      await expect(context.prepare(owner, "chat_source", { ...request, selection })).rejects.toMatchObject({ code: "context_unavailable" });
+      const stopAfterObservedSelection = new Error("synthetic catalog boundary");
+      const getCatalog = vi.fn(async () => { throw stopAfterObservedSelection; });
+      const record = await repository.get(owner, "chat_current");
+      await expect(enqueueCanonicalQueuedTurn({ principal: { userId: owner.ownerId, source: "jwt" }, owner, chatId: "chat_current", input: { ...request, selection },
+        repository: { get: async () => ({ ...record!, activeRun: { id: "run_active" } }) as never,
+          findQueuedAdmission: async () => null, enqueueQueuedTurn: vi.fn() },
+        agentContext: bots, catalog: { getCatalog }, adapters: { get: vi.fn() }, now: () => new Date(),
+      })).rejects.toBe(stopAfterObservedSelection);
+      expect(getCatalog).toHaveBeenCalledExactlyOnceWith({ userId: owner.ownerId, source: "jwt" }, { ...selection, instanceId: "matrix_bot_default" });
+    });
+
     it.each([
+      { instanceId: "matrix_openai_api", model: "gpt-4.1" },
+      { instanceId: "matrix_openai_api", model: "gpt-4.1", options: [{ id: "connectionRevision", value: "3" }, { id: "credentialGeneration", value: "e16625fe-cad7-4983-a9db-e808bbf104cc" }] },
       { instanceId: "matrix_anthropic_api", model: "claude-model" },
       { instanceId: "matrix_anthropic_api", model: "claude-model", options: [{ id: "connectionRevision", value: "3" }] },
       { instanceId: "matrix_anthropic_api", model: "claude-model", options: [{ id: "credentialGeneration", value: "e16625fe-cad7-4983-a9db-e808bbf104cc" }] },

@@ -1,3 +1,4 @@
+import { MatrixOpenAiConnectionSchema } from "#matrix-openai-connection";
 import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
@@ -260,6 +261,7 @@ export const AiNativeHarnessCatalogSchema = z.object({
 export const AiProviderSnapshotV3Schema = z.object({
   contractVersion: z.literal(3),
   nativeHarnessCatalog: AiNativeHarnessCatalogSchema.optional(),
+  matrixOpenAiConnection: MatrixOpenAiConnectionSchema.optional(),
   matrixAnthropicConnection: MatrixAnthropicConnectionSchema.optional(),
   revision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   refreshedAt: IsoTimestampSchema,
