@@ -3,6 +3,7 @@
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
 import {
   DEFAULT_ONBOARDING_PREFS,
+  GmailConnectionChoice,
   OnboardingWidget,
   onboardingPrefsKey,
   readOnboardingPrefs,
@@ -151,5 +152,8 @@ function OnboardingWidgetSession({ prefsKey, displayName, gatewayUrl, initialPre
   const [widgetSize, setWidgetSize] = useState<OnboardingWidgetBox | null>(null);
   useOnboardingSupportDock({ size: state.size, position: prefs.position, widgetSize, visible: !chatFullscreen, supportOpen, dispatch, closeSupport: closeShellSupport });
   if (chatFullscreen) return null;
-  return <OnboardingWidget {...widget} zIndex={SHELL_Z_INDEX.onboardingWidget} onSizeChange={setWidgetSize} />;
+  return <>
+    <OnboardingWidget {...widget} zIndex={SHELL_Z_INDEX.onboardingWidget} onSizeChange={setWidgetSize} />
+    <GmailConnectionChoice choice={integrations.gmailChoice} />
+  </>;
 }

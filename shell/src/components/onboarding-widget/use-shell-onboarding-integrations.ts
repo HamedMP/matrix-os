@@ -2,12 +2,16 @@ import {
   isValidServiceId,
   parseAvailableIntegrations,
   parseConnectedIntegrations,
-  parseConnectUrl,
+  hasCompletedIntegrationConnection,
+  isCompletedIntegrationAttempt,
+  parseIntegrationAttemptStatus,
+  parseIntegrationConnectResponse,
   type AvailableIntegration,
   type ConnectedIntegration,
   type OnboardingWidgetEvent,
 } from "@matrix-os/contracts";
-import { activeConnectionIds, hasNewActiveConnection, startConnectPoll, type OnboardingAppConnect } from "@matrix-os/ui";
+import { startConnectPoll, useGmailConnectionChoice, type OnboardingAppConnect } from "@matrix-os/ui";
+import { GmailConnectionOptionsSchema, type GmailConnectionMethod, type GmailConnectionOptions } from "@matrix-os/contracts/integration-marketplace";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getGatewayUrl } from "@/lib/gateway";
 
@@ -28,6 +32,7 @@ interface Options {
 export interface ShellOnboardingIntegrations extends OnboardingAppConnect {
   available: AvailableIntegration[];
   connections: ConnectedIntegration[];
+  gmailChoice: ReturnType<typeof useGmailConnectionChoice>;
 }
 
 class IntegrationsRequestError extends Error {
@@ -114,6 +119,7 @@ export function useShellOnboardingIntegrations(
   const connectionsRevisionRef = useRef(0);
   const attemptRef = useRef(0);
   const cancelPollRef = useRef<(() => void) | null>(null);
+  const popupRef = useRef<Window | null>(null);
   useEffect(() => {
     optionsRef.current = options;
   });
@@ -122,6 +128,17 @@ export function useShellOnboardingIntegrations(
     gatewayUrl: optionsRef.current.gatewayUrl ?? getGatewayUrl(),
     fetchFn: optionsRef.current.fetchFn ?? fetch,
   }), []);
+
+  const loadGmailOptions = useCallback(async (): Promise<GmailConnectionOptions> => {
+    const { gatewayUrl, fetchFn } = transport();
+    try {
+      return GmailConnectionOptionsSchema.parse(await readJson(fetchFn, `${gatewayUrl}/api/integrations/gmail/connection-options`));
+    } catch (error: unknown) {
+      if (isIntegrationServiceMissing(error)) return { methods: ["pipedream"], defaultMethod: "pipedream" };
+      throw error;
+    }
+  }, [transport]);
+  const gmailChoice = useGmailConnectionChoice(loadGmailOptions);
 
   const applyConnections = useCallback((next: ConnectedIntegration[]) => {
     connectionsRevisionRef.current += 1;
@@ -178,86 +195,103 @@ export function useShellOnboardingIntegrations(
     };
   }, [applyConnections, subscribeConnectionChanges, transport]);
 
-  useEffect(() => () => {
+  const cancelAttempt = useCallback(() => {
     attemptRef.current += 1;
     cancelPollRef.current?.();
-  }, []);
-
-  const connectApp = useCallback((serviceId: string) => {
-    cancelPollRef.current?.();
     cancelPollRef.current = null;
-    const attempt = ++attemptRef.current;
+    popupRef.current?.close();
+    popupRef.current = null;
+  }, []);
+  useEffect(() => cancelAttempt, [cancelAttempt]);
+
+  const startConnection = useCallback((serviceId: string, connectionMethod?: GmailConnectionMethod) => {
+    cancelAttempt();
+    const attempt = attemptRef.current;
     const isCurrent = () => attemptRef.current === attempt;
-    if (appsUnavailableRef.current) {
-      setConnectingService(null);
-      dispatch({ type: "connect.unavailable", service: serviceId });
-      return;
-    }
-    if (!isValidServiceId(serviceId)) {
-      setConnectingService(null);
-      dispatch({ type: "connect.failed", service: serviceId });
-      return;
-    }
-    // Opened synchronously inside the click so popup blockers allow it; the consent URL arrives later.
-    const popup = window.open("about:blank", "_blank", "width=600,height=700");
-    const fail = () => {
+    const settle = (found: boolean) => {
       if (!isCurrent()) return;
+      cancelAttempt();
       setConnectingService(null);
-      dispatch({ type: "connect.failed", service: serviceId });
+      dispatch({ type: found ? "connect.succeeded" : "connect.failed", service: serviceId });
     };
+    // Opened synchronously inside the method click so popup blockers allow it.
+    const popup = window.open("about:blank", "_blank", "width=600,height=700");
     if (!popup) {
       console.warn("[onboarding-widget] consent window blocked");
-      fail();
+      settle(false);
       return;
     }
+    popupRef.current = popup;
     setConnectingService(serviceId);
     dispatch({ type: "connect.started" });
-    const previouslyActive = activeConnectionIds(connectionsRef.current, serviceId);
+    const previousConnections = connectionsRef.current.map(connection => ({ ...connection }));
     const { gatewayUrl, fetchFn } = transport();
     void (async () => {
-      const url = parseConnectUrl(await readJson(fetchFn, `${gatewayUrl}/api/integrations/connect`, {
+      const started = parseIntegrationConnectResponse(await readJson(fetchFn, `${gatewayUrl}/api/integrations/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ service: serviceId }),
+        body: JSON.stringify({ service: serviceId, ...(connectionMethod ? { connectionMethod } : {}) }),
       }));
       if (!isCurrent()) { popup.close(); return; }
-      if (!url) throw new Error("InvalidConsentUrl");
+      if (!started) throw new Error("InvalidConsentResponse");
+      const { url, attemptId } = started;
       popup.opener = null;
       popup.location.href = url;
+      let completed = false;
       cancelPollRef.current = startConnectPoll({
         ...(optionsRef.current.pollIntervals ? { intervals: optionsRef.current.pollIntervals } : {}),
         tick: async () => {
           if (!isCurrent()) return;
+          if (attemptId) {
+            // A receipt-bearing connection must settle its own account; inventory alone
+            // can contain unrelated accounts or the same account before reauthorization.
+            const receipt = parseIntegrationAttemptStatus(await readJson(fetchFn, `${gatewayUrl}/api/integrations/gmail/pipedream/attempts/${attemptId}`));
+            if (!isCurrent()) return;
+            if (!receipt || receipt.status === "failed" || receipt.status === "expired") { settle(false); return; }
+            if (receipt.status === "pending") return;
+            const next = parseConnectedIntegrations(await readJson(fetchFn, `${gatewayUrl}/api/integrations`));
+            if (!isCurrent()) return;
+            applyConnections(next);
+            completed = isCompletedIntegrationAttempt(receipt, serviceId, next);
+            return;
+          }
           const synced = parseConnectedIntegrations(await readJson(fetchFn, `${gatewayUrl}/api/integrations/sync`, { method: "POST" }));
           if (!isCurrent()) return;
           applyConnections(synced);
-          // A closed window ends the attempt unless this last sync found the connection;
-          // some sign-in pages close themselves once they finish.
-          if (popup.closed && !hasNewActiveConnection(synced, serviceId, previouslyActive)) {
-            cancelPollRef.current?.();
-            cancelPollRef.current = null;
-            fail();
-          }
+          completed = hasCompletedIntegrationConnection(previousConnections, serviceId, synced);
+          // Check the last sync before treating a provider self-closing window as cancelled.
+          if (popup.closed && !completed) settle(false);
         },
-        isDone: () => hasNewActiveConnection(connectionsRef.current, serviceId, previouslyActive),
-        onSettled: (found) => {
-          if (!isCurrent()) return;
-          cancelPollRef.current = null;
-          if (!found) { fail(); return; }
-          setConnectingService(null);
-          dispatch({ type: "connect.succeeded", service: serviceId });
-        },
+        isDone: () => completed,
+        onSettled: settle,
       });
     })().catch((error: unknown) => {
       console.warn("[onboarding-widget] app connect failed:", errorName(error));
       popup.close();
-      if (!isIntegrationServiceMissing(error)) { fail(); return; }
-      markAppsUnavailable();
       if (!isCurrent()) return;
+      if (!isIntegrationServiceMissing(error)) { settle(false); return; }
+      cancelAttempt();
+      markAppsUnavailable();
       setConnectingService(null);
       dispatch({ type: "connect.unavailable", service: serviceId });
     });
-  }, [applyConnections, dispatch, markAppsUnavailable, transport]);
+  }, [applyConnections, cancelAttempt, dispatch, markAppsUnavailable, transport]);
 
-  return { available, connections, connectingService, connectApp, appsUnavailable };
+  const connectApp = useCallback((serviceId: string) => {
+    cancelAttempt();
+    gmailChoice.cancel();
+    setConnectingService(null);
+    if (appsUnavailableRef.current) {
+      dispatch({ type: "connect.unavailable", service: serviceId });
+      return;
+    }
+    if (!isValidServiceId(serviceId)) {
+      dispatch({ type: "connect.failed", service: serviceId });
+      return;
+    }
+    if (serviceId === "gmail") gmailChoice.request(method => startConnection(serviceId, method));
+    else startConnection(serviceId);
+  }, [cancelAttempt, dispatch, gmailChoice, startConnection]);
+
+  return { available, connections, connectingService, connectApp, appsUnavailable, gmailChoice };
 }
