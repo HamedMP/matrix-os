@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createChatAgentClient } from "../../packages/ui/src/chat-agents/client";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
 import { AppError } from "../../desktop/src/shared/app-error.js";
+import { FUNDED_AI_READINESS_TIMEOUTS } from "@matrix-os/contracts";
 
 describe("Chat Agent recipe client", () => {
   it("preserves the safe HTTP status from the desktop transport without leaking its cause", async () => {
@@ -27,7 +28,8 @@ describe("Chat Agent recipe client", () => {
   it("requests funding-aware model states through the existing shared transport", async () => {
     const request = vi.fn(async () => createCanonicalProviderCatalogFixture());
     await createChatAgentClient(request).catalog();
-    expect(request).toHaveBeenCalledExactlyOnceWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", "GET");
+    expect(request).toHaveBeenCalledExactlyOnceWith("/api/chat-providers?includeConnectionLabels=true&includeConnectionState=true&includeFundingState=true&includeChatFunding=true", "GET", undefined,
+      { timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs });
   });
   it("loads recipe capabilities and keeps only bounded display metadata for connections", async () => {
     const request = vi.fn(async (path: string) => path === "/api/chat-agents/recipe-catalog"

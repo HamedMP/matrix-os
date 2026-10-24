@@ -203,7 +203,7 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
     return () => { current = false; };
   }, [client, botRecipeAttempt]);
   useEffect(() => {
-    if (creationView && !state.editing && scratchTrigger.current?.isConnected) scratchTrigger.current.focus();
+    if (creationView && !state.editing && scratchTrigger.current?.isConnected && !scratchTrigger.current.disabled) scratchTrigger.current.focus();
     else heading.current?.focus();
   }, [state.editing, creationView]);
   const patch = (value: Partial<Library>) => setState((current) => ({ ...current, ...value }));
@@ -430,6 +430,7 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
     } finally { saving.current = false; }
   };
   const recipes = creationView;
+  const scratchBlocked = state.loading || !state.enabled || state.pending || jevPending || state.agents.length >= 100;
   const title = state.editing === "new" || recipes ? "New agent" : state.editing ? "Edit agent" : "Your AI team";
   useEffect(() => { onTitleChange?.(title); }, [onTitleChange, title]);
   return <section aria-label={recipes ? "Agent recipes" : "Agents"} data-agent-surface={recipes ? "recipes" : "library"} className="matrix-chat-agents-panel ph-no-capture flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={chatAgentSurfaceStyle}>
@@ -440,11 +441,18 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
     {dailyRecipe?.client === client && client.bots && onOpenBotChat ? <DailyBriefCreation onRefreshCatalog={modelCatalog.refresh} onSetup={onSetup} recipe={dailyRecipe.recipe} client={client} models={botModels} catalog={state.catalog} catalogLoading={state.catalogLoading}
       onOpen={async chatId => { await onOpenBotChat(chatId); onClose(); }} onClose={() => setDailyRecipe(null)} /> : null}
     {setupPaused ? <button type="button" className={button} onClick={() => { setSetupPaused(false); modelCatalog.refresh(); }}>Resume agent setup</button> : null}
-    {modelCatalog.error ? <p role="alert" className="text-xs">{modelCatalog.error}</p> : null}
+    {(!recipes || state.editing) && (modelCatalog.loading || modelCatalog.error) ? <div className="px-4 sm:px-6">
+      <div className="matrix-chat-agent-catalog-status matrix-chat-agent-catalog-status--library">
+        {modelCatalog.loading ? <p role="status">Loading models…</p> : <>
+          <p role="alert">{modelCatalog.error}</p>
+          <button type="button" className="matrix-chat-agent-catalog-retry" disabled={state.pending} onClick={modelCatalog.refresh}>Retry models</button>
+        </>}
+      </div>
+    </div> : null}
     <div hidden={setupPaused} className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
     {recipes ? <div hidden={Boolean(state.editing)} inert={Boolean(state.editing)}><AgentRecipesPanel
       onStartFromScratch={trigger => { scratchTrigger.current = trigger; edit("new"); }}
-      scratchDisabled={state.loading || !state.enabled || state.pending || jevPending || !state.catalog || state.agents.length >= 100}
+      scratchDisabled={scratchBlocked || !state.catalog} scratchRetryDisabled={scratchBlocked} catalogError={modelCatalog.error}
       onRefreshCatalog={modelCatalog.refresh} onSetup={onSetup} botClient={client.bots} onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}
       botRecipeStatus={botRecipeStatus} onRetryBotRecipes={() => setBotRecipeAttempt(attempt => attempt + 1)}
       matrixModels={botModels} catalog={state.catalog} catalogLoading={state.catalogLoading} botRecipes={botRecipes} onOpenBotChat={onOpenBotChat ? async (chatId) => { await onOpenBotChat(chatId); onClose(); } : undefined}

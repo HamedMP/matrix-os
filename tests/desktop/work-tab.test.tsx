@@ -2,7 +2,7 @@
 
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { CanonicalChatNavigationResponseSchema, type CanonicalChatRecord } from "@matrix-os/contracts";
+import { CanonicalChatNavigationResponseSchema, FUNDED_AI_READINESS_TIMEOUTS, type CanonicalChatRecord } from "@matrix-os/contracts";
 import WorkTab from "@desktop/renderer/src/features/work/WorkTab";
 import { useChatComposerDrafts } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
 import { BotHeaderBindingContext, SurfaceChromeContext, type BotHeaderBindingReport, type SurfaceChromeSpec } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
@@ -283,7 +283,8 @@ describe("WorkTab rail integration", () => {
     HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
     fireEvent.click(create);
     const model = screen.getByRole("combobox", { name: "Bot model" });
-    await waitFor(() => expect(api.get).toHaveBeenCalledWith(canonicalChatProviderCatalogPath(true)));
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(canonicalChatProviderCatalogPath(true),
+      { timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs }));
     expect((model as HTMLSelectElement).disabled).toBe(true);
     // Native selection/submission obey the same discovery barrier as visible controls.
     fireEvent.change(model, { target: { value: "" } });

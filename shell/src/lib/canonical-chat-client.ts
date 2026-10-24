@@ -182,19 +182,19 @@ export function createCanonicalShellChatClient(options: {
   createId?: () => string;
 }): CanonicalShellChatClient {
   const fetchFn = options.fetchFn ?? fetch;
-  const request = (path: string, init: RequestInit = {}) => fetchFn(`${options.gatewayUrl}${path.startsWith("/api/chats") ? chatImportSourceVersionUrl(chatFundingVersionUrl(chatReadStateVersionUrl(path))) : path}`, {
+  const request = (path: string, init: RequestInit = {}, requestOptions?: { timeoutMs?: number }) => fetchFn(`${options.gatewayUrl}${path.startsWith("/api/chats") ? chatImportSourceVersionUrl(chatFundingVersionUrl(chatReadStateVersionUrl(path))) : path}`, {
     ...init,
     ...(/^\/api\/chats(?:[/?]|$)/.test(path) ? {
       headers: { ...Object.fromEntries(new Headers(init.headers)), "X-Matrix-Chat-Metadata": "1" },
     } : {}),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(requestOptions?.timeoutMs ?? REQUEST_TIMEOUT_MS),
   }).then(response => jsonResponse(response, path));
   const createId = options.createId ?? (() => globalThis.crypto.randomUUID().replaceAll("-", ""));
   return {
     browserPermissions: createBrowserPermissionClient((path, method, body) => request(path, { method, ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }) })),
-    agents: createChatAgentClient((path, method, body) => request(path, { method,
+    agents: createChatAgentClient((path, method, body, requestOptions) => request(path, { method,
       ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
-    })),
+    }, requestOptions)),
     async openEventStream({ cursor, signal }) {
       const response = await fetchFn(chatImportSourceVersionUrl(chatFundingVersionUrl(chatEventVersionUrl(chatReadStateVersionUrl(chatMessageVersionUrl(`${options.gatewayUrl}/api/chats/events`))))), {
         method: "GET",

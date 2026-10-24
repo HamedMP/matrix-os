@@ -46,6 +46,39 @@
   animation: matrix-chat-agents-enter 220ms cubic-bezier(0.19, 1, 0.22, 1) both;
 }
 
+.matrix-chat-agent-scratch-icon { color: var(--text-primary, var(--matrix-card-fg, var(--foreground))); }
+
+.matrix-chat-agent-catalog-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  max-width: 880px;
+  margin-inline: auto;
+  padding-top: 12px;
+  color: var(--text-secondary, var(--matrix-muted-fg, var(--muted-foreground)));
+  font-size: 13px;
+  line-height: 18px;
+}
+.matrix-chat-agent-catalog-status--library { max-width: 48rem; }
+.matrix-chat-agent-catalog-status p { margin: 0; }
+.matrix-chat-agent-catalog-retry {
+  min-height: 44px;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--text-primary, var(--matrix-card-fg, var(--foreground)));
+  font: inherit;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.matrix-chat-agent-catalog-retry:hover:enabled { text-decoration-thickness: 2px; }
+.matrix-chat-agent-catalog-retry:focus-visible { outline: 2px solid var(--ring, var(--accent, var(--matrix-accent, var(--matrix-ring)))); outline-offset: 3px; }
+.matrix-chat-agent-catalog-retry:disabled { cursor: default; opacity: .5; }
+
 .matrix-chat-agents-rail__items {
   animation: matrix-chat-agents-fade 150ms ease-out both;
 }

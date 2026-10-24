@@ -1,6 +1,6 @@
 import { createChatDriveProjectClient, type ChatDriveProjectClient } from "../organization-drive/chat-project-client.js";
 import {
-  CanonicalChatIdSchema, CanonicalProviderCatalogSchema,
+  CanonicalChatIdSchema, CanonicalProviderCatalogSchema, FUNDED_AI_READINESS_TIMEOUTS,
   ChatAgentIdSchema, ChatAgentSchema, ChatAgentListResponseSchema, ChatMentionSearchResponseSchema,
   ChatAgentRecipeCatalogSchema, ChatContextSnapshotSchema, CreateChatAgentRequestSchema, UpdateChatAgentRequestSchema,
   type ChatAgent, type ChatAgentListResponse, type ChatMentionSearchResponse,
@@ -41,13 +41,14 @@ export interface ChatAgentClient {
 
 /** The surface supplies its existing authenticated, timeout-bounded transport. */
 export function createChatAgentClient(request: (
-  path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown,
+  path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown, options?: { timeoutMs?: number },
 ) => Promise<unknown>): ChatAgentClient {
   return {
     driveProjects: createChatDriveProjectClient(request),
     bots: createBotClient(request),
     list: async () => ChatAgentListResponseSchema.parse(await request("/api/chat-agents?includeManagedCustomRecoveries=true", "GET")),
-    catalog: async (options) => CanonicalProviderCatalogSchema.parse(await request(canonicalChatProviderCatalogPath(options?.refresh === true), "GET")),
+    catalog: async (options) => CanonicalProviderCatalogSchema.parse(await request(canonicalChatProviderCatalogPath(options?.refresh === true), "GET", undefined,
+      { timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs })),
     recipeCatalog: async () => ChatAgentRecipeCatalogSchema.parse(await request("/api/chat-agents/recipe-catalog", "GET")),
     integrations: async () => IntegrationConnectionListSchema.parse(await request("/api/integrations", "GET")),
     create: async (input) => ChatAgentSchema.parse(await request("/api/chat-agents", "POST", CreateChatAgentRequestSchema.parse(input))),
