@@ -42,6 +42,7 @@ export interface UseJourneyResult {
   state: JourneyState | null;
   status: JourneyStatus;
   refreshJourney: () => void;
+  checking: boolean;
 }
 
 const JOURNEY_TIMEOUT_MS = 10_000;
@@ -61,14 +62,17 @@ export function useJourney(options: {
   enabled?: boolean;
   keepPolling?: boolean;
   runtimeSlot?: string | null;
+  reconcileCheckout?: boolean;
 } = {}): UseJourneyResult {
   const enabled = options.enabled ?? true;
   const keepPolling = options.keepPolling ?? false;
   const runtimeSlot = options.runtimeSlot ?? null;
-  const { isLoaded, isSignedIn, getToken } = useAuth();
+  const reconcileCheckout = options.reconcileCheckout ?? false;
+  const { isLoaded, isSignedIn, getToken, userId } = useAuth();
   const [state, setState] = useState<JourneyState | null>(null);
   const [status, setStatus] = useState<JourneyStatus>("loading");
   const [nonce, setNonce] = useState(0);
+  const [checking, setChecking] = useState(false);
 
   // react-doctor-disable-next-line react-doctor/react-compiler-no-manual-memoization -- identity is consumed by the polling useEffect dependency array below and returned to callers (BootSequence effect deps); a stable refreshJourney keeps the poller from re-subscribing every render.
   const refreshJourney = useCallback(() => setNonce((n) => n + 1), []);
@@ -79,8 +83,11 @@ export function useJourney(options: {
     let disposed = false;
     let pollTimer: number | undefined;
     let inFlightController: AbortController | undefined;
+    let verificationPending = reconcileCheckout;
+    let verificationFailures = 0;
 
     async function fetchOnce(): Promise<void> {
+      setChecking(true);
       const controller = new AbortController();
       inFlightController = controller;
       const timeoutId = window.setTimeout(() => controller.abort(), JOURNEY_TIMEOUT_MS);
@@ -88,6 +95,26 @@ export function useJourney(options: {
       try {
         const token = await getToken();
         if (disposed) return;
+        if (verificationPending) {
+          const verified = await fetch('/billing/checkout/reconcile', {
+            method: 'POST', credentials: 'include', cache: 'no-store',
+            headers: { Accept: 'application/json', 'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+            body: JSON.stringify({ runtimeSlot: runtimeSlot ?? 'primary' }), signal: controller.signal,
+          });
+          if (disposed) return;
+          if (verified.status === 401 || verified.status === 403) {
+            setStatus('unauthorized');
+            return;
+          }
+          if (!verified.ok) {
+            setStatus('unreachable');
+            verificationFailures += 1;
+            if (verificationFailures < 3) scheduleNext(ACTIVE_POLL_MS);
+            return;
+          }
+          verificationPending = false;
+        }
         const journeyUrl = runtimeSlot
           ? `/api/journey?runtimeSlot=${encodeURIComponent(runtimeSlot)}`
           : "/api/journey";
@@ -121,10 +148,18 @@ export function useJourney(options: {
         if (keepPolling || ACTIVE_PHASES.has(body.phase)) scheduleNext(ACTIVE_POLL_MS);
       } catch (err: unknown) {
         if (disposed) return;
+        console.warn('[journey] status check failed:', err instanceof Error ? err.name : typeof err);
+        if (verificationPending) {
+          setStatus('unreachable');
+          verificationFailures += 1;
+          if (verificationFailures < 3) scheduleNext(ACTIVE_POLL_MS);
+          return;
+        }
         // Network/timeout/abort -> unreachable; keep trying while mounted.
         setStatus((prev) => (prev === "ready" ? prev : "unreachable"));
         scheduleNext(ACTIVE_POLL_MS);
       } finally {
+        if (!disposed) setChecking(false);
         if (inFlightController === controller) inFlightController = undefined;
         window.clearTimeout(timeoutId);
       }
@@ -144,7 +179,7 @@ export function useJourney(options: {
       if (pollTimer !== undefined) window.clearTimeout(pollTimer);
       inFlightController?.abort();
     };
-  }, [enabled, isLoaded, isSignedIn, getToken, keepPolling, nonce, runtimeSlot]);
+  }, [enabled, isLoaded, isSignedIn, getToken, userId, keepPolling, nonce, runtimeSlot, reconcileCheckout]);
 
-  return { state, status, refreshJourney };
+  return { state, status, refreshJourney, checking };
 }
