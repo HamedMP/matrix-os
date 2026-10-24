@@ -68,7 +68,14 @@ Local `bun run test:e2e` retains its prerequisite build for convenience.
 Next incremental compilation and Playwright browser revisions are cached by
 OS, architecture, Node/pnpm toolchain and the frozen lockfile. The shell bundle
 is rebuilt on every run. Both Playwright workspace installs still run on cache
-hits so different browser revisions and system dependencies stay complete.
+hits so each workspace's browser revision stays complete. E2E never runs
+Playwright's apt install (`--with-deps`): `ubuntu-latest` already has the shared
+libraries Chromium and Electron load, and the apt step mostly fetched CJK/Thai
+fonts from a mirror that sometimes ran at ~30 kB/s (up to 11 minutes). A
+`Check browser shared libraries` step runs `ldd` on every installed browser and
+fails with the missing library if a runner image drops one. The Electron lane
+installs one font, `fonts-wqy-microhei` (1.6 MB), because the Chat title
+regression renders a Simplified Chinese title.
 Caches are accelerators, never a substitute for validation.
 
 Every unit shard uploads `unit-profile-<shard>` with Vitest JSON, including on
