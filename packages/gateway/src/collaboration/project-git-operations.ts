@@ -189,8 +189,19 @@ async function ownerRemote(root: string): Promise<{ owner: string; repo: string;
     throw new ProjectGitBrokerError("unavailable");
   }
   const parsed = validateGitHubUrl(value);
-  if (!parsed.ok || !value.startsWith("https://github.com/")) throw new ProjectGitBrokerError("unavailable");
-  return { owner: parsed.owner, repo: parsed.repo, url: `https://github.com/${parsed.owner}/${parsed.repo}.git` };
+  if (
+    !parsed.ok
+    || (!value.startsWith("https://github.com/") && !value.startsWith("git@github.com:"))
+  ) {
+    throw new ProjectGitBrokerError("unavailable");
+  }
+  return {
+    owner: parsed.owner,
+    repo: parsed.repo,
+    url: value.startsWith("git@")
+      ? `git@github.com:${parsed.owner}/${parsed.repo}.git`
+      : `https://github.com/${parsed.owner}/${parsed.repo}.git`,
+  };
 }
 
 async function requireExpectedHead(root: string, expectedHeadSha: string): Promise<void> {
