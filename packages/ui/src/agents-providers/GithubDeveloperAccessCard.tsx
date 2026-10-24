@@ -108,10 +108,13 @@ export function GithubDeveloperAccessCard({
   activeIdentity.current = identityKey;
 
   useEffect(() => {
+    setSetupPending(false);
+  }, [identityKey]);
+
+  useEffect(() => {
     const controller = new AbortController();
     setStatus(null);
     setPhase("loading");
-    setSetupPending(false);
     void client.status(controller.signal).then((value) => {
       if (controller.signal.aborted) return;
       const parsed = parseGithubDeveloperAccessStatus(value);
