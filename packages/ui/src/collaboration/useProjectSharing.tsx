@@ -80,11 +80,10 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
   /** First-time project sharing starts with the Figma baseline: everyone in the organization is an Editor. */
   const ensureDefaultGrant = async (currentScope: CollaborationScope) => {
     const base = `/api/collaboration/scopes/${encodeURIComponent(currentScope.id)}`;
-    const live = GrantsSchema.parse(await api.get(`${base}/grants`))
-      .filter((grant) => grant.state === "active" || grant.state === "pending");
-    // Defaults apply only to a genuinely untouched scope. Any live grant means
-    // the owner already selected an audience, including Restricted + direct people.
-    if (live.length > 0) return currentScope;
+    const grants = GrantsSchema.parse(await api.get(`${base}/grants`));
+    // Any grant history means the owner already chose an audience. Revoked or expired
+    // grants must stay Restricted, rather than regain the organization default on reopen.
+    if (grants.length > 0) return currentScope;
     await api.post(`${base}/grants`, {
       clientRequestId: crypto.randomUUID(), expectedRevision: currentScope.revision,
       audience: { kind: "organization" }, preset: "contributor",

@@ -246,6 +246,28 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("owner Share with indepen
     await assertPrivate();
   });
 
+  it("keeps a private scope Restricted after the owner revoked its earlier organization grant", async () => {
+    f = await fixture();
+    const preflight = await f.api.post(`${setup}/preflight`, { kind: "project", resourceId: projectId, organizationId }) as { resourceRevision: string; confirmationToken: string };
+    const scope = await f.api.post(setup, { kind: "project", resourceId: projectId, organizationId, clientRequestId: randomUUID(),
+      expectedRevision: preflight.resourceRevision, confirmationToken: preflight.confirmationToken }) as { id: string; revision: string };
+    const base = `/api/collaboration/scopes/${scope.id}`;
+    const grant = await f.api.post(`${base}/grants`, { clientRequestId: randomUUID(), expectedRevision: scope.revision,
+      audience: { kind: "organization" }, preset: "viewer" }) as { id: string; revision: string };
+    const current = await f.api.get(base) as { revision: string };
+    await f.api.delete(`${base}/grants/${grant.id}`, { clientRequestId: randomUUID(),
+      expectedRevision: current.revision, expectedMemberRevision: grant.revision });
+    const before = f.calls.length;
+    openShare();
+    await expectDialog();
+    expect(await f.db.selectFrom("collaboration_grants").select(["preset", "state"]).execute()).toEqual([
+      { preset: "viewer", state: "revoked" },
+    ]);
+    expect(f.calls.slice(before).some(call => call.method === "POST" && call.path.endsWith("/grants"))).toBe(false);
+    expect(screen.getByRole("button", { name: "General access: Restricted" })).toBeTruthy();
+    await assertPrivate();
+  });
+
   it("hands share-after-create to the real owner setup flow after the creation dialog closes", async () => {
     f = await fixture();
     sharingContext.value = { api: f.api, runtimeId, organizationId, organizationStatus: "member" };
