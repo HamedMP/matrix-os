@@ -911,6 +911,23 @@ describe('CI workflows', () => {
     expect(workflow).toContain('pipedream_secret_tmpfile="$(mktemp)"');
   });
 
+  it('gates and mounts the Matrix-owned GitHub OAuth credentials in platform Cloud Run', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+
+    expect(workflow).toContain("GITHUB_INTEGRATION_OAUTH_ENABLED: ${{ vars.GITHUB_INTEGRATION_OAUTH_ENABLED || 'false' }}");
+    expect(workflow).toContain('Verify GitHub OAuth secrets');
+    expect(workflow).toContain('required_github_oauth_secrets=(');
+    expect(workflow).toContain('GITHUB_OAUTH_CLIENT_ID=github-oauth-client-id');
+    expect(workflow).toContain('GITHUB_OAUTH_CLIENT_SECRET=github-oauth-client-secret');
+    expect(workflow).toContain('GITHUB_OAUTH_ENCRYPTION_KEY=github-oauth-encryption-key');
+    expect(workflow).toContain('GITHUB_OAUTH_CALLBACK_URL=${MATRIX_APP_URL}/api/integrations/oauth/github/callback');
+    expect(workflow).toContain('GITHUB_OAUTH_WEB_COMPLETION_URL=${MATRIX_APP_URL}/integrations');
+    expect(workflow).toContain('GITHUB_OAUTH_CLIENT_ID=github-oauth-client-id:latest');
+    expect(workflow).toContain('GITHUB_OAUTH_CLIENT_SECRET=github-oauth-client-secret:latest');
+    expect(workflow).toContain('GITHUB_OAUTH_ENCRYPTION_KEY=github-oauth-encryption-key:${GITHUB_OAUTH_ENCRYPTION_KEY_VERSION}');
+  });
+
   it('preflights, mounts, and smokes the dedicated recruiting ATS dependencies', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');

@@ -722,7 +722,8 @@ export function createApp(deps: {
 
   const integrationDeletionGuard=createAccountDeletionMutationGuard({db,env:appEnv,resolveOwner:c=>c.get('platformUserId') as string|undefined});
   app.use('/api/integrations/*',(c,next)=>c.req.path==='/api/integrations/webhook/connected'
-    || (c.req.method==='GET' && c.req.path==='/api/integrations/available') ? next() : integrationDeletionGuard(c,next));
+    || (c.req.method==='GET' && (c.req.path==='/api/integrations/available'
+      || c.req.path==='/api/integrations/oauth/github/callback')) ? next() : integrationDeletionGuard(c,next));
   app.route('/api/integrations', deps.integrationRoutes ?? createUnavailableIntegrationRoutes());
   app.route('/internal/containers/:handle/preview-drive', createPreviewDriveRoutes({
     db, platformSecret, integration: deps.previewDriveIntegration, env: appEnv,

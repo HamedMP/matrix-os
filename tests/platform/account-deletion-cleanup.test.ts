@@ -128,6 +128,38 @@ import { vi } from 'vitest';
 import { createAccountDeletionAdapters } from '../../packages/platform/src/account-deletion/adapters.js';
 const ctx = { clerkUserId:'user_owner',appleTokens:[] };
 describe('production cleanup adapters', () => {
+  it('requires and invokes native GitHub revocation before account erasure can continue', async () => {
+    const db = await fixture();
+    try {
+      const userId = '11111111-1111-4111-8111-111111111111';
+      const connectionId = '22222222-2222-4222-8222-222222222222';
+      await sql`INSERT INTO users (id,clerk_id,handle,display_name,email,container_id)
+        VALUES (${userId},'user_owner','owner','Owner','owner@example.test','owner')`.execute(db.executor);
+      await sql`CREATE TABLE github_oauth_connections (
+        id UUID PRIMARY KEY,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status TEXT NOT NULL
+      )`.execute(db.executor);
+      await sql`INSERT INTO github_oauth_connections (id,user_id,status)
+        VALUES (${connectionId},${userId},'active')`.execute(db.executor);
+
+      const unavailable = createAccountDeletionAdapters({ db, clerkSecretKey: 'key', r2PrefixRoot: 'sync' });
+      await expect(unavailable.integrations(ctx)).rejects.toThrow('Integration cleanup configuration unavailable');
+
+      const disconnect = vi.fn(async () => true);
+      const adapters = createAccountDeletionAdapters({
+        db,
+        clerkSecretKey: 'key',
+        r2PrefixRoot: 'sync',
+        github: { disconnect },
+      });
+      await expect(adapters.integrations(ctx)).resolves.toBeUndefined();
+      expect(disconnect).toHaveBeenCalledWith(userId, connectionId);
+    } finally {
+      await db.destroy();
+    }
+  });
+
   it.each([false,true])('retains Custom MCP credentials when cleanup is unavailable (runtime=%s)',async(liveRuntime)=> {
     const db=await fixture();
     try {

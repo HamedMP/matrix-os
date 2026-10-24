@@ -46,6 +46,22 @@ describe('unconfigured managed integrations', () => {
     expect((await app().request('/api/integrations/available', { headers: { host: 'app.matrix-os.com' } })).status).toBe(503);
   });
 
+  it('keeps only the exact GitHub OAuth callback public', async () => {
+    const routes = new Hono().get('/oauth/github/callback', c => c.json({ callback: true }));
+    const server = app(routes);
+    const callback = await server.request('/api/integrations/oauth/github/callback?state=opaque&code=code-1', {
+      headers: { host: 'app.matrix-os.com' },
+    });
+    expect(callback.status).toBe(200);
+    expect(await callback.json()).toEqual({ callback: true });
+    expect((await server.request('/api/integrations/oauth/github/other', {
+      headers: { host: 'app.matrix-os.com' },
+    })).status).toBe(401);
+    expect((await app().request('/api/integrations/oauth/github/callback', {
+      headers: { host: 'app.matrix-os.com' },
+    })).status).toBe(503);
+  });
+
   it('preserves configured routes', async () => {
     const routes = new Hono().get('/', c => c.json([{ id: 'existing' }]));
     const response = await app(routes).request('/api/integrations', { headers: headers() });

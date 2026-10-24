@@ -95,7 +95,28 @@ PIPEDREAM_PROJECT_ID=...
 PIPEDREAM_WEBHOOK_SECRET=...
 ```
 
-Do not copy `PIPEDREAM_*`, Clerk server secrets, platform DB credentials, or `PLATFORM_SECRET` into customer VPS env files. Customer VPS gateways call the platform through `PLATFORM_INTERNAL_URL` with a per-host `UPGRADE_TOKEN`.
+Matrix-owned GitHub OAuth is an independent, default-off transport layered on
+the integration runtime. Create a GitHub OAuth App with the exact callback below,
+store the three sensitive values in Secret Manager, and enable the gate only
+after the Web/Electron and Native Mobile completion flows are deployed:
+
+```bash
+GITHUB_INTEGRATION_OAUTH_ENABLED=true
+GITHUB_OAUTH_CLIENT_ID=github-oauth-client-id
+GITHUB_OAUTH_CLIENT_SECRET=github-oauth-client-secret
+GITHUB_OAUTH_ENCRYPTION_KEY=github-oauth-encryption-key
+GITHUB_OAUTH_CALLBACK_URL=https://app.matrix-os.com/api/integrations/oauth/github/callback
+GITHUB_OAUTH_WEB_COMPLETION_URL=https://app.matrix-os.com/integrations
+```
+
+The encryption key must decode to exactly 32 bytes and must not reuse any other
+platform secret. Disabling the gate restores the legacy Pipedream GitHub path;
+other Pipedream integrations are unaffected.
+
+Do not copy `PIPEDREAM_*`, `GITHUB_OAUTH_*`, Clerk server secrets, platform DB
+credentials, or `PLATFORM_SECRET` into customer VPS env files. Customer VPS
+gateways call the platform through `PLATFORM_INTERNAL_URL` with a per-host
+`UPGRADE_TOKEN`.
 
 Hosted billing must be configured before promoting production Cloud Run
 revisions. Missing Stripe price IDs break the signed-in no-VPS path because the

@@ -24,7 +24,7 @@ export interface DirectApi {
 }
 
 export type IntegrationActionRisk = "read" | "write" | "destructive";
-export type IntegrationConnectorKind = "pipedream" | "mcp_preset" | "managed_oauth";
+export type IntegrationConnectorKind = "pipedream" | "github_oauth" | "mcp_preset" | "managed_oauth";
 
 export interface ServiceAction {
   description: string;

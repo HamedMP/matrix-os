@@ -50,6 +50,24 @@ export interface ConnectedServicesTable {
   last_used_at: Date | null;
 }
 
+export type GitHubConnectionStatus = "active" | "expired" | "revocation_pending";
+
+export interface GitHubOAuthConnectionsTable {
+  id: string;
+  user_id: string;
+  github_user_id: string;
+  login: string;
+  account_label: string;
+  account_email: string | null;
+  scopes: string[];
+  status: GitHubConnectionStatus;
+  revision: number;
+  encrypted_credentials: string;
+  connected_at: Date;
+  updated_at: Date;
+  last_used_at: Date | null;
+}
+
 export interface UserAppsTable {
   id: string;
   user_id: string;
@@ -104,6 +122,7 @@ export interface CustomMcpServersTable {
 export interface PlatformDatabase {
   users: UsersTable;
   connected_services: ConnectedServicesTable;
+  github_oauth_connections: GitHubOAuthConnectionsTable;
   user_apps: UserAppsTable;
   event_subscriptions: EventSubscriptionsTable;
   billing: BillingTable;
@@ -134,6 +153,16 @@ export interface ConnectServiceInput {
   accountLabel: string;
   accountEmail?: string;
   scopes: string[];
+}
+
+export interface ConnectGitHubServiceInput {
+  userId: string;
+  githubUserId: string;
+  login: string;
+  accountLabel: string;
+  accountEmail: string | null;
+  scopes: string[];
+  encryptedCredentials: string;
 }
 
 export interface CreateUserAppInput {
@@ -198,6 +227,20 @@ export interface PlatformDb extends CustomMcpApprovalStore {
   updateAccountEmail(id: string, email: string): Promise<void>;
   updateAccountLabel(id: string, label: string): Promise<void>;
   touchServiceUsage(id: string): Promise<void>;
+
+  connectGitHubService(input: ConnectGitHubServiceInput): Promise<GitHubOAuthConnectionsTable>;
+  listGitHubConnections(userId: string): Promise<GitHubOAuthConnectionsTable[]>;
+  getGitHubConnection(id: string): Promise<GitHubOAuthConnectionsTable | null>;
+  claimGitHubConnectionRevocation(id: string, userId: string, revision: number,
+    expectedEncrypted: string): Promise<GitHubOAuthConnectionsTable | null>;
+  deleteGitHubConnectionIfClaimed(id: string, userId: string, revision: number,
+    expectedEncrypted: string): Promise<boolean>;
+  updateGitHubCredentialsIfCurrent(id: string, userId: string, revision: number,
+    expectedEncrypted: string, encryptedCredentials: string): Promise<boolean>;
+  updateGitHubAccountLabel(id: string, userId: string, label: string): Promise<GitHubOAuthConnectionsTable | null>;
+  markGitHubConnectionExpiredIfCurrent(id: string, userId: string, revision: number,
+    expectedEncrypted: string): Promise<boolean>;
+  touchGitHubConnectionUsage(id: string, userId: string): Promise<void>;
 
   createUserApp(input: CreateUserAppInput): Promise<UserAppsTable>;
   listUserApps(userId: string): Promise<UserAppsTable[]>;
@@ -329,6 +372,24 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
           connected_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
           last_used_at         TIMESTAMPTZ,
           UNIQUE(user_id, pipedream_account_id)
+        )
+      `.execute(kysely);
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS github_oauth_connections (
+          id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id               UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+          github_user_id        TEXT NOT NULL CHECK (github_user_id ~ '^[0-9]{1,20}$'),
+          login                 TEXT NOT NULL CHECK (char_length(login) BETWEEN 1 AND 39),
+          account_label         TEXT NOT NULL CHECK (char_length(account_label) BETWEEN 1 AND 100),
+          account_email         TEXT,
+          scopes                TEXT[] NOT NULL,
+          status                TEXT NOT NULL CHECK (status IN ('active', 'expired', 'revocation_pending')),
+          revision              INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+          encrypted_credentials TEXT NOT NULL,
+          connected_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+          last_used_at          TIMESTAMPTZ
         )
       `.execute(kysely);
 
@@ -626,6 +687,109 @@ export function createPlatformDb(opts: string | { dialect: any; now?: () => Date
         .set({ last_used_at: sql`now()` })
         .where("id", "=", id)
         .execute();
+    },
+
+    async connectGitHubService(input: ConnectGitHubServiceInput): Promise<GitHubOAuthConnectionsTable> {
+      return kysely.transaction().execute(async (trx) => {
+        const row = await trx
+          .insertInto("github_oauth_connections")
+          .values({
+            id: randomUUID(),
+            user_id: input.userId,
+            github_user_id: input.githubUserId,
+            login: input.login,
+            account_label: input.accountLabel,
+            account_email: input.accountEmail,
+            scopes: input.scopes,
+            status: "active",
+            revision: 1,
+            encrypted_credentials: input.encryptedCredentials,
+            connected_at: sql`now()`,
+            updated_at: sql`now()`,
+            last_used_at: null,
+          })
+          .onConflict((oc) => oc.column("user_id").doUpdateSet({
+            github_user_id: input.githubUserId,
+            login: input.login,
+            account_label: input.accountLabel,
+            account_email: input.accountEmail,
+            scopes: input.scopes,
+            status: "active",
+            revision: sql`github_oauth_connections.revision + 1`,
+            encrypted_credentials: input.encryptedCredentials,
+            updated_at: sql`now()`,
+          }))
+          .returningAll()
+          .executeTakeFirstOrThrow();
+        await trx
+          .updateTable("connected_services")
+          .set({ status: "revoked" })
+          .where("user_id", "=", input.userId)
+          .where("service", "=", "github")
+          .where("status", "=", "active")
+          .execute();
+        return row;
+      });
+    },
+
+    async listGitHubConnections(userId: string): Promise<GitHubOAuthConnectionsTable[]> {
+      return kysely.selectFrom("github_oauth_connections").selectAll()
+        .where("user_id", "=", userId).where("status", "!=", "revocation_pending")
+        .orderBy("connected_at", "desc").execute();
+    },
+
+    async getGitHubConnection(id: string): Promise<GitHubOAuthConnectionsTable | null> {
+      return await kysely.selectFrom("github_oauth_connections").selectAll()
+        .where("id", "=", id).executeTakeFirst() ?? null;
+    },
+
+    async claimGitHubConnectionRevocation(id: string, userId: string, revision: number,
+      expectedEncrypted: string): Promise<GitHubOAuthConnectionsTable | null> {
+      return await kysely.updateTable("github_oauth_connections")
+        .set({ status: "revocation_pending", revision: sql`revision + 1`, updated_at: sql`now()` })
+        .where("id", "=", id).where("user_id", "=", userId).where("revision", "=", revision)
+        .where("encrypted_credentials", "=", expectedEncrypted).where("status", "in", ["active", "expired"])
+        .returningAll().executeTakeFirst() ?? null;
+    },
+
+    async deleteGitHubConnectionIfClaimed(id: string, userId: string, revision: number,
+      expectedEncrypted: string): Promise<boolean> {
+      return Boolean(await kysely.deleteFrom("github_oauth_connections")
+        .where("id", "=", id).where("user_id", "=", userId).where("revision", "=", revision)
+        .where("encrypted_credentials", "=", expectedEncrypted).where("status", "=", "revocation_pending")
+        .returning("id").executeTakeFirst());
+    },
+
+    async updateGitHubCredentialsIfCurrent(id: string, userId: string, revision: number,
+      expectedEncrypted: string, encryptedCredentials: string): Promise<boolean> {
+      return Boolean(await kysely.updateTable("github_oauth_connections")
+        .set({ encrypted_credentials: encryptedCredentials, updated_at: sql`now()` })
+        .where("id", "=", id).where("user_id", "=", userId).where("revision", "=", revision)
+        .where("encrypted_credentials", "=", expectedEncrypted).where("status", "=", "active")
+        .returning("id").executeTakeFirst());
+    },
+
+    async updateGitHubAccountLabel(id: string, userId: string,
+      label: string): Promise<GitHubOAuthConnectionsTable | null> {
+      return await kysely.updateTable("github_oauth_connections")
+        .set({ account_label: label, updated_at: sql`now()` })
+        .where("id", "=", id).where("user_id", "=", userId)
+        .where("status", "!=", "revocation_pending")
+        .returningAll().executeTakeFirst() ?? null;
+    },
+
+    async markGitHubConnectionExpiredIfCurrent(id: string, userId: string, revision: number,
+      expectedEncrypted: string): Promise<boolean> {
+      return Boolean(await kysely.updateTable("github_oauth_connections")
+        .set({ status: "expired", updated_at: sql`now()` })
+        .where("id", "=", id).where("user_id", "=", userId).where("revision", "=", revision)
+        .where("encrypted_credentials", "=", expectedEncrypted).where("status", "=", "active")
+        .returning("id").executeTakeFirst());
+    },
+
+    async touchGitHubConnectionUsage(id: string, userId: string): Promise<void> {
+      await kysely.updateTable("github_oauth_connections").set({ last_used_at: sql`now()` })
+        .where("id", "=", id).where("user_id", "=", userId).where("status", "=", "active").execute();
     },
 
     async createUserApp(input: CreateUserAppInput): Promise<UserAppsTable> {

@@ -29,6 +29,7 @@ export interface AccountDeletionAdapterOptions {
   matrixHomeserverUrl?: string;
   apple?: AppleDeletionConfig;
   pipedream?: { listAccounts(externalUserId: string): Promise<Array<{ id: string }>>; revokeAccount(id: string): Promise<void> };
+  github?: { disconnect(userId: string, connectionId: string): Promise<boolean> };
   customMcp?: { remove(userId: string, serverId: string): Promise<void> };
   twilio?: { accountSid: string; authToken: string; publicBaseUrl: string };
   fetch?: typeof fetch;
@@ -249,6 +250,17 @@ export function createAccountDeletionAdapters(options: AccountDeletionAdapterOpt
             if (ids.length > 1000) throw new Error('Integration cleanup capacity exceeded');
             for (const id of ids) await options.pipedream.revokeAccount(id);
             await sql`UPDATE connected_services SET status='revoked' WHERE user_id=${user.id}`.execute(db.executor);
+          }
+        }
+      }
+      if (await hasTable(db,'github_oauth_connections')) {
+        for (const user of users) {
+          const connections = await sql<{id:string}>`SELECT id FROM github_oauth_connections
+            WHERE user_id=${user.id} LIMIT 1001`.execute(db.executor);
+          if (connections.rows.length > 1000) throw new Error('Integration cleanup capacity exceeded');
+          if (connections.rows.length && !options.github) throw new Error('Integration cleanup configuration unavailable');
+          for (const connection of connections.rows) {
+            await options.github!.disconnect(user.id, connection.id);
           }
         }
       }

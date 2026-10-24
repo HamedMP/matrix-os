@@ -27,6 +27,7 @@ export interface AccountDeletionRuntime {
 export async function createConfiguredAccountDeletionRuntime(input:{
  db:PlatformDB;env:NodeJS.ProcessEnv;customerVpsService?:CustomerVpsService;backgroundWorkersEnabled?:boolean;
  pipedream?:AccountDeletionAdapterOptions['pipedream'];
+ github?:AccountDeletionAdapterOptions['github'];
  customMcp?:AccountDeletionAdapterOptions['customMcp'];
 }):Promise<AccountDeletionRuntime|undefined> {
  const env=input.env;
@@ -48,7 +49,7 @@ export async function createConfiguredAccountDeletionRuntime(input:{
  ownerHash:owner=>hashAccountDeletionOwner(owner,secret),
  customerVpsService:input.customerVpsService,
  hetzner:input.customerVpsService?createHetznerClient(loadCustomerVpsConfig(env)):undefined,
- stripeSecretKey:env.STRIPE_SECRET_KEY,pipedream:input.pipedream,customMcp:input.customMcp,matrixHomeserverUrl:env.MATRIX_HOMESERVER_URL,
+ stripeSecretKey:env.STRIPE_SECRET_KEY,pipedream:input.pipedream,github:input.github,customMcp:input.customMcp,matrixHomeserverUrl:env.MATRIX_HOMESERVER_URL,
  apple:appleValues.every(Boolean)?{teamId:env.APPLE_TEAM_ID!,keyId:env.APPLE_KEY_ID!,privateKey:env.APPLE_PRIVATE_KEY!,
  serviceId:env.APPLE_SERVICES_ID!,nativeClientId:env.APPLE_NATIVE_CLIENT_ID!}:undefined,
  twilio:env.TWILIO_ACCOUNT_SID&&env.TWILIO_AUTH_TOKEN?{accountSid:env.TWILIO_ACCOUNT_SID,authToken:env.TWILIO_AUTH_TOKEN,

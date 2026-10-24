@@ -457,6 +457,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     }
     const isPublicIntegrationPath =
       reqPath === '/api/integrations/available' ||
+      (c.req.method === 'GET' && reqPath === '/api/integrations/oauth/github/callback') ||
       reqPath.startsWith('/api/integrations/webhook/');
     const isIntegrationPath =
       reqPath === '/api/integrations' || reqPath.startsWith('/api/integrations/');

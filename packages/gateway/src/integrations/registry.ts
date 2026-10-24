@@ -100,6 +100,7 @@ export const SERVICE_REGISTRY: Record<string, ServiceDefinition> = defineService
     id: "github",
     name: "GitHub",
     category: "developer",
+    connectorKind: "github_oauth",
     pipedreamApp: "github",
     icon: "github",
     logoUrl: `${LOGO_BASE}/github/logo/48`,
@@ -751,7 +752,9 @@ export function getService(id: string): ServiceDefinition | undefined {
 
 /** Resolve only the provider's exact connector slug, preserving Matrix's canonical service ID. */
 export function getServiceByPipedreamApp(slug: string): ServiceDefinition | undefined {
-  return Object.values(SERVICE_REGISTRY).find(service => service.connectorKind === "pipedream" && service.pipedreamApp === slug);
+  return Object.values(SERVICE_REGISTRY).find(service =>
+    (service.connectorKind === "pipedream" || service.connectorKind === "github_oauth")
+    && service.pipedreamApp === slug);
 }
 
 export function listServices(): ServiceDefinition[] {

@@ -46,7 +46,7 @@ import {
   PlatformStartupConfigError,
   loadPlatformRuntimeConfig,
 } from './runtime-mode.js';
-import { resolvePlatformIntegrationConfig } from './integration-config.js';
+import { resolveGitHubIntegrationConfig, resolvePlatformIntegrationConfig } from './integration-config.js';
 import { createInternalCustomMcpApprovalRouteOptions } from './custom-mcp-approval-route-options.js';
 import { createPreviewDriveIntegration } from './preview-drive-integration.js';
 import { createPreviewDriveStore } from './preview-drive-store.js';
@@ -201,6 +201,8 @@ interface GatewayIntegrationRoutesModule {
     resolveUserId: (c: Context) => Promise<string | null>;
     authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
     mcpPresetBroker?: unknown;
+    githubBroker?: unknown;
+    githubCompletionUrls?: { web: string; mobile: string };
     verifiedConnectedWebhook?: ReturnType<typeof createAccountDeletionIntegrationWebhookAdmission>;
   }): Hono;
   executeIntegrationAction(opts: {
@@ -209,6 +211,31 @@ interface GatewayIntegrationRoutesModule {
     def: any; actionDef: any; serviceId: string; actionId: string;
     params: Record<string, unknown>;
   }): Promise<{ data: unknown; summary?: string }>;
+}
+
+interface GatewayGitHubOAuthModule {
+  GitHubOAuthClient: new (options: {
+    clientId: string;
+    clientSecret: string;
+    callbackUrl: string;
+  }) => unknown;
+}
+
+interface GatewayGitHubIntegrationModule {
+  GitHubIntegrationBroker: new (options: {
+    db: GatewayPlatformDb;
+    client: unknown;
+    clientId: string;
+    callbackUrl: string;
+    encryptionKey: Buffer;
+  }) => {
+    disconnect(userId: string, connectionId: string): Promise<boolean>;
+  };
+}
+
+interface GatewayGitHubCryptoModule {
+  parseGitHubCredentialEncryptionKey(value?: string): Buffer;
+  decryptGitHubOAuthState<T>(envelope: string, key: Buffer): T;
 }
 
 interface GatewayIntegrationRegistryModule {
@@ -496,7 +523,9 @@ async function startPlatformServerWithCleanup(
   }
 
   let deletionPipedream: AccountDeletionAdapterOptions['pipedream'];
+  let deletionGitHub: AccountDeletionAdapterOptions['github'];
   let deletionCustomMcp: AccountDeletionAdapterOptions['customMcp'];
+  let integrationDbShutdown: (() => Promise<void>) | undefined;
   let integrationRoutes: Hono | undefined;
   let internalIntegrationRoutes: Hono | undefined;
   let previewDriveIntegration: PreviewDriveIntegration | undefined;
@@ -524,6 +553,10 @@ async function startPlatformServerWithCleanup(
     disconnect: (userId: string, connectionId: string) => managedMcpPresetBroker?.disconnect(userId, connectionId) ?? Promise.resolve(false),
   };
   const integrationConfig = resolvePlatformIntegrationConfig(process.env, runtimeConfig.platformDatabaseUrl);
+  const githubIntegrationConfig = resolveGitHubIntegrationConfig(process.env);
+  if (githubIntegrationConfig && !integrationConfig) {
+    throw new Error('GitHub OAuth requires the managed integration runtime');
+  }
   if (integrationConfig) {
     const [
       { createIntegrationRoutes, executeIntegrationAction, authorizeInternalJevLabels },
@@ -538,6 +571,14 @@ async function startPlatformServerWithCleanup(
     ]);
 
     const trustedPlatformDb = createGatewayPlatformDb(integrationConfig.platformDatabaseUrl);
+    let integrationDbClosed = false;
+    const closeIntegrationDb = async () => {
+      if (integrationDbClosed) return;
+      integrationDbClosed = true;
+      await trustedPlatformDb.destroy();
+    };
+    integrationDbShutdown = closeIntegrationDb;
+    registerCustomMcpStartupCleanup(closeIntegrationDb);
     await trustedPlatformDb.migrate();
     const pipedream = await createPipedreamClient({
       clientId: integrationConfig.pipedreamClientId,
@@ -549,6 +590,31 @@ async function startPlatformServerWithCleanup(
     const verifiedConnectedWebhook=process.env.ACCOUNT_DELETION_SECRET===undefined?undefined:
       createAccountDeletionIntegrationWebhookAdmission({db,pipedream,env:process.env});
     const webhookSecret = integrationConfig.pipedreamWebhookSecret;
+    let githubBroker: InstanceType<GatewayGitHubIntegrationModule['GitHubIntegrationBroker']> | undefined;
+    let githubCryptoModule: GatewayGitHubCryptoModule | undefined;
+    let githubEncryptionKey: Buffer | undefined;
+    if (githubIntegrationConfig) {
+      const [githubOAuthModule, githubIntegrationModule, loadedGitHubCryptoModule] = await Promise.all([
+        importRuntimeModule<GatewayGitHubOAuthModule>('../../gateway/dist/integrations/github-oauth.js'),
+        importRuntimeModule<GatewayGitHubIntegrationModule>('../../gateway/dist/integrations/github-integration.js'),
+        importRuntimeModule<GatewayGitHubCryptoModule>('../../gateway/dist/integrations/github-credential-crypto.js'),
+      ]);
+      githubCryptoModule = loadedGitHubCryptoModule;
+      githubEncryptionKey = githubCryptoModule.parseGitHubCredentialEncryptionKey(githubIntegrationConfig.encryptionKey);
+      const githubClient = new githubOAuthModule.GitHubOAuthClient({
+        clientId: githubIntegrationConfig.clientId,
+        clientSecret: githubIntegrationConfig.clientSecret,
+        callbackUrl: githubIntegrationConfig.callbackUrl,
+      });
+      githubBroker = new githubIntegrationModule.GitHubIntegrationBroker({
+        db: trustedPlatformDb,
+        client: githubClient,
+        clientId: githubIntegrationConfig.clientId,
+        callbackUrl: githubIntegrationConfig.callbackUrl,
+        encryptionKey: githubEncryptionKey,
+      });
+      deletionGitHub = { disconnect: (userId, connectionId) => githubBroker!.disconnect(userId, connectionId) };
+    }
     const resolveIntegrationUserId = async (clerkUserId: string | undefined, handle: string | undefined) => {
       if (!clerkUserId) return null;
       const existing = await trustedPlatformDb!.getUserByClerkId(clerkUserId);
@@ -572,7 +638,7 @@ async function startPlatformServerWithCleanup(
       return user.id;
     };
 
-    integrationRoutes = createIntegrationRoutes({
+    const publicIntegrationRoutes = createIntegrationRoutes({
       db: trustedPlatformDb,
       pipedream,
       webhookSecret,
@@ -582,8 +648,34 @@ async function startPlatformServerWithCleanup(
         const handle = c.get('platformHandle') as string | undefined;
         return await resolveIntegrationUserId(clerkUserId, handle);
       },
+      ...(githubBroker && githubIntegrationConfig ? {
+        githubBroker,
+        githubCompletionUrls: {
+          web: githubIntegrationConfig.webCompletionUrl,
+          mobile: githubIntegrationConfig.mobileCompletionUrl,
+        },
+      } : {}),
       ...(process.env.CUSTOM_MCP_ENABLED === 'true' ? { mcpPresetBroker: managedMcpPresetProxy } : {}),
     });
+    if (githubBroker && githubCryptoModule && githubEncryptionKey) {
+      const githubCallbackRoutes = new Hono();
+      githubCallbackRoutes.use('/oauth/github/callback', createAccountDeletionMutationGuard({
+        db,
+        env: process.env,
+        isMutation: () => true,
+        resolveOwner: async c => {
+          const state = z.string().min(32).max(8_192).parse(c.req.query('state'));
+          const decoded = z.object({ userId: z.uuid() }).parse(
+            githubCryptoModule!.decryptGitHubOAuthState<{ userId: unknown }>(state, githubEncryptionKey!),
+          );
+          return (await trustedPlatformDb!.getUserById(decoded.userId))?.clerk_id;
+        },
+      }));
+      githubCallbackRoutes.route('/', publicIntegrationRoutes);
+      integrationRoutes = githubCallbackRoutes;
+    } else {
+      integrationRoutes = publicIntegrationRoutes;
+    }
     internalIntegrationRoutes = createIntegrationRoutes({
       db: trustedPlatformDb,
       pipedream,
@@ -595,6 +687,13 @@ async function startPlatformServerWithCleanup(
         const handle = c.get('internalContainerHandle') as string | undefined;
         return await resolveIntegrationUserId(clerkUserId, handle);
       },
+      ...(githubBroker && githubIntegrationConfig ? {
+        githubBroker,
+        githubCompletionUrls: {
+          web: githubIntegrationConfig.webCompletionUrl,
+          mobile: githubIntegrationConfig.mobileCompletionUrl,
+        },
+      } : {}),
       ...(process.env.CUSTOM_MCP_ENABLED === 'true' ? { mcpPresetBroker: managedMcpPresetProxy } : {}),
     });
     previewDriveIntegration = createPreviewDriveIntegration({
@@ -1053,7 +1152,8 @@ async function startPlatformServerWithCleanup(
   const legacyContainerRoutingEnabled =
     appEnv.MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED === 'true' && !customerVpsService;
   const accountDeletion = await createConfiguredAccountDeletionRuntime({
-    db, env: appEnv, customerVpsService, backgroundWorkersEnabled, pipedream: deletionPipedream, customMcp: deletionCustomMcp,
+    db, env: appEnv, customerVpsService, backgroundWorkersEnabled, pipedream: deletionPipedream,
+    github: deletionGitHub, customMcp: deletionCustomMcp,
   });
   registerCustomMcpStartupCleanup(async () => {
     accountDeletion?.stop();
@@ -1153,6 +1253,7 @@ async function startPlatformServerWithCleanup(
           containerProxyDispatcher.close(),
           customerVpsProxyDispatcher.close(),
           customMcpShutdown?.(),
+           integrationDbShutdown?.(),
         ]);
         posthogProcessErrors.dispose();
         await shutdownPlatformApp(app);

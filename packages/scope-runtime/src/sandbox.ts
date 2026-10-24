@@ -36,6 +36,8 @@ export const FORBIDDEN_SANDBOX_ENVIRONMENT = Object.freeze([
   "UPGRADE_TOKEN",
   "DATABASE_URL",
   "PIPEDREAM_CLIENT_SECRET",
+  "GITHUB_OAUTH_CLIENT_SECRET",
+  "GITHUB_OAUTH_ENCRYPTION_KEY",
 ] as const);
 
 /** Host locations that hold owner credentials; hidden even if a bind mount reaches near them. */

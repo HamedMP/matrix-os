@@ -47,6 +47,13 @@ const CallBodySchema = z.object({
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
+const GitHubCallbackQuerySchema = z.strictObject({
+  state: z.string().min(1).max(8_192),
+  code: z.string().min(1).max(512).optional(),
+  error: z.string().regex(/^[A-Za-z0-9_.-]{1,128}$/).optional(),
+  error_description: z.string().max(512).optional(),
+}).refine((value) => Boolean(value.code) !== Boolean(value.error));
+
 // ---------------------------------------------------------------------------
 // Per-action param validation
 // ---------------------------------------------------------------------------
@@ -128,6 +135,36 @@ export interface IntegrationBroadcast {
   (msg: { type: "integration:expired"; service: string; id: string; accountLabel: string }): void;
 }
 
+export interface GitHubIntegrationRoutesBroker {
+  start(userId: string, input: { label?: string; redirectTarget: "web" | "mobile" }): string;
+  resolveRedirectTarget(state: string): "web" | "mobile";
+  complete(state: string, code: string): Promise<{
+    redirectTarget: "web" | "mobile";
+    connection: GitHubConnectionProjection;
+  }>;
+  listConnections(userId: string): Promise<GitHubConnectionProjection[]>;
+  call(input: {
+    userId: string;
+    connectionId?: string;
+    action: ServiceDefinition["actions"][string];
+    params?: Record<string, unknown>;
+  }): Promise<{ data: unknown }>;
+  disconnect(userId: string, connectionId: string): Promise<boolean>;
+  rename(userId: string, connectionId: string, label: string): Promise<GitHubConnectionProjection>;
+  refreshConnection(userId: string, connectionId: string): Promise<GitHubConnectionProjection>;
+}
+
+interface GitHubConnectionProjection {
+  id: string;
+  service: "github";
+  account_label: string;
+  account_email: string | null;
+  scopes: string[];
+  status: string;
+  connected_at: Date | string;
+  last_used_at: Date | string | null;
+}
+
 export interface IntegrationRoutesOpts {
   db: PlatformDb;
   pipedream: PipedreamConnectClient;
@@ -136,6 +173,8 @@ export interface IntegrationRoutesOpts {
   authorizeJevLabelCall?: (c: Context) => Promise<boolean>;
   broadcast?: IntegrationBroadcast;
   verifiedConnectedWebhook?: VerifiedConnectedWebhookAdmission;
+  githubBroker?: GitHubIntegrationRoutesBroker;
+  githubCompletionUrls?: { web: string; mobile: string };
   mcpPresetBroker?: {
     listConnections(userId: string): Promise<Array<{
       id: string;
@@ -239,10 +278,12 @@ function createPendingLabelQueue() {
 }
 
 export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
-  const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker } = opts;
+  const { db, pipedream, webhookSecret, resolveUserId, broadcast, mcpPresetBroker, githubBroker } = opts;
   const emit = broadcast ?? (() => {});
   const app = new Hono();
-  app.route("/", createIntegrationReadCallRoutes({ db, pipedream, resolveUserId, presetBroker: mcpPresetBroker }));
+  app.route("/", createIntegrationReadCallRoutes({
+    db, pipedream, resolveUserId, presetBroker: mcpPresetBroker, githubBroker,
+  }));
   app.route("/", createJevLabelCallRoutes({ db, pipedream, resolveUserId, authorizeInternal: opts.authorizeJevLabelCall }));
 
   const { enqueuePendingLabel, consumePendingLabel } = createPendingLabelQueue();
@@ -307,7 +348,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       const services = listServices();
       const results = await Promise.allSettled(
         services.filter(
-          (service) => service.connectorKind === "pipedream"
+          (service) => (service.connectorKind === "pipedream"
+            || (service.connectorKind === "github_oauth" && !githubBroker))
             && service.pipedreamApp
             && service.logoUrl.startsWith("https://pipedream.com/"),
         ).map(async (s) => {
@@ -401,7 +443,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const uid = await requireUser(c);
     if (!uid) return c.json({ error: "Unauthorized" }, 401);
     const services = [
-      ...await db.listConnectedServices(uid),
+      ...(await db.listConnectedServices(uid)).filter((service) => !githubBroker || service.service !== "github"),
+      ...(githubBroker ? await githubBroker.listConnections(uid) : []),
       ...(mcpPresetBroker ? await mcpPresetBroker.listConnections(uid) : []),
     ];
     return c.json(services.map(({ id, service, account_label, account_email, scopes, status, connected_at, last_used_at }) => ({
@@ -427,7 +470,9 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
 
       const newAccounts = pdAccounts.flatMap(acc => {
         const service = getServiceByPipedreamApp(acc.app);
-        return !existingPdIds.has(acc.id) && service ? [{ ...acc, serviceId: service.id }] : [];
+        return !existingPdIds.has(acc.id) && service && (!githubBroker || service.id !== "github")
+          ? [{ ...acc, serviceId: service.id }]
+          : [];
       });
 
       // Resolve emails for new accounts missing them
@@ -483,7 +528,8 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       );
 
       const services = [
-        ...await db.listConnectedServices(uid),
+        ...(await db.listConnectedServices(uid)).filter((service) => !githubBroker || service.service !== "github"),
+        ...(githubBroker ? await githubBroker.listConnections(uid) : []),
         ...(mcpPresetBroker ? await mcpPresetBroker.listConnections(uid) : []),
       ];
       return c.json({ synced, services });
@@ -520,6 +566,19 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: `Unknown service: ${service}` }, 400);
     }
 
+    if (def.connectorKind === "github_oauth" && githubBroker) {
+      try {
+        const url = githubBroker.start(uid, {
+          ...(label ? { label } : {}),
+          redirectTarget: redirectUri === MOBILE_INTEGRATIONS_REDIRECT_URI ? "mobile" : "web",
+        });
+        return c.json({ url, service });
+      } catch (err: unknown) {
+        console.error("[integrations] GitHub connect failed:", err instanceof Error ? err.name : typeof err);
+        return c.json({ error: "Failed to initiate connection. Please try again." }, 502);
+      }
+    }
+
     if (def.connectorKind === "mcp_preset" || def.connectorKind === "managed_oauth") {
       if (!mcpPresetBroker) return c.json({ error: "Service connection unavailable" }, 503);
       try {
@@ -553,6 +612,41 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     }
 
     return c.json({ url, service });
+  });
+
+  app.get("/oauth/github/callback", async (c) => {
+    if (!githubBroker || !opts.githubCompletionUrls) {
+      return c.json({ error: "Integration service unavailable" }, 503);
+    }
+    const query = GitHubCallbackQuerySchema.safeParse(c.req.query());
+    if (!query.success) return c.json({ error: "Invalid authorization response" }, 400);
+    const { state, code, error } = query.data;
+    let redirectTarget: "web" | "mobile";
+    try {
+      redirectTarget = githubBroker.resolveRedirectTarget(state);
+    } catch (err: unknown) {
+      console.warn("[integrations] Invalid GitHub callback state:", err instanceof Error ? err.name : typeof err);
+      return c.json({ error: "Invalid authorization response" }, 400);
+    }
+    const completionUrl = (status: "connected" | "error") => {
+      const url = new URL(opts.githubCompletionUrls![redirectTarget]);
+      url.searchParams.set("service", "github");
+      url.searchParams.set("status", status);
+      return url.toString();
+    };
+    if (error || !code) return c.redirect(completionUrl("error"));
+    try {
+      const completed = await githubBroker.complete(state, code);
+      if (completed.redirectTarget !== redirectTarget) {
+        console.error("[integrations] GitHub callback redirect target mismatch");
+        return c.json({ error: "Invalid authorization response" }, 400);
+      }
+      emit({ type: "integration:connected", service: "github", accountLabel: completed.connection.account_label });
+      return c.redirect(completionUrl("connected"));
+    } catch (err: unknown) {
+      console.error("[integrations] GitHub callback failed:", err instanceof Error ? err.name : typeof err);
+      return c.redirect(completionUrl("error"));
+    }
   });
 
   // -----------------------------------------------------------------------
@@ -597,7 +691,7 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
       return c.json({ error: `Unknown action: ${action} for service ${service}` }, 400);
     }
 
-    // Validate action params against the registry definition
+    // Validate before selecting or contacting any connector.
     const paramValidation = validateActionParams(actionDef, params);
     if (!paramValidation.valid) {
       return c.json({
@@ -606,6 +700,26 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         type_errors: paramValidation.typeErrors.length > 0 ? paramValidation.typeErrors : undefined,
         value_errors: paramValidation.valueErrors?.length ? paramValidation.valueErrors : undefined,
       }, 400);
+    }
+
+    if (def.connectorKind === "github_oauth" && githubBroker) {
+      try {
+        const selected = await resolveManagedIntegrationCall({
+          service, label, connectionId, listConnections: () => githubBroker.listConnections(uid),
+        });
+        if (selected.kind === "ambiguous") return c.json({ error: AMBIGUOUS_CONNECTION_ERROR }, 409);
+        if (selected.kind === "denied") return c.json({ error: "Action not permitted" }, 403);
+        const result = await githubBroker.call({
+          userId: uid,
+          action: actionDef,
+          params,
+          ...(selected.kind === "found" ? { connectionId: selected.connectionId } : {}),
+        });
+        return c.json({ data: result.data, service, action });
+      } catch (err: unknown) {
+        console.error("[integrations] GitHub call failed:", err instanceof Error ? err.name : typeof err);
+        return c.json({ error: "Integration call failed" }, 502);
+      }
     }
 
     if (def.connectorKind === "mcp_preset" || def.connectorKind === "managed_oauth") {
@@ -662,7 +776,9 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
         const existingPdIds = new Set(connections.map((s) => s.pipedream_account_id));
         const newAccounts = pdAccounts.flatMap(acc => {
           const matchedService = getServiceByPipedreamApp(acc.app);
-          return !existingPdIds.has(acc.id) && matchedService ? [{ ...acc, serviceId: matchedService.id }] : [];
+          return !existingPdIds.has(acc.id) && matchedService && (!githubBroker || matchedService.id !== "github")
+            ? [{ ...acc, serviceId: matchedService.id }]
+            : [];
         });
         if (newAccounts.length > 0) {
           await Promise.all(
@@ -751,8 +867,13 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     if (!uid) return c.json({ error: "Unauthorized" }, 401);
 
     const id = c.req.param("id");
+    if (!UUID_RE.test(id)) return c.json({ error: "Invalid ID" }, 400);
     const result = await requireOwnedService(c, id, uid);
     if (result === "invalid") return c.json({ error: "Invalid ID" }, 400);
+    if (result === null && githubBroker) {
+      const connection = (await githubBroker.listConnections(uid)).find((item) => item.id === id);
+      if (connection) return c.json(connection);
+    }
     if (result === null) return c.json({ error: "Not found" }, 404);
     if (result === "forbidden") return c.json({ error: "Forbidden" }, 403);
 
@@ -781,6 +902,17 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     if (result === "forbidden") return c.json({ error: "Forbidden" }, 403);
 
     if (result === null) {
+      if (githubBroker) {
+        try {
+          if (await githubBroker.disconnect(uid, id)) {
+            emit({ type: "integration:disconnected", service: "github", id });
+            return c.json({ ok: true });
+          }
+        } catch (err: unknown) {
+          console.error("[integrations] GitHub disconnect error:", err instanceof Error ? err.name : typeof err);
+          return c.json({ error: "Integration service unavailable" }, 503);
+        }
+      }
       if (!mcpPresetBroker) return c.json({ error: "Not found" }, 404);
       try {
         if (await mcpPresetBroker.disconnect(uid, id)) {
@@ -828,6 +960,24 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
     const id = c.req.param("id");
     const result = await requireOwnedService(c, id, uid);
     if (result === "invalid") return c.json({ error: "Invalid ID" }, 400);
+    if (result === null && githubBroker) {
+      let body: unknown;
+      try {
+        body = await c.req.json();
+      } catch (err: unknown) {
+        console.warn("[integrations] Invalid label JSON:", err instanceof Error ? err.message : String(err));
+        return c.json({ error: "Invalid JSON" }, 400);
+      }
+      const parsed = LabelPatchSchema.safeParse(body);
+      if (!parsed.success) return c.json({ error: "Invalid request body", details: parsed.error.issues }, 400);
+      try {
+        const connection = await githubBroker.rename(uid, id, parsed.data.label);
+        return c.json({ id, account_label: connection.account_label, service: "github" });
+      } catch (err: unknown) {
+        console.error("[integrations] GitHub label update failed:", err instanceof Error ? err.name : typeof err);
+        return c.json({ error: "Not found" }, 404);
+      }
+    }
     if (result === null) return c.json({ error: "Not found" }, 404);
     if (result === "forbidden") return c.json({ error: "Forbidden" }, 403);
 
@@ -858,13 +1008,22 @@ export function createIntegrationRoutes(opts: IntegrationRoutesOpts): Hono {
   // POST /:id/refresh -- force token refresh
   // -----------------------------------------------------------------------
 
-  app.post("/:id/refresh", async (c) => {
+  app.post("/:id/refresh", bodyLimit({ maxSize: 1024 }), async (c) => {
     const uid = await requireUser(c);
     if (!uid) return c.json({ error: "Unauthorized" }, 401);
 
     const id = c.req.param("id");
     const result = await requireOwnedService(c, id, uid);
     if (result === "invalid") return c.json({ error: "Invalid ID" }, 400);
+    if (result === null && githubBroker) {
+      try {
+        const connection = await githubBroker.refreshConnection(uid, id);
+        return c.json({ id, status: connection.status, service: "github" });
+      } catch (err: unknown) {
+        console.error("[integrations] GitHub refresh failed:", err instanceof Error ? err.name : typeof err);
+        return c.json({ error: "Not found" }, 404);
+      }
+    }
     if (result === null) return c.json({ error: "Not found" }, 404);
     if (result === "forbidden") return c.json({ error: "Forbidden" }, 403);
     if (result.status === "revoked") return c.json({ error: "Not found" }, 404);

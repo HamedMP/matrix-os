@@ -21,11 +21,11 @@ describe("PlatformDb", () => {
   });
 
   describe("migrate()", () => {
-    it("creates all 5 tables", async () => {
+    it("creates all 6 integration tables", async () => {
       const result = await db.raw(
         `SELECT table_name FROM information_schema.tables
          WHERE table_schema = 'public'
-           AND table_name IN ('users', 'connected_services', 'user_apps', 'event_subscriptions', 'billing')
+           AND table_name IN ('users', 'connected_services', 'github_oauth_connections', 'user_apps', 'event_subscriptions', 'billing')
          ORDER BY table_name`,
         [],
       );
@@ -33,6 +33,7 @@ describe("PlatformDb", () => {
         "billing",
         "connected_services",
         "event_subscriptions",
+        "github_oauth_connections",
         "user_apps",
         "users",
       ]);

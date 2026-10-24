@@ -70,8 +70,8 @@ describe("Service Registry", () => {
       expect(service.id).toBeTruthy();
       expect(service.name).toBeTruthy();
       expect(service.category).toBeTruthy();
-      expect(["pipedream", "mcp_preset", "managed_oauth"]).toContain(service.connectorKind);
-      if (service.connectorKind === "pipedream") {
+      expect(["pipedream", "github_oauth", "mcp_preset", "managed_oauth"]).toContain(service.connectorKind);
+      if (service.connectorKind === "pipedream" || service.connectorKind === "github_oauth") {
         expect(service.pipedreamApp).toBeTruthy();
       }
       expect(service.icon).toBeTruthy();

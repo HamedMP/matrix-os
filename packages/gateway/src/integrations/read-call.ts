@@ -40,6 +40,11 @@ export function createIntegrationReadCallRoutes(options: {
     listConnections(userId: string): Promise<Array<{ id: string; service: string; account_label: string; status: string }>>;
     call(input: { userId: string; service: ServiceDefinition; actionId: string; params?: Record<string, unknown>; connectionId?: string }): Promise<unknown>;
   };
+  githubBroker?: {
+    listConnections(userId: string): Promise<Array<{ id: string; service: string; account_label: string; status: string }>>;
+    call(input: { userId: string; connectionId?: string; action: ServiceDefinition["actions"][string];
+      params?: Record<string, unknown> }): Promise<{ data: unknown }>;
+  };
 }): Hono {
   const app = new Hono();
   app.post("/read-call", bodyLimit({ maxSize: 65536 }), async (c) => {
@@ -73,6 +78,27 @@ export function createIntegrationReadCallRoutes(options: {
     }
     if (!validateActionParams(actionDef, params).valid) {
       return c.json({ error: "Invalid action parameters" }, 400);
+    }
+
+    if (def.connectorKind === "github_oauth" && options.githubBroker) {
+      if (binding || accountBinding) return c.json({ error: "Integration unavailable" }, 503);
+      const selected = resolveIntegrationConnection(
+        (await options.githubBroker.listConnections(uid)).filter(connection => connection.status === "active"),
+        service,
+        label,
+      );
+      if (selected.kind === "ambiguous") return c.json({ error: "Integration account label is ambiguous" }, 409);
+      if (selected.kind === "missing") return c.json({ error: "Integration account unavailable" }, 400);
+      if (connectionId && selected.connection.id !== connectionId) return c.json({ error: "Action not permitted" }, 403);
+      try {
+        const result = await options.githubBroker.call({
+          userId: uid, connectionId: selected.connection.id, action: actionDef, params,
+        });
+        return c.json({ data: result.data, service, action });
+      } catch (err: unknown) {
+        console.error("[integrations] GitHub read failed:", err instanceof Error ? err.name : typeof err);
+        return c.json({ error: "Integration read unavailable" }, 503);
+      }
     }
 
     if (def.connectorKind === "mcp_preset" || def.connectorKind === "managed_oauth") {

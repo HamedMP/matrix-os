@@ -133,6 +133,7 @@ describe("sandbox systemd policy", () => {
     expect(SCOPE_RUNTIME_SANDBOX_POLICY_DIGEST).toMatch(/^[a-f0-9]{64}$/);
     expect(FORBIDDEN_SANDBOX_ENVIRONMENT).toEqual(expect.arrayContaining([
       "GH_TOKEN", "GITHUB_TOKEN", "GIT_ASKPASS", "SSH_AUTH_SOCK", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
+      "GITHUB_OAUTH_CLIENT_SECRET", "GITHUB_OAUTH_ENCRYPTION_KEY",
     ]));
     expect(() => assertSandboxEnvironment(["HOME=/workspace", "MATRIX_SCOPE_RUNTIME=1"])).not.toThrow();
     expect(() => assertSandboxEnvironment(["HOME=/workspace", "GH_TOKEN=ghp_x"])).toThrow(/environment/i);

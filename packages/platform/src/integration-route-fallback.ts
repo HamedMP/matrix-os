@@ -8,6 +8,7 @@ export function createUnavailableIntegrationRoutes() {
   app.all('*', (c) => {
     c.header('Cache-Control', 'no-store');
     const publicPath = c.req.path === '/api/integrations/available'
+      || (c.req.method === 'GET' && c.req.path === '/api/integrations/oauth/github/callback')
       || c.req.path.startsWith('/api/integrations/webhook/');
     if (!publicPath && (!c.get('platformUserId') || !c.get('platformHandle'))) {
       return c.json({ error: 'Unauthorized' }, 401);
