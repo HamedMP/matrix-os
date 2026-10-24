@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ import { buildKernelCredentialLaunch } from "../../packages/gateway/src/kernel-c
 import type { CanonicalCliSpawn } from "../../packages/gateway/src/chat/cli-process.js";
 import type { CodingAgentProviderRegistry } from "../../packages/gateway/src/coding-agents/provider-registry.js";
 import type { MatrixFundedCredentialProvider } from "../../packages/gateway/src/funded-ai-credential-manager.js";
+import { createOwnerOpenRouterKeySaver } from "../../packages/gateway/src/ai-providers/owner-openrouter-key.js";
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(cleanup.splice(0).map(close => close())); });
@@ -23,9 +24,14 @@ async function fixture(source = "owner_claude_profile") {
   await writeFile(join(homePath, "system/ai-providers/anthropic-key.json"), JSON.stringify({ version: 1, apiKey: "synthetic-owner-key" }), { mode: 0o600 });
   // A profile marker routes credentials, but is not proof of successful OAuth.
   await writeFile(join(homePath, ".claude.json"), JSON.stringify({ oauthAccount: { accountUuid: "synthetic-profile" } }));
+  let openRouterGeneration: string | undefined;
+  if (source === "owner_openrouter") {
+    await createOwnerOpenRouterKeySaver({ homePath }).connect("sk-or-runtime", async generation => { openRouterGeneration = generation; });
+  }
   const service = new AiProviderService({ homePath, env: {}, exposeClaudeProfileAccount: true, driverInventory: async () => [{
     id: "claude_code", displayName: "Claude Code", installState: "installed", kind: "cli", health: "ready", setupActions: [], capabilities: ["tools", "resume"],
-  }] });
+  }], ...(source === "owner_openrouter" ? { openRouterEnabled: true, healthProbe: async (sourceId: string) => sourceId === "owner_openrouter"
+    ? { state: "ready" as const, checkedAt: new Date().toISOString(), staleAfter: null, action: "none" as const, safeReason: null } : null } : {}) });
   const store = new ProviderSettingsStore({ homePath, privateRootPath: join(root, "private"), providerSnapshotReader: service,
     runtimeCoordinator: { supportedActions: ["select_access_source", "set_harness_enabled"], isRecoveryReady: () => true,
       reconcilePending: async () => {}, applyConfiguration: async () => {}, rollbackConfiguration: async () => {} },
@@ -33,8 +39,13 @@ async function fixture(source = "owner_claude_profile") {
   cleanup.push(async () => { service.close(); await rm(root, { recursive: true, force: true }); });
   const initial = await store.getSnapshot();
   const harness = initial.harnesses.find(row => row.harness === "claude")!;
-  await store.mutate({ type: "select_access_source", harnessInstanceId: harness.id, accessSourceId: source,
-    enableHarness: true, expectedRevision: initial.revision, idempotencyKey: "explicit-route" });
+  if (source === "owner_openrouter") {
+    await store.completeOpenRouterKeyConnection({ harnessInstanceId: harness.id, expectedRevision: initial.revision,
+      idempotencyKey: "explicit-openrouter-route", credentialGeneration: openRouterGeneration! });
+  } else {
+    await store.mutate({ type: "select_access_source", harnessInstanceId: harness.id, accessSourceId: source,
+      enableHarness: true, expectedRevision: initial.revision, idempotencyKey: "explicit-route" });
+  }
   const getCredential = vi.fn();
   const fundedCredentialProvider = { enabled: true, getCredential } as unknown as MatrixFundedCredentialProvider;
   const getSnapshot = vi.fn((...args: Parameters<typeof store.getSnapshot>) => store.getSnapshot(...args));
@@ -65,6 +76,41 @@ function successfulSpawn() {
 }
 
 describe("production native Claude credential resolver", () => {
+  it("builds an isolated OpenRouter Claude launch without ambient native credentials", async () => {
+    const root = await mkdtemp(join(tmpdir(), "claude-openrouter-route-"));
+    const homePath = join(root, "home");
+    await mkdir(homePath, { recursive: true });
+    cleanup.push(() => rm(root, { recursive: true, force: true }));
+    await createOwnerOpenRouterKeySaver({ homePath })("sk-or-selected");
+    const launch = await buildKernelCredentialLaunch(homePath, {
+      ANTHROPIC_API_KEY: "ambient-anthropic", ANTHROPIC_AUTH_TOKEN: "ambient-token",
+      OPENROUTER_API_KEY: "ambient-openrouter", OPENAI_API_KEY: "ambient-openai",
+      CODEX_API_KEY: "ambient-codex", CLAUDE_CONFIG_DIR: "/native/claude",
+    }, "owner_openrouter", undefined, { requestClass: "interactive" });
+    expect(launch.env).toMatchObject({ HOME: homePath, OPENROUTER_API_KEY: "sk-or-selected",
+      ANTHROPIC_BASE_URL: "https://openrouter.ai/api", ANTHROPIC_AUTH_TOKEN: "sk-or-selected", ANTHROPIC_API_KEY: "" });
+    expect(launch.env?.CLAUDE_CONFIG_DIR).toBe(join(homePath, "system/ai-providers/runtime-profiles/claude-openrouter"));
+    expect(launch.env).not.toHaveProperty("OPENAI_API_KEY");
+    expect(launch.env).not.toHaveProperty("CODEX_API_KEY");
+    expect(launch.credentialGeneration).toMatch(/^[a-f0-9-]{36}$/);
+  });
+  it("rejects a symlinked Matrix-managed Claude profile parent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "claude-openrouter-symlink-"));
+    const homePath = join(root, "home");
+    const outside = join(root, "outside");
+    await mkdir(homePath, { recursive: true });
+    await mkdir(outside, { mode: 0o700 });
+    cleanup.push(() => rm(root, { recursive: true, force: true }));
+    await createOwnerOpenRouterKeySaver({ homePath })("sk-or-selected");
+    await symlink(outside, join(homePath, "system/ai-providers/runtime-profiles"));
+    await expect(buildKernelCredentialLaunch(
+      homePath,
+      {},
+      "owner_openrouter",
+      undefined,
+      { requestClass: "interactive" },
+    )).rejects.toThrow("unavailable");
+  });
   it("uses the explicitly connected native profile rather than a prior saved or ambient API key", async () => {
     const f = await fixture();
     vi.stubEnv("ANTHROPIC_API_KEY", "ambient-key"); vi.stubEnv("CLAUDE_CODE_OAUTH_TOKEN", "ambient-oauth");
@@ -100,6 +146,17 @@ describe("production native Claude credential resolver", () => {
     const launch = await f.compose().resolveClaudeCredentialLaunch({ runId: "run_1" });
     expect(launch.env?.ANTHROPIC_API_KEY).toBe("synthetic-owner-key");
     for (const variable of ["ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL"]) expect(launch.env).not.toHaveProperty(variable);
+    expect(f.getCredential).not.toHaveBeenCalled();
+  });
+
+  it("launches selected OpenRouter Claude through the isolated shared key route", async () => {
+    const f = await fixture("owner_openrouter");
+    vi.stubEnv("ANTHROPIC_API_KEY", "ambient-anthropic"); vi.stubEnv("OPENAI_API_KEY", "ambient-openai");
+    const launch = await f.compose().resolveClaudeCredentialLaunch({ runId: "run_openrouter" });
+    expect(launch.env).toMatchObject({ OPENROUTER_API_KEY: "sk-or-runtime", ANTHROPIC_AUTH_TOKEN: "sk-or-runtime",
+      ANTHROPIC_API_KEY: "", ANTHROPIC_BASE_URL: "https://openrouter.ai/api" });
+    expect(launch.env).not.toHaveProperty("OPENAI_API_KEY");
+    expect(launch.credentialGeneration).toMatch(/^[a-f0-9-]{36}$/);
     expect(f.getCredential).not.toHaveBeenCalled();
   });
 

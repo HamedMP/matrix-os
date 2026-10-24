@@ -901,6 +901,50 @@ describe("canonical Chat Provider catalog", () => {
       .toMatchObject({ availability: "available", connectionLabel: "Anthropic API key" });
   });
 
+  it.each([
+    ["claude", "claude_code", "anthropic/claude-sonnet-5"],
+    ["codex", "codex", "openai/gpt-5.6-luna"],
+  ] as const)("advertises %s on the exact shared OpenRouter account", async (harness, driverKind, modelId) => {
+    const generation = "11111111-1111-4111-8111-111111111111";
+    const row = { ...configuredHarness(harness, true), route: {
+      kind: "fixed" as const, providerId: "openrouter", modelId,
+    }, accessSourceId: "owner_openrouter", configuredAccessSourceId: "owner_openrouter",
+      selectedAccountId: "owner_openrouter", credentialGeneration: generation };
+    const settings = await harnessSettings([row]).getSnapshot();
+    Object.assign(settings.accessSources[0]!, { fundingKind: "owner_api_key", accountId: "owner_openrouter",
+      credentialGeneration: generation });
+    settings.accounts.push({ id: "owner_openrouter", providerId: "openrouter", displayName: "OpenRouter",
+      authMethod: "api_key", authState: "authenticated", accessSourceId: "owner_openrouter",
+      connectionDetails: null, usage: null });
+    const service = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({ id: harness, kind: harness })]),
+      agentRuntimeSource: runtimeSource(), harnessSettingsSource: { getSnapshot: async () => settings },
+      executableDriverKinds: [driverKind],
+      codingModelCatalogSource: async () => ({ models: [{ id: modelId, displayName: modelId,
+        capabilities: ["reasoning", "tools"], supportsVision: false, supportsToolUse: true },
+      { id: "native/other", displayName: "Unrelated native route",
+        capabilities: ["tools"], supportsVision: false, supportsToolUse: true }],
+        options: [], defaultModel: modelId }),
+    });
+    const projected = (await service.getCatalog(principal)).instances.find(instance => instance.id === `${driverKind}_default`);
+    expect(projected).toMatchObject({ availability: "available", connectionLabel: "Billed by OpenRouter",
+      defaultSelection: { model: modelId } });
+    expect(projected?.models.map(model => model.id)).toEqual([modelId]);
+    settings.accessSources[0]!.eligibleModelIds = [];
+    const removedService = createChatProviderCatalogService({
+      codingProviders: codingRegistry([codingProvider({ id: harness, kind: harness })]),
+      agentRuntimeSource: runtimeSource(), harnessSettingsSource: { getSnapshot: async () => settings },
+      executableDriverKinds: [driverKind],
+      codingModelCatalogSource: async () => ({ models: [{ id: modelId, displayName: modelId,
+        capabilities: ["reasoning", "tools"], supportsVision: false, supportsToolUse: true }],
+      options: [], defaultModel: modelId }),
+    });
+    const removed = (await removedService.getCatalog(principal)).instances
+      .find(instance => instance.id === `${driverKind}_default`);
+    expect(removed).toMatchObject({ availability: "unavailable", connectionLabel: "Billed by OpenRouter",
+      models: [{ id: modelId, availability: "unavailable" }] });
+  });
+
   it.each(["matrix_included"])("does not advertise native Claude with the saved %s source", async accessSourceId => {
     const settings = await harnessSettings([{ ...configuredHarness("claude", true), accessSourceId }]).getSnapshot();
     const before = structuredClone(settings);

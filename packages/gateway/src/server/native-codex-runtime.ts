@@ -4,6 +4,7 @@ import type { NativeProviderProfileGuard } from "../ai-providers/native-provider
 import type { ProviderSettingsStore } from "../ai-providers/provider-settings-store.js";
 import { createCodexExecutionAdmission } from "../coding-agents/codex-execution-admission.js";
 import { SessionStartBusyError } from "../session-start-guard.js";
+import { prepareOpenRouterCodexProfile } from "../coding-agents/openrouter-codex-profile.js";
 import type { WorkspaceSessionOrchestrator } from "../workspace-session-orchestrator.js";
 
 /** One owner-scoped native identity and execution authority for gateway composition. */
@@ -88,6 +89,14 @@ export function createNativeCodexRuntime(options: {
     resolveSubscription: async (ownerId: string, sessionId: string) => {
       const intent = await admission.validateLaunch(ownerId, sessionId);
       if (!intent) return undefined;
+      if ("kind" in intent && intent.kind === "openrouter") {
+        const codexHome = await prepareOpenRouterCodexProfile({
+          homePath: options.homePath,
+          credentialGeneration: intent.credentialGeneration,
+          model: intent.model,
+        });
+        return { ...intent, codexHome };
+      }
       return { ...intent, codexHome: options.environment().CODEX_HOME! };
     },
     beforeProjectSessionRemove: ({ ownerId, sessionId, proof }: { ownerId: string; sessionId: string; proof: object }) =>

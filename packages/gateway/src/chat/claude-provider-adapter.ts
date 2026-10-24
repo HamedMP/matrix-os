@@ -170,12 +170,13 @@ export function createClaudeChatProviderAdapter(options: {
   matrixMcpCapabilityIssuer?: MatrixMcpCapabilityIssuer;
   previewDriveClient?: Pick<PreviewDrivePlatformClient, "grantAction">;
   customMcpApprovalClient?: CustomMcpApprovalClient;
-}): CanonicalChatProviderAdapter<ClaudeChatState> {
+}): CanonicalChatProviderAdapter<ClaudeChatState> & { cancelOpenRouterRuns(): void } {
   const idleTimeoutMs = options.timeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const activeRuns = new Map<string, {
     ownerId: string;
     ownerType: CanonicalProviderRunInput["owner"]["type"];
     chatId: string;
+    openRouterCredentialGeneration?: string;
     abort: () => void;
     steer: (prompt: string) => void;
     submitInput: ReturnType<typeof createClaudeInputController>["submit"];
@@ -277,6 +278,9 @@ export function createClaudeChatProviderAdapter(options: {
               }).then((value) => value.env))
             )(),
           };
+      if (credentialLaunch.modelId && credentialLaunch.modelId !== input.selection.model) {
+        throw new Error("Selected AI access is unavailable");
+      }
       if (approvalClient) {
         try {
           const registered = await approvalClient.registerRun(input.runId);
@@ -406,6 +410,8 @@ export function createClaudeChatProviderAdapter(options: {
       ownerId: input.owner.ownerId,
       ownerType: input.owner.type,
       chatId: input.chatId,
+      ...(credentialLaunch.credentialGeneration
+        ? { openRouterCredentialGeneration: credentialLaunch.credentialGeneration } : {}),
       abort: () => { cancellationRequested = true; revokeApproval(); processController.abort(); },
       submitInput: inputControl.submit,
       submitApproval: async (id: string, decision: Parameters<NonNullable<typeof approvalControl>["submit"]>[1], provenance?: Parameters<NonNullable<typeof approvalControl>["submit"]>[2]) => {
@@ -943,6 +949,11 @@ export function createClaudeChatProviderAdapter(options: {
         throw new Error("Claude active Run unavailable");
       }
       active.steer(input.prompt);
+    },
+    cancelOpenRouterRuns() {
+      for (const active of activeRuns.values()) {
+        if (active.openRouterCredentialGeneration) active.abort();
+      }
     },
   };
 }

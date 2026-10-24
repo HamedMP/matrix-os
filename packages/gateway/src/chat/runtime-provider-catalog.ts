@@ -6,6 +6,10 @@ import { createRuntimeClaudeModelCatalogSource } from "./claude-runtime-model-ca
 import { createCodexModelCatalogSource } from "./codex-model-catalog.js";
 import { createNativeCodingModelCatalogSource } from "./native-coding-model-catalog.js";
 import { createChatProviderCatalogService } from "./provider-catalog.js";
+import { readOwnerOpenRouterKey } from "../ai-providers/owner-openrouter-key.js";
+import { OPENROUTER_ANTHROPIC_MODEL_IDS } from "../ai-providers/model-catalog.js";
+import { readSavedProviderSettingsConfiguration } from "../ai-providers/provider-settings-persistence.js";
+import { join } from "node:path";
 
 type RuntimeCatalogOptions = Omit<Parameters<typeof createChatProviderCatalogService>[0],
   "skillsSource" | "codingModelCatalogSource" | "invalidateCodingModelCatalog"> & {
@@ -37,6 +41,44 @@ export function createGatewayChatProviderCatalog(options: RuntimeCatalogOptions)
       || row.accessSourceId === "owner_claude_profile" || row.selectedAccountId === "owner_claude_profile");
     const ownerKey = claude.filter(row => row.configuredAccessSourceId === "owner_anthropic_key"
       || row.accessSourceId === "owner_anthropic_key");
+    const openRouter = claude.filter(row => row.configuredAccessSourceId === "owner_openrouter"
+      || row.accessSourceId === "owner_openrouter");
+    if (openRouter.length > 0) {
+      const enabled = claude.filter(row => row.configuredEnabled ?? row.enabled);
+      const row = openRouter[0];
+      const source = settings!.accessSources.find(source => source.id === "owner_openrouter");
+      const account = settings!.accounts.find(account => account.id === source?.accountId);
+      if (openRouter.length !== 1 || enabled.length !== 1 || enabled[0] !== row
+        || row.installState !== "installed" || row.accessSourceId !== "owner_openrouter"
+        || (row.configuredAccessSourceId !== undefined && row.configuredAccessSourceId !== "owner_openrouter")
+        || row.selectedAccountId !== "owner_openrouter" || row.route.providerId !== "openrouter"
+        || !OPENROUTER_ANTHROPIC_MODEL_IDS.includes(row.route.modelId as (typeof OPENROUTER_ANTHROPIC_MODEL_IDS)[number])
+        || !row.credentialGeneration || row.routeAvailability === "catalog_unavailable"
+        || source?.kind !== "provider_account" || source.fundingKind !== "owner_api_key"
+        || source.providerId !== "openrouter" || source.accountId !== "owner_openrouter"
+        || source.credentialGeneration !== row.credentialGeneration || source.readiness.state !== "ready"
+        || !source.eligibleModelIds.includes(row.route.modelId)
+        || account?.providerId !== "openrouter" || account.authMethod !== "api_key" || account.authState !== "authenticated"
+        || account.accessSourceId !== "owner_openrouter") throw new Error("Selected AI access is unavailable");
+      const launch = await buildKernelCredentialLaunch(homePath, buildAgentRuntimeEnvironment(homePath), "owner_openrouter", undefined,
+        { requestClass: "interactive", ...(context ? { claimKey: context.runId } : {}) });
+      const [latest, credential] = await Promise.all([
+        readSavedProviderSettingsConfiguration(join(homePath, "system/ai-providers/settings.json")),
+        readOwnerOpenRouterKey(homePath),
+      ]);
+      const latestRows = latest?.harnesses.filter(candidate => candidate.harness === "claude") ?? [];
+      const latestRow = latestRows[0];
+      if (launch.credentialGeneration !== row.credentialGeneration
+        || credential.credentialGeneration !== row.credentialGeneration || !credential.key
+        || latestRows.length !== 1 || !latestRow || !latestRow.enabled
+        || latestRow.id !== row.id || latestRow.accessSourceId !== "owner_openrouter"
+        || latestRow.selectedAccountId !== "owner_openrouter"
+        || latestRow.credentialGeneration !== row.credentialGeneration
+        || latestRow.route.providerId !== "openrouter" || latestRow.route.modelId !== row.route.modelId) {
+        throw new Error("Selected AI access is unavailable");
+      }
+      return { ...launch, modelId: row.route.modelId };
+    }
     if (native.length === 0 && ownerKey.length > 0) {
       // The owner's explicitly selected Anthropic key; never a funded or ambient credential.
       const enabled = claude.filter(row => row.configuredEnabled ?? row.enabled);

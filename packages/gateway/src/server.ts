@@ -14,6 +14,7 @@ import { createNativeProviderProfileGuard } from "./ai-providers/native-provider
 import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
 import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
+import { createOwnerOpenRouterKeyPreflight } from "./ai-providers/openrouter-key-preflight.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import {
@@ -1479,6 +1480,9 @@ export async function createGateway(config: GatewayConfig) {
   const appSubscriptionSource = () => terminalRuntimeOwnerId && botServices?.chatgptPlanPeers
     ? { ownerId: terminalRuntimeOwnerId, authority: botServices.chatgptPlanPeers }
     : undefined;
+  const anthropicOwnerHealth = createOwnerAnthropicKeyPreflight({ homePath });
+  const openRouterOwnerHealth = createOwnerOpenRouterKeyPreflight({ homePath });
+  const openRouterEnabled = process.env.MATRIX_OPENROUTER_MULTI_HARNESS_ENABLED === "1";
   const aiProviderService = new AiProviderService({
     observationScope: canonicalPhaseDiscovery.observationScope,
     chatGptPlanObservation: createAppAiSubscriptionObservation(appSubscriptionSource),
@@ -1489,7 +1493,10 @@ export async function createGateway(config: GatewayConfig) {
     hermesRuntimeSource: agentRuntimeServices.systemRuntimeSources.hermes,
     openclawRuntimeSource: agentRuntimeServices.source,
     homePath,
-    healthProbe: createOwnerAnthropicKeyPreflight({ homePath }),
+    healthProbe: async (sourceId, signal, context) => sourceId === "owner_openrouter"
+      ? openRouterOwnerHealth(sourceId, signal, context)
+      : anthropicOwnerHealth(sourceId, signal, context),
+    openRouterEnabled,
     fundedCredentialProvider,
     fundedReadinessReader: fundedAiRuntimeConfig && fundedAiFundingSummaryReader
       ? createFundedAiReadinessReader({
@@ -1518,10 +1525,18 @@ export async function createGateway(config: GatewayConfig) {
       (agent): agent is "claude" | "codex" => agent === "claude" || agent === "codex",
     ),
   });
+  let claudeChatProviderAdapter: ReturnType<typeof createClaudeChatProviderAdapter> | undefined;
+  const prepareOpenRouterCredentialChange = async () => {
+    botServices?.cancelOpenRouterInference?.();
+    dispatcher.cancelOpenRouterRuns();
+    claudeChatProviderAdapter?.cancelOpenRouterRuns();
+    return nativeCodexRuntime.admission.prepareRevocation();
+  };
   const providerAccountLifecycle = createDefaultProviderCliAccountLifecycleCoordinator({
     profileGuard: nativeProviderProfileGuard,
     homePath,
     enabledHarnesses: codingAgentWorkspaceAgents,
+    prepareOpenRouterCredentialChange,
   });
   const providerGenericHarnessCoordinator = createProviderGenericHarnessCoordinator({
     homePath,
@@ -1629,7 +1644,7 @@ export async function createGateway(config: GatewayConfig) {
       ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}),
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port });
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
-      canonicalAdapters.push(createClaudeChatProviderAdapter({
+      claudeChatProviderAdapter = createClaudeChatProviderAdapter({
         ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker, sharedBrowserGatewayPort: port } : {}),
         homePath,
         credentialKey: toolOutputKey,
@@ -1639,7 +1654,8 @@ export async function createGateway(config: GatewayConfig) {
         customMcpApprovalClient: internalPlatformUrl && internalPlatformToken && internalHandle
           ? createCustomMcpApprovalClient({ platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle })
           : undefined,
-      }));
+      });
+      canonicalAdapters.push(claudeChatProviderAdapter);
     }
     if (codingAgentThreadStore) {
       if (codingAgentProviders.some((provider) => provider.providerId === "codex")) {
@@ -1783,6 +1799,8 @@ export async function createGateway(config: GatewayConfig) {
     ownerId: terminalRuntimeOwnerId ?? (!process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production" ? "default" : null),
     getPrincipal: getOptionalRequestPrincipal,
     inventory: () => aiProviderService.getSnapshot(),
+    openRouterEnabled,
+    prepareOpenRouterCredentialChange,
   });
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });
