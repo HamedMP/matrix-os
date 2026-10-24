@@ -88,11 +88,57 @@ describe("project-manager", () => {
     });
   });
 
+  it("reports bounded partial setup state without leaking command errors", async () => {
+    const secret = "ghp_this_must_not_escape";
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      if (command === "gh" && args[0] === "--version") {
+        return { stdout: "gh version 2.86.0\n", stderr: "" };
+      }
+      if (command === "gh" && args[0] === "auth") {
+        const error = new Error(`authentication failed: ${secret}`) as Error & { stderr: string };
+        error.stderr = secret;
+        throw error;
+      }
+      if (command === "git" && args.includes("user.name")) {
+        return { stdout: "The Octocat\n", stderr: "" };
+      }
+      if (command === "git" && args.includes("user.email")) {
+        const error = new Error("missing") as Error & { code: number };
+        error.code = 1;
+        throw error;
+      }
+      if (command === "ssh") {
+        const error = new Error(`Permission denied ${secret}`) as Error & { stderr: string; code: number };
+        error.stderr = `Permission denied ${secret}`;
+        error.code = 255;
+        throw error;
+      }
+      throw new Error("unexpected command");
+    });
+    const manager = createProjectManager({ homePath, runCommand });
+
+    const status = await manager.getGithubStatus();
+
+    expect(status).toEqual({
+      installed: true,
+      authenticated: false,
+      user: null,
+      gitProtocol: null,
+      sshStatus: "setup_required",
+      commitIdentity: { status: "missing", label: null },
+      ready: false,
+      errorCode: "github_auth_required",
+    });
+    expect(JSON.stringify(status)).not.toContain(secret);
+    expect(status.errorCode?.length).toBeLessThanOrEqual(64);
+  });
+
   it("creates a project through safe clone staging and writes owner-scoped config", async () => {
     const runCommand = vi.fn(async (command: string, args: string[], options) => {
       expect(command).toMatch(/^(gh|git)$/);
       expect(args).not.toContain(";");
       if (command === "git" && args[0] === "clone") {
+        expect(args).toContain("git@github.com:Owner/Repo.git");
         const destination = args.at(-1);
         expect(typeof destination).toBe("string");
         await mkdir(join(destination as string, ".git"), { recursive: true });
@@ -112,7 +158,7 @@ describe("project-manager", () => {
       kind: "github",
       name: "Repo",
       slug: "repo",
-      remote: "https://github.com/Owner/Repo.git",
+      remote: "git@github.com:Owner/Repo.git",
       ownerScope: { type: "user", id: "user_123" },
       github: { owner: "Owner", repo: "Repo", authState: "ok" },
     });
