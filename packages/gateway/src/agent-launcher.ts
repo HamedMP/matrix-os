@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -11,6 +12,7 @@ import {
 } from "@matrix-os/contracts";
 import { CodexExecutableSchema } from "./coding-agents/codex-executable.js";
 import { nativeCodexLaunchPolicy, type NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
+import { openRouterCodexLaunchPolicy, type OpenRouterCodexLaunch } from "./coding-agents/openrouter-codex-launch-policy.js";
 import { codexExecContractStatus } from "./coding-agents/codex-version.js";
 import { MATRIX_COMPANY_DRIVE_TOOLS, MATRIX_INTEGRATION_READ_TOOLS, MATRIX_CUSTOM_MCP_DISCOVERY_TOOLS, MATRIX_CUSTOM_MCP_TOOLS, matrixMcpConfig } from "./chat/matrix-mcp-launch.js";
 import { MATRIX_INTEGRATION_DISCOVERY_TOOLS, MATRIX_INTEGRATION_ACTION_TOOLS } from "./chat/integration-tool-authority.js";
@@ -70,6 +72,8 @@ export interface AgentLaunchInput {
   codexExecutable?: string;
   /** Server-owned exact native admission only; never accepted from renderer DTOs. */
   nativeCodexSubscription?: NativeCodexSubscriptionLaunch;
+  /** Server-owned OpenRouter admission. The key is copied only into the isolated child environment. */
+  openRouterCodex?: OpenRouterCodexLaunch;
   claudePermissionMode?: "default" | "acceptEdits" | "plan" | "auto" | "dontAsk" | "bypassPermissions";
   claudeOutputFormat?: "stream-json";
   claudeIncludePartialMessages?: boolean;
@@ -108,9 +112,16 @@ const CODEX_APP_SERVER_RUNNER_PATH = fileURLToPath(
 );
 const CodexAppServerConfigSchema = z.object({
   nativeSubscription: z.literal(true).optional(),
+  openRouter: z.literal(true).optional(),
+  expectedCredentialGeneration: z.uuid().optional(),
   expectedNativePrincipal: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   expectedNativeConsent: z.object({ revision: z.number().int().nonnegative(),
     harnessInstanceId: z.string().min(1).max(128), accountId: z.string().min(1).max(128),
+    configurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().optional(),
+  expectedOpenRouterBinding: z.object({
+    harnessInstanceId: z.string().min(1).max(128),
+    accountId: z.string().min(1).max(128),
     configurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict().optional(),
   prompt: z.string().trim().min(1).max(64 * 1024),
@@ -451,6 +462,18 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
       expectedNativeConsent: { revision: input.nativeCodexSubscription.expectedConsentRevision,
         harnessInstanceId: input.nativeCodexSubscription.expectedHarnessInstanceId, accountId: input.nativeCodexSubscription.expectedAccountId,
         configurationFingerprint: input.nativeCodexSubscription.expectedConfigurationFingerprint } } : {}),
+    ...(input.openRouterCodex ? {
+      openRouter: true,
+      expectedCredentialGeneration: input.openRouterCodex.credentialGeneration,
+      expectedOpenRouterBinding: {
+        harnessInstanceId: input.openRouterCodex.expectedHarnessInstanceId,
+        accountId: input.openRouterCodex.expectedAccountId,
+        configurationFingerprint: createHash("sha256").update(JSON.stringify({
+          credentialGeneration: input.openRouterCodex.credentialGeneration,
+          model: input.openRouterCodex.model,
+        })).digest("hex"),
+      },
+    } : {}),
     prompt: codexPrompt(input.prompt, input.mode),
     ...(input.providerThreadId ? { providerThreadId: input.providerThreadId } : {}),
     ...(input.codexBrowserAttemptId ? { browserAttemptId: input.codexBrowserAttemptId } : {}),
@@ -459,7 +482,8 @@ function codexAppServerConfig(input: AgentLaunchInput): z.infer<typeof CodexAppS
       : input.approvalPolicy ?? "never",
     sandbox: mode,
     writableRoots: mode === "workspace-write" ? sandbox?.writableRoots ?? [] : [],
-    ...(input.model ? { model: input.model } : {}),
+    ...(input.openRouterCodex ? { model: input.openRouterCodex.model }
+      : input.model ? { model: input.model } : {}),
     ...(modelOption(input, "effort") ? { effort: modelOption(input, "effort") } : {}),
     ...(modelOption(input, "service_tier") ? { serviceTier: modelOption(input, "service_tier") } : {}),
   });
@@ -471,7 +495,9 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
     ? CodexExecutableSchema.parse(input.codexExecutable)
     : AGENTS[parsed].command;
   const nativePolicy = input.nativeCodexSubscription ? nativeCodexLaunchPolicy(input, buildAgentRuntimeEnvironment(input.runtimeHome)) : undefined;
-  const env = nativePolicy?.env ?? buildAgentRuntimeEnvironment(input.runtimeHome);
+  const openRouterPolicy = input.openRouterCodex ? openRouterCodexLaunchPolicy(input, buildAgentRuntimeEnvironment(input.runtimeHome)) : undefined;
+  const credentialPolicy = nativePolicy ?? openRouterPolicy;
+  const env = credentialPolicy?.env ?? buildAgentRuntimeEnvironment(input.runtimeHome);
   switch (parsed) {
     case "claude":
       return { command, args: claudeLaunchArgs(input), cwd: input.cwd, env };
@@ -499,12 +525,12 @@ export function buildAgentLaunch(input: AgentLaunchInput): AgentLaunchSpec {
             providerEventPath,
             CODEX_VERIFIED_VERSION,
             command,
-            ...(nativePolicy?.args ?? []),
+            ...(credentialPolicy?.args ?? []),
             appServerConfig,
           ],
           cwd: input.cwd,
           env,
-          ...(nativePolicy ? { inheritEnv: false } : {}),
+          ...(credentialPolicy ? { inheritEnv: false } : {}),
         };
       }
     case "opencode":

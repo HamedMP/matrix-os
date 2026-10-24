@@ -11,9 +11,16 @@ const ProviderModelReferenceSchema = z.string()
   .refine((value) => !value.includes(".."));
 export const RunnerConfigSchema = z.object({
   nativeSubscription: z.literal(true).optional(),
+  openRouter: z.literal(true).optional(),
+  expectedCredentialGeneration: z.uuid().optional(),
   expectedNativePrincipal: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   expectedNativeConsent: z.object({ revision: z.number().int().nonnegative(),
     harnessInstanceId: z.string().min(1).max(128), accountId: z.string().min(1).max(128),
+    configurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().optional(),
+  expectedOpenRouterBinding: z.object({
+    harnessInstanceId: z.string().min(1).max(128),
+    accountId: z.string().min(1).max(128),
     configurationFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict().optional(),
   prompt: z.string().trim().min(1).max(64 * 1024),
@@ -25,7 +32,15 @@ export const RunnerConfigSchema = z.object({
   model: ProviderModelReferenceSchema.optional(),
   effort: z.enum(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional(),
   serviceTier: z.string().min(1).max(160).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/).optional(),
-}).strict();
+}).strict().superRefine((config, context) => {
+  if (config.nativeSubscription && config.openRouter) {
+    context.addIssue({ code: "custom", message: "Conflicting credential routes" });
+  }
+  if (config.openRouter && (!config.expectedCredentialGeneration
+    || !config.expectedOpenRouterBinding || !config.model)) {
+    context.addIssue({ code: "custom", message: "Incomplete OpenRouter route" });
+  }
+});
 export const ModelOptionSchema = z.object({
   id: z.string().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/),
   value: z.union([
