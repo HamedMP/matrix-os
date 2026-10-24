@@ -122,7 +122,7 @@ import { resolveManagedPiRoute } from "../../../packages/gateway/src/bots/route-
 import type { ManagedPiRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import type { ScopeRuntimeHost } from "../../../packages/gateway/src/scope-runtime-host/index.js";
 
-it.each(["completed", "failed", "cancelled"] as const)("retains the managed tool's %s result when its start uses the last available pair", async status => {
+it.each(["completed", "failed", "cancelled"] as const)("retains the managed tool's %s result after many live text updates", async status => {
   const snapshot = makeAiProviderSnapshot();
   const selection = { instanceId: "matrix_pi_default", model: "claude-sonnet-5" };
   const binding: ManagedPiRuntimeBinding = { kind: "managed_chat", ownerId: "owner_boundary", chatId: "chat_boundary", runId: "run_boundary",
@@ -153,10 +153,11 @@ it.each(["completed", "failed", "cancelled"] as const)("retains the managed tool
   expect(outputs.at(-1)).toBeDefined();
   expect(openToolOutput(key, "call_1", outputs.at(-1)!.protectedOutput)).toContain("BOUNDARY_FINAL");
   expect(events.filter(event => event.type === "agent.activity").at(-1)).toMatchObject({ activityId: "call_1", status });
-  expect(workerEvents).toHaveLength(2000);
+  expect(workerEvents.flatMap(frame => frame.event.type === "assistant_delta" ? [frame.event.text] : []).join("")).toBe("x".repeat(1998));
+  expect(workerEvents.every((event, index) => event.seq === index)).toBe(true);
   expect(workerEvents.slice(-2)).toMatchObject([
-    { seq: 1998, event: { type: "tool_progress", phase: "started" } },
-    { seq: 1999, event: { type: "tool_progress", phase: status } },
+    { seq: workerEvents.length - 2, event: { type: "tool_progress", phase: "started" } },
+    { seq: workerEvents.length - 1, event: { type: "tool_progress", phase: status } },
   ]);
 });
 
