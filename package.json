@@ -121,7 +121,8 @@
     "patchedDependencies": {
       "app-builder-lib@26.15.3": "patches/app-builder-lib@26.15.3.patch",
       "node-forge@1.4.0": "patches/node-forge@1.4.0.patch",
-      "image-size@1.2.1": "patches/image-size@1.2.1.patch"
+      "image-size@1.2.1": "patches/image-size@1.2.1.patch",
+      "nanoid@4.0.2": "patches/nanoid@4.0.2.patch"
     },
     "overrides": {
       "@earendil-works/pi-ai": "1.0.0",
@@ -174,7 +175,9 @@
       "viem>ws": "8.21.0",
       "miniflare>ws": "8.21.0",
       "@tiptap/react>@tiptap/extension-bubble-menu": "3.30.5",
-      "@tiptap/react>@tiptap/extension-floating-menu": "3.30.5"
+      "@tiptap/react>@tiptap/extension-floating-menu": "3.30.5",
+      "@matrix-os/edge-router>wrangler": "4.149.0",
+      "@matrix-os/neo-worker>wrangler": "4.149.0"
     }
   },
   "devDependencies": {
