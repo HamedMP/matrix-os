@@ -168,6 +168,7 @@ function projectAccessSources(
       accountId: accountBySource.get(source.id) ?? null,
       displayName: source.displayName,
       ...(source.localObservation ? { localObservation: source.localObservation } : {}),
+      ...(source.credentialGeneration ? { credentialGeneration: source.credentialGeneration } : {}),
       readiness: {
         state: source.state,
         checkedAt: source.checkedAt,
@@ -384,6 +385,8 @@ function projectHarness(input: {
     configuredEnabled: generatedNative ? true : input.stored.enabled,
     configuredAccessSourceId: input.stored.accessSourceId,
     ...(input.stored.enablementOrigin ? { enablementOrigin: input.stored.enablementOrigin } : {}),
+    ...(input.stored.credentialGeneration
+      ? { credentialGeneration: input.stored.credentialGeneration } : {}),
     version: null,
     installState: driver?.installState ?? "missing",
     ...projectHermesNativeRouteObservation({ driver, stored: input.stored, source, accounts: input.accounts, now: input.now }),

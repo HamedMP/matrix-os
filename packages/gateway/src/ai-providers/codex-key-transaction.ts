@@ -25,7 +25,7 @@ export async function commitCodexKey(input: {
   directoryIdentity: Stats;
   staging: string;
   /** Trusted fixed filename; also used for the canonical owner Anthropic key. */
-  targetName?: "auth.json" | "anthropic-key.json";
+  targetName?: "auth.json" | "anthropic-key.json" | "openrouter-key.json";
   commit: () => Promise<void>;
 }): Promise<void> {
   const filename = input.targetName ?? "auth.json";
