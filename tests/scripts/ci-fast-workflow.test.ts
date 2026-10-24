@@ -69,7 +69,8 @@ describe('fast CI preserves validation while removing serialized work', () => {
   });
 
   it('retains frozen installs and keyed Next and browser caches', () => {
-    expect(source).not.toContain('runs-on: ${{');
+    // Only the unit shards are routed (to the runner pool); every other lane is pinned.
+    expect(source.match(/runs-on: \$\{\{/g)).toHaveLength(1);
     expect(workflow.jobs['funded-postgres']['runs-on']).toBe('ubuntu-latest');
     expect(workflow.jobs['funded-host-root']['runs-on']).toBe('ubuntu-latest');
     for (const id of ['shell-production-build', 'e2e']) {

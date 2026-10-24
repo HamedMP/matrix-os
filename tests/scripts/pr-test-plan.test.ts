@@ -100,7 +100,7 @@ describe("CI wiring for PR test planning", () => {
     expect(select?.run).toMatch(/^bun run test:prepare && node scripts\/ci\/unit-test-selection\.mjs /u);
     const test = unitSteps.find((step) => step.run?.startsWith('GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test --'));
     expect(test?.env?.UNIT_SELECTION).toBe("${{ steps.select.outputs.list }}");
-    expect(test?.env?.MATRIX_TEST_WORKERS).toBeUndefined();
+    expect(test?.env?.MATRIX_TEST_WORKERS).toBe("${{ runner.environment == 'self-hosted' && '6' || '2' }}");
     expect(test?.run).toContain('${UNIT_SELECTION:+--passWithNoTests $(cat "$UNIT_SELECTION")}');
   });
 
