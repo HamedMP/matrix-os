@@ -1,7 +1,11 @@
+import type { MatrixOpenAiConnection } from "@matrix-os/contracts";
+import type { MatrixOpenAiConnectionClient } from "./matrix-openai-connection-client.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MatrixAnthropicConnectSchema, type MatrixAnthropicConnection, type MatrixAnthropicDisconnect } from "@matrix-os/contracts";
 import type { MatrixAnthropicConnectionClient } from "./matrix-anthropic-connection-client.js";
 
+type ApiConnection = MatrixAnthropicConnection | MatrixOpenAiConnection;
+type ApiClient = MatrixAnthropicConnectionClient | MatrixOpenAiConnectionClient;
 const ACTION_ERROR = "Claude connection could not be updated. Check again.";
 const STATE_LABEL: Record<MatrixAnthropicConnection["state"], string> = {
   unsupported: "Unavailable", read_only: "Read only", disconnected: "Not connected",
@@ -9,10 +13,10 @@ const STATE_LABEL: Record<MatrixAnthropicConnection["state"], string> = {
 };
 
 type ConnectionObservation = {
-  observationSequence: number; projection: MatrixAnthropicConnection | null | undefined;
+  observationSequence: number; projection: ApiConnection | null | undefined;
 };
 
-function acceptsResponse(value: MatrixAnthropicConnection, issuedSequence: number, current: ConnectionObservation): boolean {
+function acceptsResponse(value: ApiConnection, issuedSequence: number, current: ConnectionObservation): boolean {
   // A later observation wins an equal revision (including source replacement).
   // A committed mutation may still advance an older snapshot seen in flight.
   if (issuedSequence !== current.observationSequence) {
@@ -21,27 +25,29 @@ function acceptsResponse(value: MatrixAnthropicConnection, issuedSequence: numbe
   return !current.projection || value.revision >= current.projection.revision;
 }
 
-function sameAuthority(left: MatrixAnthropicConnection | null | undefined, right: MatrixAnthropicConnection): boolean {
+function sameAuthority(left: ApiConnection | null | undefined, right: ApiConnection): boolean {
   return left?.revision === right.revision && left.credentialGeneration === right.credentialGeneration
     && left.sourceCredentialGeneration === right.sourceCredentialGeneration;
 }
 
 /** Matrix-only API connection; native Claude Code login and credential removal remain independent. */
-export function MatrixAnthropicConnectionCard({ client, initialStatus, disabled, readOnly, refreshRevision = 0, onChanged }: {
-  client?: MatrixAnthropicConnectionClient; initialStatus?: MatrixAnthropicConnection | null;
-  disabled: boolean; readOnly: boolean; refreshRevision?: number; onChanged(): void;
+export function MatrixAnthropicConnectionCard({ client, initialStatus, disabled, readOnly, refreshRevision = 0, provider = "anthropic", onChanged }: {
+  client?: ApiClient; initialStatus?: ApiConnection | null;
+  disabled: boolean; readOnly: boolean; refreshRevision?: number; provider?: "anthropic" | "openai"; onChanged(): void;
 }) {
+  const labelName = provider === "openai" ? "OpenAI" : "Claude";
+  const vendorName = provider === "openai" ? "OpenAI" : "Anthropic";
   const [observation, setObservation] = useState({ client, projection: initialStatus, sequence: 0 });
   if (observation.client !== client || observation.projection !== initialStatus) {
     setObservation({ client, projection: initialStatus, sequence: observation.sequence + 1 });
   }
-  const [receipt, setReceipt] = useState<{ client: MatrixAnthropicConnectionClient; status: MatrixAnthropicConnection | null;
+  const [receipt, setReceipt] = useState<{ client: ApiClient; status: ApiConnection | null;
     observationSequence: number } | null>(null);
-  const [error, setError] = useState<MatrixAnthropicConnectionClient | null>(null);
-  const [active, setActive] = useState<MatrixAnthropicConnectionClient | null>(null);
-  const [form, setForm] = useState<{ client: MatrixAnthropicConnectionClient; apiKey: string } | null>(null);
-  const scope = useRef<{ client: MatrixAnthropicConnectionClient; lifetime: AbortController; revision: number; pending: boolean } & ConnectionObservation | null>(null);
-  const lastAttempt = useRef<{ client: MatrixAnthropicConnectionClient; kind: string; revision: number; generation: string | null; apiKey: string; id: string } | null>(null);
+  const [error, setError] = useState<ApiClient | null>(null);
+  const [active, setActive] = useState<ApiClient | null>(null);
+  const [form, setForm] = useState<{ client: ApiClient; apiKey: string } | null>(null);
+  const scope = useRef<{ client: ApiClient; lifetime: AbortController; revision: number; pending: boolean } & ConnectionObservation | null>(null);
+  const lastAttempt = useRef<{ client: ApiClient; kind: string; revision: number; generation: string | null; apiKey: string; id: string } | null>(null);
   // Only a new canonical projection is an observation; requesting a refresh
   // must not discard an accepted receipt. null never permits probing.
   const status = receipt?.client === client && receipt?.observationSequence === observation.sequence ? receipt?.status : initialStatus ?? null;
@@ -51,7 +57,7 @@ export function MatrixAnthropicConnectionCard({ client, initialStatus, disabled,
 
   useLayoutEffect(() => {
     if (!client) return;
-    const current = { client, lifetime: new AbortController(), revision: 0, pending: false, observationSequence: 0, projection: undefined as MatrixAnthropicConnection | null | undefined };
+    const current = { client, lifetime: new AbortController(), revision: 0, pending: false, observationSequence: 0, projection: undefined as ApiConnection | null | undefined };
     scope.current = current; lastAttempt.current = null; setForm(null);
     return () => {
       current.lifetime.abort();
@@ -147,34 +153,34 @@ export function MatrixAnthropicConnectionCard({ client, initialStatus, disabled,
 
   const label = busy ? "Updating connection…" : status ? STATE_LABEL[status.state]
     : client && initialStatus === undefined && error !== client ? "Checking connection…" : "Unavailable";
-  return <article className="matrix-ap-subscription" aria-label="Claude API connection" aria-busy={busy ? "true" : undefined}>
-    <div className="matrix-ap-subscription-head"><strong>Claude · Anthropic API</strong>
+  return <article className="matrix-ap-subscription" aria-label={`${labelName} API connection`} aria-busy={busy ? "true" : undefined}>
+    <div className="matrix-ap-subscription-head"><strong>{provider === "openai" ? "OpenAI API" : "Claude · Anthropic API"}</strong>
       <span className="matrix-ap-status-chip" data-state={status?.state === "ready" ? "ready" : "attention"}><i aria-hidden="true"/>{label}</span>
     </div>
-    <p className="matrix-ap-help">Anthropic bills API requests separately from your Claude subscription and Matrix AI credit.</p>
+    <p className="matrix-ap-help">{vendorName} bills API requests separately from subscriptions and Matrix AI credit.</p>
     {status?.state === "ready" ? <p className="matrix-ap-help">{status.supports.rootChat && status.supports.recipeBots
       ? "Available for chats and Matrix Bots on this Computer." : status.supports.rootChat
         ? "Available for chats on this Computer." : status.supports.recipeBots
           ? "Available for Matrix Bots on this Computer." : "Connection saved. Model execution is unavailable on this Computer."}</p> : null}
-    {!client || status?.state === "unsupported" ? <p className="matrix-ap-help">This Computer does not support the Claude API connection. Refresh or update this Computer to check again.</p> : null}
+    {!client || status?.state === "unsupported" ? <p className="matrix-ap-help">This Computer does not support the {labelName} API connection. Refresh or update this Computer to check again.</p> : null}
     {readOnly || status?.state === "read_only" ? <p className="matrix-ap-help">Only this Computer’s owner can manage connections.</p> : null}
-    {error === client && client ? <p className="matrix-ap-help" role="alert">{ACTION_ERROR}</p> : null}
+    {error === client && client ? <p className="matrix-ap-help" role="alert">{provider === "openai" ? "Connection could not be updated. Check again." : ACTION_ERROR}</p> : null}
     {keyForm && !readOnly ? <form className="matrix-ap-key-form" onSubmit={event => { event.preventDefault(); void act("connect"); }}>
-      <label className="matrix-ap-field"><span>Anthropic API key</span>
+      <label className="matrix-ap-field"><span>{vendorName} API key</span>
         <input type="password" autoComplete="off" spellCheck={false} maxLength={4096} value={keyForm.apiKey} disabled={blocked}
           onChange={event => setForm({ client: keyForm.client, apiKey: event.target.value })}/>
       </label>
       <div className="matrix-ap-workflow-actions matrix-ap-subscription-actions">
         <button type="submit" className="matrix-ap-button matrix-ap-button-primary" disabled={blocked || !status?.actions.includes("connect")
           || !MatrixAnthropicConnectSchema.safeParse({ expectedRevision: status.revision, expectedCredentialGeneration: status.credentialGeneration,
-            idempotencyKey: "validation", apiKey: keyForm.apiKey }).success}>Connect Claude</button>
+            idempotencyKey: "validation", apiKey: keyForm.apiKey }).success}>Connect {labelName}</button>
         <button type="button" className="matrix-ap-button" disabled={busy} onClick={() => { setForm(null); lastAttempt.current = null; }}>Cancel</button>
       </div>
     </form> : client && !readOnly && status?.state !== "read_only" ? <div className="matrix-ap-workflow-actions matrix-ap-subscription-actions">
       {status?.actions.includes("connect") ? <button type="button" className="matrix-ap-button" disabled={blocked}
-        onClick={() => setForm({ client, apiKey: "" })}>{status.enabled ? "Change API key" : "Connect Claude"}</button> : null}
-      {status?.actions.includes("refresh") ? <button type="button" className="matrix-ap-button" disabled={blocked} onClick={() => void act("refresh")}>Check Claude connection</button> : null}
-      {status?.actions.includes("disconnect") ? <button type="button" className="matrix-ap-button" disabled={blocked} onClick={() => void act("disconnect")}>Disconnect Claude</button> : null}
+        onClick={() => setForm({ client, apiKey: "" })}>{status.enabled ? "Change API key" : `Connect ${labelName}`}</button> : null}
+      {status?.actions.includes("refresh") ? <button type="button" className="matrix-ap-button" disabled={blocked} onClick={() => void act("refresh")}>Check {labelName} connection</button> : null}
+      {status?.actions.includes("disconnect") ? <button type="button" className="matrix-ap-button" disabled={blocked} onClick={() => void act("disconnect")}>Disconnect {labelName}</button> : null}
     </div> : null}
   </article>;
 }
