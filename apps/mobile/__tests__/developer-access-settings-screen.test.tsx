@@ -1,13 +1,21 @@
 const mockPush = jest.fn();
 const mockUseGateway = jest.fn();
 const focusEffects: Array<() => void | (() => void)> = [];
+const focusCleanups: Array<undefined | (() => void)> = [];
 
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: mockPush }),
   useFocusEffect: (effect: () => void | (() => void)) => {
     const React = require("react");
     focusEffects[0] = effect;
-    React.useEffect(effect, [effect]);
+    React.useEffect(() => {
+      const cleanup = effect();
+      focusCleanups[0] = cleanup;
+      return () => {
+        cleanup?.();
+        focusCleanups[0] = undefined;
+      };
+    }, [effect]);
   },
 }));
 
@@ -49,6 +57,7 @@ describe("GitHub developer access settings", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     focusEffects.length = 0;
+    focusCleanups.length = 0;
     getGithubDeveloperStatus.mockResolvedValue({ ok: true, status: readyStatus });
     createGithubDeveloperSetupSession.mockResolvedValue(
       `tws_${"a".repeat(32)}:tt_${"b".repeat(32)}`,
@@ -138,6 +147,63 @@ describe("GitHub developer access settings", () => {
     expect(await screen.findByText("Could not open the setup terminal. Try again.")).toBeTruthy();
     expect(mockPush).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Connect GitHub developer access")).toBeTruthy();
+  });
+
+  it("does not navigate when setup finishes after the page loses focus", async () => {
+    const created = deferred<string | null>();
+    createGithubDeveloperSetupSession.mockReturnValue(created.promise);
+    getGithubDeveloperStatus.mockResolvedValue({
+      ok: true,
+      status: { ...readyStatus, authenticated: false, user: null, ready: false },
+    });
+    render(<DeveloperAccessSettingsScreen />);
+
+    fireEvent.press(await screen.findByLabelText("Connect GitHub developer access"));
+    act(() => focusCleanups[0]?.());
+    await act(async () => created.resolve(`tws_${"a".repeat(32)}:tt_${"b".repeat(32)}`));
+
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate when the selected computer changes during setup", async () => {
+    const created = deferred<string | null>();
+    createGithubDeveloperSetupSession.mockReturnValue(created.promise);
+    getGithubDeveloperStatus.mockResolvedValue({
+      ok: true,
+      status: { ...readyStatus, authenticated: false, user: null, ready: false },
+    });
+    const firstClient = { getGithubDeveloperStatus, createGithubDeveloperSetupSession };
+    mockUseGateway.mockReturnValue({ client: firstClient, gateway: { id: "first-computer" } });
+    const view = render(<DeveloperAccessSettingsScreen />);
+    fireEvent.press(await screen.findByLabelText("Connect GitHub developer access"));
+
+    mockUseGateway.mockReturnValue({
+      client: {
+        getGithubDeveloperStatus: jest.fn().mockResolvedValue({ ok: true, status: readyStatus }),
+        createGithubDeveloperSetupSession: jest.fn(),
+      },
+      gateway: { id: "second-computer" },
+    });
+    view.rerender(<DeveloperAccessSettingsScreen />);
+    await act(async () => created.resolve(`tws_${"a".repeat(32)}:tt_${"b".repeat(32)}`));
+
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate when setup finishes after unmount", async () => {
+    const created = deferred<string | null>();
+    createGithubDeveloperSetupSession.mockReturnValue(created.promise);
+    getGithubDeveloperStatus.mockResolvedValue({
+      ok: true,
+      status: { ...readyStatus, authenticated: false, user: null, ready: false },
+    });
+    const view = render(<DeveloperAccessSettingsScreen />);
+    fireEvent.press(await screen.findByLabelText("Connect GitHub developer access"));
+
+    view.unmount();
+    await act(async () => created.resolve(`tws_${"a".repeat(32)}:tt_${"b".repeat(32)}`));
+
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it("refreshes the selected computer status when the page regains focus", async () => {

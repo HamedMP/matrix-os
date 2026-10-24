@@ -4,6 +4,11 @@ import {
   parseTerminalSessions,
   type MobileTerminalSession,
 } from "@/lib/terminal-state";
+import {
+  createGithubDeveloperSetupSession as createGithubDeveloperSetupSessionRequest,
+  getGithubDeveloperStatus as getGithubDeveloperStatusRequest,
+  type GithubDeveloperStatusResult,
+} from "@/lib/github-developer-access";
 import { logMobileCodingAgentWarning } from "@/lib/coding-agent-diagnostics";
 import { twoWordShellSessionName } from "@/lib/shell-session-names";
 import {
@@ -68,46 +73,7 @@ import {
 } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 
-function randomShellSuffix(): string {
-  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
-  if (c && typeof c.randomUUID === "function") {
-    return c.randomUUID().replace(/-/g, "").slice(0, 7);
-  }
-  return Math.random().toString(36).slice(2, 9).padEnd(7, "0").slice(0, 7);
-}
-
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
-
-const GithubDeveloperStatusSchema = z.object({
-  installed: z.boolean(),
-  authenticated: z.boolean(),
-  user: z.string().min(1).max(128).nullable(),
-  gitProtocol: z.enum(["ssh", "https"]).nullable(),
-  sshStatus: z.enum(["verified", "setup_required", "unavailable"]),
-  commitIdentity: z.object({
-    status: z.enum(["ready", "missing", "unavailable"]),
-    label: z.string().min(1).max(256).nullable(),
-  }),
-  ready: z.boolean(),
-  errorCode: z.string().regex(/^[a-z0-9_]{1,64}$/).nullable(),
-});
-
-export type GithubDeveloperStatus = z.infer<typeof GithubDeveloperStatusSchema>;
-export type GithubDeveloperStatusResult =
-  | { ok: true; status: GithubDeveloperStatus }
-  | { ok: false; error: "GitHub developer access unavailable" };
-
-function parseGithubDeveloperStatus(value: unknown): GithubDeveloperStatus | null {
-  const parsed = GithubDeveloperStatusSchema.safeParse(value);
-  if (!parsed.success) return null;
-  const status = parsed.data;
-  const prerequisitesReady = status.installed
-    && status.authenticated
-    && status.gitProtocol === "ssh"
-    && status.sshStatus === "verified"
-    && status.commitIdentity.status === "ready";
-  return { ...status, ready: status.ready && prerequisitesReady };
-}
 
 /** Canonical hosted platform origin; `/vm/<handle>` computer routes share it. */
 const HOSTED_PLATFORM_ORIGIN = "https://app.matrix-os.com";
@@ -1562,23 +1528,7 @@ export class GatewayClient {
   }
 
   async getGithubDeveloperStatus(): Promise<GithubDeveloperStatusResult> {
-    try {
-      const res = await this.fetchGateway("/api/github/status");
-      if (!res.ok) {
-        logGatewayStatusWarning("GitHub developer status unavailable", res.status);
-        return { ok: false, error: "GitHub developer access unavailable" };
-      }
-      const body = await res.json();
-      const status = parseGithubDeveloperStatus(body);
-      if (!status) {
-        logGatewayWarning("GitHub developer status returned invalid payload", "invalid payload");
-        return { ok: false, error: "GitHub developer access unavailable" };
-      }
-      return { ok: true, status };
-    } catch (err: unknown) {
-      logGatewayCatchWarning("GitHub developer status unavailable", err);
-      return { ok: false, error: "GitHub developer access unavailable" };
-    }
+    return getGithubDeveloperStatusRequest((path, init) => this.fetchGateway(path, init));
   }
 
   /**
@@ -1586,42 +1536,7 @@ export class GatewayClient {
    * return its validated serialized TerminalRef for handoff, or null on failure.
    */
   async createGithubDeveloperSetupSession(): Promise<string | null> {
-    const name = `GitHub setup ${randomShellSuffix()}`;
-    try {
-      const ensured = await this.fetchGateway("/api/terminal/workspaces/ensure", {
-        method: "POST", body: "{}", headers: { "Content-Type": "application/json" },
-      });
-      if (!ensured.ok) return null;
-      const ensuredBody = (await ensured.json().catch((err: unknown) => {
-        logGatewayCatchWarning("GitHub setup workspace ensure returned invalid JSON", err);
-        return null;
-      })) as { workspace?: { id?: unknown } } | null;
-      const workspaceId = typeof ensuredBody?.workspace?.id === "string" ? ensuredBody.workspace.id : "";
-      if (!/^tws_[0-9a-f]{32}$/.test(workspaceId)) return null;
-      const res = await this.fetchGateway(`/api/terminal/workspaces/${workspaceId}/tabs`, {
-        method: "POST",
-        body: JSON.stringify({ name, cwd: "projects", command: ["matrix-github-developer-login"] }),
-        headers: { "Content-Type": "application/json" },
-      });
-      if (!res.ok) {
-        await res.text().catch((err: unknown) => {
-          logGatewayCatchWarning("failed to read GitHub setup session create error body", err);
-          return "";
-        });
-        logGatewayStatusWarning("GitHub setup session create failed", res.status);
-        return null;
-      }
-      const body = (await res.json().catch((err: unknown) => {
-        logGatewayCatchWarning("GitHub setup tab create returned invalid JSON", err);
-        return null;
-      })) as { tab?: { id?: unknown } } | null;
-      const tabId = typeof body?.tab?.id === "string" ? body.tab.id : "";
-      const created = `${workspaceId}:${tabId}`;
-      return isSafeSessionId(created) ? created : null;
-    } catch (err: unknown) {
-      logGatewayCatchWarning("GitHub setup tab create unavailable", err);
-      return null;
-    }
+    return createGithubDeveloperSetupSessionRequest((path, init) => this.fetchGateway(path, init));
   }
 
   async deleteTerminalSession(refKey: string): Promise<boolean> {

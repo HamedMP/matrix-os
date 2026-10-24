@@ -1,10 +1,10 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
 
 import { useGateway } from "@/app/_layout";
 import { SettingsCardStack, SettingsPage, SettingsRow } from "@/components/settings/SettingsSurface";
 import { Button, Spacer, Text } from "@/components/ui";
-import type { GithubDeveloperStatus } from "@/lib/gateway-client";
+import type { GithubDeveloperStatus } from "@/lib/github-developer-access";
 import { isSafeSessionId } from "@/lib/terminal-state";
 
 const STATUS_ERROR = "Status unavailable";
@@ -19,7 +19,17 @@ export default function DeveloperAccessSettingsScreen() {
   const [setupError, setSetupError] = useState<string | null>(null);
   const [isStartingSetup, setIsStartingSetup] = useState(false);
   const refreshGeneration = useRef(0);
+  const setupGeneration = useRef(0);
   const setupInFlight = useRef(false);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      setupGeneration.current += 1;
+    };
+  }, []);
 
   const refreshStatus = useCallback(async () => {
     const generation = ++refreshGeneration.current;
@@ -46,20 +56,26 @@ export default function DeveloperAccessSettingsScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      const focusedSetupGeneration = ++setupGeneration.current;
       void refreshStatus();
       return () => {
         refreshGeneration.current += 1;
+        if (setupGeneration.current === focusedSetupGeneration) {
+          setupGeneration.current += 1;
+        }
       };
     }, [refreshStatus]),
   );
 
   const startSetup = async () => {
     if (!client || setupInFlight.current) return;
+    const generation = setupGeneration.current;
     setupInFlight.current = true;
     setIsStartingSetup(true);
     setSetupError(null);
     try {
       const terminalRef = await client.createGithubDeveloperSetupSession();
+      if (!mounted.current || generation !== setupGeneration.current) return;
       if (!terminalRef || !isSafeSessionId(terminalRef)) {
         setSetupError(SETUP_ERROR);
         return;
@@ -70,10 +86,12 @@ export default function DeveloperAccessSettingsScreen() {
       } as never);
     } catch (error: unknown) {
       console.warn("[mobile] GitHub developer setup failed", error instanceof Error ? error.name : "unknown");
-      setSetupError(SETUP_ERROR);
+      if (mounted.current && generation === setupGeneration.current) {
+        setSetupError(SETUP_ERROR);
+      }
     } finally {
       setupInFlight.current = false;
-      setIsStartingSetup(false);
+      if (mounted.current) setIsStartingSetup(false);
     }
   };
 
