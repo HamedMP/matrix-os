@@ -14,7 +14,8 @@ const COMMAND_TIMEOUT_MS = 15_000;
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
 const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const IDENTITY_NAME = /^[^\x00-\x1f\x7f]{1,200}$/;
-const IDENTITY_EMAIL = /^(?=.{3,320}$)[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/;
+// Mirrors Zod's default email validation used by status and coding-agent commits.
+const IDENTITY_EMAIL = /^(?=.{3,320}$)(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-.]*)[A-Za-z0-9_+\-]@([A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$/;
 const SSH_GREETING = /^Hi [A-Za-z0-9](?:[A-Za-z0-9-]{0,38})! You've successfully authenticated, but GitHub does not provide shell access\.$/m;
 
 // Verified against GitHub's official published host-key entries on 2026-10-24:
@@ -64,6 +65,17 @@ function streamSanitized(stream, destination, state, onLimit) {
     while ((newline = state.pending.indexOf("\n")) !== -1) {
       destination.write(redact(state.pending.slice(0, newline + 1)));
       state.pending = state.pending.slice(newline + 1);
+    }
+    // Interactive programs commonly wait after a prompt without writing a
+    // newline. Forward only prompt-shaped, already-sanitized text; everything
+    // else remains line-buffered so secret patterns can span data chunks.
+    if (
+      /(?:[:?]|\[[^\]\r\n]{0,80}\]|\([^()\r\n]{0,80}\)) $/.test(state.pending)
+      && redact(state.pending) === state.pending
+      && !/(?:ghp_|github_pat_|bearer\s|PRIVATE KEY)/i.test(state.pending)
+    ) {
+      destination.write(state.pending);
+      state.pending = "";
     }
   });
 }
@@ -163,11 +175,11 @@ async function readOwnerFile(path, maxBytes) {
   return { bytes, stat };
 }
 
-async function writeOwnerFileAtomic(path, content, mode, maxBytes) {
+async function writeOwnerFileAtomic(path, content, mode, maxBytes, expectedCurrent) {
   const bytes = Buffer.from(content, "utf8");
   if (bytes.length > maxBytes) throw new Error("owner file too large");
   const parent = dirname(path);
-  const current = await readOwnerFile(path, maxBytes);
+  const current = expectedCurrent ?? await readOwnerFile(path, maxBytes);
   const temporary = join(parent, `.matrix-github-${randomBytes(16).toString("hex")}`);
   let handle;
   try {
@@ -184,6 +196,7 @@ async function writeOwnerFileAtomic(path, content, mode, maxBytes) {
         || current.stat.dev !== latest.stat.dev
         || current.stat.mtimeMs !== latest.stat.mtimeMs
         || current.stat.size !== latest.stat.size
+        || !current.bytes.equals(latest.bytes)
       ))
     ) {
       throw new Error("owner file changed");
@@ -216,7 +229,7 @@ async function installPinnedSshConfiguration(homePath) {
   const text = current.bytes ? new TextDecoder("utf-8", { fatal: true }).decode(current.bytes) : "";
   const hasInclude = text.split(/\r?\n/).some((line) => line.trim() === GITHUB_INCLUDE);
   if (!hasInclude) {
-    await writeOwnerFileAtomic(configPath, `${GITHUB_INCLUDE}\n${text}`, 0o600, CONFIG_BYTES);
+    await writeOwnerFileAtomic(configPath, `${GITHUB_INCLUDE}\n${text}`, 0o600, CONFIG_BYTES, current);
   }
 }
 

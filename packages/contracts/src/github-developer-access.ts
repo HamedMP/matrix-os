@@ -6,6 +6,7 @@ export const GithubDeveloperStatusErrorCodeSchema = z.enum([
   "gh_missing",
   "github_auth_required",
   "github_status_unavailable",
+  "github_ssh_protocol_required",
   "github_ssh_setup_required",
   "github_ssh_unavailable",
   "git_identity_missing",

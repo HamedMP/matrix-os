@@ -40,6 +40,17 @@ if (command === "gh") {
       console.error("cancelled ghp_secret_that_must_not_escape");
       process.exit(130);
     }
+    if (process.env.FAKE_LOGIN_PROMPT === "1") {
+      process.stdout.write("Choose an SSH key: ");
+      await new Promise((resolvePrompt) => {
+        const timer = setTimeout(() => process.exit(12), 2_000);
+        process.stdin.once("data", () => {
+          clearTimeout(timer);
+          resolvePrompt();
+        });
+      });
+      process.exit(0);
+    }
     process.exit(0);
   }
   if (args[0] === "auth" && args[1] === "setup-git") process.exit(0);
@@ -93,7 +104,18 @@ process.exit(9);
       });
       let stdout = "";
       let stderr = "";
-      child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
+      let promptAnswered = false;
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf8");
+        if (
+          !promptAnswered
+          && extraEnv.FAKE_LOGIN_PROMPT === "1"
+          && stdout.includes("Choose an SSH key: ")
+        ) {
+          promptAnswered = true;
+          child.stdin.write("\n");
+        }
+      });
       child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
       child.on("error", rejectRun);
       const inputTimer = setInterval(async () => {
@@ -181,6 +203,28 @@ process.exit(9);
       { command: "git", args: ["config", "--global", "--replace-all", "user.name", "Octo Owner"] },
       { command: "git", args: ["config", "--global", "--replace-all", "user.email", "owner@example.com"] },
     ]));
+  });
+
+  it("shows a non-newline GitHub CLI prompt before the command waits for input", async () => {
+    const result = await runLogin("\n\n", { FAKE_LOGIN_PROMPT: "1" });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("Choose an SSH key: ");
+  });
+
+  it("rejects an email that readiness and coding-agent commits reject", async () => {
+    const result = await runLogin("Octo Owner\nfirst..last@example.com\n");
+
+    expect(result.code).toBe(3);
+    expect((await commands()).some((call) => call.command === "git" && call.args.includes("--replace-all"))).toBe(false);
+  });
+
+  it("passes the original SSH config snapshot into the atomic replacement", async () => {
+    const source = await readFile(SCRIPT, "utf8");
+
+    expect(source).toMatch(
+      /writeOwnerFileAtomic\(configPath, `\$\{GITHUB_INCLUDE\}\\n\$\{text\}`, 0o600, CONFIG_BYTES, current\)/,
+    );
   });
 
   it("rejects invalid identity before saving either value", async () => {
