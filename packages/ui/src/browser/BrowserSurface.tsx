@@ -6,9 +6,17 @@ import { useBrowserSurface } from "./use-browser-surface.js";
 import { browserAutomationActionAllowed, browserControlLabel, browserHumanInputAllowed } from "./automation-state.js";
 import type { BrowserControlAction, BrowserSurfaceProps } from "./types.js";
 import "./browser.css";
+import { BrowserSetupGate } from "./BrowserSetupGate.js";
 
 export function BrowserSurface(props: BrowserSurfaceProps) {
-  const { state, iframe, viewerKey, reconnect, control, automationControl } = useBrowserSurface(props);
+  return props.setup ? <BrowserSetupGate key={props.gatewayUrl} setup={props.setup} active={props.active !== false} scope={props.gatewayUrl}>{recheck => <ReadyBrowserSurface {...props} recheckSetup={recheck}/>}</BrowserSetupGate> : <ReadyBrowserSurface {...props}/>;
+}
+function ReadyBrowserSurface(props: BrowserSurfaceProps & { recheckSetup?: () => Promise<boolean> }) {
+  const { state, iframe, viewerKey, reconnect: reconnectViewer, control, automationControl } = useBrowserSurface(props);
+  const reconnect = async () => {
+    if (props.active === false) return;
+    if (!props.recheckSetup || await props.recheckSetup()) reconnectViewer();
+  };
   const [settings, setSettings] = useState(false);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const settingsPanel = useRef<HTMLElement>(null);

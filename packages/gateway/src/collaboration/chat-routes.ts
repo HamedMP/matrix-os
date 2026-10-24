@@ -114,7 +114,7 @@ export function registerChatRoutes(routes: Hono, options: CollaborationRouteOpti
     const adapter = requireExecutionAdapter(options.chatExecutionAdapter);
     const { value, bytes } = await readJson(c);
     const context = await authorize(options, c, bytes, "request_ai", scopeId);
-    return c.json(await adapter.submit(context, CollaborationCreateAiRequestSchema.parse(value)), 201);
+    return c.json(await adapter.submit(context, CollaborationCreateAiRequestSchema.parse(value), c.req.raw.signal), 201);
   }));
 
   routes.post("/api/collaboration/scopes/:scopeId/chat/requests/:requestId/cancel", async (c) => handle(c, async () => {

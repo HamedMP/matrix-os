@@ -13,6 +13,18 @@ export type SharedChatAuthorizer = (
 
 export type SharedChatAction = "read" | "discuss" | Parameters<SharedChatAuthorizer>[2];
 
+/** Lock an inherited Project before its Chat, matching assignment and Company Brain.
+ * The authority preflight supplies the expected parent; the fence rejects reparenting
+ * before it can acquire a different Project after the Chat has been locked. */
+export async function lockSharedChatMembershipScope(
+  trx: Transaction<OwnerCollaborationDatabase>,
+  context: Pick<AuthorizedCollaborationContext, "scopeId" | "membershipScopeId"> | undefined,
+): Promise<void> {
+  if (!context || context.membershipScopeId === context.scopeId) return;
+  await trx.selectFrom("collaboration_scopes").select("id")
+    .where("id", "=", context.membershipScopeId).forUpdate().executeTakeFirst();
+}
+
 /** Locks the same scopes grant mutations advance, so a preflight cannot survive revocation. */
 export function fenceSharedChatAuthority(
   trx: Transaction<OwnerCollaborationDatabase>,
@@ -46,6 +58,7 @@ export async function fenceSharedChatAuthority(
     || context.authorityGeneration !== Number(scope.authority_generation)
     || (context.role === "owner" && actorId !== scope.owner_id)
     || (scope.membership_mode === "direct" && scope.parent_scope_id !== null)
+    || (scope.membership_mode === "inherited" && scope.parent_scope_id !== context.membershipScopeId)
     || (action !== "read" && context.role === "viewer")) {
     throw new CollaborationAuthorizationError("forbidden", "Shared Chat authority changed");
   }

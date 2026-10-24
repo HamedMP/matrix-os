@@ -7,7 +7,7 @@ describe("platform speech process wiring", () => {
     expect(source).toContain("createAiFundedReservationCleanupWorker({");
     expect(source).toContain("fundedReservationCleanupWorker?.shutdown()");
     expect(source).toContain("loadPlatformSpeechConfig(process.env)");
-    expect(source).toContain("createConfiguredPlatformSpeechService({ db, config: speechConfig })");
+    expect(source).toContain("createConfiguredPlatformSpeechService({ db, config: speechConfig, previewRuntimeAccess })");
     expect(source).not.toContain("const speechService: PlatformSpeechService = createUnavailablePlatformSpeechService");
   });
 
@@ -33,8 +33,9 @@ describe("platform speech process wiring", () => {
     const setup = source.slice(source.indexOf("activateManagedFeatures = createManagedFeatureActivator"), source.indexOf("goldenSnapshotConfig = customerVpsConfig.goldenSnapshots"));
     expect(setup).toContain("fundedAiEnabled: customerVpsConfig.fundedAiEnabled");
     expect(setup).toContain("speechEnabled: customerVpsConfig.platformSpeechEnabled");
-    expect(setup).toContain("if (customerVpsConfig.fundedAiEnabled && internalFundedAiRuntimeRoutes)");
+    expect(setup).toContain("if ((customerVpsConfig.fundedAiEnabled || previewRuntimeAccess.enabled) && internalFundedAiRuntimeRoutes)");
     expect(setup).toContain("createFundedHostActivationRoutes({ db,");
+    expect(setup).toContain("previewRuntimeSecret: previewRuntimeAccess.runtimeSecret");
     expect(setup).toMatch(/if \(backgroundWorkersEnabled\)\s*\{\s*managedFeatureReconciliationWorker = startCustomerVpsReconciliationWorker/);
     expect(setup).toContain("runPass: reconcileManagedFeatures");
     expect(setup).toContain("registerCustomMcpStartupCleanup(async () => {");

@@ -6,7 +6,7 @@ const refused = (requestId: string, error: 'action_denied' | 'invalid_request' |
 export async function forwardChatGptPlanInference(request: ScopeRuntimeBotInferenceRequest, binding: PiRuntimeBinding, deps: {
     authority: ChatGptPlanAuthority;
     signal: AbortSignal;
-    stillAuthorized(): boolean;
+    stillAuthorized(): boolean | Promise<boolean>;
 }): Promise<ScopeRuntimeBrokerResponse> {
     if (!binding.subscription || binding.accessSourceId !== 'matrix_chatgpt_plan' || request.action !== 'inference.responses'
         || request.path !== '/v1/responses')
@@ -20,7 +20,9 @@ export async function forwardChatGptPlanInference(request: ScopeRuntimeBotInfere
         return refused(request.requestId, 'invalid_request');
     }
     const signal = AbortSignal.any([deps.signal, AbortSignal.timeout(120000)]);
-    const authorized = async () => !signal.aborted && deps.stillAuthorized() && await deps.authority.revalidate(binding, signal) && !signal.aborted && deps.stillAuthorized();
+    const authorized = async () => !signal.aborted && await deps.stillAuthorized() && !signal.aborted
+        && await deps.authority.revalidate(binding, signal) && !signal.aborted
+        && await deps.stillAuthorized() && !signal.aborted;
     try {
         if (!await authorized())
             return refused(request.requestId, 'action_denied');

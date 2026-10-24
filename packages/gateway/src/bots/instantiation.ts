@@ -18,6 +18,7 @@ import { createHash } from "node:crypto";
 import { lstat, opendir } from "node:fs/promises";
 import {
   CreateManagedCustomBotRequestSchema, MANAGED_CUSTOM_BOT_RECIPE_REF,
+  CreateChatAgentRequestSchema,
   InstantiateBotRequestSchema,
   InstantiateBotResponseSchema,
   type ChatAgent,
@@ -35,15 +36,16 @@ import { createBotBindingsRepository } from "./repositories/bindings.js";
 import { createBotOperationsRepository, type BotOperation } from "./repositories/operations.js";
 import { BotStateError, type BotExecutor } from "./repositories/shared.js";
 import { MATRIX_BOT_SELECTION } from "./selection.js";
-import { isManagedCustomOperationRequestId, managedCustomOperationRequestId } from "./custom-creation-authority.js";
+import { isManagedCustomOperationRequestId, isManagedCustomRecoveryRequestId, managedCustomOperationRequestId } from "./custom-creation-authority.js";
 import { ManagedCustomDefinitionError, resolveManagedCustomDefinition } from "./custom-definition.js";
 import type { ChatAgentRecipeResolver } from "../chat/agent-recipe.js";
 
 export type BotInstantiationErrorCode = "invalid_request" | "conflict" | "rate_limited" | "unavailable";
+export type BotCreationFailureReason = "prompt_too_large" | "unsupported_skill";
 
 /** Allowlisted failures; the route maps each to one status and a generic message. */
 export class BotInstantiationError extends Error {
-  constructor(readonly code: BotInstantiationErrorCode) {
+  constructor(readonly code: BotInstantiationErrorCode, readonly reason?: BotCreationFailureReason) {
     super(`Bot instantiation failed: ${code}`);
     this.name = "BotInstantiationError";
   }
@@ -262,7 +264,7 @@ export function createBotInstantiation(deps: {
         try {
           await resolveManagedCustomDefinition(custom, deps.customRecipes);
         } catch (error) {
-          if (error instanceof ManagedCustomDefinitionError) throw new BotInstantiationError("invalid_request");
+          if (error instanceof ManagedCustomDefinitionError) throw new BotInstantiationError("invalid_request", error.code);
           throw error;
         }
       }
@@ -308,7 +310,10 @@ export function createBotInstantiation(deps: {
     instantiate: (ownerId: string, requestValue: unknown) => instantiate(ownerId, requestValue),
     async createCustom(ownerId: string, requestValue: unknown): Promise<InstantiateBotResponse> {
       const parsed = CreateManagedCustomBotRequestSchema.safeParse(requestValue);
-      if (!parsed.success) throw new BotInstantiationError("invalid_request");
+      if (!parsed.success) {
+        const fields = CreateChatAgentRequestSchema.safeParse(requestValue);
+        throw new BotInstantiationError("invalid_request", fields.success && fields.data.recipe?.skills.includes("matrix-jev-email-triage") ? "unsupported_skill" : undefined);
+      }
       return instantiate(ownerId, { clientRequestId: managedCustomOperationRequestId(ownerId, parsed.data.clientRequestId), recipe: MANAGED_CUSTOM_BOT_RECIPE_REF, name: parsed.data.name, selection: parsed.data.selection }, parsed.data);
     },
     /**
@@ -317,6 +322,9 @@ export function createBotInstantiation(deps: {
      * recoverable and only a retried request can finish it.
      */
     async resume(operation: BotOperation): Promise<void> {
+      // Existing-identity recovery needs its explicit owner/revision checks.
+      // Ordinary reconciliation must never adopt an unpromoted legacy file.
+      if (isManagedCustomRecoveryRequestId(operation.clientRequestId)) return;
       try {
         await advance(operation, () => deps.agents.get(owner(operation.ownerId), operation.botId));
       } catch (error: unknown) {

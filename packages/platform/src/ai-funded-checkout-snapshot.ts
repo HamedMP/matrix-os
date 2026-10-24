@@ -6,9 +6,11 @@ import { projectExpiredPromotionalCredit } from "./ai-funded-expiry-projection.j
 import type { PlatformDB } from "./db.js";
 import { AiFundedPolicyError } from "./ai-funded-policy-errors.js";
 import { exactInteger, fundingSummary, intersectModels, parseModels, utcMonthStart } from "./ai-funded-metering-helpers.js";
+import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
 
 type CheckoutRow = {
-  clerk_user_id: string; machine_runtime_slot: string; status: string; activation_state: string; deleted_at: string | null;
+  clerk_user_id: string; machine_runtime_slot: string; machine_runtime_token_epoch: number;
+  machine_provisioning_class: string; status: string; activation_state: string; deleted_at: string | null;
   owner_id: string; policy_runtime_slot: string; runtime_enabled: boolean; runtime_allowed_model_ids: string;
   monthly_budget_microusd: unknown; expires_at: string | null; runtime_revision: number;
   global_enabled: boolean; global_allowed_model_ids: string; global_revision: number;
@@ -16,6 +18,9 @@ type CheckoutRow = {
   reserved_microusd: unknown; funding_shortfall_microusd: unknown; month_period_start: string;
   month_spent_microusd: unknown; month_reserved_microusd: unknown;
   restriction_debt_microusd: unknown | null; restriction_frozen: boolean | null;
+  preview_owner_id: string | null; preview_runtime_slot: string | null; preview_runtime_token_epoch: number | null;
+  preview_ai_request_limit: unknown | null; preview_ai_requests_used: unknown | null;
+  preview_max_concurrency: unknown | null; preview_expires_at: string | null;
 };
 
 /** Checkout reads current owner/policy/budget without admission's balancing
@@ -43,6 +48,8 @@ export async function readCheckoutFundingSnapshot(input: {
     if (Date.now() >= deadlineAtMs) throw new Error("Checkout funding read timed out");
     const result = await sql<CheckoutRow>`
       select machine.clerk_user_id, machine.runtime_slot as machine_runtime_slot,
+        machine.runtime_token_epoch as machine_runtime_token_epoch,
+        machine.provisioning_class as machine_provisioning_class,
         machine.status, machine.activation_state, machine.deleted_at,
         runtime.owner_id, runtime.runtime_slot as policy_runtime_slot,
         runtime.enabled as runtime_enabled, runtime.allowed_model_ids as runtime_allowed_model_ids,
@@ -53,13 +60,22 @@ export async function readCheckoutFundingSnapshot(input: {
         balance.addon_balance_microusd, balance.reserved_microusd, balance.funding_shortfall_microusd,
         balance.month_period_start, balance.month_spent_microusd, balance.month_reserved_microusd,
         restriction.debt_microusd as restriction_debt_microusd,
-        restriction.frozen as restriction_frozen
+        restriction.frozen as restriction_frozen,
+        preview.owner_id as preview_owner_id, preview.runtime_slot as preview_runtime_slot,
+        preview.runtime_token_epoch as preview_runtime_token_epoch,
+        preview.ai_request_limit as preview_ai_request_limit,
+        preview.ai_requests_used as preview_ai_requests_used,
+        preview.max_concurrency as preview_max_concurrency,
+        preview.expires_at as preview_expires_at
       from user_machines as machine
       join ai_funded_runtime_policies as runtime on runtime.machine_id = machine.machine_id
       join ai_funded_runtime_balances as balance on balance.machine_id = runtime.machine_id
         and balance.owner_id = runtime.owner_id and balance.runtime_slot = runtime.runtime_slot
       left join ai_funded_credit_restrictions as restriction on restriction.machine_id = runtime.machine_id
         and restriction.owner_id = runtime.owner_id and restriction.runtime_slot = runtime.runtime_slot
+      left join preview_runtime_allocations as preview on preview.machine_id = machine.machine_id
+        and preview.owner_id = machine.clerk_user_id and preview.runtime_slot = machine.runtime_slot
+        and preview.runtime_token_epoch = machine.runtime_token_epoch
       join ai_funded_global_policy as global on global.policy_id = 'default'
       where machine.machine_id = ${identity.machineId}
     `.execute(trx.executor);
@@ -72,8 +88,23 @@ export async function readCheckoutFundingSnapshot(input: {
       if (row.restriction_frozen === true || exactInteger(row.restriction_debt_microusd ?? 0) > 0) {
         throw new AiFundedPolicyError("access_disabled");
       }
+    const preview = isBoundedPreviewProvisioningClass(row.machine_provisioning_class)
+      && row.preview_owner_id === identity.ownerId && row.preview_runtime_slot === identity.runtimeSlot
+      && row.preview_runtime_token_epoch === row.machine_runtime_token_epoch
+      && row.preview_expires_at !== null && Date.parse(row.preview_expires_at) > checked.getTime()
+      ? {
+          requestLimit: exactInteger(row.preview_ai_request_limit),
+          requestsUsed: exactInteger(row.preview_ai_requests_used),
+          maxConcurrency: exactInteger(row.preview_max_concurrency),
+          expiresAt: row.preview_expires_at,
+        }
+      : undefined;
+    if (row.machine_provisioning_class !== "customer" && !preview) {
+      throw new AiFundedPolicyError("access_disabled");
+    }
     const monthlyBudgetMicrousd = exactInteger(row.monthly_budget_microusd);
-    const enabled = row.global_enabled && row.runtime_enabled
+    const previewRequestsAvailable = preview === undefined || preview.requestsUsed < preview.requestLimit;
+    const enabled = row.global_enabled && row.runtime_enabled && previewRequestsAvailable
       && (row.expires_at === null || Date.parse(row.expires_at) > checked.getTime());
     const allowedModelIds = enabled
       ? intersectModels(parseModels(row.global_allowed_model_ids), parseModels(row.runtime_allowed_model_ids))
@@ -83,12 +114,24 @@ export async function readCheckoutFundingSnapshot(input: {
     const balance = currentBalance.month_period_start === currentPeriod ? currentBalance : {
       ...currentBalance, month_period_start: currentPeriod, month_spent_microusd: 0, month_reserved_microusd: 0,
     };
-    const funding = fundingSummary(balance, monthlyBudgetMicrousd, checkedAt);
+    const funding = {
+      ...fundingSummary(balance, monthlyBudgetMicrousd, checkedAt),
+      ...(preview ? { previewQuota: {
+        mode: "preview" as const,
+        requestLimit: preview.requestLimit,
+        requestsUsed: preview.requestsUsed,
+        requestsRemaining: preview.requestLimit - preview.requestsUsed,
+        maxConcurrency: preview.maxConcurrency,
+        expiresAt: preview.expiresAt,
+      } } : {}),
+    };
     const sources = input.includeChatAvailability ? await fundingSourceAvailability(trx.executor, identity, balance, checkedAt, { readOnly: true }) : undefined;
     if (Date.now() >= deadlineAtMs) throw new Error("Checkout funding read timed out");
     const chatAvailability = sources ? FundedAiChatAvailabilitySchema.parse({ contractVersion: 1, asOf: checkedAt,
-      eligibleBalanceMicrousd: Math.min(sources.ceilingMicrousd, Math.max(0, funding.creditBalanceMicrousd - (funding.fundingShortfallMicrousd ?? 0))),
-      availableBalanceMicrousd: Math.min(sources.availableMicrousd, funding.remainingBalanceMicrousd),
+      eligibleBalanceMicrousd: previewRequestsAvailable
+        ? Math.min(sources.ceilingMicrousd, Math.max(0, funding.creditBalanceMicrousd - (funding.fundingShortfallMicrousd ?? 0))) : 0,
+      availableBalanceMicrousd: previewRequestsAvailable
+        ? Math.min(sources.availableMicrousd, funding.remainingBalanceMicrousd) : 0,
     }) : undefined;
     return {
       funding, ...(chatAvailability ? { chatAvailability } : {}),

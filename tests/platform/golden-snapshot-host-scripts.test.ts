@@ -385,6 +385,8 @@ describe('golden snapshot host scripts', () => {
       'home/matrix/.npmrc',
       'run/matrix/bootstrap-token',
       'var/lib/matrix/bootstrap-attestation.json',
+      'var/lib/matrix-browser-bootstrap/receipt.json',
+      'var/lib/matrix-browser-bootstrap/bootstrap.lock',
       'var/lib/docker/volumes/customer/_data/db',
       'var/log/matrix-builder.log',
       'var/crash/matrix-gateway.crash',
