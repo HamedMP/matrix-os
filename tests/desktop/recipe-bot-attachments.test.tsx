@@ -20,6 +20,29 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it.each([
+  { sizes: [10 * 1024 * 1024], valid: true },
+  { sizes: [10 * 1024 * 1024, 10 * 1024 * 1024], valid: true },
+  { sizes: [10 * 1024 * 1024, 10 * 1024 * 1024, 1], valid: false },
+])("checks the Bot's complete file selection before upload: $sizes", async ({ sizes, valid }) => {
+  const { client, putBytes } = fixture("completed");
+  fireEvent.click(await screen.findByRole("button", { name: "Attach files" }));
+  const editor = screen.getByRole("textbox", { name: "Reply to chat" });
+  await setSharedComposerText(editor, "Keep capacity draft");
+  fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: sizes.map((size, index) => new File([new Uint8Array(size)], `input-${index}.bin`, { type: "application/octet-stream" })) } });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", false));
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  if (valid) {
+    await waitFor(() => expect(client.admitTurn).toHaveBeenCalledOnce());
+    expect(putBytes).toHaveBeenCalledTimes(sizes.length);
+  } else {
+    expect(await screen.findByText(/Attachments must total 20 MiB/)).toBeTruthy();
+    expect(putBytes).not.toHaveBeenCalled(); expect(client.admitTurn).not.toHaveBeenCalled();
+    expect(editor.textContent).toBe("Keep capacity draft");
+    expect(screen.getByText("input-0.bin")).toBeTruthy();
+  }
+});
+
 function fixture(status: "completed" | "running", vision = true) {
   const { snapshot, providerCatalog } = createCanonicalChatFixture(status);
   const record = { chat: snapshot.chat, projectId: "matrix-os", providerBinding: snapshot.chat.providerBinding, activeRun: snapshot.chat.activeRun };

@@ -148,7 +148,7 @@ describe("Electron Desktop bot Chat", () => {
     expect(patch).not.toHaveBeenCalled();
   });
 
-  it("refreshes bot controls on bot events without a chat revision change", async () => {
+  it("refreshes Bot metadata on Bot events but not streamed text revisions", async () => {
     const client = createCanonicalChatWorkspaceClient();
     const interactions = vi.fn(async () => []);
     client.agents = { bots: {
@@ -163,8 +163,25 @@ describe("Electron Desktop bot Chat", () => {
     render(<CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={snapshot.chat.id}
       initialView="conversation" active catalog={providerCatalog} eventSource={eventSource} />);
     await waitFor(() => expect(interactions).toHaveBeenCalledTimes(1));
+    const definitionReads = vi.mocked(client.agents!.list).mock.calls.length;
+    for (let index = 1; index <= 3; index++) {
+      const revision = snapshot.chat.revision + index;
+      const message = { id: "msg_streaming_bot", chatId: snapshot.chat.id, seq: snapshot.messages.length + 1,
+        role: "assistant" as const, state: "pending" as const, runId: snapshot.runs[0]!.id, turnId: snapshot.turns[0]!.id,
+        parts: [{ type: "text" as const, text: `Streaming chunk ${index}` }], createdAt: snapshot.chat.createdAt };
+      await act(async () => {
+        for (const listener of listeners) listener({ type: "chat.changed", chatId: snapshot.chat.id, cursor: revision,
+          revision, eventType: "run.message", content: { type: "chat.content", event: {
+            chatId: snapshot.chat.id, cursor: revision, revision, eventType: "run.message", createdAt: snapshot.chat.createdAt,
+          }, content: { record: { ...canonicalChatRecord, chat: { ...canonicalChatRecord.chat, revision,
+            messageCount: snapshot.chat.messageCount + 1 } }, messages: [...snapshot.messages, message] } } });
+      });
+      await screen.findByText(`Streaming chunk ${index}`);
+      expect(client.agents!.list).toHaveBeenCalledTimes(definitionReads);
+      expect(interactions).toHaveBeenCalledTimes(1);
+    }
     act(() => { for (const listener of listeners) listener({ type: "chat.changed", chatId: snapshot.chat.id,
-      cursor: 10, revision: snapshot.chat.revision, eventType: "bot.interaction.created" }); });
+      cursor: 10, revision: snapshot.chat.revision + 3, eventType: "bot.interaction.created" }); });
     await waitFor(() => expect(interactions).toHaveBeenCalledTimes(2));
   });
 

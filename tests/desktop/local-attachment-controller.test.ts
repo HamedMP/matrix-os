@@ -47,7 +47,26 @@ describe("local Desktop attachment controller", () => {
       "item-5.txt",
     ]);
     expect(items[0]?.status).toBe("ready");
-    expect(items[1]).toMatchObject({ status: "failed", error: "Files are limited to 10 MB." });
+    expect(items[1]).toMatchObject({ status: "failed", error: "Files are limited to 10 MiB." });
+  });
+
+  it("rechecks the current complete-selection policy before retrying a failed upload", async () => {
+    const putBytes = vi.fn().mockRejectedValue(new Error("offline"));
+    let error: string | null = null;
+    const controller = createLocalAttachmentController({ api: { putBytes } as never, validate: () => error });
+    controller.add([file("large.bin", 10 * MiB)]);
+    await controller.uploadAll();
+    const localId = controller.getSnapshot()[0]!.localId;
+    error = "The selected provider does not support file attachments.";
+    await controller.retry(localId);
+    expect(putBytes).toHaveBeenCalledOnce();
+    expect(controller.getSnapshot()[0]).toMatchObject({ status: "failed", error });
+    error = null;
+    putBytes.mockImplementation(async (url: string, bytes: File) => ({ path: decodeURIComponent(url.split("path=")[1]!), size: bytes.size }));
+    await controller.retry(localId);
+    expect(putBytes).toHaveBeenCalledTimes(2);
+    expect(controller.getSnapshot()[0]!.status).toBe("ready");
+    controller.dispose();
   });
 
   it("creates previews only for safe raster images and revokes them on remove and dispose", () => {
