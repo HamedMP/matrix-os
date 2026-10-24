@@ -81,8 +81,9 @@ export function safePlanNetworkDiagnostic(value: unknown): PlanNetworkDiagnostic
     return result as PlanNetworkDiagnostic;
 }
 export function planNetworkFailureDiagnostic(error: unknown, elapsedMs: number, requestBodyBytes: number): PlanNetworkDiagnostic {
+    const { chromiumCode } = planPeerNetworkFailureDiagnostic(error, 'before_headers');
     return safePlanNetworkDiagnostic({ errorName: networkField(error, 'name'), code: networkField(error, 'code'),
-        causeCode: networkField(networkField(error, 'cause'), 'code'), phase: 'before_headers', elapsedMs, requestBodyBytes });
+        causeCode: networkField(networkField(error, 'cause'), 'code'), chromiumCode, phase: 'before_headers', elapsedMs, requestBodyBytes });
 }
 /** Chromium puts its fixed net code in Error.message. Inspect only a bounded,
  * anchored prefix; never retain the message, URL, arbitrary code, or cause body. */
