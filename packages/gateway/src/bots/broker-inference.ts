@@ -46,6 +46,7 @@ const BotInferenceBodySchema = z.object({
   tools: z.array(z.unknown()).max(MAX_BOT_TOOLS).optional(),
   max_tokens: z.number().int().positive().optional(),
   max_completion_tokens: z.number().int().positive().optional(),
+  max_output_tokens: z.number().int().positive().optional(),
 }).passthrough();
 
 export interface BotInferenceDependencies {
@@ -54,6 +55,7 @@ export interface BotInferenceDependencies {
   isolatedChat?: import("../chat/isolated-chat-envelope.js").IsolatedChatAuthority;
   homePath: string;
   chatgptPlan?: import("./chatgpt-plan.js").ChatGptPlanAuthority;
+  matrixOpenAi?: import("./matrix-openai-api.js").MatrixOpenAiAuthority;
   matrixAnthropic?: import("./matrix-anthropic-api.js").MatrixAnthropicAuthority;
   lifetime: AbortSignal;
   /** Exact registry-owned run lifetime; combined with subsystem shutdown. */
@@ -130,6 +132,9 @@ export async function forwardBotInference(
   if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return failure(request.requestId, "action_denied");
   if (lifecycle.aborted) return failure(request.requestId, "action_denied");
   const authorization = authorize(modelId);
+  if (binding.openaiApi && (!deps.matrixOpenAi || binding.accessSourceId !== "owner_openai_key"
+    || !["openai-completions", "openai-responses"].includes(binding.route.api)
+    || !await deps.matrixOpenAi.revalidate(binding, lifecycle))) return failure(request.requestId, "action_denied");
   if (binding.anthropicApi && (!deps.matrixAnthropic || binding.accessSourceId !== "owner_anthropic_key"
     || !await deps.matrixAnthropic.revalidate(binding, lifecycle))) return failure(request.requestId, "action_denied");
   if (!authorization.allowed || !authorization.accessSourceId || !authorization.allowedModelIds.includes(modelId)) {
@@ -165,25 +170,32 @@ export async function forwardBotInference(
     if (deps.googleData && (!(await planPolicy("release")).allowed || !await planLive())) return failure(request.requestId, "action_denied");
     return result;
   }
+  if (authorization.accessSourceId === "owner_openai_key" && !binding.openaiApi) return failure(request.requestId, "action_denied");
   // Borrowed native profiles remain task-executor-only; never substitute them for the explicit paired-device source.
   if (authorization.accessSourceId === "owner_openai_profile" || authorization.accessSourceId === "owner_anthropic_profile"
-    || request.action === "inference.responses") return failure(request.requestId, "provider_unavailable");
+    || request.action === "inference.responses" && !binding.openaiApi) return failure(request.requestId, "provider_unavailable");
   // Chat completions exist only on Matrix's managed route (the funded relay).
-  if (request.action === "inference.chat_completions" && authorization.accessSourceId !== "matrix_included") {
+  if (request.action === "inference.chat_completions" && authorization.accessSourceId !== "matrix_included" && !binding.openaiApi) {
     return failure(request.requestId, "provider_unavailable");
   }
+
+  // Explicit API adapters have fixed hosts and paths. A worker cannot request
+  // native/OAuth, another vendor endpoint, remote state, or an alternate action.
+  if (binding.openaiApi && (authorization.accessSourceId !== "owner_openai_key" || request.method !== "POST"
+    || (binding.route.api === "openai-responses" ? request.action !== "inference.responses" || request.path !== "/v1/responses"
+      : request.action !== "inference.chat_completions" || request.path !== "/v1/chat/completions"))) return failure(request.requestId, "action_denied");
 
   // The registry's resolved route is the output authority. Omission must not
   // let an upstream default widen it; preserve smaller explicit limits (for
   // example session summaries) and reject conflicting/oversized limits.
-  if ((parsedBody.max_tokens !== undefined && parsedBody.max_completion_tokens !== undefined)
-    || (request.action === "inference.messages" && parsedBody.max_completion_tokens !== undefined)) {
-    return failure(request.requestId, "invalid_request");
-  }
-  const outputTokens = parsedBody.max_tokens ?? parsedBody.max_completion_tokens ?? binding.route.maxOutputTokens;
+  const tokenFields = [parsedBody.max_tokens, parsedBody.max_completion_tokens, parsedBody.max_output_tokens].filter(value => value !== undefined);
+  if (tokenFields.length > 1 || request.action === "inference.messages" && (parsedBody.max_completion_tokens !== undefined || parsedBody.max_output_tokens !== undefined)
+    || request.action === "inference.responses" && (parsedBody.max_tokens !== undefined || parsedBody.max_completion_tokens !== undefined)
+    || request.action === "inference.chat_completions" && parsedBody.max_output_tokens !== undefined) return failure(request.requestId, "invalid_request");
+  const outputTokens = tokenFields[0] ?? binding.route.maxOutputTokens;
   if (outputTokens > binding.route.maxOutputTokens) return failure(request.requestId, "invalid_request");
-  const inferenceBody = parsedBody.max_tokens === undefined && parsedBody.max_completion_tokens === undefined
-    ? JSON.stringify({ ...parsedBody, max_tokens: outputTokens }) : request.body;
+  const inferenceBody = tokenFields.length === 0
+    ? JSON.stringify({ ...parsedBody, [request.action === "inference.responses" ? "max_output_tokens" : binding.openaiApi ? "max_completion_tokens" : "max_tokens"]: outputTokens }) : request.body;
 
   const accessSourceId = authorization.accessSourceId;
   const stillAuthorized = () => {
@@ -200,18 +212,18 @@ export async function forwardBotInference(
       && await deps.googleData.managed.required(binding, lifecycle) ? deps.googleData.managed : undefined;
     const managedInitial = managed ? await managed.acquire(binding, lifecycle) : undefined;
     if (lifecycle.aborted || !stillAuthorized()) return failure(request.requestId, 'action_denied');
-    const launch = managedInitial ? { env: { ANTHROPIC_AUTH_TOKEN: managedInitial.lease.token, ANTHROPIC_BASE_URL: managedInitial.lease.relayBaseUrl } } : binding.anthropicApi ? { env: { ANTHROPIC_API_KEY: await deps.matrixAnthropic!.credential(binding, lifecycle) } } : await resolveInferenceCredentials(
-      accessSourceId,
+    const launch: KernelCredentialLaunch = managedInitial ? { env: { ANTHROPIC_AUTH_TOKEN: managedInitial.lease.token, ANTHROPIC_BASE_URL: managedInitial.lease.relayBaseUrl } } : binding.openaiApi ? { env: { OPENAI_API_KEY: await deps.matrixOpenAi!.credential(binding, lifecycle) } } : binding.anthropicApi ? { env: { ANTHROPIC_API_KEY: await deps.matrixAnthropic!.credential(binding, lifecycle) } } : await resolveInferenceCredentials(
+      accessSourceId as KernelCredentialAccessSourceId,
       { requestClass: binding.requestClass, claimKey: request.runtimeHandle },
       lifecycle,
       deps,
     );
     const env = launch.env;
     if (lifecycle.aborted) return failure(request.requestId, "action_denied");
-    const apiKey = env?.ANTHROPIC_API_KEY;
-    const authToken = env?.ANTHROPIC_AUTH_TOKEN;
+    const apiKey = binding.openaiApi ? env?.OPENAI_API_KEY : env?.ANTHROPIC_API_KEY;
+    const authToken = binding.openaiApi ? undefined : env?.ANTHROPIC_AUTH_TOKEN;
     if ((!apiKey && !authToken) || (apiKey && authToken)) return failure(request.requestId, "provider_unavailable");
-    const baseUrl = env?.ANTHROPIC_BASE_URL?.replace(/\/$/, "") ?? "https://api.anthropic.com";
+    const baseUrl = binding.openaiApi ? "https://api.openai.com" : env?.ANTHROPIC_BASE_URL?.replace(/\/$/, "") ?? "https://api.anthropic.com";
     if (managedInitial && managedInitial.identity.endpoint !== `${baseUrl}${request.path}`) return failure(request.requestId, 'action_denied');
     let identity: GoogleInferenceIdentity | null = managedInitial?.identity ?? null;
     if (deps.googleData && !managedInitial) {
@@ -219,7 +231,7 @@ export async function forwardBotInference(
       catch (error: unknown) { if (!(error instanceof GoogleInferencePolicyError) && !(error instanceof TypeError)) throw error; }
     }
     const headers = new Headers({ accept: "text/event-stream", "content-type": "application/json" });
-    if (apiKey) headers.set("x-api-key", apiKey);
+    if (apiKey) headers.set(binding.openaiApi ? "authorization" : "x-api-key", binding.openaiApi ? `Bearer ${apiKey}` : apiKey);
     if (authToken) headers.set("authorization", `Bearer ${authToken}`);
     if (request.action === "inference.messages") {
       for (const [name, value] of Object.entries(request.headers)) {
@@ -228,6 +240,7 @@ export async function forwardBotInference(
     }
     if (accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);
     const liveAfterPolicy = async () => {
+      if (binding.openaiApi && !await deps.matrixOpenAi!.revalidate(binding, lifecycle)) return false;
       if (binding.anthropicApi && !await deps.matrixAnthropic!.revalidate(binding, lifecycle)) return false;
       if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return false;
       return !lifecycle.aborted && stillAuthorized();
@@ -240,6 +253,7 @@ export async function forwardBotInference(
         if (!isDeepStrictEqual(fresh.identity, identity) || fresh.lease.relayBaseUrl !== baseUrl || lifecycle.aborted || !stillAuthorized()) return 'denied';
         headers.set('authorization', `Bearer ${fresh.lease.token}`);
       }
+      if (binding.openaiApi && !await deps.matrixOpenAi!.revalidate(binding, lifecycle)) return "denied";
       if (binding.anthropicApi && !await deps.matrixAnthropic!.revalidate(binding, lifecycle)) return "denied";
       if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return "denied";
       if (lifecycle.aborted) return "denied";
@@ -295,6 +309,8 @@ export async function forwardBotInference(
       const policy = await authorizeGoogleInference(deps.googleData, { phase: "release", binding, identity, signal: lifecycle });
       if (!policy.allowed || googleOrigin && !policy.googleOrigin || !await liveAfterPolicy()) return failure(request.requestId, "action_denied");
     }
+    if (binding.openaiApi && (lifecycle.aborted || !await deps.matrixOpenAi!.revalidate(binding, lifecycle)
+      || deps.revalidateBinding && !await deps.revalidateBinding(binding) || !stillAuthorized())) return failure(request.requestId, "action_denied");
     if (binding.anthropicApi && (lifecycle.aborted || !await deps.matrixAnthropic!.revalidate(binding, lifecycle)
       || deps.revalidateBinding && !await deps.revalidateBinding(binding) || !stillAuthorized())) return failure(request.requestId, "action_denied");
     const result = ScopeRuntimeBrokerResponseSchema.parse({

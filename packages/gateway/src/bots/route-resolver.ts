@@ -31,6 +31,7 @@ export interface ResolvedBotRoute {
   accessSourceId: BotCredentialAccessSourceId;
   subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
   anthropicApi?: import("@matrix-os/contracts").MatrixAnthropicBinding;
+  openaiApi?: import("@matrix-os/contracts").MatrixOpenAiBinding;
 }
 
 export class BotRouteError extends Error {

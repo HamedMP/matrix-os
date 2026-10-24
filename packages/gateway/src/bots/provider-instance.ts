@@ -1,3 +1,4 @@
+import { matrixOpenAiSelectionBinding } from "@matrix-os/contracts";
 import { matrixAnthropicSelectionBinding, chatgptPlanSelectionBinding } from "@matrix-os/contracts";
 import { MANAGED_PI_INSTANCE_ID } from "./route-resolver.js";
 /**
@@ -61,7 +62,7 @@ export function withBotProviderInstance(
       if (selection?.instanceId === MATRIX_BOT_INSTANCE_ID) {
         if (selection.model !== MATRIX_BOT_MODEL) {
           if (selection.options?.length) {
-            const sourceId = matrixAnthropicSelectionBinding(selection.options) ? "matrix_anthropic_api" : chatgptPlanSelectionBinding(selection.options) ? "matrix_chatgpt_plan" : null;
+            const sourceId = matrixOpenAiSelectionBinding(selection.options) ? "matrix_openai_api" : matrixAnthropicSelectionBinding(selection.options) ? "matrix_anthropic_api" : chatgptPlanSelectionBinding(selection.options) ? "matrix_chatgpt_plan" : null;
             const base = await catalog.getCatalog(principal, sourceId ? { ...selection, instanceId: sourceId } : undefined);
             const plan = sourceId ? base.instances.find(instance => instance.id === sourceId) : undefined;
             if (plan) {

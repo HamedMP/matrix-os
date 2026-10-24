@@ -6,6 +6,7 @@ import { resolveManagedPiRoute } from "./route-resolver.js";
 export function createBotCreationSelectionValidator(deps: {
   available(): boolean;
   providers: { getSnapshot(options?: { admissionScope?: "managed_matrix" }): Promise<AiProviderSnapshotV3> };
+  matrixOpenAi?: { resolve(selection: CanonicalChatModelSelection, ownerId: string, requestClass: "interactive"): Promise<unknown> };
   matrixAnthropic?: { resolve(selection: CanonicalChatModelSelection, ownerId: string, requestClass: "interactive"): Promise<unknown> };
   chatgptPlan?: { resolve(selection: CanonicalChatModelSelection, ownerId: string, requestClass: "interactive"): Promise<unknown> };
 }) {
@@ -13,7 +14,8 @@ export function createBotCreationSelectionValidator(deps: {
     if (!deps.available()) throw new BotInstantiationError("unavailable");
     if (isAutomaticBotSelection(selection)) return;
     try {
-      if (selection.instanceId === "matrix_anthropic_api" && deps.matrixAnthropic) await deps.matrixAnthropic.resolve(selection, ownerId, "interactive");
+      if (selection.instanceId === "matrix_openai_api" && deps.matrixOpenAi) await deps.matrixOpenAi.resolve(selection, ownerId, "interactive");
+      else if (selection.instanceId === "matrix_anthropic_api" && deps.matrixAnthropic) await deps.matrixAnthropic.resolve(selection, ownerId, "interactive");
       else if (selection.instanceId === "matrix_chatgpt_plan" && deps.chatgptPlan) await deps.chatgptPlan.resolve(selection, ownerId, "interactive");
       else resolveManagedPiRoute(await deps.providers.getSnapshot({ admissionScope: "managed_matrix" }), selection);
     } catch (error: unknown) {
