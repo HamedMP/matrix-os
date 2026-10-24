@@ -7,7 +7,8 @@
 Make the existing `owner_openrouter` source real through the established owner
 key lifecycle, then project four explicit instances that launch with isolated,
 child-only credentials. Exact route fingerprints and generation checks prevent
-resume drift; a default-off operational flag and no-fallback rule contain risk.
+resume drift; a default-on capability with an explicit fail-closed kill switch
+and no-fallback rule contains risk.
 
 ## Technical context
 
@@ -53,8 +54,8 @@ before new admission and drains matching children.
 4. `coding-agents`: Claude Code and Codex isolated launch/admission.
 5. `qualification-rollout`: full tests, flag, disposable VPS evidence, docs.
 
-Each PR references ENG-381, this spec, and the stack. No layer enables production
-by default.
+Each PR references ENG-381, this spec, and the stack. The qualification layer
+changes the shipped default to enabled while preserving an explicit kill switch.
 
 ## Wiring and shutdown
 
@@ -67,7 +68,9 @@ generation. Dependencies are drained before owned resources close.
 
 ## Rollout
 
-Qualify an exact host bundle on a disposable VPS, then enable dev, canary, beta,
-and stable sequentially. Rollback flips the capability flag: starts/resumes
-fail closed while metadata, settings, and history remain readable.
+Qualify an exact host bundle on a disposable VPS, then promote dev, canary,
+beta, and stable sequentially. Rollback sets
+`MATRIX_OPENROUTER_MULTI_HARNESS_ENABLED=0`: starts/resumes fail closed while
+metadata, settings, and history remain readable. Unset or exact `1` enables the
+feature; any other configured value fails closed.
 

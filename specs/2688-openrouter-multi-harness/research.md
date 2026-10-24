@@ -4,8 +4,9 @@
 
 No billable inference was performed. No OpenRouter key, prompt, response, or
 private content was captured. These local non-mutating checks validate CLI
-parsing and documented launch surfaces; the capability flag remains off until
-the paid live suite is explicitly approved.
+parsing and documented launch surfaces. The product default is enabled, but
+merge and channel promotion remain gated until the paid live suite is explicitly
+approved and completed.
 
 ## Pinned/runtime versions
 
@@ -66,5 +67,5 @@ binaries for all four paths and record only command shape, versions, exit/result
 class, model attribution, and provider activity. Qualify streaming, one bounded
 tool, cancellation, restart/resume, rotation, revocation, and model removal.
 Any unsupported behavior removes that model/harness pair from the checked-in
-matrix before the operational flag can be enabled.
+matrix before that build is promoted beyond its qualification environment.
 

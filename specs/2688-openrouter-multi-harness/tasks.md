@@ -5,7 +5,7 @@
 - [x] Create ENG-381, relate ENG-201/268/182, assign verified Nima.
 - [x] Record official Claude/Codex launch contracts and sanitized local parsing
   spikes without billable calls.
-- [x] Freeze exact candidate model matrix and default-off qualification gate.
+- [x] Freeze exact candidate model matrix and live qualification gate.
 
 ## 2. Canonical connection
 
@@ -29,7 +29,8 @@
 
 ## 5. Qualification and rollout
 
-- [ ] Complete unit/contract/integration/UI suites and capability flag.
+- [x] Add the default-on, fail-closed operational capability contract.
+- [ ] Complete remaining unit/contract/integration/UI suites.
 - [ ] With explicit approval, qualify exact binaries/models on a disposable VPS.
 - [ ] Capture Web Desktop, Electron, and Web Mobile evidence; attach to PR and
   Slack `#tech` with commit/build and limitations.
