@@ -63,7 +63,7 @@ describe("Get started answers", () => {
     render(
       <GetStartedAnswersProvider scope="alice">
         <Goals />
-        <GetStartedGate port={port({ status: "in_progress", updatedAt: AT, draft: { step: 6, goals: ["build"], tools: [] } })} zIndex={1} />
+        <GetStartedGate port={port({ status: "in_progress", updatedAt: AT, draft: { step: 7, goals: ["build"], tools: [] } })} zIndex={1} />
       </GetStartedAnswersProvider>,
     );
     expect(screen.getByTestId("goals")).toHaveTextContent("unknown");
@@ -133,7 +133,7 @@ describe("Get started finished now", () => {
     render(
       <GetStartedAnswersProvider scope="alice">
         <FinishedNow />
-        <GetStartedGate port={port({ status: "in_progress", updatedAt: AT, draft: { step: 6, goals: [], tools: [] } })} zIndex={1} />
+        <GetStartedGate port={port({ status: "in_progress", updatedAt: AT, draft: { step: 7, goals: [], tools: [] } })} zIndex={1} />
       </GetStartedAnswersProvider>,
     );
     expect(screen.getByTestId("finished-now")).toHaveTextContent("not now");

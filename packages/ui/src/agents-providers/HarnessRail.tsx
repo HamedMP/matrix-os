@@ -1,6 +1,6 @@
 import { useLocalObservationExpiry } from "../local-observation-expiry.js";
-import { resolvedWorkflowRowStatus } from "./workflow-row-status.js";
-import { ProviderAccordion } from "./ProviderAccordion.js";
+import { capabilityRowStatus, resolvedWorkflowRowStatus } from "./workflow-row-status.js";
+import { AgentRow } from "./AgentRow.js";
 import { resolveHarnessConnection } from "./harness-connection.js";
 import type { ReactNode } from "react";
 import type {
@@ -11,45 +11,8 @@ import type {
   ProviderWorkflowCapability,
   ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
-import {
-  codingAgentArtworkSrc, settingsHarnessArtworkSrc, CODING_AGENT_ARTWORK,
-} from "../coding-agent-artwork.js";
-/** Settings retains the shipped upstream artwork, per the reviewed design override. */
-export function HarnessIcon({ harness }: { harness: ProviderHarnessKind }) {
-  const src = harness === "claude" || harness === "codex" ? settingsHarnessArtworkSrc(harness) : codingAgentArtworkSrc(CODING_AGENT_ARTWORK[harness].src);
-  const size = harness === "claude" ? 22 : harness === "codex" ? 20 : 24;
-  return (
-    <span
-      className="matrix-ap-agent-logo"
-      // White upstream marks retain the canonical artwork background in both appearances.
-      style={harness === "opencode" || harness === "pi" ? { background: CODING_AGENT_ARTWORK[harness].background } : undefined}
-      aria-hidden="true"
-    >
-      <img
-        src={src}
-        alt=""
-        className={harness === "claude" ? "matrix-ap-claude-logo" : harness === "codex" ? "matrix-ap-openai-logo" : "matrix-ap-upstream-logo"}
-        width={size}
-        height={size}
-        draggable={false}
-        loading="eager"
-      />
-    </span>
-  );
-}
 
-function installationWorkflowStatus(installState: string, override: string | undefined) {
-  return installState === "installed" || override === "Installing" || override === "Uninstalling" ? override : undefined;
-}
-
-function RowChevron({ expanded }: { expanded: boolean }) {
-  // Same Hugeicons ChevronDown geometry used by Settings ChannelCard/SkillsSection.
-  return <span className="matrix-ap-chevron" data-expanded={expanded} aria-hidden="true">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-      <path d="M18 9.00005C18 9.00005 13.5811 15 12 15C10.4188 15 6 9 6 9" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" />
-    </svg>
-  </span>;
-}
+export { HarnessIcon } from "./AgentRow.js";
 
 export function HarnessRail({
   harnesses,
@@ -121,93 +84,35 @@ export function HarnessRail({
               const expanded = item.id === selectedId;
               if (item.inventory || item.catalog) {
                 const observed = item.inventory ?? item.catalog!;
-                const status =
-                  installationWorkflowStatus(observed.installState, statusOverride?.[item.id]) ?? (observed.installState === "missing"
-                      ? "Not installed"
-                      : observed.installState === "installing"
-                        ? "Installing"
-                        : observed.installState === "failed"
-                          ? "Install failed"
-                          : observed.installState === "unknown" ? "Checking installation" : "Not connected");
-                const detailsId = `matrix-ap-details-${item.id}`;
                 return (
-                  <div key={item.id} className="matrix-ap-agent-row">
-                    <div className="matrix-ap-agent-row-head">
-                      <button
-                        type="button"
-                        className="matrix-ap-rail-item"
-                        aria-expanded={expanded}
-                        aria-controls={detailsId}
-                        id={`${detailsId}-trigger`}
-                        onClick={() => onSelect(item.id)}
-                      >
-                        <span className="matrix-ap-harness-mark">
-                          <HarnessIcon harness={observed.harness} />
-                        </span>
-                        <span className="matrix-ap-rail-copy">
-                          <span className="matrix-ap-rail-name">
-                            {observed.displayName}
-                          </span>
-                        </span>
-                        <span
-                          className="matrix-ap-status-chip"
-                          data-state={status.toLowerCase().replaceAll(" ", "-")}
-                        >
-                          <i aria-hidden="true" />
-                          {status}
-                        </span>
-                        <RowChevron expanded={expanded} />
-                      </button>
-                    </div>
-                    <ProviderAccordion id={detailsId} expanded={expanded}>
-                      {item.inventory ? renderInventory?.(item.inventory) : renderCatalog?.(item.catalog!)}
-                    </ProviderAccordion>
-                  </div>
+                  <AgentRow
+                    key={item.id}
+                    id={item.id}
+                    harness={observed.harness}
+                    name={observed.displayName}
+                    status={capabilityRowStatus(observed.installState, statusOverride?.[item.id])}
+                    expanded={expanded}
+                    onToggle={() => onSelect(item.id)}
+                  >
+                    {item.inventory ? renderInventory?.(item.inventory) : renderCatalog?.(item.catalog!)}
+                  </AgentRow>
                 );
               }
               const harness = item.instance!;
               const source = resolveHarnessConnection(harness, accounts, sources).source;
-              const status =
-                resolvedWorkflowRowStatus(harness, source, statusOverride?.[harness.id]);
-              const detailsId = `matrix-ap-details-${harness.id}`;
               return (
-                <div key={harness.id} className="matrix-ap-agent-row">
-                  <div className="matrix-ap-agent-row-head">
-                    <button
-                      type="button"
-                      className="matrix-ap-rail-item"
-                      aria-expanded={expanded}
-                      aria-controls={detailsId}
-                        id={`${detailsId}-trigger`}
-                      onClick={() => onSelect(harness.id)}
-                    >
-                      <span
-                        className="matrix-ap-harness-mark"
-                        data-accent={harness.accentColor ?? "none"}
-                        aria-hidden="true"
-                      >
-                        <HarnessIcon harness={harness.harness} />
-                      </span>
-                      <span className="matrix-ap-rail-copy">
-                        <span className="matrix-ap-rail-name">
-                          {harness.harness === "claude" && harness.displayName === "Claude" ? "Claude Code" : harness.displayName}
-                        </span>
-                      </span>
-                      <span
-                        className="matrix-ap-status-chip"
-                        data-state={status.toLowerCase().replaceAll(" ", "-")}
-                      >
-                        <i aria-hidden="true" />
-                        {status}
-                      </span>
-
-                      <RowChevron expanded={expanded} />
-                    </button>
-                  </div>
-                  <ProviderAccordion id={detailsId} expanded={expanded}>
-                    {renderDetails(harness)}
-                  </ProviderAccordion>
-                </div>
+                <AgentRow
+                  key={harness.id}
+                  id={harness.id}
+                  harness={harness.harness}
+                  name={harness.harness === "claude" && harness.displayName === "Claude" ? "Claude Code" : harness.displayName}
+                  status={resolvedWorkflowRowStatus(harness, source, statusOverride?.[harness.id])}
+                  accent={harness.accentColor ?? "none"}
+                  expanded={expanded}
+                  onToggle={() => onSelect(harness.id)}
+                >
+                  {renderDetails(harness)}
+                </AgentRow>
               );
             })}
           </section>

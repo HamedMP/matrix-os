@@ -5,8 +5,8 @@ import {
   getStartedAnswersFromWizard,
   getStartedBotFromWizard,
   getStartedQuestionProgress,
-  getStartedAgentsForTools,
   getStartedToolGroupsForGoals,
+  type GetStartedAgentKind,
   type GetStartedAnswers,
   type GetStartedChoiceGroup,
   type GetStartedWizardEvent,
@@ -14,11 +14,12 @@ import {
   type GetStartedWizardStep,
 } from "@matrix-os/contracts";
 import { galleryAppsReadyWith } from "@matrix-os/contracts/app-gallery";
-import { useEffect, useId, useMemo, useRef, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, type KeyboardEvent } from "react";
 import { ButtonRow, RabbitAvatar, ToggleChip } from "../onboarding-widget/parts.js";
 import { GetStartedAiStep } from "./ai-step.js";
 import { GetStartedAppGalleryStep, type GetStartedReadyApp } from "./app-gallery-step.js";
 import type { GetStartedAgentLoginHost } from "./agent-login.js";
+import { GetStartedAgentsStep } from "./agents-step.js";
 import { GetStartedConnectTools, type GetStartedConnect } from "./connect.js";
 import { joinNames, type GetStartedGallery } from "./gallery.js";
 import { GetStartedRecipeBots } from "./recipe-bots.js";
@@ -34,7 +35,7 @@ export interface GetStartedWizardProps {
   connect?: GetStartedConnect | null;
   /** App Gallery for step 5; absent when the surface has none. */
   gallery?: GetStartedGallery | null;
-  /** The surface's Settings sign-in for a picked coding agent on step 3; absent when it has none. */
+  /** The surface's Settings > Agents & providers host for the coding agents screen; absent when it has none. */
   agentLogin?: GetStartedAgentLoginHost | null;
 }
 
@@ -69,23 +70,23 @@ function ChoiceGroup({ group, wizard, dispatch }: {
   dispatch(event: GetStartedWizardEvent): void;
 }) {
   const titleId = useId();
-  let chips: ReactNode;
-  if (group.kind === "tools") {
-    const picked = new Set(wizard.tools);
-    chips = group.tools.map((tool) => (
-      <ToggleChip key={tool.id} label={tool.label} pressed={picked.has(tool.id)} onToggle={() => dispatch({ type: "toggle-tool", tool: tool.id })} />
-    ));
-  } else {
-    chips = group.options.map((starter) => (
-      <ToggleChip key={starter.id} label={starter.label} pressed={wizard.starter === starter.id} onToggle={() => dispatch({ type: "pick-starter", id: starter.id })} />
-    ));
-  }
   return (
     <section className="mxo-gs__group" aria-labelledby={titleId}>
       <h3 id={titleId} className="mxo-muted">{group.title}</h3>
-      <div className="mxo-chips">{chips}</div>
+      <div className="mxo-chips">
+        {group.options.map((starter) => (
+          <ToggleChip key={starter.id} label={starter.label} pressed={wizard.starter === starter.id} onToggle={() => dispatch({ type: "pick-starter", id: starter.id })} />
+        ))}
+      </div>
     </section>
   );
+}
+
+/** The coding agents screen through the surface's provider host, reporting connected agents as answers. */
+function AgentsStep({ agentLogin: AgentLogin, dispatch }: { agentLogin: GetStartedAgentLoginHost | null; dispatch(event: GetStartedWizardEvent): void }) {
+  const onAgentsConnected = useCallback((agents: GetStartedAgentKind[]) => dispatch({ type: "agents-connected", agents }), [dispatch]);
+  if (!AgentLogin) return <p className="mxo-muted">You can sign in to Claude Code or Codex later in Settings &gt; Agents &amp; providers.</p>;
+  return <AgentLogin>{(port) => <GetStartedAgentsStep port={port} onAgentsConnected={onAgentsConnected} />}</AgentLogin>;
 }
 
 /** The AI as finishing saves it, so a blank name shows as Matrix, like the saved one. */
@@ -123,6 +124,7 @@ function stepTitle(wizard: GetStartedWizardState, ready: readonly GetStartedRead
   switch (wizard.step) {
     case "name": return "What should we call you?";
     case "goals": return "What will you use Matrix for?";
+    case "agents": return "Sign in to your coding agents";
     case "tools": return "Connect the tools you use";
     case "ai": return "Name your main bot";
     case "gallery": return ready.length > 0 ? "Apps ready with your data" : "Build your own apps";
@@ -135,6 +137,7 @@ function stepHint(wizard: GetStartedWizardState, ready: readonly GetStartedReady
   switch (wizard.step) {
     case "name": return "Your AI will use this.";
     case "goals": return "Pick any. We'll set up those first.";
+    case "agents": return "Have a Claude or ChatGPT plan? Sign in to use it in Matrix. You can skip this and do it later in Settings.";
     case "tools": return "Each one opens the app's own sign-in. Connect any now, or later in Settings.";
     case "ai": return "This is your main bot. It uses this name and style everywhere you talk to Matrix.";
     case "gallery": return ready.length > 0
@@ -175,7 +178,7 @@ function SignInPending({ connect, step }: { connect: GetStartedConnect | null; s
 }
 
 /** The questions after the name: one body per step, under the shared heading. */
-function StepContent({ wizard, answers, connect, gallery, ready, agentLogin: AgentLogin, dispatch, titleId }: {
+function StepContent({ wizard, answers, connect, gallery, ready, agentLogin, dispatch, titleId }: {
   wizard: GetStartedWizardState;
   answers: GetStartedAnswers;
   connect: GetStartedConnect | null;
@@ -197,12 +200,12 @@ function StepContent({ wizard, answers, connect, gallery, ready, agentLogin: Age
         </div>
       );
     }
+    case "agents": return <AgentsStep agentLogin={agentLogin} dispatch={dispatch} />;
     case "tools": return (
       <div className="mxo-gs__groups">
         {getStartedToolGroupsForGoals(wizard.goals).map((group) => (
           <ChoiceGroup key={group.goal} group={group} wizard={wizard} dispatch={dispatch} />
         ))}
-        {AgentLogin ? getStartedAgentsForTools(wizard.tools).map((agent) => <AgentLogin key={agent} agent={agent} />) : null}
         <GetStartedConnectTools goals={wizard.goals} connect={connect} />
       </div>
     );

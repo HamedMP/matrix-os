@@ -39,7 +39,7 @@ function connected(services: string[]) {
 function setup(draft: Record<string, unknown> = {}, extra: { gallery?: GetStartedGalleryPort; services?: string[] } = {}) {
   const saves: GetStartedUpdate[] = [];
   const port: GetStartedPort = {
-    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 4, name: "Sam", goals: ["code"], tools: [], ...draft } })),
+    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 5, name: "Sam", goals: ["code"], tools: [], ...draft } })),
     save: vi.fn(async (update: GetStartedUpdate) => {
       saves.push(update);
       if (update.type === "complete") return { status: "completed", completedAt: AT, answers: update.answers };

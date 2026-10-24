@@ -11,7 +11,7 @@ const AT = "2026-10-25T10:12:00.000Z";
 function port() {
   const saves: GetStartedUpdate[] = [];
   const value: GetStartedPort = {
-    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 3, name: "Sam", goals: ["code"], tools: [] } })),
+    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 4, name: "Sam", goals: ["code"], tools: [] } })),
     save: vi.fn(async (update: GetStartedUpdate) => {
       saves.push(update);
       return update.type === "complete" ? { status: "completed", completedAt: AT, answers: update.answers } : { status: "in_progress", updatedAt: AT, draft: update.type === "draft" ? update.draft : {} };
