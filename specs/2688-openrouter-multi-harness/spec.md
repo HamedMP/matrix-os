@@ -101,16 +101,17 @@ fail-closed generation checks before admission and immediately before launch.
 - **FR-017**: Disconnect MUST be blocked while this account is a default until
   the owner explicitly reassigns the default.
 - **FR-018**: A single operational capability flag MUST disable new starts and
-  resumes without deleting account metadata, settings, or history. It is off by
-  default outside development/test.
+  resumes without deleting account metadata, settings, or history. The feature
+  is enabled when `MATRIX_OPENROUTER_MULTI_HARNESS_ENABLED` is unset or exactly
+  `1`; explicit `0` and malformed values fail closed.
 - **FR-019**: OpenRouter OAuth, organization funding/budgets, automatic secret
   migration, the full catalog, and automatic provider fallback are out of scope.
 
 ## Compatibility matrix
 
-These are release candidates, not production-qualified claims. The operational
-flag remains disabled until the live suite in `research.md` passes on the exact
-pinned binaries.
+These are release candidates, not production-qualified claims. The product
+build enables their routes by default, while merge and staged rollout remain
+gated on the live suite in `research.md` passing on the exact pinned binaries.
 
 | Harness | Exact model slug | Required qualification |
 |---|---|---|
