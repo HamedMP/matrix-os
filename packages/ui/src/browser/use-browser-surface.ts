@@ -92,6 +92,7 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
       polling = true;
       const statusEpoch = focus.current.epoch;
       const mutationRevision = owner.mutationRevision;
+      let readingStatus = false;
       try {
         if (!focus.current.active || owner.mutation) return;
         if ((owner.connection === "connecting" && !expectedViewerUrl)
@@ -102,11 +103,23 @@ export function useBrowserSurface({ gatewayUrl, surface, active = true, ensureSe
           await openViewer(); return;
         }
         await session(); if (!current()) return;
+        readingStatus = true;
         const status = browserStatus(await browserRequest(endpoint.appBase, "browser-status", controller.signal));
         if (current() && !owner.mutation && mutationRevision === owner.mutationRevision && browserStatusIsCurrent(status, owner.status)) {
-          update({ status }, statusEpoch); if (!status.available) fail();
+          update({ status, error: "" }, statusEpoch); if (!status.available) fail();
         }
-      } catch (error) { if (current() && !owner.mutation && mutationRevision === owner.mutationRevision) { report(error); fail(); } }
+      } catch (error) {
+        if (current() && !owner.mutation && mutationRevision === owner.mutationRevision) {
+          report(error);
+          if (readingStatus && owner.connection === "connected" && expectedViewerUrl && owner.status
+            && (error instanceof TypeError || (error instanceof DOMException && ["AbortError", "TimeoutError"].includes(error.name)))) {
+            // A failed status read is not a revocation. Keep the admitted stream,
+            // but require a fresh status (including its broker revision) for input.
+            update({ status: { ...owner.status, available: false, humanControlAvailable: false },
+              error: "Checking your connection. Browser controls are paused." });
+          } else fail();
+        }
+      }
       finally {
         polling = false;
         if (current()) {
