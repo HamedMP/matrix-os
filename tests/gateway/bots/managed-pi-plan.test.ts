@@ -207,6 +207,17 @@ it("discovers only the new ordinary source scope without probing funded or nativ
   expect(scope.acceptsDriver("codex")).toBe(false);
 });
 
+it.each([
+  ["matrix_pi_owner_openrouter", "matrix_pi"],
+  ["kernel_owner_openrouter", "kernel"],
+] as const)("discovers the exact OpenRouter %s route from canonical AI only", (instanceId, driverKind) => {
+  const scope = chatCatalogDiscoveryScope({ instanceId, model: "anthropic/claude-sonnet-5" });
+  expect(scope).toMatchObject({ readAi: true, readRuntime: false, coding: [], systems: [] });
+  expect(scope.acceptsInstance(instanceId)).toBe(true);
+  expect(scope.acceptsDriver(driverKind)).toBe(true);
+  expect(scope.acceptsDriver(driverKind === "kernel" ? "matrix_pi" : "kernel")).toBe(false);
+});
+
 
 it("refuses an admission route with forged peer, account, API or model limits before another runtime starts", async () => {
   const f = await fixture(); const { binding } = await f.start();

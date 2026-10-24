@@ -66,10 +66,12 @@ export interface DispatchContext {
 export interface KernelDispatchOverrides {
   /** Funded AI priority class; server-set only. Kernel dispatch is interactive unless a background job says so. */
   fundedRequestClass?: FundedAiRequestClass;
-  model?: KernelModel;
+  model?: KernelModel | string;
   effort?: KernelEffort;
   /** Explicit credential/funding source selected from the canonical provider snapshot. */
   accessSourceId?: KernelCredentialAccessSourceId;
+  /** Exact owner credential generation captured in the persisted route fingerprint. */
+  credentialGeneration?: string;
   /** Internal, validated execution root. Never accepted from client frames. */
   workingDirectory?: string;
   /** Per-client native approval bridge. Never accepted from request JSON. */
@@ -104,6 +106,7 @@ export interface Dispatcher {
   dispatchBatch(entries: BatchEntry[]): Promise<BatchResult[]>;
   readonly queueLength: number;
   readonly activeCount: number;
+  cancelOpenRouterRuns(): void;
   db: MatrixDB;
   homePath: string;
 }
@@ -139,6 +142,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
   const usageTracker = createUsageTracker(homePath);
 
   const queue: InternalEntry[] = [];
+  const activeOpenRouterRuns = new Map<string, { generation: string; controller: AbortController }>();
   let active = 0;
   let batchRunning = false;
 
@@ -230,7 +234,20 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
         opts.fundedCredentialProvider,
         { requestClass: entry.kernelOverrides?.fundedRequestClass ?? "interactive" },
       );
-      const deadline = fundedAbortController(entry.abortController, credentialLaunch.fundedRunTimeoutMs);
+      if (entry.kernelOverrides?.accessSourceId === "owner_openrouter"
+        && credentialLaunch.credentialGeneration !== entry.kernelOverrides.credentialGeneration) {
+        throw new Error("Selected AI access is unavailable");
+      }
+      const routeController = entry.abortController
+        ?? (entry.kernelOverrides?.accessSourceId === "owner_openrouter" ? new AbortController() : undefined);
+      const deadline = fundedAbortController(routeController, credentialLaunch.fundedRunTimeoutMs);
+      if (entry.kernelOverrides?.accessSourceId === "owner_openrouter"
+        && credentialLaunch.credentialGeneration && deadline.controller) {
+        activeOpenRouterRuns.set(processId, {
+          generation: credentialLaunch.credentialGeneration,
+          controller: deadline.controller,
+        });
+      }
       const config: KernelConfig = {
         db,
         homePath,
@@ -256,6 +273,7 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
           }
         }
       } finally {
+        activeOpenRouterRuns.delete(processId);
         deadline.cleanup();
       }
 
@@ -516,6 +534,10 @@ export function createDispatcher(opts: DispatchOptions): Dispatcher {
 
     get activeCount() {
       return active;
+    },
+
+    cancelOpenRouterRuns() {
+      for (const run of activeOpenRouterRuns.values()) run.controller.abort();
     },
 
     dispatch(message, sessionId, onEvent, context, abortController, kernelOverrides) {

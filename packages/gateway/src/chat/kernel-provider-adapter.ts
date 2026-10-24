@@ -5,6 +5,7 @@ import type { KernelEvent } from "@matrix-os/kernel";
 import type { Dispatcher } from "../dispatcher.js";
 import { KernelCredentialAccessSourceIdSchema } from "../kernel-credentials.js";
 import { KernelEffortSchema, KernelModelSchema } from "../kernel-settings.js";
+import { OPENROUTER_ANTHROPIC_MODEL_IDS } from "../ai-providers/model-catalog.js";
 import { createCanonicalCliEventQueue } from "./cli-process.js";
 import {
   CanonicalProviderRunEventSchema,
@@ -42,6 +43,12 @@ function selectedAccessSource(input: CanonicalProviderRunInput<KernelChatState>)
   return KernelCredentialAccessSourceIdSchema.parse(input.selection.instanceId.slice(prefix.length));
 }
 
+function selectedOpenRouterGeneration(input: CanonicalProviderRunInput<KernelChatState>): string {
+  const generations = input.selection.options?.filter((option) => option.id === "credentialGeneration") ?? [];
+  if (generations.length !== 1) throw new Error("Invalid OpenRouter credential generation");
+  return z.uuid().parse(generations[0]!.value);
+}
+
 export function createKernelChatProviderAdapter(options: {
   dispatcher: Pick<Dispatcher, "dispatch">;
 }): CanonicalChatProviderAdapter<KernelChatState> {
@@ -58,9 +65,13 @@ export function createKernelChatProviderAdapter(options: {
       yield { type: "run.completed", outcome: "failed", error: matrixSdkRetirementError() };
       return;
     }
-    const model = KernelModelSchema.parse(input.selection.model);
-    const effort = selectedEffort(input);
     const accessSourceId = selectedAccessSource(input);
+    const model = accessSourceId === "owner_openrouter"
+      ? z.enum(OPENROUTER_ANTHROPIC_MODEL_IDS).parse(input.selection.model)
+      : KernelModelSchema.parse(input.selection.model);
+    const effort = selectedEffort(input);
+    const credentialGeneration = accessSourceId === "owner_openrouter"
+      ? selectedOpenRouterGeneration(input) : undefined;
     const queue = createCanonicalCliEventQueue<CanonicalProviderRunEvent>();
     const controller = new AbortController();
     let activeTool: { id: string; label: string } | null = null;
@@ -152,6 +163,7 @@ export function createKernelChatProviderAdapter(options: {
       {
         model,
         accessSourceId,
+        ...(credentialGeneration ? { credentialGeneration } : {}),
         ...(effort ? { effort } : {}),
         ...(input.executionRoot ? { workingDirectory: input.executionRoot } : {}),
       },
