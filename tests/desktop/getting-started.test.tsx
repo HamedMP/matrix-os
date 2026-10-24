@@ -125,6 +125,26 @@ describe("getting started status", () => {
     expect(snapshot.steps.find((step) => step.id === "github")?.status).toBe("complete");
   });
 
+  it("keeps GitHub incomplete until developer access is fully ready", async () => {
+    const snapshot = await loadGettingStartedSnapshot(makeApi({
+      "/api/github/status": {
+        installed: true,
+        authenticated: true,
+        user: "octocat",
+        gitProtocol: "ssh",
+        sshStatus: "setup_required",
+        commitIdentity: { status: "ready", label: "The Octocat <octocat@users.noreply.github.com>" },
+        ready: false,
+        errorCode: null,
+      },
+      "/api/integrations": [
+        { id: CONNECTION_ID, service: "github", account_label: "octocat", status: "active" },
+      ],
+    }) as never);
+
+    expect(snapshot.steps.find((step) => step.id === "github")?.status).toBe("incomplete");
+  });
+
   it("loads platform-owned billing status through the primary route", async () => {
     const api = makeApi();
     const platformGet = vi.fn(async (path: string) => successfulResponse(path));
