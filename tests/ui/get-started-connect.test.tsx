@@ -10,6 +10,7 @@ import {
   type GetStartedConnect,
   type GetStartedPort,
 } from "../../packages/ui/src/get-started/index.js";
+import { GET_STARTED_WIZARD_STEPS } from "../../packages/contracts/src/index.js";
 
 const AT = "2026-10-25T10:12:00.000Z";
 
@@ -45,6 +46,25 @@ afterEach(() => {
 });
 
 describe("Get started connect list", () => {
+  it("keeps the owner in the wizard while an app sign-in is still under way", async () => {
+    // Ending the wizard unmounts its connector, which would drop the sign-in without a word.
+    const at = (step: (typeof GET_STARTED_WIZARD_STEPS)[number]): GetStartedPort => ({
+      load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: GET_STARTED_WIZARD_STEPS.indexOf(step), goals: [], tools: [] } })),
+      save: vi.fn(async () => ({ status: "completed", completedAt: AT, answers: { goals: [], tools: [] } })),
+    });
+    const summary = makeConnector({ connectingService: "gmail" });
+    render(<GetStartedGate port={at("summary")} zIndex={1} connector={summary.Connector} />);
+    const enter = await screen.findByRole("button", { name: "Enter your computer" });
+    expect(enter).toBeDisabled();
+    expect(screen.getByText("Waiting for your app sign-in to finish.")).toBeInTheDocument();
+    summary.update({ connectingService: null });
+    expect(enter).toBeEnabled();
+    expect(screen.queryByText("Waiting for your app sign-in to finish.")).not.toBeInTheDocument();
+    cleanup();
+    render(<GetStartedGate port={at("name")} zIndex={1} connector={makeConnector({ connectingService: "gmail" }).Connector} />);
+    expect(await screen.findByRole("button", { name: "Skip setup" })).toBeDisabled();
+  });
+
   it("lists the picked tools and two suggestions, without connecting anything by itself", async () => {
     const { Connector, connect } = makeConnector({});
     render(<GetStartedGate port={port({ name: "Sam", goals: ["code"], tools: ["github", "claude-code"] })} zIndex={1} connector={Connector} />);

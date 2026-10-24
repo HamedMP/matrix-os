@@ -6,6 +6,7 @@ import {
   type GetStartedChoiceGroup,
   type GetStartedWizardEvent,
   type GetStartedWizardState,
+  type GetStartedWizardStep,
 } from "@matrix-os/contracts";
 import { useEffect, useId, useMemo, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { ButtonRow, RabbitAvatar, ToggleChip } from "../onboarding-widget/parts.js";
@@ -112,12 +113,20 @@ function trapKeys(event: KeyboardEvent<HTMLDivElement>) {
   }
 }
 
+/** Says why the wizard can't end yet: Enter your computer and Skip setup wait for an app sign-in. */
+function SignInPending({ connect, step }: { connect: GetStartedConnect | null; step: GetStartedWizardStep }) {
+  if (!connect?.connectingService || (step !== "summary" && step !== "name")) return null;
+  return <p className="mxo-muted" role="status">Waiting for your app sign-in to finish.</p>;
+}
+
 export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish, onSkipAll, connect = null }: GetStartedWizardProps) {
   const titleId = useId();
   const hintId = useId();
   const focusTarget = useRef<HTMLElement | null>(null);
   const progress = getStartedQuestionProgress(wizard);
   const isSummary = wizard.step === "summary";
+  // Ending the wizard unmounts its connector, which would drop an app sign-in still under way.
+  const endBlocked = submitting || Boolean(connect?.connectingService);
   const pickedGoals = new Set(wizard.goals);
   const answers = useMemo(() => getStartedAnswersFromWizard(wizard), [wizard]);
 
@@ -190,17 +199,18 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
         {isSummary && connect ? <GetStartedConnectList answers={answers} connect={connect} /> : null}
 
         {error ? <p className="mxo-failed-line" role="alert">{error}</p> : null}
+        <SignInPending connect={connect} step={wizard.step} />
       </div>
 
       <footer className="mxo-gs__footer">
         {wizard.step === "name" ? (
-          <button type="button" className="mxo-link" onClick={onSkipAll} disabled={submitting}>Skip setup</button>
+          <button type="button" className="mxo-link" onClick={onSkipAll} disabled={endBlocked}>Skip setup</button>
         ) : (
           <button type="button" className="mxo-btn mxo-btn--ghost" onClick={() => dispatch({ type: "back" })} disabled={submitting}>Back</button>
         )}
         <ButtonRow>
           {isSummary ? (
-            <button type="button" className="mxo-btn mxo-btn--dark" onClick={onFinish} disabled={submitting} aria-busy={submitting}>
+            <button type="button" className="mxo-btn mxo-btn--dark" onClick={onFinish} disabled={endBlocked} aria-busy={submitting}>
               Enter your computer
             </button>
           ) : (
