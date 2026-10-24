@@ -95,14 +95,15 @@ it("blocks cold Electron reads and retains working selection, sending, and model
   expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
 });
 
-it("shows shared Web loading in the trigger and open picker for initial and explicit revalidation without sending", async () => {
+it("keeps active Web output and provider controls usable during explicit background revalidation", async () => {
   const catalog = createCanonicalProviderCatalogFixture();
   const initial = deferred<Response>();
   const refreshed = deferred<Response>();
   const fetcher = vi.fn().mockReturnValueOnce(initial.promise).mockReturnValueOnce(refreshed.promise);
   vi.stubGlobal("fetch", fetcher);
-  const submit = vi.fn();
-  render(<ChatApp messages={[]} busy={false} connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={submit} />);
+  const abort = vi.fn();
+  render(<ChatApp messages={[{ id: "assistant-live", role: "assistant", content: "Still streaming this answer", timestamp: 1 }]}
+    busy activeRunId="run-live" connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} onAbortCurrent={abort} />);
   const trigger = screen.getByRole("button", { name: "Choose model and connection" });
   expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
   await act(async () => initial.resolve(Response.json(catalog)));
@@ -112,17 +113,20 @@ it("shows shared Web loading in the trigger and open picker for initial and expl
   expect(fetcher).toHaveBeenCalledTimes(1);
   act(() => window.dispatchEvent(new CustomEvent(PROVIDER_SETTINGS_CHANGED_EVENT)));
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
-  expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
-  expect(screen.getByRole("searchbox")).not.toHaveFocus();
-  expect(screen.getByRole("listbox")).toHaveAttribute("aria-busy", "true");
-  expect(within(screen.getByRole("listbox")).getByRole("option")).toBeDisabled();
+  expect(screen.getByText("Still streaming this answer")).toBeVisible();
+  expect(within(trigger).queryByRole("status", { name: "Checking model availability" })).toBeNull();
+  expect(screen.getByRole("listbox")).not.toHaveAttribute("aria-busy", "true");
+  expect(within(screen.getByRole("listbox")).getByRole("option")).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
   expect(trigger).toHaveFocus();
   expect(screen.queryByRole("listbox")).toBeNull();
-  expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
-  await act(async () => refreshed.resolve(Response.json(catalog)));
-  await waitFor(() => expect(screen.queryByRole("status", { name: "Checking model availability" })).toBeNull());
-  expect(submit).not.toHaveBeenCalled();
+  expect(screen.getByText("Still streaming this answer")).toBeVisible();
+  await act(async () => refreshed.resolve(new Response(null, { status: 503 })));
+  expect(screen.getByText("Still streaming this answer")).toBeVisible();
+  expect(within(trigger).queryByRole("status", { name: "Checking model availability" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+  expect(abort).toHaveBeenCalledOnce();
 });
 
 it("wires cold loading and quiet five-minute background refresh through the production Electron workspace", async () => {

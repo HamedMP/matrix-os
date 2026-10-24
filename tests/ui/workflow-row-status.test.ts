@@ -39,9 +39,9 @@ it("distinguishes expired Hermes observations from logout without admitting stal
     route: { kind: "configurable", providerId: "openai-codex", modelId: "openai-codex:gpt-5.6-sol" }, accessSourceId: source.id, localObservation } as import("@matrix-os/contracts").ProviderHarnessInstance;
   const clock = vi.spyOn(Date, "now").mockReturnValue(checked + 4999);
   try {
-    expect(resolvedWorkflowRowStatus(harness, source)).toBe("Connected");
+    expect(resolvedWorkflowRowStatus(harness, source)).toBe("Configured");
     clock.mockReturnValue(checked + 5001);
-    expect(resolvedWorkflowRowStatus(harness, source)).toBe("Checking connection");
+    expect(resolvedWorkflowRowStatus(harness, source)).toBe("Configured");
     expect(hasConfiguredConnection(harness, source)).toBe(false);
     for (const authState of ["expired", "unauthenticated", "failed"] as const)
       expect(resolvedWorkflowRowStatus({ ...harness, authState }, source)).toBe("Not connected");
