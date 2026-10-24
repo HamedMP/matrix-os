@@ -9,22 +9,22 @@
 
 ## 2. Canonical connection
 
-- [ ] Add failing key lifecycle, workflow, and provider projection tests.
-- [ ] Implement canonical OpenRouter store, generation, rotation, rollback, and
+- [x] Add failing key lifecycle, workflow, and provider projection tests.
+- [x] Implement canonical OpenRouter store, generation, rotation, rollback, and
   tombstoned revocation through the existing key workflow.
-- [ ] Project one account/source and four stable instances; reuse shared UI.
+- [x] Project one account/source and four stable instances; reuse shared UI.
 
 ## 3. Matrix paths
 
-- [ ] Add failing Pi and kernel launch/admission tests.
-- [ ] Inject a per-launch Pi credential without native-store writes.
-- [ ] Launch Agent SDK through the isolated Claude/OpenRouter environment.
+- [x] Add failing Pi and kernel launch/admission tests.
+- [x] Inject a per-launch Pi credential without native-store writes.
+- [x] Launch Agent SDK through the isolated Claude/OpenRouter environment.
 
 ## 4. Coding agents
 
-- [ ] Add failing Claude Code and Codex isolation/admission tests.
-- [ ] Add isolated Claude Code launch and generation checks.
-- [ ] Add isolated Codex custom-provider config, Responses metadata, and exact
+- [x] Add failing Claude Code and Codex isolation/admission tests.
+- [x] Add isolated Claude Code launch and generation checks.
+- [x] Add isolated Codex custom-provider config, Responses metadata, and exact
   route binding without changing native Codex admission.
 
 ## 5. Qualification and rollout
