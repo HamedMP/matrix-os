@@ -25,7 +25,7 @@ import {
 import type { BotInferenceAuthorization } from "./credentials.js";
 
 export const BOT_RUNTIME_REGISTRY_CAPACITY = 64;
-/** A bot run holds its workload for at most the profile lifetime (900 s) plus margin. */
+/** One binding lease spans the 900 s supervisor lease plus a brief margin; live runs renew it. */
 const DEFAULT_TTL_MS = 16 * 60_000;
 const MAX_TTL_MS = 20 * 60_000;
 const GenerationSchema = z.string().regex(/^(0|[1-9][0-9]{0,19})$/);
@@ -104,6 +104,7 @@ export function isManagedPiBinding(binding: PiRuntimeBinding): binding is Manage
   return "kind" in binding && binding.kind === "managed_chat";
 }
 export type PiInferenceIdentity = Pick<PiRuntimeBinding, "runtimeHandle" | "executionGeneration" | "runId" | "ownerId" | "chatId">;
+export type PiRuntimeRenewalIdentity = PiInferenceIdentity & Pick<PiRuntimeBinding, "rootFingerprint">;
 type StoredBinding = PiRuntimeBinding & { expiresAt: number; inference: AbortController; releaseTracking?: () => void };
 
 export class BotRuntimeRegistryError extends Error {
@@ -209,13 +210,27 @@ export class BotRuntimeRegistry {
     const entry = this.entries.get(runtimeHandle.data);
     if (!entry || entry.executionGeneration !== generation.data) return null;
     const { expiresAt: _expiresAt, inference: _inference, releaseTracking: _releaseTracking, ...binding } = entry;
-    return binding;
+    return structuredClone(binding);
   }
 
   /** Bot frames must also name the bound run. */
   lookupRun(input: { runtimeHandle: string; executionGeneration: string; runId: string }): PiRuntimeBinding | null {
     const binding = this.lookup(input);
     return binding && binding.runId === input.runId ? binding : null;
+  }
+
+  /** Extend only the original live run. Renewal never changes authority or its cancellation signal. */
+  renew(input: PiRuntimeRenewalIdentity): boolean {
+    const runtimeHandle = RuntimeHandleSchema.safeParse(input.runtimeHandle);
+    const generation = GenerationSchema.safeParse(input.executionGeneration);
+    if (!runtimeHandle.success || !generation.success) return false;
+    this.sweep();
+    const entry = this.entries.get(runtimeHandle.data);
+    if (!entry || entry.inference.signal.aborted || entry.executionGeneration !== generation.data
+      || entry.ownerId !== input.ownerId || entry.chatId !== input.chatId || entry.runId !== input.runId
+      || entry.rootFingerprint !== input.rootFingerprint) return false;
+    entry.expiresAt = this.now() + this.ttlMs;
+    return true;
   }
 
   /** Private run lifetime; never exposed in serialized runtime bindings. */

@@ -49,7 +49,8 @@ async function failedWorkerEvents(reply: unknown | (() => Promise<unknown>)) {
   const forgetRun = vi.fn();
   const runBot = vi.fn(async () => typeof reply === "function" ? reply() : reply);
   const runtime = createManagedPiRuntime({ admission: { admit: async () => binding,
-    toolAuthority: async () => ({ permissionMode: "supervised" }), release, workspace: async () => "/owned/chat" },
+    toolAuthority: async () => ({ permissionMode: "supervised" }), release, workspace: async () => "/owned/chat",
+    startRenewal: () => ({ stop: async () => undefined }) },
     host: { client: { runBot } } as unknown as ScopeRuntimeHost, providers: { getSnapshot: async () => snapshot },
     lifetime: new AbortController().signal, forgetRun, cancelInference: () => undefined });
   const events = [];
@@ -157,7 +158,8 @@ it("passes the already prepared canonical Agent prompt to Pi exactly once", asyn
     expect(spec.turn).toEqual({ kind: "prompt", text: prompt });
     return { ok: true, reply: { runId: binding.runId, status: "completed", toolActions: 0, sessionRevision: 1 } };
   } } } as unknown as ScopeRuntimeHost;
-  const runtime: ReturnType<typeof createManagedPiRuntime> = createManagedPiRuntime({ admission: { admit: async () => binding, toolAuthority: async () => ({ permissionMode: "supervised" }), release, workspace: async () => "/owned/chat" },
+  const runtime: ReturnType<typeof createManagedPiRuntime> = createManagedPiRuntime({ admission: { admit: async () => binding, toolAuthority: async () => ({ permissionMode: "supervised" }), release, workspace: async () => "/owned/chat",
+    startRenewal: () => ({ stop: async () => undefined }) },
     host, providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal, forgetRun: () => undefined, cancelInference: () => undefined });
   const events = [];
   for await (const event of runtime.adapter.start({ owner: { type: "personal", ownerId: OWNER }, chatId: binding.chatId,
@@ -186,7 +188,7 @@ it("runs an ordinary canonical Matrix Chat through the pinned Pi loop, brokered 
   const specs: unknown[] = []; let serial = 0;
   const createRuntime = vi.fn(async () => ({ runtimeHandle: `runtime_${(++serial).toString(16).padStart(32, "0")}`, executionGeneration: "1" }));
   const stopRuntime = vi.fn(async () => undefined);
-  const host = { available: true, client: { createRuntime, stopRuntime, runBot: async (request: { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }) => {
+  const host = { available: true, client: { createRuntime, stopRuntime, renewRuntime: async () => undefined, runBot: async (request: { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }) => {
     const call = async (body: Record<string, unknown>) => {
       const reply = await actions.handleFrame({ version: 1, requestId: randomUUID(), runtimeHandle: request.runtimeHandle, executionGeneration: request.executionGeneration, runId: request.command.runId, ...body });
       if (!reply?.ok) throw new BotBrokerError((reply?.code ?? "unavailable") as never);
@@ -268,7 +270,7 @@ it("executes owner integration and Custom MCP tools through actual Pi loop/broke
   const specs: unknown[] = []; let serial = 0;
   const createRuntime = vi.fn(async () => ({ runtimeHandle: `runtime_${(++serial).toString(16).padStart(32, "0")}`, executionGeneration: "1" }));
   const stopRuntime = vi.fn(async () => undefined);
-  const host = { available: true, client: { createRuntime, stopRuntime, runBot: async (request: { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }) => {
+  const host = { available: true, client: { createRuntime, stopRuntime, renewRuntime: async () => undefined, runBot: async (request: { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }) => {
     const call = async (body: Record<string, unknown>) => {
       const reply = await actions.handleFrame({ version: 1, requestId: randomUUID(), runtimeHandle: request.runtimeHandle, executionGeneration: request.executionGeneration, runId: request.command.runId, ...body });
       if (!reply?.ok) throw new BotBrokerError((reply?.code ?? "unavailable") as never);
@@ -345,7 +347,7 @@ it.each([false, true])("preserves root admission/capabilities while composing is
   const release = vi.fn(async () => undefined), open = vi.fn(async () => undefined);
   const admit = vi.fn(async () => binding), claim = vi.fn(async () => ({ phaseId: "phase_envelope", maxInputBytes: 131072 as const }));
   const runtime = createManagedPiRuntime({ admission: { admit, release, workspace: async () => "/owned/chat",
-    toolAuthority: async () => ({ permissionMode: "full_access" }) },
+    toolAuthority: async () => ({ permissionMode: "full_access" }), startRenewal: () => ({ stop: async () => undefined }) },
     ...(enabled ? { isolatedChat: { select: () => true, targets: () => true, claim, consume: async () => true } } : {}),
     ownerTools: { open, closeRun: async () => undefined } as never,
     providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal,
@@ -391,6 +393,7 @@ it("replays a stopped managed tool as stopped after canonical cancellation witho
       runtimeHandle: `runtime_${"a".repeat(32)}`, executionGeneration: "1", workspace: { kind: "chat_workspace" }, rootFingerprint: "a".repeat(64),
       ...resolved, capabilities: ["mcp.call"], requestClass: "interactive" }, release: async () => undefined,
     toolAuthority: async () => ({ permissionMode: "full_access" }), workspace: async () => "/owned/chat",
+    startRenewal: () => ({ stop: async () => undefined }),
   }, host, providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal, forgetRun: () => undefined, cancelInference: () => undefined });
   const repository = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
   const catalog = { getCatalog: async () => ({ revision: "cancel_test", drivers: [{ kind: "matrix_pi" as const, displayName: "Pi", adapterVersion: "1", capabilityClass: "system_agent" as const }],

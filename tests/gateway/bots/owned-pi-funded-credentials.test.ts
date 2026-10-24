@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScopeRuntimeBotInferenceRequest } from "@matrix-os/scope-runtime/broker-protocol";
-import type { FundedAiCredentialLease, MatrixFundedCredentialProvider } from "../../../packages/gateway/src/funded-ai-credential-manager.js";
+import { createFundedAiCredentialManager, type FundedAiCredentialLease, type MatrixFundedCredentialProvider } from "../../../packages/gateway/src/funded-ai-credential-manager.js";
 import { createBotBrokerActions } from "../../../packages/gateway/src/bots/broker-actions.js";
 import { BotRuntimeRegistry, type PiRuntimeBinding } from "../../../packages/gateway/src/bots/runtime-registry.js";
 import { createFundedAdmissionQueue } from "../../../packages/gateway/src/funded-ai/admission-queue.js";
@@ -21,7 +21,7 @@ beforeEach(async () => {
 });
 afterEach(async () => { vi.unstubAllEnvs(); await rm(homePath, { recursive: true, force: true }); });
 
-function setup(model = glm, requestClass: "interactive" | "background" = "interactive", recipe = false) {
+function setup(model = glm, requestClass: "interactive" | "background" = "interactive", recipe = false, now = Date.now) {
   const identity = {
     runtimeHandle: `runtime_${"e".repeat(32)}`, executionGeneration: "6", ownerId: "owner",
     chatId: "chat_funded", runId: "run_funded", rootFingerprint: "f".repeat(64),
@@ -43,9 +43,9 @@ function setup(model = glm, requestClass: "interactive" | "background" = "intera
   const request = { version: frame.version, requestId: frame.requestId, runtimeHandle: frame.runtimeHandle,
     executionGeneration: frame.executionGeneration, action: frame.action, method: frame.method,
     path: frame.path, headers: frame.headers, body: frame.body };
-  const registry = new BotRuntimeRegistry(); registry.bind(binding);
+  const registry = new BotRuntimeRegistry({ now }); registry.bind(binding);
   const lifetime = new AbortController();
-  const queue = createFundedAdmissionQueue();
+  const queue = createFundedAdmissionQueue({ now });
   const lease: FundedAiCredentialLease = {
     token: leaseToken, tokenId: "test-token-id", relayBaseUrl: `${relay}/`,
     expiresAt: new Date(Date.now() + 20 * 60_000).toISOString(), maxRunMs: 600_000, requestClass,
@@ -70,6 +70,69 @@ function setup(model = glm, requestClass: "interactive" | "background" = "intera
 }
 
 describe("owned Pi default funded credential path", () => {
+  it.each([glm, sonnet])("refreshes the real manager before a second %s inference in the same live run after its old credential expires", async model => {
+    let clock = Date.parse("2026-10-21T00:00:00.000Z");
+    const fixture = setup(model, "interactive", false, () => clock);
+    const issued: Array<{ token: string; expiresAt: number }> = [];
+    const issueFetch = vi.fn<typeof fetch>(async () => {
+      const tokenId = `credential_${issued.length + 1}`;
+      const credential = { token: `sk-matrix-funded-${tokenId}.${"A".repeat(43)}`, tokenId,
+        audience: "matrix-funded-relay", scope: "ai:invoke", issuedAt: new Date(clock).toISOString(),
+        expiresAt: new Date(clock + 15 * 60_000).toISOString() };
+      issued.push({ token: credential.token, expiresAt: Date.parse(credential.expiresAt) });
+      return new Response(JSON.stringify({ contractVersion: 1, requestClass: "interactive", credential,
+        identity: { ownerId: "owner", machineId: "machine_owned", runtimeSlot: "primary" },
+        policy: { enabled: true, globalRevision: 1, runtimeRevision: 1, allowedModelIds: [model],
+          monthlyBudgetMicrousd: 5_000_000, checkedAt: new Date(clock).toISOString(), staleAfter: new Date(clock + 60_000).toISOString() },
+      }), { status: 200 });
+    });
+    const manager = createFundedAiCredentialManager({
+      issueUrl: "https://platform.example.invalid/credential", fundingSummaryUrl: "https://platform.example.invalid/funding",
+      routeReadinessUrl: "https://platform.example.invalid/readiness", relayBaseUrl: relay, runtimeAuthToken: "p".repeat(64),
+      identity: { ownerId: "owner", machineId: "machine_owned", runtimeSlot: "primary" }, maxRunMs: 600_000, requestTimeoutMs: 5_000,
+    }, { fetchFn: issueFetch, now: () => clock, random: () => 0 });
+    const realGetCredential = manager.getCredential.bind(manager);
+    const maxRunReads = vi.fn(() => { throw new Error("Broker must not treat lease maxRunMs as turn lifetime"); });
+    const getCredential = vi.spyOn(manager, "getCredential").mockImplementation(async options => {
+      const lease = await realGetCredential(options);
+      Object.defineProperty(lease, "maxRunMs", { get: maxRunReads });
+      return lease;
+    });
+    const authorization = vi.spyOn(fixture.registry, "authorize");
+    const admission = vi.spyOn(fixture.queue, "run");
+    const paidTokens: string[] = [];
+    // Fake relay boundary refuses stale credentials; Platform policy/DB admission
+    // remains covered separately by the policy/metering repository suites.
+    fixture.fetchImpl.mockImplementation(async (_url, init) => {
+      const token = new Headers(init?.headers).get("authorization")?.replace(/^Bearer /, "");
+      const current = issued.find(candidate => candidate.token === token);
+      if (!current || current.expiresAt <= clock) return new Response("expired", { status: 401 });
+      paidTokens.push(current.token);
+      expect(new Headers(init?.headers).get("x-matrix-funded-claim-key")).toBe(fixture.binding.runtimeHandle);
+      return new Response("data: fake-paid-response\n\n", { headers: { "content-type": "text/event-stream" } });
+    });
+    try {
+      const broker = fixture.actions(manager);
+      await expect(broker.handleFrame({ ...fixture.request, requestId: "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d2" })).resolves.toMatchObject({ ok: true, status: 200 });
+      const firstAuthorityCalls = authorization.mock.calls.length;
+      const firstRevalidations = fixture.revalidateBinding.mock.calls.length;
+      // Keep the exact registry authority live through real renewal validation;
+      // no rebinding, forged progress or model request is involved.
+      for (let step = 0; step < 32; step++) { clock += 30_000; expect(fixture.registry.renew(fixture.binding)).toBe(true); }
+      expect(clock).toBeGreaterThan(issued[0]!.expiresAt);
+      expect(fixture.registry.lookupRun(fixture.binding)).toEqual(fixture.binding);
+      await expect(broker.handleFrame(fixture.request)).resolves.toMatchObject({ ok: true, status: 200 });
+      expect(issueFetch).toHaveBeenCalledTimes(2);
+      expect(getCredential).toHaveBeenCalledTimes(2);
+      expect(admission).toHaveBeenCalledTimes(2);
+      expect(authorization.mock.calls.length).toBeGreaterThan(firstAuthorityCalls);
+      expect(fixture.revalidateBinding.mock.calls.length).toBeGreaterThan(firstRevalidations);
+      expect(paidTokens).toEqual([issued[0]!.token, issued[1]!.token]);
+      expect(issued[1]!.token).not.toBe(issued[0]!.token);
+      expect(maxRunReads).not.toHaveBeenCalled();
+    } finally { manager.close(); fixture.close(); vi.restoreAllMocks(); }
+  });
+
   it.each([
     [glm, "interactive", false], [sonnet, "interactive", false],
     [glm, "background", true], [sonnet, "background", true],
