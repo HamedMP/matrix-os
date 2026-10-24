@@ -1,3 +1,4 @@
+import { retainRunActivityWindow } from "./activity-retention.js";
 import { readChatImportSource } from "./import-source.js";
 import { listChats, updateChat, renameChat } from "./metadata-repository.js";
 import { ownerSharedProjection, sharedBindingScopeId } from "./owner-shared-projection.js";
@@ -801,12 +802,12 @@ export class ChatRepository {
         .returning("session_id")
         .executeTakeFirst();
       if (!binding) return false;
+      let activityChanges: { activityIds: string[]; removedActivityIds: string[] } | undefined;
       if (runId) {
         const count = await trx.selectFrom("chat_run_events")
           .select(({ fn }) => fn.countAll().as("count"))
           .where("run_id", "=", runId)
           .executeTakeFirstOrThrow();
-        if (Number(count.count) >= 500) throw new ChatConflictError(chatId, Number(chat.revision));
         const activity = CanonicalChatRunActivitySchema.parse({
           id: `activity_${randomUUID()}`,
           chatId,
@@ -820,16 +821,19 @@ export class ChatRepository {
           .select(({ fn }) => fn.max("run_seq").as("sequence"))
           .where("run_id", "=", runId)
           .executeTakeFirst();
-        const sequence = Number(latestSequence?.sequence ?? 0) + 1;
-        const sequenced = CanonicalChatRunActivitySchema.parse({ ...activity, sequence });
-        await trx.insertInto("chat_run_events").values({
-          id: sequenced.id,
-          chat_id: chatId,
-          run_id: runId,
-          run_seq: sequence,
-          event: jsonb(sequenced),
-          occurred_at: occurredAt,
-        }).execute();
+        const retained = await retainRunActivityWindow(trx, {
+          chatId, runId, revision: Number(chat.revision), activities: [activity],
+          persistedCount: Number(count.count), unseenCount: 1,
+        });
+        activityChanges = { activityIds: retained.activities.map(event => event.id), removedActivityIds: retained.removedActivityIds };
+        if (retained.activities.length) {
+          const sequence = Number(latestSequence?.sequence ?? 0) + 1;
+          const sequenced = CanonicalChatRunActivitySchema.parse({ ...activity, sequence });
+          await trx.insertInto("chat_run_events").values({
+            id: sequenced.id, chat_id: chatId, run_id: runId, run_seq: sequence,
+            event: jsonb(sequenced), occurred_at: occurredAt,
+          }).execute();
+        }
       }
       const revision = Number(chat.revision) + 1;
       await trx.updateTable("chats").set({ revision, updated_at: sql`now()` })
@@ -841,7 +845,7 @@ export class ChatRepository {
         chatId,
         revision,
         runId ? "run.activity" : "chat.terminal_bound",
-        runId ? { runId } : { terminalSessionId: sessionId },
+        runId ? { runId, ...activityChanges } : { terminalSessionId: sessionId },
       );
       return true;
     });
