@@ -258,6 +258,7 @@ function GatewayShell() {
   const [unreadCount, setUnreadCount] = useState(0);
   const getTokenRef = useRef(getToken);
   const connectionKeyRef = useRef<string | null>(null);
+  const connectionLoadVersionRef = useRef(0);
 
   useEffect(() => {
     getTokenRef.current = getToken;
@@ -290,6 +291,7 @@ function GatewayShell() {
   // main chat WebSocket, so it is never opened here; the terminal mints its
   // own ws-token on each attach.
   const setGateway = useCallback((gw: GatewayConnection) => {
+    connectionLoadVersionRef.current += 1;
     const nextKey = `${gw.url}:${gw.token ?? ""}`;
     if (connectionKeyRef.current === nextKey) return;
     connectionKeyRef.current = nextKey;
@@ -307,10 +309,11 @@ function GatewayShell() {
     if (!isLoaded) return;
 
     let cancelled = false;
+    const loadVersion = ++connectionLoadVersionRef.current;
 
     async function selectGatewayClient() {
       const selectedGateway = await getSelectedGatewayConnection();
-      if (cancelled) return;
+      if (cancelled || loadVersion !== connectionLoadVersionRef.current) return;
 
       if (!isSignedIn) {
         if (!isHostedGatewayUrl(selectedGateway.url) && selectedGateway.token) {
@@ -331,7 +334,7 @@ function GatewayShell() {
       }
 
       const token = await getTokenRef.current();
-      if (cancelled) return;
+      if (cancelled || loadVersion !== connectionLoadVersionRef.current) return;
       if (!token) {
         connectionKeyRef.current = null;
         setClient(null);
@@ -359,7 +362,7 @@ function GatewayShell() {
     return () => {
       cancelled = true;
     };
-  }, [isLoaded, isSignedIn]);
+  }, [isLoaded, isSignedIn, userId]);
 
   const contextValue = useMemo<GatewayContextValue>(
     () => ({ client, gateway, setGateway, unreadCount, incrementUnread, clearUnread }),
