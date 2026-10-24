@@ -16,6 +16,11 @@ const binary = resolve(process.argv[2] ?? "");
 if (!process.argv[2]) throw new Error("usage: smoke-zellij-session-config.ts <zellij-binary>");
 const delay = (ms: number) => new Promise((done) => setTimeout(done, ms));
 const spawnPty = createRequire(import.meta.url)("node-pty").spawn;
+const timeoutMultiplier = Number(process.env.MATRIX_ZELLIJ_SMOKE_TIMEOUT_MULTIPLIER ?? "1");
+if (!Number.isInteger(timeoutMultiplier) || timeoutMultiplier < 1 || timeoutMultiplier > 10) {
+  throw new Error("MATRIX_ZELLIJ_SMOKE_TIMEOUT_MULTIPLIER must be an integer from 1 through 10");
+}
+const scaledTimeout = (milliseconds: number) => milliseconds * timeoutMultiplier;
 
 function fixtureEnv(root: string) {
   return {
@@ -27,12 +32,27 @@ function fixtureEnv(root: string) {
 }
 
 async function waitFor(check: () => Promise<boolean>, label: string) {
-  const deadline = Date.now() + 4_000;
+  const deadline = Date.now() + scaledTimeout(4_000);
   while (Date.now() < deadline) {
     if (await check()) return;
     await delay(50);
   }
   throw new Error(label);
+}
+
+async function stopClient(client: ShellAttachProcess, label: string) {
+  let exitDisposable: { dispose(): void } | undefined;
+  try {
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        exitDisposable = client.onExit(() => resolve());
+        client.kill();
+      }),
+      delay(scaledTimeout(4_000)).then(() => { throw new Error(`${label} client did not exit`); }),
+    ]);
+  } finally {
+    exitDisposable?.dispose();
+  }
 }
 
 // The supervisor owns all fixture roots and daemons. Killing a timed-out worker
@@ -50,7 +70,7 @@ async function supervise() {
       ? [resolve(fixtureWorker), binary, root]
       : ["--conditions=development", "--import", "tsx", fileURLToPath(import.meta.url), binary, root];
     const result = await run(process.execPath, workerArgs, {
-      timeout: 35_000, killSignal: "SIGKILL", signal: controller.signal, maxBuffer: 512 * 1024,
+      timeout: scaledTimeout(35_000), killSignal: "SIGKILL", signal: controller.signal, maxBuffer: 512 * 1024,
     });
     process.stdout.write(result.stdout);
     process.stderr.write(result.stderr);
@@ -106,8 +126,10 @@ async function exercise(parentRoot: string) {
       await writeFile(env.ZELLIJ_CONFIG_FILE, `${common}default_mode "locked"\n`);
       await writeFile(inputPath, "");
       await writeFile(probe, `
-import { appendFile, writeFile } from 'node:fs/promises';
-await writeFile(${JSON.stringify(pidPath)}, String(process.pid));
+import { appendFile, rename, writeFile } from 'node:fs/promises';
+const pidPath = ${JSON.stringify(pidPath)};
+await writeFile(pidPath + '.next', String(process.pid));
+await rename(pidPath + '.next', pidPath);
 process.stdin.setRawMode(true);
 let bytes = 0;
 let writes = Promise.resolve();
@@ -117,7 +139,7 @@ process.stdin.on('data', data => {
   writes = writes.then(() => appendFile(${JSON.stringify(inputPath)}, data));
 });
 process.stdout.write('READY');
-setTimeout(() => process.exit(0), 30000);
+setTimeout(() => process.exit(0), ${scaledTimeout(30_000)});
 `);
       await writeFile(layout, `layout {
   pane command=${JSON.stringify(process.execPath)} {
@@ -128,11 +150,15 @@ setTimeout(() => process.exit(0), 30000);
       await run(binary, ["--config", serverConfig, "--layout", layout, "attach", "--create-background", session], {
         env, cwd: root, timeout: 5_000,
       });
-      await waitFor(async () => readFile(pidPath).then(() => true, (error) => {
+      let originalPid = "";
+      await waitFor(async () => readFile(pidPath, "utf8").then((value) => {
+        if (!/^[1-9][0-9]*$/.test(value)) return false;
+        originalPid = value;
+        return true;
+      }, (error) => {
         if (error.code === "ENOENT") return false;
         throw error;
       }), "pane did not start");
-      const originalPid = await readFile(pidPath, "utf8");
       const adapter = createZellijAdapter({ binaryPath: binary, cwd: root, env, manageConfig: false });
       const runtime = createZellijRuntime({ homePath: root });
       let expected = "";
@@ -154,11 +180,13 @@ setTimeout(() => process.exit(0), 30000);
           await waitFor(async () => (await readFile(inputPath, "utf8")) === expected,
             `${savedMode}/${path} lost input: ${JSON.stringify(input)}`);
         }
-        client!.kill();
+        await stopClient(client!, `${savedMode}/${path}`);
         client = undefined;
         data.dispose();
-        await delay(150);
-        if (await readFile(pidPath, "utf8") !== originalPid) throw new Error("pane process was replaced");
+        const currentPid = await readFile(pidPath, "utf8");
+        if (currentPid !== originalPid) {
+          throw new Error(`${savedMode}/${path} replaced pane process ${originalPid} with ${currentPid}`);
+        }
       }
       console.log(`PASS: ${savedMode} server, direct/reconnect/indexed, typing/paste/Ctrl keys, same process`);
     } finally {

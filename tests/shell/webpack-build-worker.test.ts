@@ -23,6 +23,7 @@ describe("production Webpack worker boundaries", () => {
   });
 
   it.each([false, true])("retains worker parallelism and source aliases with PostHog release wrapper=%s", async (release) => {
+    vi.stubEnv("MATRIX_LOCAL_PARITY_BUILD", undefined);
     vi.stubEnv("POSTHOG_API_KEY", release ? "test-personal-key" : "");
     vi.stubEnv("POSTHOG_PROJECT_ID", release ? "test-project-id" : "");
     vi.stubEnv("GATEWAY_URL", "http://localhost:4000");
@@ -38,6 +39,9 @@ describe("production Webpack worker boundaries", () => {
       expect(config.experimental?.webpackBuildWorker).toBe(true);
       expect(config.experimental?.parallelServerCompiles).toBe(true);
       expect(config.experimental?.parallelServerBuildTraces).toBe(true);
+      expect(config.experimental?.webpackMemoryOptimizations).toBe(false);
+      expect(config.experimental?.staticGenerationMaxConcurrency).toBe(8);
+      expect(config.experimental?.staticGenerationMinPagesPerWorker).toBe(25);
       // Next merges our targeted barrel with its built-in optimization list.
       expect(config.experimental?.optimizePackageImports).toEqual(expect.arrayContaining([
         "@hugeicons/core-free-icons", "lucide-react", "date-fns",
@@ -56,5 +60,22 @@ describe("production Webpack worker boundaries", () => {
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
+  });
+
+  it("enables bounded build concurrency only when local parity explicitly opts in", async () => {
+    vi.stubEnv("MATRIX_LOCAL_PARITY_BUILD", "1");
+    vi.stubEnv("POSTHOG_API_KEY", "");
+    vi.stubEnv("POSTHOG_PROJECT_ID", "");
+    vi.resetModules();
+    const { default: exported } = await import("../../shell/next.config.ts");
+    const config = await resolveProductionConfig(exported);
+    expect(config.experimental).toMatchObject({
+      webpackBuildWorker: true,
+      parallelServerCompiles: true,
+      parallelServerBuildTraces: true,
+      webpackMemoryOptimizations: true,
+      staticGenerationMaxConcurrency: 1,
+      staticGenerationMinPagesPerWorker: 100,
+    });
   });
 });
