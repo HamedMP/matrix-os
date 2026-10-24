@@ -17,6 +17,9 @@ model or provider credential does not add missing harness tools.
 | User-installed Pi canonical Chat | No built-in integration bridge | The separate CLI route retains its read/ask_user-only restriction |
 | Jev Inbox recipe | Receipt-bound preview workflow | Intentionally excludes general Drive actions |
 
+The [Matrix-hosted Jev guide](./matrix-hosted-jev.md) documents the fixed email
+classification API, Matrix AI funding, and the separate Inbox broker boundary.
+
 Funded canonical Chat uses the owned Pi worker; the retired SDK-funded Chat route
 remains denied. Matrix AI's Claude models run through Matrix Pi. Native Claude
 Code Chat uses only the owner's Claude subscription; it does not acquire a

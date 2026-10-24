@@ -17,7 +17,7 @@ Matrix ships an Agent-installable skill pack under `skills/matrix/`. These skill
 | `matrix-landing-design` | Build product landing pages matching their apps, while keeping public Matrix OS marketing on the shared brand. |
 | `matrix-chat-import` | Import owner-selected Codex/Claude transcripts as private Matrix Chats. |
 | `matrix-personal-daily-brief` | Prepare a personal briefing from connected services. |
-| `matrix-jev-email-triage` | Triage email through the scoped Matrix workflow. |
+| `matrix-jev-email-triage` | Triage email through the scoped Matrix workflow; see the [Matrix-hosted Jev guide](./matrix-hosted-jev.md) for its evaluation contract and access limits. |
 | `emil-design-eng` | Refine hierarchy, components, UI details, and interaction polish. |
 | `apple-design` | Build fluid direct manipulation, gestures, and spatial continuity. |
 | `animate` | Choose and implement purposeful web motion with local recipe references. |
