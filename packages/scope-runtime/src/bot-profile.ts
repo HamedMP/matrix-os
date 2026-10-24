@@ -3,8 +3,8 @@
  *
  * It keeps every isolation property of `scope-runtime-chat-v1` (dynamic
  * user, private network and root, no capabilities, the same resource caps)
- * and differs in two places only: a lifetime that fits a bot task's active
- * work deadline, and the pinned bot-runtime bundle mounted in place of the
+ * and replaces the fixed total lifetime with a supervisor-owned renewable
+ * lease, and the pinned bot-runtime bundle mounted in place of the
  * Claude SDK, native binary, and Chat worker file. The chat profile and its
  * digest are unchanged.
  */
@@ -22,11 +22,12 @@ import {
 } from "./profile.js";
 
 export const SCOPE_RUNTIME_BOT_PROFILE_ID = "scope-runtime-bot-v1";
-export const SCOPE_RUNTIME_BOT_PROFILE_VERSION = 1;
+export const SCOPE_RUNTIME_BOT_PROFILE_VERSION = 2;
 export const SCOPE_RUNTIME_BOT_ADAPTER_ID = "matrix-bot";
 /** The pinned Pi agent version inside the bot-runtime bundle. */
 export const SCOPE_RUNTIME_BOT_HARNESS_VERSION = "1.0.0";
-export const SCOPE_RUNTIME_BOT_RUNTIME_MAX_SEC = 900;
+/** A lost gateway is reclaimed within this interval; an active turn renews it. */
+export const SCOPE_RUNTIME_PI_LEASE_MS = 900_000;
 /** Where the bot-runtime bundle directory is mounted, and its entry file inside the sandbox. */
 export const BOT_RUNTIME_MOUNT = "/opt/matrix/scope-sdk/bot-runtime";
 export const BOT_RUNTIME_ENTRY = `${BOT_RUNTIME_MOUNT}/bot-worker.mjs`;
@@ -46,8 +47,10 @@ function deriveBotProperties(): readonly string[] {
       continue;
     }
     if (CHAT_ONLY_MOUNTS.includes(property)) continue;
-    properties.push(property === "RuntimeMaxSec=90" ? `RuntimeMaxSec=${SCOPE_RUNTIME_BOT_RUNTIME_MAX_SEC}` : property);
+    properties.push(property === "RuntimeMaxSec=90" ? "RuntimeMaxSec=infinity" : property);
   }
+  // If the supervisor crashes, systemd stops its workers even before a lease sweep.
+  properties.push("BindsTo=matrix-scope-runtime.service", "After=matrix-scope-runtime.service");
   return Object.freeze(properties);
 }
 
@@ -58,12 +61,13 @@ export const SCOPE_RUNTIME_BOT_PROFILE_DIGEST = createHash("sha256")
     ...FIXED_BOT_SYSTEMD_PROPERTIES,
     ...FIXED_SYSTEMD_ENVIRONMENT,
     `Adapter=${SCOPE_RUNTIME_BOT_ADAPTER_ID}/${SCOPE_RUNTIME_BOT_HARNESS_VERSION}/bot_agent`,
+    `LeaseMs=${SCOPE_RUNTIME_PI_LEASE_MS}`,
   ].join("\n") + "\n")
   .digest("hex");
 
 /** Ordinary owner-authorized Chat shares Pi's worker, never recipe Bot mount authority. */
 export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID = "scope-runtime-managed-pi-v1";
-export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION = 1;
+export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_VERSION = 2;
 export const SCOPE_RUNTIME_MANAGED_PI_PROFILE_DIGEST = createHash("sha256")
   .update(`${SCOPE_RUNTIME_BOT_PROFILE_DIGEST}\nProfile=${SCOPE_RUNTIME_MANAGED_PI_PROFILE_ID}\nRoots=agent-workspaces,projects,worktrees\n`)
   .digest("hex");

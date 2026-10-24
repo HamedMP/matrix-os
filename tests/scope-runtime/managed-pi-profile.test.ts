@@ -114,7 +114,7 @@ describe("managed Pi supervisor and actual launcher boundary", () => {
     expect(args).toContain("--property=ProtectHome=yes");
     expect(args).toContain("/opt/matrix/scope-sdk/bot-runtime/bot-worker.mjs");
     const provenance = JSON.parse(await readFile(join(paths.stateRoot, "runtimes", "2".repeat(32), "provenance.json"), "utf8"));
-    expect(provenance).toMatchObject({ profileId: MANAGED_PROFILE, profileVersion: 1, workload: "bot_agent" });
+    expect(provenance).toMatchObject({ profileId: MANAGED_PROFILE, profileVersion: 2, workload: "bot_agent" });
     await expect(launcher.list()).resolves.toEqual([{ runtimeHandle: RUNTIME, executionGeneration: "7", profileId: MANAGED_PROFILE }]);
     // The same pinned worker command remains reachable through the distinct managed profile.
     launcher.runBot = vi.fn(async () => ({ version: 1 as const, ok: true as const, reply: { acknowledged: true } }));
