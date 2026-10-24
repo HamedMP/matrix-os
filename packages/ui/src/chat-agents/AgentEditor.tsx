@@ -1,7 +1,7 @@
 import type {BotClient} from "./bots/client.js";
 import { botModelChoiceMatchesSelection, isAutomaticBotSelection, matrixBotSelectableModelChoices, MatrixBotModelField } from "./bots/MatrixBotModelField.js";
 import { useId, type ReactNode } from "react";
-import { isManagedCustomBot, isChatgptPlanBotRoute, isChatgptPlanChatRoute, isMatrixAnthropicChatRoute, isMatrixAnthropicBotRoute, ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
+import { isMatrixOpenAiBotRoute, isMatrixOpenAiChatRoute, isManagedCustomBot, isChatgptPlanBotRoute, isChatgptPlanChatRoute, isMatrixAnthropicChatRoute, isMatrixAnthropicBotRoute, ChatAgentRecipeSchema, type ChatAgent, type ChatAgentRecipe, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
 import { AgentRecipeEditor } from "./AgentRecipeEditor.js";
 import { recipeSkillsFit } from "./recipe-skills.js";
@@ -13,7 +13,7 @@ const muted = chatAgentMutedStyle;
 export type AgentDraft = { name: string; description: string; instructions: string; selection: CanonicalChatModelSelection | null; requestId: string; recipe?: ChatAgentRecipe | null };
 
 function customAgentModelChoices(models: ReturnType<typeof deriveCanonicalProviderChoices>) {
-  return models.filter(choice => !isChatgptPlanBotRoute(choice) && !isChatgptPlanChatRoute(choice) && !isMatrixAnthropicChatRoute(choice) && !isMatrixAnthropicBotRoute(choice));
+  return models.filter(choice => !isChatgptPlanBotRoute(choice) && !isChatgptPlanChatRoute(choice) && !isMatrixAnthropicChatRoute(choice) && !isMatrixAnthropicBotRoute(choice) && !isMatrixOpenAiBotRoute(choice) && !isMatrixOpenAiChatRoute(choice));
 }
 
 export function AgentModelField({ id, selected, pending, models: suppliedModels, change, onSetup, hermesOnly }: {
