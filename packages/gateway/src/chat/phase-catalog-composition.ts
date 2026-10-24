@@ -1,3 +1,4 @@
+import { projectMatrixOpenAiProviderInstances } from "../bots/matrix-openai-provider-instance.js";
 import { projectMatrixAnthropicProviderInstances } from "../bots/matrix-anthropic-provider-instance.js";
 import { projectChatGptPlanProviderInstances } from "../bots/chatgpt-plan-provider-instance.js";
 import type { ChatProviderCatalogService } from "./provider-catalog.js";
@@ -7,7 +8,7 @@ import type { ChatProviderCatalogService } from "./provider-catalog.js";
 export function composePhaseCatalog(base: ChatProviderCatalogService, canonical: boolean,
   decorate: (catalog: ChatProviderCatalogService) => Pick<ChatProviderCatalogService, "getCatalog">): ChatProviderCatalogService {
   if (canonical) {
-    const project = (catalog: Awaited<ReturnType<typeof base.getCatalog>>) => projectChatGptPlanProviderInstances(projectMatrixAnthropicProviderInstances(catalog, undefined, false), undefined, false);
+    const project = (catalog: Awaited<ReturnType<typeof base.getCatalog>>) => projectChatGptPlanProviderInstances(projectMatrixOpenAiProviderInstances(projectMatrixAnthropicProviderInstances(catalog, undefined, false), undefined, false), undefined, false);
     return { getCatalog: async (principal, selection, readOptions) => project(await base.getCatalog(principal, selection, readOptions)),
       refresh: async (principal, readOptions) => project(await base.refresh(principal, readOptions)) };
   }

@@ -1,3 +1,4 @@
+import type { MatrixOpenAiConnection } from "@matrix-os/contracts";
 import type { NativeObservationReadScope } from "./hermes-observation-renewal.js";
 import type { CanonicalNativeHarnessCatalogReader } from "./native-harness-canonical-projection.js";
 import type { ProviderSnapshotReadOptions } from "./snapshot-read-options.js";
@@ -78,6 +79,7 @@ interface AiProviderServiceOptions {
   codexNativeKeyReadiness?: () => Promise<AiProviderReadiness | null>;
   codexLocalObservation?: (signal: AbortSignal) => Promise<CodexLocalCredentialObservation>;
   /** Saved source authority only; this read must not discover or enable a connection. */
+  matrixOpenAiConnection?: () => Promise<MatrixOpenAiConnection | undefined>;
   matrixAnthropicConnection?: () => Promise<MatrixAnthropicConnection | undefined>;
   /** Fresh configured-owner peer authority only; no credentials or renderer owner IDs. */
   chatGptPlanObservation?: (signal: AbortSignal) => Promise<BotProviderConnection | undefined>;
@@ -217,6 +219,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
   readonly #fundedReadiness?: FundedAiReadinessReader;
   readonly #codexNativeKeyReadiness?: AiProviderServiceOptions["codexNativeKeyReadiness"];
   readonly #codexLocalObservation?: AiProviderServiceOptions["codexLocalObservation"];
+  readonly #matrixOpenAiConnection?: AiProviderServiceOptions["matrixOpenAiConnection"];
   readonly #matrixAnthropicConnection?: AiProviderServiceOptions["matrixAnthropicConnection"];
   readonly #chatGptPlanObservation?: AiProviderServiceOptions["chatGptPlanObservation"];
 
@@ -243,6 +246,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
     this.#fundedReadiness = options.fundedReadinessReader;
     this.#codexNativeKeyReadiness = options.codexNativeKeyReadiness;
     this.#codexLocalObservation = options.codexLocalObservation;
+    this.#matrixOpenAiConnection = options.matrixOpenAiConnection;
     this.#matrixAnthropicConnection = options.matrixAnthropicConnection;
     this.#chatGptPlanObservation = options.chatGptPlanObservation;
   }
@@ -651,10 +655,12 @@ export class AiProviderService implements AiProviderSnapshotReader {
         }
       : { providerInstanceId: null, accessSourceId: null, modelId: null };
 
+    const matrixOpenAiConnection = canonicalOnly ? undefined : await this.#matrixOpenAiConnection?.();
     const matrixAnthropicConnection = canonicalOnly ? undefined : await this.#matrixAnthropicConnection?.();
     options.signal?.throwIfAborted();
     const snapshot = AiProviderSnapshotV3Schema.parse({
       contractVersion: 3,
+      ...(matrixOpenAiConnection ? { matrixOpenAiConnection } : {}),
       ...(matrixAnthropicConnection ? { matrixAnthropicConnection } : {}),
       ...(nativeHarnessCatalog ? { nativeHarnessCatalog } : {}),
       revision: 0,

@@ -37,7 +37,7 @@ export function googleInferenceIdentity(binding: PiRuntimeBinding, endpoint: str
   return { endpoint: url.toString(), api: binding.route.api, modelId: binding.route.modelId,
     harnessVersion: SCOPE_RUNTIME_BOT_HARNESS_VERSION, credential: { kind: credential.kind,
       fingerprint: createHash("sha256").update(credential.value).digest("hex"),
-      generation: binding.anthropicApi?.credentialGeneration ?? null } };
+      generation: binding.openaiApi?.credentialGeneration ?? binding.anthropicApi?.credentialGeneration ?? null } };
 }
 
 /** A configured authority is consulted even for unresolved delegated transports.
@@ -136,11 +136,21 @@ const Completions = z.strictObject({ model: Name, stream: z.literal(true), messa
   frequency_penalty: z.number().min(-2).max(2).optional(), presence_penalty: z.number().min(-2).max(2).optional(), ...Sampling,
 });
 const ResponseText = z.strictObject({ type: z.literal("input_text"), text: Text });
+// Pi replays complete inline assistant content with presentation metadata. Accept only
+// bounded, non-semantic metadata and drop it; never turn an item ID into a remote reference.
+const ResponseOutputText = z.strictObject({ type: z.literal("output_text"), text: Text,
+  annotations: z.array(z.never()).max(0).optional(),
+}).transform(({ annotations: _annotations, ...content }) => content);
+const ResponseContent = z.union([Text, z.array(z.union([ResponseText, ResponseOutputText,
+  z.strictObject({ type: z.literal("input_image"), image_url: InlineUrl, detail: Detail })])).max(256)]);
+const ResponseItemId = z.string().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/);
 const ResponseInput = z.union([
-  z.strictObject({ role: z.enum(["system", "developer", "user", "assistant"]), type: z.literal("message").optional(),
-    content: z.union([Text, z.array(z.union([ResponseText, z.strictObject({ type: z.literal("output_text"), text: Text }),
-      z.strictObject({ type: z.literal("input_image"), image_url: InlineUrl, detail: Detail })])).max(256)]) }),
-  z.strictObject({ type: z.literal("function_call"), call_id: Name, name: Name, arguments: Text }),
+  z.strictObject({ role: z.enum(["system", "developer", "user"]), type: z.literal("message").optional(), content: ResponseContent }),
+  z.strictObject({ role: z.literal("assistant"), type: z.literal("message").optional(), content: ResponseContent,
+    id: ResponseItemId.optional(), status: z.literal("completed").optional(), phase: z.enum(["commentary", "final_answer"]).optional(),
+  }).transform(({ id: _id, status: _status, phase: _phase, ...message }) => message),
+  z.strictObject({ type: z.literal("function_call"), id: ResponseItemId.regex(/^fc_/).optional(), call_id: Name, name: Name, arguments: Text,
+  }).transform(({ id: _id, ...call }) => call),
   z.strictObject({ type: z.literal("function_call_output"), call_id: Name, output: Text }),
 ]);
 const Responses = z.strictObject({ model: Name, stream: z.literal(true), store: z.literal(false).optional(),

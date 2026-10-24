@@ -77,6 +77,7 @@ const BotInferenceBodySchema = z.object({
   tools: z.array(z.unknown()).max(MAX_BOT_TOOLS).optional(),
   max_tokens: z.number().int().positive().optional(),
   max_completion_tokens: z.number().int().positive().optional(),
+  max_output_tokens: z.number().int().positive().optional(),
 }).passthrough();
 
 export interface BotInferenceDependencies {
@@ -85,6 +86,7 @@ export interface BotInferenceDependencies {
   isolatedChat?: import("../chat/isolated-chat-envelope.js").IsolatedChatAuthority;
   homePath: string;
   chatgptPlan?: import("./chatgpt-plan.js").ChatGptPlanAuthority;
+  matrixOpenAi?: import("./matrix-openai-api.js").MatrixOpenAiAuthority;
   matrixAnthropic?: import("./matrix-anthropic-api.js").MatrixAnthropicAuthority;
   lifetime: AbortSignal;
   /** Exact registry-owned run lifetime; combined with subsystem shutdown. */
@@ -185,11 +187,13 @@ export async function forwardBotInference(
   const bindingValid = () => !deps.revalidateBinding ? Promise.resolve(true)
     : ownerStream ? deps.revalidateBinding(binding)
     : waitForInferenceAuthority(() => deps.revalidateBinding!(binding), lifecycle);
+  const openaiValid = (signal = lifecycle) => ownerStream ? deps.matrixOpenAi!.revalidate(binding, signal)
+    : waitForInferenceAuthority(() => deps.matrixOpenAi!.revalidate(binding, signal), signal);
   const anthropicValid = (signal = lifecycle) => ownerStream ? deps.matrixAnthropic!.revalidate(binding, signal)
     : waitForInferenceAuthority(() => deps.matrixAnthropic!.revalidate(binding, signal), signal);
   if (lifecycle.aborted) return failure(request.requestId, "action_denied");
   const streamLifetime = new AbortController();
-  const ownerStream = binding.accessSourceId === "owner_anthropic_key" && request.responseMode === "stream";
+  const ownerStream = ["owner_anthropic_key", "owner_openai_key"].includes(binding.accessSourceId) && request.responseMode === "stream";
   const ownerSignal = ownerStream ? AbortSignal.any([lifecycle, streamLifetime.signal]) : lifecycle;
   // Each owner stage owns one timer; successful stages never spend a stream-wide deadline.
   const stage = async <T>(work: (signal: AbortSignal) => Promise<T>, signal = ownerSignal): Promise<T> => {
@@ -205,6 +209,9 @@ export async function forwardBotInference(
     if (await stage(bindingValid) !== true) return failure(request.requestId, "action_denied");
     if (ownerSignal.aborted) return failure(request.requestId, "action_denied");
     authorization = await stage(readAuthorization);
+    if (binding.openaiApi && (!deps.matrixOpenAi || binding.accessSourceId !== "owner_openai_key"
+      || !["openai-completions", "openai-responses"].includes(binding.route.api)
+      || await stage(openaiValid) !== true)) return failure(request.requestId, "action_denied");
     if (binding.anthropicApi && (!deps.matrixAnthropic || binding.accessSourceId !== "owner_anthropic_key"
       || await stage(anthropicValid) !== true)) return failure(request.requestId, "action_denied");
   } catch (error: unknown) {
@@ -257,25 +264,32 @@ export async function forwardBotInference(
     if (deps.googleData && (!(await planPolicy("release")).allowed || !await planLive())) return failure(request.requestId, "action_denied");
     return result;
   }
+  if (authorization.accessSourceId === "owner_openai_key" && !binding.openaiApi) return failure(request.requestId, "action_denied");
   // Borrowed native profiles remain task-executor-only; never substitute them for the explicit paired-device source.
   if (authorization.accessSourceId === "owner_openai_profile" || authorization.accessSourceId === "owner_anthropic_profile"
-    || request.action === "inference.responses") return failure(request.requestId, "provider_unavailable");
+    || request.action === "inference.responses" && !binding.openaiApi) return failure(request.requestId, "provider_unavailable");
   // Chat completions exist only on Matrix's managed route (the funded relay).
-  if (request.action === "inference.chat_completions" && authorization.accessSourceId !== "matrix_included") {
+  if (request.action === "inference.chat_completions" && authorization.accessSourceId !== "matrix_included" && !binding.openaiApi) {
     return failure(request.requestId, "provider_unavailable");
   }
+
+  // Explicit API adapters have fixed hosts and paths. A worker cannot request
+  // native/OAuth, another vendor endpoint, remote state, or an alternate action.
+  if (binding.openaiApi && (authorization.accessSourceId !== "owner_openai_key" || request.method !== "POST"
+    || (binding.route.api === "openai-responses" ? request.action !== "inference.responses" || request.path !== "/v1/responses"
+      : request.action !== "inference.chat_completions" || request.path !== "/v1/chat/completions"))) return failure(request.requestId, "action_denied");
 
   // The registry's resolved route is the output authority. Omission must not
   // let an upstream default widen it; preserve smaller explicit limits (for
   // example session summaries) and reject conflicting/oversized limits.
-  if ((parsedBody.max_tokens !== undefined && parsedBody.max_completion_tokens !== undefined)
-    || (request.action === "inference.messages" && parsedBody.max_completion_tokens !== undefined)) {
-    return failure(request.requestId, "invalid_request");
-  }
-  const outputTokens = parsedBody.max_tokens ?? parsedBody.max_completion_tokens ?? binding.route.maxOutputTokens;
+  const tokenFields = [parsedBody.max_tokens, parsedBody.max_completion_tokens, parsedBody.max_output_tokens].filter(value => value !== undefined);
+  if (tokenFields.length > 1 || request.action === "inference.messages" && (parsedBody.max_completion_tokens !== undefined || parsedBody.max_output_tokens !== undefined)
+    || request.action === "inference.responses" && (parsedBody.max_tokens !== undefined || parsedBody.max_completion_tokens !== undefined)
+    || request.action === "inference.chat_completions" && parsedBody.max_output_tokens !== undefined) return failure(request.requestId, "invalid_request");
+  const outputTokens = tokenFields[0] ?? binding.route.maxOutputTokens;
   if (outputTokens > binding.route.maxOutputTokens) return failure(request.requestId, "invalid_request");
-  const inferenceBody = parsedBody.max_tokens === undefined && parsedBody.max_completion_tokens === undefined
-    ? JSON.stringify({ ...parsedBody, max_tokens: outputTokens }) : request.body;
+  const inferenceBody = tokenFields.length === 0
+    ? JSON.stringify({ ...parsedBody, [request.action === "inference.responses" ? "max_output_tokens" : binding.openaiApi ? "max_completion_tokens" : "max_tokens"]: outputTokens }) : request.body;
 
   const accessSourceId = authorization.accessSourceId;
   const stillAuthorized = async () => {
@@ -297,15 +311,16 @@ export async function forwardBotInference(
     const managedInitial = managed ? await waitForInferenceAuthority(() => managed.acquire(binding, lifecycle), lifecycle) : undefined;
     if ((managed && !managedInitial) || lifecycle.aborted || !await stillAuthorized()) return failure(request.requestId, "action_denied");
     const launch = await stage<KernelCredentialLaunch>(async signal => managedInitial
-      ? { env: { ANTHROPIC_AUTH_TOKEN: managedInitial.lease.token, ANTHROPIC_BASE_URL: managedInitial.lease.relayBaseUrl } } : binding.anthropicApi
+      ? { env: { ANTHROPIC_AUTH_TOKEN: managedInitial.lease.token, ANTHROPIC_BASE_URL: managedInitial.lease.relayBaseUrl } } : binding.openaiApi
+      ? { env: { OPENAI_API_KEY: await deps.matrixOpenAi!.credential(binding, signal) } } : binding.anthropicApi
       ? { env: { ANTHROPIC_API_KEY: await deps.matrixAnthropic!.credential(binding, signal) } }
       : resolveInferenceCredentials(accessSourceId, { requestClass: binding.requestClass, claimKey: request.runtimeHandle }, signal, deps));
     const env = launch.env;
     if (lifecycle.aborted) return failure(request.requestId, "action_denied");
-    const apiKey = env?.ANTHROPIC_API_KEY;
-    const authToken = env?.ANTHROPIC_AUTH_TOKEN;
+    const apiKey = binding.openaiApi ? env?.OPENAI_API_KEY : env?.ANTHROPIC_API_KEY;
+    const authToken = binding.openaiApi ? undefined : env?.ANTHROPIC_AUTH_TOKEN;
     if ((!apiKey && !authToken) || (apiKey && authToken)) return failure(request.requestId, "provider_unavailable");
-    const baseUrl = env?.ANTHROPIC_BASE_URL?.replace(/\/$/, "") ?? "https://api.anthropic.com";
+    const baseUrl = binding.openaiApi ? "https://api.openai.com" : env?.ANTHROPIC_BASE_URL?.replace(/\/$/, "") ?? "https://api.anthropic.com";
     if (managedInitial && managedInitial.identity.endpoint !== `${baseUrl}${request.path}`) return failure(request.requestId, 'action_denied');
     let identity: GoogleInferenceIdentity | null = managedInitial?.identity ?? null;
     if (deps.googleData && !managedInitial) {
@@ -313,7 +328,7 @@ export async function forwardBotInference(
       catch (error: unknown) { if (!(error instanceof GoogleInferencePolicyError) && !(error instanceof TypeError)) throw error; }
     }
     const headers = new Headers({ accept: "text/event-stream", "content-type": "application/json" });
-    if (apiKey) headers.set("x-api-key", apiKey);
+    if (apiKey) headers.set(binding.openaiApi ? "authorization" : "x-api-key", binding.openaiApi ? `Bearer ${apiKey}` : apiKey);
     if (authToken) headers.set("authorization", `Bearer ${authToken}`);
     if (request.action === "inference.messages") {
       for (const [name, value] of Object.entries(request.headers)) {
@@ -322,6 +337,7 @@ export async function forwardBotInference(
     }
     if (accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);
     const liveAfterPolicy = async () => {
+      if (binding.openaiApi && await openaiValid() !== true) return false;
       if (binding.anthropicApi && await anthropicValid() !== true) return false;
       if (await bindingValid() !== true) return false;
       return !lifecycle.aborted && stillAuthorized();
@@ -337,6 +353,7 @@ export async function forwardBotInference(
       }
       let body = inferenceBody;
       const permitted = await stage(async signal => {
+        if (binding.openaiApi && await openaiValid(signal) !== true) return false;
         if (binding.anthropicApi && await anthropicValid(signal) !== true) return false;
         if (await bindingValid() !== true) return false;
         if (signal.aborted || !await stillAuthorized()) return false;
@@ -403,6 +420,7 @@ export async function forwardBotInference(
     };
     if (request.responseMode === 'stream') {
       const authorized = () => stage(async signal => !signal.aborted && await googleReleaseAllowed() && await stillAuthorized()
+        && (!binding.openaiApi || await openaiValid(signal) === true)
         && (!binding.anthropicApi || await anthropicValid(signal) === true)
         && (await bindingValid() === true) && !signal.aborted && await stillAuthorized(), responseSignal);
       let permitted: boolean;
@@ -420,13 +438,15 @@ export async function forwardBotInference(
       return { version: 1, requestId: request.requestId, ok: true, status: response.status,
         headers: safeResponseHeaders(response, 'inference'),
         body: guardInferenceStream(boundedInferenceSseFrames(inferenceResponseText(response, responseSignal,
-          accessSourceId === "owner_anthropic_key" ? INFERENCE_TIMEOUT_MS : undefined)), {
+          ownerStream ? INFERENCE_TIMEOUT_MS : undefined)), {
           signal: responseSignal, authorized, abort: () => streamLifetime.abort(),
         }) };
     }
     const body = await readBoundedBody(response, INFERENCE_RESPONSE_BODY_MAX_BYTES);
     if (!await googleReleaseAllowed()) return failure(request.requestId, "action_denied");
     if (binding.anthropicApi && (lifecycle.aborted || await anthropicValid() !== true
+      || await bindingValid() !== true || !await stillAuthorized())) return failure(request.requestId, "action_denied");
+    if (binding.openaiApi && (lifecycle.aborted || await openaiValid() !== true
       || await bindingValid() !== true || !await stillAuthorized())) return failure(request.requestId, "action_denied");
     const result = ScopeRuntimeBrokerResponseSchema.parse({
       version: 1,
