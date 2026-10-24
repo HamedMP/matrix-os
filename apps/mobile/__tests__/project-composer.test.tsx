@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react-native";
 
 import { useProjectComposer } from "../components/projects/use-project-composer";
+import { catalogOf, engineInstance } from "./model-test-catalog";
 
 interface SentMessage {
   chatId: string | null;
@@ -27,7 +28,11 @@ type Options = Parameters<typeof useProjectComposer>[0];
 
 function renderComposer(overrides: Partial<Options> = {}) {
   const onChatStarted = jest.fn();
-  const initialProps: Options = { projectId: "proj_portfolio", selection, turnModes, onChatStarted, ...overrides };
+  const initialProps: Options = {
+    projectId: "proj_portfolio", selection, turnModes, onChatStarted,
+    catalog: catalogOf(engineInstance(selection.instanceId, "codex", "Test", [[selection.model, "Test"]])),
+    ...overrides,
+  };
   const hook = renderHook((props: Options) => useProjectComposer(props), { initialProps });
   return { ...hook, onChatStarted, initialProps };
 }

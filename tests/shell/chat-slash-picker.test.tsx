@@ -152,9 +152,9 @@ it("retains Web Chat/Bot text and attachments when the shared managed file limit
  const selected = { ...instance, driverKind: "matrix_pi" as const, models: instance.models.map(model => ({ ...model, supportsVision: true })) };
  const policy = shellChatAttachmentPolicy({ revision: "managed", drivers: [], instances: [selected] }, { instanceId: selected.id, model: selected.models[0]!.id });
  const submit = vi.fn(); const view = render(<Harness initial="Unsent file draft" submit={submit} selected={selected} attachmentPolicy={policy.error}/>);
- fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files: [new File(["x".repeat(1024 * 1024 + 1)], "notes.txt", { type: "text/plain" })] } });
+ fireEvent.change(view.container.querySelector('input[type="file"]')!, { target: { files: [new File(["x".repeat(10 * 1024 * 1024 + 1)], "notes.txt", { type: "text/plain" })] } });
  fireEvent.click(screen.getByRole("button", { name: "Send" }));
- expect((await screen.findByRole("alert")).textContent).toContain("1 MiB");
+ expect((await screen.findByRole("alert")).textContent).toContain("10 MiB");
  expect((screen.getByLabelText("Message chat") as HTMLTextAreaElement).value).toBe("Unsent file draft");
  expect(screen.getByText("notes.txt")).toBeTruthy(); expect(submit).not.toHaveBeenCalled();
 });

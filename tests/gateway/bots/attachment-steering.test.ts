@@ -24,11 +24,11 @@ function upload(kind: "image" | "file"): CanonicalChatMessagePart {
     ownerReference: `temporary/desktop-chat/${kind}`, sizeBytes: 8 };
 }
 
-function fixture(mode: "Chat" | "Bot") {
+function fixture(mode: "Chat" | "Bot", acknowledged = true) {
   let complete!: () => void;
   const held = new Promise<void>(resolve => { complete = resolve; });
   const selection = { instanceId: mode === "Chat" ? "matrix_pi_default" : "matrix_bot_default", model: "claude-sonnet-5" };
-  const delivered = vi.fn(async (_request: unknown) => true);
+  const delivered = vi.fn(async (_request: unknown) => acknowledged);
   if (mode === "Bot") {
     const adapter = createMatrixBotChatProviderAdapter({
       orchestrator: {
@@ -47,7 +47,8 @@ function fixture(mode: "Chat" | "Bot") {
   const runBot = vi.fn(async (request: { command: { kind: string; runId: string } }) => {
     if (request.command.kind === "bot.run") await held;
     else await delivered(request);
-    return { ok: true, reply: { runId: request.command.runId, status: "completed", toolActions: 0 } };
+    return { ok: true, reply: request.command.kind === "bot.steer" ? { acknowledged }
+      : { runId: request.command.runId, status: "completed", toolActions: 0 } };
   });
   const runtime = createManagedPiRuntime({
     admission: {
@@ -57,6 +58,7 @@ function fixture(mode: "Chat" | "Bot") {
         ...resolveManagedPiRoute(snapshot, selection), capabilities: ["artifact.read"], requestClass: "interactive" as const }),
       toolAuthority: async () => ({ permissionMode: "supervised" as const }),
       release: async () => undefined, workspace: async () => "/owned/chat",
+      startRenewal: () => ({ stop: async () => undefined }),
     },
     host: { client: { runBot } } as unknown as ScopeRuntimeHost,
     providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal,
@@ -132,4 +134,18 @@ it.each(["Chat", "Bot"] as const)("keeps queued %s uploads unclaimed when text-o
     .where("id", "=", queued.queuedTurn.id).executeTakeFirstOrThrow()).toEqual({ status: "queued" });
   expect((await repository.getDetailPage(owner, chatId, { limit: 50 }))?.messages.filter(message =>
     message.parts.some(part => part.type === "attachment_reference"))).toHaveLength(0);
+});
+
+it.each(["Chat", "Bot"] as const)("rejects a transport-successful but worker-refused %s steer", async mode => {
+  const f = fixture(mode, false);
+  const input = { owner, chatId: "chat_refused", runId: "run_refused", turnId: "cturn_refused",
+    prompt: text.text, parts: [text], selection: f.selection, clientRequestId: "req_refused",
+    interactionMode: "default", permissionMode: "supervised", signal: new AbortController().signal };
+  const ready = Promise.withResolvers<void>();
+  const running = (async () => { for await (const event of f.adapter.start(input)) if (event.type === "state.updated") ready.resolve(); })();
+  try {
+    if (mode === "Chat") await ready.promise;
+    await expect(f.adapter.steer!(input)).rejects.toThrow();
+    expect(f.delivered).toHaveBeenCalledOnce();
+  } finally { f.complete(); await running; }
 });
