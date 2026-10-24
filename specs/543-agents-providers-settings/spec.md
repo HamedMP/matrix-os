@@ -165,6 +165,14 @@ Wrong: native login exits0 -> check a generic unverified canonical profile -> re
 Correct: native writer exits and releases its fence -> read and independently bind current native subscription status -> private serialized fixed-Claude completion -> production specialized coordinator -> revalidate current principal/catalog -> persist the exact account selection and enablement -> refresh the scoped Settings projection. Keep inference readiness and quota unknown unless their own authoritative observations exist.
 
 
+## Native Claude defaults and legacy funded bindings
+
+Fresh Settings chooses an owner-funded Anthropic route for native Claude Code, preferring its exact `owner_claude_profile` CLI binding over the legacy SDK profile when Matrix AI is the active system route. An active owner API key remains selectable. Matrix included/add-on credit never supplies a native Claude default, authenticated state, or runnable route. Matrix-only inventory cannot fabricate a native account.
+
+Existing saved source, model and enabled/Off intent remain durable. A historical Matrix-bound Claude row stays visible for recovery but projects unknown authentication/connectivity and disabled execution, without borrowing Matrix readiness; the shared Web Canvas, Web Desktop and Electron Desktop connection UI also rejects such bindings from older Gateways. Genuine verified native account and explicit owner-key connections retain their existing proof rules. Unknown native status does not establish either login or logout. The existing native execution ban remains authoritative; managed Claude models continue through the owned managed runtime.
+
+Validation includes fresh defaults, Matrix-only inventory, legacy on/off bindings through file read/reconciliation and projection, verified native metadata, owner key selection, preserved owner intent and mounted shared Settings status/actions. Synthetic regression coverage is separate from exact-client Electron acceptance. This restores the existing connection contract and adds no public workflow or endpoint.
+
 ## Foreground sign-in progress (2026-10-07)
 
 A connection click immediately shows a spinner on its selected card and a labelled “Starting sign-in…” status while the start response is pending. After a running receipt arrives without an authorization URL/code, show “Preparing sign-in page…” rather than an apparently idle finish panel. Once the authorization action is available, retain visible waiting feedback. Failed start, cancellation, terminal receipts and runtime/identity changes clear the scoped loading state; late results from an old scope cannot restore its action or spinner. Use the shared 16px current-color ring, stable indicator slot and reduced-motion treatment.
