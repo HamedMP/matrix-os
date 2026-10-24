@@ -4,6 +4,7 @@ import type { GetStartedAgentKind } from "@matrix-os/contracts";
 import { GetStartedAgentLogin, useProviderSettingsController, type GetStartedAgentLoginPort } from "@matrix-os/ui";
 import { useCallback, useMemo } from "react";
 import { currentAiCreditRuntimeSlot } from "@/lib/ai-credit-checkout";
+import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
 import { getGatewayUrl } from "@/lib/gateway";
 import { createProviderSettingsTransport } from "@/lib/provider-settings-transport";
 import { createWebProviderWorkflowClient, openWebProviderWorkflowAuthorization } from "@/lib/provider-workflow-transport";
@@ -18,7 +19,11 @@ export function ShellGetStartedAgentLogin({ agent }: { agent: GetStartedAgentKin
     [identityKey, runtimeSlot],
   );
   const workflowClient = useMemo(() => createWebProviderWorkflowClient({ isIdentityCurrent }), [isIdentityCurrent]);
-  const controller = useProviderSettingsController({ identityKey: `${identityKey}:${runtimeSlot}`, transport });
+  // An agent signed in here is new to an already-open Chat too, as after a Settings sign-in.
+  const onCatalogChanged = useCallback(() => {
+    if (isIdentityCurrent()) window.dispatchEvent(new Event(PROVIDER_SETTINGS_CHANGED_EVENT));
+  }, [isIdentityCurrent]);
+  const controller = useProviderSettingsController({ identityKey: `${identityKey}:${runtimeSlot}`, transport, onCatalogChanged });
   const { snapshot, error, refresh } = controller;
   const port = useMemo<GetStartedAgentLoginPort>(() => ({
     snapshot,
