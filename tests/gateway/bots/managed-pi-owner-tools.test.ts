@@ -96,3 +96,85 @@ it("denies unavailable transports and recipe identities without inheriting owner
   await expect(tools.dispatch({ ...binding, runId: "run_other" }, request("list_issues", { repo: "matrix/qa" }), new AbortController().signal)).rejects.toThrow();
   expect(call).not.toHaveBeenCalled();
 });
+
+it("ENG344 rejects an integration approval at its human TTL before a delayed timer runs", async () => {
+  vi.useFakeTimers();
+  const startedAt = Date.parse("2026-10-21T12:00:00.000Z");
+  vi.setSystemTime(startedAt);
+  const { tools, call, events } = setup();
+  const work = tools.dispatch(binding, request("create_issue", { repo: "matrix/qa", title: "ENG344 synthetic TTL" }), new AbortController().signal);
+  const settled = work.then(() => "completed", () => "rejected");
+  try {
+    // Resolve async authority/account reads without delivering any fake timer.
+    for (let index = 0; index < 30 && !events.some(event => event.type === "approval.requested"); index++) await Promise.resolve();
+    const approval = events.find(event => event.type === "approval.requested");
+    expect(approval).toBeDefined();
+    expect(approval).not.toHaveProperty("expiresAt");
+    expect(call).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(1);
+
+    // HUMAN_WAIT_MS is ten minutes. Clock advancement deliberately does not run its timer.
+    vi.setSystemTime(startedAt + 10 * 60_000);
+    expect(vi.getTimerCount()).toBe(1);
+    expect(events.some(event => event.type === "approval.resolved")).toBe(false);
+    const accepted = await tools.submit({ owner: { type: "personal", ownerId: binding.ownerId },
+      chatId: binding.chatId, runId: binding.runId, approvalId: approval!.approvalId as string,
+      decision: "approve", clientRequestId: "req_eng344_expired" }).then(() => true, () => false);
+    const replayAccepted = await tools.submit({ owner: { type: "personal", ownerId: binding.ownerId },
+      chatId: binding.chatId, runId: binding.runId, approvalId: approval!.approvalId as string,
+      decision: "approve", clientRequestId: "req_eng344_replay" }).then(() => true, () => false);
+    const resolutions = events.filter(event => event.type === "approval.resolved");
+    const timersRemaining = vi.getTimerCount();
+    if (resolutions.length === 0) await tools.closeRun(binding.runId);
+    await settled;
+
+    // At the deadline, the wait settles once and cannot be accepted on replay.
+    expect({ accepted, replayAccepted, mutationCalls: call.mock.calls.length, timersRemaining }).toEqual({
+      accepted: false, replayAccepted: false, mutationCalls: 0, timersRemaining: 0,
+    });
+    expect(resolutions).toEqual([expect.objectContaining({ approvalId: approval!.approvalId, decision: "cancel" })]);
+  } finally {
+    await tools.closeRun(binding.runId);
+    await settled;
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
+});
+
+it("ENG344 rejects an approval that expires while the authority check is pending", async () => {
+  vi.useFakeTimers();
+  const startedAt = Date.parse("2026-10-21T12:00:00.000Z");
+  vi.setSystemTime(startedAt);
+  const { tools, call, events, authority } = setup();
+  const work = tools.dispatch(binding, request("create_issue", { repo: "matrix/qa", title: "ENG344 delayed authority" }), new AbortController().signal);
+  const settled = work.then(() => "completed", () => "rejected");
+  try {
+    for (let index = 0; index < 30 && !events.some(event => event.type === "approval.requested"); index++) await Promise.resolve();
+    const approval = events.find(event => event.type === "approval.requested");
+    expect(approval).toBeDefined();
+    let releaseAuthority!: (value: { permissionMode: string }) => void;
+    authority.mockImplementationOnce(() => new Promise(resolve => { releaseAuthority = resolve; }));
+    const submitted = tools.submit({ owner: { type: "personal", ownerId: binding.ownerId },
+      chatId: binding.chatId, runId: binding.runId, approvalId: approval!.approvalId as string,
+      decision: "approve", clientRequestId: "req_eng344_delayed_authority" }).then(() => true, () => false);
+    expect(releaseAuthority).toBeTypeOf("function");
+    expect(vi.getTimerCount()).toBe(1);
+    vi.setSystemTime(startedAt + 10 * 60_000 + 1);
+    releaseAuthority({ permissionMode: "full_access" });
+    const accepted = await submitted;
+    const resolutions = events.filter(event => event.type === "approval.resolved");
+    const timersRemaining = vi.getTimerCount();
+    if (resolutions.length === 0) await tools.closeRun(binding.runId);
+    await settled;
+
+    expect({ accepted, mutationCalls: call.mock.calls.length, timersRemaining }).toEqual({
+      accepted: false, mutationCalls: 0, timersRemaining: 0,
+    });
+    expect(resolutions).toEqual([expect.objectContaining({ approvalId: approval!.approvalId, decision: "cancel" })]);
+  } finally {
+    await tools.closeRun(binding.runId);
+    await settled;
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  }
+});

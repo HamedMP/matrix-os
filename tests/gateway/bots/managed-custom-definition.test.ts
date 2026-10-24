@@ -270,7 +270,8 @@ it("records policy_denied on a durable task when an installed skill grows beyond
     resolveProcedure: (ownerId, agent) => procedures.resolve(ownerId, agent),
     resolveRoute: async () => ({ accessSourceId: "matrix_chatgpt_plan", subscription: { accountId: "owner-account", grantRevision: 3 },
       route: { api: "openai-responses", modelId: "gpt-owner", input: ["text"], contextWindow: 200_000, maxOutputTokens: 8192 } }),
-    admission: { admit, release: vi.fn() }, registry: new BotRuntimeRegistry(), client: { runBot } });
+    admission: { admit, release: vi.fn(), startRenewal: () => ({ stop: async () => undefined }) },
+    registry: new BotRuntimeRegistry(), client: { runBot } });
   const run = orchestrator.start({ ownerId: OWNER, chatId: created.chatId, runId: "run_skill_growth",
     text: "Summarize", selection: input.selection, signal: new AbortController().signal });
   await expect(run.result).resolves.toEqual({ status: "blocked", blockedReason: "policy_denied" });

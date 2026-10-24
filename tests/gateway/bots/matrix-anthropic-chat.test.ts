@@ -47,7 +47,7 @@ async function fixture(permissionMode: "supervised" | "full_access" = "supervise
  let binding: ManagedPiRuntimeBinding | undefined, finish = () => {};
  const hold = new Promise<void>(resolve => { finish = resolve; });
  const runBot = vi.fn(async (input: { runId?: string; runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }) => { binding = registry.lookupRun({ ...input, runId: input.command.runId }) as ManagedPiRuntimeBinding; await hold; return { ok: true, reply: { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 } }; });
- const host = { available: true, client: { createRuntime, runBot, stopRuntime: vi.fn(async () => { finish(); }) } } as unknown as ScopeRuntimeHost;
+ const host = { available: true, client: { createRuntime, runBot, renewRuntime: vi.fn(async () => undefined), stopRuntime: vi.fn(async () => { finish(); }) } } as unknown as ScopeRuntimeHost;
  const providers = { getSnapshot: vi.fn(async () => { throw new Error("Funded fallback forbidden"); }) };
  const admission = createManagedPiAdmission({ homePath: home, db, host, registry, matrixAnthropic: service, toolCapabilities: ["integration.call", "mcp.call"], roots: { resolve: async () => { throw new Error("Unselected project forbidden"); } } });
  const runtime = createManagedPiRuntime({ admission, host, providers, matrixAnthropic: service, lifetime: new AbortController().signal, forgetRun: () => {}, cancelInference: b => registry.cancelInference(b) });

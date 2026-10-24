@@ -16,7 +16,8 @@ async function runFailure(options: { code?: "insufficient_credit" | "budget_exce
     ...(options.code ? { headers: { "x-matrix-funded-error": options.code } } : {}) }));
   const release = vi.fn(async () => undefined);
   const runtime = createManagedPiRuntime({ admission: { admit: async () => binding, release,
-    workspace: async () => "/owned/chat", toolAuthority: async () => ({ permissionMode: "supervised" }) },
+    workspace: async () => "/owned/chat", toolAuthority: async () => ({ permissionMode: "supervised" }),
+    startRenewal: () => ({ stop: async () => undefined }) },
     lifetime: new AbortController().signal, providers: { getSnapshot: async () => snapshot }, forgetRun: () => undefined, cancelInference: () => undefined,
     host: { client: { runBot: async () => {
       const request = { version: 1 as const, action: "inference.messages" as const, requestId: "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1",

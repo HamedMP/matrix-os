@@ -12,11 +12,12 @@ import type { ChatRepository } from "../chat/repository.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { BotInteractionError, type BotContinuation } from "./interactions.js";
 import { MATRIX_BOT_SELECTION } from "./selection.js";
+import { chatContextRequestHash } from "../chat/agent-context.js";
 
 export type BotContinuationAdmitter = (principal: RequestPrincipal, continuation: BotContinuation) => Promise<void>;
 
 export function createBotContinuationAdmitter(deps: {
-  repository: Pick<ChatRepository, "get">;
+  repository: Pick<ChatRepository, "get" | "findQueuedAdmission">;
   orchestrator: Pick<CanonicalChatOrchestrator, "admitTurn" | "enqueueQueuedTurn">;
 }): BotContinuationAdmitter {
   return async (principal, continuation) => {
@@ -32,14 +33,28 @@ export function createBotContinuationAdmitter(deps: {
         interactionMode: "default",
         permissionMode: "default",
       };
+      // A retry may arrive after a busy answer was queued or already claimed.
+      // Check that same owner/request/payload before the ordinary turn path,
+      // which correctly refuses IDs belonging to queued admissions.
+      if (await deps.repository.findQueuedAdmission(owner, continuation.chatId, continuation.clientRequestId,
+        chatContextRequestHash(input))) return;
       try {
         await deps.orchestrator.admitTurn(principal, owner, continuation.chatId, input);
         return;
       } catch (error: unknown) {
         if (!(error instanceof CanonicalChatOrchestrationError)) throw error;
         if (error.safeError.code === "chat_busy") {
-          await deps.orchestrator.enqueueQueuedTurn(principal, owner, continuation.chatId, input);
-          return;
+          try {
+            // This is an automatic next turn, never a steer into the asking turn.
+            await deps.orchestrator.enqueueQueuedTurn(principal, owner, continuation.chatId, input);
+            return;
+          } catch (enqueueError: unknown) {
+            if (!(enqueueError instanceof CanonicalChatOrchestrationError)
+              || !["chat_busy", "chat_conflict"].includes(enqueueError.safeError.code) || attempt > 0) throw enqueueError;
+            // The asking turn can finish between these two admissions. Re-read
+            // its revision and admit the same idempotent answer directly.
+            continue;
+          }
         }
         if (error.safeError.code !== "chat_conflict" || attempt > 0) throw error;
       }
