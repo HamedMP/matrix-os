@@ -3,6 +3,7 @@ import { createScopeRuntimeServer } from "./server.js";
 import { createScopeRuntimeController } from "./supervisor.js";
 import { createSystemdScopeRuntimeLauncher, nextExecutionGeneration } from "./systemd-launcher.js";
 import { botSandboxRootsForHome, managedPiSandboxRootsForHome, sandboxRootsForHome } from "./sandbox.js";
+import { startScopeRuntimeWatchdog } from "./systemd-watchdog.js";
 
 const RUNTIME_DIRECTORY = "/run/matrix-scope-runtime";
 const STATE_DIRECTORY = "/var/lib/matrix-scope-runtime";
@@ -27,11 +28,15 @@ async function main(): Promise<void> {
     controller,
   });
   await server.start();
+  const watchdog = startScopeRuntimeWatchdog();
   process.stdout.write("scope_runtime_supervisor_ready\n");
 
   let shutdown: Promise<void> | undefined;
   const stop = () => {
-    shutdown ??= server.close();
+    shutdown ??= (async () => {
+      await watchdog.close();
+      await server.close();
+    })();
     void shutdown.then(() => {
       process.exitCode = 0;
     }).catch((error: unknown) => {
