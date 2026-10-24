@@ -23,7 +23,8 @@ function setup(connected: string[] = [], options: { available?: string[]; draft?
   function Connector({ children }: { children: (connect: GetStartedConnect) => ReactNode }) {
     return <>{children({
       availableServices: new Set(options.available ?? []), connectedServices: new Set(connected), failedServices: new Set(),
-      logoUrls: new Map(), connectingService: options.connectingService ?? null, unavailable: false, connect,
+      logoUrls: new Map(), catalog: [], connectionsLoaded: true,
+      connectingService: options.connectingService ?? null, unavailable: false, connect,
     })}</>;
   }
   render(<GetStartedGate port={port} zIndex={1} connector={Connector}><div data-testid="widget" /></GetStartedGate>);
