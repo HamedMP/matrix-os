@@ -71,13 +71,22 @@ describe("large merged provider catalogs", () => {
       now: () => now,
       codingProviders: { listProviders: async () => [], invalidate: () => undefined },
       harnessSettingsSource: store, aiProviderSource: { getSnapshot: async () => canonical },
-      agentRuntimeSource: async () => ({ runtime: { selected: "hermes", transition: null, options: [] }, providers: [],
-        messaging: { runtime: "hermes", configured: false, provider: null, model: null } }),
+      agentRuntimeSource: async () => ({ runtime: { selected: "hermes", transition: null, options: [{
+        id: "hermes", displayName: "Hermes", installState: "installed", health: "healthy", selectionState: "active",
+        configured: true, capabilities: ["provider_catalog", "model_selection", "authentication"],
+      }] }, providers: [{ id: "openrouter", displayName: "OpenRouter", runtime: "hermes", scopes: ["messaging"],
+        authKind: "api_key", supportedAuthKinds: ["api_key"], authStatus: { state: "ready", authenticated: true, action: "none" },
+        models: Array.from({ length: 11 }, (_, i) => ({ id: `hermes-${i}`, displayName: `Hermes ${i}`, available: true,
+          capabilities: ["tools"], efforts: [] })),
+      }], messaging: { runtime: "hermes", configured: true, provider: "openrouter", model: "hermes-10" } }),
     });
     const app = createChatProviderRoutes({ catalog, getPrincipal: () => ({ userId: "owner", source: "jwt" }) });
     const response = await app.request("/api/chat-providers");
     expect(response.status).toBe(200);
     const snapshot = CanonicalProviderCatalogSchema.parse(await response.json());
-    expect(snapshot.instances.length).toBeGreaterThan(0);
+    const hermes = snapshot.instances.find(instance => instance.id === "hermes_default");
+    expect(hermes).toMatchObject({ availability: "available",
+      defaultSelection: { instanceId: "hermes_default", model: "openrouter:hermes-10" } });
+    expect(hermes!.models).toContainEqual(expect.objectContaining({ id: "openrouter:hermes-10", availability: "available" }));
   });
 });
