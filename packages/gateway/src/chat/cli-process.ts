@@ -52,18 +52,25 @@ export class CanonicalCliError extends Error {
   }
 }
 
-type CanonicalCliDeadline =
-  | {
-    /** Absolute process lifetime. Never refreshed by provider activity. */
-    timeoutMs: number;
-    /** Inactivity deadline, refreshed after accepted stdout or stdin writes. */
-    idleTimeoutMs?: number;
-  }
-  | {
-    timeoutMs?: number;
-    /** Inactivity deadline, refreshed after accepted stdout or stdin writes. */
-    idleTimeoutMs: number;
-  };
+export interface CanonicalCliLifetimeOptions {
+  /** Explicit source-owned absolute deadline, never a default for busy turns. */
+  timeoutMs?: number;
+  /** Optional legacy inactivity policy; busy canonical turns omit this. */
+  idleTimeoutMs?: number;
+  /** Initialization only. The owner must acknowledge a valid provider frame. */
+  startupTimeoutMs?: number;
+}
+
+export interface CanonicalCliStartupControl {
+  ready(): void;
+}
+
+export interface CanonicalCliIdleControl {
+  /** Suspend only work inactivity; absolute lifetime and output caps remain active. */
+  pause(): void;
+  /** Restart a full idle interval after the human wait ends. */
+  resume(): void;
+}
 
 export async function runCanonicalCli(options: {
   command: string;
@@ -73,12 +80,14 @@ export async function runCanonicalCli(options: {
   replaceEnv?: boolean;
   signal: AbortSignal;
   maxStdoutBytes: number;
+  /** Only framed callers with their own per-frame/pending-buffer guard may opt in. */
+  stdoutLimitMode?: "cumulative" | "caller_bounded_frames";
   maxStderrBytes?: number;
   spawnFn?: CanonicalCliSpawn;
-  onStart?: (write: (frame: string) => Promise<void>, end: () => void) => void;
+  onStart?: (write: (frame: string) => Promise<void>, end: () => void, idle: CanonicalCliIdleControl, startup: CanonicalCliStartupControl) => void;
   onStdout: (chunk: Buffer) => void;
   onStderr?: (chunk: Buffer) => void;
-} & CanonicalCliDeadline): Promise<void> {
+} & CanonicalCliLifetimeOptions): Promise<void> {
   const maxStderrBytes = options.maxStderrBytes ?? 8_192;
   let stdoutBytes = 0;
   let stderrBytes = 0;
@@ -103,6 +112,8 @@ export async function runCanonicalCli(options: {
   await new Promise<void>((resolve, reject) => {
     let timeout: NodeJS.Timeout | undefined;
     let idleTimeout: NodeJS.Timeout | undefined;
+    let startupTimeout: NodeJS.Timeout | undefined;
+    let idlePaused = false;
     let forceKillTimer: NodeJS.Timeout | undefined;
     let forceSettleTimer: NodeJS.Timeout | undefined;
     let terminationError: Error | undefined;
@@ -111,6 +122,7 @@ export async function runCanonicalCli(options: {
       settled = true;
       if (timeout) clearTimeout(timeout);
       if (idleTimeout) clearTimeout(idleTimeout);
+      if (startupTimeout) clearTimeout(startupTimeout);
       if (forceKillTimer) clearTimeout(forceKillTimer);
       if (forceSettleTimer) clearTimeout(forceSettleTimer);
       options.signal.removeEventListener("abort", abort);
@@ -131,14 +143,37 @@ export async function runCanonicalCli(options: {
     };
     const abort = () => terminate(new CanonicalCliError("aborted"));
     const resetIdleTimeout = () => {
-      if (options.idleTimeoutMs === undefined || settled || terminationError) return;
+      if (options.idleTimeoutMs === undefined || idlePaused || settled || terminationError) return;
       if (idleTimeout) clearTimeout(idleTimeout);
       idleTimeout = setTimeout(() => terminate(new CanonicalCliError("timeout")), options.idleTimeoutMs);
       idleTimeout.unref?.();
     };
+    const idle: CanonicalCliIdleControl = {
+      pause() {
+        if (settled || terminationError) return;
+        idlePaused = true;
+        if (idleTimeout) clearTimeout(idleTimeout);
+        idleTimeout = undefined;
+      },
+      resume() {
+        if (!idlePaused || settled || terminationError) return;
+        idlePaused = false;
+        resetIdleTimeout();
+      },
+    };
     if (options.timeoutMs !== undefined) {
       timeout = setTimeout(() => terminate(new CanonicalCliError("timeout")), options.timeoutMs);
       timeout.unref?.();
+    }
+    const startup: CanonicalCliStartupControl = {
+      ready() {
+        if (startupTimeout) clearTimeout(startupTimeout);
+        startupTimeout = undefined;
+      },
+    };
+    if (options.startupTimeoutMs !== undefined) {
+      startupTimeout = setTimeout(() => terminate(new CanonicalCliError("startup")), options.startupTimeoutMs);
+      startupTimeout.unref?.();
     }
     resetIdleTimeout();
 
@@ -149,10 +184,12 @@ export async function runCanonicalCli(options: {
     options.signal.addEventListener("abort", abort, { once: true });
     child.stdout.on("data", (chunk) => {
       if (settled || terminationError) return;
-      stdoutBytes += chunk.byteLength;
-      if (stdoutBytes > options.maxStdoutBytes) {
-        terminate(new CanonicalCliError("stdout_limit"));
-        return;
+      if (options.stdoutLimitMode !== "caller_bounded_frames") {
+        stdoutBytes += chunk.byteLength;
+        if (stdoutBytes > options.maxStdoutBytes) {
+          terminate(new CanonicalCliError("stdout_limit"));
+          return;
+        }
       }
       try {
         options.onStdout(chunk);
@@ -199,7 +236,7 @@ export async function runCanonicalCli(options: {
           });
         } catch (error) { clearTimeout(timer); rejectWrite(error); }
       });
-      try { options.onStart(write, () => child.stdin?.end?.()); } catch (error) {
+      try { options.onStart(write, () => child.stdin?.end?.(), idle, startup); } catch (error) {
         console.warn("[chat-cli] Provider stdin setup failed", error instanceof Error ? error.name : "UnknownError");
         terminate(new CanonicalCliError("startup"));
       }

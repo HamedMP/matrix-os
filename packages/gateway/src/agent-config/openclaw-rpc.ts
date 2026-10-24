@@ -85,7 +85,9 @@ const AgentParamsSchema = z.object({
   sessionKey: SafeRpcReferenceSchema.optional(),
   thinking: z.string().min(1).max(64).optional(),
   deliver: z.boolean().optional(),
-  timeout: z.number().int().positive().max(1800).optional(),
+  // OpenClaw's pinned runtime defines zero as its no-run-timeout sentinel.
+  // RPC exchange deadlines remain independently bounded below.
+  timeout: z.number().int().min(0).max(1800).optional(),
   idempotencyKey: SafeRpcReferenceSchema,
 }).strict();
 const AgentWaitParamsSchema = z.object({
@@ -394,8 +396,7 @@ export function createOpenClawRpcClient(
 
     const entry = pending.get(frame.id);
     if (!entry) return;
-    const isAccepted = entry.expectFinal
-      && frame.ok
+    const isAccepted = frame.ok
       && typeof frame.payload === "object"
       && frame.payload !== null
       && !Array.isArray(frame.payload)
@@ -409,7 +410,7 @@ export function createOpenClawRpcClient(
           error instanceof Error ? error.name : "UnknownError",
         );
       }
-      return;
+      if (entry.expectFinal) return;
     }
     pending.delete(frame.id);
     clearTimeout(entry.timer);

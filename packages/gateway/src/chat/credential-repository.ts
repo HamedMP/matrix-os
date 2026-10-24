@@ -1,6 +1,6 @@
 import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod/v4";
-import { CanonicalChatMessagePartSchema } from "@matrix-os/contracts";
+import { CanonicalChatStoredMessagePartSchema } from "@matrix-os/contracts";
 import type { ChatDatabase } from "./database.js";
 import type { OwnerCollaborationDatabase } from "../collaboration/database.js";
 import type { ChatOwner } from "./records.js";
@@ -98,7 +98,7 @@ export async function storeAssistantCredentialSidecars(
 }
 
 function messageText(parts: unknown): string | null {
-  const parsed = z.array(CanonicalChatMessagePartSchema).safeParse(parts);
+  const parsed = z.array(CanonicalChatStoredMessagePartSchema).safeParse(parts);
   return parsed.success
     ? parsed.data.filter((part) => part.type === "text").map((part) => part.text).join("")
     : null;

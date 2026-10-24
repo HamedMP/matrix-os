@@ -1,8 +1,10 @@
+import { retainRunActivityWindow } from "./activity-retention.js";
 import { assertInputClaim, getChatInputState, pendingInputTransition } from "./input-submission.js";
 import {
   CanonicalChatIdSchema,
   AgentAttachmentSchema,
   CanonicalChatMessagePartSchema,
+  CanonicalChatAssistantTextPartSchema,
   CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
   CanonicalOwnerScopeSchema,
@@ -49,7 +51,7 @@ const ACTIVE_RUNS = ["accepted", "running", "waiting_for_approval", "waiting_for
 function recoveredTextParts(text: string) {
   if (Buffer.byteLength(text) > 96 * 1024) throw new RangeError("Recovered output limit exceeded");
   return (text.match(/[\s\S]{1,4000}/gu) ?? [""]).map((chunk) =>
-    CanonicalChatMessagePartSchema.parse({ type: "text", text: chunk }));
+    CanonicalChatAssistantTextPartSchema.parse({ type: "text", text: chunk }));
 }
 const SAFE_INTERNAL_REF = z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const encoded = new TextEncoder();
@@ -64,21 +66,7 @@ function requireSafeRef(value: string): string {
 
 function preview(message: CanonicalChatMessage): string | null {
   const text = message.parts.find((part) => part.type === "text");
-  return text?.type === "text" ? text.text.slice(0, 280) : null;
-}
-
-function isTerminalActivity(activity: CanonicalChatRunActivity): boolean {
-  return activity.type === "run.error"
-    || (activity.type === "run.status"
-      && ["completed", "failed", "aborted"].includes(activity.status));
-}
-
-function isRetentionProtectedActivity(
-  activity: CanonicalChatRunActivity,
-  resolvedApprovalIds: readonly string[],
-): boolean {
-  return isTerminalActivity(activity)
-    || (activity.type === "approval.requested" && !resolvedApprovalIds.includes(activity.approvalId));
+  return text?.type === "text" ? text.text.trim().slice(0, 280) || null : null;
 }
 
 function railTransitionForActivity(activity: CanonicalChatRunActivity): {
@@ -399,65 +387,22 @@ export class ChatRunLifecycleRepository {
         throw new ChatConflictError(chatId, Number(current.revision));
       }
       const unseenCount = activityIds.length - existing.length;
-      const overflow = Number(count.count) + unseenCount - 500;
-      let removedActivityIds: string[] = [];
-      if (overflow > 0) {
-        if (!activities.some(isTerminalActivity)) {
-          throw new ChatConflictError(chatId, Number(current.revision));
-        }
-        const candidates = await trx.selectFrom("chat_run_events")
-          .select(["id", "event"])
-          .where("run_id", "=", runId)
-          .orderBy("occurred_at")
-          .orderBy("run_seq")
-          .orderBy("id")
-          .execute();
-        const parsedCandidates = candidates.map((row) => ({
-          id: row.id,
-          activity: CanonicalChatRunActivitySchema.safeParse(row.event),
-        }));
-        // Bounded by the 500 persisted events plus at most 100 incoming events.
-        const resolvedApprovalIds = activities.flatMap((activity) =>
-          activity.type === "approval.resolved" ? [activity.approvalId] : []);
-        const requestedApprovalIds = parsedCandidates.flatMap(({ activity }) =>
-          activity.success && activity.data.type === "approval.requested" ? [activity.data.approvalId] : []);
-        for (const { activity } of parsedCandidates) {
-          if (activity.success && activity.data.type === "approval.resolved"
-            && !resolvedApprovalIds.includes(activity.data.approvalId)) {
-            resolvedApprovalIds.push(activity.data.approvalId);
-          }
-        }
-        if (requestedApprovalIds.length > 0) {
-          const outcomes = await trx.selectFrom("chat_approval_outcomes")
-            .select("approval_id")
-            .where("run_id", "=", runId)
-            .where("approval_id", "in", requestedApprovalIds)
-            .execute();
-          for (const outcome of outcomes) {
-            if (!resolvedApprovalIds.includes(outcome.approval_id)) {
-              resolvedApprovalIds.push(outcome.approval_id);
-            }
-          }
-        }
-        const evictedIds = parsedCandidates.flatMap(({ id, activity }) => {
-          return activity.success && !isRetentionProtectedActivity(activity.data, resolvedApprovalIds) ? [id] : [];
-        }).slice(0, overflow);
-        if (evictedIds.length !== overflow) {
-          throw new ChatConflictError(chatId, Number(current.revision));
-        }
-        await trx.deleteFrom("chat_run_events").where("id", "in", evictedIds).execute();
-        removedActivityIds = evictedIds;
-      }
+      // Capture the cursor before group eviction, even if a whole ledger is removed.
       const latestSequence = await trx.selectFrom("chat_run_events")
         .select(({ fn }) => fn.max("run_seq").as("sequence"))
         .where("run_id", "=", runId)
         .executeTakeFirst();
+      const retained = await retainRunActivityWindow(trx, {
+        chatId, runId, revision: Number(current.revision), activities,
+        persistedCount: Number(count.count), unseenCount,
+      });
+      const removedActivityIds = retained.removedActivityIds;
       const existingIds = new Set(existing.map((row) => row.id));
       const existingById = new Map(existing.map((row) => [row.id, row]));
       let nextSequence = Number(latestSequence?.sequence ?? 0);
       let changed = 0;
       let railTransition: ReturnType<typeof railTransitionForActivity>;
-      for (const activity of activities) {
+      for (const activity of retained.activities) {
         if (existingIds.has(activity.id)) {
           const row = existingById.get(activity.id);
           if (!row) throw new ChatConflictError(chatId, Number(current.revision));
@@ -536,7 +481,7 @@ export class ChatRunLifecycleRepository {
           ...(railTransition ? { attention: railTransition.attention } : {}),
           updated_at: sql`now()`,
         }).where("id", "=", chatId).execute();
-        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", { runId, activityIds, removedActivityIds });
+        await this.appendOutbox(trx, owner, chatId, revision, "run.activity", { runId, activityIds: retained.activities.map(activity => activity.id), removedActivityIds });
       }
       return changed;
     });
@@ -594,13 +539,13 @@ export class ChatRunLifecycleRepository {
           delta = input.delta.slice(persisted.length);
           if (delta.length === 0) return current;
         }
-        const combined = CanonicalChatMessagePartSchema.safeParse({
+        const combined = CanonicalChatAssistantTextPartSchema.safeParse({
           type: "text",
           text: `${last.text}${delta}`,
         });
         const parts = input.snapshot ? recoveredTextParts(input.delta) : combined.success
           ? [...textParts.slice(0, -1), combined.data]
-          : [...textParts, CanonicalChatMessagePartSchema.parse({ type: "text", text: delta })];
+          : [...textParts, CanonicalChatAssistantTextPartSchema.parse({ type: "text", text: delta })];
         next = CanonicalChatMessageSchema.parse({
           ...current,
           parts,

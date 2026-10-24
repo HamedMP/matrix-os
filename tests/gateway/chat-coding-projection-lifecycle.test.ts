@@ -83,7 +83,7 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
       await rm(homePath, { recursive: true, force: true });
     }
   });
-  it.each(["none", "once", "always"] as const)("keeps unconfirmed cleanup busy (state write failure=%s)", async (stateFailure) => {
+  it.each(["none", "once", "always"] as const)("keeps unconfirmed cleanup busy after projection persistence fails (state write failure=%s)", async (stateFailure) => {
     const homePath = await mkdtemp(join(tmpdir(), "chat-unconfirmed-stop-"));
     const pglite = await KyselyPGlite.create();
     const repository = new ChatRepository(pglite.dialect);
@@ -98,8 +98,10 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
       return persistState(...args);
     });
     const finish = Promise.withResolvers<void>();
-    // Use complete ordinary tokens: oversized unbroken tokens are redacted by
-    // the stream projector and cannot exercise the 96 KiB transcript ceiling.
+    // Display truncation no longer fails the turn. Trigger cleanup through
+    // persistence; retain the 104 KiB fixture to exercise bounded recovery.
+    const projectionWrite = stateFailure === "none" ? vi.spyOn(repository, "appendAssistantDelta")
+      .mockRejectedValueOnce(new Error("Projection storage unavailable")) : undefined;
     let nativeSignal: AbortSignal | undefined;
     let nativeThreadId = "";
     const threads = createCodingAgentThreadStore({ homePath, providers: [{
@@ -151,6 +153,7 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
       }));
     } finally {
       stateWrite.mockRestore();
+      projectionWrite?.mockRestore();
       telemetry.shutdown();
       finish.resolve();
       if (nativeThreadId) await vi.waitFor(async () => expect((await threads.getThread(principal, nativeThreadId)).thread.status).toBe("completed"));
@@ -160,11 +163,13 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
       await rm(homePath, { recursive: true, force: true });
     }
   });
-  it("stops accepted backing work before committing a projection failure", async () => {
+  it("stops accepted backing work before committing a persistence failure", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "chat-projection-stop-"));
     const pglite = await KyselyPGlite.create();
     const repository = new ChatRepository(pglite.dialect);
     await repository.bootstrap();
+    const projectionWrite = vi.spyOn(repository, "appendAssistantDelta")
+      .mockRejectedValueOnce(new Error("Projection storage unavailable"));
     const capture = vi.fn();
     const telemetry = createCanonicalChatEventStream({ repository, onCommittedEvent: createChatFailureRecorder({ capture }) });
     const finish = Promise.withResolvers<void>();
@@ -176,10 +181,8 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
       async startThread({ thread, signal, nextEventId, now, publishEvents }) {
         nativeSignal = signal;
         nativeThreadId = thread.id;
-        for (let i = 0; i < 26; i += 1) {
-          await publishEvents!({ events: [{ threadId: thread.id, eventId: nextEventId(),
-            occurredAt: now().toISOString(), type: "assistant.text.delta", messageId: "msg_large", delta: "word ".repeat(800) }] });
-        }
+        await publishEvents!({ events: [{ threadId: thread.id, eventId: nextEventId(),
+          occurredAt: now().toISOString(), type: "assistant.text.delta", messageId: "msg_result", delta: "Working. " }] });
         await finish.promise;
         return { events: [] };
       },
@@ -206,9 +209,10 @@ describe("Chat projection preserves the backing execution lifecycle", () => {
       expect(statusAtStop).toBe("running");
       expect((await threads.getThread(principal, nativeThreadId)).thread.status).toBe("aborted");
       expect(capture).toHaveBeenCalledWith("matrix_agent_run_failed", expect.objectContaining({ properties: expect.objectContaining({
-        chat_id: "chat_projection", failure_kind: "projection", failure_stage: "projection", error_category: "resource_limit",
+        chat_id: "chat_projection", failure_kind: "synchronization", failure_stage: "persistence", error_category: "unknown",
       }) }));
     } finally {
+      projectionWrite.mockRestore();
       finish.resolve();
       await orchestrator.close();
       telemetry.shutdown();
