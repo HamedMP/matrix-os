@@ -314,23 +314,26 @@ export function createBotInstantiation(deps: {
       return operation ? { active: operation.status === "active", botId: operation.botId, payloadHash: operation.payloadHash } : null;
     },
     /**
-     * Finishes an unfinished creation from its saved definition, as reconciliation does. False when
-     * it never wrote one: then only a new request can create the bot.
+     * Finishes an unfinished creation from its saved definition, as reconciliation does, waiting for
+     * a request already finishing it. False only when it never wrote one: then only a new request
+     * can create the bot.
      */
     async finishFromDefinition(ownerId: string, clientRequestId: string): Promise<boolean> {
+      // A custom bot's creation and recovery carry their own owner and revision checks.
+      if (isManagedCustomOperationRequestId(clientRequestId)) throw new BotInstantiationError("invalid_request");
       const operation = await operations.get(ownerId, clientRequestId);
       if (!operation) return false;
-      if (operation.status !== "active") {
-        const saved = () => deps.agents.get(owner(ownerId), operation.botId);
-        if (!await saved()) return false;
-        try {
-          await advance(operation, saved);
-        } catch (error: unknown) {
-          // A request finishing the same creation is not a failure.
-          if (!(error instanceof ConcurrentCreationError)) throw error;
-        }
+      if (operation.status === "active") return true;
+      const saved = () => deps.agents.get(owner(ownerId), operation.botId);
+      if (!await saved()) return false;
+      try {
+        await advance(operation, saved);
+      } catch (error: unknown) {
+        if (!(error instanceof ConcurrentCreationError)) throw error;
+        // Another request is finishing it; it is never reported as unfinished meanwhile.
+        await awaitConcurrent(ownerId, clientRequestId, false);
       }
-      return (await operations.get(ownerId, clientRequestId))?.status === "active";
+      return true;
     },
     async createCustom(ownerId: string, requestValue: unknown): Promise<InstantiateBotResponse> {
       const parsed = CreateManagedCustomBotRequestSchema.safeParse(requestValue);

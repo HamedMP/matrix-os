@@ -7,9 +7,9 @@ export function getStartedBotRequestId(recipeId: string): string {
   return `req_get-started-${recipeId}`;
 }
 
-/** The request that continues an attempt whose request can no longer be replayed. */
-export function getStartedBotFollowUpRequestId(recipeId: string, previousBotId: string): string {
-  return `req_get-started-${recipeId}-after-${previousBotId}`;
+/** The request that continues an attempt whose request can no longer be replayed; bot IDs are unique, so it needs no recipe. */
+export function getStartedBotFollowUpRequestId(previousBotId: string): string {
+  return `req_get-started-after-${previousBotId}`;
 }
 
 export const GET_STARTED_MATRIX_BOT_RECIPE_ID = "matrix-bot";
@@ -37,7 +37,7 @@ async function attemptsFor(instantiation: Pick<BotInstantiation, "attempt">, own
     if (!attempt) break;
     attempts.push({ ...attempt, clientRequestId });
     if (attempt.active) break;
-    clientRequestId = getStartedBotFollowUpRequestId(recipeId, attempt.botId);
+    clientRequestId = getStartedBotFollowUpRequestId(attempt.botId);
   }
   return attempts;
 }
@@ -72,7 +72,7 @@ export function createGetStartedBots(services: GetStartedBotServices) {
     }
     if (await services.instantiation.finishFromDefinition(ownerId, last.clientRequestId)) return;
     if (attempts.length >= MAX_GET_STARTED_BOT_ATTEMPTS) throw new Error("BotRetriesExhausted");
-    await services.instantiation.instantiate(ownerId, request(getStartedBotFollowUpRequestId(recipe.recipeId, last.botId)));
+    await services.instantiation.instantiate(ownerId, request(getStartedBotFollowUpRequestId(last.botId)));
   };
 }
 

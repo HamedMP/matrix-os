@@ -10,10 +10,12 @@ import type { OwnerBotDatabase } from "../../packages/gateway/src/bots/database.
 import { createBotInstantiation, ensureBotWorkspace } from "../../packages/gateway/src/bots/instantiation.js";
 import { createBotRecipeCatalog, type BotRecipe } from "../../packages/gateway/src/bots/recipe-catalog.js";
 import { createBotOperationsRepository } from "../../packages/gateway/src/bots/repositories/operations.js";
+import { InstantiateBotRequestSchema } from "@matrix-os/contracts";
 import {
   MAX_GET_STARTED_BOT_ATTEMPTS,
   createGetStartedBotStatus,
   createGetStartedBots,
+  getStartedBotFollowUpRequestId,
   getStartedBotRequestId,
 } from "../../packages/gateway/src/get-started/bots.js";
 import { OWNER, createBotStateDatabase } from "./bots/bot-state-support.js";
@@ -102,6 +104,16 @@ describe("Get started bots", () => {
     await expect(after.status(OWNER, "writing-bot")).resolves.toEqual({ status: "created", agentId: first.botId });
     await expect(agents.get(scope, first.botId)).resolves.toMatchObject({ recipeRef: { recipeId: "writing-bot", version: current.version } });
     await expect(agents.count(scope)).resolves.toBe(1);
+  });
+
+  it("keeps follow-up request IDs within the request ID limit, whatever the recipe", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const long: BotRecipe = { ...current, recipeId: "w".repeat(100) };
+    await expect(release([long], { definition: true }).ensure(OWNER, long.recipeId)).rejects.toThrow();
+    const after = release([{ ...long, version: next.version }]);
+    await after.ensure(OWNER, long.recipeId);
+    await expect(after.status(OWNER, long.recipeId)).resolves.toMatchObject({ status: "created" });
+    expect(InstantiateBotRequestSchema.shape.clientRequestId.safeParse(getStartedBotFollowUpRequestId(`bot_${"a".repeat(64)}`)).success).toBe(true);
   });
 
   it("stops after a few attempts that could not be finished", async () => {

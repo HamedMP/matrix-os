@@ -133,6 +133,35 @@ describe("bot instantiation", () => {
     await expect(definitionFailed.finishFromDefinition(OWNER, "req_never_made")).resolves.toBe(false);
   });
 
+  it("waits for another request finishing the same creation instead of calling it unfinished", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const failing = setup({ ensureWorkspace: failOnce((botId: string) => ensureBotWorkspace(home, botId)) });
+    await expect(failing.instantiate(OWNER, request())).rejects.toEqual(new BotInstantiationError("unavailable"));
+    // A marks the files created and pauses before activating; B read the creation earlier, so it loses the race.
+    let paused!: () => void;
+    const aPaused = new Promise<void>((resolve) => { paused = resolve; });
+    let release!: () => void;
+    const aReleased = new Promise<void>((resolve) => { release = resolve; });
+    const a = setup({ chats: { withTransaction: async <T>(work: (repository: ChatRepository) => Promise<T>) => {
+      paused();
+      await aReleased;
+      return chats.withTransaction(work);
+    } } });
+    const b = setup({ ensureWorkspace: async (botId: string) => {
+      await aPaused;
+      setTimeout(release, 200);
+      await ensureBotWorkspace(home, botId);
+    } });
+    await expect(Promise.all([a.finishFromDefinition(OWNER, "req_instantiate_1"), b.finishFromDefinition(OWNER, "req_instantiate_1")]))
+      .resolves.toEqual([true, true]);
+    await expect(operation()).resolves.toMatchObject({ status: "active" });
+    await expect(agents.count(scope)).resolves.toBe(1);
+  });
+
+  it("never finishes a custom bot's creation from a saved file", async () => {
+    await expect(setup().finishFromDefinition(OWNER, "req_managedcustom_recover_0123")).rejects.toEqual(new BotInstantiationError("invalid_request"));
+  });
+
   it("refuses another payload for the same request, unknown recipes, and malformed input", async () => {
     const instantiation = setup();
     await instantiation.instantiate(OWNER, request());
