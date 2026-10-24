@@ -264,3 +264,64 @@ it('cleans malformed JSON in its own fixed log file at startup without a new fai
   const store = createPlanDiagnosticStore({ directory }); stores.push(store);
   await vi.waitFor(async () => expect(await readFile(file, 'utf8')).toBe('[]'), { timeout: 200 });
 });
+
+
+it('retries orphan temporary cleanup and the failed snapshot on the hourly sweep without a new failure or flush', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  const actualRename = fs.rename, actualUnlink = fs.unlink;
+  vi.spyOn(fs, 'rename').mockRejectedValueOnce(Object.assign(new Error('Unavailable'), { code: 'EIO' }));
+  const unlink = vi.spyOn(fs, 'unlink').mockRejectedValueOnce(Object.assign(new Error('Unavailable'), { code: 'EIO' }));
+  const { store, directory, file } = await setup();
+  logPlanFailure('responses', new DOMException('SECRET', 'TimeoutError'));
+  expect(await store.flush()).toBe(false);
+  const temporary = join(directory, '.chatgpt-plan-failures.tmp');
+  expect((await stat(temporary)).isFile()).toBe(true);
+  vi.mocked(fs.rename).mockImplementation(actualRename); unlink.mockImplementation(actualUnlink);
+  await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+  await vi.waitFor(async () => expect(JSON.parse(await readFile(file, 'utf8'))).toEqual([
+    expect.objectContaining({ stage: 'responses', category: 'timeout' }),
+  ]));
+  await expect(stat(temporary)).rejects.toHaveProperty('code', 'ENOENT');
+});
+
+it('does not sweep the temporary file owned by an active writer', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  const actualOpen = fs.open;
+  let release!: () => void, entered!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  vi.spyOn(fs, 'open').mockImplementationOnce(async (...args) => {
+    const handle = await actualOpen(...args), write = handle.writeFile.bind(handle);
+    handle.writeFile = async (...data) => { entered(); await waiting; return write(...data); };
+    return handle;
+  });
+  const unlink = vi.spyOn(fs, 'unlink');
+  const { store, directory, file } = await setup();
+  logPlanFailure('responses', new DOMException('SECRET', 'TimeoutError'));
+  await started;
+  try {
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+    expect(unlink).not.toHaveBeenCalled();
+    expect((await stat(join(directory, '.chatgpt-plan-failures.tmp'))).isFile()).toBe(true);
+  } finally { release(); }
+  expect(await store.flush()).toBe(true);
+  expect(JSON.parse(await readFile(file, 'utf8'))).toHaveLength(1);
+});
+
+it.each(['symlink', 'hardlink'] as const)('does not remove or follow a %s encountered by temporary maintenance', async kind => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  const { store, directory } = await setup();
+  expect(await store.flush()).toBe(true);
+  const outside = join(directory, 'unrelated.log'); await writeFile(outside, 'KEEP');
+  const temporary = join(directory, '.chatgpt-plan-failures.tmp');
+  if (kind === 'symlink') await symlink(outside, temporary); else await link(outside, temporary);
+  const unlink = vi.spyOn(fs, 'unlink');
+  await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(unlink).not.toHaveBeenCalled();
+  expect(await readFile(outside, 'utf8')).toBe('KEEP');
+  expect((await fs.lstat(temporary)).isSymbolicLink()).toBe(kind === 'symlink');
+});
