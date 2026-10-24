@@ -536,10 +536,15 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       proc.once("exit", (code: number | null) => {
         if (killTimer.current) clearTimeout(killTimer.current);
         if (settled) return;
-        const tail = terminationReason ? "" : outputBuffer.finish().trim();
-        if (tail.length > 0) {
-          collector.feedLine(tail);
-          drainCollector();
+        try {
+          const tail = terminationReason ? "" : outputBuffer.finish().trim();
+          if (tail.length > 0) {
+            collector.feedLine(tail);
+            drainCollector();
+          }
+        } catch (error: unknown) {
+          logCodingAgentWarning("pi final output frame rejected", error);
+          terminationReason = "failure";
         }
         const collected = finishCollector();
         const sessionId = collected.sessionId ?? input.sessionId;

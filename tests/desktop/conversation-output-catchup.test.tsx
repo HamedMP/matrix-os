@@ -57,3 +57,15 @@ it("reveals the latest stream snapshot when a visible window becomes hidden", ()
   act(() => document.dispatchEvent(new Event("visibilitychange")));
   expect(container.querySelector("[data-selectable]")?.textContent).toBe(text);
 });
+
+
+it("reveals a newly polled completed long reply immediately in a visible window", () => {
+  vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  const text = `${"Saved completed result. ".repeat(6_000)}END`;
+  const input = turn(text, false);
+  input.final = { ...input.work[0] as Extract<typeof input.work[number], { kind: "message" }>, phase: "final" };
+  input.work = [];
+  const { container, rerender } = render(<ConversationTranscript turns={[]} callbacks={{ copyText: vi.fn() }} />);
+  rerender(<ConversationTranscript turns={[input]} callbacks={{ copyText: vi.fn() }} />);
+  expect(container.querySelector("[data-selectable]")?.textContent).toBe(text);
+});
