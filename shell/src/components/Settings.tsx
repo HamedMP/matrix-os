@@ -1,7 +1,7 @@
 "use client";
 
 import { useGettingStartedBlocker } from "@matrix-os/ui";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useState } from "react";
 import Image from "next/image";
 import {
   PaletteIcon,
@@ -204,6 +204,10 @@ function SettingsFrame({
   billingActive,
   showBillingSection,
 }: SettingsFrameProps) {
+  const openGithubDeveloperTerminal = useCallback(
+    () => onOpenAgentTerminal?.("github-ssh-login"),
+    [onOpenAgentTerminal],
+  );
   const onboardingMode = onboardingDefaultInstalls !== undefined;
   const canonicalDefaultSection = normalizeSettingsSectionId(defaultSection);
   const canonicalLockedSection = lockedSection === undefined
@@ -419,7 +423,7 @@ function SettingsFrame({
               {activeSection === "agents-providers" && (
                 <AgentSection automaticCreditRefreshEnabled={open} onOpenTerminal={onOpenProviderTerminalSession}
                   onOpenGithubDeveloperTerminal={onOpenAgentTerminal
-                    ? () => onOpenAgentTerminal("github-ssh-login")
+                    ? openGithubDeveloperTerminal
                     : undefined} />
               )}
               {activeSection === "identity-personality" && <IdentityPersonalitySection />}

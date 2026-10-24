@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 const MAX_ACCOUNT_LABEL_LENGTH = 128;
 const MAX_IDENTITY_LABEL_LENGTH = 256;
@@ -100,16 +100,18 @@ export function GithubDeveloperAccessCard({
   identityKey: string;
   client: GithubDeveloperAccessClient;
 }) {
+  return <GithubDeveloperAccessCardForIdentity key={identityKey} client={client} />;
+}
+
+function GithubDeveloperAccessCardForIdentity({
+  client,
+}: {
+  client: GithubDeveloperAccessClient;
+}) {
   const [refreshRevision, setRefreshRevision] = useState(0);
   const [status, setStatus] = useState<GithubDeveloperAccessStatus | null>(null);
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const [setupPending, setSetupPending] = useState(false);
-  const activeIdentity = useRef(identityKey);
-  activeIdentity.current = identityKey;
-
-  useEffect(() => {
-    setSetupPending(false);
-  }, [identityKey]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -127,22 +129,21 @@ export function GithubDeveloperAccessCard({
       setPhase("error");
     });
     return () => controller.abort();
-  }, [client, identityKey, refreshRevision]);
+  }, [client, refreshRevision]);
 
   const startSetup = useCallback(async () => {
     if (setupPending) return;
-    const requestedIdentity = identityKey;
     setSetupPending(true);
     try {
       const opened = await client.startSetup();
-      if (activeIdentity.current === requestedIdentity && !opened) setPhase("error");
+      if (!opened) setPhase("error");
     } catch (error: unknown) {
       console.warn("[github-developer-access] Setup handoff unavailable:", error instanceof Error ? error.name : typeof error);
-      if (activeIdentity.current === requestedIdentity) setPhase("error");
+      setPhase("error");
     } finally {
-      if (activeIdentity.current === requestedIdentity) setSetupPending(false);
+      setSetupPending(false);
     }
-  }, [client, identityKey, setupPending]);
+  }, [client, setupPending]);
 
   const connectLabel = status?.authenticated ? "Finish setup" : "Connect";
   return (
