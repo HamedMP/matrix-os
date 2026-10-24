@@ -14,6 +14,8 @@ function retryablePollConnectionFailure(error: unknown): boolean {
     if (!(error instanceof PlanFailure) || error.stage !== 'peer_poll' || error.category !== 'network_error'
         || error.networkDiagnostic?.phase !== 'before_headers') return false;
     const { chromiumCode, code, causeCode } = error.networkDiagnostic;
+    for (const failureCode of [code, causeCode])
+        if (failureCode !== undefined && !PRECONNECT_NODE_CODES.has(failureCode)) return false;
     if (chromiumCode !== undefined) return PRECONNECT_CHROME_CODES.has(chromiumCode);
     return code !== undefined ? PRECONNECT_NODE_CODES.has(code) : PRECONNECT_NODE_CODES.has(causeCode ?? '');
 }
@@ -131,7 +133,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
             }
             if (error instanceof SyntaxError || error instanceof z.ZodError) throw new PlanFailure(stage, 'invalid_schema');
             const network = planPeerNetworkFailureDiagnostic(error, phase);
-            if ((path === 'poll-v2' || path === 'reply') && blocksPollDeliveryRecovery(error)) network.causeCode = 'unknown';
+            if ((isPoll || path === 'reply') && blocksPollDeliveryRecovery(error)) network.causeCode = 'unknown';
             if (error instanceof Error && error.message === 'response too large')
                 throw new PlanFailure(stage, 'response_oversize', undefined, undefined, network);
             if (error instanceof TypeError || network.chromiumCode && network.chromiumCode !== 'unknown' || network.code || network.causeCode)
