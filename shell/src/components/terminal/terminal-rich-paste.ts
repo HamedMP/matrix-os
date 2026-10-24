@@ -1,3 +1,6 @@
+import { sendTerminalInputFrame, type TerminalInputSink } from "./terminal-input-frame";
+import { parseTerminalRefKey } from "./terminal-session-id";
+
 const BRACKETED_PASTE_OPEN = "\x1b[200~";
 const BRACKETED_PASTE_CLOSE = "\x1b[201~";
 const BRACKETED_PASTE_OVERHEAD = BRACKETED_PASTE_OPEN.length + BRACKETED_PASTE_CLOSE.length;
@@ -5,11 +8,6 @@ const MAX_TERMINAL_INPUT = 65_536;
 const TERMINAL_PASTE_IMAGE_DIR = "data/terminal-paste";
 const TERMINAL_PASTE_UPLOAD_TIMEOUT_MS = 30_000;
 const MATRIX_HOME_ABSOLUTE_PATH = "/home/matrix/home";
-
-type TerminalInputSink = {
-  readyState: number;
-  send(data: string): void;
-};
 
 type ClipboardLike = {
   read?: () => Promise<ClipboardItems>;
@@ -66,13 +64,13 @@ export function bracketTerminalPaste(text: string): string {
   return `${BRACKETED_PASTE_OPEN}${capped}${BRACKETED_PASTE_CLOSE}`;
 }
 
-export function sendBracketedTerminalPaste(ws: TerminalInputSink | null | undefined, text: string): boolean {
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    return false;
-  }
+export function sendBracketedTerminalPaste(
+  ws: TerminalInputSink | null | undefined,
+  terminalKey: string | null | undefined,
+  text: string,
+): boolean {
   try {
-    ws.send(JSON.stringify({ type: "input", data: bracketTerminalPaste(text) }));
-    return true;
+    return sendTerminalInputFrame(ws, terminalKey, bracketTerminalPaste(text));
   } catch (error: unknown) {
     console.warn("[terminal] clipboard paste transport failed", {
       category: error instanceof DOMException ? error.name : "transport-error",
@@ -83,14 +81,15 @@ export function sendBracketedTerminalPaste(ws: TerminalInputSink | null | undefi
 
 function sendFormattedTerminalPaste(input: {
   ws: TerminalInputSink | null | undefined;
+  terminalKey: string | null | undefined;
   text: string;
   submit?: boolean;
 }): boolean {
-  if (!sendBracketedTerminalPaste(input.ws, input.text)) {
+  if (!sendBracketedTerminalPaste(input.ws, input.terminalKey, input.text)) {
     return false;
   }
   if (input.submit === true) {
-    input.ws?.send(JSON.stringify({ type: "input", data: "\r" }));
+    sendTerminalInputFrame(input.ws, input.terminalKey, "\r");
   }
   return true;
 }
@@ -249,8 +248,12 @@ export async function pasteClipboardDataIntoTerminal(input: {
   clipboardData: ClipboardDataLike | null | undefined;
   gatewayUrl: string;
   ws: TerminalInputSink | null | undefined;
+  terminalKey: string | null | undefined;
   submit?: boolean;
 }): Promise<"image" | "empty" | "failed"> {
+  if (!parseTerminalRefKey(input.terminalKey)) {
+    return "failed";
+  }
   const imagePaths = await readClipboardDataImagePaths({
     clipboardData: input.clipboardData,
     gatewayUrl: input.gatewayUrl,
@@ -260,6 +263,7 @@ export async function pasteClipboardDataIntoTerminal(input: {
   }
   const sent = sendFormattedTerminalPaste({
     ws: input.ws,
+    terminalKey: input.terminalKey,
     text: formatTerminalPastePrompt(imagePaths),
     submit: input.submit,
   });
@@ -270,11 +274,15 @@ export async function pasteClipboardIntoTerminal(input: {
   clipboard: ClipboardLike | undefined;
   gatewayUrl: string;
   ws: TerminalInputSink | null | undefined;
+  terminalKey: string | null | undefined;
   submit?: boolean;
   canCommit?: () => boolean;
 }): Promise<TerminalRichPasteResult> {
   if (!input.clipboard?.read && !input.clipboard?.readText) {
     return "unavailable";
+  }
+  if (!parseTerminalRefKey(input.terminalKey)) {
+    return "failed";
   }
 
   if (input.clipboard.read) {
@@ -287,6 +295,7 @@ export async function pasteClipboardIntoTerminal(input: {
       if (imagePaths.length > 0) {
         const sent = sendFormattedTerminalPaste({
           ws: input.ws,
+          terminalKey: input.terminalKey,
           text: formatTerminalPastePrompt(imagePaths),
           submit: input.submit,
         });
@@ -316,7 +325,7 @@ export async function pasteClipboardIntoTerminal(input: {
   if (text.length === 0) {
     return "empty";
   }
-  return sendFormattedTerminalPaste({ ws: input.ws, text, submit: input.submit })
+  return sendFormattedTerminalPaste({ ws: input.ws, terminalKey: input.terminalKey, text, submit: input.submit })
     ? "text"
     : "failed";
 }
