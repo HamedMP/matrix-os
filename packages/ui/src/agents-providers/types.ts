@@ -62,6 +62,10 @@ export interface AgentsProvidersViewProps {
   workflowClient?: ProviderWorkflowClient;
   localChatgptClient?: import("./local-chatgpt-plan-client.js").LocalChatgptPlanClient;
   matrixAnthropicClient?: import("./matrix-anthropic-connection-client.js").MatrixAnthropicConnectionClient;
+  githubDeveloperAccess?: {
+    identityKey: string;
+    client: import("./GithubDeveloperAccessCard.js").GithubDeveloperAccessClient;
+  };
   onOpenAuthorizationUrl?: (url: string) => void;
   onLoadUsageHistory?: (cursor: string | null, signal: AbortSignal) => Promise<import("@matrix-os/contracts").AiCreditHistoryResponse>;
   onSetupHarness?: (harness: ProviderHarnessKind) => Promise<boolean>;

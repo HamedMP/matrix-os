@@ -32,8 +32,8 @@ const TERMINAL_ACTIONS: Record<TerminalLaunchAction, TerminalLaunchConfig> = {
   },
   "github-ssh-login": {
     action: "github-ssh-login",
-    label: "GitHub browser login",
-    command: "printf 'Matrix authenticates GitHub separately from SSH keys.\\nUse browser login here. Do not upload local private keys; secure repository SSH uses a Matrix-managed key inside the runtime.\\n\\n' && gh auth login --hostname github.com --web",
+    label: "GitHub developer setup",
+    command: "matrix-github-developer-login",
   },
   "hermes-install": {
     action: "hermes-install",

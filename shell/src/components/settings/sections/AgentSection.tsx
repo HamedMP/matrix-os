@@ -4,25 +4,54 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { AgentsProvidersView, useProviderSettingsController, type AgentsProvidersViewProps } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
-import { createProviderSettingsTransport, openWebProviderAgentSetup } from "@/lib/provider-settings-transport";
+import { boundedProviderSettingsJson, createProviderSettingsTransport, openWebProviderAgentSetup } from "@/lib/provider-settings-transport";
 import { currentAiCreditRuntimeSlot, openWebAiCreditCheckout } from "@/lib/ai-credit-checkout";
 import { createWebProviderWorkflowClient, createWebMatrixAnthropicClient, loadWebAiCreditHistory, openWebProviderWorkflowAuthorization } from "@/lib/provider-workflow-transport";
 
 export function AgentSection({
   onOpenTerminal,
+  onOpenGithubDeveloperTerminal,
   automaticCreditRefreshEnabled = false,
 }: {
   automaticCreditRefreshEnabled?: boolean;
   onOpenTerminal?: (terminalSessionId: string) => void;
+  onOpenGithubDeveloperTerminal?: () => void;
 }) {
   const transport = useMemo(() => createProviderSettingsTransport(), []);
   const identityKey = getGatewayUrl();
   const runtimeSlot = currentAiCreditRuntimeSlot();
+  const githubSetupHandler = useRef(onOpenGithubDeveloperTerminal);
+  githubSetupHandler.current = onOpenGithubDeveloperTerminal;
   const workflowClient = useMemo(() => createWebProviderWorkflowClient({
     isIdentityCurrent: () => getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
   }), [identityKey, runtimeSlot]);
   const matrixAnthropicClient = useMemo(() => createWebMatrixAnthropicClient({
     isIdentityCurrent: () => getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot,
+  }), [identityKey, runtimeSlot]);
+  const githubDeveloperAccessClient = useMemo<NonNullable<AgentsProvidersViewProps["githubDeveloperAccess"]>["client"]>(() => ({
+    async status(signal) {
+      const timeout = AbortSignal.timeout(10_000);
+      const response = await fetch(`${identityKey}/api/github/status`, {
+        cache: "no-store",
+        signal: AbortSignal.any([signal, timeout]),
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new Error("GitHub developer access is unavailable.");
+      }
+      const value = await boundedProviderSettingsJson(response, 16 * 1024);
+      if (getGatewayUrl() !== identityKey || currentAiCreditRuntimeSlot() !== runtimeSlot) {
+        throw new Error("GitHub developer access is unavailable.");
+      }
+      return value;
+    },
+    async startSetup() {
+      if (!githubSetupHandler.current
+        || getGatewayUrl() !== identityKey
+        || currentAiCreditRuntimeSlot() !== runtimeSlot) return false;
+      githubSetupHandler.current();
+      return true;
+    },
   }), [identityKey, runtimeSlot]);
   const loadUsageHistory = useCallback((cursor: string | null, signal: AbortSignal) => loadWebAiCreditHistory({ runtimeSlot, cursor, signal,
     isIdentityCurrent: () => getGatewayUrl() === identityKey && currentAiCreditRuntimeSlot() === runtimeSlot }), [identityKey, runtimeSlot]);
@@ -96,6 +125,10 @@ export function AgentSection({
         onOpenBrowser={openProviderAuthorizationPath}
         workflowClient={workflowClient}
         matrixAnthropicClient={matrixAnthropicClient}
+        githubDeveloperAccess={{
+          identityKey: `${identityKey}:${runtimeSlot}`,
+          client: githubDeveloperAccessClient,
+        }}
         onOpenAuthorizationUrl={(url) => {
           if (getGatewayUrl() !== identityKey || currentAiCreditRuntimeSlot() !== runtimeSlot) return;
           if (!openWebProviderWorkflowAuthorization(url)) throw new Error("Browser unavailable");

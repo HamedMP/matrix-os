@@ -40,7 +40,7 @@ const STEP_LABELS: Record<GettingStartedStepId, string> = {
   billing: "Set up billing",
 };
 
-const GithubStatusSchema = z.object({ authenticated: z.boolean() }).passthrough();
+const GithubStatusSchema = z.object({ ready: z.boolean() }).passthrough();
 const AgentStatusSchema = z.object({
   agents: z.array(z.object({
     agent: z.string().max(64),
@@ -117,16 +117,12 @@ export function emptyGettingStartedSnapshot(): GettingStartedSnapshot {
 export function deriveGettingStartedSnapshot(
   results: GettingStartedResults,
 ): GettingStartedSnapshot {
-  const githubCliStatus = statusFrom(
+  const githubDeveloperStatus = statusFrom(
     results.github,
-    (value) => GithubStatusSchema.parse(value).authenticated,
-  );
-  const githubIntegrationStatus = statusFrom(
-    results.integrations,
-    (value) => connectedServices(value).has("github"),
+    (value) => GithubStatusSchema.parse(value).ready,
   );
   const statuses: Record<GettingStartedStepId, GettingStartedStepStatus> = {
-    github: alternativeCompletionStatus(githubCliStatus, githubIntegrationStatus),
+    github: githubDeveloperStatus,
     "email-calendar": statusFrom(results.integrations, (value) => {
       const services = connectedServices(value);
       return services.has("gmail") && services.has("google_calendar");
