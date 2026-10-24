@@ -118,6 +118,15 @@ describe("BootSequence", () => {
     expect(screen.queryByTestId("shell")).toBeNull();
   });
 
+  it("preserves a device approval return and computer through unfinished checkout recovery", async () => {
+    mockJourney(baseState);
+    render(<BootSequence runtimeSlot="studio" completionRedirect="/?runtime=studio&device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK"><div>SHELL</div></BootSequence>);
+    await waitFor(() => expect(onboardingNavigation.navigate).toHaveBeenCalled());
+    const destination = new URL(onboardingNavigation.navigate.mock.calls[0][0]);
+    expect(destination.searchParams.get('runtime')).toBe('studio');
+    expect(destination.searchParams.get('device_return')).toBe('/auth/device?user_code=BCDF-GHJK');
+  });
+
   it("shows a calm settling state within the window (never the paywall)", async () => {
     mockJourney({
       phase: "payment_settling",
@@ -143,6 +152,15 @@ describe("BootSequence", () => {
     expect(screen.getByText("Contact support")).toBeTruthy();
   });
 
+  it("lets a customer recheck activation without starting another checkout", async () => {
+    const fetchMock = mockJourney({ phase: "payment_settling", detail: "Activating your subscription…",
+      nextAction: { kind: "wait" }, settling: { since: "2026-06-11T12:00:00.000Z", delayed: false } });
+    render(<BootSequence><div data-testid="shell">SHELL</div></BootSequence>);
+    fireEvent.click(await screen.findByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/checkout/reconcile'))).toHaveLength(2));
+    expect(onboardingNavigation.navigate).not.toHaveBeenCalled();
+  });
+
   it("shows build progress with a stage label during provisioning", async () => {
     mockJourney({
       phase: "provisioning",
@@ -163,6 +181,7 @@ describe("BootSequence", () => {
     let appSessionAttempts = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url === "/billing/checkout/reconcile") return Response.json({ status: "none" });
       requests.push({ url, init });
       if (url === "/api/journey?runtimeSlot=studio") {
         journeyAttempts += 1;
@@ -226,6 +245,7 @@ describe("BootSequence", () => {
     let appSessionAttempts = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url === "/billing/checkout/reconcile") return Response.json({ status: "none" });
       if (url.includes("/api/journey")) {
         return Response.json({
           phase: "ready",
@@ -261,6 +281,7 @@ describe("BootSequence", () => {
     let provisioningAccepted = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url === "/billing/checkout/reconcile") return Response.json({ status: "none" });
       if (url.includes("/api/journey")) {
         const journeyState: JourneyState = provisioningAccepted
           ? {
@@ -322,6 +343,7 @@ describe("BootSequence", () => {
     let appSessionAttempts = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url === "/billing/checkout/reconcile") return Response.json({ status: "none" });
       if (url.includes("/api/journey")) {
         if (!provisioningAccepted) {
           return Response.json({
@@ -375,6 +397,7 @@ describe("BootSequence", () => {
     let staleRefreshCompleted = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url === "/billing/checkout/reconcile") return Response.json({ status: "none" });
       if (url.includes("/api/journey")) {
         const state: JourneyState = provisionTimedOut && staleRefreshCompleted
           ? {
@@ -426,6 +449,7 @@ describe("BootSequence", () => {
     let conflictAccepted = false;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url === "/billing/checkout/reconcile") return Response.json({ status: "none" });
       if (url.includes("/api/journey")) {
         const journeyState: JourneyState = conflictAccepted
           ? {
@@ -465,6 +489,7 @@ describe("BootSequence", () => {
     };
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url === "/billing/checkout/reconcile") return Response.json({ status: "none" });
       if (url.includes("/api/journey")) {
         return new Response(JSON.stringify(journeyState), { status: 200, headers: { "content-type": "application/json" } });
       }

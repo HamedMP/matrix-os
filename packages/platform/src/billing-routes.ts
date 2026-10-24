@@ -4,6 +4,7 @@ import { createBillingTrackingRoutes } from './billing/tracking-routes.js';
 import { resolveNewCardTrialDays } from './billing/trial-policy.js';
 import { Hono, type Context } from 'hono';
 import { createBillingStatusHandler } from './billing-status-route.js';
+import { createCheckoutReconciliationHandler } from './billing/checkout-reconciliation.js';
 import { bodyLimit } from 'hono/body-limit';
 import { randomUUID } from 'node:crypto';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
@@ -527,6 +528,11 @@ export function createBillingRoutes(options: {
       return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
     }
   });
+
+  app.post('/checkout/reconcile', bodyLimit({ maxSize: BILLING_BODY_LIMIT }), createCheckoutReconciliationHandler({
+    db: options.db, stripe: options.stripe, now, prebilling: options.prebilling,
+    resolveClerkUserId: c => resolveRouteClerkUserId(c, 'checkout reconciliation'),
+  }));
 
   app.post('/checkout/abandon', bodyLimit({ maxSize: BILLING_BODY_LIMIT }), async (c) => {
     const clerkUserId = await resolveRouteClerkUserId(c, 'checkout abandon');

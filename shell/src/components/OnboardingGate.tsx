@@ -64,6 +64,24 @@ function OnboardingGateInner({
   if (platformSessionActive && deviceReturnPath) {
     return <DeviceReturnHandoff deviceReturnPath={deviceReturnPath} />;
   }
+  // Return markers select a verification flow, never establish payment. The
+  // legacy BillingGate can otherwise hide the authoritative journey behind a
+  // purchase overlay while the completed subscription webhook is still pending.
+  if (checkoutReturnRequested || searchParams.get("billing") === "canceled") {
+    return (
+      <BootSequence
+        platformSessionActive={platformSessionActive}
+        e2eBypass={e2eBypass}
+        completionRedirect={deviceReturnPath
+          ? buildDeviceBootHandoffPath(deviceReturnPath, requestedRuntime)
+          : "/"}
+        runtimeSlot={requestedRuntime}
+        passivePostCheckout={checkoutReturnRequested}
+      >
+        {children}
+      </BootSequence>
+    );
+  }
   if (isDeviceFlow || isBillingEntrypoint) {
     return (
       <BillingGate

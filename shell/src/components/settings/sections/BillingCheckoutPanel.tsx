@@ -261,6 +261,10 @@ export function BillingCheckoutPanel({
         </div>
       )}
 
+      {activeCheckout ? <p className="mt-4 text-sm">
+        Your checkout hasn’t completed. Resume it to finish setting up your subscription.
+      </p> : null}
+
       <button
         type="button"
         onClick={startCheckout}
