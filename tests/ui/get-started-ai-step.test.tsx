@@ -81,7 +81,10 @@ describe("Make your AI yours", () => {
     const { port: gatePort, saves } = port();
     render(<GetStartedGate port={gatePort} zIndex={1} />);
     fireEvent.change(await screen.findByLabelText("AI name"), { target: { value: "   " } });
-    fireEvent.click(screen.getByRole("button", { name: "Finish" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByRole("heading", { name: "Build your own apps" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Finish" }));
     expect((await screen.findByText("Your AI")).nextElementSibling).toHaveTextContent(/^Matrix · /);
     fireEvent.click(screen.getByRole("button", { name: "Enter your computer" }));
     await waitFor(() => expect(saves.at(-1)).toMatchObject({ type: "complete", answers: { bot: { name: "Matrix" } } }));
