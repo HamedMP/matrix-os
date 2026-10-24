@@ -1,3 +1,18 @@
+import { z } from "zod/v4";
+
+export const GmailConnectionMethodSchema = z.enum(["matrix", "pipedream"]);
+export type GmailConnectionMethod = z.infer<typeof GmailConnectionMethodSchema>;
+export const GmailConnectionOptionsSchema = z.object({
+  methods: z.array(GmailConnectionMethodSchema).min(1).max(2),
+  defaultMethod: GmailConnectionMethodSchema,
+}).refine(value => new Set(value.methods).size === value.methods.length && value.methods.includes(value.defaultMethod),
+  { message: "Invalid Gmail connection options" });
+export type GmailConnectionOptions = z.infer<typeof GmailConnectionOptionsSchema>;
+export const GMAIL_CONNECTION_METHOD_LABELS: Record<GmailConnectionMethod, string> = {
+  matrix: "Connect with Matrix (internal preview)",
+  pipedream: "Connect with Pipedream",
+};
+
 export type IntegrationAuthType = "oauth" | "keys";
 export interface IntegrationCatalogItem {
   id: string;

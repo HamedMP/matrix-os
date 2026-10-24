@@ -1,3 +1,4 @@
+import { NativeGmailHistoryExpiredError } from "./native-gmail/request.js";
 import type { Context } from "hono";
 import type { PlatformDb } from "../platform-db.js";
 import { IntegrationActionNotImplementedError } from "./action-execution.js";
@@ -62,6 +63,9 @@ export async function integrationActionSuccess(c: Context, input: {
 
 /** Preserve general call's safe provider failure mapping for scoped reads. */
 export function integrationActionFailure(c: Context, err: unknown, service: string, action: string): Response {
+  if (err instanceof NativeGmailHistoryExpiredError) {
+    return c.json({ error: "Mailbox history expired. Run a bounded resync before continuing.", code: err.code, resync_required: true }, 409);
+  }
   if (err instanceof DriveContentError) {
     const messages = {
       unsupported_file_type: "This file type cannot be read as text. Choose a text file or a supported document export.",
