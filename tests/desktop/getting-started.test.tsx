@@ -204,7 +204,7 @@ describe("GettingStartedPopover", () => {
       const baseGet = api.get.getMockImplementation();
       api.get.mockImplementation(async (path: string, ...rest: unknown[]) => path === "/api/chat-agents"
         ? { enabled: true, agents: created ? [{ id: "bot_write001", archived: false, createdAt: "2026-10-22T10:00:00.000Z", recipeRef: { recipeId: "writing-bot", version: 1 } }] : [] }
-        : path === "/api/settings/get-started/bots" ? { bots: { "writing-bot": created ? "created" : "pending" } }
+        : path === "/api/settings/get-started/bots" ? { bots: { "writing-bot": created ? { status: "created", agentId: "bot_write001" } : { status: "pending" } } }
           : baseGet?.(path, ...rest));
       api.post.mockImplementation(async (path: string) => {
         if (path === "/api/settings/get-started/bots") {
@@ -231,6 +231,7 @@ describe("GettingStartedPopover", () => {
           agents: [{ id: "bot_write001", archived: false, createdAt: "2026-10-22T10:00:00.000Z", recipeRef: { recipeId: "writing-bot", version: 1 } }],
         },
         "/api/chat-agents/bot_write001/direct-chat": { chatId: null },
+        "/api/settings/get-started/bots": { bots: { "writing-bot": { status: "created", agentId: "bot_write001" } } },
       });
       api.post.mockResolvedValue({ chatId: "chat_writer0001" });
       useConnection.setState({ api: api as never });

@@ -168,9 +168,14 @@ describe("get started personality", () => {
     expect(ensureBot.mock.calls.map((call) => call[1])).toEqual(["writing-bot", "echo", "writing-bot", "echo"]);
   });
 
+  /** Echo's creation never finished; the others report the bot their Get started request made. */
+  const savedBot = (recipeId: string) => (recipeId === "echo"
+    ? { status: "pending" as const }
+    : { status: "created" as const, agentId: `bot_${recipeId.replaceAll("-", "")}01` });
+
   it("only re-requests saved bots whose creation never finished", async () => {
     // Re-requesting a created bot would conflict once its recipe version moves on.
-    const botStatus = vi.fn(async (_owner: string, recipeId: string) => (recipeId === "echo" ? "pending" as const : "created" as const));
+    const botStatus = vi.fn(async (_owner: string, recipeId: string) => savedBot(recipeId));
     app = new Hono();
     app.route("/api/settings/get-started", createGetStartedRoutes({ homePath, enabled: true, getOwnerId: () => "user_owner", ensureBot, botStatus }));
     await complete(ATLAS, ["writing-bot", "echo"]);
@@ -181,7 +186,7 @@ describe("get started personality", () => {
   });
 
   it("reports which saved bots finished being created, so removed bots stay removed", async () => {
-    const botStatus = vi.fn(async (_owner: string, recipeId: string) => (recipeId === "echo" ? "pending" as const : "created" as const));
+    const botStatus = vi.fn(async (_owner: string, recipeId: string) => savedBot(recipeId));
     const statusOf = () => app.request("/api/settings/get-started/bots");
     app = new Hono();
     app.route("/api/settings/get-started", createGetStartedRoutes({ homePath, enabled: true, getOwnerId: () => "user_owner", ensureBot, botStatus }));
@@ -189,7 +194,11 @@ describe("get started personality", () => {
     await complete(ATLAS, ["writing-bot", "echo"]);
     const res = await statusOf();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ bots: { "matrix-bot": "created", "writing-bot": "created", echo: "pending" } });
+    expect(await res.json()).toEqual({ bots: {
+      "matrix-bot": { status: "created", agentId: "bot_matrixbot01" },
+      "writing-bot": { status: "created", agentId: "bot_writingbot01" },
+      echo: { status: "pending" },
+    } });
     expect(botStatus).toHaveBeenCalledWith("user_owner", "echo");
     app = new Hono();
     app.route("/api/settings/get-started", createGetStartedRoutes({ homePath, enabled: true, getOwnerId: () => null, ensureBot, botStatus }));
@@ -254,7 +263,7 @@ describe("createGetStartedBots", () => {
     const instantiate = vi.fn(async () => ({}));
     const ensure = createGetStartedBots({
       recipes: { list: () => [{ recipeId: "matrix-bot", version: "2026-10-10.1" }] as never },
-      instantiation: { instantiate } as never,
+      instantiation: { instantiate, attempt: async () => null } as never,
     });
     await ensure("user_owner", "matrix-bot", "Atlas");
     expect(GET_STARTED_MATRIX_BOT_REQUEST_ID).toBe("req_get-started-matrix-bot");
@@ -269,7 +278,7 @@ describe("createGetStartedBots", () => {
     const instantiate = vi.fn(async () => ({}));
     const ensure = createGetStartedBots({
       recipes: { list: () => [{ recipeId: "writing-bot", version: "2026-10-01.1" }] as never },
-      instantiation: { instantiate } as never,
+      instantiation: { instantiate, attempt: async () => null } as never,
     });
     await ensure("user_owner", "writing-bot");
     expect(instantiate).toHaveBeenCalledWith("user_owner", {

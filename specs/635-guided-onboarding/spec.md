@@ -165,7 +165,7 @@ Personal Matrix Bot: at "Enter your computer", create it with `POST /api/chat-ag
 
 - `GET /api/settings/get-started` → `{ status: "not_eligible" }` or `{ status, draft? | answers? }`
 - `PUT /api/settings/get-started` → body `{ type: "draft" | "complete" | "skip", answers? }` (Zod discriminated union, strict)
-- `GET /api/settings/get-started/bots` → each saved bot's creation `{ bots: { [recipeId]: "created" | "pending" } }`, from its fixed-request operation (the bot list leaves removed bots out, so this tells a removed bot from one that never finished)
+- `GET /api/settings/get-started/bots` → what each saved bot choice made `{ bots: { [recipeId]: { status: "created", agentId } | { status: "pending" } } }`, from its Get started creation requests. Getting started uses that bot, never another copy of the same recipe; the bot list leaves removed bots out, so this also tells a removed bot from one whose creation never finished
 - `POST /api/settings/get-started/bots` → retries the saved bot choices of a finished setup → `{ bots: { [recipeId]: "ready" | "failed" } }`
 
 A dedicated endpoint instead of generic file writes: answers are validated against enums and caps, files are written to fixed paths only, SOUL is rendered by the server (P2), and completion is one idempotent call. The generic `/files` route is unchanged.
@@ -218,7 +218,7 @@ Neither path is on the public, webhook, collaboration, route-scoped bearer or We
 - Concurrent PUTs: serialised per home; the second terminal transition sees the first and returns idempotent `200` or `409`.
 - Crash mid-write: temp + rename leaves either the old or the new file; stray temp files are dot-prefixed in `system/` and overwritten never (unique names); they are removed on the failure path.
 - Connect sign-in doesn't finish: "Sign-in didn't finish" with Try again / Skip.
-- Bot creation fails (P2): enter the desktop anyway. The saved answers are the durable intent: reading the finished setup retries any saved bot (at most every 10 minutes per owner, bounded per-owner memory), `POST /bots` retries on request, and Getting started keeps a Create action for a chosen bot whose creation never finished (`GET /bots` says "pending"); a bot the owner removed stays hidden. Fixed request IDs make retries idempotent; a bot the owner deleted is never brought back, and a bot already created is never requested again (its recipe version may have moved on).
+- Bot creation fails (P2): enter the desktop anyway. The saved answers are the durable intent: reading the finished setup retries any saved bot (at most every 10 minutes per owner, bounded per-owner memory), `POST /bots` retries on request, and Getting started keeps a Create action for a chosen bot whose creation never finished (`GET /bots` says "pending"), even when part of it exists; a bot the owner removed stays hidden. Fixed request IDs make retries idempotent; a bot the owner deleted is never brought back, and a bot already created is never requested again. A retry replays the original request. If the recipe version changed since: an attempt that wrote its definition is finished from it, and one that never did starts again under a follow-up request named after the bot it reserved, so it is found again without new state; at most 4 attempts per bot.
 - Gateway unreachable on desktop load: don't show the wizard this session; try again on next load.
 
 ## Resource management

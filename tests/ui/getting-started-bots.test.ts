@@ -21,9 +21,12 @@ function gateway(routes: Record<string, unknown>) {
 }
 
 describe("Getting started bots", () => {
+  const created = (agentId: string) => ({ status: "created", agentId });
+
   it("ticks a bot once its chat has messages and leaves the rest to do", async () => {
     const request = gateway({
       "/api/chat-agents": { enabled: true, agents: [agent("bot_brief001", "personal-daily-brief"), agent("bot_write001", "writing-bot")] },
+      "/api/settings/get-started/bots": { bots: { "personal-daily-brief": created("bot_brief001"), "writing-bot": created("bot_write001") } },
       "/api/chat-agents/bot_brief001/direct-chat": { chatId: CHAT_ID },
       [`/api/chats/${CHAT_ID}?limit=1`]: { record: { chat: { id: CHAT_ID, messageCount: 2 } }, messages: [] },
       "/api/chat-agents/bot_write001/direct-chat": { chatId: null },
@@ -36,10 +39,10 @@ describe("Getting started bots", () => {
   });
 
   it("drops a bot the owner removed, and offers to create one whose creation never finished", async () => {
-    // The bot list leaves removed bots out, so the gateway says which saved bots were created.
+    // The bot list leaves removed bots out; the gateway says which bot each saved choice made.
     const request = gateway({
       "/api/chat-agents": { enabled: true, agents: [] },
-      "/api/settings/get-started/bots": { bots: { echo: "created", "writing-bot": "pending" } },
+      "/api/settings/get-started/bots": { bots: { echo: created("bot_echo0001"), "writing-bot": { status: "pending" } } },
     });
     expect(await loadGettingStartedBots(request, ["echo", "writing-bot"])).toEqual({
       statuses: { echo: null, "writing-bot": "missing" },
@@ -47,24 +50,43 @@ describe("Getting started bots", () => {
     });
   });
 
-  it("hides absent bots when it cannot tell whether they were created", async () => {
-    vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("offers Create while a creation is unfinished, even when its bot file exists", async () => {
     const request = gateway({
-      "/api/chat-agents": { enabled: true, agents: [] },
-      "/api/settings/get-started/bots": new Error("down"),
+      "/api/chat-agents": { enabled: true, agents: [agent("bot_write001", "writing-bot")] },
+      "/api/settings/get-started/bots": { bots: { "writing-bot": { status: "pending" } } },
     });
-    expect((await loadGettingStartedBots(request, ["writing-bot"])).statuses).toEqual({ "writing-bot": null });
+    expect(await loadGettingStartedBots(request, ["writing-bot"])).toEqual({ statuses: { "writing-bot": "missing" }, agentIds: {} });
+  });
+
+  it("uses the bot Get started made, never another copy of the same recipe", async () => {
+    const copy = agent("bot_copy0001", "writing-bot", { createdAt: "2026-10-01T09:00:00.000Z" });
+    const request = gateway({
+      "/api/chat-agents": { enabled: true, agents: [copy, agent("bot_write001", "writing-bot")] },
+      "/api/settings/get-started/bots": { bots: { "writing-bot": created("bot_write001") } },
+      "/api/chat-agents/bot_write001/direct-chat": { chatId: null },
+    });
+    expect(await loadGettingStartedBots(request, ["writing-bot"])).toEqual({ statuses: { "writing-bot": "incomplete" }, agentIds: { "writing-bot": "bot_write001" } });
+    // Once the owner removes it, the row goes, even though another copy remains.
+    const removed = gateway({
+      "/api/chat-agents": { enabled: true, agents: [copy] },
+      "/api/settings/get-started/bots": { bots: { "writing-bot": created("bot_write001") } },
+    });
+    expect(await loadGettingStartedBots(removed, ["writing-bot"])).toEqual({ statuses: { "writing-bot": null }, agentIds: {} });
   });
 
   it("reports unavailable instead of done when a check fails", async () => {
     const request = gateway({
       "/api/chat-agents": { enabled: true, agents: [agent("bot_brief001", "personal-daily-brief")] },
+      "/api/settings/get-started/bots": { bots: { "personal-daily-brief": created("bot_brief001") } },
       "/api/chat-agents/bot_brief001/direct-chat": new Error("down"),
     });
     vi.spyOn(console, "warn").mockImplementation(() => {});
     expect((await loadGettingStartedBots(request, ["personal-daily-brief"])).statuses).toEqual({ "personal-daily-brief": "unavailable" });
-    const listDown = gateway({ "/api/chat-agents": new Error("down") });
+    const listDown = gateway({ "/api/chat-agents": new Error("down"), "/api/settings/get-started/bots": { bots: {} } });
     expect((await loadGettingStartedBots(listDown, ["echo"])).statuses).toEqual({ echo: "unavailable" });
+    // Without the saved creations it can't tell which bot is the one Get started made.
+    const statusDown = gateway({ "/api/chat-agents": { enabled: true, agents: [] }, "/api/settings/get-started/bots": new Error("down") });
+    expect(await loadGettingStartedBots(statusDown, ["echo"])).toEqual({ statuses: { echo: "unavailable" }, agentIds: {} });
   });
 
   it("asks nothing when no bots were added", async () => {

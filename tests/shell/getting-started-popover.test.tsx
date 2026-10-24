@@ -262,6 +262,7 @@ describe("web getting started status", () => {
           agents: [{ id: "bot_write001", archived: false, createdAt: "2026-10-22T10:00:00.000Z", recipeRef: { recipeId: "writing-bot", version: 1 } }],
         }
           : url.endsWith("/api/chat-agents/bot_write001/direct-chat") ? { chatId: init?.method === "POST" ? BOT_CHAT : null }
+          : url.endsWith("/api/settings/get-started/bots") ? { bots: { "writing-bot": { status: "created", agentId: "bot_write001" } } }
             : url.endsWith("/api/integrations") ? []
               : url.endsWith("/api/agents/credentials/status") ? { agents: [] }
                 : url.endsWith("/api/workspace/projects") ? { projects: [] }
@@ -298,7 +299,7 @@ describe("web getting started status", () => {
           return new Response(JSON.stringify({ bots: { "writing-bot": "ready" } }), { status: 200 });
         }
         if (url.endsWith("/api/settings/get-started/bots")) {
-          return new Response(JSON.stringify({ bots: { "writing-bot": created ? "created" : "pending" } }), { status: 200 });
+          return new Response(JSON.stringify({ bots: { "writing-bot": created ? { status: "created", agentId: "bot_write001" } : { status: "pending" } } }), { status: 200 });
         }
         const body = url.endsWith("/api/chat-agents") ? {
           enabled: true,

@@ -5,6 +5,7 @@ import {
   GetStartedUpdateSchema,
   type GetStartedAnswers,
   type GetStartedResponse,
+  type GetStartedSavedBot,
   type GetStartedState,
   type GetStartedUpdate,
 } from "@matrix-os/contracts";
@@ -38,8 +39,8 @@ export interface GetStartedRoutesOptions {
   getOwnerId?: (c: Context) => string | null;
   /** Creates (or replays) a bot from a recipe. Best effort: setup never fails on it. */
   ensureBot?: (ownerId: string, recipeId: string, name?: string) => Promise<void>;
-  /** Whether a saved bot was ever created ("created") or its creation never finished ("pending"). */
-  botStatus?: (ownerId: string, recipeId: string) => Promise<"created" | "pending">;
+  /** What a saved bot choice made: the bot it created, or "pending" while its creation never finished. */
+  botStatus?: (ownerId: string, recipeId: string) => Promise<GetStartedSavedBot>;
 }
 
 class GetStartedStateCorruptError extends Error {
@@ -132,7 +133,7 @@ export function createGetStartedRoutes(opts: GetStartedRoutesOptions) {
     if (!opts.ensureBot) return results;
     for (const job of savedBotJobs(answers)) {
       try {
-        if (opts.botStatus && await opts.botStatus(ownerId, job.recipeId) === "created") {
+        if (opts.botStatus && (await opts.botStatus(ownerId, job.recipeId)).status === "created") {
           results[job.recipeId] = "ready";
           continue;
         }
@@ -236,8 +237,8 @@ export function createGetStartedRoutes(opts: GetStartedRoutesOptions) {
   });
 
   /**
-   * Spec 635: each saved bot's creation, so Getting started can tell a bot the owner removed
-   * ("created") from one whose creation never finished ("pending", offered as Create).
+   * Spec 635: what each saved bot choice made, so Getting started uses that bot (and tells one the
+   * owner removed from one whose creation never finished, "pending", offered as Create).
    */
   app.get("/bots", async (c) => {
     if (!enabled) return c.json({ error: "Get started is not available" }, 404);
@@ -254,7 +255,7 @@ export function createGetStartedRoutes(opts: GetStartedRoutesOptions) {
     }
     if (state?.status !== "completed") return c.json({ error: "Get started is not finished" }, 404);
     try {
-      const bots: Record<string, "created" | "pending"> = {};
+      const bots: Record<string, GetStartedSavedBot> = {};
       for (const job of savedBotJobs(state.answers)) bots[job.recipeId] = await botStatus(ownerId, job.recipeId);
       return c.json({ bots });
     } catch (err) {

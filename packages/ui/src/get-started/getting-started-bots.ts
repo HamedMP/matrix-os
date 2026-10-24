@@ -2,6 +2,7 @@ import {
   BotChatBindingResponseSchema,
   CanonicalChatIdSchema,
   ChatAgentIdSchema,
+  GetStartedSavedBotsResponseSchema,
   type GetStartedRecipeBotId,
   type GettingStartedBotStatuses,
 } from "@matrix-os/contracts";
@@ -19,12 +20,7 @@ export interface GettingStartedBots {
 // Only the fields this check reads; the list route validates the full records.
 const BotListSchema = z.looseObject({
   enabled: z.boolean(),
-  agents: z.array(z.looseObject({
-    id: ChatAgentIdSchema,
-    archived: z.boolean(),
-    createdAt: z.string().max(64),
-    recipeRef: z.looseObject({ recipeId: z.string().max(128) }).optional(),
-  })).max(100),
+  agents: z.array(z.looseObject({ id: ChatAgentIdSchema, archived: z.boolean() })).max(100),
 });
 const ChatActivitySchema = z.looseObject({ record: z.looseObject({ chat: z.looseObject({ messageCount: z.number().int().min(0) }) }) });
 
@@ -36,51 +32,44 @@ function errorName(error: unknown): string {
 
 const agentPath = (agentId: string) => `/api/chat-agents/${encodeURIComponent(ChatAgentIdSchema.parse(agentId))}/direct-chat`;
 
-const SavedBotStatusSchema = z.object({ bots: z.record(z.string().max(128), z.enum(["created", "pending"])) });
-
 /**
- * Which absent bots never finished being created. The bot list leaves removed bots out, so the
- * gateway's record of each saved bot's creation tells them apart; when it can't be read, absent
- * bots stay hidden rather than wrongly offered again.
- */
-async function pendingBots(request: GettingStartedRequest): Promise<Set<string>> {
-  try {
-    const { bots } = SavedBotStatusSchema.parse(await request("/api/settings/get-started/bots", "GET"));
-    return new Set(Object.entries(bots).filter(([, status]) => status === "pending").map(([recipeId]) => recipeId));
-  } catch (error: unknown) {
-    console.warn("[getting-started] bot creation status unavailable:", errorName(error));
-    return new Set();
-  }
-}
-
-/**
- * Spec 635: whether the owner has chatted with each bot they added in Get started. A bot they
- * removed drops out (null); one whose creation never finished reads as "missing", so it can be
- * created again; a failed check reads as unavailable, never as done.
+ * Spec 635: whether the owner has chatted with each bot they added in Get started. Each row is the
+ * bot its Get started request made, never another copy of the same recipe. A bot they removed drops
+ * out (null); one whose creation never finished reads as "missing", so it can be created again,
+ * even when part of it exists; a failed check reads as unavailable, never as done.
  */
 export async function loadGettingStartedBots(request: GettingStartedRequest, recipeIds: readonly GetStartedRecipeBotId[]): Promise<GettingStartedBots> {
   if (recipeIds.length === 0) return EMPTY;
   let list: z.infer<typeof BotListSchema>;
+  let saved: z.infer<typeof GetStartedSavedBotsResponseSchema>["bots"];
   try {
-    list = BotListSchema.parse(await request("/api/chat-agents", "GET"));
+    [list, saved] = await Promise.all([
+      request("/api/chat-agents", "GET").then((body) => BotListSchema.parse(body)),
+      request("/api/settings/get-started/bots", "GET").then((body) => GetStartedSavedBotsResponseSchema.parse(body).bots),
+    ]);
   } catch (error: unknown) {
-    console.warn("[getting-started] bot list unavailable:", errorName(error));
+    console.warn("[getting-started] bot status unavailable:", errorName(error));
     return { statuses: Object.fromEntries(recipeIds.map((id) => [id, "unavailable"])), agentIds: {} };
   }
+  const present = new Set(list.enabled ? list.agents.filter((agent) => !agent.archived).map((agent) => agent.id) : []);
   const result: GettingStartedBots = { statuses: {}, agentIds: {} };
-  const agentFor = (recipeId: GetStartedRecipeBotId) => (list.enabled ? list.agents : [])
-    .filter((candidate) => !candidate.archived && candidate.recipeRef?.recipeId === recipeId)
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))[0];
-  const pending = list.enabled && recipeIds.some((recipeId) => !agentFor(recipeId)) ? await pendingBots(request) : new Set<string>();
   await Promise.all(recipeIds.map(async (recipeId) => {
-    const agent = agentFor(recipeId);
-    if (!agent) {
-      result.statuses[recipeId] = pending.has(recipeId) ? "missing" : null;
+    const bot = saved[recipeId];
+    if (!list.enabled || !bot) {
+      result.statuses[recipeId] = null;
       return;
     }
-    result.agentIds[recipeId] = agent.id;
+    if (bot.status === "pending") {
+      result.statuses[recipeId] = "missing";
+      return;
+    }
+    if (!present.has(bot.agentId)) {
+      result.statuses[recipeId] = null;
+      return;
+    }
+    result.agentIds[recipeId] = bot.agentId;
     try {
-      const { chatId } = BotChatBindingResponseSchema.parse(await request(agentPath(agent.id), "GET"));
+      const { chatId } = BotChatBindingResponseSchema.parse(await request(agentPath(bot.agentId), "GET"));
       if (!chatId) {
         result.statuses[recipeId] = "incomplete";
         return;

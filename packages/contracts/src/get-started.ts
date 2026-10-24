@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { ChatAgentIdSchema } from "#chat-agent-context";
 import { GetStartedBotSchema } from "#get-started-bot";
 import { GET_STARTED_RECIPE_BOT_IDS, GET_STARTED_RECIPE_BOTS_MAX } from "#get-started-recipe-bots";
 
@@ -201,3 +202,14 @@ export const GetStartedResponseSchema = z.discriminatedUnion("status", [
   z.object(skippedShape).strict(),
 ]);
 export type GetStartedResponse = z.infer<typeof GetStartedResponseSchema>;
+
+/**
+ * `GET /api/settings/get-started/bots`: what each saved bot choice made, by recipe ID. "created"
+ * names the bot its Get started request made; "pending" means that creation never finished.
+ */
+export const GetStartedSavedBotSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("created"), agentId: ChatAgentIdSchema }).strict(),
+  z.object({ status: z.literal("pending") }).strict(),
+]);
+export type GetStartedSavedBot = z.infer<typeof GetStartedSavedBotSchema>;
+export const GetStartedSavedBotsResponseSchema = z.object({ bots: z.record(z.string().max(128), GetStartedSavedBotSchema) }).strict();

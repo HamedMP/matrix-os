@@ -308,8 +308,28 @@ export function createBotInstantiation(deps: {
     }
   return {
     instantiate: (ownerId: string, requestValue: unknown) => instantiate(ownerId, requestValue),
-    /** Whether the creation request with this ID finished (its operation is active). */
-    async completed(ownerId: string, clientRequestId: string): Promise<boolean> {
+    /** The creation request with this ID: the bot it reserved, its payload, and whether it finished. */
+    async attempt(ownerId: string, clientRequestId: string): Promise<{ active: boolean; botId: string; payloadHash: string } | null> {
+      const operation = await operations.get(ownerId, clientRequestId);
+      return operation ? { active: operation.status === "active", botId: operation.botId, payloadHash: operation.payloadHash } : null;
+    },
+    /**
+     * Finishes an unfinished creation from its saved definition, as reconciliation does. False when
+     * it never wrote one: then only a new request can create the bot.
+     */
+    async finishFromDefinition(ownerId: string, clientRequestId: string): Promise<boolean> {
+      const operation = await operations.get(ownerId, clientRequestId);
+      if (!operation) return false;
+      if (operation.status !== "active") {
+        const saved = () => deps.agents.get(owner(ownerId), operation.botId);
+        if (!await saved()) return false;
+        try {
+          await advance(operation, saved);
+        } catch (error: unknown) {
+          // A request finishing the same creation is not a failure.
+          if (!(error instanceof ConcurrentCreationError)) throw error;
+        }
+      }
       return (await operations.get(ownerId, clientRequestId))?.status === "active";
     },
     async createCustom(ownerId: string, requestValue: unknown): Promise<InstantiateBotResponse> {

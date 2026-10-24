@@ -109,12 +109,28 @@ describe("bot instantiation", () => {
     ]);
   });
 
-  it("tells whether a creation request finished, by request ID", async () => {
+  it("reads a creation request's reserved bot, payload and whether it finished", async () => {
     const instantiation = setup();
-    await expect(instantiation.completed(OWNER, "req_instantiate_1")).resolves.toBe(false);
-    await instantiation.instantiate(OWNER, request({ name: "Essay Partner" }));
-    await expect(instantiation.completed(OWNER, "req_instantiate_1")).resolves.toBe(true);
-    await expect(instantiation.completed(OWNER, "req_other")).resolves.toBe(false);
+    await expect(instantiation.attempt(OWNER, "req_instantiate_1")).resolves.toBeNull();
+    const created = await instantiation.instantiate(OWNER, request({ name: "Essay Partner" }));
+    await expect(instantiation.attempt(OWNER, "req_instantiate_1")).resolves.toEqual({
+      active: true, botId: created.agent.id, payloadHash: instantiationPayloadHash(request({ name: "Essay Partner" })),
+    });
+  });
+
+  it("finishes an unfinished creation from its saved definition, and only when it has one", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // The definition was written, then the workspace failed.
+    const workspaceFailed = setup({ ensureWorkspace: failOnce((botId: string) => ensureBotWorkspace(home, botId)) });
+    await expect(workspaceFailed.instantiate(OWNER, request())).rejects.toEqual(new BotInstantiationError("unavailable"));
+    await expect(workspaceFailed.attempt(OWNER, "req_instantiate_1")).resolves.toMatchObject({ active: false });
+    await expect(workspaceFailed.finishFromDefinition(OWNER, "req_instantiate_1")).resolves.toBe(true);
+    await expect(workspaceFailed.attempt(OWNER, "req_instantiate_1")).resolves.toMatchObject({ active: true });
+    // Nothing was written: there is nothing to finish from.
+    const definitionFailed = setup({ agents: { createRecipeBot: async () => { throw new Error("disk full"); } } });
+    await expect(definitionFailed.instantiate(OWNER, request({ clientRequestId: "req_instantiate_2" }))).rejects.toEqual(new BotInstantiationError("unavailable"));
+    await expect(definitionFailed.finishFromDefinition(OWNER, "req_instantiate_2")).resolves.toBe(false);
+    await expect(definitionFailed.finishFromDefinition(OWNER, "req_never_made")).resolves.toBe(false);
   });
 
   it("refuses another payload for the same request, unknown recipes, and malformed input", async () => {
