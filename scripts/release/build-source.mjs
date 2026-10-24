@@ -35,7 +35,13 @@ export function readBuildSource(root, expectedCommit) {
       || !isDeepStrictEqual(original, current);
   }
   if (dirty) {
-    if (expectedCommit) throw new Error("Release checkout has uncommitted source changes");
+    if (expectedCommit) {
+      // Name a few repo-relative paths so CI failures are diagnosable.
+      const paths = [...changed, ...untracked.split("\0").filter(Boolean)];
+      const shown = paths.slice(0, 5).join(", ");
+      const more = paths.length > 5 ? ` (+${paths.length - 5} more)` : "";
+      throw new Error(`Release checkout has uncommitted source changes: ${shown}${more}`);
+    }
     return null;
   }
   const history = git("rev-list", "--topo-order", `--max-count=${MAX_ANCESTORS + 1}`, "HEAD");
