@@ -110,6 +110,36 @@ it.each(['ERR_CONNECTION_RESET', 'ERR_NETWORK_CHANGED', 'ERR_CERT_AUTHORITY_INVA
     } finally { await x.close(); }
   });
 
+it.each([
+  ['primary certificate', { code: 'CERT_HAS_EXPIRED' }],
+  ['nested certificate', { cause: { code: 'CERT_HAS_EXPIRED' } }],
+  ['deeper certificate', { cause: { code: 'ECONNREFUSED', cause: { code: 'CERT_HAS_EXPIRED' } } }],
+  ['unknown primary', { code: 'UNRECOGNIZED_SECURITY_FAILURE' }],
+  ['unknown nested cause', { cause: { code: 'UNRECOGNIZED_SECURITY_FAILURE' } }],
+  ['non-object cause', { cause: 'PRIVATE cause' }],
+] as const)('gives %s precedence over a legacy preconnect Chromium error', async (_name, fields) => {
+  const x = await fixture([() => { throw Object.assign(new Error('net::ERR_CONNECTION_REFUSED'), fields); }]);
+  try {
+    await vi.waitFor(() => expect(x.closed).toBe(true));
+    expect(x.polls).toBe(2);
+    expect(x.inferCount).toBe(1);
+    expect(x.sourceSignal?.aborted).toBe(true);
+    expect(JSON.stringify(x.records)).not.toContain('PRIVATE');
+  } finally { await x.close(); }
+});
+
+it.each(['CERT_HAS_EXPIRED', 'UNRECOGNIZED_SECURITY_FAILURE'])(
+  'does not borrow a safe primary Node code over the forbidden cause %s', async code => {
+    const x = await fixture([() => { throw Object.assign(new TypeError('Connection failed'), { code: 'ECONNREFUSED', cause: { code } }); }]);
+    try {
+      await vi.waitFor(() => expect(x.closed).toBe(true));
+      expect(x.polls).toBe(2);
+      expect(x.inferCount).toBe(1);
+      expect(x.sourceSignal?.aborted).toBe(true);
+    } finally { await x.close(); }
+  },
+);
+
 it('marks binding changes after reading poll as stale source and immediately closes admitted work', async () => {
   const go = gate();
   const x = await fixture([async signal => { await waitOrAbort(go.promise, signal); x.changeBinding(); return empty(); }]);
@@ -134,8 +164,8 @@ it('retains unknown Chromium errors only as unknown, discarding arbitrary messag
     { cause: { code: 'PRIVATE', token: 'PRIVATE'.repeat(100_000) } }); }]);
   try {
     await vi.waitFor(() => expect(x.closed).toBe(true)); expect(x.polls).toBe(2);
-    expect(x.records).toContainEqual(expect.objectContaining({ stage: 'peer_poll', category: 'local_failure',
-      networkDiagnostic: { errorName: 'Error', chromiumCode: 'unknown', phase: 'before_headers' } }));
+    expect(x.records).toContainEqual(expect.objectContaining({ stage: 'peer_poll', category: 'network_error',
+      networkDiagnostic: { errorName: 'Error', chromiumCode: 'unknown', causeCode: 'unknown', phase: 'before_headers' } }));
     expect(JSON.stringify(x.records)).not.toContain('PRIVATE');
     expect(safePlanFailureRecord({ observedAt: '2026-10-22T00:00:00.000Z', stage: 'peer_poll', category: 'network_error',
       networkDiagnostic: { chromiumCode: 'ERR_PRIVATE_NEW', phase: 'PRIVATE', token: 'PRIVATE' } }))
