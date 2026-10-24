@@ -30,6 +30,32 @@ describe("managed Chat catalog", () => {
       .toEqual(["kernel_matrix_included"]);
   });
 
+  it("projects a separately selectable generation-bound OpenRouter Matrix route", () => {
+    const snapshot = makeAiProviderSnapshot();
+    const generation = "11111111-1111-4111-8111-111111111111";
+    snapshot.accessSources.push({ ...snapshot.accessSources[0]!, id: "owner_openrouter", vendor: "openrouter",
+      fundingKind: "owner_api_key", accountLabel: "Billed by OpenRouter", eligibleModelIds: ["anthropic/claude-sonnet-5"],
+      credentialGeneration: generation });
+    snapshot.drivers.push({ ...snapshot.drivers[0]!, id: "matrix_pi", displayName: "Matrix AI" });
+    snapshot.models.push({ ...snapshot.models[0]!, id: "anthropic/claude-sonnet-5", vendor: "openrouter",
+      displayName: "Claude Sonnet 5 via OpenRouter", eligibleAccessSourceIds: ["owner_openrouter"],
+      dataPolicies: [{ accessSourceId: "owner_openrouter", route: "provider_router", disclosureKey: "owner-openrouter" }] });
+    snapshot.instances.push({ ...snapshot.instances[0]!, id: "matrix_pi_owner_openrouter", driverId: "matrix_pi",
+      vendor: "openrouter", accountId: "owner_openrouter", accessSourceId: "owner_openrouter",
+      modelIds: ["anthropic/claude-sonnet-5"], defaultModelId: "anthropic/claude-sonnet-5" });
+    snapshot.instances.push({ ...snapshot.instances[0]!, id: "kernel_owner_openrouter", driverId: "kernel",
+      vendor: "openrouter", accountId: "owner_openrouter", accessSourceId: "owner_openrouter",
+      modelIds: ["anthropic/claude-sonnet-5"], defaultModelId: "anthropic/claude-sonnet-5" });
+    expect(managedPiChatInstances(snapshot)[1]).toMatchObject({ id: "matrix_pi_owner_openrouter",
+      connectionLabel: "Billed by OpenRouter", availability: "available",
+      defaultSelection: { instanceId: "matrix_pi_owner_openrouter", model: "anthropic/claude-sonnet-5",
+        options: [{ id: "credentialGeneration", value: generation }] } });
+    expect(managedChatInstances(snapshot, [])[1]).toMatchObject({ id: "kernel_owner_openrouter",
+      connectionLabel: "Billed by OpenRouter", availability: "available",
+      defaultSelection: { instanceId: "kernel_owner_openrouter", model: "anthropic/claude-sonnet-5",
+        options: [{ id: "credentialGeneration", value: generation }] } });
+  });
+
   it("does not add a native Claude entry when funding becomes unavailable", () => {
     const snapshot = makeAiProviderSnapshot();
     snapshot.accessSources[0]!.state = "unavailable";

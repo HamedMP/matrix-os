@@ -1,6 +1,6 @@
 import type { AiProviderSnapshotV3 } from "@matrix-os/contracts";
 import { describe, expect, it } from "vitest";
-import { BotRouteError, resolveBotRoute, resolveManagedPiRoute } from "../../../packages/gateway/src/bots/route-resolver.js";
+import { BotRouteError, resolveBotRoute, resolveManagedPiOpenRouterRoute, resolveManagedPiRoute } from "../../../packages/gateway/src/bots/route-resolver.js";
 import { resolveBotRouteForAccessSource } from "../../../packages/gateway/src/bots/route-resolver.js";
 
 const NOW = Date.parse("2026-09-28T12:00:00.000Z");
@@ -115,6 +115,25 @@ describe("explicit managed Pi route", () => {
   const value = () => snapshot({
     sources: [{ id: "matrix_cloudflare", models: [GLM] }, { id: "matrix_included", models: [SONNET] }],
     models: [{ id: GLM, vendor: "cloudflare", sources: ["matrix_cloudflare"] }, { id: SONNET, vendor: "anthropic", sources: ["matrix_included"] }],
+  });
+  it("binds an explicit OpenRouter route to its exact credential generation", () => {
+    const value = snapshot();
+    const generation = "11111111-1111-4111-8111-111111111111";
+    value.accessSources.push({ ...ready, id: "owner_openrouter", displayName: "OpenRouter", fundingKind: "owner_api_key",
+      vendor: "openrouter", accountLabel: "Billed by OpenRouter", eligibleModelIds: ["anthropic/claude-sonnet-5"],
+      credentialGeneration: generation, policyVersion: "test" });
+    value.models.push({ id: "anthropic/claude-sonnet-5", vendor: "openrouter", displayName: "Claude Sonnet 5 via OpenRouter",
+      status: "current", capabilities: ["tools"], effortControls: [], eligibleAccessSourceIds: ["owner_openrouter"],
+      dataPolicies: [{ accessSourceId: "owner_openrouter", route: "provider_router", disclosureKey: "owner-openrouter" }], aliases: [], catalogVersion: "test" });
+    value.instances.push({ id: "matrix_pi_owner_openrouter", driverId: "matrix_pi", vendor: "openrouter", accountId: "owner_openrouter",
+      accessSourceId: "owner_openrouter", label: "Billed by OpenRouter", readiness: ready, capabilitySnapshot: ["tools"],
+      modelIds: ["anthropic/claude-sonnet-5"], defaultModelId: "anthropic/claude-sonnet-5", catalogVersion: "test" });
+    const selection = { instanceId: "matrix_pi_owner_openrouter", model: "anthropic/claude-sonnet-5",
+      options: [{ id: "credentialGeneration", value: generation }] };
+    expect(resolveManagedPiOpenRouterRoute(value, selection, NOW)).toMatchObject({ accessSourceId: "owner_openrouter",
+      route: { api: "anthropic-messages", modelId: selection.model }, openRouter: { credentialGeneration: generation } });
+    selection.options[0]!.value = "22222222-2222-4222-8222-222222222222";
+    expect(() => resolveManagedPiOpenRouterRoute(value, selection, NOW)).toThrow(BotRouteError);
   });
   it("honors a concrete Anthropic model instead of the healthy GLM default", () => {
     expect(resolveManagedPiRoute(value(), { instanceId: "matrix_pi_default", model: SONNET }, NOW)).toMatchObject({

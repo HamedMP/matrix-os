@@ -38,7 +38,7 @@ import type { AiProviderSnapshotReader } from "../ai-providers/service.js";
 import { ProviderSettingsStoreError } from "../ai-providers/provider-settings-errors.js";
 import { claudeFallbackCatalog } from "./claude-model-catalog.js";
 import { systemModels } from "./system-model-catalog.js";
-import { managedPiChatInstances } from "./managed-chat-catalog.js";
+import { managedChatInstances, managedPiChatInstances } from "./managed-chat-catalog.js";
 import { applyHarnessSettings, configuredSystemModel } from "./harness-catalog-admission.js";
 import { fundedSelectionError } from "./funded-chat-error.js";
 
@@ -645,6 +645,8 @@ export function createChatProviderCatalogService(options: {
       now: options.now?.() ?? new Date(),
       instances: [
       ...(!selection || scope.managedMatrix ? managedPiChatInstances(aiSnapshot, (options.now?.() ?? new Date()).getTime()) : []),
+      ...(!selection || scope.managedKernel ? managedChatInstances(aiSnapshot, skills, (options.now?.() ?? new Date()).getTime())
+        .filter((instance) => instance.id === "kernel_owner_openrouter") : []),
       ...systemInstances,
       ...completeCodingInstances,
       ],

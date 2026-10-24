@@ -1,5 +1,6 @@
 import { readOwnerAnthropicKey } from "./ai-providers/owner-anthropic-key.js";
-import { readFile } from "node:fs/promises";
+import { assertOwnerOpenRouterKeyParents, readOwnerOpenRouterKey } from "./ai-providers/owner-openrouter-key.js";
+import { lstat, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod/v4";
 import type { FundedAiRequestClass } from "@matrix-os/contracts";
@@ -11,6 +12,7 @@ export const KernelCredentialAccessSourceIdSchema = z.enum([
   "owner_anthropic_key",
   "owner_anthropic_profile",
   "owner_claude_profile",
+  "owner_openrouter",
 ]);
 export type KernelCredentialAccessSourceId = z.infer<typeof KernelCredentialAccessSourceIdSchema>;
 export type KernelCredentialObservationState =
@@ -34,6 +36,7 @@ interface KernelCredentialResolution {
   env?: Record<string, string | undefined>;
   sources: KernelCredentialSources;
   fundedRunTimeoutMs?: number;
+  credentialGeneration?: string;
 }
 
 function hasClaudeOauthConfig(value: unknown): boolean {
@@ -53,6 +56,20 @@ function isNotFound(err: unknown): boolean {
 
 function observationForReadFailure(err: unknown): KernelCredentialObservationState {
   return err instanceof SyntaxError ? "invalid" : "unavailable";
+}
+
+async function ensurePrivateRuntimeProfileDirectory(path: string): Promise<void> {
+  try {
+    await mkdir(path, { mode: 0o700 });
+  } catch (error) {
+    if (!(error instanceof Error)
+      || (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  const metadata = await lstat(path);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()
+    || metadata.uid !== process.getuid?.() || (metadata.mode & 0o077) !== 0) {
+    throw new Error("Selected AI access is unavailable");
+  }
 }
 
 /** Funded request class and optional turn identity for owner-wide interactive priority. */
@@ -76,6 +93,9 @@ async function resolveKernelCredentials(
   delete env.ANTHROPIC_AUTH_TOKEN;
   delete env.CLAUDE_CODE_OAUTH_TOKEN;
   delete env.ANTHROPIC_CUSTOM_HEADERS;
+  delete env.OPENROUTER_API_KEY;
+  delete env.OPENAI_API_KEY;
+  delete env.CODEX_API_KEY;
   const matrixState = fundedProvider?.enabled ? "ready" as const : "disabled" as const;
   let apiKeyState: KernelCredentialObservationState = "setup_required";
   let profileState: KernelCredentialObservationState = "setup_required";
@@ -117,6 +137,23 @@ async function resolveKernelCredentials(
     ownerProfile: { state: profileState },
   };
 
+  if (requestedAccessSourceId === "owner_openrouter") {
+    const openRouter = await readOwnerOpenRouterKey(homePath);
+    if (!openRouter.key || !openRouter.credentialGeneration) throw new Error("Selected AI access is unavailable");
+    await assertOwnerOpenRouterKeyParents(homePath, true);
+    const profiles = join(homePath, "system/ai-providers/runtime-profiles");
+    await ensurePrivateRuntimeProfileDirectory(profiles);
+    const profile = join(profiles, "claude-openrouter");
+    await ensurePrivateRuntimeProfileDirectory(profile);
+    env.HOME = homePath;
+    env.CLAUDE_CONFIG_DIR = profile;
+    env.OPENROUTER_API_KEY = openRouter.key;
+    env.ANTHROPIC_BASE_URL = "https://openrouter.ai/api";
+    env.ANTHROPIC_AUTH_TOKEN = openRouter.key;
+    env.ANTHROPIC_API_KEY = "";
+    return { mode: "api_key", env, sources, credentialGeneration: openRouter.credentialGeneration };
+  }
+
   if (requestedAccessSourceId === "owner_anthropic_key") {
     if (ownerApiKey === undefined) throw new Error("Selected AI access is unavailable");
     env.ANTHROPIC_API_KEY = ownerApiKey;
@@ -151,6 +188,8 @@ async function resolveKernelCredentials(
 export interface KernelCredentialLaunch {
   env?: Record<string, string | undefined>;
   fundedRunTimeoutMs?: number;
+  credentialGeneration?: string;
+  modelId?: string;
 }
 
 /** SDK launches require owner credentials; Matrix funding belongs to the owned Pi worker. */
@@ -170,7 +209,8 @@ export async function buildKernelCredentialLaunch(
     fundedProvider,
     true,
   );
-  return { env: resolved.env, fundedRunTimeoutMs: resolved.fundedRunTimeoutMs };
+  return { env: resolved.env, fundedRunTimeoutMs: resolved.fundedRunTimeoutMs,
+    ...(resolved.credentialGeneration ? { credentialGeneration: resolved.credentialGeneration } : {}) };
 }
 
 export async function buildKernelEnv(

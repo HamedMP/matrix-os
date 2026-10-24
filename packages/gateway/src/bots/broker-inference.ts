@@ -30,6 +30,7 @@ import {
   safeResponseHeaders,
 } from "../collaboration/scope-runtime-broker.js";
 import { isManagedPiBinding, type PiRuntimeBinding } from "./runtime-registry.js";
+import { readOwnerOpenRouterKey } from "../ai-providers/owner-openrouter-key.js";
 
 const INFERENCE_TIMEOUT_MS = 30_000;
 /** Funded relay generation may buffer the full reply; the worker bridge and
@@ -179,7 +180,7 @@ export async function forwardBotInference(
   if (authorization.accessSourceId === "owner_openai_profile" || authorization.accessSourceId === "owner_anthropic_profile"
     || request.action === "inference.responses") return failure(request.requestId, "provider_unavailable");
   // Chat completions exist only on Matrix's managed route (the funded relay).
-  if (request.action === "inference.chat_completions" && authorization.accessSourceId !== "matrix_included") {
+  if (request.action === "inference.chat_completions" && !["matrix_included", "owner_openrouter"].includes(authorization.accessSourceId)) {
     return failure(request.requestId, "provider_unavailable");
   }
 
@@ -214,6 +215,8 @@ export async function forwardBotInference(
       lifecycle,
       deps,
     );
+    if (binding.openRouter && (accessSourceId !== "owner_openrouter"
+      || launch.credentialGeneration !== binding.openRouter.credentialGeneration)) return failure(request.requestId, "action_denied");
     const env = launch.env;
     if (lifecycle.aborted) return failure(request.requestId, "action_denied");
     const apiKey = env?.ANTHROPIC_API_KEY;
@@ -235,6 +238,10 @@ export async function forwardBotInference(
       if (await bindingValid() !== true) return "denied";
       if (lifecycle.aborted) return "denied";
       if (!await stillAuthorized()) return "denied";
+      if (binding.openRouter) {
+        const current = await readOwnerOpenRouterKey(deps.homePath);
+        if (!current.key || current.credentialGeneration !== binding.openRouter.credentialGeneration) return "denied";
+      }
       if (isolated && (!await deps.isolatedChat!.consume(binding) || lifecycle.aborted || !await stillAuthorized())) return "denied";
       return fetchImpl(`${baseUrl}${request.path}`, {
         method: "POST",
