@@ -65,6 +65,14 @@ describe("drawer settings hub", () => {
     expect(screen.getByText("Docs, support, privacy, and terms")).toBeTruthy();
   });
 
+  it("opens GitHub developer access as its own Settings destination", () => {
+    render(<SettingsScreen />);
+
+    fireEvent.press(screen.getByLabelText("Open Developer access"));
+
+    expect(mockPush).toHaveBeenCalledWith("/settings-detail/developer-access");
+  });
+
   it("confirms before signing out", async () => {
     const alert = jest.spyOn(Alert, "alert").mockImplementation(
       (_title, _message, buttons) => buttons?.find((button) => button.style === "destructive")?.onPress?.(),
