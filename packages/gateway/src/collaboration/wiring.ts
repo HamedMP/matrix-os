@@ -232,6 +232,7 @@ export async function createGatewayCollaboration(options: {
     ? new OwnerRuntimeSessionService({
         verifier: directVerifier, ownerId: options.config.ownerId,
         runtimeId: options.config.runtimeId, organizationPrecondition,
+        runtimeGeneration: () => controlClient?.controlFresh() ? controlClient.authorityGeneration() : null,
       })
     : undefined;
   // S07 / T039: lease loss also releases terminal control, stops bound sandbox runtimes and refuses input.

@@ -125,13 +125,7 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
         { kind: "project", resourceId: projectId, organizationId });
       const preflight = CollaborationScopePreflightResponseSchema.parse(preflightValue);
       if (!preflight.eligible || !preflight.confirmationToken) throw new Error("Project unavailable");
-      if (preflight.existingScopeId) {
-        const refreshed = await refreshScope(preflight.existingScopeId);
-        if (refreshed.lifecycle !== "shared" && refreshed.lifecycle !== "archived") await refreshInventory(refreshed.id);
-        if (alive.current) setSurface("dialog");
-        return;
-      }
-      const created = CollaborationScopeSchema.parse(await api.post(
+      const scopeId = preflight.existingScopeId ?? CollaborationScopeSchema.parse(await api.post(
         `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes`,
         {
           kind: "project",
@@ -141,10 +135,10 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
           expectedRevision: preflight.resourceRevision,
           confirmationToken: preflight.confirmationToken,
         },
-      ));
-      let refreshed = await refreshScope(created.id);
+      )).id;
+      let refreshed = await refreshScope(scopeId);
       if (refreshed.lifecycle === "private") refreshed = await ensureDefaultGrant(refreshed);
-      if (refreshed.lifecycle !== "shared" && refreshed.lifecycle !== "archived") await refreshInventory(created.id);
+      if (refreshed.lifecycle !== "shared" && refreshed.lifecycle !== "archived") await refreshInventory(scopeId);
       if (alive.current) setSurface("dialog");
     } catch (failure: unknown) {
       console.warn("[project-collaboration] setup failed", failure instanceof Error ? failure.name : "UnknownError");
