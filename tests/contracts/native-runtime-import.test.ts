@@ -2,6 +2,21 @@ import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 describe("contracts native Node runtime", () => {
+  it("loads explicit owner OpenAI connection contracts in raw Node", () => {
+    const output = execFileSync(process.execPath, ["--input-type=module", "-e", `
+      const { MATRIX_OPENAI_CONNECTION_ID, MatrixOpenAiConnectionSchema,
+        MatrixOpenAiSourceStateSchema, matrixOpenAiSelectionBinding } = await import("@matrix-os/contracts");
+      console.log(MATRIX_OPENAI_CONNECTION_ID, typeof MatrixOpenAiConnectionSchema.safeParse,
+        MatrixOpenAiSourceStateSchema.safeParse({ version: 1, revision: 0, enabled: false, credentialGeneration: null }).success,
+        matrixOpenAiSelectionBinding([
+          { id: "connectionRevision", value: "1" },
+          { id: "credentialGeneration", value: "11111111-1111-4111-8111-111111111111" },
+          { id: "api", value: "openai-completions" },
+        ])?.api);
+    `], { cwd: process.cwd(), encoding: "utf8", timeout: 10_000, env: { ...process.env, NODE_OPTIONS: "" } });
+    expect(output.trim()).toBe("matrix_openai_api function true openai-completions");
+  });
+
   it("loads managed Google route and qualified funded contracts without a TypeScript resolver", () => {
     const output = execFileSync(process.execPath, ["--input-type=module", "-e", `
       const { ManagedGoogleRouteDescriptorSchema, ManagedGoogleRouteResolveRequestSchema,
