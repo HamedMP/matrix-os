@@ -4,6 +4,7 @@ import type { InspectorFileTarget } from "../panels/InspectorFilesPanel";
 interface FileRequest {
   chatId: string;
   target: InspectorFileTarget;
+  directory?: boolean;
 }
 
 const ChatFileNavigation = createContext<{

@@ -51,7 +51,7 @@ import { cn } from "../../lib/cn";
 import type { ConversationActionPresentation } from "../../components/conversation/presentation";
 import { normalizeDesktopEditorPath } from "../editor/desktop-editor-store";
 import { useChatFileNavigation } from "../work/ChatFileNavigation";
-import { resolveChatInspectorTargetForRun, resolveWorkFilesScope } from "../work/work-files-scope";
+import { useChatCopyFullPath, useChatFilePathNavigation } from "./use-chat-file-path-navigation";
 import type { ApiClient } from "../../lib/api";
 import { useBoard } from "../../stores/board";
 import { useConnection } from "../../stores/connection";
@@ -426,6 +426,8 @@ function CanonicalChatWorkspaceContent({
     if (!navigator.clipboard?.writeText) throw new Error("ClipboardUnavailable");
     await navigator.clipboard.writeText(text);
   }, []);
+  const openChatFilePath = useChatFilePathNavigation(controller.detail, projects, fileNavigation, setSubmissionError);
+  const copyChatFullPath = useChatCopyFullPath(controller.detail, projects, copyText);
   const retryTurn = controller.retryTurn;
   const submitApproval = controller.submitApproval;
   const performTranscriptAction = useCallback(async (action: ConversationActionPresentation) => {
@@ -995,6 +997,7 @@ function CanonicalChatWorkspaceContent({
                   onReveal={credentialDisclosure.reveal} onHide={credentialDisclosure.hide} />;
               },
               copyText,
+              copyFullPath: copyChatFullPath,
               openImportedAsset: importedAssets.openImportedAsset,
               openAttachment: (rawPath) => {
                 const path = normalizeDesktopEditorPath(rawPath);
@@ -1003,16 +1006,7 @@ function CanonicalChatWorkspaceContent({
                 return true;
               },
               openWebLink: openChatWebLink,
-              openFile: (rawPath, executionRoot) => {
-                if (!fileNavigation || !controller.detail) return false;
-                const scope = resolveWorkFilesScope(controller.detail, projects);
-                const target = resolveChatInspectorTargetForRun(
-                  rawPath, scope, executionRoot, controller.detail.record.projectId,
-                );
-                if (!target) return false;
-                fileNavigation.open({ chatId: scope.chatId, target });
-                return true;
-              },
+              openFile: openChatFilePath,
               ...(api ? { loadImage: loadChatImage } : {}),
               submitInput: controller.submitInput,
               performAction: performTranscriptAction,

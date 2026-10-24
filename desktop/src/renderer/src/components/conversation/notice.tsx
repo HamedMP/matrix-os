@@ -57,7 +57,7 @@ export function ConversationNotice({
               <div className="min-w-0">
                 <p className="font-medium leading-5">{notice.label}</p>
                 <div className="mt-0.5 leading-5" style={{ color: "var(--text-secondary)" }}>
-                  <MessageResponse copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink}>{notice.markdown}</MessageResponse>
+                  <MessageResponse copyText={callbacks.copyText} copyFullPath={callbacks.copyFullPath} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink}>{notice.markdown}</MessageResponse>
                 </div>
                 {availableActions.length > 0 ? (
                   <div className="mt-2 flex flex-wrap gap-2">

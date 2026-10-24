@@ -38,6 +38,7 @@ function renderBrowser(props?: {
   compact?: boolean;
   mode?: "browse" | "folder-picker";
   onOpenFile?: (path: string) => void;
+  onEditFile?: (path: string) => void;
   onChooseFolder?: (path: string) => void;
   onCreateFolder?: (path: string) => void;
 }) {
@@ -293,6 +294,29 @@ describe("ComputerFileBrowser view options", () => {
     expect(screen.getByText("512 B")).toBeTruthy();
     // Directories show their item count instead of a byte size.
     expect(screen.getByText("3 items")).toBeTruthy();
+  });
+
+  it("copies the absolute path and opens a listed file in Editor", async () => {
+    const onEditFile = vi.fn();
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    renderBrowser({ onEditFile });
+    const row = await screen.findByRole("button", { name: "Open README.md" });
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Copy Path" }));
+    expect(writeText).toHaveBeenCalledWith("/home/matrix/home/README.md");
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Open in Editor" }));
+    expect(onEditFile).toHaveBeenCalledWith("README.md");
+  });
+
+  it("shows a safe message when Copy Path is denied", async () => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn().mockRejectedValue(new Error("private clipboard error")) } });
+    renderBrowser();
+    fireEvent.contextMenu(await screen.findByRole("button", { name: "Open README.md" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Copy Path" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Couldn’t copy the path");
+    expect(screen.queryByText(/private clipboard error/)).toBeNull();
   });
 
   it("matches the Files list handoff geometry and filters from the toolbar search", async () => {

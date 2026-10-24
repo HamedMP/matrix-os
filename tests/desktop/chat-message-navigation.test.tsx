@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MessageResponse } from "@desktop/renderer/src/components/conversation/message";
 import { ConversationTranscript } from "@desktop/renderer/src/components/conversation/transcript";
 import { resolveChatMessageLink } from "@matrix-os/contracts";
+import { fullPathForInspectorTarget, useChatCopyFullPath } from "@desktop/renderer/src/features/chat/use-chat-file-path-navigation";
+import { useConnection } from "@desktop/renderer/src/stores/connection";
+import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 
 beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} unobserve() {} });
@@ -16,7 +19,56 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it("classifies links consistently and rejects unsafe file and protocol inputs", () => {
   expect(resolveChatMessageLink("https://example.com")).toEqual({ kind: "web", url: "https://example.com/" });
   expect(resolveChatMessageLink("/home/matrix/home/reports/file.md:12")).toEqual({ kind: "file", path: "reports/file.md" });
+  expect(resolveChatMessageLink("~/projects/demo/src/")).toEqual({ kind: "file", path: "projects/demo/src" });
   for (const input of ["javascript:alert(1)", "../secrets", "file:///etc/passwd", "https://user:password@example.com"]) expect(resolveChatMessageLink(input)).toBeNull();
+});
+
+it("builds full paths only from an authorized target root", () => {
+  expect(fullPathForInspectorTarget({ kind: "home", path: "notes/readme.md", label: "readme.md" })).toBe("/home/matrix/home/notes/readme.md");
+  expect(fullPathForInspectorTarget({ kind: "project", projectId: "demo", worktreeId: "old", path: "src", label: "src" }, "/worktrees/old")).toBe("/worktrees/old/src");
+  expect(fullPathForInspectorTarget({ kind: "project", projectId: "demo", path: "src", label: "src" }, "relative/root")).toBeNull();
+});
+
+it("copies a historical worktree path from its own authorized root", async () => {
+  const fixture = createCanonicalChatFixture("completed").snapshot;
+  const detail = {
+    record: { ...fixture, projectId: "project_stable" },
+    runs: [{ ...fixture.runs[0]!, executionRoot: { kind: "worktree" as const, projectId: "project_stable", worktreeId: "wt_new" } }],
+    messages: [], turns: [], activities: [],
+  };
+  const get = vi.fn(async () => ({ worktrees: [{ id: "wt_old", path: "/home/matrix/home/worktrees/old" }] }));
+  useConnection.setState({ runtimeSlot: "primary", authGeneration: 1, api: { forRuntime: () => ({ get }) } as never });
+  const copyText = vi.fn(async () => undefined);
+  const { result } = renderHook(() => useChatCopyFullPath(detail, [{ id: "project_stable", slug: "demo", name: "Demo", kind: "github" }], copyText));
+  await act(async () => result.current("src/", { kind: "worktree", projectId: "project_stable", worktreeId: "wt_old" }));
+  expect(get).toHaveBeenCalledWith("/api/projects/demo/worktrees");
+  expect(copyText).toHaveBeenCalledWith("/home/matrix/home/worktrees/old/src");
+});
+
+it("opens folder links and inline folder paths through Chat file navigation", () => {
+  const openFile = vi.fn(() => true);
+  render(<MessageResponse copyText={vi.fn()} openFile={openFile}>
+    {"[Sources](projects/demo/src/) and `projects/demo/src/`"}
+  </MessageResponse>);
+  fireEvent.click(screen.getByRole("link", { name: "Sources" }));
+  fireEvent.click(screen.getByRole("button", { name: "Open src" }));
+  expect(openFile).toHaveBeenNthCalledWith(1, "projects/demo/src/");
+  expect(openFile).toHaveBeenNthCalledWith(2, "projects/demo/src/");
+});
+
+it("recognizes a single relative folder chip", () => {
+  const openFile = vi.fn(() => true);
+  render(<MessageResponse copyText={vi.fn()} openFile={openFile}>{"Open `src/`"}</MessageResponse>);
+  fireEvent.click(screen.getByRole("button", { name: "Open src" }));
+  expect(openFile).toHaveBeenCalledWith("src/");
+});
+
+it("offers Copy Full Path on a transcript folder reference", async () => {
+  const copyFullPath = vi.fn(async () => undefined);
+  render(<MessageResponse copyText={vi.fn()} copyFullPath={copyFullPath} openFile={vi.fn(() => true)}>{"Open `src/`"}</MessageResponse>);
+  fireEvent.contextMenu(screen.getByRole("button", { name: "Open src" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Copy Full Path" }));
+  expect(copyFullPath).toHaveBeenCalledWith("src/");
 });
 
 it("routes web links and file references through separate Chat actions", () => {
