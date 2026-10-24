@@ -64,9 +64,9 @@ it.each(["off", "expired"] as const)("labels a native %s connection truthfully",
   expect(screen.getByText("Usage unavailable")).toBeVisible();
 });
 
-it("expires the rail label without a snapshot refresh", async () => {
+it("expires a non-Hermes configured rail label without a snapshot refresh", async () => {
   vi.useFakeTimers(); view();
-  expect(screen.getByRole("button", { name: /^Pi/ })).toHaveTextContent("Connected");
+  expect(screen.getByRole("button", { name: /^Pi/ })).toHaveTextContent("Configured");
   await act(() => vi.advanceTimersByTimeAsync(5001));
   expect(screen.getByRole("button", { name: /^Pi/ })).toHaveTextContent("Not connected");
 });
