@@ -314,9 +314,10 @@ function collectLine(input: {
           title: "Input needed", safeDescription: "Answer the questions to continue.", questions: record.questions },
       } : { type: "user_input.answered", requestId: record.requestId, correlationId: record.correlationId, reason: record.reason }),
     });
-    const retained = fitCodingPreviewEvents([...input.events, event], MAX_EVENTS);
+    const combined = [...input.events, event];
+    const retained = fitCodingPreviewEvents(combined, MAX_EVENTS);
     input.events.splice(0, input.events.length, ...retained);
-    return { sessionId };
+    return { sessionId, previewTruncated: retained.length !== combined.length };
   }
   const part = record.part;
   if (!part || typeof part !== "object") return { sessionId };
@@ -533,8 +534,13 @@ export function createOpenCodeCodingAgentProvider(
         if (timer) clearTimeout(timer);
         if (killTimer) clearTimeout(killTimer);
         if (drainTimer) clearTimeout(drainTimer);
-        const tail = terminationReason || failed ? "" : outputBuffer.finish().trim();
-        if (tail && !terminationReason && !failed) feed(tail);
+        try {
+          const tail = terminationReason || failed ? "" : outputBuffer.finish().trim();
+          if (tail && !terminationReason && !failed) feed(tail);
+        } catch (error: unknown) {
+          failed = true;
+          logCodingAgentWarning("OpenCode final output normalization failed", error);
+        }
         const result = {
           events,
           previewTruncated: previewTruncated || publisher?.truncated,

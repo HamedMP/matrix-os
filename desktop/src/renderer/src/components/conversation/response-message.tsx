@@ -43,9 +43,9 @@ export function ResponseMessage({
 
   useEffect(() => {
     if (visibleMarkdown === message.markdown) return;
-    // Persisted commentary is already authoritative. Rendering it must not
-    // depend on a typing animation, especially in an occluded Electron window.
-    if ((!streaming && !animateOnMount) || document.hidden) {
+    // Saved content is authoritative, including a completed final first seen
+    // during polling. Only an active visible stream needs a typing animation.
+    if (!streaming || document.hidden) {
       setVisibleMarkdown(message.markdown);
       return;
     }
