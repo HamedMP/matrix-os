@@ -1,5 +1,5 @@
 import { ChatAgentInputFieldsSchema, ChatAgentRecipeSchema, isChatgptPlanBotRoute, isChatgptPlanChatRoute,
-  isManagedCustomBot, isMatrixAnthropicBotRoute, isMatrixAnthropicChatRoute,
+  isManagedCustomBot, isMatrixOpenAiBotRoute, isMatrixOpenAiChatRoute, isMatrixAnthropicBotRoute, isMatrixAnthropicChatRoute,
   type ChatAgent, type ChatAgentRecipeCatalog, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
 import type { AgentDraft } from "./AgentEditor.js";
 import type { deriveCanonicalProviderChoices } from "../canonical-provider-choice.js";
@@ -9,7 +9,7 @@ import { editableAgentRecipe } from "./recipe-edit.js";
 
 export function customAgentModelChoices(models: ReturnType<typeof deriveCanonicalProviderChoices>) {
   return models.filter(choice => !isChatgptPlanBotRoute(choice) && !isChatgptPlanChatRoute(choice)
-    && !isMatrixAnthropicChatRoute(choice) && !isMatrixAnthropicBotRoute(choice));
+    && !isMatrixOpenAiChatRoute(choice) && !isMatrixOpenAiBotRoute(choice) && !isMatrixAnthropicChatRoute(choice) && !isMatrixAnthropicBotRoute(choice));
 }
 
 /** One derivation owns visible feedback, button eligibility and native submission. */

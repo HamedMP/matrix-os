@@ -1,9 +1,9 @@
 import type {
   CanonicalProviderCatalog, CanonicalProviderInstanceDescriptor, CanonicalProviderSetupAction,
 } from "@matrix-os/contracts";
-import { canonicalProviderModelRouteLabel, isManagedPiBotRoute, isChatgptPlanChatRoute, isMatrixAnthropicChatRoute } from "@matrix-os/contracts";
+import { canonicalProviderModelRouteLabel, isManagedPiBotRoute, isChatgptPlanChatRoute, isMatrixAnthropicChatRoute, isMatrixOpenAiChatRoute } from "@matrix-os/contracts";
 import { Cpu } from "@renderer/lib/hugeicons";
-import { ChatModelPicker, deriveCanonicalProviderChoices, canonicalProviderUnavailableSelectionLabel } from "@matrix-os/ui";
+import { ChatModelPicker, deriveCanonicalProviderChoices, canonicalProviderUnavailableSelectionLabel, canonicalChatSubscriptionSelectionMatches } from "@matrix-os/ui";
 import { changeCanonicalComposerInstance, createCanonicalComposerSelection, canonicalComposerSelectionIsAvailable, type CanonicalComposerSelection } from "./canonical-composer-state";
 import { ProviderDriverGlyph } from "./ProviderDriverGlyph";
 import { openProviderSettings } from "../settings/open-provider-settings";
@@ -33,11 +33,11 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
     selected={selection ? { instanceId: selection.instanceId, modelId: selection.model } : null}
     label={routeLabel} statusLabel={showUnavailable ? unavailableLabel : null}
     instanceId={selectedInstance?.id ?? selection?.instanceId} modelId={selectedModel?.id ?? selection?.model}
-    triggerIcon={selectedInstance ? <ProviderDriverGlyph kind={isManagedPiBotRoute({ instanceId: selectedInstance.id, driverKind: selectedInstance.driverKind }) || isChatgptPlanChatRoute({ instanceId: selectedInstance.id, driverKind: selectedInstance.driverKind }) || isMatrixAnthropicChatRoute({ instanceId: selectedInstance.id, driverKind: selectedInstance.driverKind }) ? "kernel" : selectedInstance.driverKind} /> : <Cpu size={15} />}
+    triggerIcon={selectedInstance ? <ProviderDriverGlyph kind={isManagedPiBotRoute({ instanceId: selectedInstance.id, driverKind: selectedInstance.driverKind }) || isChatgptPlanChatRoute({ instanceId: selectedInstance.id, driverKind: selectedInstance.driverKind }) || (isMatrixAnthropicChatRoute({ instanceId: selectedInstance.id, driverKind: selectedInstance.driverKind }) || isMatrixOpenAiChatRoute({ instanceId: selectedInstance.id, driverKind: selectedInstance.driverKind })) ? "kernel" : selectedInstance.driverKind} /> : <Cpu size={15} />}
     lockedInstanceId={instanceLocked ? selection?.instanceId : undefined}
     disabled={disabled} loading={loading} menuSide={menuSide} menuZIndex={DESKTOP_Z_INDEX.popover}
     renderDriverIcon={(kind) => <ProviderDriverGlyph kind={kind} size={17} />}
-    renderIcon={(choice) => <ProviderDriverGlyph kind={isManagedPiBotRoute({ instanceId: choice.instanceId, driverKind: choice.driverKind }) || (isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)) ? "kernel" : choice.driverKind} size={13} />}
+    renderIcon={(choice) => <ProviderDriverGlyph kind={isManagedPiBotRoute({ instanceId: choice.instanceId, driverKind: choice.driverKind }) || (isChatgptPlanChatRoute(choice) || (isMatrixAnthropicChatRoute(choice) || isMatrixOpenAiChatRoute(choice))) ? "kernel" : choice.driverKind} size={13} />}
     onSetupAction={onSetupAction} onNewChat={onNewChat} onOpenSettings={openProviderSettings}
     onSelect={(choice) => {
       if (instanceLocked && choice.instanceId !== selection?.instanceId) return;
@@ -46,7 +46,7 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
         : createCanonicalComposerSelection(catalog, choice.instanceId);
       if (!base) return;
       onChange({ ...base, model: choice.modelId,
-        ...((isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)) ? { options: choice.selectedOptions,
+        ...((isChatgptPlanChatRoute(choice) || (isMatrixAnthropicChatRoute(choice) || isMatrixOpenAiChatRoute(choice))) ? { options: isMatrixOpenAiChatRoute(choice) && selection?.instanceId === choice.instanceId && canonicalChatSubscriptionSelectionMatches(selectedInstance, selection.options) ? selection.options : choice.selectedOptions,
           interactionMode: choice.interactionModes.includes(base.interactionMode) ? base.interactionMode : choice.interactionMode,
           permissionMode: choice.permissionModes.includes(base.permissionMode) ? base.permissionMode : choice.permissionMode,
         } : {}),
