@@ -51,6 +51,7 @@ export default function SettingsDetailLayout() {
         ["account", "Account"],
         ["app-settings", "App settings"],
         ["connect-apps", "Connect Apps"],
+        ["developer-access", "Developer access"],
         ["billing", "Billing"],
         ["help", "Help"],
       ].map(([name, title]) => (
