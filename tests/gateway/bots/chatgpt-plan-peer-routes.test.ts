@@ -90,7 +90,7 @@ it('admits escaping-heavy near-limit SSE replies and rejects encoded/decoded ove
   });
   const app = new Hono();
   app.use('*', async (c, next) => { markVerifiedRuntimeBearer(c); await next(); });
-  app.route('/', createChatGptPlanPeerRoutes({ getPrincipal: () => ({ userId: 'owner', source: 'jwt' }) as never, peers: { reply } as never }));
+  app.route('/', createChatGptPlanPeerRoutes({ getPrincipal: () => ({ userId: 'owner', source: 'jwt' }) as never, peers: { reply, authorizeReply: () => {} } as never }));
   const terminal = 'data: {"type":"response.completed","response":{"status":"completed","model":"fixture-model"}}\n\n';
   const body = `: ${'\u0001'.repeat(1024 * 1024 - terminal.length - 5)}\n\n${terminal}`;
   const envelope = { version: 1, sessionId: '00000000-0000-4000-8000-000000000001', id: '00000000-0000-4000-8000-000000000002', ok: true, status: 200, headers: { 'content-type': 'text/event-stream' }, body };
