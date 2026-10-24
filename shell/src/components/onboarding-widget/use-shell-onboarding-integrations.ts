@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getGatewayUrl } from "@/lib/gateway";
 
 const REQUEST_TIMEOUT_MS = 10_000;
+const CLOSED_RECEIPT_GRACE_MS = 5_000;
 const LIST_RETRY_DELAYS_MS = [3_000, 10_000, 30_000];
 
 interface Options {
@@ -238,6 +239,7 @@ export function useShellOnboardingIntegrations(
       popup.opener = null;
       popup.location.href = url;
       let completed = false;
+      let receiptPopupClosedAt: number | null = null;
       cancelPollRef.current = startConnectPoll({
         ...(optionsRef.current.pollIntervals ? { intervals: optionsRef.current.pollIntervals } : {}),
         tick: async () => {
@@ -248,7 +250,15 @@ export function useShellOnboardingIntegrations(
             const receipt = parseIntegrationAttemptStatus(await readJson(fetchFn, `${gatewayUrl}/api/integrations/gmail/pipedream/attempts/${attemptId}`));
             if (!isCurrent()) return;
             if (!receipt || receipt.status === "failed" || receipt.status === "expired") { settle(false); return; }
-            if (receipt.status === "pending") return;
+            if (receipt.status === "pending") {
+              // A provider can close consent before its callback receipt arrives.
+              // Keep checking this exact attempt briefly, then release Connecting.
+              if (popup.closed) {
+                receiptPopupClosedAt ??= Date.now();
+                if (Date.now() - receiptPopupClosedAt >= CLOSED_RECEIPT_GRACE_MS) settle(false);
+              }
+              return;
+            }
             const next = parseConnectedIntegrations(await readJson(fetchFn, `${gatewayUrl}/api/integrations`));
             if (!isCurrent()) return;
             applyConnections(next);
