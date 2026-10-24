@@ -31,6 +31,17 @@ const ResourcesSchema = z.object({
   maxFileHandles: z.number().int().positive().default(128),
 }).default({ memoryMb: 256, cpuShares: 512, maxFileHandles: 128 });
 
+const IntegrationServiceId = z.string().regex(/^[a-z][a-z0-9_]{0,47}$/);
+/** Legacy apps list service ids; App Store manifests declare services with their actions. */
+const ManifestIntegrationSchema = z.union([
+  IntegrationServiceId,
+  z.strictObject({ service: IntegrationServiceId, actions: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)).min(1).max(16) }),
+]);
+const ManifestIntegrationsSchema = z.strictObject({
+  required: z.array(ManifestIntegrationSchema).max(16).optional(),
+  optional: z.array(ManifestIntegrationSchema).max(16).optional(),
+});
+
 const BaseManifestSchema = z.object({
   name: z.string().min(1),
   slug: z.string().regex(SAFE_SLUG, "slug must match ^[a-z0-9][a-z0-9-]{0,63}$"),
@@ -47,6 +58,8 @@ const BaseManifestSchema = z.object({
   serve: ServeSchema.optional(),
   resources: ResourcesSchema,
   permissions: z.array(z.string()).default([]),
+  // Malformed legacy declarations are dropped rather than making an existing app unloadable.
+  integrations: ManifestIntegrationsSchema.optional().catch(undefined),
   storage: z.unknown().optional(),
   publishing: SitePublishingSchema.optional(),
   listingTrust: z.string().optional(),
