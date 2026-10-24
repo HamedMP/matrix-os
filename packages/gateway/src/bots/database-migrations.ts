@@ -12,6 +12,7 @@ import { sql, type Transaction } from "kysely";
 import { migrateManagedPiState } from "../chat/managed-pi-migration.js";
 import { migrateBotProviderConnections } from "./provider-connections-migration.js";
 import { migrateChatGptPlanDevices } from "./chatgpt-plan-device-migration.js";
+import { migrateBotChatThreadsV9 } from "./bot-chat-threads-migration.js";
 import type { OwnerBotDatabase } from "./database.js";
 
 const OWNER = "owner_id TEXT NOT NULL CHECK (char_length(owner_id) BETWEEN 1 AND 128)";
@@ -355,4 +356,5 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 6, name: "bot_chatgpt_plan_devices", up: migrateChatGptPlanDevices },
   { version: 7, name: "jev_label_grant", up: migrateJevLabelGrantV7 },
   { version: 8, name: "isolated_chat_phases", up: migrateIsolatedChatPhasesV8 },
+  { version: 9, name: "bot_chat_threads", up: migrateBotChatThreadsV9 },
 ];
