@@ -33,13 +33,15 @@ operator probe-count limits (`MATRIX_FUNDED_AI_MODEL_PROBE_DAILY_LIMIT` and
 for both counters is one conditional Postgres write; a receipt never substitutes
 for execution-time policy and credit authorization. Probe-count limits bound
 calls, not verified dollar spend. The limits must match across Platform replicas;
-a same-day mismatch fails closed until the next UTC day. GLM Flash and Sonnet 5 are the only currently
-probed models; Jev requires its own priced, exact-wire readiness path.
+a same-day mismatch fails closed until coordinated limit migration or the next
+UTC-day activation; never manually reset counters in their active window. Fixed text
+probes use the finite `FUNDED_PROBE_MODELS` registry, currently nine managed
+Workers AI routes and Sonnet 5. Jev requires its own priced, exact-wire readiness path.
 
 The authenticated relay `GET /ready?model=<canonical-id>` success response is
 `{ "ready": true, "priceValidThrough": "<ISO timestamp>" }`. The timestamp
 comes from the same local model price table used for admission. Platform accepts
-only this bounded success shape. For fixed GLM Flash and Sonnet routes, provider
+only this bounded success shape. For approved fixed text routes, provider
 health is shared across Platform replicas for at most five minutes, capped by
 `priceValidThrough`. The original health observation and expiry are retained;
 reuse never restamps or extends them. Jev's owner-specific credential/policy
@@ -62,10 +64,16 @@ hashed control-credential/configuration identity; credential bytes and owner
 policy/ledger snapshots are never stored in the shared cache. Database failure,
 stale evidence or exhausted count budget fail closed. No live probe-count limit,
 Gateway spend fuse or customer enablement changes are implied by this contract.
-In a continuously healthy two-model deployment, the five-minute interval needs
-approximately 576 paid readiness calls per day; failures, cancellations and Jev
-may consume remaining budget, so this is not an availability or dollar-cost
-guarantee.
+For `N` continuously healthy enabled routes, the five-minute maximum health
+interval implies an idealized floor of `N × 288` paid readiness calls per day:
+ten routes need 2,880, while the older two-route example needs 576. Minute
+capacity must also admit the bounded cold fanout; two calls per minute cannot
+supply ten fresh routes in one request. Shorter price expiry, failures,
+cancellations and Jev need additional headroom, so this is not an availability
+or dollar-cost guarantee. The [ranked-model rollout contract](../../606-ranked-workers-ai-models/spec.md)
+proposes 20/minute and 3,000/day for reviewed activation; these are not new
+defaults or authorization to change a live allowance. Intentionally constrained
+canaries may retain smaller limits and remain unavailable without current health.
 
 An explicitly configured [isolated ordinary Chat phase](../isolated-ordinary-chat.md)
 uses cache-only fixed-model readiness for its exact runtime. Missing or expired
