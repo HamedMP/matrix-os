@@ -45,8 +45,11 @@ it("installs the Chromium revision used by shell-scoped Settings tests before ge
   const setup = e2e.slice(0, e2e.indexOf("- name: Run E2E tests"));
   // Settings contrast resolves @playwright/test from shell, while terminal tests
   // use mcp-browser's separately locked Playwright. Both revisions are required.
-  expect(setup).toContain("pnpm --filter shell exec playwright install --with-deps chromium");
-  expect(setup).toContain("pnpm --filter @matrix-os/mcp-browser exec playwright install --with-deps chromium");
+  // System packages come from the cached install step, so the browser installs omit --with-deps.
+  expect(setup).toContain("pnpm --filter shell exec playwright install-deps chromium");
+  expect(setup).toContain("pnpm --filter @matrix-os/mcp-browser exec playwright install-deps chromium");
+  expect(setup).toContain("pnpm --filter shell exec playwright install chromium");
+  expect(setup).toContain("pnpm --filter @matrix-os/mcp-browser exec playwright install chromium");
 });
 it("measures complete disabled group opacity without claiming disabled WCAG conformance", () => {
   const opaque = [{ background: [0, 0, 0, 1], opacity: 1 }];

@@ -97,6 +97,10 @@ jobs:
       dedicated_eligible: ${{ needs.redirect.outputs.routed == 'true' && 'false' || (steps.route.outputs.eligible) }}
       dedicated_mode: ${{ steps.route.outputs.mode }}
       dedicated_required: ${{ needs.redirect.outputs.routed == 'true' && 'false' || (steps.route.outputs.required) }}
+      # Ordinary PRs run only affected unit tests and skip unrelated E2E. Main, manual, merge-queue
+      # and fast-ci admitted PRs keep the full inventory that their coverage gates verify.
+      unit_scope: ${{ needs.redirect.outputs.routed != 'true' && steps.route.outputs.required != 'true' && steps.changed.outputs.unit_scope || 'full' }}
+      e2e_tests: ${{ (needs.redirect.outputs.routed == 'true' || steps.route.outputs.required == 'true') && 'true' || steps.changed.outputs.e2e_tests || 'true' }}
     steps:
       - name: Authenticate isolated refresh workflow origin
         id: origin
@@ -727,6 +731,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
+          # The PR merge commit's first parent is the base it is tested against.
+          fetch-depth: 2
         if: needs.changes.outputs.should_run == 'true'
 
       - uses: oven-sh/setup-bun@v2
@@ -756,8 +762,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
+      - name: Select affected unit tests
+        id: select
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.unit_scope == 'affected'
+        timeout-minutes: 10
+        # Vitest resolves workspace packages through their built output while walking the import graph.
+        run: bun run test:prepare && node scripts/ci/unit-test-selection.mjs HEAD^1 "$RUNNER_TEMP/unit-tests.txt"
+
       - name: Check controller regressions before the full suite
-        if: matrix.shard == 4 && needs.changes.outputs.should_run == 'true'
+        if: matrix.shard == 4 && needs.changes.outputs.should_run == 'true' && needs.changes.outputs.unit_scope != 'affected'
         timeout-minutes: 3
         env:
           UNIT_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
@@ -803,7 +816,7 @@ jobs:
             --maxWorkers=2 --reporter=default --reporter=json --outputFile.json=output/ci/controller-regression.json
 
       - name: Upload controller regression evidence
-        if: always() && matrix.shard == 4 && needs.changes.outputs.should_run == 'true'
+        if: always() && matrix.shard == 4 && needs.changes.outputs.should_run == 'true' && needs.changes.outputs.unit_scope != 'affected'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: controller-regression
@@ -811,9 +824,13 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - run: GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile.json=output/ci/unit-${{ matrix.shard }}.json
+      - run: GITHUB_SHA="$UNIT_SOURCE_SHA" bun run test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile.json=output/ci/unit-${{ matrix.shard }}.json ${UNIT_SELECTION:+--passWithNoTests $(cat "$UNIT_SELECTION")}
         env:
           UNIT_SOURCE_SHA: ${{ needs.changes.outputs.source_sha || github.sha }}
+          # Keep Vitest's default of 2 workers: 4 measured no faster on 4-vCPU runners (#2843) and
+          # starved the CPU-heavy gateway build in customer-vps-runtime-loader past its timeout.
+          # Set only after a successful affected-test selection; empty runs the full suite.
+          UNIT_SELECTION: ${{ steps.select.outputs.list }}
         if: needs.changes.outputs.should_run == 'true'
 
       - name: Upload unit profiling
@@ -1027,9 +1044,11 @@ jobs:
   e2e:
     name: E2E Tests (${{ matrix.lane }})
     needs: [changes, ci-backend]
-    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
+    # PRs confined to CI tooling, mobile, distro or non-E2E tests skip E2E; main always runs it.
+    if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && needs.changes.outputs.e2e_tests != 'false' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Normal runs take 5-8 minutes; a Playwright package cache miss on a slow Ubuntu mirror adds ~10.
+    timeout-minutes: 25
     env:
       LANG: C.UTF-8
       LC_ALL: C.UTF-8
@@ -1080,13 +1099,55 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}
 
+      - name: Identify runner image for Playwright system packages
+        id: runner-image
+        if: needs.changes.outputs.should_run == 'true'
+        run: echo "version=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      # Cached .deb files skip the Ubuntu mirror, which has dropped to ~30 kB/s and turned this
+      # 18 MB install into a 10-minute step that exhausted the E2E timeout. The key pins the runner
+      # image so the cached packages always match the libraries already installed on it.
+      - name: Restore Playwright system packages
+        id: playwright-apt
+        if: needs.changes.outputs.should_run == 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/playwright-apt
+          key: playwright-apt-${{ runner.os }}-${{ runner.arch }}-${{ steps.runner-image.outputs.version }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright system packages
+        if: needs.changes.outputs.should_run == 'true'
+        run: |
+          set -euo pipefail
+          cache="$HOME/.cache/playwright-apt"
+          if compgen -G "$cache/*.deb" >/dev/null; then
+            if sudo dpkg -i "$cache"/*.deb >/dev/null; then
+              echo "Installed $(ls "$cache"/*.deb | wc -l) Playwright system packages from cache."
+              exit 0
+            fi
+            echo "::warning::Cached Playwright system packages did not install; downloading them."
+          fi
+          echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' | sudo tee /etc/apt/apt.conf.d/99keep-playwright-debs >/dev/null
+          sudo rm -f /var/cache/apt/archives/*.deb
+          pnpm --filter @matrix-os/mcp-browser exec playwright install-deps chromium
+          pnpm --filter shell exec playwright install-deps chromium
+          rm -rf "$cache" && mkdir -p "$cache"
+          cp /var/cache/apt/archives/*.deb "$cache"/ 2>/dev/null || true
+
+      - name: Save Playwright system packages
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'true' && steps.playwright-apt.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/playwright-apt
+          key: ${{ steps.playwright-apt.outputs.cache-primary-key }}
+
       - name: Install Chromium for terminal presentation regression
         if: needs.changes.outputs.should_run == 'true'
-        run: pnpm --filter @matrix-os/mcp-browser exec playwright install --with-deps chromium
+        run: pnpm --filter @matrix-os/mcp-browser exec playwright install chromium
 
       - name: Install Chromium for shell-scoped Settings regressions
         if: needs.changes.outputs.should_run == 'true'
-        run: pnpm --filter shell exec playwright install --with-deps chromium
+        run: pnpm --filter shell exec playwright install chromium
 
       - name: Save Playwright browser revisions
         if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
