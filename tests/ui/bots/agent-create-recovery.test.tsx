@@ -112,26 +112,39 @@ it("preserves selected recipe data through failed refresh and retry", async () =
   expect(screen.getByRole("button", { name: "Create Agent" })).toBeEnabled();
 });
 
-it("shows quiet model loading without offering retry before a failure", async () => {
+it("keeps model discovery inside the scratch card and restores its ready icon", async () => {
   const x = fixture();
   let resolve!: (value: Awaited<ReturnType<typeof x.client.catalog>>) => void;
   x.client.catalog.mockReturnValueOnce(new Promise(value => { resolve = value; }));
   render(<ChatAgentsPanel client={x.client} view="recipes" onClose={x.close}/>);
-  expect(screen.getByText("Loading models…")).toHaveAttribute("role", "status");
+  const card = screen.getByRole("button", { name: "Start from scratch" });
+  expect(card).toHaveAttribute("aria-busy", "true");
+  expect(within(card).getByRole("status")).toHaveTextContent("Loading models…");
+  expect(card.querySelector(".matrix-ap-loading-spinner")).not.toBeNull();
+  expect(card.querySelector(".lucide-plus")).toBeNull();
+  expect(document.querySelector(".matrix-chat-agent-catalog-status")).toBeNull();
   expect(screen.queryByRole("button", { name: "Retry models" })).toBeNull();
-  expect(screen.getByRole("button", { name: "Start from scratch" })).toBeDisabled();
+  expect(card).toBeDisabled();
   const catalog = await clientFixture({ matrix: true }).catalog();
   await act(async () => resolve(catalog));
   await waitFor(() => expect(screen.queryByText("Loading models…")).toBeNull());
-  expect(screen.getByRole("button", { name: "Start from scratch" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Start from scratch" })).toBe(card);
+  expect(card).toBeEnabled();
+  expect(card).toHaveAttribute("aria-busy", "false");
+  expect(card.querySelector(".matrix-ap-loading-spinner")).toBeNull();
+  expect(card.querySelector(".lucide-plus")).not.toBeNull();
 });
 
 it("offers model retry from a failed chooser and coalesces its pending requests", async () => {
   const x = fixture(); x.client.catalog.mockRejectedValueOnce(new Error("private discovery failure"));
   render(<ChatAgentsPanel client={x.client} view="recipes" onClose={x.close}/>);
-  await screen.findByText("Models could not be refreshed. Your draft is still here.");
+  await screen.findByText("Models unavailable. Retry models.");
   const retry = await screen.findByRole("button", { name: "Retry models" });
-  expect(screen.getByRole("button", { name: "Start from scratch" })).toBeDisabled();
+  expect(within(retry).getByRole("alert")).toHaveTextContent("Models unavailable. Retry models.");
+  expect(within(retry).getByText("Start from scratch")).toBeVisible();
+  expect(within(retry).getByText("Describe it in your own words")).toBeVisible();
+  expect(retry.querySelector("button")).toBeNull();
+  expect(document.querySelector(".matrix-chat-agent-catalog-status")).toBeNull();
   expect(retry).toBeEnabled();
   retry.focus(); expect(retry).toHaveFocus();
   let resolve!: (value: Awaited<ReturnType<typeof x.client.catalog>>) => void;
@@ -139,7 +152,10 @@ it("offers model retry from a failed chooser and coalesces its pending requests"
   x.client.catalog.mockReturnValueOnce(new Promise(value => { resolve = value; }));
   fireEvent.click(retry); fireEvent.click(retry);
   expect(screen.queryByRole("button", { name: "Retry models" })).toBeNull();
-  expect(screen.getByText("Loading models…")).toHaveAttribute("role", "status");
+  const loadingCard = screen.getByRole("button", { name: "Start from scratch" });
+  expect(loadingCard).toBeDisabled();
+  expect(loadingCard).toHaveAttribute("aria-busy", "true");
+  expect(within(loadingCard).getByRole("status")).toHaveTextContent("Loading models…");
   expect(x.client.catalog).toHaveBeenCalledTimes(2);
   await act(async () => resolve(catalog));
   await waitFor(() => expect(screen.getByRole("button", { name: "Start from scratch" })).toBeEnabled());

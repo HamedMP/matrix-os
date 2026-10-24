@@ -18,6 +18,7 @@ import { chatAgentButtonClass, chatAgentInputClass, chatAgentMutedStyle } from "
 import type { BotRecipeRef, BotRecipeSummary } from "@matrix-os/contracts";
 import { useRef } from "react";
 import { Plus } from "lucide-react";
+import { WorkflowLoadingSpinner } from "../agents-providers/WorkflowLoadingSpinner.js";
 
 
 const jevRecipe = {
@@ -29,9 +30,9 @@ export const AGENT_RECIPE_COUNT = agentInspirations.length + 1;
 export const BOT_RECIPE_COUNT = agentInspirations.filter((recipe) => !isLaunchBotRecipeId(recipe.id)).length + LAUNCH_BOT_RECIPE_IDS.length;
 const EMPTY_BOT_RECIPES: BotRecipeSummary[] = [];
 
-export function AgentRecipesPanel({ onStartFromScratch, scratchDisabled = false, onRefreshCatalog, onSetup, botClient, onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "",
+export function AgentRecipesPanel({ onStartFromScratch, scratchDisabled = false, scratchRetryDisabled = scratchDisabled, catalogError = "", onRefreshCatalog, onSetup, botClient, onStartChat, onCreateJev, connections = [], jevUnavailable = "", jevPending = false, jevError = "",
   botRecipes = EMPTY_BOT_RECIPES, botRecipeStatus, onRetryBotRecipes, matrixModels = [], catalog, catalogLoading = false, onInstantiateBot, onOpenBotChat }: {
-  onStartFromScratch?: (trigger: HTMLButtonElement) => void; scratchDisabled?: boolean;
+  onStartFromScratch?: (trigger: HTMLButtonElement) => void; scratchDisabled?: boolean; scratchRetryDisabled?: boolean; catalogError?: string;
   onRefreshCatalog?:()=>void; onSetup?:()=>void; botClient?: BotClient; onStartChat?: StartAgentChat; onCreateJev?: (accountLabel: string, labeling: boolean) => Promise<void>;
   connections?: ChatAgentIntegrationConnection[]; jevUnavailable?: string; jevPending?: boolean; jevError?: string;
   botRecipes?: BotRecipeSummary[]; matrixModels?: readonly CanonicalProviderChoice[];
@@ -137,10 +138,14 @@ export function AgentRecipesPanel({ onStartFromScratch, scratchDisabled = false,
     {setupRecipe && !nativeCatalogBlocked ? <BotRecipeSetup onRefreshCatalog={onRefreshCatalog} onSetup={onSetup} botClient={botClient} creationRetained={!!botAttempt.current?.chatId} key={setupRecipe.recipeId} recipe={setupRecipe} selection={botSelection} models={matrixModels} catalog={catalog} pending={!!botPending} createDisabled={!botModelAvailable || catalogLoading} catalogLoading={catalogLoading} error={botError} onSelectionChange={selection => { setBotSelection(selection); setBotError(""); }} onCreate={(name,executor) => { void createBot(setupRecipe, name,executor); }} onClose={() => { setSetupRecipe(null); setBotError(""); }}/> : null}
     {botError && !setupRecipe ? <p role="alert" className="text-xs">{botError}</p> : null}
     {onStartFromScratch || showJev || matches.length || visibleBotRecipes.length ? <div className="matrix-chat-agent-recipes__grid grid gap-3">
-      {onStartFromScratch ? <button type="button" aria-label="Start from scratch" disabled={scratchDisabled || !!botPending || jevPending || !!setupRecipe}
+      {onStartFromScratch ? <button type="button" aria-label={catalogError ? "Retry models" : "Start from scratch"} aria-busy={catalogLoading}
+        disabled={catalogLoading || (catalogError ? !onRefreshCatalog || scratchRetryDisabled : scratchDisabled) || !!botPending || jevPending || !!setupRecipe}
         className={`${chatAgentButtonClass} matrix-chat-agent-card matrix-chat-agent-recipe-card flex min-w-0 flex-col rounded-xl border p-3 text-left`}
-        onClick={event => onStartFromScratch(event.currentTarget)}>
-        <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--bg-hover,var(--matrix-secondary,var(--secondary)))]"><Plus size={18} strokeWidth={1.5}/></span>
+        onClick={event => { if (catalogError) { onRefreshCatalog?.(); return; } onStartFromScratch(event.currentTarget); }}>
+        <span className="flex h-8 items-center gap-2">
+          <span aria-hidden="true" className="matrix-chat-agent-scratch-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--bg-hover,var(--matrix-secondary,var(--secondary)))]">{catalogLoading ? <WorkflowLoadingSpinner/> : <Plus size={18} strokeWidth={1.5}/>}</span>
+          {catalogLoading ? <span role="status" className="sr-only">Loading models…</span> : catalogError ? <span role="alert" className="text-xs leading-4" style={chatAgentMutedStyle}>Models unavailable. Retry models.</span> : null}
+        </span>
         <span className="text-sm font-medium">Start from scratch</span>
         <span className="matrix-template-description text-xs leading-5" style={chatAgentMutedStyle}>Describe it in your own words</span>
       </button> : null}
