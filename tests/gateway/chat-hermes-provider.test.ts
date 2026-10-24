@@ -1793,17 +1793,20 @@ describe("Hermes canonical Chat Provider adapter", () => {
     ]);
   });
 
-  it("caps streamed Hermes output before it can grow adapter memory without bound", async () => {
+  it("caps streamed Hermes preview without ending the active task", async () => {
     const gateway = fakeGateway();
     const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
     const eventsPromise = collect(adapter.start(baseInput));
     await vi.waitFor(() => expect(gateway.requests.some(({ method }) => method === "prompt.submit")).toBe(true));
-    gateway.event("message.delta", { text: "x".repeat(96 * 1024 + 1) });
+    const text = "x".repeat(96 * 1024 + 1);
+    gateway.event("message.delta", { text });
+    gateway.event("message.complete", { text, status: "complete" });
 
-    expect(await eventsPromise).toEqual([
-      expect.objectContaining({ type: "run.completed", outcome: "failed" }),
-    ]);
-    expect(gateway.process.kill).toHaveBeenCalledWith("SIGTERM");
+    const events = await eventsPromise;
+    expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    const preview = events.flatMap(event => event.type === "assistant.delta" ? [event.delta] : []).join("");
+    expect(Buffer.byteLength(JSON.stringify(preview))).toBeLessThanOrEqual(96 * 1024 + 2);
+    expect(preview.match(/Output preview truncated/g)).toHaveLength(1);
   });
 
   it("bounds JSON-RPC requests instead of waiting forever for a response", async () => {

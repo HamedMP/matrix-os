@@ -1,8 +1,11 @@
 import type { SharedBrowserBroker } from "../shared-browser/broker.js";
 import { openNativeSharedBrowserRun, type NativeSharedBrowserRun } from "./native-shared-browser-run.js";
 import { configureClaudeSharedBrowser } from "./claude-shared-browser-launch.js";
+import { claudeCliLifetime } from "./claude-run-lifetime.js";
+import { createBoundedCliLines } from "./bounded-cli-lines.js";
 import { classifiedClaudeCliFailure, classifiedClaudeFailureEvidence } from "./claude-run-failure.js";
 import { createClaudeInputController } from "./claude-input-control.js";
+import { createCanonicalCliHumanWait } from "./cli-human-wait.js";
 import { CALL_TOOL, createClaudeCustomMcpApprovalControl } from "./claude-custom-mcp-approval.js";
 import { createClaudeBuiltinToolApprovalControl } from "./claude-builtin-tool-approval.js";
 import { createClaudeIntegrationApprovalControl } from "./claude-integration-approval.js";
@@ -71,12 +74,11 @@ const ClaudeStreamLineSchema = z.object({
 }).passthrough();
 
 type ClaudeChatState = z.infer<typeof ClaudeChatStateSchema>;
-const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000;
 // Claude's stream-json protocol repeats bounded tool-result envelopes throughout
 // a Run, so healthy repository tasks routinely exceed one MiB in total. This is
 // still a hard process-output ceiling; per-event projection and the queue remain
 // independently bounded below.
-const MAX_STREAM_BYTES = 16 * 1024 * 1024;
+const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const MAX_STDERR_BYTES = 8_192;
 
 type ClaudeActivity = {
@@ -160,7 +162,7 @@ export function createClaudeChatProviderAdapter(options: {
   homePath: string;
   credentialKey?: Buffer;
   spawnFn?: CanonicalCliSpawn;
-  /** Maximum time without CLI output or accepted input. */
+  /** Explicit legacy inactivity override; omitted for ordinary busy owner turns. */
   timeoutMs?: number;
   resolveCredentialEnv?: () => Promise<Record<string, string | undefined> | undefined>;
   /** The run id doubles as the funded priority claim key for this turn. */
@@ -171,7 +173,6 @@ export function createClaudeChatProviderAdapter(options: {
   previewDriveClient?: Pick<PreviewDrivePlatformClient, "grantAction">;
   customMcpApprovalClient?: CustomMcpApprovalClient;
 }): CanonicalChatProviderAdapter<ClaudeChatState> {
-  const idleTimeoutMs = options.timeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
   const activeRuns = new Map<string, {
     ownerId: string;
     ownerType: CanonicalProviderRunInput["owner"]["type"];
@@ -313,7 +314,6 @@ export function createClaudeChatProviderAdapter(options: {
     }
 
     const queue = createCanonicalCliEventQueue<CanonicalProviderRunEvent>();
-    let buffered = "";
     let stderrEvidence = "";
     let stderrEvidenceBytes = 0;
     let streamedText = false;
@@ -329,16 +329,18 @@ export function createClaudeChatProviderAdapter(options: {
     const processSignal = AbortSignal.any([input.signal, processController.signal]);
     let finishInput: (() => void) | undefined;
     let writeControl: ((frame: string) => Promise<void>) | undefined;
+    let markStarted: (() => void) | undefined;
+    const humanWait = createCanonicalCliHumanWait(event => queue.push(event));
     const approvalControl = approvalClient && registeredGeneration ? createClaudeCustomMcpApprovalControl({
       runId: input.runId, generation: registeredGeneration, client: approvalClient,
-      emit: event => queue.push(event),
+      emit: humanWait.emit,
       onError: error => console.warn("[chat-claude] Custom MCP approval failed", error instanceof Error ? error.name : "UnknownError"),
     }) : undefined;
     const integrationApproval = capability ? createClaudeIntegrationApprovalControl({
       runId: input.runId, homePath: options.homePath, capability,
       verify: options.customMcpApprovalClient?.verifyIntegrationDecision?.bind(options.customMcpApprovalClient),
       ...(previewDrive && options.previewDriveClient ? { previewDriveClient: options.previewDriveClient } : {}),
-      emit: event => queue.push(event), onError: () => processController.abort(),
+      emit: humanWait.emit, onError: () => processController.abort(),
     }) : undefined;
     const verifyBuiltinToolDecision = options.customMcpApprovalClient?.verifyIntegrationDecision?.bind(options.customMcpApprovalClient);
     // Auto Accept Edits still asks for non-edit tools; Auto's classifier refusals are deliberate and stay denied.
@@ -347,13 +349,14 @@ export function createClaudeChatProviderAdapter(options: {
       && input.interactionMode === "default"
       ? createClaudeBuiltinToolApprovalControl({
         runId: input.runId, chatId: input.chatId, homePath: options.homePath, verify: verifyBuiltinToolDecision,
-        emit: event => queue.push(event),
+        emit: humanWait.emit,
         onError: () => processController.abort(),
       }) : undefined;
     let approvalRevoked = false;
     let finalRevokePromise: Promise<void> | undefined;
     let clearApprovalPromise: Promise<boolean> | undefined;
     const revokeApproval = (reason: "final" | "steer" = "final") => {
+      inputControl.close();
       capability?.revoke();
       approvalControl?.close();
       integrationApproval?.close();
@@ -377,8 +380,9 @@ export function createClaudeChatProviderAdapter(options: {
       }
     };
     const inputControl = createClaudeInputController({
+      signal: processSignal,
       write: frame => writeControl ? writeControl(frame) : Promise.reject(new Error("Input transport unavailable")),
-      emit: event => queue.push(event),
+      emit: humanWait.emit,
       onError: () => processController.abort(),
       onToolPermission: (request, respond) => integrationApproval?.onToolPermission(request, respond)
         || (approvalControl?.onToolPermission ?? (approvalReady && capability && !previewDrive && selectedPermission === "default"
@@ -614,6 +618,7 @@ export function createClaudeChatProviderAdapter(options: {
     const parseLine = (raw: string) => {
       if (!raw.trim()) return;
       const line = ClaudeStreamLineSchema.parse(JSON.parse(raw));
+      markStarted?.();
       if (inputControl.handle(line)) return;
       if (line.type === "result") {
         if (line.is_error === true || line.subtype === "error") discardProjectedText();
@@ -727,6 +732,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
     };
 
+    const lines = createBoundedCliLines(MAX_FRAME_BYTES, parseLine);
     void runCanonicalCli({
       command: launch.command,
       args: launch.args,
@@ -734,16 +740,15 @@ export function createClaudeChatProviderAdapter(options: {
       env: runEnv,
       replaceEnv: true,
       signal: processSignal,
-      // Funding supplies a strict total deadline; owner credentials only use
-      // the progress-aware idle deadline.
-      ...(credentialLaunch.fundedRunTimeoutMs === undefined
-        ? {}
-        : { timeoutMs: credentialLaunch.fundedRunTimeoutMs }),
-      idleTimeoutMs: Math.min(idleTimeoutMs, credentialLaunch.fundedRunTimeoutMs ?? idleTimeoutMs),
-      maxStdoutBytes: MAX_STREAM_BYTES,
+      ...claudeCliLifetime({ idleTimeoutMs: options.timeoutMs,
+        fundedRunTimeoutMs: credentialLaunch.fundedRunTimeoutMs }),
+      maxStdoutBytes: MAX_FRAME_BYTES,
+      stdoutLimitMode: "caller_bounded_frames",
       maxStderrBytes: MAX_STDERR_BYTES,
       spawnFn: options.spawnFn,
-      onStart(write, end) {
+      onStart(write, end, idle, startup) {
+        markStarted = () => startup.ready();
+        humanWait.attach(idle);
         writeControl = write;
         finishInput = end;
         void write(`${JSON.stringify({ type: "user", session_id: resumeState?.sessionId ?? "", message: { role: "user", content: nativePrompt }, parent_tool_use_id: null })}\n`).catch(error => {
@@ -752,10 +757,7 @@ export function createClaudeChatProviderAdapter(options: {
         });
       },
       onStdout(chunk) {
-        buffered += chunk.toString("utf8");
-        const lines = buffered.split("\n");
-        buffered = lines.pop() ?? "";
-        for (const line of lines) parseLine(line);
+        lines.push(chunk);
       },
       onStderr(chunk) {
         stderrEvidence += chunk.toString("utf8");
@@ -763,7 +765,7 @@ export function createClaudeChatProviderAdapter(options: {
       },
     }).then(() => {
       releaseActiveRun();
-      if (buffered.trim()) parseLine(buffered);
+      lines.finish();
       if (sawResult && !resultFailed) flushProjectedText();
       else discardProjectedText();
       flushPendingDelta();
@@ -858,9 +860,10 @@ export function createClaudeChatProviderAdapter(options: {
         queue.finish();
         return;
       }
+      const cancelled = input.signal.aborted || (cancellationRequested && error instanceof CanonicalCliError && error.kind === "aborted");
       const classifiedFailure = usageFailure ?? classifiedClaudeFailureEvidence(`${resultText}\n${stderrEvidence}`)
         ?? classifiedClaudeCliFailure(error);
-      if (!input.signal.aborted && !cancellationRequested) {
+      if (!cancelled) {
         console.warn("[chat-claude] Claude CLI Run failed", {
           category: classifiedFailure?.category ?? "provider_exit",
           cliFailureKind: error instanceof CanonicalCliError ? error.kind : "unknown",
@@ -871,8 +874,8 @@ export function createClaudeChatProviderAdapter(options: {
       }
       queue.push(CanonicalProviderRunEventSchema.parse({
         type: "run.completed",
-        outcome: input.signal.aborted || cancellationRequested ? "aborted" : "failed",
-        ...(input.signal.aborted || cancellationRequested ? {} : {
+        outcome: cancelled ? "aborted" : "failed",
+        ...(cancelled ? {} : {
           error: classifiedFailure?.safeError ?? {
             code: "run_failed",
             safeMessage: "Claude could not complete this Run. Check its connection and retry.",
@@ -887,7 +890,7 @@ export function createClaudeChatProviderAdapter(options: {
       // terminal events. Finish the forwarding stream with that failure too.
       releaseActiveRun();
       queue.finish(error instanceof Error ? error : new Error("Claude execution unavailable"));
-    }).finally(() => { if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
+    }).finally(() => { inputControl.close(); humanWait.close(); if (steerPrompt && emittedState && !input.signal.aborted && !cancellationRequested) {
       capability?.revoke(); approvalControl?.close(); integrationApproval?.close(); builtinToolApproval?.close();
     } else revokeApproval(); });
 
@@ -897,6 +900,7 @@ export function createClaudeChatProviderAdapter(options: {
       streamCompleted = true;
     } finally {
       processController.abort();
+      inputControl.close(); humanWait.close();
       discardProjectedText();
       if (!streamCompleted) {
         cancellationRequested = true;
