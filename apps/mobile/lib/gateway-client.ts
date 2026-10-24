@@ -78,6 +78,37 @@ function randomShellSuffix(): string {
 
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
+const GithubDeveloperStatusSchema = z.object({
+  installed: z.boolean(),
+  authenticated: z.boolean(),
+  user: z.string().min(1).max(128).nullable(),
+  gitProtocol: z.enum(["ssh", "https"]).nullable(),
+  sshStatus: z.enum(["verified", "setup_required", "unavailable"]),
+  commitIdentity: z.object({
+    status: z.enum(["ready", "missing", "unavailable"]),
+    label: z.string().min(1).max(256).nullable(),
+  }),
+  ready: z.boolean(),
+  errorCode: z.string().regex(/^[a-z0-9_]{1,64}$/).nullable(),
+});
+
+export type GithubDeveloperStatus = z.infer<typeof GithubDeveloperStatusSchema>;
+export type GithubDeveloperStatusResult =
+  | { ok: true; status: GithubDeveloperStatus }
+  | { ok: false; error: "GitHub developer access unavailable" };
+
+function parseGithubDeveloperStatus(value: unknown): GithubDeveloperStatus | null {
+  const parsed = GithubDeveloperStatusSchema.safeParse(value);
+  if (!parsed.success) return null;
+  const status = parsed.data;
+  const prerequisitesReady = status.installed
+    && status.authenticated
+    && status.gitProtocol === "ssh"
+    && status.sshStatus === "verified"
+    && status.commitIdentity.status === "ready";
+  return { ...status, ready: status.ready && prerequisitesReady };
+}
+
 /** Canonical hosted platform origin; `/vm/<handle>` computer routes share it. */
 const HOSTED_PLATFORM_ORIGIN = "https://app.matrix-os.com";
 
@@ -1530,49 +1561,65 @@ export class GatewayClient {
     }
   }
 
+  async getGithubDeveloperStatus(): Promise<GithubDeveloperStatusResult> {
+    try {
+      const res = await this.fetchGateway("/api/github/status");
+      if (!res.ok) {
+        logGatewayStatusWarning("GitHub developer status unavailable", res.status);
+        return { ok: false, error: "GitHub developer access unavailable" };
+      }
+      const body = await res.json();
+      const status = parseGithubDeveloperStatus(body);
+      if (!status) {
+        logGatewayWarning("GitHub developer status returned invalid payload", "invalid payload");
+        return { ok: false, error: "GitHub developer access unavailable" };
+      }
+      return { ok: true, status };
+    } catch (err: unknown) {
+      logGatewayCatchWarning("GitHub developer status unavailable", err);
+      return { ok: false, error: "GitHub developer access unavailable" };
+    }
+  }
+
   /**
-   * Create a workspace tab that runs a provider setup command and return its
-   * serialized TerminalRef for handoff, or null on failure. The command is sent
-   * to the gateway inside the bounded foreground tab and is never stored in
-   * shell state or rendered in the UI (CLAUDE.md: provider setup stays
-   * terminal-backed and command-hidden).
+   * Create a workspace tab that runs the fixed GitHub developer login flow and
+   * return its validated serialized TerminalRef for handoff, or null on failure.
    */
-  async createProviderSetupSession(command: string): Promise<string | null> {
-    if (typeof command !== "string" || command.length === 0) return null;
-    const name = `Setup ${randomShellSuffix()}`;
+  async createGithubDeveloperSetupSession(): Promise<string | null> {
+    const name = `GitHub setup ${randomShellSuffix()}`;
     try {
       const ensured = await this.fetchGateway("/api/terminal/workspaces/ensure", {
         method: "POST", body: "{}", headers: { "Content-Type": "application/json" },
       });
       if (!ensured.ok) return null;
       const ensuredBody = (await ensured.json().catch((err: unknown) => {
-        logGatewayCatchWarning("provider setup workspace ensure returned invalid JSON", err);
+        logGatewayCatchWarning("GitHub setup workspace ensure returned invalid JSON", err);
         return null;
       })) as { workspace?: { id?: unknown } } | null;
       const workspaceId = typeof ensuredBody?.workspace?.id === "string" ? ensuredBody.workspace.id : "";
       if (!/^tws_[0-9a-f]{32}$/.test(workspaceId)) return null;
       const res = await this.fetchGateway(`/api/terminal/workspaces/${workspaceId}/tabs`, {
         method: "POST",
-        body: JSON.stringify({ name, cwd: "projects", command: ["sh", "-lc", command] }),
+        body: JSON.stringify({ name, cwd: "projects", command: ["matrix-github-developer-login"] }),
         headers: { "Content-Type": "application/json" },
       });
       if (!res.ok) {
         await res.text().catch((err: unknown) => {
-          logGatewayCatchWarning("failed to read provider setup session create error body", err);
+          logGatewayCatchWarning("failed to read GitHub setup session create error body", err);
           return "";
         });
-        logGatewayStatusWarning("provider setup session create failed", res.status);
+        logGatewayStatusWarning("GitHub setup session create failed", res.status);
         return null;
       }
       const body = (await res.json().catch((err: unknown) => {
-        logGatewayCatchWarning("provider setup tab create returned invalid JSON", err);
+        logGatewayCatchWarning("GitHub setup tab create returned invalid JSON", err);
         return null;
       })) as { tab?: { id?: unknown } } | null;
       const tabId = typeof body?.tab?.id === "string" ? body.tab.id : "";
       const created = `${workspaceId}:${tabId}`;
       return isSafeSessionId(created) ? created : null;
     } catch (err: unknown) {
-      logGatewayCatchWarning("provider setup tab create unavailable", err);
+      logGatewayCatchWarning("GitHub setup tab create unavailable", err);
       return null;
     }
   }

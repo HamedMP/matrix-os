@@ -52,6 +52,7 @@ describe("drawer settings hub", () => {
       "Open Account",
       "Open App settings",
       "Open Connect Apps",
+      "Open Developer access",
       "Open Billing",
       "Open Help",
       "Sign out",
