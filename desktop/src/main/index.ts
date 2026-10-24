@@ -6,7 +6,9 @@ import { readDriveUploadFile, saveDriveDownloadFile } from "./files/organization
 import { registerTerminalClipboardIpc } from "./files/terminal-clipboard";
 import { pathToFileURL } from "node:url";
 import { createNativeChatgptPlanService } from "./chatgpt-plan/service";
+import { fetchNativePlan } from "./chatgpt-plan/transport";
 import { createPlanVault } from "./chatgpt-plan/vault";
+import { createPlanDiagnosticStore, planDiagnosticDirectory } from "./chatgpt-plan/diagnostic-store";
 import { createNavigationCache } from "./persistence/navigation-cache";
 import { registerNavigationCacheIpc } from "./ipc/navigation-cache";
 import { registerChatgptPlanIpc } from "./ipc/chatgpt-plan";
@@ -98,6 +100,9 @@ let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
 let navigationCacheDrained = false;
 let drainingNavigationCache = false;
+let planDiagnostics: ReturnType<typeof createPlanDiagnosticStore> | null = null;
+let planDiagnosticsDrained = false;
+let drainingPlanDiagnostics = false;
 let planDrained = false;
 let drainingPlan = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
@@ -282,8 +287,16 @@ if (!gotLock) {
         return !!contents && !contents.isDestroyed() && event.sender === contents
           && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
       });
+      // Failure-only metadata stays in this app/profile's logs; no credential
+      // profile files or other applications' logs are read by the recorder.
+      try {
+        planDiagnostics = createPlanDiagnosticStore({ directory: planDiagnosticDirectory(app.getPath("logs"), userData) });
+      } catch (error: unknown) {
+        console.warn("[chatgpt-plan] diagnostic_start_failed");
+      }
       chatgptPlan = createNativeChatgptPlanService({
         auth, vault: createPlanVault({ dir: userData, safeStorage }),
+        fetchFn: fetchNativePlan,
         openBrowser: async url => {
           const authorizationUrl = safeChatgptAuthorizationUrl(url);
           if (!authorizationUrl) throw new Error("invalid authorization URL");
@@ -662,6 +675,18 @@ if (!gotLock) {
         drainingPlan = true;
         void chatgptPlan.dispose().catch((error: unknown) => logMainError("subscription cleanup failed", error))
           .finally(() => { planDrained = true; app.quit(); });
+      }
+      return;
+    }
+    // Dispose the subscription first so peer shutdown failures can still be
+    // recorded, then drain diagnostics for at most the store's one-second cap.
+    if (!planDiagnosticsDrained && planDiagnostics) {
+      event.preventDefault();
+      if (!drainingPlanDiagnostics) {
+        drainingPlanDiagnostics = true;
+        void planDiagnostics.close().catch((error: unknown) => {
+          console.warn("[chatgpt-plan] diagnostic_close_failed");
+        }).finally(() => { planDiagnosticsDrained = true; app.quit(); });
       }
       return;
     }
