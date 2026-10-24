@@ -9,6 +9,7 @@ import type { AiProviderSnapshotV3 } from '@matrix-os/contracts';
 const { run } = vi.hoisted(() => ({ run: vi.fn() }));
 vi.mock('node:child_process', () => ({ execFile: Object.assign(vi.fn(), { [Symbol.for('nodejs.util.promisify.custom')]: run }) }));
 import { createClaudeTaskObserver } from '../../../packages/gateway/src/bots/claude-task-observation.js';
+import { AiProviderService } from '../../../packages/gateway/src/ai-providers/service.js';
 
 const help = '--restricted --tools --strict-mcp-config --setting-sources --output-format --permission-prompts';
 const loggedOut = JSON.stringify({ loggedIn: false, authMethod: 'none' });
@@ -26,6 +27,17 @@ beforeEach(async () => {
 afterEach(async () => { vi.unstubAllEnvs(); await rm(homePath, { recursive: true, force: true }); });
 
 describe('native Claude Bot readiness observation', () => {
+  it('accepts current native subscription authentication with the real unprobed owner catalog', async () => {
+    run.mockResolvedValueOnce({ stdout: JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' }) });
+    await writeFile(join(homePath, '.claude.json'), JSON.stringify({ oauthAccount: { accountUuid: 'account_test' } }));
+    const service = new AiProviderService({ homePath, env: {}, exposeClaudeProfileAccount: true });
+    try {
+      expect((await service.getSnapshot()).accessSources.find(source => source.id === 'owner_anthropic_profile')?.state).toBe('unknown');
+      const observed = await createClaudeTaskObserver({ homePath, providers: service })();
+      expect(observed).toMatchObject({ available: true, fingerprint: createHash('sha256').update('account_test').digest('hex') });
+      if (observed.available) expect(observed.models.length).toBeGreaterThan(0);
+    } finally { service.close(); }
+  });
   it('recognizes documented logged-out exit1 without reading a native profile or granting access', async () => {
     run.mockRejectedValueOnce(failure(loggedOut));
     await expect(observe()).resolves.toEqual({ available: false, reason: 'authentication_required' });
@@ -44,6 +56,18 @@ describe('native Claude Bot readiness observation', () => {
   it('does not qualify an API key as native subscription authentication', async () => {
     run.mockResolvedValueOnce({ stdout: JSON.stringify({ loggedIn: true, authMethod: 'api_key' }) });
     await expect(observe()).resolves.toEqual({ available: false, reason: 'authentication_required' });
+  });
+  it.each(['setup_required', 'auth_required', 'expired', 'invalid', 'unavailable', 'disabled'])('does not override negative catalog state %s with native login', async state => {
+    run.mockResolvedValueOnce({ stdout: JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' }) });
+    await writeFile(join(homePath, '.claude.json'), JSON.stringify({ oauthAccount: { accountUuid: 'account_test' } }));
+    const canonical = structuredClone(snapshot); canonical.accessSources[0]!.state = state as typeof canonical.accessSources[0]['state'];
+    await expect(createClaudeTaskObserver({ homePath, providers: { getSnapshot: async () => canonical } })()).resolves.toEqual({ available: false, reason: 'authentication_required' });
+  });
+  it('does not extend an expired unprobed catalog after native authentication', async () => {
+    run.mockResolvedValueOnce({ stdout: JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' }) });
+    await writeFile(join(homePath, '.claude.json'), JSON.stringify({ oauthAccount: { accountUuid: 'account_test' } }));
+    const canonical = structuredClone(snapshot); Object.assign(canonical.accessSources[0]!, { state: 'unknown', staleAfter: new Date(Date.now() - 1000).toISOString() });
+    await expect(createClaudeTaskObserver({ homePath, providers: { getSnapshot: async () => canonical } })()).resolves.toEqual({ available: false, reason: 'authentication_required' });
   });
   it.each([
     ['invalid JSON', failure('not-json')],
