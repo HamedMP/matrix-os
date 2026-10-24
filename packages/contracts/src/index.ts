@@ -1522,4 +1522,4 @@ export * from '#google-qualified-authorization';
 export * from '#pilot-cohort';
 export * from "#native-mobile-target";
 
-export * from "./matrix-openai-connection.js";
+export * from "#matrix-openai-connection";

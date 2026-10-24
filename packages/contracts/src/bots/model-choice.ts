@@ -1,4 +1,4 @@
-import { MATRIX_OPENAI_API_INSTANCE_ID, MATRIX_PI_OPENAI_API_INSTANCE_ID, matrixOpenAiSelectionBinding } from "../matrix-openai-connection.js";
+import { MATRIX_OPENAI_API_INSTANCE_ID, MATRIX_PI_OPENAI_API_INSTANCE_ID, matrixOpenAiSelectionBinding } from "#matrix-openai-connection";
 import type { CanonicalProviderCatalog, CanonicalProviderInstanceDescriptor } from "#canonical-chat-provider";
 import type { CanonicalChatModelSelection } from "#canonical-chat";
 import { MATRIX_BOT_SELECTION } from "#bots/selection";
