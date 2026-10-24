@@ -1,0 +1,335 @@
+#!/opt/matrix/runtime/node/bin/node
+
+import { spawn } from "node:child_process";
+import { constants } from "node:fs";
+import { chmod, link, lstat, mkdir, open, readFile, realpath, rename, unlink } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { dirname, join, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
+
+const COMMAND_OUTPUT_BYTES = 64 * 1024;
+const CONFIG_BYTES = 256 * 1024;
+const COMMAND_TIMEOUT_MS = 15_000;
+const LOGIN_TIMEOUT_MS = 10 * 60_000;
+const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+const IDENTITY_NAME = /^[^\x00-\x1f\x7f]{1,200}$/;
+const IDENTITY_EMAIL = /^(?=.{3,320}$)[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/;
+const SSH_GREETING = /^Hi [A-Za-z0-9](?:[A-Za-z0-9-]{0,38})! You've successfully authenticated, but GitHub does not provide shell access\.$/m;
+
+// Verified against GitHub's official published host-key entries on 2026-10-24:
+// https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
+const GITHUB_KNOWN_HOSTS = `github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+github.com ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEmKSENjQEezOmxkZMy7opKgwFB9nkt5YRrYMjNuG5N87uRgg6CLrbo5wAdT/y6v0mKV0U2w0WZ2YB/++Tpockg=
+github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZaMgRK6+PKCUXaDbC7qtbW8gIkhL7aGCsOr/C56SJMy/BCZfxd1nWzAOxSDPgVsmerOBYfNqltV9/hWCqBywINIR+5dIg6JTJ72pcEpEjcYgXkE2YEFXV1JHnsKgbLWNlhScqb2UmyRkQyytRLtL+38TGxkxCflmO+5Z8CSSNY7GidjMIZ7Q4zMjA2n1nGrlTDkzwDCsw+wqFPGQA179cnfGWOWRVruj16z6XyvxvjJwbz0wQZ75XK5tKSb7FNyeIEs4TT4jk+S4dhPeAUC5y+bDYirYgM4GC7uEnztnZyaVWQ7B381AK4Qdrwt51ZqExKbQpTUNn+EjqoTwvqNj4kqx5QUCI0ThS/YkOxJCXmPUWZbhjpCg56i+2aB6CmK2JGhn57K5mj0MNdBXA4/WnwH6XoPWJzK5Nyu2zB3nAZp+S5hpQs+p1vN1/wsjk=
+`;
+
+const GITHUB_SSH_CONFIG = `Host github.com
+  HostName github.com
+  User git
+  StrictHostKeyChecking yes
+  UserKnownHostsFile ~/.ssh/matrix-github-known-hosts
+  GlobalKnownHostsFile /dev/null
+`;
+const GITHUB_INCLUDE = "Include ~/.ssh/matrix-github.conf";
+
+class CommandFailure extends Error {
+  constructor(code, output = "") {
+    super("command failed");
+    this.code = code;
+    this.output = output.slice(0, COMMAND_OUTPUT_BYTES);
+  }
+}
+
+function redact(value) {
+  return value
+    .replace(/ghp_[A-Za-z0-9_]+/g, "[redacted]")
+    .replace(/github_pat_[A-Za-z0-9_]+/g, "[redacted]")
+    .replace(/bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*?-----END [^-\r\n]*PRIVATE KEY-----/g, "[redacted private key]");
+}
+
+function streamSanitized(stream, destination, state, onLimit) {
+  stream.on("data", (chunk) => {
+    state.bytes += chunk.length;
+    if (state.bytes > COMMAND_OUTPUT_BYTES) {
+      onLimit();
+      return;
+    }
+    const text = chunk.toString("utf8");
+    state.output += text;
+    state.pending += text;
+    let newline;
+    while ((newline = state.pending.indexOf("\n")) !== -1) {
+      destination.write(redact(state.pending.slice(0, newline + 1)));
+      state.pending = state.pending.slice(newline + 1);
+    }
+  });
+}
+
+async function run(command, args, options = {}) {
+  const interactive = options.interactive === true;
+  const timeoutMs = options.timeoutMs ?? COMMAND_TIMEOUT_MS;
+  const accepted = new Set(options.acceptExitCodes ?? [0]);
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: [interactive ? "inherit" : "ignore", "pipe", "pipe"],
+    });
+    const stdout = { bytes: 0, output: "", pending: "" };
+    const stderr = { bytes: 0, output: "", pending: "" };
+    let forceTimer;
+    const terminate = () => {
+      child.kill("SIGTERM");
+      if (!forceTimer) forceTimer = setTimeout(() => child.kill("SIGKILL"), 2_000);
+    };
+    if (interactive) {
+      streamSanitized(child.stdout, process.stdout, stdout, terminate);
+      streamSanitized(child.stderr, process.stderr, stderr, terminate);
+    } else {
+      child.stdout.on("data", (chunk) => {
+        stdout.bytes += chunk.length;
+        if (stdout.bytes <= COMMAND_OUTPUT_BYTES) stdout.output += chunk.toString("utf8");
+        else terminate();
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr.bytes += chunk.length;
+        if (stderr.bytes <= COMMAND_OUTPUT_BYTES) stderr.output += chunk.toString("utf8");
+        else terminate();
+      });
+    }
+    let settled = false;
+    const timer = setTimeout(terminate, timeoutMs);
+    const forwardSignal = (signal) => child.kill(signal);
+    process.once("SIGINT", forwardSignal);
+    process.once("SIGTERM", forwardSignal);
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(forceTimer);
+      process.off("SIGINT", forwardSignal);
+      process.off("SIGTERM", forwardSignal);
+      rejectRun(new CommandFailure(error.code ?? "unavailable"));
+    });
+    child.once("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(forceTimer);
+      process.off("SIGINT", forwardSignal);
+      process.off("SIGTERM", forwardSignal);
+      if (interactive) {
+        if (stdout.pending) process.stdout.write(redact(stdout.pending));
+        if (stderr.pending) process.stderr.write(redact(stderr.pending));
+      }
+      const output = `${stdout.output}\n${stderr.output}`.slice(0, COMMAND_OUTPUT_BYTES);
+      if (stdout.bytes > COMMAND_OUTPUT_BYTES || stderr.bytes > COMMAND_OUTPUT_BYTES) {
+        rejectRun(new CommandFailure("output_limit"));
+      } else if (accepted.has(code ?? -1)) {
+        resolveRun({ code, stdout: stdout.output, stderr: stderr.output });
+      } else {
+        rejectRun(new CommandFailure(code ?? "unavailable", output));
+      }
+    });
+  });
+}
+
+async function ensureOwnerDirectory(path) {
+  await mkdir(path, { recursive: true, mode: 0o700 });
+  const stat = await lstat(path);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (process.getuid && stat.uid !== process.getuid())) {
+    throw new Error("unsafe owner directory");
+  }
+  await chmod(path, 0o700);
+}
+
+async function readOwnerFile(path, maxBytes) {
+  let stat;
+  try {
+    stat = await lstat(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return { bytes: null, stat: null };
+    throw error;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maxBytes || (process.getuid && stat.uid !== process.getuid())) {
+    throw new Error("unsafe owner file");
+  }
+  const bytes = await readFile(path);
+  if (bytes.length > maxBytes) throw new Error("owner file too large");
+  return { bytes, stat };
+}
+
+async function writeOwnerFileAtomic(path, content, mode, maxBytes) {
+  const bytes = Buffer.from(content, "utf8");
+  if (bytes.length > maxBytes) throw new Error("owner file too large");
+  const parent = dirname(path);
+  const current = await readOwnerFile(path, maxBytes);
+  const temporary = join(parent, `.matrix-github-${randomBytes(16).toString("hex")}`);
+  let handle;
+  try {
+    handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, mode);
+    await handle.writeFile(bytes);
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    const latest = await readOwnerFile(path, maxBytes);
+    if (
+      (current.stat === null) !== (latest.stat === null)
+      || (current.stat && latest.stat && (
+        current.stat.ino !== latest.stat.ino
+        || current.stat.dev !== latest.stat.dev
+        || current.stat.mtimeMs !== latest.stat.mtimeMs
+        || current.stat.size !== latest.stat.size
+      ))
+    ) {
+      throw new Error("owner file changed");
+    }
+    if (current.stat === null) {
+      await link(temporary, path);
+      await unlink(temporary);
+    } else {
+      await rename(temporary, path);
+    }
+    await chmod(path, mode);
+  } finally {
+    await handle?.close();
+    try {
+      await unlink(temporary);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+}
+
+async function installPinnedSshConfiguration(homePath) {
+  const sshPath = join(homePath, ".ssh");
+  await ensureOwnerDirectory(sshPath);
+  await writeOwnerFileAtomic(join(sshPath, "matrix-github-known-hosts"), GITHUB_KNOWN_HOSTS, 0o600, CONFIG_BYTES);
+  await writeOwnerFileAtomic(join(sshPath, "matrix-github.conf"), GITHUB_SSH_CONFIG, 0o600, CONFIG_BYTES);
+
+  const configPath = join(sshPath, "config");
+  const current = await readOwnerFile(configPath, CONFIG_BYTES);
+  const text = current.bytes?.toString("utf8") ?? "";
+  const hasInclude = text.split(/\r?\n/).some((line) => line.trim() === GITHUB_INCLUDE);
+  if (!hasInclude) {
+    await writeOwnerFileAtomic(configPath, `${GITHUB_INCLUDE}\n${text}`, 0o600, CONFIG_BYTES);
+  }
+}
+
+async function gitConfigValue(env, homePath, key) {
+  try {
+    const result = await run("git", ["config", "--global", "--get", key], { env, cwd: homePath });
+    return result.stdout.trim();
+  } catch (error) {
+    if (error instanceof CommandFailure && error.code === 1) return null;
+    throw error;
+  }
+}
+
+function validName(value) {
+  return IDENTITY_NAME.test(value.trim());
+}
+
+function validEmail(value) {
+  return IDENTITY_EMAIL.test(value.trim());
+}
+
+async function configureIdentity(env, homePath, profile) {
+  const configuredName = await gitConfigValue(env, homePath, "user.name");
+  const configuredEmail = await gitConfigValue(env, homePath, "user.email");
+  if (configuredName && validName(configuredName) && configuredEmail && validEmail(configuredEmail)) return;
+
+  const suggestedName = configuredName && validName(configuredName)
+    ? configuredName.trim()
+    : profile.name && validName(profile.name) ? profile.name.trim() : profile.login;
+  const suggestedEmail = configuredEmail && validEmail(configuredEmail)
+    ? configuredEmail.trim()
+    : `${profile.id}+${profile.login}@users.noreply.github.com`;
+  const prompt = createInterface({ input: process.stdin, output: process.stdout, terminal: Boolean(process.stdin.isTTY) });
+  let name;
+  let email;
+  try {
+    let nameInput;
+    let emailInput;
+    if (process.stdin.isTTY) {
+      nameInput = await prompt.question(`Git commit name [${suggestedName}]: `);
+      emailInput = await prompt.question(`Git commit email [${suggestedEmail}]: `);
+    } else {
+      process.stdout.write(`Git commit name [${suggestedName}]: Git commit email [${suggestedEmail}]: `);
+      const lines = [];
+      for await (const line of prompt) {
+        if (lines.length >= 2 || line.length > 320) throw new Error("invalid identity input");
+        lines.push(line);
+      }
+      if (lines.length !== 2) throw new Error("identity confirmation required");
+      [nameInput, emailInput] = lines;
+    }
+    name = nameInput.trim() || suggestedName;
+    email = emailInput.trim() || suggestedEmail;
+  } finally {
+    prompt.close();
+  }
+  if (!validName(name) || !validEmail(email)) throw new Error("invalid identity");
+  await run("git", ["config", "--global", "--replace-all", "user.name", name], { env, cwd: homePath });
+  await run("git", ["config", "--global", "--replace-all", "user.email", email], { env, cwd: homePath });
+}
+
+async function main() {
+  if (process.argv.length !== 2) throw new Error("unexpected arguments");
+  const requestedHome = resolve(process.env.MATRIX_HOME || process.env.HOME || "/home/matrix/home");
+  const homePath = await realpath(requestedHome);
+  const env = {
+    ...process.env,
+    HOME: homePath,
+    MATRIX_HOME: homePath,
+    XDG_CONFIG_HOME: join(homePath, ".config"),
+    GH_CONFIG_DIR: join(homePath, ".config", "gh"),
+    GIT_CONFIG_GLOBAL: join(homePath, ".gitconfig"),
+  };
+
+  await run("gh", ["auth", "login", "--hostname", "github.com", "--web", "--git-protocol", "ssh"], {
+    env,
+    cwd: homePath,
+    interactive: true,
+    timeoutMs: LOGIN_TIMEOUT_MS,
+  });
+  await run("gh", ["auth", "setup-git", "--hostname", "github.com"], { env, cwd: homePath });
+  await installPinnedSshConfiguration(homePath);
+  const knownHostsPath = join(homePath, ".ssh", "matrix-github-known-hosts");
+  const ssh = await run("ssh", [
+    "-T",
+    "-o", "BatchMode=yes",
+    "-o", "StrictHostKeyChecking=yes",
+    "-o", `UserKnownHostsFile=${knownHostsPath}`,
+    "-o", "GlobalKnownHostsFile=/dev/null",
+    "-o", "ConnectTimeout=10",
+    "-o", "ConnectionAttempts=1",
+    "git@github.com",
+  ], { env, cwd: homePath, acceptExitCodes: [0, 1] });
+  if (!SSH_GREETING.test(`${ssh.stdout}\n${ssh.stderr}`.slice(0, COMMAND_OUTPUT_BYTES))) {
+    throw new Error("ssh verification failed");
+  }
+
+  const profileResult = await run("gh", ["api", "user"], { env: { ...env, GH_PROMPT_DISABLED: "1" }, cwd: homePath });
+  const profile = JSON.parse(profileResult.stdout);
+  if (
+    !profile
+    || !Number.isSafeInteger(profile.id)
+    || profile.id < 1
+    || typeof profile.login !== "string"
+    || !GITHUB_LOGIN.test(profile.login)
+    || (profile.name !== null && profile.name !== undefined && typeof profile.name !== "string")
+  ) {
+    throw new Error("invalid GitHub profile");
+  }
+  await configureIdentity(env, homePath, profile);
+  process.stdout.write(`GitHub developer access is ready for ${profile.login}.\n`);
+}
+
+main().catch((error) => {
+  // Detailed process errors and outputs are intentionally not surfaced. Setup is idempotent and recoverable by rerun.
+  if (!(error instanceof Error)) process.exitCode = 3;
+  process.stderr.write("GitHub developer access setup could not be completed. Run the command again.\n");
+  process.exitCode = 3;
+});
