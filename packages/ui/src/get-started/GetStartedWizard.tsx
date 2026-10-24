@@ -57,6 +57,13 @@ function ChoiceGroup({ group, wizard, dispatch }: {
   );
 }
 
+/** The AI as finishing saves it, so a blank name shows as Matrix, like the saved one. */
+function yourAi(wizard: GetStartedWizardState): string {
+  const bot = wizard.botChosen ? getStartedBotFromWizard(wizard.bot) : null;
+  if (!bot) return "Matrix";
+  return `${bot.name} · ${GET_STARTED_PERSONALITIES.find((personality) => personality.id === bot.personality)?.label ?? ""}`;
+}
+
 function Summary({ wizard }: { wizard: GetStartedWizardState }) {
   const picked = new Set(wizard.goals);
   const goals = GET_STARTED_GOALS.filter((goal) => picked.has(goal.id)).map((goal) => goal.label);
@@ -68,7 +75,7 @@ function Summary({ wizard }: { wizard: GetStartedWizardState }) {
       </div>
       <div>
         <dt>Your AI</dt>
-        <dd>{wizard.botChosen ? `${wizard.bot.name} · ${GET_STARTED_PERSONALITIES.find((personality) => personality.id === wizard.bot.personality)?.label ?? ""}` : "Matrix"}</dd>
+        <dd>{yourAi(wizard)}</dd>
       </div>
     </dl>
   );
