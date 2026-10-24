@@ -1,0 +1,237 @@
+diff --git a/async/index.browser.js b/async/index.browser.js
+--- a/async/index.browser.js
++++ b/async/index.browser.js
+@@ -1,8 +1,12 @@
+-export let random = async bytes => crypto.getRandomValues(new Uint8Array(bytes))
++import { validateSize } from '../size.js'
++export let random = async bytes => crypto.getRandomValues(new Uint8Array(validateSize(bytes)))
+ export let customAlphabet = (alphabet, defaultSize = 21) => {
++  validateSize(defaultSize)
+   let mask = (2 << (Math.log(alphabet.length - 1) / Math.LN2)) - 1
+-  let step = -~((1.6 * mask * defaultSize) / alphabet.length)
+   return async (size = defaultSize) => {
++    size = validateSize(size)
++    if (size === 0) return ''
++    let step = Math.min(65536, Math.floor((1.6 * mask * (defaultSize || size)) / alphabet.length) + 1)
+     let id = ''
+     while (true) {
+       let bytes = crypto.getRandomValues(new Uint8Array(step))
+@@ -16,6 +20,7 @@
+ }
+ export let nanoid = async (size = 21) => {
+   let id = ''
++  size = validateSize(size)
+   let bytes = crypto.getRandomValues(new Uint8Array(size))
+   while (size--) {
+     let byte = bytes[size] & 63
+diff --git a/async/index.js b/async/index.js
+--- a/async/index.js
++++ b/async/index.js
+@@ -1,8 +1,9 @@
++import { validateSize } from '../size.js'
+ import { randomFill } from 'crypto'
+ import { urlAlphabet } from '../url-alphabet/index.js'
+ export let random = bytes =>
+   new Promise((resolve, reject) => {
+-    randomFill(Buffer.allocUnsafe(bytes), (err, buf) => {
++    randomFill(Buffer.allocUnsafe(validateSize(bytes)), (err, buf) => {
+       if (err) {
+         reject(err)
+       } else {
+@@ -11,18 +12,23 @@
+     })
+   })
+ export let customAlphabet = (alphabet, defaultSize = 21) => {
++  validateSize(defaultSize)
+   let mask = (2 << (31 - Math.clz32((alphabet.length - 1) | 1))) - 1
+-  let step = Math.ceil((1.6 * mask * defaultSize) / alphabet.length)
+-  let tick = (id, size = defaultSize) =>
+-    random(step).then(bytes => {
++  return async (size = defaultSize) => {
++    size = validateSize(size)
++    if (size === 0) return ''
++    let step = Math.ceil((1.6 * mask * (defaultSize || size)) / alphabet.length)
++    if (defaultSize === 0) step = Math.min(step, 65536)
++    let id = ''
++    while (true) {
++      let bytes = await random(step)
+       let i = step
+       while (i--) {
+         id += alphabet[bytes[i] & mask] || ''
+         if (id.length === size) return id
+       }
+-      return tick(id, size)
+-    })
+-  return size => tick('', size)
++    }
++  }
+ }
+ export let nanoid = (size = 21) =>
+   random(size).then(bytes => {
+diff --git a/async/index.native.js b/async/index.native.js
+--- a/async/index.native.js
++++ b/async/index.native.js
+@@ -1,19 +1,24 @@
++import { validateSize } from '../size.js'
+ import { getRandomBytesAsync } from 'expo-random'
+ import { urlAlphabet } from '../url-alphabet/index.js'
+-export let random = getRandomBytesAsync
++export let random = async bytes => getRandomBytesAsync(validateSize(bytes))
+ export let customAlphabet = (alphabet, defaultSize = 21) => {
++  validateSize(defaultSize)
+   let mask = (2 << (31 - Math.clz32((alphabet.length - 1) | 1))) - 1
+-  let step = Math.ceil((1.6 * mask * defaultSize) / alphabet.length)
+-  let tick = (id, size = defaultSize) =>
+-    random(step).then(bytes => {
++  return async (size = defaultSize) => {
++    size = validateSize(size)
++    if (size === 0) return ''
++    let step = Math.min(1024, Math.ceil((1.6 * mask * (defaultSize || size)) / alphabet.length))
++    let id = ''
++    while (true) {
++      let bytes = await random(step)
+       let i = step
+       while (i--) {
+         id += alphabet[bytes[i] & mask] || ''
+         if (id.length === size) return id
+       }
+-      return tick(id, size)
+-    })
+-  return size => tick('', size)
++    }
++  }
+ }
+ export let nanoid = (size = 21) =>
+   random(size).then(bytes => {
+diff --git a/index.browser.js b/index.browser.js
+--- a/index.browser.js
++++ b/index.browser.js
+@@ -1,9 +1,13 @@
++import { validateSize } from './size.js'
+ export { urlAlphabet } from './url-alphabet/index.js'
+-export let random = bytes => crypto.getRandomValues(new Uint8Array(bytes))
++export let random = bytes => crypto.getRandomValues(new Uint8Array(validateSize(bytes)))
+ export let customRandom = (alphabet, defaultSize, getRandom) => {
++  validateSize(defaultSize)
+   let mask = (2 << (Math.log(alphabet.length - 1) / Math.LN2)) - 1
+-  let step = -~((1.6 * mask * defaultSize) / alphabet.length)
+   return (size = defaultSize) => {
++    size = validateSize(size)
++    if (size === 0) return ''
++    let step = Math.min(65536, Math.floor((1.6 * mask * (defaultSize || size)) / alphabet.length) + 1)
+     let id = ''
+     while (true) {
+       let bytes = getRandom(step)
+@@ -18,7 +22,7 @@
+ export let customAlphabet = (alphabet, size = 21) =>
+   customRandom(alphabet, size, random)
+ export let nanoid = (size = 21) =>
+-  crypto.getRandomValues(new Uint8Array(size)).reduce((id, byte) => {
++  crypto.getRandomValues(new Uint8Array(validateSize(size))).reduce((id, byte) => {
+     byte &= 63
+     if (byte < 36) {
+       id += byte.toString(36)
+diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -1,27 +1,39 @@
++import { validateSize } from './size.js'
+ import { randomFillSync } from 'crypto'
+ import { urlAlphabet } from './url-alphabet/index.js'
+ export { urlAlphabet }
+ const POOL_SIZE_MULTIPLIER = 128
+ let pool, poolOffset
+ let fillPool = bytes => {
+-  if (!pool || pool.length < bytes) {
+-    pool = Buffer.allocUnsafe(bytes * POOL_SIZE_MULTIPLIER)
+-    randomFillSync(pool)
+-    poolOffset = 0
+-  } else if (poolOffset + bytes > pool.length) {
+-    randomFillSync(pool)
+-    poolOffset = 0
++  try {
++    if (!pool || pool.length < bytes) {
++      pool = Buffer.allocUnsafe(bytes * POOL_SIZE_MULTIPLIER)
++      randomFillSync(pool)
++      poolOffset = 0
++    } else if (poolOffset + bytes > pool.length) {
++      randomFillSync(pool)
++      poolOffset = 0
++    }
++  } catch (error) {
++    pool = undefined
++    throw error
+   }
+   poolOffset += bytes
+ }
+ export let random = bytes => {
+-  fillPool((bytes -= 0))
++  bytes = validateSize(bytes)
++  if (bytes === 0) return Buffer.alloc(0)
++  fillPool(bytes)
+   return pool.subarray(poolOffset - bytes, poolOffset)
+ }
+ export let customRandom = (alphabet, defaultSize, getRandom) => {
++  validateSize(defaultSize)
+   let mask = (2 << (31 - Math.clz32((alphabet.length - 1) | 1))) - 1
+-  let step = Math.ceil((1.6 * mask * defaultSize) / alphabet.length)
+   return (size = defaultSize) => {
++    size = validateSize(size)
++    if (size === 0) return ''
++    let step = Math.ceil((1.6 * mask * (defaultSize || size)) / alphabet.length)
++    if (defaultSize === 0) step = Math.min(step, 65536)
+     let id = ''
+     while (true) {
+       let bytes = getRandom(step)
+@@ -36,7 +48,9 @@
+ export let customAlphabet = (alphabet, size = 21) =>
+   customRandom(alphabet, size, random)
+ export let nanoid = (size = 21) => {
+-  fillPool((size -= 0))
++  size = validateSize(size)
++  if (size === 0) return ''
++  fillPool(size)
+   let id = ''
+   for (let i = poolOffset - size; i < poolOffset; i++) {
+     id += urlAlphabet[pool[i] & 63]
+diff --git a/nanoid.js b/nanoid.js
+--- a/nanoid.js
++++ b/nanoid.js
+@@ -1 +1 @@
+-export let nanoid=(t=21)=>crypto.getRandomValues(new Uint8Array(t)).reduce(((t,e)=>t+=(e&=63)<36?e.toString(36):e<62?(e-26).toString(36).toUpperCase():e>62?"-":"_"),"");
+\ No newline at end of file
++export let nanoid=(t=21)=>{if(!Number.isInteger(t)||t<0||t>2147483647)throw new RangeError('Invalid ID size');return crypto.getRandomValues(new Uint8Array(t)).reduce(((t,e)=>t+=(e&=63)<36?e.toString(36):e<62?(e-26).toString(36).toUpperCase():e>62?"-":"_"),"")};
+diff --git a/non-secure/index.js b/non-secure/index.js
+--- a/non-secure/index.js
++++ b/non-secure/index.js
+@@ -1,7 +1,10 @@
++import { validateSize } from '../size.js'
+ let urlAlphabet =
+   'useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict'
+ export let customAlphabet = (alphabet, defaultSize = 21) => {
++  validateSize(defaultSize)
+   return (size = defaultSize) => {
++    size = validateSize(size)
+     let id = ''
+     let i = size
+     while (i--) {
+@@ -11,6 +14,7 @@
+   }
+ }
+ export let nanoid = (size = 21) => {
++  size = validateSize(size)
+   let id = ''
+   let i = size
+   while (i--) {
+diff --git a/size.js b/size.js
+new file mode 100644
+--- /dev/null
++++ b/size.js
+@@ -0,0 +1,7 @@
++// Validate before touching entropy state or entering a generation loop.
++export let validateSize = size => {
++  if (!Number.isInteger(size) || size < 0 || size > 0x7fffffff) {
++    throw new RangeError('Size must be an integer between 0 and 2147483647')
++  }
++  return size
++}
