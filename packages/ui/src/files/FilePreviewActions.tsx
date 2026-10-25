@@ -32,6 +32,12 @@ export function FilePreviewActions({ name, children, onDownload, onCopyImage, on
     } finally { inFlight.current = false; }
   };
   if (!onDownload && !onCopyImage && !onCopyPath && !onOpenInFiles) return children;
+  const actions: Array<{ kind: Action; label: string; busyLabel?: string; available: boolean }> = [
+    { kind: "files", label: "Open in Files", available: Boolean(onOpenInFiles) },
+    { kind: "path", label: "Copy path", available: Boolean(onCopyPath) },
+    { kind: "copy", label: "Copy image", busyLabel: "Copying…", available: Boolean(onCopyImage) },
+    { kind: "download", label: "Download", busyLabel: "Downloading…", available: Boolean(onDownload) },
+  ];
   const itemClass = "cursor-default rounded px-2.5 py-1.5 text-sm outline-none focus:bg-[var(--bg-hover,var(--muted))] data-[disabled]:opacity-40";
   return <ContextMenu.Root onOpenChange={(open) => { if (open && !inFlight.current) setState({}); }}>
     <ContextMenu.Trigger asChild onContextMenu={(event) => event.stopPropagation()}>{children}</ContextMenu.Trigger>
@@ -39,14 +45,11 @@ export function FilePreviewActions({ name, children, onDownload, onCopyImage, on
       <ContextMenu.Content aria-label={`File actions for ${name}`} className="min-w-[180px] rounded-xl border p-1 shadow-lg" style={{
         zIndex, background: "var(--bg-overlay, var(--popover))", color: "var(--text-primary, var(--popover-foreground))", borderColor: "var(--border-default, var(--border))",
       }}>
-        {onOpenInFiles ? <ContextMenu.Item aria-label={`Open in Files ${name}`} disabled={pending || Boolean(state.busy)} className={itemClass}
-          onSelect={(event) => { event.preventDefault(); void run("files"); }}>Open in Files</ContextMenu.Item> : null}
-        {onCopyPath ? <ContextMenu.Item aria-label={`Copy path ${name}`} disabled={pending || Boolean(state.busy)} className={itemClass}
-          onSelect={(event) => { event.preventDefault(); void run("path"); }}>Copy path</ContextMenu.Item> : null}
-        {onCopyImage ? <ContextMenu.Item aria-label={`Copy image ${name}`} disabled={pending || Boolean(state.busy)} className={itemClass}
-          onSelect={(event) => { event.preventDefault(); void run("copy"); }}>{state.busy === "copy" ? "Copying…" : "Copy image"}</ContextMenu.Item> : null}
-        {onDownload ? <ContextMenu.Item aria-label={`Download ${name}`} disabled={pending || Boolean(state.busy)} className={itemClass}
-          onSelect={(event) => { event.preventDefault(); void run("download"); }}>{pending || state.busy === "download" ? "Downloading…" : "Download"}</ContextMenu.Item> : null}
+        {actions.filter((action) => action.available).map((action) => <ContextMenu.Item key={action.kind}
+          aria-label={`${action.label} ${name}`} disabled={pending || Boolean(state.busy)} className={itemClass}
+          onSelect={(event) => { event.preventDefault(); void run(action.kind); }}>
+          {action.busyLabel && (state.busy === action.kind || action.kind === "download" && pending) ? action.busyLabel : action.label}
+        </ContextMenu.Item>)}
         {state.error ? <div role="alert" className="max-w-xs px-2.5 py-1.5 text-xs">{state.error}</div> : state.copied ? <div role="status" className="px-2.5 py-1.5 text-xs">{state.copied}</div> : null}
       </ContextMenu.Content>
     </ContextMenu.Portal>

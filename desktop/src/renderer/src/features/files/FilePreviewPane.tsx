@@ -23,7 +23,7 @@ import { isManagedBrowserPath, parseBrowserEntries, type BrowserEntry } from "./
 import { FileGlyph, kindForEntry } from "./file-kind";
 import { formatEntrySize, formatModified } from "./format";
 import { MonacoReadOnlyEditor } from "../editor/MonacoReadOnlyEditor";
-import { DesktopFilePreviewContent } from "./DesktopFilePreviewContent";
+import { DesktopFilePreviewContent, DesktopFilePreviewViewport } from "./DesktopFilePreviewContent";
 
 const MarkdownContent = lazy(async () => {
   const module = await import("../editor/MarkdownPreview");
@@ -278,7 +278,7 @@ function RichFilePreview({ path }: { path: string }) {
   const retry = () => setAttempt((value) => value + 1);
   if (state.status === "loading") return <LoadingPreview />;
   if (state.status === "error") return <PreviewFailure error={state.error} onRetry={retry} />;
-  return <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4" style={{ background: "var(--bg-sunken)" }}>
+  return <DesktopFilePreviewViewport kind={state.descriptor.kind}>
     <DesktopFilePreviewContent
       key={`${state.descriptor.version}:${attempt}`}
       descriptor={state.descriptor}
@@ -287,7 +287,7 @@ function RichFilePreview({ path }: { path: string }) {
       loadText={loadText}
       retry={retry}
     />
-  </div>;
+  </DesktopFilePreviewViewport>;
 }
 
 function childBrowserPath(parent: string, name: string): string {

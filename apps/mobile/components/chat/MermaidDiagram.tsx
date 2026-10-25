@@ -39,7 +39,7 @@ function DiagramContent({ source, theme }: { source: string; theme: ChatMarkdown
     {showSource || failed || !document ? <Text selectable style={[theme.textStyle, { fontFamily: theme.monoFontFamily, padding: 10 }]}>{source}</Text>
       : <WebView source={{ html: document }} originWhitelist={["*"]} onShouldStartLoadWithRequest={(request) => request.url === "about:blank"}
         accessibilityLabel="Mermaid diagram" javaScriptEnabled domStorageEnabled={false} allowFileAccess={false} sharedCookiesEnabled={false} thirdPartyCookiesEnabled={false}
-        javaScriptCanOpenWindowsAutomatically={false} setSupportMultipleWindows={false} scrollEnabled={false} style={{ height, backgroundColor: "transparent" }}
+        javaScriptCanOpenWindowsAutomatically={false} setSupportMultipleWindows={false} scrollEnabled nestedScrollEnabled style={{ height, backgroundColor: "transparent" }}
         onError={() => setFailed(true)} onMessage={(event) => {
           if (event.nativeEvent.data.length > 100) return;
           try {

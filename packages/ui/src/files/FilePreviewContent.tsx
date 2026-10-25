@@ -91,12 +91,12 @@ function TextualPreview({ descriptor, contentUrl, loadText, retry, textPreviewBy
       title={`HTML preview: ${descriptor.name}`}
       sandbox=""
       srcDoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="${policy}">${state.text}`}
-      className="h-full min-h-96 w-full border-0 bg-white"
+      className="min-h-0 w-full flex-1 border-0 bg-white"
     />;
   }
-  return <div className="min-h-0 w-full overflow-auto">
-    {renderText ? renderText(state.text) : <pre className="whitespace-pre-wrap break-words p-4 text-xs" data-selectable><code>{state.text}</code></pre>}
-    {descriptor.sizeBytes > limit ? <p role="status" className="px-4 pb-4 text-xs">Preview truncated.</p> : null}
+  return <div className="flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden">
+    {renderText ? renderText(state.text) : <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 text-xs" data-selectable><code>{state.text}</code></pre>}
+    {descriptor.sizeBytes > limit ? <p role="status" className="shrink-0 px-4 pb-4 text-xs">Preview truncated.</p> : null}
   </div>;
 }
 

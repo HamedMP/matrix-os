@@ -6,6 +6,8 @@ import { Button } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
 import { useAppearance } from "../../stores/appearance";
 import { useConnection } from "../../stores/connection";
+import type { FileResourceRef } from "@matrix-os/contracts";
+import { invoke } from "../../lib/operator";
 import { ConflictBar } from "./EditorPanel";
 import { languageForPath, monacoThemeForDocument } from "./MonacoReadOnlyEditor";
 import {
@@ -19,6 +21,34 @@ import {
 
 export const MAX_MONACO_FILE_BYTES = 2 * 1024 * 1024;
 const MarkdownContent = lazy(async () => ({ default: (await import("./MarkdownPreview")).MarkdownContent }));
+
+function projectFilesApi(resource: Extract<FileResourceRef, { kind: "project" }>): FilesApi {
+  let etag: string | null = null;
+  let version = 0;
+  let cached: string | null = null;
+  const observe = (next: string) => { if (next !== etag) { etag = next; version += 1; } return version; };
+  const refresh = async (path: string) => {
+    if (path !== resource.path || !resource.worktreeId) throw new Error("InvalidFileResource");
+    const response = await invoke("runtime:get-file-content", { projectId: resource.projectId, worktreeId: resource.worktreeId, path });
+    if (response.truncated) throw new Error("file_too_large");
+    cached = response.content;
+    return { mtime: observe(response.metadata.etag) };
+  };
+  return {
+    stat: refresh,
+    read: async (path) => { if (cached === null) await refresh(path); return cached!; },
+    write: async (path, content) => {
+      if (path !== resource.path || !resource.worktreeId) throw new Error("InvalidFileResource");
+      if (new TextEncoder().encode(content).byteLength > 65_536) throw new Error("file_too_large");
+      const response = await invoke("runtime:save-file-content", {
+        projectId: resource.projectId, worktreeId: resource.worktreeId, path, content,
+        encoding: "utf8", baseEtag: etag, clientRequestId: `req_${crypto.randomUUID().replace(/-/g, "")}`,
+      });
+      cached = content;
+      return { mtime: observe(response.metadata.etag) };
+    },
+  };
+}
 
 class EditorScopeChangedError extends Error {
   constructor() {
@@ -53,10 +83,12 @@ export default function MonacoEditorHost({
   path,
   active,
   onDirtyChange,
+  resource,
 }: {
   path: string;
   active: boolean;
   onDirtyChange: (dirty: boolean) => void;
+  resource?: Extract<FileResourceRef, { kind: "project" }>;
 }) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -94,7 +126,7 @@ export default function MonacoEditorHost({
   useEffect(() => {
     if (!api) return;
     const scope = `${runtimeSlot}|${authGeneration}`;
-    const files = scopedFilesApi(createFilesApi(api, MAX_MONACO_FILE_BYTES), scope);
+    const files = scopedFilesApi(resource ? projectFilesApi(resource) : createFilesApi(api, MAX_MONACO_FILE_BYTES), scope);
     let disposed = false;
     setLoadState("loading");
     setLoadError(null);
@@ -115,7 +147,7 @@ export default function MonacoEditorHost({
     }).catch((error: unknown) => {
       if (disposed || error instanceof EditorScopeChangedError) return;
       setLoadError(error instanceof Error && error.message === "file_too_large"
-        ? "This file is larger than the 2 MB editor limit."
+        ? resource ? "This file is larger than the 64 KiB project editor limit." : "This file is larger than the 2 MB editor limit."
         : toUserMessage(error));
       setLoadState("error");
     });
@@ -124,7 +156,7 @@ export default function MonacoEditorHost({
       editorRef.current?.dispose();
       editorRef.current = null;
     };
-  }, [api, authGeneration, path, runtimeSlot]);
+  }, [api, authGeneration, path, runtimeSlot, resource]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -286,11 +318,7 @@ export default function MonacoEditorHost({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {isMarkdown ? <div className="flex shrink-0 gap-3 border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)" }}>
-        <button type="button" aria-label="Markdown source" aria-pressed={markdownView === "source"} onClick={() => setMarkdownView("source")}>Source</button>
-        <button type="button" aria-label="Split Markdown view" aria-pressed={markdownView === "split"} onClick={() => setMarkdownView("split")}>Split</button>
-        <button type="button" aria-label="Markdown preview" aria-pressed={markdownView === "preview"} onClick={() => setMarkdownView("preview")}>Preview</button>
-      </div> : null}
+      <EditorToolbar path={path} markdown={isMarkdown} view={markdownView} onView={setMarkdownView} saving={saving} onSave={() => void saveRef.current()} />
       <div className="flex min-h-0 flex-1 overflow-hidden">
       <div className={isMarkdown && markdownView === "preview" ? "hidden" : "relative min-h-0 min-w-0 flex-1 overflow-hidden"}>
         {supportsMonaco ? (
@@ -329,4 +357,18 @@ export default function MonacoEditorHost({
       {conflict ? <ConflictBar busy={saving} onReload={() => void reload()} onOverwrite={() => void overwrite()} /> : null}
     </div>
   );
+}
+
+function EditorToolbar({ path, markdown, view, onView, saving, onSave }: {
+  path: string; markdown: boolean; view: "source" | "split" | "preview";
+  onView(view: "source" | "split" | "preview"): void; saving: boolean; onSave(): void;
+}) {
+  return <div className="flex shrink-0 gap-3 border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)" }}>
+    {markdown ? <>
+      <button type="button" aria-label="Markdown source" aria-pressed={view === "source"} onClick={() => onView("source")}>Source</button>
+      <button type="button" aria-label="Split Markdown view" aria-pressed={view === "split"} onClick={() => onView("split")}>Split</button>
+      <button type="button" aria-label="Markdown preview" aria-pressed={view === "preview"} onClick={() => onView("preview")}>Preview</button>
+    </> : null}
+    <button type="button" aria-label={`Save ${path}`} disabled={saving} className="ml-auto" onClick={onSave}>{saving ? "Saving…" : "Save"}</button>
+  </div>;
 }

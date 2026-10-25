@@ -1,4 +1,4 @@
-import { FilePathSchema } from "@matrix-os/contracts";
+import { FilePathSchema, FileResourceRefSchema, type FileResourceRef } from "@matrix-os/contracts";
 import { create } from "zustand";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
@@ -33,13 +33,14 @@ export function normalizeDesktopEditorPath(rawPath: string): string | null {
 }
 
 interface DesktopEditorState {
+  resources: Record<string, Extract<FileResourceRef, { kind: "project" }>>;
   scope: string | null;
   paths: string[];
   activePath: string | null;
   dirtyPaths: string[];
   error: string | null;
   ensureScope(scope: string): void;
-  openFile(path: string): boolean;
+  openFile(path: string, resource?: Extract<FileResourceRef, { kind: "project" }>): boolean;
   setActive(path: string): void;
   setDirty(path: string, dirty: boolean): void;
   closeFile(path: string): void;
@@ -48,6 +49,7 @@ interface DesktopEditorState {
 
 export const useDesktopEditor = create<DesktopEditorState>()((set, get) => ({
   scope: null,
+  resources: {},
   paths: [],
   activePath: null,
   dirtyPaths: [],
@@ -55,14 +57,17 @@ export const useDesktopEditor = create<DesktopEditorState>()((set, get) => ({
 
   ensureScope: (scope) => set((state) => state.scope === scope ? state : {
     scope,
+    resources: {},
     paths: [],
     activePath: null,
     dirtyPaths: [],
     error: null,
   }),
 
-  openFile: (rawPath) => {
-    const path = normalizeDesktopEditorPath(rawPath);
+  openFile: (rawPath, resource) => {
+    const parsedResource = resource ? FileResourceRefSchema.safeParse(resource) : null;
+    if (resource && (!parsedResource?.success || parsedResource.data.kind !== "project")) return false;
+    const path = resource ? `@project/${encodeURIComponent(resource.projectId)}/${encodeURIComponent(resource.worktreeId ?? "root")}/${resource.path}` : normalizeDesktopEditorPath(rawPath);
     if (!path) {
       set({ error: "That file path is outside Matrix home." });
       return false;
@@ -85,7 +90,13 @@ export const useDesktopEditor = create<DesktopEditorState>()((set, get) => ({
       paths = paths.filter((candidate) => candidate !== victim);
       dirtyPaths = dirtyPaths.filter((candidate) => candidate !== victim);
     }
-    set({ paths: [...paths, path], activePath: path, dirtyPaths, error: null });
+    const nextPaths = [...paths, path];
+    set({ paths: nextPaths, activePath: path, dirtyPaths, error: null,
+      resources: Object.fromEntries(nextPaths.flatMap((key) => {
+        const value = key === path && resource ? resource : state.resources[key];
+        return value ? [[key, value]] : [];
+      })),
+    });
     return true;
   },
 
@@ -109,6 +120,7 @@ export const useDesktopEditor = create<DesktopEditorState>()((set, get) => ({
       : state.activePath;
     return {
       paths,
+      resources: Object.fromEntries(Object.entries(state.resources).filter(([key]) => key !== path)),
       activePath,
       dirtyPaths: state.dirtyPaths.filter((candidate) => candidate !== path),
       error: null,
@@ -127,6 +139,26 @@ export function openFileInDesktopEditor(rawPath: string): boolean {
   const editor = useDesktopEditor.getState();
   editor.ensureScope(currentDesktopEditorScope());
   if (!useDesktopEditor.getState().openFile(rawPath)) return false;
+  useTabs.getState().openTab(EDITOR_WORKSPACE_TAB_SPEC);
+  return true;
+}
+
+export async function openResourceInDesktopEditor(resource: FileResourceRef, isCurrent: () => boolean = () => true): Promise<boolean> {
+  if (!isCurrent()) return false;
+  const target = FileResourceRefSchema.parse(resource);
+  if (target.kind === "artifact") return false;
+  const scope = currentDesktopEditorScope();
+  if (target.kind === "home") return openFileInDesktopEditor(target.path);
+  if (!target.worktreeId) {
+    const { api, runtimeSlot } = useConnection.getState();
+    if (!api) return false;
+    const response = await api.forRuntime(runtimeSlot).get<{ path: unknown }>(`/api/projects/${encodeURIComponent(target.projectId)}/files-location`);
+    if (scope !== currentDesktopEditorScope() || !isCurrent()) return false;
+    const root = FilePathSchema.parse(response.path);
+    return openFileInDesktopEditor(`${root}/${target.path}`);
+  }
+  useDesktopEditor.getState().ensureScope(scope);
+  if (!useDesktopEditor.getState().openFile(target.path, target)) return false;
   useTabs.getState().openTab(EDITOR_WORKSPACE_TAB_SPEC);
   return true;
 }

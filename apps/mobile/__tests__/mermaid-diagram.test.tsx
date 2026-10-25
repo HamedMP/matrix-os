@@ -29,6 +29,8 @@ it("blocks navigation, bounds bridge messages and preserves source/copy after fa
   expect(frame.props.allowFileAccess).toBe(false);
   act(() => frame.props.onMessage({ nativeEvent: { data: '{"height":100000000}' } }));
   expect(screen.getByTestId("diagram-webview").props.style.height).toBe(1000);
+  expect(screen.getByTestId("diagram-webview").props.scrollEnabled).toBe(true);
+  expect(screen.getByTestId("diagram-webview").props.nestedScrollEnabled).toBe(true);
   act(() => frame.props.onMessage({ nativeEvent: { data: '{"error":true}' } }));
   expect(screen.queryByTestId("diagram-webview")).toBeNull();
   expect(screen.getByText(source)).toBeTruthy();

@@ -60,6 +60,43 @@ it("renders Markdown headings and lists in the sidebar", async () => {
   expect(screen.getByRole("listitem").textContent).toContain("Published");
 });
 
+it("opens the selected Markdown in the persistent Editor workspace", async () => {
+  get.mockResolvedValue({ ...descriptor, name: "report.md", kind: "markdown", mimeType: "text/markdown" });
+  getBlob.mockResolvedValue(new Blob(["# Report"], { type: "text/markdown" }));
+  const { useDesktopEditor } = await import("../../desktop/src/renderer/src/features/editor/desktop-editor-store");
+  render(<InspectorFilePreview target={{ kind: "home", path: "reports/report.md", label: "report.md" }} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit report.md" }));
+  expect(useDesktopEditor.getState().activePath).toBe("reports/report.md");
+});
+it("preserves project/worktree identity when editing and opening in Files", async () => {
+  const target = { kind: "project" as const, projectId: "project-one", worktreeId: "wt_one", path: "guide.md", label: "guide.md" };
+  const resource = { kind: target.kind, projectId: target.projectId, worktreeId: target.worktreeId, path: target.path };
+  get.mockResolvedValue({ ...descriptor, resource, name: "guide.md", kind: "markdown", mimeType: "text/markdown" });
+  getBlob.mockResolvedValue(new Blob(["# Guide"], { type: "text/markdown" }));
+  const { useDesktopEditor } = await import("../../desktop/src/renderer/src/features/editor/desktop-editor-store");
+  const { useFilesNavigation } = await import("../../desktop/src/renderer/src/stores/files-navigation");
+  render(<InspectorFilePreview target={target} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit guide.md" }));
+  await waitFor(() => expect(useDesktopEditor.getState().resources[useDesktopEditor.getState().activePath!]).toEqual(resource));
+  fireEvent.contextMenu(await screen.findByRole("heading", { name: "Guide" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Open in Files guide.md" }));
+  expect(useFilesNavigation.getState().request?.project).toEqual(resource);
+});
+it("does not open a stale project edit after its preview is closed", async () => {
+  const resource = { kind: "project" as const, projectId: "project-one", path: "guide.md" };
+  let resolveLocation!: (value: unknown) => void;
+  get.mockResolvedValueOnce({ ...descriptor, resource, name: "guide.md", kind: "markdown", mimeType: "text/markdown" })
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveLocation = resolve; }));
+  const { useDesktopEditor } = await import("../../desktop/src/renderer/src/features/editor/desktop-editor-store");
+  useDesktopEditor.setState(useDesktopEditor.getInitialState(), true);
+  const { unmount } = render(<InspectorFilePreview target={{ ...resource, label: "guide.md" }} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Edit guide.md" }));
+  await waitFor(() => expect(resolveLocation).toBeDefined());
+  unmount();
+  await act(async () => resolveLocation({ path: "projects/project-one" }));
+  expect(useDesktopEditor.getState().activePath).toBeNull();
+});
+
 it("offers copy path and open in Files from a preview context menu", async () => {
   const writeText = vi.fn(async () => {});
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
