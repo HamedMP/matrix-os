@@ -3,6 +3,7 @@
 // compact plus action. Account details remain accessible without changing the
 // compact visual treatment of the card.
 import { integrationAuthType, integrationDescription } from "@matrix-os/contracts/integration-marketplace";
+import { integrationConnectionMethodLabel } from "@matrix-os/contracts";
 import { Button } from "../../design/primitives";
 import { Check, Plus } from "@renderer/lib/hugeicons";
 import { IntegrationIcon } from "./IntegrationIcon";
@@ -52,8 +53,17 @@ export function AvailableServiceCard({
         {connections.length > 0 ? (
           <div className="mt-1 flex flex-col gap-1" aria-label={`${service.name} connected accounts`}>
             {connections.map((account) => (
-              <div key={account.id} className="flex min-w-0 items-center gap-1.5 text-xs" style={{ color: "var(--text-secondary)" }}>
+              <div key={account.id} className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs" style={{ color: "var(--text-secondary)" }}>
                 <span className="font-medium">{displayIntegrationName(account.accountLabel)}</span>
+                {account.service === "gmail" ? (
+                  <span
+                    aria-label={`Connection method: ${integrationConnectionMethodLabel(account.service, account.connectionMethod)}`}
+                    className="shrink-0 rounded border px-1.5 py-0.5"
+                    style={{ borderColor: "var(--border-subtle)" }}
+                  >
+                    {integrationConnectionMethodLabel(account.service, account.connectionMethod)}
+                  </span>
+                ) : null}
                 {account.accountEmail ? <span className="truncate">{account.accountEmail}</span> : null}
                 <span className="capitalize" style={{ color: "var(--surface-success-emphasis, #288A5B)" }}>{account.status}</span>
                 {onDisconnect ? (

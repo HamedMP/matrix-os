@@ -127,6 +127,16 @@ describe("desktop integrations settings section", () => {
     expect(screen.getByTestId("integrations-loading")).not.toBeNull();
   });
 
+  it("shows each Gmail connection method independently of its label and email", async () => {
+    useConnection.setState({ api: makeApi({ connections: [
+      { ...GMAIL_CONNECTION, account_label: "Same", connection_method: "matrix" },
+      { ...GMAIL_CONNECTION, id: NEW_CONN_ID, account_label: "Same", connection_method: "pipedream" },
+    ] }) as never });
+    render(<IntegrationsSettingsSection />);
+    expect(await screen.findByLabelText("Connection method: Matrix")).toBeTruthy();
+    expect(screen.getByLabelText("Connection method: Pipedream")).toBeTruthy();
+  });
+
   it("lists available services with their Pipedream logo and an initial fallback", async () => {
     const { container } = render(<IntegrationsSettingsSection />);
     await waitFor(() => expect(screen.getByText("Gmail")).not.toBeNull());

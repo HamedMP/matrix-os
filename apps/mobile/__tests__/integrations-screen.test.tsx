@@ -291,6 +291,30 @@ describe("drawer integrations screen", () => {
     open.mockRestore();
   });
 
+  it("identifies same-email Gmail methods on installed accounts", () => {
+    const state = mockUseComputerIntegrations();
+    mockUseComputerIntegrations.mockReturnValue({ ...state, connected: [
+      { id: "direct", service: "gmail", accountLabel: "Same", accountEmail: "same@example.test", status: "active", connectedAt: "2026-10-25T00:00:00Z", connectionMethod: "matrix" },
+      { id: "external", service: "gmail", accountLabel: "Same", accountEmail: "same@example.test", status: "active", connectedAt: "2026-10-25T00:00:00Z", connectionMethod: "pipedream" },
+    ] });
+    render(<InstalledIntegrationsScreen />);
+    expect(screen.getByLabelText("Connection method: Matrix")).toBeTruthy();
+    expect(screen.getByLabelText("Connection method: Pipedream")).toBeTruthy();
+  });
+
+  it.each(["", "   "])("keeps Gmail methods and account labels visible for blank email %j", email => {
+    const state = mockUseComputerIntegrations();
+    mockUseComputerIntegrations.mockReturnValue({ ...state, connected: [
+      { id: "direct", service: "gmail", accountLabel: "Work", accountEmail: email, status: "active", connectedAt: "2026-10-25T00:00:00Z", connectionMethod: "matrix" },
+      { id: "external", service: "gmail", accountLabel: "Personal", accountEmail: email, status: "active", connectedAt: "2026-10-25T00:00:00Z", connectionMethod: "pipedream" },
+    ] });
+    render(<InstalledIntegrationsScreen />);
+    expect(screen.getByLabelText("Connection method: Matrix")).toBeTruthy();
+    expect(screen.getByLabelText("Connection method: Pipedream")).toBeTruthy();
+    expect(screen.getByText("Work")).toBeTruthy();
+    expect(screen.getByText("Personal")).toBeTruthy();
+  });
+
   it("refreshes and confirmation-deletes connected accounts from swipe actions", () => {
     mockRefreshConnection.mockResolvedValue(undefined);
     mockDeleteConnection.mockResolvedValue(undefined);

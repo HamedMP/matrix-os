@@ -1,4 +1,5 @@
 import { hasCompletedIntegrationConnection, type IntegrationConnectionSnapshot } from "@matrix-os/contracts";
+import type { GmailConnectionMethod } from "@matrix-os/contracts/integration-marketplace";
 
 export interface ConnectedService {
   id: string;
@@ -7,6 +8,7 @@ export interface ConnectedService {
   account_email: string | null;
   status: string;
   connected_at: string;
+  connection_method?: GmailConnectionMethod;
 }
 
 type ConnectionState = Pick<ConnectedService, "id" | "service" | "status" | "connected_at">;
