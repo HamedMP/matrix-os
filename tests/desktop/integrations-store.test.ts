@@ -134,6 +134,18 @@ describe("parseConnectedIntegrations", () => {
     expect(parseConnectedIntegrations({ synced: 1, services: CONNECTIONS })).toHaveLength(1);
   });
 
+  it("preserves only recognized server method metadata in list and sync payloads", () => {
+    for (const method of ["matrix", "pipedream"]) {
+      const rows = [{ ...CONNECTIONS[0], connection_method: method }];
+      expect(parseConnectedIntegrations(rows)[0]).toMatchObject({ connectionMethod: method });
+      expect(parseConnectedIntegrations({ services: rows })[0]).toMatchObject({ connectionMethod: method });
+    }
+    for (const method of [undefined, "Matrix", "external", 1]) {
+      expect(parseConnectedIntegrations([{ ...CONNECTIONS[0], connection_method: method }])[0])
+        .not.toHaveProperty("connectionMethod");
+    }
+  });
+
   it("drops entries without a usable id or service", () => {
     const parsed = parseConnectedIntegrations([
       ...CONNECTIONS,
