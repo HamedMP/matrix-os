@@ -132,6 +132,9 @@ export async function enableOwnerSharedAi(options: {
 }
 
 export interface OwnerCollaborationStartupOptions {
+  /** Owner startup supplies a factory bound to its already-prepared database.
+   * Direct callers retain the standalone constructor's schema readiness check. */
+  createCollaboration?: typeof createGatewayCollaboration;
   homePath: string;
   chatRepository: ChatRepository;
   appRegistry: AppRegistry;
@@ -169,7 +172,7 @@ export async function constructOwnerCollaboration(options: OwnerCollaborationSta
   const construction = await constructGatewayCollaborationOrFailClosed(
     async () => {
       try {
-        const runtime = await createGatewayCollaboration({
+        const runtime = await (options.createCollaboration ?? createGatewayCollaboration)({
           db: ownerChatRepository.kysely as Kysely<any>,
           chatRepository: ownerChatRepository,
           config: collaborationConfig,

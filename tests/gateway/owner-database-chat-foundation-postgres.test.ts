@@ -5,17 +5,19 @@ import { join } from "node:path";
 import { Pool } from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAppDb } from "../../packages/gateway/src/app-db.js";
+import * as appDatabase from "../../packages/gateway/src/app-db.js";
 import { ChatCredentialRepository } from "../../packages/gateway/src/chat/credential-repository.js";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { createDiscussionOnlyChatExecutionGuard } from "../../packages/gateway/src/collaboration/chat-scope.js";
 import * as collaborationDatabase from "../../packages/gateway/src/collaboration/database.js";
-import { createGatewayCollaboration } from "../../packages/gateway/src/collaboration/wiring.js";
+import { createGatewayCollaboration, prepareGatewayCollaborationDatabase } from "../../packages/gateway/src/collaboration/wiring.js";
 import {
   initializeOwnerDatabaseServices,
   type InitializeOwnerDatabaseOptions,
   type OwnerDatabaseServices,
 } from "../../packages/gateway/src/startup/owner-database.js";
 import { teardownOwnerDatabaseServices } from "../../packages/gateway/src/startup/owner-database-fallback.js";
+import * as ownerCollaboration from "../../packages/gateway/src/startup/collaboration.js";
 
 const realDescribe = process.env.MATRIX_TEST_POSTGRES_URL ? describe : describe.skip;
 const owner = { type: "personal" as const, ownerId: "owner_disabled_collaboration_test" };
@@ -62,9 +64,8 @@ realDescribe("owner Chat foundation bootstrap ownership (PostgreSQL)", () => {
     vi.unstubAllGlobals();
   });
 
-  async function boot(
+  async function initialize(
     collaborationConfig: InitializeOwnerDatabaseOptions["collaborationConfig"] = null,
-    expectedFailure: InitializeOwnerDatabaseOptions["initialFailureReason"] = null,
   ) {
     const unused = {} as never;
     const options: InitializeOwnerDatabaseOptions = {
@@ -85,6 +86,14 @@ realDescribe("owner Chat foundation bootstrap ownership (PostgreSQL)", () => {
     };
     const result = await initializeOwnerDatabaseServices(options);
     services = result.services;
+    return result;
+  }
+
+  async function boot(
+    collaborationConfig: InitializeOwnerDatabaseOptions["collaborationConfig"] = null,
+    expectedFailure: InitializeOwnerDatabaseOptions["initialFailureReason"] = null,
+  ) {
+    const result = await initialize(collaborationConfig);
     expect(result.failClosedReason).toBe(expectedFailure);
     if (!services?.chatRepository || !services.chatCollaborationGuard) {
       throw new Error("Owner Chat startup failed");
@@ -110,6 +119,51 @@ realDescribe("owner Chat foundation bootstrap ownership (PostgreSQL)", () => {
     }
   });
 
+  it.each([
+    { configured: false, table: "collaboration_schema_migrations" },
+    { configured: true, table: "collaboration_schema_migrations" },
+    { configured: false, table: "collaboration_cutover_journal" },
+    { configured: true, table: "collaboration_cutover_journal" },
+  ])("returns no owner services when DDL fails at $table (configured=$configured)", async ({ configured, table }) => {
+    const setup = new Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      // A real PostgreSQL event trigger rejects the selected base/versioned DDL.
+      // Names are fixed test cases, and the entire dedicated database is dropped.
+      if (!["collaboration_schema_migrations", "collaboration_cutover_journal"].includes(table)) throw new Error("Invalid fixture table");
+      await setup.query(`CREATE FUNCTION reject_test_collaboration_ddl() RETURNS event_trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF EXISTS (SELECT FROM pg_event_trigger_ddl_commands() WHERE object_identity = 'public.${table}') THEN
+            RAISE EXCEPTION 'Synthetic collaboration migration failure';
+          END IF;
+        END $$;
+        CREATE EVENT TRIGGER reject_test_collaboration_ddl ON ddl_command_end
+        WHEN TAG IN ('CREATE TABLE') EXECUTE FUNCTION reject_test_collaboration_ddl()`);
+    } finally {
+      await setup.end();
+    }
+    const release = vi.spyOn(ChatRepository.prototype, "release");
+    const poolEnd = vi.spyOn(Pool.prototype, "end");
+    const construct = vi.spyOn(ownerCollaboration, "constructOwnerCollaboration");
+    const result = await initialize(configured ? configuredCollaboration : null);
+    expect(result.services).toBeNull();
+    expect(result.failClosedReason).toBe(configured ? "owner_database_missing" : null);
+    expect(collaborationDatabase.bootstrapCollaborationDatabase).toHaveBeenCalledTimes(1);
+    expect(construct).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(poolEnd).toHaveBeenCalledTimes(1);
+    const probe = new Pool({ connectionString: databaseUrl, max: 1 });
+    try {
+      const relation = await probe.query("SELECT to_regclass($1) AS relation", [`public.${table}`]);
+      expect(relation.rows[0].relation).toBeNull();
+      if (table === "collaboration_cutover_journal") {
+        const migrated = await probe.query("SELECT max(version) AS version FROM collaboration_schema_migrations");
+        expect(migrated.rows[0].version).toBe(13);
+      }
+    } finally {
+      await probe.end();
+    }
+  });
+
   it("lets configured collaboration own the single schema bootstrap and keeps private checks ready", async () => {
     const { repository, guard } = await boot(configuredCollaboration);
     expect(services!.collaboration).not.toBeNull();
@@ -132,6 +186,47 @@ realDescribe("owner Chat foundation bootstrap ownership (PostgreSQL)", () => {
     await expect(credentials.list(owner, chatId, ["msg_enabled_fallback"])).resolves.toEqual([]);
   });
 
+  it("keeps private storage ready when runtime construction fails after schema readiness", async () => {
+    const originalCreateAppDb = appDatabase.createAppDb;
+    vi.spyOn(appDatabase, "createAppDb").mockImplementationOnce((...args) => {
+      const created = originalCreateAppDb(...args);
+      return { ...created, kysely: created.kysely.withPlugin({
+        transformQuery(input) {
+          if (input.node.kind === "DeleteQueryNode" && JSON.stringify(input.node).includes("collaboration_exports")) {
+            throw new Error("Synthetic runtime cleanup failure after schema readiness");
+          }
+          return input.node;
+        },
+        async transformResult(input) { return input.result; },
+      }) };
+    });
+    const { repository, guard } = await boot(configuredCollaboration, "construction_failed");
+    expect(collaborationDatabase.bootstrapCollaborationDatabase).toHaveBeenCalledTimes(1);
+    await repository.create(owner, { id: chatId, clientRequestId: "req_runtime_build_failure", title: "Private storage remains ready" });
+    await expect(guard.assertPersonalExecutionAllowed(owner, chatId)).resolves.toBeUndefined();
+    const credentials = new ChatCredentialRepository(repository.kysely, Buffer.alloc(32, 1), [owner.ownerId]);
+    await expect(credentials.list(owner, chatId, ["msg_runtime_build_failure"])).resolves.toEqual([]);
+  });
+
+  it("binds the prepared factory to its migrated pool even if call options supply another database", async () => {
+    const { db, kysely } = createAppDb(databaseUrl);
+    let runtime: Awaited<ReturnType<typeof createGatewayCollaboration>> | undefined;
+    try {
+      const repository = new ChatRepository(kysely);
+      await repository.bootstrap();
+      const create = await prepareGatewayCollaborationDatabase(kysely);
+      runtime = await create({ db: {} as never, chatRepository: repository,
+        config: configuredCollaboration, startTimers: false });
+      expect(collaborationDatabase.bootstrapCollaborationDatabase).toHaveBeenCalledTimes(1);
+      await repository.create(owner, { id: chatId, clientRequestId: "req_bound_factory", title: "Prepared pool" });
+      const credentials = new ChatCredentialRepository(kysely, Buffer.alloc(32, 1), [owner.ownerId]);
+      await expect(credentials.list(owner, chatId, ["msg_bound_factory"])).resolves.toEqual([]);
+    } finally {
+      await runtime?.shutdown();
+      await db.destroy();
+    }
+  });
+
   it("still bootstraps storage for standalone collaboration callers", async () => {
     const { db, kysely } = createAppDb(databaseUrl);
     let runtime: Awaited<ReturnType<typeof createGatewayCollaboration>> | undefined;
@@ -148,6 +243,21 @@ realDescribe("owner Chat foundation bootstrap ownership (PostgreSQL)", () => {
       await expect(credentials.list(owner, chatId, ["msg_standalone"])).resolves.toEqual([]);
     } finally {
       await runtime?.shutdown();
+      await db.destroy();
+    }
+  });
+
+  it("rejects a standalone runtime before construction when its schema preparation fails", async () => {
+    const { db, kysely } = createAppDb(databaseUrl);
+    try {
+      const repository = new ChatRepository(kysely);
+      await repository.bootstrap();
+      vi.mocked(collaborationDatabase.bootstrapCollaborationDatabase)
+        .mockRejectedValueOnce(new Error("Synthetic standalone schema failure"));
+      await expect(createGatewayCollaboration({ db: kysely, chatRepository: repository,
+        config: configuredCollaboration, startTimers: false })).rejects.toThrow("Synthetic standalone schema failure");
+      expect(collaborationDatabase.bootstrapCollaborationDatabase).toHaveBeenCalledTimes(1);
+    } finally {
       await db.destroy();
     }
   });
