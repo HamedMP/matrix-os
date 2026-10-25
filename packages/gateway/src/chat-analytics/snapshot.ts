@@ -1,9 +1,10 @@
 import type { ClassificationApi, ClassificationSnapshot } from "./contracts.js";
+import { CHAT_ANALYTICS_MAX_SNAPSHOT_BYTES } from "./contracts.js";
 
 /** Exact current request only. Never reads a session, file, tool or future message. */
-export function extractClassificationSnapshot(api: ClassificationApi, body: string, maxBytes = 16_384): ClassificationSnapshot | null {
+export function extractClassificationSnapshot(api: ClassificationApi, body: string, maxBytes = CHAT_ANALYTICS_MAX_SNAPSHOT_BYTES): ClassificationSnapshot | null {
   if (!["openai-completions", "openai-responses", "anthropic-messages"].includes(api)
-    || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 16_384 || Buffer.byteLength(body) > 131_072) return null;
+    || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > CHAT_ANALYTICS_MAX_SNAPSHOT_BYTES || Buffer.byteLength(body) > 131_072) return null;
   let parsed: unknown;
   try { parsed = JSON.parse(body); }
   catch (error) { if (!(error instanceof SyntaxError)) console.warn("[chat-analytics] Snapshot unavailable"); return null; }

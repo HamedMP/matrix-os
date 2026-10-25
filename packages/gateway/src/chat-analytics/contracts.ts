@@ -1,5 +1,7 @@
 import { z } from "zod/v4";
 
+export const CHAT_ANALYTICS_MAX_SNAPSHOT_BYTES = 16_384;
+
 export const TASK_TYPES = {
   coding: ["generate", "debug", "review", "explain", "refactor", "tests"],
   research: ["lookup", "compare", "synthesis"], writing: ["draft", "rewrite", "summarize"],

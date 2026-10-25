@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomInt, randomUUID } from "node:crypto";
-import { AdmissionLeaseSchema, CaptureInputSchema, ChatAnalyticsTagsSchema, ChatAnalyticsUnavailable, GenerationFactsSchema,
+import { AdmissionLeaseSchema, CaptureInputSchema, ChatAnalyticsTagsSchema, ChatAnalyticsUnavailable, GenerationFactsSchema, CHAT_ANALYTICS_MAX_SNAPSHOT_BYTES,
   type AdmissionLease, type ClassificationSnapshot, type CompletedGeneration, type GenerationBinding, type GenerationFactsInput } from "./contracts.js";
 import type { ChatAnalyticsStore } from "./store.js";
 import { extractClassificationSnapshot } from "./snapshot.js";
@@ -14,7 +14,7 @@ export interface ChatAnalyticsLimits {
   classificationTimeoutMs: number; shutdownTimeoutMs: number; sweepIntervalMs: number;
 }
 const defaults: ChatAnalyticsLimits = { maxOutstanding: 64, maxQueued: 32, maxActive: 2, maxPerOwner: 4, maxActivePerOwner: 1,
-  maxSnapshotBytes: 16_384, maxSnapshotBytesTotal: 262_144, receiptTtlMs: 180_000, queueTtlMs: 60_000,
+  maxSnapshotBytes: CHAT_ANALYTICS_MAX_SNAPSHOT_BYTES, maxSnapshotBytesTotal: 262_144, receiptTtlMs: 180_000, queueTtlMs: 60_000,
   classificationTimeoutMs: 10_000, shutdownTimeoutMs: 6_000, sweepIntervalMs: 1_000 };
 const maxima: ChatAnalyticsLimits = { ...defaults, maxActive: 4, maxPerOwner: 8, maxActivePerOwner: 2,
   receiptTtlMs: 300_000, queueTtlMs: 120_000, classificationTimeoutMs: 30_000, shutdownTimeoutMs: 10_000, sweepIntervalMs: 5_000 };
@@ -174,6 +174,9 @@ export function createTransientChatClassifier(options: {
     },
     cancel(receipt: OrdinaryGenerationReceipt) { const entry = entries.get(receipt); if (entry) cancelEntry(entry); pump(); },
     cancelOwner(ownerId: string) { cancelMatching(entry => entry.binding.ownerId === ownerId); },
+    cancelChat(ownerId: string, chatId: string) {
+      cancelMatching(entry => entry.binding.ownerId === ownerId && entry.binding.chatId === chatId);
+    },
     async deleteOwner(ownerId: string) {
       cancelMatching(entry => entry.binding.ownerId === ownerId);
       await options.store.deleteOwner(ownerId);
