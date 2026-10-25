@@ -19,7 +19,7 @@ Product/design owner review of browser placement, file actions, and PDF controls
 - The editor previews its unsaved in-memory buffer. View changes do not save, replace the model, or discard dirty edits. Existing optimistic file conflict handling remains in force.
 - The Browser uses the existing embed navigation admission, sandbox, isolated browser partition, popup/download restrictions and runtime URL classifier. It detaches while hidden and never receives the renderer's preload API.
 - Home file previews offer Copy path, Open in Files and Download. Project/worktree resource paths remain scoped; do not reinterpret a worktree-relative path as a home path. Opening arbitrary worktree files in Files needs an authoritative location API before enabling that action.
-- HTML preview currently supports static, self-contained remote files. Running HTML scripts with adjacent assets in a remote browser requires a separately reviewed remote-browser route; a local webview cannot claim that capability.
+- Hamed confirmed on 25 October 2026 that static HTML preview is sufficient for this scope. Preview static, self-contained remote files with scripts and network access disabled. Interactive scripts and adjacent external assets are outside this increment and are not a completion blocker. Public website URLs still use the separate local Browser view.
 
 ## Existing routes and auth
 
