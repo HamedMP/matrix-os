@@ -1,6 +1,6 @@
 import { getThemeVariant, MONO_FONT_OPTIONS } from "@matrix-os/brand/themes";
 import { monacoTheme } from "@matrix-os/brand/themes/editor";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useDeferredValue, useEffect, useRef, useState } from "react";
 import type { editor as MonacoEditor } from "monaco-editor";
 import { Button } from "../../design/primitives";
 import { toUserMessage } from "../../lib/errors";
@@ -18,6 +18,7 @@ import {
 } from "./editor-save";
 
 export const MAX_MONACO_FILE_BYTES = 2 * 1024 * 1024;
+const MarkdownContent = lazy(async () => ({ default: (await import("./MarkdownPreview")).MarkdownContent }));
 
 class EditorScopeChangedError extends Error {
   constructor() {
@@ -82,6 +83,9 @@ export default function MonacoEditorHost({
   const [saving, setSaving] = useState(false);
   const [documentRevision, setDocumentRevision] = useState(0);
   const [fallbackContent, setFallbackContent] = useState("");
+  const [markdownView, setMarkdownView] = useState<"source" | "split" | "preview">("source");
+  const previewContent = useDeferredValue(fallbackContent);
+  const isMarkdown = /\.(?:md|mdx|markdown)$/i.test(path);
   const [monacoState, setMonacoState] = useState<"pending" | "ready" | "failed">("pending");
   const supportsMonaco = typeof Worker === "function"
     && typeof navigator !== "undefined"
@@ -152,6 +156,7 @@ export default function MonacoEditorHost({
       });
       editor.onDidChangeModelContent(() => {
         contentRef.current = editor.getValue();
+        setFallbackContent(contentRef.current);
         dirtyChangeRef.current(contentRef.current !== fileRef.current?.content);
       });
       editorRef.current = editor;
@@ -281,7 +286,13 @@ export default function MonacoEditorHost({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      {isMarkdown ? <div className="flex shrink-0 gap-3 border-b px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)" }}>
+        <button type="button" aria-label="Markdown source" aria-pressed={markdownView === "source"} onClick={() => setMarkdownView("source")}>Source</button>
+        <button type="button" aria-label="Split Markdown view" aria-pressed={markdownView === "split"} onClick={() => setMarkdownView("split")}>Split</button>
+        <button type="button" aria-label="Markdown preview" aria-pressed={markdownView === "preview"} onClick={() => setMarkdownView("preview")}>Preview</button>
+      </div> : null}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className={isMarkdown && markdownView === "preview" ? "hidden" : "relative min-h-0 min-w-0 flex-1 overflow-hidden"}>
         {supportsMonaco ? (
           <div
             ref={hostRef}
@@ -305,6 +316,10 @@ export default function MonacoEditorHost({
           className="absolute inset-0 size-full resize-none border-0 p-4 font-mono text-[13px] leading-5 outline-none"
           style={{ background: "var(--bg-sunken)", color: "var(--text-primary)" }}
         />
+      </div>
+      {isMarkdown && markdownView !== "source" ? <section aria-label="Markdown preview" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto border-l" style={{ borderColor: "var(--border-subtle)" }}>
+        <Suspense fallback={<p role="status">Loading preview…</p>}><MarkdownContent content={previewContent} /></Suspense>
+      </section> : null}
       </div>
       {saveError ? (
         <div role="alert" className="flex items-center justify-between gap-3 border-t px-3 py-2 text-xs" style={{ borderColor: "var(--border-subtle)", color: "var(--danger)" }}>

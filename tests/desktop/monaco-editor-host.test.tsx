@@ -32,6 +32,20 @@ function makeApi() {
 }
 
 describe("MonacoEditorHost", () => {
+  it("previews unsaved Markdown beside the editor without writing it", async () => {
+    const api = makeApi();
+    api.getText.mockResolvedValue("# Original\n");
+    useConnection.setState({ api: api as never });
+    render(<MonacoEditorHost path="notes/plan.md" active onDirtyChange={vi.fn()} />);
+    const editor = await screen.findByRole("textbox", { name: "Edit notes/plan.md" });
+    fireEvent.change(editor, { target: { value: "# Unsaved heading\n\n- First action" } });
+    fireEvent.click(screen.getByRole("button", { name: "Split Markdown view" }));
+    expect(await screen.findByRole("heading", { name: "Unsaved heading" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Edit notes/plan.md" })).toBeTruthy();
+    expect(api.putText).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Markdown source" }));
+    expect(screen.getByRole("textbox").getAttribute("value") ?? (screen.getByRole("textbox") as HTMLTextAreaElement).value).toContain("Unsaved heading");
+  });
   beforeEach(() => {
     useConnection.setState(useConnection.getInitialState(), true);
     useConnection.setState({ runtimeSlot: "primary", authGeneration: 1 });

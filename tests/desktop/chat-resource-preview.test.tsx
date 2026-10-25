@@ -52,6 +52,27 @@ it("renders project HTML charts through the authenticated worktree preview", asy
   expect(screen.queryByRole("button", { name: "Copy image chart.html" })).toBeNull();
 });
 
+it("renders Markdown headings and lists in the sidebar", async () => {
+  get.mockResolvedValue({ ...descriptor, name: "report.md", kind: "markdown", mimeType: "text/markdown" });
+  getBlob.mockResolvedValue(new Blob(["# Quarterly report\n\n- Published"], { type: "text/markdown" }));
+  render(<InspectorFilePreview target={{ kind: "home", path: "reports/report.md", label: "report.md" }} />);
+  expect(await screen.findByRole("heading", { name: "Quarterly report" })).toBeTruthy();
+  expect(screen.getByRole("listitem").textContent).toContain("Published");
+});
+
+it("offers copy path and open in Files from a preview context menu", async () => {
+  const writeText = vi.fn(async () => {});
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  const { useFilesNavigation } = await import("../../desktop/src/renderer/src/stores/files-navigation");
+  const navigate = vi.spyOn(useFilesNavigation.getState(), "navigate");
+  render(<InspectorFilePreview target={home} />);
+  fireEvent.contextMenu(await screen.findByRole("img", { name: "chart.png" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Copy path chart.png" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith(home.path));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Open in Files chart.png" }));
+  await waitFor(() => expect(navigate).toHaveBeenCalledWith("apps/chart"));
+});
+
 it("does not copy an image when its selected preview is replaced during the read", async () => {
   let resolveRead!: (blob: Blob) => void;
   getBlob.mockImplementation(() => new Promise<Blob>((resolve) => { resolveRead = resolve; }));

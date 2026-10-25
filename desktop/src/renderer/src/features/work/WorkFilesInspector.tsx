@@ -13,6 +13,7 @@ import {
   type InspectorFileTarget,
 } from "../panels/InspectorFilesPanel";
 import TerminalView from "../terminal/TerminalView";
+import SidebarBrowser from "../browser/SidebarBrowser";
 import { resolveWorkFilesScope, type WorkFilesScope } from "./work-files-scope";
 import { projectWorkTerminalSessions } from "./work-terminal-scope";
 import { parseTerminalRefKey, runtimeTerminalTabs } from "../../lib/terminal-workspaces";
@@ -26,9 +27,11 @@ const FILE_LIST_DIVIDER_WIDTH = 8;
 
 type WorkInspectorTab =
   | { id: "files"; kind: "files"; label: "Files" }
+  | { id: "browser"; kind: "browser"; label: "Browser" }
   | { id: string; kind: "terminal"; label: string; sessionId: string };
 
 const FILES_TAB: WorkInspectorTab = { id: "files", kind: "files", label: "Files" };
+const BROWSER_TAB: WorkInspectorTab = { id: "browser", kind: "browser", label: "Browser" };
 
 function collectTerminalBindingIds(detail: CanonicalChatDetailResponse): string[] {
   const bindingIds = [...(detail.terminalSessionIds ?? [])];
@@ -382,6 +385,10 @@ function WorkInspectorContent({
                 style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)" }}
               >
                 <InspectorMenuItem label="Files" icon={<FileCode2 size={14} />} onSelect={() => setSelectedId(FILES_TAB.id)} />
+                <InspectorMenuItem label="Browser" icon={<FileCode2 size={14} />} onSelect={() => {
+                  setTabs((current) => current.some((tab) => tab.id === BROWSER_TAB.id) ? current : [...current, BROWSER_TAB]);
+                  setSelectedId(BROWSER_TAB.id);
+                }} />
                 {detail || resolveDraftChatId ? (
                   <>
                     <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
@@ -471,6 +478,9 @@ function WorkInspectorContent({
               : "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"}
             style={{ background: "var(--bg-surface)" }}
           >
+            {tabs.some((tab) => tab.kind === "browser") ? <div hidden={selected.kind !== "browser"} className={selected.kind === "browser" ? "flex min-h-0 flex-1 flex-col" : "hidden"} role="tabpanel" aria-label="Browser" id="work-inspector-panel-browser">
+              <SidebarBrowser active={active && selected.kind === "browser"} />
+            </div> : null}
             {selected.kind === "files" && selectedFile ? (
               <div
                 id={`work-inspector-panel-${FILES_TAB.id}`}

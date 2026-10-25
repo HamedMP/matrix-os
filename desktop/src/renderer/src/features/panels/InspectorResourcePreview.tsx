@@ -5,6 +5,10 @@ import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
 import { useDesktopFileDownload } from "../files/use-file-download";
 import type { InspectorFileTarget } from "./InspectorFilesPanel";
+import { DesktopFilePreviewContent } from "../files/DesktopFilePreviewContent";
+import { useFilesNavigation } from "../../stores/files-navigation";
+import { FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
+import { useDesktopSurfaces } from "../../stores/desktop-surfaces";
 
 const MAX_PROJECT_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 const PROJECT_TEXT_PREFIX_BYTES = 64 * 1024;
@@ -66,6 +70,13 @@ export function InspectorResourcePreview({ target }: { target: InspectorFileTarg
     if (isCurrent()) savePreviewBlob(blob, descriptor.name);
   } : undefined;
   return <FilePreviewActions key={contentUrl} name={descriptor.name} onDownload={onDownload} pending={download.pending} zIndex={DESKTOP_Z_INDEX.popover}
+    onCopyPath={async () => { if (!isCurrent()) throw new Error("PreviewUnavailable"); await navigator.clipboard.writeText(target.path); }}
+    onOpenInFiles={target.kind === "home" ? () => {
+      if (!isCurrent()) throw new Error("PreviewUnavailable");
+      useFilesNavigation.getState().navigate(target.path.split("/").slice(0, -1).join("/"));
+      const tabId = useTabs.getState().openTab(FILES_WORKSPACE_TAB_SPEC);
+      useDesktopSurfaces.getState().activateSurface(tabId);
+    } : undefined}
     onCopyImage={descriptor.kind === "image" ? async () => copyFileImage(await loadBlob(contentUrl, 50 * 1024 * 1024), isCurrent) : undefined}>
     <div className="flex min-h-0 flex-1 flex-col" tabIndex={0} aria-label={`File preview ${descriptor.name}`}>
     <header className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2" style={{ borderColor: "var(--border-subtle)" }}>
@@ -74,7 +85,7 @@ export function InspectorResourcePreview({ target }: { target: InspectorFileTarg
       {projectDownloadTooLarge ? <p className="text-xs">Project downloads are available for files up to 50 MiB.</p> : null}
     </header>
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
-      <FilePreviewContent key={`${contentUrl}:${attempt}`} descriptor={descriptor} contentUrl={contentUrl} loadBlob={loadBlob} loadText={loadText} textPreviewBytes={textPrefix ? PROJECT_TEXT_PREFIX_BYTES : undefined} retry={() => setAttempt((value) => value + 1)} />
+      <DesktopFilePreviewContent key={`${contentUrl}:${attempt}`} descriptor={descriptor} contentUrl={contentUrl} loadBlob={loadBlob} loadText={loadText} textPreviewBytes={textPrefix ? PROJECT_TEXT_PREFIX_BYTES : undefined} retry={() => setAttempt((value) => value + 1)} />
     </div>
   </div></FilePreviewActions>;
 }
