@@ -10,6 +10,22 @@ const root = '/api/chatgpt-plan/device';
 const post = (body: unknown, bearer = true) => ({ method: 'POST', headers: {
   'content-type': 'application/json', ...(bearer ? { authorization: 'Bearer fixture' } : {}),
 }, body: JSON.stringify(body) });
+it.each(['challenge', 'rebind-challenge', 'connect', 'poll', 'reply', 'disconnect'])(
+  'browser-cookie owner cannot use native device %s even with an authenticated principal', async (action) => {
+    const methods = { challenge: vi.fn(), rebindChallenge: vi.fn(), connect: vi.fn(), poll: vi.fn(), reply: vi.fn(), disconnect: vi.fn() };
+    const app = new Hono();
+    // A valid browser principal is not the verified native bearer capability.
+    app.route('/', createChatGptPlanPeerRoutes({
+      getPrincipal: () => ({ userId: 'owner', source: 'jwt' }) as never,
+      peers: methods as never,
+    }));
+    const request = post({}, false);
+    const response = await app.request(`${root}/${action}`, { ...request,
+      headers: { ...request.headers, cookie: '__session=browser-owner-fixture' } });
+    expect(response.status).toBe(403);
+    for (const method of Object.values(methods)) expect(method).not.toHaveBeenCalled();
+  },
+);
 function fixture(owner = 'owner', source = 'jwt') {
   const challenge = vi.fn((id: string) => {
     if (id !== 'owner') throw new ChatGptPlanPeerError('forbidden');
