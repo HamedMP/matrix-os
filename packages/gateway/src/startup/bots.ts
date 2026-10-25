@@ -99,6 +99,9 @@ import { createNativeBotTasks } from '../bots/native-task-service.js';
 import { createBotExecutorReadiness } from '../bots/executor-readiness.js';
 import type { NativeProviderProfileGuard } from '../ai-providers/native-provider-profile-guard.js';
 import type { createCompanyBotRuntime } from "./company-bot-runtime.js";
+import type { OwnedInferenceAnalytics } from '../bots/inference-analytics.js';
+import { createBotInferenceComposition } from './bot-inference-composition.js';
+import { closeOwnedInferenceAnalytics, createBotConnectionReconciler, createBotServicesCloser, startBotInteractionSweeper } from './bot-services-close.js';
 
 /** Passes before the first run is admitted; any rest is finished in the background. */
 const MAX_CHECKPOINT_RECONCILE_PASSES = 50;
@@ -175,6 +178,8 @@ export interface BotServices extends RoutineOriginStartup {
 export async function startBots(options: {
   routineCliTransport?: { binPath: string; endpoint: string };
   routineActionPlatform?: { platformUrl: string; token: string; handle: string; machineId: string; runtimeSlot: string };
+  /** This owner host transfers runtime lifecycle ownership; it retains its database pool. */
+  chatAnalytics?: OwnedInferenceAnalytics;
   toolOutputKey?: Buffer;
   runtimeOwnerId?: string | null;
   /** Fixed trusted runtime config only; preserve each actual principal's existing owner data. */
@@ -207,14 +212,15 @@ export async function startBots(options: {
   checkpointReconcile?: { passes?: number; intervalMs?: number };
 }): Promise<BotServices | undefined> {
   const pilot = options.googlePilot ?? { enabled: false as const };
-  if (pilot.enabled && (pilot.ownerId !== options.runtimeOwnerId || !options.googleCopies || !options.host?.available || !options.executionAdmissionFence || !options.pendingExecutionCount || !options.integrations)) throw new Error('Google pilot unavailable');
-  if (pilot.enabled && options.qualifiedFundedConfig && options.qualifiedFundedConfig.identity.ownerId !== pilot.ownerId) throw new Error('Google pilot unavailable');
   const now = () => options.now?.() ?? new Date();
   const lifetime = new AbortController();
   // Register each acquired resource immediately: any later startup failure must drain it.
   const startupCleanup: Array<() => void | Promise<void>> = [];
   const startupDrain: Array<() => void | Promise<void>> = [];
   try {
+  startupCleanup.push(() => closeOwnedInferenceAnalytics(options.chatAnalytics));
+  if (pilot.enabled && (pilot.ownerId !== options.runtimeOwnerId || !options.googleCopies || !options.host?.available || !options.executionAdmissionFence || !options.pendingExecutionCount || !options.integrations)) throw new Error('Google pilot unavailable');
+  if (pilot.enabled && options.qualifiedFundedConfig && options.qualifiedFundedConfig.identity.ownerId !== pilot.ownerId) throw new Error('Google pilot unavailable');
   const db = ownerBotExecutor(options.repository.kysely);
   try {
     await bootstrapBotDatabase(db);
@@ -223,6 +229,7 @@ export async function startBots(options: {
   } catch (error: unknown) {
     console.warn("[bots] bot state unavailable:", error instanceof Error ? error.name : "UnknownError");
     if (pilot.enabled) throw new Error("Google pilot unavailable");
+    await closeOwnedInferenceAnalytics(options.chatAnalytics);
     return undefined;
   }
   const recipes = createBotRecipeCatalog();
@@ -300,38 +307,14 @@ export async function startBots(options: {
   const routineOriginRuntime = createRoutineOriginStartup({ db, transact, repository: options.repository, interactions, agents: options.agents,
     computerId: options.computerId ?? undefined, platform: options.routineActionPlatform, now: options.now });
   const authority = createBotAuthority({ resolveProcedure, transact, agents: options.agents, recipes, ...(integrationClient ? { client: integrationClient } : {}) });
-  // Started connection requests are completed from the inventory; passes never overlap and stop on close.
-  let connectionTimer: ReturnType<typeof setInterval> | undefined;
-  let connecting: Promise<unknown> | undefined;
-  const startConnectionReconciler = (admit: BotContinuationAdmitter) => {
-    if (!connections || connectionTimer) return;
-    connectionTimer = setInterval(() => {
-      connecting ??= runConnectionReconciliationPass(connections, admit).catch((error: unknown) => {
-        console.warn("[bots] connection reconciliation unavailable:", error instanceof Error ? error.name : "UnknownError");
-      }).finally(() => { connecting = undefined; });
-    }, CONNECTION_RECONCILE_MS);
-    connectionTimer.unref();
-  };
-  const stopConnections = async () => {
-    if (connectionTimer) clearInterval(connectionTimer);
-    connectionTimer = undefined;
-    await connecting;
-  };
+  const connectionReconciler = createBotConnectionReconciler({ available: Boolean(connections), intervalMs: CONNECTION_RECONCILE_MS,
+    reconcile: admit => runConnectionReconciliationPass(connections!, admit) });
+  const startConnectionReconciler = connectionReconciler.start;
+  const stopConnections = connectionReconciler.stop;
   startupCleanup.push(stopConnections);
   const memory = createBotMemoryService({ transact });
   const grants = createBotGrantService({ transact });
-  // Overdue questions are expired and announced; passes never overlap and stop on close.
-  let sweeping: Promise<unknown> | undefined;
-  const sweep = setInterval(() => {
-    sweeping ??= interactions.expireAllDue().catch((error: unknown) => {
-      console.warn("[bots] question expiry failed:", error instanceof Error ? error.name : "UnknownError");
-    }).finally(() => { sweeping = undefined; });
-  }, INTERACTION_SWEEP_MS);
-  sweep.unref();
-  const stopSweep = async () => {
-    clearInterval(sweep);
-    await sweeping;
-  };
+  const stopSweep = startBotInteractionSweeper({ intervalMs: INTERACTION_SWEEP_MS, expire: () => interactions.expireAllDue() });
   startupCleanup.push(stopSweep);
   const botChats = createCustomBotChats({ chats: options.repository, agents: options.agents });
   const tasks: BotServices["tasks"] = async (ownerId, chatId) => {
@@ -357,6 +340,7 @@ export async function startBots(options: {
         await stopConnections();
         await stopSweep();
         await reconciler.stop();
+        await closeOwnedInferenceAnalytics(options.chatAnalytics);
       },
     };
   }
@@ -542,25 +526,8 @@ export async function startBots(options: {
     },
     events: { publish: (binding, event) => isManagedPiBinding(binding) ? managed.events.publish(binding, event) : orchestrator.eventSink.publish(binding, event) },
     tools: qualifiedTools,
-    inference: {
-      googleData: googleData.inference,
-      ...(isolatedChat ? { isolatedChat } : {}),
-      ...(options.matrixOpenAi ? { matrixOpenAi: options.matrixOpenAi } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}),
-      ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}),
-      homePath: options.homePath,
-      onFundedFailure: (binding, reason) => managed.recordFundedFailure(binding, reason),
-      revalidateBinding: async (binding) => {
-        if (!isManagedPiBinding(binding)) {
-          try { await revalidateSource(binding); return true; }
-          catch (error: unknown) { console.warn("[bots] Custom authority revalidation failed", error instanceof Error ? error.name : "UnknownError"); return false; }
-        }
-        try { await managedAdmission.toolAuthority(binding); return true; }
-        catch (error: unknown) { console.warn("[managed-pi] authority revalidation failed", error instanceof Error ? error.name : "UnknownError"); return false; }
-      },
-      lifetime: lifetime.signal,
-      ...(options.fundedCredentialProvider ? { fundedCredentialProvider: options.fundedCredentialProvider } : {}),
-      ...(options.fundedAdmission ? { fundedAdmission: options.fundedAdmission } : {}),
-    },
+    inference: createBotInferenceComposition({ options, lifetime: lifetime.signal, googleData: googleData.inference,
+      isolatedChat, chatgptPlan: chatgptPlanPeers, procedures, revalidateSource, managedAdmission, managed }),
   });
   brokerTool = actions.callTool;
   forgetRun = (runId) => { githubDeveloper.closeRun(runId); actions.forgetRun(runId); };
@@ -595,30 +562,9 @@ export async function startBots(options: {
     managedAdapter: managed.adapter,
     cancelOpenAiInference: () => registry.cancelOpenAiInference(),
     cancelAnthropicInference: () => registry.cancelAnthropicInference(),
-    async close() {
-      await routineOriginRuntime.routineOrigin?.close();
-      await routines.stop();
-      lifetime.abort();
-      await purgeDelivery?.close();
-      await copyLifecycle?.close();
-      chatgptPlanPeers?.close();
-      await routineCli?.close();
-      await githubDeveloperService.close();
-      unregister();
-      registry.shutdown();
-      await jevTools?.close();
-      if (checkpointTimer) clearInterval(checkpointTimer);
-      clearInterval(saveSweepTimer);
-      await reconciling;
-      await sweepingSaves;
-      await stopConnections();
-      await stopSweep();
-      await reconciler.stop();
-      await nativeTasks?.close();
-      await managed.close();
-      await googleData.close();
-      await qualifiedCredentials?.close();
-    },
+    close: createBotServicesCloser({ lifetime, purgeDelivery, copyLifecycle, chatgptPlanPeers, unregister, registry, jevTools,
+      checkpointTimer, saveSweepTimer, reconciling: () => reconciling, sweepingSaves: () => sweepingSaves,
+      stopConnections, stopSweep, reconciler, nativeTasks, managed, googleData, qualifiedCredentials, chatAnalytics: options.chatAnalytics, additionalServices: [{ close: () => routineOriginRuntime.routineOrigin?.close() }, { close: () => routines.stop() }, { close: () => routineCli?.close() }, githubDeveloperService] }),
   };
   } catch (error: unknown) {
     lifetime.abort();

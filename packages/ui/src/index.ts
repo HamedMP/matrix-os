@@ -1,6 +1,9 @@
 export { createChatDriveProjectClient, type ChatDriveProjectClient } from "./organization-drive/chat-project-client.js";
 export { useChatDriveProjects } from "./organization-drive/use-chat-drive-projects.js";
 export { Button } from "./Button.js";
+export { ChatUsagePanel } from "./chat-usage/ChatUsagePanel.js";
+export { createChatUsageClient, ChatUsageUnavailable, chatUsageGroups } from "./chat-usage/client.js";
+export type { ChatUsageClient, ChatUsagePolicy, ChatUsageSummary, ChatUsageGroup, ChatUsageMutation, ChatUsageRequest } from "./chat-usage/client.js";
 export type { ButtonProps, ButtonVariant, ButtonSize } from "./Button.js";
 
 export { Card, CardHeader, CardTitle, CardContent, CardFooter } from "./Card.js";

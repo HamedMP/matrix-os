@@ -35,6 +35,7 @@ import {
 import { isManagedPiBinding, type PiRuntimeBinding } from "./runtime-registry.js";
 import { authorizeGoogleInference, googleInferenceHeadersAllowed, googleInferenceIdentity, GoogleInferencePolicyError,
   prepareGoogleInferenceBody, type GoogleDataInferenceAuthority, type GoogleInferenceIdentity } from "../google-data/runtime/inference-policy.js";
+import { captureInferenceAnalytics, observeInferenceAnalyticsStream, type InferenceAnalytics, type InferenceAnalyticsAttempt } from "./inference-analytics.js";
 
 const INFERENCE_TIMEOUT_MS = 30_000;
 /** Funded relay generation may buffer the full reply; the worker bridge and
@@ -81,6 +82,8 @@ const BotInferenceBodySchema = z.object({
 }).passthrough();
 
 export interface BotInferenceDependencies {
+  /** Private positive-provenance classifier hooks; never supplied by a worker frame. */
+  chatAnalytics?: InferenceAnalytics;
   /** Server-owned provenance/profile authority. Never populated from model input. */
   googleData?: GoogleDataInferenceAuthority;
   isolatedChat?: import("../chat/isolated-chat-envelope.js").IsolatedChatAuthority;
@@ -167,6 +170,8 @@ export async function forwardBotInference(
   authorize: (modelId: string) => BotInferenceAuthorization | Promise<BotInferenceAuthorization>,
   deps: BotInferenceDependencies,
 ): Promise<ScopeRuntimeBrokerResult> {
+  const startedAt = performance.now();
+  let analyticsAttempt: InferenceAnalyticsAttempt | undefined;
   let modelId: string;
   let parsedBody: z.infer<typeof BotInferenceBodySchema>;
   try {
@@ -369,6 +374,17 @@ export async function forwardBotInference(
         }
         if (!await liveAfterPolicy()) return false;
       }
+      // Capture only the exact final wire body after real admission/queue waits.
+      // Its independent durable admission may still refuse unknown provenance.
+      if (!googleOrigin && deps.chatAnalytics) {
+        analyticsAttempt = await captureInferenceAnalytics({ analytics: deps.chatAnalytics, binding, requestId: request.requestId,
+          api: binding.route.api, body, signal: lifecycle, modelId, accessSource: accessSourceId, startedAt });
+        if (deps.googleData) {
+          const fresh = await waitForInferenceAuthority(() => authorizeGoogleInference(deps.googleData, { phase: "dispatch", binding, identity, signal }), signal);
+          if (!fresh?.allowed || fresh.googleOrigin) { analyticsAttempt?.cancel(); return false; }
+        }
+        if (!await liveAfterPolicy() || !await stillAuthorized()) { analyticsAttempt?.cancel(); return false; }
+      }
         return true;
       });
       if (!permitted) return "denied";
@@ -386,7 +402,9 @@ export async function forwardBotInference(
         const pending = fetchImpl(`${baseUrl}${request.path}`, {
           method: "POST", headers, body, redirect: "error", signal: responseSignal,
         });
-        return ownerStream ? await awaitOwnerStreamResult(pending, responseSignal, discard) : await pending;
+        const response = ownerStream ? await awaitOwnerStreamResult(pending, responseSignal, discard) : await pending;
+        if (!response.ok) { analyticsAttempt?.cancel(); analyticsAttempt = undefined; }
+        return response;
       } finally { if (headersTimer !== undefined) clearTimeout(headersTimer); }
     };
 
@@ -435,12 +453,13 @@ export async function forwardBotInference(
         return failure(request.requestId, 'action_denied');
       }
       if (accessSourceId === 'matrix_included') deps.onFundedFailure?.(binding, undefined);
+      const streamAttempt = analyticsAttempt; analyticsAttempt = undefined;
       return { version: 1, requestId: request.requestId, ok: true, status: response.status,
         headers: safeResponseHeaders(response, 'inference'),
-        body: guardInferenceStream(boundedInferenceSseFrames(inferenceResponseText(response, responseSignal,
+        body: observeInferenceAnalyticsStream(guardInferenceStream(boundedInferenceSseFrames(inferenceResponseText(response, responseSignal,
           ownerStream ? INFERENCE_TIMEOUT_MS : undefined)), {
           signal: responseSignal, authorized, abort: () => streamLifetime.abort(),
-        }) };
+        }), streamAttempt) };
     }
     const body = await readBoundedBody(response, INFERENCE_RESPONSE_BODY_MAX_BYTES);
     if (!await googleReleaseAllowed()) return failure(request.requestId, "action_denied");
@@ -457,12 +476,16 @@ export async function forwardBotInference(
       body,
     });
     if (accessSourceId === "matrix_included") deps.onFundedFailure?.(binding, undefined);
+    analyticsAttempt?.completed(body);
     return result;
   } catch (error: unknown) {
     if (accessSourceId === "matrix_included" && await stillAuthorized()) deps.onFundedFailure?.(binding, undefined);
     if (error instanceof RangeError && error.message === "response_too_large") return failure(request.requestId, "response_too_large");
     console.warn("[bots] inference forward failed:", error instanceof Error ? error.name : "UnknownError");
     return failure(request.requestId, "provider_unavailable");
+  } finally {
+    // Settled completions are inert; failures/aborts and denied release drop their exact snapshot.
+    analyticsAttempt?.cancel();
   }
 }
 
