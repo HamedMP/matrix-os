@@ -112,3 +112,11 @@ time bounds, compatibility and Host-first rollback sequence are specified in
 [the protocol design](poll-delivery-v2-design.md) and
 [implementation plan](poll-delivery-v2-plan.md). Local synthetic inference and
 Node HTTP tests do not qualify real TLS or 10/30-minute Electron operation.
+
+## Lost acknowledgements and Stop synchronization
+
+Electron Desktop and shared Web Chat treat admission transport failure as an unknown outcome. A bounded authenticated read may confirm the exact request ID, original input, selection and modes; it must never infer acceptance from the latest Run or automatically resend the write. Definitive client/auth/conflict rejections remain errors. An unchanged manual retry retains its admission key while acknowledgement is unresolved.
+
+A successful Stop retains a selected-Chat snapshot synchronization obligation even when the event stream reports open. Reads retry with capped backoff until the cancelled Run is no longer active; navigation, authority changes and unmount dispose the obligation. The canonical terminal state stays authoritative; clients do not invent revisions or turn a completed Run into a cancellation.
+
+Qualification separates controlled transport-fault regression tests from Electron Desktop live observations. Previous long-run evidence remains pinned to its original source; a new UI build does not retroactively qualify other surfaces, providers or untested output/expiry boundaries.

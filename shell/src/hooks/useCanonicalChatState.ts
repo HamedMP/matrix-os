@@ -24,6 +24,7 @@ import {
   createChatMentionRequestTracker,
   createSharedCanonicalChatEventSource,
   createCanonicalChatRefresh,
+  useCanonicalChatStopRecovery,
   applyCanonicalChatContent,
   type CanonicalChatEventConnectionState,
 } from "@matrix-os/ui";
@@ -245,6 +246,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     }
   }, [client, navigationIdentity, isCurrent]);
 
+  const reconcileStop = useCanonicalChatStopRecovery(client, isCurrent() ? activeChatId : null, loadDetail);
+
 
   useEffect(() => {
     const pendingDisposal = pendingEventSourceDisposalRef.current;
@@ -436,9 +439,9 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         };
         const requestScope = record.chat.id;
         let operation = record.activeRun && options.resources?.length ? "queue" as const : "send" as const;
-        if (options.resources?.length) {
-          const { clientRequestId: seed, baseRevision: _revision, ...semanticInput } = input;
-          const attempt = mentionRequests.resolve(authority.summaryClient ?? client, requestScope, semanticInput, operation, seed);
+        {
+          const { clientRequestId: _generatedId, baseRevision: _revision, ...semanticInput } = input;
+          const attempt = mentionRequests.resolve(authority.summaryClient ?? client, requestScope, semanticInput, operation, options.clientRequestId);
           input.clientRequestId = attempt.clientRequestId;
           operation = attempt.operation;
         }
@@ -596,13 +599,13 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     if (!current?.record.activeRun || current.record.chat.id !== activeChatIdRef.current) return;
     const chatId = current.record.chat.id;
     void client.cancelRun(chatId, current.record.activeRun.runId, requestId())
-      .then(() => { if (isCurrent() && activeChatIdRef.current === chatId) return loadDetail(chatId); })
+      .then(() => { if (isCurrent() && activeChatIdRef.current === chatId) reconcileStop(chatId, current.record.activeRun!.runId); })
       .catch((error: unknown) => {
         if (!isCurrent()) return;
         console.warn("[canonical-chat] Shell cancellation failed:", error instanceof Error ? error.name : "UnknownError");
         if (activeChatIdRef.current === chatId) setSafeError("The run could not be stopped. Try again.");
       });
-  }, [client, loadDetail, isCurrent]);
+  }, [client, reconcileStop, isCurrent]);
 
   const submitInput = useCallback(async (
     runId: string,

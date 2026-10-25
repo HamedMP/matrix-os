@@ -1,4 +1,4 @@
-import { createBrowserPermissionClient, type BrowserPermissionClient } from "@matrix-os/ui";
+import { createBrowserPermissionClient, recoverCanonicalChatAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
 import type { CanonicalSubmitChatApprovalRequest } from "@matrix-os/contracts";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
 import { MAX_AGENT_ATTACHMENT_BYTES, CanonicalChatNavigationResponseSchema, canonicalAssistantOutputMessages, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
@@ -256,11 +256,21 @@ export function createCanonicalShellChatClient(options: {
     async admitTurn(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
       const body = CanonicalCreateChatTurnRequestSchema.parse(input);
-      return CanonicalChatTurnAdmissionResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turns`), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      }));
+      try {
+        return CanonicalChatTurnAdmissionResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turns`), {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        }));
+      } catch (error: unknown) {
+        const ambiguous = error instanceof TypeError
+          || error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")
+          || error instanceof CanonicalShellChatRequestError && error.status >= 500;
+        if (ambiguous) {
+          const recovered = await recoverCanonicalChatAdmission(id, body,
+            () => request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?limit=200`)));
+          if (recovered) return recovered;
+        }
+        throw error;
+      }
     },
     async queueTurn(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
