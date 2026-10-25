@@ -33,6 +33,7 @@ import {
 import { isManagedPiBinding, type PiRuntimeBinding } from "./runtime-registry.js";
 import { authorizeGoogleInference, googleInferenceHeadersAllowed, googleInferenceIdentity, GoogleInferencePolicyError,
   prepareGoogleInferenceBody, type GoogleDataInferenceAuthority, type GoogleInferenceIdentity } from "../google-data/runtime/inference-policy.js";
+import { captureInferenceAnalytics, type InferenceAnalytics, type InferenceAnalyticsAttempt } from "./inference-analytics.js";
 
 const INFERENCE_TIMEOUT_MS = 30_000;
 /** Funded relay generation may buffer the full reply; the worker bridge and
@@ -50,6 +51,8 @@ const BotInferenceBodySchema = z.object({
 }).passthrough();
 
 export interface BotInferenceDependencies {
+  /** Private positive-provenance classifier hooks; never supplied by a worker frame. */
+  chatAnalytics?: InferenceAnalytics;
   /** Server-owned provenance/profile authority. Never populated from model input. */
   googleData?: GoogleDataInferenceAuthority;
   isolatedChat?: import("../chat/isolated-chat-envelope.js").IsolatedChatAuthority;
@@ -112,6 +115,8 @@ export async function forwardBotInference(
   authorize: (modelId: string) => BotInferenceAuthorization,
   deps: BotInferenceDependencies,
 ): Promise<ScopeRuntimeBrokerResponse> {
+  const startedAt = performance.now();
+  let analyticsAttempt: InferenceAnalyticsAttempt | undefined;
   let modelId: string;
   let parsedBody: z.infer<typeof BotInferenceBodySchema>;
   try {
@@ -271,7 +276,18 @@ export async function forwardBotInference(
         }
         if (!await liveAfterPolicy()) return "denied";
       }
-      return fetchImpl(`${baseUrl}${request.path}`, {
+      // Capture only the exact final wire body after real admission/queue waits.
+      // Its independent durable admission may still refuse unknown provenance.
+      if (!googleOrigin && deps.chatAnalytics) {
+        analyticsAttempt = await captureInferenceAnalytics({ analytics: deps.chatAnalytics, binding, requestId: request.requestId,
+          api: binding.route.api, body, signal: lifecycle, modelId, accessSource: accessSourceId, startedAt });
+        if (deps.googleData) {
+          const fresh = await authorizeGoogleInference(deps.googleData, { phase: "dispatch", binding, identity, signal: lifecycle });
+          if (!fresh.allowed || fresh.googleOrigin) { analyticsAttempt?.cancel(); return "denied"; }
+        }
+        if (!await liveAfterPolicy() || !stillAuthorized()) { analyticsAttempt?.cancel(); return "denied"; }
+      }
+      const response = await fetchImpl(`${baseUrl}${request.path}`, {
         method: "POST",
         headers,
         body,
@@ -280,6 +296,8 @@ export async function forwardBotInference(
           accessSourceId === "matrix_included" ? FUNDED_INFERENCE_TIMEOUT_MS : INFERENCE_TIMEOUT_MS,
         )]),
       });
+      if (!response.ok) { analyticsAttempt?.cancel(); analyticsAttempt = undefined; }
+      return response;
     };
 
     const response = funded
@@ -308,6 +326,7 @@ export async function forwardBotInference(
     if (deps.googleData) {
       const policy = await authorizeGoogleInference(deps.googleData, { phase: "release", binding, identity, signal: lifecycle });
       if (!policy.allowed || googleOrigin && !policy.googleOrigin || !await liveAfterPolicy()) return failure(request.requestId, "action_denied");
+      if (policy.googleOrigin) { analyticsAttempt?.cancel(); analyticsAttempt = undefined; }
     }
     if (binding.openaiApi && (lifecycle.aborted || !await deps.matrixOpenAi!.revalidate(binding, lifecycle)
       || deps.revalidateBinding && !await deps.revalidateBinding(binding) || !stillAuthorized())) return failure(request.requestId, "action_denied");
@@ -322,12 +341,16 @@ export async function forwardBotInference(
       body,
     });
     if (accessSourceId === "matrix_included") deps.onFundedFailure?.(binding, undefined);
+    analyticsAttempt?.completed(body);
     return result;
   } catch (error: unknown) {
     if (accessSourceId === "matrix_included" && stillAuthorized()) deps.onFundedFailure?.(binding, undefined);
     if (error instanceof RangeError && error.message === "response_too_large") return failure(request.requestId, "response_too_large");
     console.warn("[bots] inference forward failed:", error instanceof Error ? error.name : "UnknownError");
     return failure(request.requestId, "provider_unavailable");
+  } finally {
+    // Settled completions are inert; failures/aborts and denied release drop their exact snapshot.
+    analyticsAttempt?.cancel();
   }
 }
 

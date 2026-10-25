@@ -3,6 +3,7 @@ import type { ProviderSettingsMutationIntent } from "@matrix-os/ui";
 import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import {
   AgentsProvidersView,
+  ChatUsagePanel,
   useProviderSettingsController,
 } from "@matrix-os/ui";
 import "@matrix-os/ui/agents-providers.css";
@@ -12,6 +13,7 @@ import { useConnection } from "../../stores/connection";
 import { CreditDiagnosticDisclosure } from "./CreditDiagnosticDisclosure";
 import { createDesktopProviderWorkflowClient, createDesktopMatrixAnthropicClient, loadDesktopAiCreditHistory, openDesktopProviderWorkflowAuthorization } from "./provider-workflow-transport";
 import { createDesktopChatgptPlanClient } from "./local-chatgpt-plan-client";
+import { createDesktopChatUsageClient } from "./chat-usage-transport";
 import {
   createDesktopProviderSettingsTransport,
   desktopProviderIdentityKey,
@@ -104,6 +106,7 @@ function ConnectedAgentsProvidersAdapter({
     [identityKey],
   );
   const workflowClient = useMemo(() => createDesktopProviderWorkflowClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
+  const chatUsageClient = useMemo(() => createDesktopChatUsageClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
   const matrixAnthropicClient = useMemo(() => createDesktopMatrixAnthropicClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
   const authGeneration = useConnection((state) => state.authGeneration);
   const localChatgptClient = useMemo(() => createDesktopChatgptPlanClient({ runtimeSlot, authGeneration }, isIdentityCurrent),
@@ -212,6 +215,7 @@ function ConnectedAgentsProvidersAdapter({
     />
     <CreditDiagnosticDisclosure api={runtimeApi} snapshot={controller.snapshot}
       selectedHarnessId={controller.selectedHarnessId} identityKey={identityKey} />
+    <ChatUsagePanel client={chatUsageClient} identityKey={identityKey} />
     </>
   );
 }

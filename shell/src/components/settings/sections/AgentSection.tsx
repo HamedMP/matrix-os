@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { AgentsProvidersView, useProviderSettingsController, type AgentsProvidersViewProps } from "@matrix-os/ui";
+import { WebChatUsageSettings } from "./ChatUsageSettings";
 import { getGatewayUrl } from "@/lib/gateway";
 import { openProviderAuthorizationPath } from "@/lib/provider-browser-action";
 import { createProviderSettingsTransport, openWebProviderAgentSetup } from "@/lib/provider-settings-transport";
@@ -103,6 +104,7 @@ export function AgentSection({
         onLoadUsageHistory={loadUsageHistory}
         onAddCredit={addCredit}
       />
+      <WebChatUsageSettings />
     </div>
   );
 }
