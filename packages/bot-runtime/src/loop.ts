@@ -163,7 +163,10 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
       if (maxTextBytes <= 0) { budgetExhausted = true; agent.abort(); return; }
       if (estimateContextTokens(context.messages).tokens <= command.route.contextWindow * 0.8
         && contextTextBytes(context.messages) <= maxTextBytes) return;
-      const compacted = await compactSession({ messages: context.messages, now, keepRecentUserTurns: 1, summarize: transcript => summarize(transcript, signal) });
+      // Corrections belong to this active turn, not historical user turns:
+      // keep its initial prompt (including images) and every injected steer.
+      const keepRecentUserTurns = 1 + steered.filter(pending => pending.consumed).length;
+      const compacted = await compactSession({ messages: context.messages, now, keepRecentUserTurns, summarize: transcript => summarize(transcript, signal) });
       if (signal?.aborted || input.signal?.aborted) return;
       // Hysteresis leaves room for the next tool result instead of retrying
       // an unavailable summary on every small message.

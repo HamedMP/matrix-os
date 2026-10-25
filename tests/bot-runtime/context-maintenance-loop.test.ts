@@ -143,3 +143,28 @@ it('stops before inference when person text cannot fit, without silently truncat
   expect(requests).toBe(0);
   expect(JSON.stringify(b.saves)).toContain(text);
 });
+
+it('keeps the active prompt image across a pressured tool boundary and accepted correction', async () => {
+  const provider = fauxProvider({ models: [{ id: 'faux-context', contextWindow: 8_192, maxTokens: 1_024, input: ['text', 'image'] }] });
+  const data = 'A'.repeat(600_000), c = command(8_192), b = broker();
+  c.turn = { kind: 'prompt', text: 'ACTIVE-IMAGE-TASK: inspect this image.', images: [{ mimeType: 'image/png', data }] };
+  let steer: ((text: string) => boolean) | undefined, ordinary = 0;
+  const imageSeen: boolean[] = [];
+  provider.setResponses(Array.from({ length: 9 }, () => context => {
+    const serialized = JSON.stringify(context);
+    if (serialized.includes('Summarize the conversation')) return fauxAssistantMessage(fauxText('Earlier image task summarized.'));
+    imageSeen.push(context.messages.some(message => Array.isArray(message.content)
+      && message.content.some(part => part.type === 'image' && part.data === data)));
+    if (++ordinary === 1) {
+      expect(steer?.('CORRECTION: focus on the original image.')).toBe(true);
+      return fauxAssistantMessage(fauxToolCall('read_artifact', { path: 'pressure.md' }, { id: 'active_image_tool' }), { stopReason: 'toolUse' });
+    }
+    expect(serialized).toContain('ACTIVE-IMAGE-TASK');
+    expect(serialized).toContain('CORRECTION: focus on the original image.');
+    return fauxAssistantMessage(fauxText('READY'));
+  }));
+  const result = await runBotTurn({ command: c, broker: b.client,
+    onControl: control => { steer = control.steer; }, route: { provider: provider.provider, model: provider.getModel() }, bridgeOrigin: 'http://127.0.0.1:41000' });
+  expect(result.status).toBe('completed');
+  expect(imageSeen).toEqual([true, true]);
+});
