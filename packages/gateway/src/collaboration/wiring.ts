@@ -115,7 +115,22 @@ export {
   type OrganizationPrecondition,
 } from "./organization-precondition.js";
 
-export async function createGatewayCollaboration(options: {
+type GatewayCollaborationOptions = Parameters<typeof createPreparedGatewayCollaboration>[0];
+
+export async function createGatewayCollaboration(options: GatewayCollaborationOptions) {
+  const create = await prepareGatewayCollaborationDatabase(options.db);
+  return create(options);
+}
+
+/** Await schema readiness before handing the owner a constructor capability.
+ * The factory closes over this exact database; callers cannot replace it with
+ * an unprepared pool. The unprepared constructor remains module-private. */
+export async function prepareGatewayCollaborationDatabase(db: Kysely<OwnerCollaborationDatabase>) {
+  await bootstrapCollaborationDatabase(db);
+  return (options: GatewayCollaborationOptions) => createPreparedGatewayCollaboration({ ...options, db });
+}
+
+async function createPreparedGatewayCollaboration(options: {
   db: Kysely<OwnerCollaborationDatabase>;
   chatRepository: ChatRepository;
   config: GatewayCollaborationConfig;
@@ -144,7 +159,6 @@ export async function createGatewayCollaboration(options: {
   /** S08: organization `collaboration.aiSubmission` projection; absent reads as owner-only. */
   organizationAiSubmission?: OrganizationAiSubmissionSource;
 }) {
-  await bootstrapCollaborationDatabase(options.db);
   await cleanupExpiredArtifacts(options.db, new Date());
   const repository = new CollaborationRepository(options.db, { chatRepository: options.chatRepository });
   const cutoverGuard = new GatewayCollaborationCutover(options.db);

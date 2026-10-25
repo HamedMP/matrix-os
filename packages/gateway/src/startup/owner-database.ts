@@ -32,8 +32,7 @@ import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import type { OwnerToolOutputProjection } from "../chat/owner-tool-output.js";
 import { ChatRepository } from "../chat/repository.js";
 import { createDiscussionOnlyChatExecutionGuard } from "../collaboration/chat-scope.js";
-import { bootstrapCollaborationDatabase } from "../collaboration/database.js";
-import type { GatewayCollaborationConfig, GatewayCollaborationConfigurationFailure, GatewayCollaborationRuntime } from "../collaboration/wiring.js";
+import { prepareGatewayCollaborationDatabase, type GatewayCollaborationConfig, type GatewayCollaborationConfigurationFailure, type GatewayCollaborationRuntime } from "../collaboration/wiring.js";
 import { MessagingKyselyRepository } from "../messages/repository.js";
 import { registerNativeAppStorage } from "../native-app-storage.js";
 import { OsViewStateRepository } from "../os-view-state/repository.js";
@@ -156,9 +155,9 @@ export async function initializeOwnerDatabaseServices(
       services.googleCopies = chatHistory.googleCopies;
       await chatHistory.bootstrap();
       // Private Chat ownership/credential checks also read collaboration metadata.
-      // A configured collaboration runtime bootstraps that schema first itself.
-      // Without one, migrate metadata only: no grants or execution authority.
-      if (!options.collaborationConfig) await bootstrapCollaborationDatabase(kysely);
+      // DDL failure belongs to owner startup teardown, outside the optional
+      // collaboration construction fallback. Preparation creates no authority.
+      const createCollaboration = await prepareGatewayCollaborationDatabase(kysely);
       const ownerChatExecutionRoots = createChatExecutionRootResolver({
         homePath: options.homePath,
         projects: options.codingAgentProjectManager,
@@ -169,6 +168,7 @@ export async function initializeOwnerDatabaseServices(
       await bootstrapChatSharing(chatRepository.kysely);
       if (options.collaborationConfig) {
         const construction = await constructOwnerCollaboration({
+          createCollaboration,
           homePath: options.homePath, chatRepository, appRegistry, canvasRepository,
           collaborationConfig: options.collaborationConfig,
           providerSnapshotReader: options.providerSnapshotReader,
