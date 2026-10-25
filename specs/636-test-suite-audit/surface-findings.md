@@ -39,6 +39,15 @@ The Chat alternative keeps 31 scenarios and imports the Web production reducer/g
 
 ## Why terminal paste escaped
 
+Follow-up: hosted CI on audit head `fa1f2455a945511336bc1346d6849b433836a89a`
+failed the actual Web Desktop and Web Canvas menu-paste scenarios with the fixed
+fixture rejection prefix, while the other 232 general E2E cases passed. The audit
+branch now reuses #2936's commit `61504cb7b6a3445ac5a7ec00a727bca8317dcc02`
+with cherry-pick provenance. Its shared sender preserves captured terminal
+identity for text, image prompts and submit. All 27 focused sender/paste/fixture
+cases and repository typecheck pass; hosted green and full live journey evidence
+remain separate obligations. The analysis below describes the original baseline.
+
 At this source snapshot, `shell/src/components/terminal/terminal-rich-paste.ts:74` sends `{type: "input", data}`; its submit path does the same at line 93. `packages/contracts/src/index.ts:729` requires `terminalRef` on canonical tab input. Regular `TerminalPane.tsx:117` includes that identity.
 
 `tests/shell/terminal-rich-paste.test.ts` does call the production paste helper, but explicitly expects the incomplete object for text paste and Enter submission. This is a **wrong test oracle and an untested producer/consumer join**, not simply missing assertions or insufficient line coverage. The product fix is already tracked by ENG-392 / PR #2936 and must not be duplicated.

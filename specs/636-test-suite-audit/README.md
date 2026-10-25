@@ -44,6 +44,10 @@ proof of effective assertions. No measured full-CI speedup is claimed.
   workspace/tab identity. Every terminal fixture case observes rejection/errors,
   including errors raised after its Page closes. Do not let a fake repair a
   malformed production message.
+- Reuse the existing paste fix from [#2936](https://github.com/HamedMP/matrix-os/pull/2936)
+  / ENG-392 after hosted CI demonstrated the two rejected paste frames. Text,
+  image prompts and optional submit now use the same exact-tab input sender as
+  typing. The source PR is preserved; its commit is cherry-picked with provenance.
 - Repair a test-only WebSocket teardown leak uncovered during cleanup; passing
   assertions previously still left an unhandled error and a failing exit status.
 - Add a read-only, reproducible census and per-registration structural analyzer.
@@ -61,8 +65,9 @@ proof of effective assertions. No measured full-CI speedup is claimed.
 | Terminal fixture accepts invalid frames | Seven intended failures / one pass before schema/target validation; two further intended observer failures before rejection notification. | Ten validator/observer cases pass. |
 | Census loses language/config/provenance information | Regression fixtures fail for omitted Python/Swift, comments/coverage mistaken for collection, wrong roots, stale/unknown reviews and dirty source labels. | Focused collector and analyzer cases pass. |
 
-The mutations live only in external throwaway copies. Production source is
-unchanged. Vitest `assertionResults` counts test-case records, not individual
+The mutations live only in external throwaway copies. The later paste integration
+reuses the existing production fix; no fault injection ships in product code.
+Vitest `assertionResults` counts test-case records, not individual
 `expect()` calls; execution totals below use **test cases**.
 
 ## Validation
@@ -72,6 +77,14 @@ unchanged. Vitest `assertionResults` counts test-case records, not individual
 - **108 cases across all 17 real-PostgreSQL suites pass**, zero skipped, checked
   again after the total-budget change.
 - Native Swift retained BoardStore selection: **6/6 pass**.
+- Hosted CI on `fa1f2455a945511336bc1346d6849b433836a89a` passed all four unit
+  shards and both PostgreSQL jobs. General E2E failed only the Web Desktop and
+  Web Canvas right-click paste cases: no input arrived and the strict fixture
+  recorded a rejected client frame (232 pass, two fail, 111 skipped). This is
+  the intended original-fault evidence, not a fixture setup failure.
+- After reusing #2936, **27 focused paste/sender/fixture cases pass**, zero
+  skipped, and repository typecheck passes. Fresh hosted renderer qualification
+  is still required for the integrated source.
 - Repository typecheck passes. Pattern scanner: zero violations, five existing
   warning groups. Changed-scope React Doctor reports no new issues.
 - Broad macOS unit diagnostic: **35,212 passed, 213 failed, 449 skipped**;
@@ -93,7 +106,7 @@ snapshot is recorded explicitly rather than presented as passing qualification.
 
 | Priority | Required outcome | Current gap / next evidence |
 | --- | --- | --- |
-| First | Web terminal paste/command execution | Existing product fix [#2936](https://github.com/HamedMP/matrix-os/pull/2936) / ENG-392 is still open. The stricter renderer fixture should expose its missing `terminalRef`. Reuse that fix, then qualify Cmd+V on macOS, tab switch/focus, reconnect and actual command output through a real gateway/PTY. IAB smoke attempts did not establish trusted clipboard-event delivery; they are not qualification. |
+| First | Web terminal paste/command execution | Existing product fix [#2936](https://github.com/HamedMP/matrix-os/pull/2936) / ENG-392 is now reused in this branch after hosted red evidence. Qualify the integrated renderer, then Cmd+V on macOS, tab switch/focus, reconnect and actual command output through a real gateway/PTY. IAB smoke attempts did not establish trusted clipboard-event delivery; they are not qualification. |
 | First | Required tests actually execute | Keep new PostgreSQL ownership enforcement. Fifteen Electron suites can still skip missing builds without honoring required mode. Onboarding/collaboration Playwright configs lack a verified tracked CI invocation; Native Mobile Jest was found only in OTA, not normal PR CI. |
 | First | Checkout to usable first session | Qualify leave/return/reload, exact plan/region/tools, failed provisioning and recovery through the actual first-party services. Happy-path pricing components do not prove this. |
 | First | AI account to actual execution | Connect/select/run/logout/revoke exact account and funding source; inspect the launched adapter environment and late results. Catalog/state mocks do not prove credential wiring. |
