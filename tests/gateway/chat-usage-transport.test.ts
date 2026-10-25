@@ -41,4 +41,14 @@ describe("Matrix transient classification transport",()=>{
     const{classify,fetcher}=setup({maxCallsPerHour:1});await classify(snapshot,new AbortController().signal);
     await expect(classify(snapshot,new AbortController().signal)).rejects.toThrow("Classification unavailable");expect(fetcher).toHaveBeenCalledTimes(1);
   });
+  it("accepts snapshots admitted near the runtime size bound",async()=>{
+    const{classify}=setup();
+    expect(await classify({messages:[{role:"user",text:"x".repeat(12_000)}]},new AbortController().signal)).toEqual(tags);
+  });
+  it("does not spend an attempt for an over-budget snapshot",async()=>{
+    const{classify,fetcher,provider}=setup({maxCallsPerHour:1});
+    await expect(classify({messages:[{role:"user",text:"x".repeat(20_000)}]},new AbortController().signal)).rejects.toThrow("Classification unavailable");
+    expect(provider.getCredential).not.toHaveBeenCalled();
+    expect(await classify(snapshot,new AbortController().signal)).toEqual(tags);expect(fetcher).toHaveBeenCalledTimes(1);
+  });
 });

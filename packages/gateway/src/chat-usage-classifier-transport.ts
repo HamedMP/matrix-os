@@ -1,5 +1,5 @@
 import type { MatrixFundedCredentialProvider } from "./funded-ai-credential-manager.js";
-import { ChatAnalyticsTagsSchema } from "./chat-analytics/contracts.js";
+import { ChatAnalyticsTagsSchema, CHAT_ANALYTICS_MAX_SNAPSHOT_BYTES } from "./chat-analytics/contracts.js";
 
 export const CHAT_USAGE_CLASSIFIER_MODEL = "@cf/openai/gpt-oss-20b";
 const MAX_RESPONSE_BYTES = 16_384;
@@ -30,10 +30,10 @@ export function createFundedChatUsageTransport(options: {
       signal.throwIfAborted();
       const now = options.now?.() ?? Date.now();
       if (now - windowAt >= 3_600_000) { windowAt = now; calls = 0; }
+      const serialized = JSON.stringify(snapshot);
+      if (Buffer.byteLength(serialized) > CHAT_ANALYTICS_MAX_SNAPSHOT_BYTES || snapshot.messages.length > 64) throw unavailable();
       if (calls >= cap) throw unavailable();
       calls += 1;
-      const serialized = JSON.stringify(snapshot);
-      if (Buffer.byteLength(serialized) > 10_240 || snapshot.messages.length > 64) throw unavailable();
       const lease = await options.provider.getCredential({ requestClass: "background", signal });
       signal.throwIfAborted();
       // The credential manager is trusted, but a stale/misbound lease must never

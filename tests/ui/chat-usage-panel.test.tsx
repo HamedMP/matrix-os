@@ -29,6 +29,37 @@ it("shows loading and unavailable states without presenting false zero usage", a
   expect(screen.queryByText("No recorded generations")).toBeNull();
   api.policy.mockResolvedValue(policy); fireEvent.click(screen.getByRole("button", { name: "Retry Chat usage" })); await ready();
 });
+it("keeps Stop and Delete usable when the initial report fails independently of the enabled policy", async () => {
+  const api = client(); api.policy.mockResolvedValue({ ...policy, enabled: true });
+  api.summary.mockRejectedValue(new Error("private report provider error")); api.configure.mockResolvedValue(policy);
+  render(<ChatUsagePanel client={api} identityKey="owner/runtime" />);
+  const stop = await screen.findByRole("button", { name: "Stop Chat usage" });
+  expect(stop).toBeEnabled(); expect(screen.getByRole("button", { name: "Delete Chat usage data" })).toBeEnabled();
+  expect(screen.getByRole("alert")).toHaveTextContent("Chat usage report is unavailable");
+  expect(screen.queryByText("No recorded generations")).toBeNull();
+  expect(screen.queryByText(/private report provider/)).toBeNull();
+  fireEvent.click(stop);
+  await waitFor(() => expect(api.configure).toHaveBeenCalledWith({ enabled: false, sampleRateBps: 1000 }, expect.any(AbortSignal)));
+  await screen.findByRole("button", { name: "Enable Chat usage" });
+  expect(screen.getByRole("alert")).toHaveTextContent("Chat usage report is unavailable");
+  fireEvent.click(screen.getByRole("button", { name: "Delete Chat usage data" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+  await waitFor(() => expect(api.deleteData).toHaveBeenCalledWith(expect.any(AbortSignal)));
+  await screen.findByText("Chat usage data deleted. Collection is off.");
+});
+it("makes collection controls available before a slow report finishes loading", async () => {
+  const api = client(); api.policy.mockResolvedValue({ ...policy, enabled: true }); api.configure.mockResolvedValue(policy);
+  let finish!: (value: ChatUsageSummary) => void;
+  api.summary.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  render(<ChatUsagePanel client={api} identityKey="owner/runtime" />);
+  const stop = await screen.findByRole("button", { name: "Stop Chat usage" });
+  expect(stop).toBeEnabled(); expect(screen.getByRole("button", { name: "Delete Chat usage data" })).toBeEnabled();
+  fireEvent.click(stop);
+  await screen.findByRole("button", { name: "Enable Chat usage" });
+  finish(summary);
+  await screen.findByText("coding");
+  expect(screen.queryByText("Loading Chat usage…")).toBeNull();
+});
 it("requires explicit normal in-app consent with exact scope and recipient before enable", async () => {
   const api = client(); render(<ChatUsagePanel client={api} identityKey="owner/runtime" />); await ready();
   const enable = screen.getByRole("button", { name: "Enable Chat usage" }); expect(enable).toBeDisabled();

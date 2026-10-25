@@ -23,6 +23,13 @@ function setup(extra: Record<string, unknown> = {}) {
 afterEach(async () => { for (const service of services.splice(0)) await service.close(); vi.restoreAllMocks(); });
 
 describe("ordinary Chat transient classifier", () => {
+  it("cancels only the exact deleted Chat without another database operation",async()=>{
+    const{service,store,classify}=setup();const one=request("cancel_one");const other=request("keep_two");other.binding.chatId="chat_two";
+    const a=await service.capture(one);const b=await service.capture(other);
+    service.cancelChat(one.binding.ownerId,one.binding.chatId);service.completed(a!,facts());service.completed(b!,facts());await service.whenIdle();
+    expect(store.deleteChat).not.toHaveBeenCalled();expect(classify).toHaveBeenCalledTimes(1);
+    expect(store.recordCompleted.mock.calls[0][0].binding.chatId).toBe("chat_two");
+  });
   it("defaults off without inspecting or copying a prompt", async () => {
     const { service, store, classify } = setup({ enabled: undefined });
     expect(await service.capture(request())).toBeNull();

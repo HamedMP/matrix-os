@@ -42,7 +42,10 @@ suite("Electron Desktop idle provider Settings (synthetic gateway)", () => {
   let reads = 0;
   let capabilityReads = 0;
   let mutations = 0;
-  const settings = () => page.locator(".matrix-agents-providers");
+  // Chat usage shares these style tokens; target the actual provider settings view.
+  const settings = () => page.locator(".matrix-agents-providers").filter({
+    has: page.getByRole("heading", { name: "Agents & providers", exact: true }),
+  });
   const refresh = () => settings().getByRole("button", { name: "Refresh provider status", exact: true });
   const hermes = () => settings().locator(".matrix-ap-rail-item").filter({ hasText: "Hermes" }).first();
 
