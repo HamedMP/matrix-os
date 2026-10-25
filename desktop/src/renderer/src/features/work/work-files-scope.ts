@@ -8,6 +8,18 @@ export type WorkFilesScope =
   | { kind: "project"; chatId: string; projectId: string; worktreeId?: string; label: string }
   | { kind: "unavailable"; chatId: string };
 
+export function scopeForInspectorTarget(scope: WorkFilesScope, target: InspectorFileTarget | null): WorkFilesScope {
+  if (!target) return scope;
+  if (target.kind === "home") return { kind: "home", chatId: scope.chatId };
+  return {
+    kind: "project",
+    chatId: scope.chatId,
+    projectId: target.projectId,
+    ...(target.worktreeId ? { worktreeId: target.worktreeId } : {}),
+    label: scope.kind === "project" ? scope.label : "Project files",
+  };
+}
+
 export function resolveWorkFilesScope(
   detail: CanonicalChatDetailResponse,
   projects: readonly Project[],

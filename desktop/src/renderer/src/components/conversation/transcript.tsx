@@ -154,7 +154,7 @@ function ResponseMessage({
           ) : null}
           <Bubble variant="ghost">
             <BubbleContent className="w-full max-w-full overflow-visible">
-              <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink} loadFileImage={callbacks.loadFileImage} resolveApp={callbacks.resolveApp} openApp={callbacks.openApp}
+              <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} copyFullPath={callbacks.copyFullPath} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink} loadFileImage={callbacks.loadFileImage} resolveApp={callbacks.resolveApp} openApp={callbacks.openApp}
                 renderCredentialMarker={callbacks.renderCredentialMarker ? (offset, marker, number) => callbacks.renderCredentialMarker?.(message, offset, marker, number) : undefined}>{visibleMarkdown}</MessageResponse>
             </BubbleContent>
           </Bubble>
@@ -404,7 +404,7 @@ function ConversationTurn({
   const resolveRunApp = useCallback((path: string) => callbacks.resolveApp?.(path, appRoot) ?? null, [callbacks.resolveApp, appRoot]);
   const openRunApp = useCallback((path: string) => callbacks.openApp?.(path, appRoot) ?? false, [callbacks.openApp, appRoot]);
   const fileCallbacks: ConversationPresentationCallbacks = turn.executionRoot && callbacks.openFile
-    ? { ...callbacks, openFile: (path) => callbacks.openFile!(path, turn.executionRoot), ...(callbacks.loadFileImage ? { loadFileImage: (path: string) => callbacks.loadFileImage!(path, turn.executionRoot) } : {}) }
+    ? { ...callbacks, openFile: (path) => callbacks.openFile!(path, turn.executionRoot), ...(callbacks.copyFullPath ? { copyFullPath: (path: string) => callbacks.copyFullPath!(path, turn.executionRoot) } : {}), ...(callbacks.loadFileImage ? { loadFileImage: (path: string) => callbacks.loadFileImage!(path, turn.executionRoot) } : {}) }
     : callbacks;
   const scopedCallbacks: ConversationPresentationCallbacks = {
     ...fileCallbacks,

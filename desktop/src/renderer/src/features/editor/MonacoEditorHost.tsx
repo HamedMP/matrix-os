@@ -52,10 +52,12 @@ export default function MonacoEditorHost({
   path,
   active,
   onDirtyChange,
+  saveRequest = 0,
 }: {
   path: string;
   active: boolean;
   onDirtyChange: (dirty: boolean) => void;
+  saveRequest?: number;
 }) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
@@ -198,6 +200,10 @@ export default function MonacoEditorHost({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [active]);
+
+  useEffect(() => {
+    if (saveRequest > 0) void saveRef.current();
+  }, [saveRequest]);
 
   async function save(): Promise<void> {
     const file = fileRef.current;

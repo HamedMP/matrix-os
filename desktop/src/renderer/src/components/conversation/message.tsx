@@ -5,8 +5,8 @@ import * as React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "../../lib/cn";
+import { ContextMenu } from "../../design/primitives";
 import type { ConversationPresentationCallbacks } from "./presentation";
-import { normalizeDesktopEditorPath } from "../../features/editor/desktop-editor-store";
 
 function MessageGroup({ className, ...props }: React.ComponentProps<"div">) {
   return <div data-slot="message-group" className={cn("flex min-w-0 flex-col gap-2", className)} {...props} />;
@@ -182,6 +182,7 @@ export function MessageMetadata({
 
 const FILE_EXTENSION_PATTERN = /(?:^|\/)[^/]+\.[A-Za-z0-9]{1,12}$/;
 const RELATIVE_PATH_PATTERN = /^(?:[A-Za-z0-9_.@+-]+\/)+[A-Za-z0-9_.@+-]+\/?$/;
+const SINGLE_FOLDER_PATTERN = /^[A-Za-z0-9_.@+-]+\/$/;
 const BARE_FILE_PATTERN = /^[A-Za-z0-9_.@+-]+\.[A-Za-z0-9]{1,12}$/;
 const IMAGE_FILE_PATTERN = /\.(?:png|jpe?g|webp|gif|avif|svg)$/i;
 
@@ -193,12 +194,27 @@ function pathPresentation(value: string): { kind: "file" | "folder"; label: stri
     || normalized.startsWith("./")
     || normalized.startsWith("../")
     || RELATIVE_PATH_PATTERN.test(normalized)
+    || SINGLE_FOLDER_PATTERN.test(normalized)
     || BARE_FILE_PATTERN.test(normalized);
   if (!looksLikePath) return null;
   const withoutTrailingSlash = normalized.replace(/[\\/]+$/, "");
   const withoutLocation = withoutTrailingSlash.replace(/:\d+(?::\d+)?$/, "");
   const label = withoutLocation.split(/[\\/]/).filter(Boolean).at(-1) ?? normalized;
   return { kind: FILE_EXTENSION_PATTERN.test(withoutLocation) ? "file" : "folder", label };
+}
+
+function TranscriptPathReference({ path, copyFullPath, children }: {
+  path: string;
+  copyFullPath: (path: string) => Promise<void>;
+  children: React.ReactElement;
+}) {
+  const [failed, setFailed] = React.useState(false);
+  return <>
+    <ContextMenu items={[{ label: "Copy Full Path", onSelect: () => {
+      void copyFullPath(path).then(() => setFailed(false)).catch(() => setFailed(true));
+    } }]}>{children}</ContextMenu>
+    {failed ? <span role="alert" className="ml-1 text-xs" style={{ color: "var(--danger)" }}>Couldn’t copy the full path.</span> : null}
+  </>;
 }
 
 function CodeBlock({
@@ -391,6 +407,7 @@ function codeCredentialContent(
 export function MessageResponse({
   children,
   copyText,
+  copyFullPath,
   openFile,
   openWebLink,
   loadFileImage,
@@ -402,6 +419,7 @@ export function MessageResponse({
 }: {
   children: string;
   copyText: ConversationPresentationCallbacks["copyText"];
+  copyFullPath?: ConversationPresentationCallbacks["copyFullPath"];
   openFile?: ConversationPresentationCallbacks["openFile"];
   openWebLink?: ConversationPresentationCallbacks["openWebLink"];
   loadFileImage?: (path: string) => Promise<Blob>;
@@ -411,16 +429,17 @@ export function MessageResponse({
   renderCredentialMarker?: (offset: number, marker: string, number: number) => React.ReactNode;
   className?: string;
 }) {
-  const callbacks = React.useRef({ copyText, openFile, openWebLink, loadFileImage, resolveApp, openApp });
+  const callbacks = React.useRef({ copyText, copyFullPath, openFile, openWebLink, loadFileImage, resolveApp, openApp });
   const credentialMarkerRef = React.useRef(renderCredentialMarker);
   const markdownSourceRef = React.useRef(children);
   credentialMarkerRef.current = renderCredentialMarker;
   markdownSourceRef.current = children;
   React.useLayoutEffect(() => {
-    callbacks.current = { copyText, openFile, openWebLink, loadFileImage, resolveApp, openApp };
-  }, [copyText, openFile, openWebLink, loadFileImage, resolveApp, openApp]);
+    callbacks.current = { copyText, copyFullPath, openFile, openWebLink, loadFileImage, resolveApp, openApp };
+  }, [copyText, copyFullPath, openFile, openWebLink, loadFileImage, resolveApp, openApp]);
   const copy = React.useCallback((text: string) => callbacks.current.copyText(text), []);
   const hasFileNavigation = Boolean(openFile);
+  const hasFullPathCopy = Boolean(copyFullPath);
   const hasWebNavigation = Boolean(openWebLink);
   const loadLocalImage = React.useCallback((path: string) => callbacks.current.loadFileImage!(path), []);
   const openLocalFile = React.useCallback((path: string) => callbacks.current.openFile?.(path), []);
@@ -439,13 +458,16 @@ export function MessageResponse({
       if (editorPath && hasImageLoader && IMAGE_FILE_PATTERN.test(editorPath)) {
         return <AttachmentImage src={href!} label={String(props.children ?? editorPath.split("/").at(-1))} path={href!} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
       }
-      return <a {...props} href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(editorPath && hasFileNavigation ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
+      const anchor = <a {...props} href={href} {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})} {...(editorPath && hasFileNavigation ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
         callbacks.current.openFile?.(href!);
       } } : {})} {...(external && hasWebNavigation ? { onClick: (event: React.MouseEvent<HTMLAnchorElement>) => {
         event.preventDefault();
         callbacks.current.openWebLink?.(href!);
       } } : {})} />;
+      return editorPath && hasFullPathCopy && href
+        ? <TranscriptPathReference path={href} copyFullPath={(path) => callbacks.current.copyFullPath!(path)}>{anchor}</TranscriptPathReference>
+        : anchor;
     }
     return {
     span: ({ node: _node, ...props }: React.ComponentProps<"span"> & { node?: unknown }) => {
@@ -497,12 +519,13 @@ export function MessageResponse({
       const app = resolveApp?.(value);
       if (app && openApp) return <button type="button" title={value} aria-label={`Open app ${app.name}`} className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[var(--highlight)] hover:bg-[var(--bg-hover)]" onClick={() => callbacks.current.openApp?.(value)}>{app.name}</button>;
       const path = className || !/[\\/]/.test(value) ? null : pathPresentation(value);
-      const editorPath = path?.kind === "file" ? normalizeDesktopEditorPath(value) : null;
-      if (editorPath && hasImageLoader && IMAGE_FILE_PATTERN.test(editorPath) && resolveChatMessageLink(value)?.kind === "file") {
+      const target = path ? resolveChatMessageLink(value) : null;
+      const editorPath = target?.kind === "file" ? target.path : null;
+      if (editorPath && hasImageLoader && IMAGE_FILE_PATTERN.test(editorPath)) {
         return <AttachmentImage src={value} label={path!.label} path={value} loadImage={loadLocalImage} open={hasFileNavigation ? openLocalFile : undefined} inline />;
       }
       if (path && editorPath && hasFileNavigation) {
-        return (
+        const chip = (
           <button
             type="button"
             aria-label={`Open ${path.label}`}
@@ -510,10 +533,13 @@ export function MessageResponse({
             onClick={() => callbacks.current.openFile?.(value)}
             className="inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--border-default)] bg-[var(--bg-sunken)] px-1.5 py-0.5 align-middle font-mono text-xs text-[var(--highlight)] hover:bg-[var(--bg-hover)]"
           >
-            <FileText size={13} aria-hidden className="shrink-0" />
+            {path.kind === "folder" ? <Folder size={13} aria-hidden className="shrink-0" /> : <FileText size={13} aria-hidden className="shrink-0" />}
             <span className="truncate">{path.label}</span>
           </button>
         );
+        return hasFullPathCopy
+          ? <TranscriptPathReference path={value} copyFullPath={(raw) => callbacks.current.copyFullPath!(raw)}>{chip}</TranscriptPathReference>
+          : chip;
       }
       if (path) {
         const Icon = path.kind === "file" ? FileText : Folder;
@@ -546,7 +572,7 @@ export function MessageResponse({
       <MarkdownTable {...props} copyText={copy} />
     ),
     };
-  }, [copy, hasFileNavigation, hasWebNavigation, hasImageLoader, loadLocalImage, openLocalFile, resolveApp, openApp]);
+  }, [copy, hasFileNavigation, hasFullPathCopy, hasWebNavigation, hasImageLoader, loadLocalImage, openLocalFile, resolveApp, openApp]);
 
   return (
     <div

@@ -56,6 +56,7 @@ export function UserMessage({
                 <MessageResponse
                   className="[&_p:first-child]:mt-0 [&_p:last-child]:mb-0"
                   copyText={callbacks.copyText}
+                  copyFullPath={callbacks.copyFullPath}
                   openFile={callbacks.openFile}
                   openWebLink={callbacks.openWebLink}
                   renderReferenceLink={(href) => {

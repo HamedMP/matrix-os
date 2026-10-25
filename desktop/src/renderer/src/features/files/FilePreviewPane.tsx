@@ -23,6 +23,7 @@ import { isManagedBrowserPath, parseBrowserEntries, type BrowserEntry } from "./
 import { FileGlyph, kindForEntry } from "./file-kind";
 import { formatEntrySize, formatModified } from "./format";
 import { MonacoReadOnlyEditor } from "../editor/MonacoReadOnlyEditor";
+import MonacoEditorHost from "../editor/MonacoEditorHost";
 
 const MarkdownContent = lazy(async () => {
   const module = await import("../editor/MarkdownPreview");
@@ -165,7 +166,7 @@ function LoadingPreview({ label = "Loading preview…" }: { label?: string }) {
   );
 }
 
-function TextPreview({ path, markdown = false, monaco = false }: { path: string; markdown?: boolean; monaco?: boolean }) {
+function TextPreview({ path, markdown = false, html = false, monaco = false }: { path: string; markdown?: boolean; html?: boolean; monaco?: boolean }) {
   const api = useConnection((state) => state.api);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<
@@ -195,6 +196,7 @@ function TextPreview({ path, markdown = false, monaco = false }: { path: string;
   if (state.status === "loading") return <LoadingPreview />;
   if (state.status === "error") return <PreviewFailure error={state.error} onRetry={() => setAttempt((value) => value + 1)} />;
   if (markdown) return <MarkdownContent content={state.content} />;
+  if (html) return <iframe title={`HTML preview: ${path}`} sandbox="" srcDoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; font-src data:">${state.content}`} className="min-h-0 flex-1 border-0 bg-white" />;
   if (monaco) return <MonacoReadOnlyEditor path={path} content={state.content} />;
   return (
     <pre className="min-h-0 flex-1 overflow-auto p-5 font-mono text-[13px] leading-6" style={{ color: "var(--text-primary)", background: "var(--bg-sunken)" }} data-selectable>
@@ -359,12 +361,14 @@ export function FilePreview({
   entry,
   onOpen,
   textRenderer = "plain",
+  sourceMode = false,
   unavailableAction,
 }: {
   path: string | null;
   entry?: BrowserEntry;
   onOpen?: (selection: PreviewSelection) => void;
   textRenderer?: "plain" | "monaco";
+  sourceMode?: boolean;
   unavailableAction?: ReactNode;
 }) {
   const api = useConnection((state) => state.api);
@@ -377,9 +381,10 @@ export function FilePreview({
   const name = path.split("/").pop() ?? path;
   const kind = previewKindForPath(path);
   if (kind === "image") return <ImagePreview key={path} path={path} name={name} />;
-  if (kind === "markdown") return <TextPreview key={path} path={path} markdown />;
+  if (kind === "markdown") return <TextPreview key={`${path}:${sourceMode}`} path={path} markdown={!sourceMode} monaco={sourceMode} />;
   if (kind === "text") return <TextPreview key={path} path={path} monaco={textRenderer === "monaco"} />;
-  if (["pdf", "table", "audio", "video", "html"].includes(kind)) return <RichFilePreview key={path} path={path} />;
+  if (kind === "html") return <TextPreview key={`${path}:${sourceMode}`} path={path} html={!sourceMode} monaco={sourceMode} />;
+  if (["pdf", "table", "audio", "video"].includes(kind)) return <RichFilePreview key={path} path={path} />;
   return <EmptyState icon={<FileQuestion size={26} />} headline="Preview not available" description="This file type can’t be previewed here." action={unavailableAction} />;
 }
 
@@ -387,18 +392,33 @@ export function PreviewPane({
   selection,
   onClose,
   onEdit,
+  onDirtyChange,
   onDownload,
   downloadPending = false,
 }: {
   selection: PreviewSelection;
   onClose?: () => void;
   onEdit?: (path: string) => void;
+  onDirtyChange?: (dirty: boolean) => void;
   onDownload?: (path: string, size?: number) => void;
   downloadPending?: boolean;
 }) {
   const [history, setHistory] = useState<PreviewSelection[]>([selection]);
+  const [mode, setMode] = useState<"preview" | "source" | "edit">("preview");
+  const [dirty, setDirty] = useState(false);
+  const [saveRequest, setSaveRequest] = useState(0);
+  const updateDirty = (next: boolean) => { setDirty(next); onDirtyChange?.(next); };
   const activeSelection = history.at(-1) ?? selection;
   const { entry, path } = activeSelection;
+  const kind = previewKindForPath(path);
+  const textual = entry.type === "file" && ["text", "markdown", "html"].includes(kind);
+  const confirmDiscard = () => !dirty || window.confirm("Discard unsaved changes to this file?");
+  const changeMode = (next: "preview" | "source" | "edit") => {
+    if (next === mode || (kind === "text" && mode === "preview" && next === "source")) return;
+    if (!confirmDiscard()) return;
+    updateDirty(false);
+    setMode(next);
+  };
 
   const metadata = isManagedBrowserPath(path)
     ? "Managed · Read only"
@@ -418,7 +438,7 @@ export function PreviewPane({
             aria-label="Back in preview"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]"
             style={{ color: "var(--text-secondary)" }}
-            onClick={() => setHistory((current) => current.slice(0, -1))}
+            onClick={() => { if (confirmDiscard()) { updateDirty(false); setMode("preview"); setHistory((current) => current.slice(0, -1)); } }}
           >
             <ArrowLeft size={16} aria-hidden />
           </button>
@@ -431,6 +451,12 @@ export function PreviewPane({
           {metadata ? <p className="mt-0.5 truncate text-xs" style={{ color: "var(--text-tertiary)" }}>{metadata}</p> : null}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1">
+        {textual ? <>
+          {kind !== "text" ? <button type="button" aria-label="Rendered preview" aria-pressed={mode === "preview"} onClick={() => changeMode("preview")} className="rounded px-2 py-1 text-xs aria-pressed:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]">Preview</button> : null}
+          <button type="button" aria-label="Source view" aria-pressed={mode === "source" || (kind === "text" && mode === "preview")} onClick={() => changeMode("source")} className="rounded px-2 py-1 text-xs aria-pressed:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]">Source</button>
+          {!isManagedBrowserPath(path) ? <button type="button" aria-label="Edit file" aria-pressed={mode === "edit"} onClick={() => changeMode("edit")} className="rounded px-2 py-1 text-xs aria-pressed:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]">Edit</button> : null}
+          {mode === "edit" ? <button type="button" aria-label="Save file" disabled={!dirty} onClick={() => setSaveRequest((value) => value + 1)} className="rounded px-2 py-1 text-xs text-[var(--accent)] disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-[var(--accent)]">Save</button> : null}
+        </> : null}
         {entry.type === "file" && (onDownload || (onEdit && !isManagedBrowserPath(path))) ? (
           <DropdownMenu.Root key={path}>
             <DropdownMenu.Trigger asChild>
@@ -455,22 +481,24 @@ export function PreviewPane({
           </DropdownMenu.Root>
         ) : null}
         {onClose ? (
-          <button type="button" aria-label="Close preview" onClick={onClose} className="flex size-8 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]" style={{ color: "var(--text-tertiary)" }}>
+          <button type="button" aria-label="Close preview" onClick={() => { if (confirmDiscard()) onClose(); }} className="flex size-8 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]" style={{ color: "var(--text-tertiary)" }}>
             <X size={16} />
           </button>
         ) : null}
         </div>
       </header>
-      <FilePreview
+      {mode === "edit" && textual ? <MonacoEditorHost key={path} path={path} active onDirtyChange={updateDirty} saveRequest={saveRequest} /> : <FilePreview
         path={path}
         entry={entry}
-        onOpen={(next) => setHistory((current) => [...current, next])}
+        textRenderer="monaco"
+        sourceMode={mode === "source"}
+        onOpen={(next) => { if (confirmDiscard()) { updateDirty(false); setMode("preview"); setHistory((current) => [...current, next]); } }}
         unavailableAction={onDownload ? (
           <Button variant="subtle" disabled={downloadPending} onClick={() => onDownload(path, entry.sizeBytes)}>
             <Download size={14} aria-hidden /> Download
           </Button>
         ) : undefined}
-      />
+      />}
     </section>
   );
 }

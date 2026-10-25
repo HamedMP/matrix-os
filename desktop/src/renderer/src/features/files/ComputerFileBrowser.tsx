@@ -70,6 +70,7 @@ export default function ComputerFileBrowser({
   forceList = false,
   mode = "browse",
   onOpenFile,
+  onEditFile,
   onDownload,
   downloadPending = false,
   onSelectionChange,
@@ -94,6 +95,7 @@ export default function ComputerFileBrowser({
   // competes with files. The default "browse" mode is unchanged.
   mode?: "browse" | "folder-picker";
   onOpenFile?: (path: string) => void;
+  onEditFile?: (path: string) => void;
   onDownload?: (path: string, size?: number) => void;
   downloadPending?: boolean;
   onSelectionChange?: (selection: BrowserSelection | null) => void;
@@ -129,6 +131,7 @@ export default function ComputerFileBrowser({
   const [entries, setEntries] = useState<BrowserEntry[]>([]);
   const [status, setStatus] = useState<BrowserStatus>("loading");
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<BrowserSortKey>("name");
   const [sortDirection, setSortDirection] = useState<BrowserSortDirection>("asc");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -534,8 +537,17 @@ export default function ComputerFileBrowser({
       ) : null}
       <ContextMenu items={mode === "browse"
         ? [
+            ...(contextFile && contextFile.scope === browserScope && onEditFile && !isManagedBrowserPath(contextFile.path)
+              ? [{ label: "Open in Editor", onSelect: () => onEditFile(contextFile.path) }]
+              : []),
             ...(contextFile && contextFile.scope === browserScope && onDownload
               ? [{ label: "Download", disabled: downloadPending, onSelect: () => onDownload(contextFile.path, contextFile.size) }]
+              : []),
+            ...(contextFile?.scope === browserScope || contextDirectory
+              ? [{ label: "Copy Path", onSelect: () => {
+                  const path = contextFile?.scope === browserScope ? contextFile.path : contextDirectory?.path;
+                  if (path) void navigator.clipboard.writeText(`/home/matrix/home/${path}`).then(() => setActionError(null)).catch(() => setActionError("Couldn’t copy the path. Check clipboard access and try again."));
+                } }]
               : []),
             ...(contextDirectory && onOpenFolderInNewTab
               ? [{ label: "Open in new tab", onSelect: () => onOpenFolderInNewTab(contextDirectory.path, contextDirectory.name) }]
@@ -584,6 +596,8 @@ export default function ComputerFileBrowser({
         ) : null}
       </div>
       </ContextMenu>
+
+      {actionError ? <p role="alert" className="px-3 py-1 text-xs" style={{ color: "var(--danger)" }}>{actionError}</p> : null}
 
       <UploadStatusList uploads={fileUploads.uploads} onRetry={fileUploads.retry} onRemove={fileUploads.remove} />
 

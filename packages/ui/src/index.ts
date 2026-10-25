@@ -190,6 +190,7 @@ export { CanonicalChatInputForm, type CanonicalChatInputFormProps } from "./chat
 export { useFileDownload, type FileDownloadTransport, type FileDownloadController } from "./files/use-file-download.js";
 export { filePreviewContentUrl, filePreviewMetadataUrl } from "./files/file-preview-policy.js";
 export { FilePreviewContent, type FilePreviewContentProps } from "./files/FilePreviewContent.js";
+export type { PreviewLink } from "./files/preview-links.js";
 export { FilePreviewActions } from "./files/FilePreviewActions.js";
 export { copyFileImage, savePreviewBlob } from "./files/file-image-actions.js";
 

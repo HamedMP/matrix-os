@@ -148,6 +148,7 @@ export interface ConversationPresentationCallbacks {
   openPermissionMode?: () => void;
   renderCredentialMarker?: (message: ConversationMessagePresentation, offset: number, marker: string, number: number) => ReactNode;
   copyText: (text: string) => Promise<void>;
+  copyFullPath?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => Promise<void>;
   loadImage?: (src: string) => Promise<Blob>;
   loadFileImage?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => Promise<Blob>;
   resolveApp?: (path: string, executionRoot?: CanonicalChatExecutionRootRef) => { name: string } | null;
