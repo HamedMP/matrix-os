@@ -3,8 +3,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Pool } from "pg";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createAppDb } from "../../packages/gateway/src/app-db.js";
 import { ChatCredentialRepository } from "../../packages/gateway/src/chat/credential-repository.js";
+import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
+import { createDiscussionOnlyChatExecutionGuard } from "../../packages/gateway/src/collaboration/chat-scope.js";
+import * as collaborationDatabase from "../../packages/gateway/src/collaboration/database.js";
+import { createGatewayCollaboration } from "../../packages/gateway/src/collaboration/wiring.js";
 import {
   initializeOwnerDatabaseServices,
   type InitializeOwnerDatabaseOptions,
@@ -15,8 +20,15 @@ import { teardownOwnerDatabaseServices } from "../../packages/gateway/src/startu
 const realDescribe = process.env.MATRIX_TEST_POSTGRES_URL ? describe : describe.skip;
 const owner = { type: "personal" as const, ownerId: "owner_disabled_collaboration_test" };
 const chatId = "chat_disabled_collaboration_test";
+const configuredCollaboration = {
+  runtimeId: "runtime_owner_bootstrap_test",
+  platformBaseUrl: "https://platform.invalid",
+  serviceToken: "synthetic-collaboration-test-token-only",
+  clientOrigins: [],
+  ownerId: owner.ownerId,
+};
 
-realDescribe("owner Chat foundation with collaboration disabled (PostgreSQL)", () => {
+realDescribe("owner Chat foundation bootstrap ownership (PostgreSQL)", () => {
   let admin: Pool;
   let databaseName: string;
   let databaseUrl: string;
@@ -34,6 +46,8 @@ realDescribe("owner Chat foundation with collaboration disabled (PostgreSQL)", (
     url.pathname = `/${databaseName}`;
     databaseUrl = url.href;
     homePath = await mkdtemp(join(tmpdir(), "owner-chat-foundation-test-"));
+    vi.spyOn(collaborationDatabase, "bootstrapCollaborationDatabase");
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("Unexpected external request in owner startup test"); }));
   });
 
   afterEach(async () => {
@@ -44,18 +58,23 @@ realDescribe("owner Chat foundation with collaboration disabled (PostgreSQL)", (
       await admin.end();
     }
     if (homePath) await rm(homePath, { recursive: true, force: true });
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  async function boot() {
+  async function boot(
+    collaborationConfig: InitializeOwnerDatabaseOptions["collaborationConfig"] = null,
+    expectedFailure: InitializeOwnerDatabaseOptions["initialFailureReason"] = null,
+  ) {
     const unused = {} as never;
     const options: InitializeOwnerDatabaseOptions = {
       databaseUrl, homePath,
-      collaborationConfig: null,
+      collaborationConfig,
       initialFailureReason: null,
       providerSnapshotReader: unused,
       codingAgentProjectManager: unused,
       codingAgentWorktreeManager: unused,
-      terminalWorkspaceRuntime: unused,
+      terminalWorkspaceRuntime: { listWorkspaces: async () => [] } as never,
       terminalRuntimeOwnerIds: [owner.ownerId],
       projectOwnerToolOutput: unused,
       capture: () => undefined,
@@ -66,11 +85,11 @@ realDescribe("owner Chat foundation with collaboration disabled (PostgreSQL)", (
     };
     const result = await initializeOwnerDatabaseServices(options);
     services = result.services;
-    expect(result.failClosedReason).toBeNull();
+    expect(result.failClosedReason).toBe(expectedFailure);
     if (!services?.chatRepository || !services.chatCollaborationGuard) {
       throw new Error("Owner Chat startup failed");
     }
-    expect(services.collaboration).toBeNull();
+    if (!collaborationConfig || expectedFailure) expect(services.collaboration).toBeNull();
     return { repository: services.chatRepository, guard: services.chatCollaborationGuard };
   }
 
@@ -81,12 +100,55 @@ realDescribe("owner Chat foundation with collaboration disabled (PostgreSQL)", (
     const credentials = new ChatCredentialRepository(repository.kysely, Buffer.alloc(32, 1), [owner.ownerId]);
     // This real private-owner query failed with PostgreSQL 42P01 before the fix.
     await expect(credentials.list(owner, chatId, ["msg_private_first"])).resolves.toEqual([]);
+    expect(collaborationDatabase.bootstrapCollaborationDatabase).toHaveBeenCalledTimes(1);
     await expect(credentials.list({ ...owner, ownerId: "unrelated_owner" }, chatId, ["msg_private_first"]))
       .rejects.toThrow("Credential unavailable");
     await expect(guard.assertPersonalExecutionAllowed({ ...owner, ownerId: "unrelated_owner" }, chatId))
       .rejects.toMatchObject({ code: "not_found" });
     for (const table of ["collaboration_scopes", "collaboration_members", "collaboration_grants", "collaboration_grant_activations"]) {
       expect(await services!.kyselyInstance!.selectFrom(table).selectAll().execute()).toEqual([]);
+    }
+  });
+
+  it("lets configured collaboration own the single schema bootstrap and keeps private checks ready", async () => {
+    const { repository, guard } = await boot(configuredCollaboration);
+    expect(services!.collaboration).not.toBeNull();
+    expect(collaborationDatabase.bootstrapCollaborationDatabase).toHaveBeenCalledTimes(1);
+    await repository.create(owner, { id: chatId, clientRequestId: "req_enabled_bootstrap", title: "Configured startup" });
+    await expect(guard.assertPersonalExecutionAllowed(owner, chatId)).resolves.toBeUndefined();
+    const credentials = new ChatCredentialRepository(repository.kysely, Buffer.alloc(32, 1), [owner.ownerId]);
+    await expect(credentials.list(owner, chatId, ["msg_enabled_bootstrap"])).resolves.toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("retains ready private metadata when configured runtime construction fails after its bootstrap", async () => {
+    // A missing terminal owner fails onPartialRuntime after the runtime has migrated storage.
+    const { ownerId: _ownerId, ...configWithoutTerminalOwner } = configuredCollaboration;
+    const { repository, guard } = await boot(configWithoutTerminalOwner, "construction_failed");
+    expect(collaborationDatabase.bootstrapCollaborationDatabase).toHaveBeenCalledTimes(1);
+    await repository.create(owner, { id: chatId, clientRequestId: "req_enabled_fallback", title: "Private fallback" });
+    await expect(guard.assertPersonalExecutionAllowed(owner, chatId)).resolves.toBeUndefined();
+    const credentials = new ChatCredentialRepository(repository.kysely, Buffer.alloc(32, 1), [owner.ownerId]);
+    await expect(credentials.list(owner, chatId, ["msg_enabled_fallback"])).resolves.toEqual([]);
+  });
+
+  it("still bootstraps storage for standalone collaboration callers", async () => {
+    const { db, kysely } = createAppDb(databaseUrl);
+    let runtime: Awaited<ReturnType<typeof createGatewayCollaboration>> | undefined;
+    try {
+      const repository = new ChatRepository(kysely);
+      await repository.bootstrap();
+      runtime = await createGatewayCollaboration({ db: kysely, chatRepository: repository,
+        config: configuredCollaboration, startTimers: false });
+      expect(collaborationDatabase.bootstrapCollaborationDatabase).toHaveBeenCalledTimes(1);
+      await repository.create(owner, { id: chatId, clientRequestId: "req_standalone", title: "Standalone storage" });
+      await expect(createDiscussionOnlyChatExecutionGuard(kysely).assertPersonalExecutionAllowed(owner, chatId))
+        .resolves.toBeUndefined();
+      const credentials = new ChatCredentialRepository(kysely, Buffer.alloc(32, 1), [owner.ownerId]);
+      await expect(credentials.list(owner, chatId, ["msg_standalone"])).resolves.toEqual([]);
+    } finally {
+      await runtime?.shutdown();
+      await db.destroy();
     }
   });
 

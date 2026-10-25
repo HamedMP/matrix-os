@@ -156,9 +156,9 @@ export async function initializeOwnerDatabaseServices(
       services.googleCopies = chatHistory.googleCopies;
       await chatHistory.bootstrap();
       // Private Chat ownership/credential checks also read collaboration metadata.
-      // Schema readiness is independent of enabling the collaboration runtime;
-      // these migrations create no membership, grants or execution authority.
-      await bootstrapCollaborationDatabase(kysely);
+      // A configured collaboration runtime bootstraps that schema first itself.
+      // Without one, migrate metadata only: no grants or execution authority.
+      if (!options.collaborationConfig) await bootstrapCollaborationDatabase(kysely);
       const ownerChatExecutionRoots = createChatExecutionRootResolver({
         homePath: options.homePath,
         projects: options.codingAgentProjectManager,
