@@ -129,3 +129,64 @@ it('fails closed when the direct bot binding was removed after saving the answer
   await expect(makeService().resolve(OWNER, CHAT, interactionId, { kind: 'resume', baseRevision: 2 }))
     .rejects.toEqual(new BotInteractionError('conflict'));
 });
+
+it('never offers an earlier saved answer after the task reaches a later question', async () => {
+  const tasks = createBotTasksRepository(db), previous = (await tasks.get({ ownerId: OWNER, taskId }))!;
+  const running = await tasks.transition({ ownerId: OWNER, taskId, baseRevision: previous.revision,
+    to: 'running', runId: 'run_later', now: new Date(clock).toISOString() });
+  await makeService().createFromTool({ ownerId: OWNER, botId: BOT, chatId: CHAT, taskId,
+    capabilities: ['interaction.create'] } as BotRuntimeBinding, {
+    blocking: true, payload: { kind: 'question', questions: [{ questionId: 'recipient', header: 'Recipient',
+      question: 'Which recipient?', allowOther: true, secret: false }] },
+  });
+  await tasks.transition({ ownerId: OWNER, taskId, baseRevision: running.revision,
+    to: 'waiting_person', now: new Date(clock).toISOString() });
+  const visible = await makeService().listPending(OWNER, CHAT, { includeRecovery: true });
+  expect(visible.map(item => item.interactionId)).not.toContain(interactionId);
+  expect(visible).toHaveLength(1);
+  await expect(makeService().resolve(OWNER, CHAT, interactionId, { kind: 'resume', baseRevision: 2 }))
+    .rejects.toEqual(new BotInteractionError('conflict'));
+  // An original button resubmission must not replay the stale intent either.
+  await expect(makeService().resolve(OWNER, CHAT, interactionId, { kind: 'question', baseRevision: 1, answer: 'Concise' }))
+    .rejects.toEqual(new BotInteractionError('conflict'));
+  await recordCanonicalAnswer();
+  await expect(beginRecordedAnswer()).rejects.toBeDefined();
+  expect((await tasks.get({ ownerId: OWNER, taskId }))?.status).toBe('waiting_person');
+});
+
+it('preserves an answer saved while the original asking run is still settling', async () => {
+  const tasks = createBotTasksRepository(db), previous = (await tasks.get({ ownerId: OWNER, taskId }))!;
+  const running = await tasks.transition({ ownerId: OWNER, taskId, baseRevision: previous.revision,
+    to: 'running', runId: 'run_early_ask', now: new Date(clock).toISOString() });
+  await makeService().createFromTool({ ownerId: OWNER, botId: BOT, chatId: CHAT, taskId,
+    runId: 'run_early_ask', capabilities: ['interaction.create'] } as BotRuntimeBinding, {
+    blocking: true, payload: { kind: 'question', questions: [{ questionId: 'early', header: 'Early',
+      question: 'Reply while this run settles?', allowOther: true, secret: false }] },
+  });
+  const [next] = await makeService().listPending(OWNER, CHAT);
+  interactionId = next!.interactionId;
+  expect((await makeService().resolve(OWNER, CHAT, interactionId, { kind: 'question', baseRevision: 1,
+    answer: 'Concise' })).continuation?.text).toBe('Concise');
+  await tasks.transition({ ownerId: OWNER, taskId, baseRevision: running.revision,
+    to: 'waiting_person', now: new Date(clock).toISOString() });
+  expect(await makeService().listPending(OWNER, CHAT, { includeRecovery: true })).toEqual([
+    expect.objectContaining({ interactionId, recoveryAvailable: true }),
+  ]);
+  await recordCanonicalAnswer();
+  expect((await beginRecordedAnswer()).task.taskId).toBe(taskId);
+});
+
+it('does not guess the source of a legacy pending question while a run is busy', async () => {
+  const tasks = createBotTasksRepository(db), previous = (await tasks.get({ ownerId: OWNER, taskId }))!;
+  await tasks.transition({ ownerId: OWNER, taskId, baseRevision: previous.revision,
+    to: 'running', runId: 'run_busy_legacy', now: new Date(clock).toISOString() });
+  await makeService().createFromTool({ ownerId: OWNER, botId: BOT, chatId: CHAT, taskId,
+    capabilities: ['interaction.create'] } as BotRuntimeBinding, {
+    blocking: true, payload: { kind: 'question', questions: [{ questionId: 'legacy', header: 'Legacy',
+      question: 'Legacy source unknown?', allowOther: true, secret: false }] },
+  });
+  const [question] = await makeService().listPending(OWNER, CHAT);
+  await expect(makeService().resolve(OWNER, CHAT, question!.interactionId,
+    { kind: 'question', baseRevision: 1, answer: 'Do not bind this to another run.' }))
+    .rejects.toEqual(new BotInteractionError('conflict'));
+});

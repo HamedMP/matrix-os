@@ -122,6 +122,7 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
           const { interaction, expired } = await createBotInteractionsRepository(tx.db).create({
             ownerId: binding.ownerId, botId: binding.botId, chatId: binding.chatId, taskId: binding.taskId,
             kind: "question", payload: args.payload, responderActorId: binding.ownerId, blocking: args.blocking,
+            ...(binding.runId ? { sourceRunId: binding.runId } : {}),
             expiresAt: new Date(at.getTime() + QUESTION_LIFETIME_MS).toISOString(), now: at.toISOString(),
           }, tx.db);
           for (const overdue of expired) await tx.publish(overdue.chatId, "interaction.resolved", event(overdue));
@@ -223,8 +224,22 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
           ...(interaction.blocking && text ? { continuation: { chatId: interaction.chatId, clientRequestId: `req_answer_${interaction.interactionId}`, text } } : {}),
         });
         const { continuation: storedText, ...stored } = current.resolution ?? {};
+        const task = current.blocking && current.kind === "question"
+          ? await tx.db.selectFrom("bot_tasks").select(["run_id", "status"]).where("owner_id", "=", responderId)
+            .where("task_id", "=", current.taskId).where("bot_id", "=", current.botId).where("chat_id", "=", current.chatId)
+            .forUpdate().executeTakeFirst() : undefined;
+        // New questions carry their asking run. Older pending rows may bind
+        // only after that run settled; never guess during another busy run.
+        const sourceRunId = current.sourceRunId
+          ?? (current.status === "pending" && task?.status === "waiting_person" ? task.run_id : undefined);
         if (current.status === "resolved" && current.revision === input.baseRevision + 1 && JSON.stringify(stored) === JSON.stringify(requested)) {
           if (current.blocking && Date.parse(current.expiresAt) <= Date.parse(at)) throw new BotInteractionError("expired");
+          if (current.kind === "question" && current.blocking) {
+            if (typeof storedText === "string" && await repository.hasContinuationAdmission({ chatId: current.chatId,
+              interactionId: current.interactionId, requestHash: chatContextRequestHash({ parts: [{ type: "text", text: storedText }],
+                selection: MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" }) }, tx.db)) return respond(current, undefined);
+            if (!sourceRunId || task?.run_id !== sourceRunId || !["running", "waiting_person"].includes(task.status)) throw new BotInteractionError("conflict");
+          }
           const replayText = typeof storedText === "string" ? storedText
             : current.kind === "question" ? renderAnswer(current.payload as QuestionPayload, requested as QuestionAnswer) : undefined;
           return respond(current, replayText);
@@ -236,6 +251,7 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
         if (current.revision !== input.baseRevision) throw new BotInteractionError("conflict");
         let text: string;
         if (input.kind === "question") {
+          if (current.blocking && (!sourceRunId || task?.run_id !== sourceRunId || !["running", "waiting_person"].includes(task.status))) throw new BotInteractionError("conflict");
           const payload = current.payload as QuestionPayload;
           const known = new Set(payload.questions.map((question) => question.questionId));
           if (Object.keys(input.structuredAnswers ?? {}).some((id) => !known.has(id))) throw new BotInteractionError("invalid_request");
@@ -255,6 +271,7 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
           resolved = await repository.resolve({
             ownerId: responderId, interactionId: current.interactionId, baseRevision: input.baseRevision,
             responderActorId: responderId, resolution: { ...requested, continuation: text }, now: at,
+            ...(sourceRunId ? { sourceRunId } : {}),
           }, tx.db);
         } catch (error: unknown) {
           return mapStateError(error);
