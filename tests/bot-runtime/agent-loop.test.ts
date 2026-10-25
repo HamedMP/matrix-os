@@ -381,10 +381,10 @@ describe("bot agent loop", () => {
     expect(results[1]).toContain("Fix: action.");
   });
 
-  it.each([512, 4096])("summarizes earlier turns within a %i-token route when the session is too large to save", async maxOutputTokens => {
+  it.each([512, 4096])("summarizes pressure before inference within a %i-token output budget", async maxOutputTokens => {
     const { route } = scripted([
-      fauxAssistantMessage(fauxText("Here is the fourth answer.")),
       fauxAssistantMessage(fauxText("Earlier: the person asked for three long Acme reports and prefers tables.")),
+      fauxAssistantMessage(fauxText("Here is the fourth answer.")),
     ]);
     const stream = vi.spyOn(route.provider, "streamSimple");
     const history = [1, 2, 3].flatMap((turn) => [
@@ -398,7 +398,7 @@ describe("bot agent loop", () => {
 
     expect(outcome).toMatchObject({ status: "completed", sessionRevision: 4 });
     expect(stream).toHaveBeenCalledTimes(2);
-    expect(stream.mock.calls[1]?.[2]).toMatchObject({ maxTokens: Math.min(2048, maxOutputTokens), maxRetries: 0 });
+    expect(stream.mock.calls[0]?.[2]).toMatchObject({ maxTokens: Math.min(2048, maxOutputTokens), maxRetries: 0 });
     const saved = JSON.stringify(saves[0]!.messages);
     expect(saved).toContain("prefers tables");
     expect(saved).toContain("And a fourth?");
@@ -406,16 +406,23 @@ describe("bot agent loop", () => {
     expect(saved.length).toBeLessThan(512 * 1024);
   });
 
-  it.each([{ mainCalls: 4, limits: { maxToolActions: 2 }, expected: 5 }, { mainCalls: 5, limits: { maxToolActions: 2 }, expected: 5 }, { mainCalls: 11, limits: { maxToolActions: 60, maxInferenceCalls: 12 }, expected: 12 }, { mainCalls: 12, limits: { maxToolActions: 60, maxInferenceCalls: 12 }, expected: 12 }])("shares the remaining inference allowance with both compaction paths after $mainCalls main calls", async ({ mainCalls, limits, expected }) => {
-    const { route } = scripted([
-      ...Array.from({ length: mainCalls - 1 }, (_, index) => fauxAssistantMessage(
-        fauxToolCall("missing_tool", {}, { id: `missing_${index}` }), { stopReason: "toolUse" },
-      )),
-      fauxAssistantMessage(fauxText("Here is the fourth answer.")),
-      // An empty first summary leaves storage compaction necessary too.
-      fauxAssistantMessage(fauxText(""), { stopReason: "error", errorMessage: "provider overloaded" }),
-      fauxAssistantMessage(fauxText("This second summary must not be requested.")),
-    ]);
+  it.each([
+    { mainCalls: 4, limits: { maxToolActions: 2 }, expected: 5, status: "completed" },
+    { mainCalls: 5, limits: { maxToolActions: 2 }, expected: 5, status: "failed" },
+    { mainCalls: 11, limits: { maxToolActions: 60, maxInferenceCalls: 12 }, expected: 12, status: "completed" },
+    { mainCalls: 12, limits: { maxToolActions: 60, maxInferenceCalls: 12 }, expected: 12, status: "failed" },
+  ])("shares the finite inference allowance with pre-request compaction for $mainCalls main calls", async ({ mainCalls, limits, expected, status }) => {
+    let ordinary = 0, summaries = 0;
+    const { route } = scripted(Array.from({ length: 20 }, () => context => {
+      if (JSON.stringify(context).includes("Summarize the conversation")) {
+        summaries += 1;
+        return fauxAssistantMessage(fauxText(""), { stopReason: "error", errorMessage: "provider overloaded" });
+      }
+      ordinary += 1;
+      return ordinary < mainCalls
+        ? fauxAssistantMessage(fauxToolCall("missing_tool", {}, { id: `missing_${ordinary}` }), { stopReason: "toolUse" })
+        : fauxAssistantMessage(fauxText("Here is the fourth answer."));
+    }));
     const stream = vi.spyOn(route.provider, "streamSimple");
     const history = [1, 2, 3].flatMap(turn => [
       { role: "user", content: `Report ${turn}, please.`, timestamp: turn * 10 },
@@ -423,12 +430,12 @@ describe("bot agent loop", () => {
     ]) as unknown as Record<string, unknown>[];
     const { broker, saves, tools } = memoryBroker({ messages: history });
     const outcome = await run({ broker, route, command: command({ limits, turn: { kind: "prompt", text: "And a fourth?" } }) });
-    expect(outcome).toMatchObject({ status: "completed", sessionRevision: 4 });
+    expect(outcome).toMatchObject({ status, sessionRevision: 4 });
     expect(stream).toHaveBeenCalledTimes(expected);
+    expect(summaries).toBe(1);
     expect(stream.mock.calls.every(([, , options]) => options?.maxRetries === 0)).toBe(true);
     expect(tools).toHaveLength(0);
     expect(JSON.stringify(saves[0]!.messages)).toContain("And a fourth?");
-    expect(JSON.stringify(saves[0]!.messages)).not.toContain("second summary");
   });
 
   it("still saves the turn when the optional summary call fails or the run was cancelled", async () => {
@@ -438,8 +445,8 @@ describe("bot agent loop", () => {
     ]) as unknown as Record<string, unknown>[];
 
     const failing = scripted([
-      fauxAssistantMessage(fauxText("Here is the fourth answer.")),
       fauxAssistantMessage(fauxText(""), { stopReason: "error", errorMessage: "provider overloaded" }),
+      fauxAssistantMessage(fauxText("Here is the fourth answer.")),
     ]);
     const saved = memoryBroker({ messages: history });
     const outcome = await run({ broker: saved.broker, route: failing.route, command: command({ capabilities: [], turn: { kind: "prompt", text: "And a fourth?" } }) });
@@ -467,8 +474,8 @@ describe("bot agent loop", () => {
     const provider = Object.assign(Object.create(faux.route.provider) as typeof faux.route.provider, {
       streamSimple: ((...args: Parameters<typeof faux.route.provider.streamSimple>) => {
         calls += 1;
-        // The second call is the summary: the person cancels while it runs.
-        if (calls === 2) controller.abort();
+        // The first call is now pre-request compaction; cancel before ordinary inference.
+        if (calls === 1) controller.abort();
         return faux.route.provider.streamSimple(...args);
       }) as typeof faux.route.provider.streamSimple,
     });
