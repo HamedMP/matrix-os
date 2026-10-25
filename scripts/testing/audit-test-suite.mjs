@@ -2,13 +2,15 @@
 /** Read-only census. Signals never authorize deleting a test or claim execution. */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, lstatSync, writeFileSync } from "node:fs";
+import { readFileSync, lstatSync, writeFileSync, openSync, fstatSync, readSync, closeSync, constants } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { analyzeTestEvidence } from "./test-evidence.mjs";
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
+const MAX_REVIEW_BYTES = 8 * 1024 * 1024;
+const MAX_REVIEWS = 10_000;
 const sha256 = data => createHash("sha256").update(data).digest("hex");
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const read = (root, name) => {
@@ -124,6 +126,8 @@ function matchingCollectors(name, configs) {
 
 function reviewIndex(reviews) {
   if (!Array.isArray(reviews)) throw new Error("Reviews must be an array");
+  if (reviews.length > MAX_REVIEWS) throw new Error("Review count limit exceeded");
+  // Per-invocation index: reject excess input rather than evicting review evidence.
   const result = new Map();
   for (const review of reviews) {
     if (!review || typeof review.path !== "string" || result.has(review.path)) throw new Error("Invalid or duplicate review path");
@@ -136,6 +140,28 @@ function reviewIndex(reviews) {
     result.set(review.path, review);
   }
   return result;
+}
+
+export function readReviewLedger(filename) {
+  const metadata = lstatSync(filename);
+  if (!metadata.isFile() || metadata.size > MAX_REVIEW_BYTES) throw new Error("Review file size limit or regular-file requirement exceeded");
+  const descriptor = openSync(filename, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const current = fstatSync(descriptor);
+    if (!current.isFile() || current.size > MAX_REVIEW_BYTES) throw new Error("Review file size limit or regular-file requirement exceeded");
+    // Bound the read itself as well: the file can grow after the metadata check.
+    const buffer = Buffer.alloc(MAX_REVIEW_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const count = readSync(descriptor, buffer, length, buffer.length - length, null);
+      if (!count) break;
+      length += count;
+    }
+    if (length > MAX_REVIEW_BYTES) throw new Error("Review file size limit exceeded");
+    return JSON.parse(buffer.subarray(0, length).toString("utf8"));
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 export function auditRepository(root, reviews = []) {
@@ -206,7 +232,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (!["--root", "--output", "--reviews"].includes(args[i]) || !args[i + 1]) throw new Error("Usage: node scripts/testing/audit-test-suite.mjs [--root DIR] [--reviews JSON] [--output JSON]");
     options[args[i]] = args[i + 1];
   }
-  const report = auditRepository(options["--root"] ?? process.cwd(), options["--reviews"] ? JSON.parse(readFileSync(options["--reviews"], "utf8")) : []);
+  const report = auditRepository(options["--root"] ?? process.cwd(), options["--reviews"] ? readReviewLedger(options["--reviews"]) : []);
   if (options["--output"]) writeFileSync(options["--output"], JSON.stringify(report, null, 2) + "\n", { flag: "wx" });
   process.stdout.write(JSON.stringify(report.summary, null, 2) + "\n");
 }

@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, openSync, closeSync, ftruncateSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { auditRepository, isTestEntrypoint } from "../../scripts/testing/audit-test-suite.mjs";
+import { auditRepository, isTestEntrypoint, readReviewLedger } from "../../scripts/testing/audit-test-suite.mjs";
 
 const fixtures: string[] = [];
 afterEach(() => { for (const root of fixtures.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -153,5 +153,23 @@ describe("test effectiveness census", () => {
     expect(report.registrationCandidates.map(file => file.path)).toEqual(["specs/evidence/probe.ts"]);
     expect(report.summary.syntacticJsTestDeclarations).toBe(2);
     expect(report.files[0].decision).toBe("needs-review");
+  });
+
+  it("rejects excessive review rows before populating its index", () => {
+    const root = repository({ "tests/a.test.ts": "it('a', () => {});" });
+    const reviews = Array.from({ length: 10_001 }, (_, index) => ({ path: `tests/${index}.test.ts`,
+      sourceSha256: "a".repeat(64), reviewer: "engineer", evidenceDepth: "source-reviewed",
+      decision: "keep", rationale: "Reviewed production behavior." }));
+    expect(() => auditRepository(root, reviews)).toThrow(/review count limit/i);
+  });
+
+  it("bounds review file bytes before JSON parsing and preserves a valid small ledger", () => {
+    const root = mkdtempSync(join(tmpdir(), "matrix-review-bytes-")); fixtures.push(root);
+    const file = join(root, "reviews.json");
+    const fd = openSync(file, "w");
+    try { ftruncateSync(fd, 8 * 1024 * 1024 + 1); } finally { closeSync(fd); }
+    expect(() => readReviewLedger(file)).toThrow(/review file size limit/i);
+    writeFileSync(file, "[]");
+    expect(readReviewLedger(file)).toEqual([]);
   });
 });

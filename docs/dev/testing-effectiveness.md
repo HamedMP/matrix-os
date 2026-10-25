@@ -126,6 +126,9 @@ Source-review rows supplied with `--reviews /path/reviews.json` must include
 `fault` describing the observed failure. Changed test bytes invalidate the row.
 Recheck production/dependency changes separately; a matching hash is not a
 qualification receipt. Keep raw ledgers outside Git and publish concise findings.
+The CLI accepts regular review files up to 8 MiB and at most 10,000 rows per
+invocation. Excess input fails explicitly; reviews are never silently dropped.
+The index is discarded when that audit invocation completes.
 
 Use targeted mutation testing and historical bug replay to challenge assertions.
 Review equivalent or irrelevant mutations; do not chase a new universal mutation
