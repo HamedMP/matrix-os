@@ -5,7 +5,8 @@ import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 const fixtureDefinitions = new Set(['tests/gateway/collaboration-test-support.ts', 'tests/platform/collaboration-test-support.ts']);
-const anchors = ['tests/gateway/personal-sync-share-inventory-postgres.test.ts',
+const anchors = ['tests/gateway/owner-database-chat-foundation-postgres.test.ts',
+  'tests/gateway/personal-sync-share-inventory-postgres.test.ts',
   'tests/platform/collaboration-cutover-postgres.test.ts', 'tests/platform/organization-authority-postgres.test.ts'];
 const testFile = /\.test\.tsx?$/;
 const realFixture = /\bcreateReal(?:Platform)?CollaborationTestDatabase\b/;

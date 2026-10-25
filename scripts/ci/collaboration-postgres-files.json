@@ -21,6 +21,7 @@
   "tests/gateway/collaboration-standalone-scope-postgres.test.ts",
   "tests/gateway/collaboration-terminal-scope.test.ts",
   "tests/gateway/direct-resource-policy-postgres.test.ts",
+  "tests/gateway/owner-database-chat-foundation-postgres.test.ts",
   "tests/gateway/personal-sync-share-inventory-postgres.test.ts",
   "tests/gateway/project-git-broker-postgres.test.ts",
   "tests/gateway/project-share-inventory-postgres.test.ts",
