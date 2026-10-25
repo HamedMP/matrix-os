@@ -18,6 +18,9 @@ vi.mock("@matrix-os/ui", async () => ({
   ...await import("../../packages/ui/src/agents-providers/provider-workflow-client.js"),
   ...await import("../../packages/ui/src/agents-providers/matrix-anthropic-connection-client.js"),
   ...await import("../../packages/ui/src/speech/browser-client.js"),
+  ...await import("../../packages/ui/src/chat-usage/client.js"),
+  // Analytics has separate real-panel and runtime-identity coverage.
+  ChatUsagePanel: () => null,
   AgentsProvidersView: mocks.view,
   useProviderSettingsController: mocks.controller,
   sessionProviderSettingsSnapshotCache: undefined,
