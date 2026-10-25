@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token";
 import { buildPlatformUserProof } from "../../packages/platform/src/session-routing-websocket";
 import {
+  isGatewayProxyPath,
   isPlatformMobileAppSessionRequest,
   isPublicShellPath,
   isSignUpShellPath,
@@ -16,52 +17,12 @@ import {
  * without requiring a running Clerk or Next.js instance.
  */
 
-const PUBLIC_PATHS = ["/health", "/manifest.json", "/og.png", "/favicon.ico"];
-const GATEWAY_PREFIXES = ["/gateway/", "/api/", "/files/", "/modules/", "/ws"];
-
-function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PATHS.includes(pathname);
-}
-
-function isGatewayProxy(pathname: string): boolean {
-  return GATEWAY_PREFIXES.some((prefix) => pathname.startsWith(prefix));
-}
-
-function shouldBypassAuth(env: {
-  E2E_TEST_BYPASS?: string;
-  NODE_ENV?: string;
-}): boolean {
-  return env.E2E_TEST_BYPASS === "1";
-}
-
-function resolveGatewayTarget(pathname: string): string {
-  return pathname.startsWith("/gateway/")
-    ? pathname.replace("/gateway", "")
-    : pathname;
-}
-
-function shouldInjectAuthToken(
-  pathname: string,
-  authToken: string | undefined,
-): boolean {
-  return isGatewayProxy(pathname) && !!authToken;
-}
-
-function isOwnerMatch(
-  userId: string | null,
-  expectedClerkUserId: string | undefined,
-): boolean {
-  if (!expectedClerkUserId) return true;
-  if (!userId) return true; // no user yet (pre-auth)
-  return userId === expectedClerkUserId;
-}
-
 describe("proxy auth: route classification", () => {
   it("classifies public paths correctly", () => {
-    expect(isPublicPath("/health")).toBe(true);
-    expect(isPublicPath("/manifest.json")).toBe(true);
-    expect(isPublicPath("/og.png")).toBe(true);
-    expect(isPublicPath("/favicon.ico")).toBe(true);
+    expect(isPublicShellPath("/health")).toBe(true);
+    expect(isPublicShellPath("/manifest.json")).toBe(true);
+    expect(isPublicShellPath("/og.png")).toBe(true);
+    expect(isPublicShellPath("/favicon.ico")).toBe(true);
   });
 
   it("classifies Clerk auth pages as public shell paths", () => {
@@ -105,27 +66,30 @@ describe("proxy auth: route classification", () => {
     expect(isPublicShellPath("/")).toBe(false);
   });
 
-  it("non-public paths require auth", () => {
-    expect(isPublicPath("/")).toBe(false);
-    expect(isPublicPath("/api/message")).toBe(false);
-    expect(isPublicPath("/files/apps/todo")).toBe(false);
-    expect(isPublicPath("/dashboard")).toBe(false);
+  it("keeps protected paths out of the public shell allowlist", () => {
+    expect(isPublicShellPath("/")).toBe(false);
+    expect(isPublicShellPath("/api/message")).toBe(false);
+    expect(isPublicShellPath("/files/apps/todo")).toBe(false);
+    expect(isPublicShellPath("/dashboard")).toBe(false);
   });
 
   it("identifies gateway proxy paths", () => {
-    expect(isGatewayProxy("/api/message")).toBe(true);
-    expect(isGatewayProxy("/api/identity")).toBe(true);
-    expect(isGatewayProxy("/files/apps/todo/index.html")).toBe(true);
-    expect(isGatewayProxy("/modules/weather")).toBe(true);
-    expect(isGatewayProxy("/ws")).toBe(true);
-    expect(isGatewayProxy("/ws/terminal")).toBe(true);
-    expect(isGatewayProxy("/gateway/health")).toBe(true);
+    expect(isGatewayProxyPath("/api/message")).toBe(true);
+    expect(isGatewayProxyPath("/api/identity")).toBe(true);
+    expect(isGatewayProxyPath("/files/apps/todo/index.html")).toBe(true);
+    expect(isGatewayProxyPath("/modules/weather")).toBe(true);
+    expect(isGatewayProxyPath("/icons/notes.png")).toBe(true);
+    expect(isGatewayProxyPath("/apps/calculator/")).toBe(true);
+    expect(isGatewayProxyPath("/ws")).toBe(true);
+    expect(isGatewayProxyPath("/ws/terminal")).toBe(true);
+    expect(isGatewayProxyPath("/gateway/health")).toBe(true);
   });
 
   it("non-gateway paths are shell routes", () => {
-    expect(isGatewayProxy("/")).toBe(false);
-    expect(isGatewayProxy("/settings")).toBe(false);
-    expect(isGatewayProxy("/health")).toBe(false);
+    expect(isGatewayProxyPath("/")).toBe(false);
+    expect(isGatewayProxyPath("/settings")).toBe(false);
+    expect(isGatewayProxyPath("/health")).toBe(false);
+    expect(isGatewayProxyPath("/ws-malicious")).toBe(false);
   });
 });
 
@@ -388,15 +352,7 @@ describe("proxy auth: screenshot bypass", () => {
     vi.doUnmock("next/server");
   });
 
-  it("bypasses auth when the explicit E2E flag is set", () => {
-    expect(shouldBypassAuth({ E2E_TEST_BYPASS: "1", NODE_ENV: "production" })).toBe(true);
-    expect(shouldBypassAuth({ E2E_TEST_BYPASS: "1", NODE_ENV: "test" })).toBe(true);
-  });
 
-  it("does not bypass auth without the explicit E2E flag", () => {
-    expect(shouldBypassAuth({ NODE_ENV: "test" })).toBe(false);
-    expect(shouldBypassAuth({ E2E_TEST_BYPASS: "0", NODE_ENV: "production" })).toBe(false);
-  });
 
   it("still rewrites gateway paths and injects the gateway token in bypass mode", async () => {
     vi.resetModules();
@@ -438,38 +394,6 @@ describe("proxy auth: screenshot bypass", () => {
     const [url, init] = nextResponseRewrite.mock.calls[0] ?? [];
     expect(url?.toString()).toBe("http://localhost:4000/api/shell/bootstrap");
     expect(init?.request?.headers?.get("authorization")).toBe("Bearer local-gateway-token");
-  });
-});
-
-describe("proxy auth: gateway target resolution", () => {
-  it("strips /gateway prefix", () => {
-    expect(resolveGatewayTarget("/gateway/health")).toBe("/health");
-    expect(resolveGatewayTarget("/gateway/api/message")).toBe("/api/message");
-  });
-
-  it("preserves other paths as-is", () => {
-    expect(resolveGatewayTarget("/api/message")).toBe("/api/message");
-    expect(resolveGatewayTarget("/files/apps/todo")).toBe("/files/apps/todo");
-    expect(resolveGatewayTarget("/ws")).toBe("/ws");
-  });
-});
-
-describe("proxy auth: Layer 2 owner verification", () => {
-  it("allows when no expected user ID is configured", () => {
-    expect(isOwnerMatch("user_abc", undefined)).toBe(true);
-    expect(isOwnerMatch(null, undefined)).toBe(true);
-  });
-
-  it("allows matching user", () => {
-    expect(isOwnerMatch("user_abc", "user_abc")).toBe(true);
-  });
-
-  it("rejects mismatched user", () => {
-    expect(isOwnerMatch("user_xyz", "user_abc")).toBe(false);
-  });
-
-  it("allows null user (pre-auth state)", () => {
-    expect(isOwnerMatch(null, "user_abc")).toBe(true);
   });
 });
 
@@ -1098,24 +1022,5 @@ describe("proxy auth: sign-in redirects", () => {
       ),
     });
     expect(nextResponseRedirect).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("proxy auth: Layer 3 bearer token injection", () => {
-  it("injects token on gateway proxy paths when token is set", () => {
-    expect(shouldInjectAuthToken("/api/message", "secret-token")).toBe(true);
-    expect(shouldInjectAuthToken("/files/apps/todo", "secret-token")).toBe(true);
-    expect(shouldInjectAuthToken("/ws", "secret-token")).toBe(true);
-  });
-
-  it("does not inject token when no token configured", () => {
-    expect(shouldInjectAuthToken("/api/message", undefined)).toBe(false);
-    expect(shouldInjectAuthToken("/api/message", "")).toBe(false);
-  });
-
-  it("does not inject token on non-gateway paths", () => {
-    expect(shouldInjectAuthToken("/", "secret-token")).toBe(false);
-    expect(shouldInjectAuthToken("/settings", "secret-token")).toBe(false);
-    expect(shouldInjectAuthToken("/health", "secret-token")).toBe(false);
   });
 });

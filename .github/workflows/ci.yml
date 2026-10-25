@@ -897,6 +897,18 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/gateway/browser-approval-repository.test.ts --maxWorkers=1 --no-file-parallelism
 
+      - name: Qualify remaining real PostgreSQL suites
+        run: node scripts/ci/remaining-postgres.mjs
+
+      - name: Upload remaining PostgreSQL qualification
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: remaining-postgres-qualification
+          path: output/ci/remaining-postgres/*.json
+          if-no-files-found: error
+          retention-days: 7
+
   collaboration-postgres:
     name: Collaboration PostgreSQL
     needs: changes
