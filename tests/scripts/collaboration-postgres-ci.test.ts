@@ -7,7 +7,8 @@ import { parse } from "yaml";
 import { collaborationPostgresFiles, runCollaborationPostgres } from "../../scripts/ci/collaboration-postgres.mjs";
 
 const roots: string[] = [];
-const anchors = ["tests/gateway/personal-sync-share-inventory-postgres.test.ts",
+const anchors = ["tests/gateway/owner-database-chat-foundation-postgres.test.ts",
+  "tests/gateway/personal-sync-share-inventory-postgres.test.ts",
   "tests/platform/collaboration-cutover-postgres.test.ts", "tests/platform/organization-authority-postgres.test.ts"];
 const factory = `createReal${"Collaboration"}TestDatabase`;
 function put(root: string, file: string, source: string) {
@@ -42,6 +43,7 @@ describe("collaboration PostgreSQL CI inventory", () => {
     const files = collaborationPostgresFiles(process.cwd());
     expect(files.length).toBeGreaterThanOrEqual(39);
     expect(files).toContain("tests/platform/collaboration-registration-recovery.test.ts");
+    expect(files).toContain("tests/gateway/owner-database-chat-foundation-postgres.test.ts");
     expect(files).toContain("tests/gateway/direct-resource-policy-postgres.test.ts");
     expect(files).toContain("tests/gateway/chat-native-scheduled-postgres.test.ts");
     expect(files).toContain("tests/platform/platform-migration-revision-db.test.ts");
