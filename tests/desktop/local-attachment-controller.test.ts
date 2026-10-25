@@ -84,6 +84,30 @@ describe("local Desktop attachment controller", () => {
     controller.dispose();
   });
 
+  it("keeps overflow feedback frozen until an uploading selection can be cleared", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const putBytes = vi.fn(async (url: string, uploaded: File) => {
+      await gate;
+      return { path: decodeURIComponent(url.split("path=")[1]!), size: uploaded.size };
+    });
+    const controller = createLocalAttachmentController({ api: { putBytes } as never });
+    controller.add(Array.from({ length: 9 }, (_, index) => file(`case-${index}.txt`, 1)));
+    const feedback = controller.getSelectionError();
+    expect(feedback).not.toBeNull();
+    const uploading = controller.uploadAll();
+    await vi.waitFor(() => expect(putBytes).toHaveBeenCalledTimes(3));
+    controller.clear();
+    expect(controller.getSelectionError()).toBe(feedback);
+    expect(controller.getSnapshot()).toHaveLength(8);
+    finish();
+    await expect(uploading).resolves.toMatchObject({ ok: true });
+    controller.clear();
+    expect(controller.getSelectionError()).toBeNull();
+    expect(controller.getSnapshot()).toEqual([]);
+    controller.dispose();
+  });
+
   it("creates previews only for safe raster images and revokes them on remove and dispose", () => {
     const controller = createLocalAttachmentController({ api: {} as never });
     controller.add([

@@ -229,8 +229,8 @@ export function createLocalAttachmentController(options: {
       }
     },
     clear() {
-      selectionError = null;
       if (uploadInFlight) return;
+      selectionError = null;
       for (const item of items) revoke(item);
       items = [];
       emit();
