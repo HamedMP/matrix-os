@@ -98,3 +98,92 @@ supported fixed release and passing these API/security regressions and normal
 Expo/Metro build and signing checks. Recommend integration-owner review of this
 dependency change. Link the existing public documentation PR for the parent Gmail
 processing-policy feature; dependency implementation details belong in this spec.
+
+## October 24 residual nanoid and native image followup
+
+This separate ENG-355 layer closes the remaining nanoid 4 and Sharp 0.34 source
+families without suppressing advisories or forcing an unsupported transitive
+major. It requires its own final-head CI, review and emitted/deployed inventory.
+Historical counts above remain historical.
+
+`patches/nanoid@4.0.2.patch` carries a compatible input-validation backport for
+[non-integer sizes](https://github.com/advisories/GHSA-mwcw-c2x4-8c55),
+[negative non-secure sizes](https://github.com/advisories/GHSA-28wg-ghj8-5hjv),
+[zero custom sizes](https://github.com/advisories/GHSA-2v37-7h3g-55p8), and
+[entropy-pool overflow/corruption](https://github.com/ai/nanoid/security/advisories/GHSA-xwg4-73v4-xw9w).
+There is no fixed nanoid 4 release. The patch preserves the published 4.x module
+paths, valid numeric sizes, default 21-character IDs, custom alphabet/random
+APIs and asynchronous/native variants. It rejects fractional, negative,
+non-finite and signed-32-bit-overflow sizes before entropy access or iteration;
+zero custom-generator calls return an empty result without requesting entropy.
+Other zero-size random/ID entrypoints retain their existing provider calls with
+empty buffers where applicable. A failed Node entropy fill clears the pool before
+reuse. Custom generators preserve their original nonzero-default sampling batch
+and rounding. Only a zero default uses the validated positive invocation size as a
+fallback. Browser entropy batches are capped at WebCrypto's 65,536 bytes, and
+native batches at Expo Random's 1,024 bytes; Node zero-default fallback batches
+are bounded at 65,536 bytes while existing nonzero-default Node batches remain
+unchanged. These caps do not limit the requested ID length. The standalone
+browser file receives the same guard without adding an import. The CLI delegates to the guarded implementation.
+
+The fixed upstream releases informed the narrow security changes; the patch
+retains the nanoid 4 sampling algorithm and does not replace it with nanoid 5.
+`tests/deploy/residual-nanoid-security.test.ts` executes every shipped Node,
+browser, non-secure, async, async-browser, async-native and standalone-browser
+implementation in a child with a kill deadline. The sole native bridge fixture
+supplies actual CSPRNG bytes and enforces the 1,024-byte limit verified in the
+[official `expo-random@13.1.1` source](https://registry.npmjs.org/expo-random/13.1.1)
+instead of loading that optional package; this
+is algorithm coverage, not Native Mobile device qualification. The suite also
+executes the real Mermaid converter's graph-image path and verifies generated
+file IDs retain their exact element/file linkage. Initial unpatched execution
+reproduced 12 failures across 22 cases; the patched fresh frozen installation
+passes all 33 cases including the real consumer regression, large valid
+overrides and entropy-failure recovery during initial fill, refill and growth.
+The initial entropy failure is also red against the original package. Review
+found that the first patch recomputed batches from large invocation overrides,
+exceeding browser/native per-call quotas. Additional red checks reproduced the
+regression before the compatible default-preserving, quota-bounded correction.
+
+Sharp's affected native libraries cannot be fixed with a JavaScript-only patch.
+Two owner-scoped overrides select `wrangler@4.149.0` for edge-router and
+neo-worker. This same-major vendor parent selects
+`miniflare@5.20261006.1-alpha`, `workerd@1.20261006.1` and `sharp@0.35.5` itself;
+there is no direct Sharp or Miniflare override. Their official npm publication
+and integrity records are verified, and all new selected releases satisfy the
+unchanged seven-day minimum release age. No script approval or age exception is
+added. The final lock contains no Sharp 0.34.5/native 0.34.5 dependency snapshots.
+
+The selected Miniflare is a prerelease with a changed Node constructor API.
+There is no Matrix application Miniflare constructor caller to migrate. The
+compatibility test explicitly invokes its vendor-exported
+`convertV4MiniflareOptions` bridge, starts the real workerd process bound to
+loopback on an ephemeral port, checks worker health and sends valid/invalid
+image bytes through its actual Images binding and Sharp decoder, then disposes
+the emulator. Existing edge-router, preview-router and neo-worker contracts pass;
+all three existing Wrangler dry-run build scripts and both worker typechecks
+pass without deployment or cloud credentials. Wrangler's optional
+`@cloudflare/workers-types` peer now expects major 5; the existing major 4
+application types remain unchanged and both consumers typecheck successfully.
+Integration-owner review of this prerelease transition and optional type-peer
+mismatch is recommended.
+
+The actual Linux library inventory is Sharp 0.35.5, libvips 8.18.7,
+libheif 1.23.5 and librsvg 2.63.2, above the maintainers' fixed floors for
+[libvips](https://github.com/lovell/sharp/security/advisories/GHSA-f88m-g3jw-g9cj),
+[libheif](https://github.com/lovell/sharp/security/advisories/GHSA-rgj7-g3m4-5g8c)
+and [librsvg](https://github.com/lovell/sharp/security/advisories/GHSA-wq5f-xc86-pv6w).
+Tests inspect loaded native versions, reject truncated images and enforce an
+explicit pixel limit, and preserve SVG/PNG/AVIF decode/resize behavior. These are
+native-version and consumer regressions, not exploit reproduction of every
+upstream native CVE. Other supported platform packages remain locked but need
+their normal platform-specific artifact verification.
+
+All installs, lock generation, decoder/emulator executions, tests and dry-run
+builds ran on the remote test host in a dedicated workspace and private stores,
+with pnpm 10.33.4 and a subsequent fresh frozen installation. The first patch
+iteration exposed a malformed no-newline hunk; a corrected patch and clean store
+verified the actual patched installed bytes. No operator Mac build or test ran.
+Retain the carried nanoid finding and provenance when a version-only scanner
+reports 4.0.2; remove the patch only after its owning chain moves to a supported
+fixed release and these consumer regressions pass again.

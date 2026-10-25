@@ -2,14 +2,14 @@ import {useState} from "react";
 import {BotConnectionSelector} from "./BotConnectionSelector.js";
 import {useBotConnections} from "./use-bot-connections.js";
 import type {BotClient} from "./client.js";
-import { MATRIX_BOT_SELECTION, MATRIX_PI_CHAT_INSTANCE_ID, MATRIX_CHATGPT_PLAN_INSTANCE_ID, MATRIX_ANTHROPIC_API_INSTANCE_ID, isMatrixAnthropicBotRoute, matrixAnthropicSelectionBinding, sameMatrixAnthropicSelectionBinding, isAutomaticBotSelection, isManagedPiBotRoute, isPiBotCoordinatorRoute, isChatgptPlanBotRoute, chatgptPlanSelectionBinding, sameChatgptPlanSelectionBinding, canonicalProviderModelRouteLabel, canonicalProviderFundingState, canonicalProviderAvailabilityReasonLabel, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
-import { canonicalProviderUnavailableSelectionLabel, type CanonicalProviderChoice } from "../../canonical-provider-choice.js";
+import { MATRIX_OPENAI_API_INSTANCE_ID, isMatrixOpenAiBotRoute, matrixOpenAiSelectionBinding, MATRIX_BOT_SELECTION, MATRIX_PI_CHAT_INSTANCE_ID, MATRIX_CHATGPT_PLAN_INSTANCE_ID, MATRIX_ANTHROPIC_API_INSTANCE_ID, isMatrixAnthropicBotRoute, matrixAnthropicSelectionBinding, sameMatrixAnthropicSelectionBinding, isAutomaticBotSelection, isManagedPiBotRoute, isPiBotCoordinatorRoute, isChatgptPlanBotRoute, chatgptPlanSelectionBinding, sameChatgptPlanSelectionBinding, canonicalProviderModelRouteLabel, canonicalProviderFundingState, canonicalProviderAvailabilityReasonLabel, type CanonicalChatModelSelection, type CanonicalProviderCatalog } from "@matrix-os/contracts";
+import { canonicalChatSubscriptionSelectionMatches, canonicalProviderUnavailableSelectionLabel, type CanonicalProviderChoice } from "../../canonical-provider-choice.js";
 import { deriveChatPickerModelRows } from "../../chat-picker-entries.js";
 import { chatAgentInputClass, chatAgentMutedStyle } from "../theme.js";
 
 /** Only the public, owner-authorized Pi route may back an explicit recipe choice. */
 export function matrixBotModelChoices(models: readonly CanonicalProviderChoice[], includeConnections = true): CanonicalProviderChoice[] {
-  return models.filter(choice => isManagedPiBotRoute(choice) || includeConnections && (isMatrixAnthropicBotRoute(choice) && !!matrixAnthropicSelectionBinding(choice.selectedOptions) || isChatgptPlanBotRoute(choice) && !!chatgptPlanSelectionBinding(choice.selectedOptions)));
+  return models.filter(choice => isManagedPiBotRoute(choice) || includeConnections && (isMatrixOpenAiBotRoute(choice) && !!matrixOpenAiSelectionBinding(choice.selectedOptions) || isMatrixAnthropicBotRoute(choice) && !!matrixAnthropicSelectionBinding(choice.selectedOptions) || isChatgptPlanBotRoute(choice) && !!chatgptPlanSelectionBinding(choice.selectedOptions)));
 }
 
 /** Retained model arrays cannot override a fresh unavailable catalog snapshot. */
@@ -17,15 +17,23 @@ export function matrixBotSelectableModelChoices(models: readonly CanonicalProvid
   const managed = matrixBotModelChoices(models, includeSubscription);
   const scoped = catalog ? managed.filter(choice => {
     const current = catalog.instances.find(instance => instance.id === choice.instanceId)?.defaultSelection?.options;
-    return isMatrixAnthropicBotRoute(choice) ? sameMatrixAnthropicSelectionBinding(choice.selectedOptions, current)
+    return isMatrixOpenAiBotRoute(choice) ? canonicalChatSubscriptionSelectionMatches(catalog.instances.find(instance => instance.id === choice.instanceId), choice.selectedOptions)
+      : isMatrixAnthropicBotRoute(choice) ? sameMatrixAnthropicSelectionBinding(choice.selectedOptions, current)
       : !isChatgptPlanBotRoute(choice) || sameChatgptPlanSelectionBinding(choice.selectedOptions, current);
   }) : managed;
   return catalog === undefined ? managed : catalog ? deriveChatPickerModelRows(catalog, scoped)
     .filter(isPiBotCoordinatorRoute).flatMap(row => row.choice ? [row.choice] : []) : [];
 }
 
+function openAiChoiceMatchesSelection(choice: CanonicalProviderChoice, selection: CanonicalChatModelSelection): boolean {
+  const source = matrixOpenAiSelectionBinding(choice.selectedOptions), selected = matrixOpenAiSelectionBinding(selection.options);
+  return !!source && !!selected && source.connectionRevision === selected.connectionRevision && source.credentialGeneration === selected.credentialGeneration
+    && choice.options.some(option => option.id === "api" && option.kind === "enum" && option.values?.some(value => value.value === selected.api));
+}
+
 export function botModelChoiceMatchesSelection(choice: CanonicalProviderChoice, selection: CanonicalChatModelSelection | null | undefined): boolean {
   return choice.instanceId === selection?.instanceId && choice.modelId === selection.model
+    && (!isMatrixOpenAiBotRoute(choice) || openAiChoiceMatchesSelection(choice, selection))
     && (!isChatgptPlanBotRoute(choice) || sameChatgptPlanSelectionBinding(choice.selectedOptions, selection.options))
     && (!isMatrixAnthropicBotRoute(choice) || sameMatrixAnthropicSelectionBinding(choice.selectedOptions, selection.options));
 }
@@ -38,7 +46,7 @@ export function matrixBotModelSelection(choice: CanonicalProviderChoice): Canoni
 }
 
 function modelSelectionKey(selection: CanonicalChatModelSelection): string {
-  return selection.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID || selection.instanceId === MATRIX_ANTHROPIC_API_INSTANCE_ID
+  return selection.instanceId === MATRIX_OPENAI_API_INSTANCE_ID || selection.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID || selection.instanceId === MATRIX_ANTHROPIC_API_INSTANCE_ID
     ? JSON.stringify([selection.instanceId, selection.model, [...(selection.options ?? [])].sort((a, b) => a.id.localeCompare(b.id))])
     : JSON.stringify([selection.instanceId, selection.model]);
 }
@@ -55,13 +63,19 @@ export function MatrixBotModelField({ botClient, id, label = "Model", selection,
   const automatic = allowAutomatic && ((!selection && !requireSelection && !connectionIntent) || isAutomaticBotSelection(selection));
   const sourceId = selection ? isAutomaticBotSelection(selection) ? "computer" : selection.instanceId
     : connectionIntent ?? MATRIX_PI_CHAT_INSTANCE_ID;
-  const allChoices = matrixBotSelectableModelChoices(models, catalog, allowSubscription);
-  const coordinatorSource = sourceId === MATRIX_PI_CHAT_INSTANCE_ID || sourceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID || sourceId === MATRIX_ANTHROPIC_API_INSTANCE_ID;
-  const rows = catalog ? deriveChatPickerModelRows(catalog, matrixBotModelChoices(models, allowSubscription)).filter(isPiBotCoordinatorRoute)
+  const preserveOpenAiApi = (choice: CanonicalProviderChoice): CanonicalProviderChoice => {
+    if (!selection || !isMatrixOpenAiBotRoute(choice) || choice.instanceId !== selection.instanceId
+      || !openAiChoiceMatchesSelection(choice, selection)) return choice;
+    const api = matrixOpenAiSelectionBinding(selection.options)!.api;
+    return { ...choice, selectedOptions: choice.selectedOptions.map(option => option.id === "api" ? { ...option, value: api } : option) };
+  };
+  const allChoices = matrixBotSelectableModelChoices(models, catalog, allowSubscription).map(preserveOpenAiApi);
+  const coordinatorSource = sourceId === MATRIX_OPENAI_API_INSTANCE_ID || sourceId === MATRIX_PI_CHAT_INSTANCE_ID || sourceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID || sourceId === MATRIX_ANTHROPIC_API_INSTANCE_ID;
+  const rows = catalog ? deriveChatPickerModelRows(catalog, matrixBotModelChoices(models, allowSubscription).map(preserveOpenAiApi)).filter(isPiBotCoordinatorRoute)
     .filter(row => allowSubscription || row.instanceId === MATRIX_PI_CHAT_INSTANCE_ID)
     .filter(row => !coordinatorSource || row.instanceId === sourceId) : [];
   const choices = allChoices.filter(choice => !coordinatorSource || choice.instanceId === sourceId);
-  const legacy = preservedSelection && preservedSelection.instanceId !== MATRIX_PI_CHAT_INSTANCE_ID && preservedSelection.instanceId !== MATRIX_CHATGPT_PLAN_INSTANCE_ID && preservedSelection.instanceId !== MATRIX_ANTHROPIC_API_INSTANCE_ID && !isAutomaticBotSelection(preservedSelection)
+  const legacy = preservedSelection && preservedSelection.instanceId !== MATRIX_OPENAI_API_INSTANCE_ID && preservedSelection.instanceId !== MATRIX_PI_CHAT_INSTANCE_ID && preservedSelection.instanceId !== MATRIX_CHATGPT_PLAN_INSTANCE_ID && preservedSelection.instanceId !== MATRIX_ANTHROPIC_API_INSTANCE_ID && !isAutomaticBotSelection(preservedSelection)
     ? preservedSelection : undefined;
   const legacyKey = legacy ? JSON.stringify([legacy.instanceId, legacy.model]) : undefined;
   const legacyChoice = legacy ? models.find(choice => choice.instanceId === legacy.instanceId && choice.modelId === legacy.model) : undefined;
@@ -81,15 +95,16 @@ export function MatrixBotModelField({ botClient, id, label = "Model", selection,
   const managedInstance = catalog?.instances.find(instance => instance.id === (sourceId === "computer" ? MATRIX_PI_CHAT_INSTANCE_ID : sourceId));
   const unavailableReason = managedInstance ? canonicalProviderAvailabilityReasonLabel(managedInstance) : sourceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID ? "ChatGPT subscription unavailable" : "Matrix AI unavailable";
   const noModels = !catalogLoading && choices.length === 0;
-  const sourceName = sourceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID ? "ChatGPT subscription" : sourceId === MATRIX_ANTHROPIC_API_INSTANCE_ID ? "Anthropic API" : "Matrix AI";
+  const sourceName = sourceId === MATRIX_OPENAI_API_INSTANCE_ID ? "OpenAI API" : sourceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID ? "ChatGPT subscription" : sourceId === MATRIX_ANTHROPIC_API_INSTANCE_ID ? "Anthropic API" : "Matrix AI";
   const showApi = allowSubscription && (sourceId === MATRIX_ANTHROPIC_API_INSTANCE_ID || !!catalog?.instances.some(instance => instance.id === MATRIX_ANTHROPIC_API_INSTANCE_ID));
-  const showConnection = allowSubscription && (showApi || !!botClient?.connections || sourceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID
+  const showOpenAiApi = allowSubscription && (sourceId === MATRIX_OPENAI_API_INSTANCE_ID || !!catalog?.instances.some(instance => instance.id === MATRIX_OPENAI_API_INSTANCE_ID));
+  const showConnection = allowSubscription && (showOpenAiApi || showApi || !!botClient?.connections || sourceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID
     || !!catalog?.instances.some(instance => instance.id === MATRIX_CHATGPT_PLAN_INSTANCE_ID));
   return <div className="grid gap-1.5">
-    {showConnection ? <BotConnectionSelector connections={discovery.connections} value={sourceId} showApi={showApi} apiAvailable={allChoices.some(choice => choice.instanceId === MATRIX_ANTHROPIC_API_INSTANCE_ID)} showSubscription={allowSubscription && (sourceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID || !!catalog?.instances.some(instance => instance.id === MATRIX_CHATGPT_PLAN_INSTANCE_ID) || !!discovery.connections?.connections.some(item => item.id === MATRIX_CHATGPT_PLAN_INSTANCE_ID))}
+    {showConnection ? <BotConnectionSelector connections={discovery.connections} value={sourceId} showOpenAiApi={showOpenAiApi} openAiApiAvailable={allChoices.some(choice => choice.instanceId === MATRIX_OPENAI_API_INSTANCE_ID)} showApi={showApi} apiAvailable={allChoices.some(choice => choice.instanceId === MATRIX_ANTHROPIC_API_INSTANCE_ID)} showSubscription={allowSubscription && (sourceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID || !!catalog?.instances.some(instance => instance.id === MATRIX_CHATGPT_PLAN_INSTANCE_ID) || !!discovery.connections?.connections.some(item => item.id === MATRIX_CHATGPT_PLAN_INSTANCE_ID))}
       subscriptionAvailable={allChoices.some(choice => choice.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID)} pending={pending || catalogLoading} onSetup={onSetup} onChange={value => {
-        if (value !== MATRIX_PI_CHAT_INSTANCE_ID && value !== MATRIX_CHATGPT_PLAN_INSTANCE_ID && value !== MATRIX_ANTHROPIC_API_INSTANCE_ID && value !== "computer") return;
-        if (!allowSubscription && (value === MATRIX_CHATGPT_PLAN_INSTANCE_ID || value === MATRIX_ANTHROPIC_API_INSTANCE_ID)) return;
+        if (value !== MATRIX_OPENAI_API_INSTANCE_ID && value !== MATRIX_PI_CHAT_INSTANCE_ID && value !== MATRIX_CHATGPT_PLAN_INSTANCE_ID && value !== MATRIX_ANTHROPIC_API_INSTANCE_ID && value !== "computer") return;
+        if (!allowSubscription && (value === MATRIX_OPENAI_API_INSTANCE_ID || value === MATRIX_CHATGPT_PLAN_INSTANCE_ID || value === MATRIX_ANTHROPIC_API_INSTANCE_ID)) return;
         setConnectionIntent(value); onChange(value === "computer" ? MATRIX_BOT_SELECTION : null);
       }}/> : null}
     <label className="grid gap-1.5 text-sm" htmlFor={id}>{label}
@@ -105,7 +120,7 @@ export function MatrixBotModelField({ botClient, id, label = "Model", selection,
         {legacy ? <option value={legacyKey} disabled={!legacyAvailable}>{legacyLabel}</option> : null}
         {selection && !available && !savedRow && !legacySelected ? <option value={key} disabled>{selection?.model} · unavailable</option> : null}
         {choices.map((choice) => <option key={`${choice.instanceId}:${choice.modelId}`} value={modelSelectionKey(matrixBotModelSelection(choice))}>
-          {choice.modelLabel} · {choice.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID ? "ChatGPT subscription" : choice.instanceId === MATRIX_ANTHROPIC_API_INSTANCE_ID ? "Anthropic API" : "Matrix AI"}</option>)}
+          {choice.modelLabel} · {choice.instanceId === MATRIX_OPENAI_API_INSTANCE_ID ? "OpenAI API" : choice.instanceId === MATRIX_CHATGPT_PLAN_INSTANCE_ID ? "ChatGPT subscription" : choice.instanceId === MATRIX_ANTHROPIC_API_INSTANCE_ID ? "Anthropic API" : "Matrix AI"}</option>)}
         {blockedRows.map(row => <option key={`${row.instanceId}:${row.modelId}`} disabled value={JSON.stringify([row.instanceId, row.modelId])}>
           {row.modelLabel} · {sourceName} · {canonicalProviderUnavailableSelectionLabel(catalog?.instances.find(instance => instance.id === row.instanceId), row.modelId)}
         </option>)}

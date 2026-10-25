@@ -4,6 +4,7 @@
 // only ever handle display-safe fields: no tokens, no scopes beyond counts,
 // no provider error text. Logo URLs are accepted only from the HTTPS catalog
 // response and remain display-only.
+import type { GmailConnectionMethod } from "./integration-marketplace.js";
 
 export const MAX_AVAILABLE_INTEGRATIONS = 200;
 export const MAX_CONNECTED_INTEGRATIONS = 200;
@@ -33,6 +34,18 @@ export interface ConnectedIntegration {
   accountEmail: string | null;
   status: string;
   connectedAt: string;
+  connectionMethod?: GmailConnectionMethod;
+}
+
+/** Missing or future transport metadata remains unknown on older client/server pairs. */
+export function parseIntegrationConnectionMethod(service: string, value: unknown): GmailConnectionMethod | undefined {
+  return service === "gmail" && (value === "matrix" || value === "pipedream") ? value : undefined;
+}
+
+export function integrationConnectionMethodLabel(service: string, value: unknown): string | undefined {
+  if (service !== "gmail") return undefined;
+  const method = parseIntegrationConnectionMethod(service, value);
+  return method === "matrix" ? "Matrix" : method === "pipedream" ? "Pipedream" : "Method unavailable";
 }
 
 // Service ids are registry slugs (e.g. "gmail", "google_calendar"). Validated
@@ -126,7 +139,9 @@ export function parseConnectedIntegrations(value: unknown): ConnectedIntegration
     const accountEmail = asTrimmedString(record.account_email, 256);
     const status = asTrimmedString(record.status, 32) ?? "active";
     const connectedAt = asTrimmedString(record.connected_at, 64) ?? "";
-    out.push({ id, service, accountLabel, accountEmail, status, connectedAt });
+    const connectionMethod = parseIntegrationConnectionMethod(service, record.connection_method);
+    out.push({ id, service, accountLabel, accountEmail, status, connectedAt,
+      ...(connectionMethod ? { connectionMethod } : {}) });
   }
   return out;
 }

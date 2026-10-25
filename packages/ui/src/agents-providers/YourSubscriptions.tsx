@@ -29,10 +29,12 @@ export function YourSubscriptions({snapshot, capabilities, client, localChatgptC
   const title = matrixAnthropicClient ? "Your connections" : "Your subscriptions";
   return <section className="matrix-ap-subscriptions" aria-label={title}>
     <h3>{title}</h3>
-    <p className="matrix-ap-help">{matrixAnthropicClient ? "Connect ChatGPT or add a Claude API key for chats and Matrix Bots."
+    <p className="matrix-ap-help">{matrixAnthropicClient ? "Connect ChatGPT or add an Anthropic or OpenAI API key for chats and Matrix Bots."
       : "Connect your accounts on this Computer. Subscription usage is separate from Matrix AI credit."}</p>
     <div className="matrix-ap-subscription-list">
       <LocalChatgptSubscription client={localChatgptClient} refreshRevision={localChatgptRefreshRevision} disabled={disabled} readOnly={forbidden || snapshot.access.mode === "read_only"} onChanged={onRefresh}/>
+      {client?.matrixOpenAi ? <MatrixAnthropicConnectionCard provider="openai" client={client.matrixOpenAi} initialStatus={snapshot.matrixOpenAiConnection ?? null} refreshRevision={localChatgptRefreshRevision}
+        disabled={disabled} readOnly={forbidden || snapshot.access.mode === "read_only"} onChanged={onRefresh}/> : null}
       {matrixAnthropicClient ? <MatrixAnthropicConnectionCard client={matrixAnthropicClient} initialStatus={snapshot.matrixAnthropicConnection ?? null} refreshRevision={localChatgptRefreshRevision}
         disabled={disabled} readOnly={forbidden || snapshot.access.mode === "read_only"} onChanged={onRefresh}/> : null}
       {(["codex"] as const).flatMap(kind => {

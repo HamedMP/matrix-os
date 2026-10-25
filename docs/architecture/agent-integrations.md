@@ -2,9 +2,11 @@
 
 ## User experience
 
-When a user connects Gmail in **Settings > Integrations**, that connection belongs to the Matrix user. New Hermes, OpenClaw, and coding-agent chats can discover a safe inventory entry such as `Gmail (Work Gmail, work@example.com) [active]` and use the connection without CLI setup, explicit skill invocation, or provider credentials.
+When a user connects Gmail in **Settings > Connect Apps**, that connection belongs to the Matrix user. New Hermes, OpenClaw, and coding-agent chats can discover a safe inventory entry such as `Gmail (Work Gmail, work@example.com) [active]` without CLI setup, explicit skill invocation, or provider credentials.
 
 The inventory intentionally contains connection metadata only. Email content is fetched only when an agent performs an integration action.
+
+Discovery does not authorize Google-data processing. In the governed Gmail pilot, content collection additionally requires a current reviewed profile for the exact provider route and credentials, separate affirmative owner consent, and an admitted owned-Pi execution context. An unsupported harness can discover inventory but cannot use that discovery to collect Gmail content or send it to a model. Managed and explicitly connected owner API providers follow the same checks; connecting either account does not approve processing. See [processing policy completion](../../specs/551-direct-gmail/processing-policy-completion.md).
 
 ## Boundary
 

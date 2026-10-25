@@ -84,6 +84,7 @@ export type ProviderWorkflowUIOperation = import("@matrix-os/contracts").Provide
 
 /** Separate capability-negotiated transport; secrets never enter mutation receipts. */
 export interface ProviderWorkflowClient {
+  matrixOpenAi?: import("./matrix-openai-connection-client.js").MatrixOpenAiConnectionClient;
   botConnections?: import("../chat-agents/bots/provider-connections-client.js").BotConnectionClient;
   capabilities(signal: AbortSignal): Promise<ProviderWorkflowUICapability[]>;
   start(request: import("@matrix-os/contracts").ProviderWorkflowStart, signal: AbortSignal): Promise<ProviderWorkflowUIOperation>;

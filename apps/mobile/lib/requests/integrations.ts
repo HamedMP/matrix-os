@@ -1,4 +1,4 @@
-import { parseIntegrationAttemptStatus, type IntegrationAttemptStatus } from "@matrix-os/contracts";
+import { parseIntegrationAttemptStatus, parseIntegrationConnectionMethod, type IntegrationAttemptStatus } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { HOSTED_GATEWAY_URL } from "@/lib/hosted-origin";
 import { assertNativeCallbackTarget, MOBILE_INTEGRATIONS_REDIRECT_URI } from "@/lib/native-callback-target";
@@ -40,15 +40,20 @@ const ConnectedIntegrationWireSchema = z.object({
   status: z.string().min(1).max(32),
   connected_at: z.string().min(1).max(64),
   last_used_at: z.string().max(64).nullable().optional(),
-}).transform((value) => ({
-  id: value.id,
-  service: value.service,
-  accountLabel: value.account_label,
-  accountEmail: value.account_email,
-  status: value.status,
-  connectedAt: value.connected_at,
-  lastUsedAt: value.last_used_at ?? null,
-}));
+  connection_method: z.unknown().optional(),
+}).transform((value) => {
+  const connectionMethod = parseIntegrationConnectionMethod(value.service, value.connection_method);
+  return {
+    id: value.id,
+    service: value.service,
+    accountLabel: value.account_label,
+    accountEmail: value.account_email,
+    status: value.status,
+    connectedAt: value.connected_at,
+    lastUsedAt: value.last_used_at ?? null,
+    ...(connectionMethod ? { connectionMethod } : {}),
+  };
+});
 
 const ConnectedIntegrationsSchema = z.union([
   z.array(ConnectedIntegrationWireSchema).max(MAX_INTEGRATIONS),

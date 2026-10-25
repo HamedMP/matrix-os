@@ -17,6 +17,7 @@ import { ConfirmDialog, Icon, ListItemMotion, SettleIn } from "@/components/ui";
 import { useComputerIntegrations } from "@/lib/queries/use-computer-integrations";
 import type { ConnectedIntegration, IntegrationService } from "@/lib/requests";
 import { showToast } from "@/lib/toast";
+import { integrationConnectionMethodLabel } from "@matrix-os/contracts";
 
 export default function InstalledIntegrationsScreen() {
   const [pendingDelete, setPendingDelete] = useState<ConnectedIntegration | null>(null);
@@ -211,7 +212,12 @@ function SwipeableConnectionRow({
     >
       <ListRow
         title={service.name}
-        detail={connection.accountEmail ?? connection.accountLabel}
+        detail={connection.accountEmail?.trim() || connection.accountLabel}
+        detailLeading={connection.service === "gmail" ? (
+          <Text accessibilityLabel={`Connection method: ${integrationConnectionMethodLabel(connection.service, connection.connectionMethod)}`} style={styles.statusText}>
+            {integrationConnectionMethodLabel(connection.service, connection.connectionMethod)}
+          </Text>
+        ) : undefined}
         leading={<IntegrationLogo service={service} />}
         actionIcon={CheckmarkCircle02Icon}
       />
