@@ -8,6 +8,9 @@ import { AgentSection } from "../../shell/src/components/settings/sections/Agent
 import { IdentityPersonalitySection } from "../../shell/src/components/settings/sections/IdentityPersonalitySection.js";
 import * as checkoutActions from "../../shell/src/lib/ai-credit-checkout.js";
 
+// This suite isolates provider workflows; analytics has its own authenticated-panel coverage.
+vi.mock("../../shell/src/components/settings/sections/ChatUsageSettings", () => ({ WebChatUsageSettings: () => null }));
+
 const providerControllerState = vi.hoisted(() => ({
   snapshot: {} as unknown,
   error: null as string | null,
