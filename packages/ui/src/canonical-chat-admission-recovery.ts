@@ -3,7 +3,13 @@ import {
   CanonicalChatTurnAdmissionResponseSchema,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCreateChatTurnRequest,
+  type CanonicalChatDetailResponse,
 } from "@matrix-os/contracts";
+
+export type CanonicalChatClientAdmission = CanonicalChatTurnAdmissionResponse & {
+  /** Local authenticated readback only; never part of the wire admission schema. */
+  recoveredDetail?: CanonicalChatDetailResponse;
+};
 
 /** A lost HTTP acknowledgement is not proof of rejection. Read the exact
  * idempotency key once; never repeat a potentially admitted write here.
@@ -12,7 +18,7 @@ export async function recoverCanonicalChatAdmission(
   chatId: string,
   request: CanonicalCreateChatTurnRequest,
   read: () => Promise<unknown>,
-): Promise<CanonicalChatTurnAdmissionResponse | null> {
+): Promise<CanonicalChatClientAdmission | null> {
   try {
     const detail = CanonicalChatDetailResponseSchema.parse(await read());
     if (detail.record.chat.id !== chatId) return null;
@@ -29,7 +35,7 @@ export async function recoverCanonicalChatAdmission(
     const parsed = CanonicalChatTurnAdmissionResponseSchema.safeParse({
       record: detail.record, message, turn, run, admission: "already_accepted",
     });
-    return parsed.success ? parsed.data : null;
+    return parsed.success ? { ...parsed.data, recoveredDetail: detail } : null;
   } catch (error: unknown) {
     console.warn("[canonical-chat] admission readback unavailable:", error instanceof Error ? error.name : "UnknownError");
     return null;

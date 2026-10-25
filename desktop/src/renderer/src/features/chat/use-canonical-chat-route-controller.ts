@@ -1,5 +1,5 @@
 import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
-import { useChatReadState, mergeChatReadState } from "@matrix-os/ui";
+import { useChatReadState, mergeChatReadState, type CanonicalChatClientAdmission } from "@matrix-os/ui";
 import { canonicalChatApprovals, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { useCanonicalInputSubmission } from "./use-canonical-input-submission";
 import type {
@@ -471,7 +471,7 @@ export function useCanonicalChatRouteController({
     if (!isCurrentScope()) return null;
     try {
       const current = detail;
-      const admitted = await admitDesktopChatTurn({ client, tracker: admissions, identity: admissionIdentity,
+      const admitted: CanonicalChatClientAdmission | null = await admitDesktopChatTurn({ client, tracker: admissions, identity: admissionIdentity,
         scope: selectedChatId ?? `new:${initialProjectId ?? "global"}:${selectionEpoch.current}`, input, title, projectId: initialProjectId, detail,
         current: () => detailRef.current,
         isCurrent: () => admissionAuthority.current.valid && admissionAuthority.current.mounted
@@ -497,7 +497,7 @@ export function useCanonicalChatRouteController({
       if (!admitted) return null;
       if (!isCurrentScope() || admissionSequence.current !== sequence) return null;
       const streamed = detailRef.current;
-      const next: CanonicalChatDetailResponse = {
+      const next: CanonicalChatDetailResponse = admitted.recoveredDetail ?? {
         ...(current ?? { activities: [] }),
         record: admitted.record,
         messages: [...(current?.messages ?? []), admitted.message],

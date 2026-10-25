@@ -1,4 +1,4 @@
-import { createBrowserPermissionClient, recoverCanonicalChatAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
+import { createBrowserPermissionClient, recoverCanonicalChatAdmission, type CanonicalChatClientAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
 import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { postWithProviderCatalogRecovery } from "../features/chat/provider-catalog-admission";
@@ -161,7 +161,7 @@ export interface CanonicalChatClient {
     chatId: string,
     input: CanonicalCreateChatTurnRequest,
     analytics?: { chatScope: "global" | "project" },
-  ): Promise<CanonicalChatTurnAdmissionResponse>;
+  ): Promise<CanonicalChatClientAdmission>;
   queueTurn(chatId: string, input: CanonicalQueueChatTurnRequest): Promise<CanonicalChatQueueAdmissionResponse>;
   steerRun(
     chatId: string,

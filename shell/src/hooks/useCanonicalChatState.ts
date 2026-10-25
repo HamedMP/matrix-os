@@ -1,3 +1,4 @@
+import type { CanonicalChatClientAdmission } from "@matrix-os/ui";
 "use client";
 import { browserPermissionRequest, type BrowserPermissionChoice } from "@matrix-os/contracts";
 
@@ -461,7 +462,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           return isCurrent();
         }
         const submittedDraft = composerDraftSequence.current;
-        const admitted = await admitShellChatTurn({ tracker: admissions, identity: navigationIdentity, client, record, input,
+        const admitted: CanonicalChatClientAdmission = await admitShellChatTurn({ tracker: admissions, identity: navigationIdentity, client, record, input,
           seed: options.clientRequestId, current: () => detailRef.current, isCurrent,
           onRejected: () => mentionRequests.accepted(requestScope, input.clientRequestId),
           onPrepared: id => { latestAdmissionId.current = id; },
@@ -483,7 +484,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           setActiveChatId(record.chat.id);
           const current = detailRef.current?.record.chat.id === record.chat.id ? detailRef.current : null;
           if (!current || current.record.chat.revision < admitted.record.chat.revision) {
-            const next = {
+            const next = admitted.recoveredDetail ?? {
               record: admitted.record,
               messages: [...(current?.messages ?? []), admitted.message],
               turns: [...(current?.turns ?? []), admitted.turn], runs: [...(current?.runs ?? []), admitted.run],

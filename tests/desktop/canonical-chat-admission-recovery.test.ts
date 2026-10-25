@@ -44,6 +44,7 @@ describe.each(["Electron", "Web"])("%s lost admission acknowledgement", (surface
     expect(accepted.admission).toBe("already_accepted");
     expect(accepted.turn.id).toBe("cturn_fixture_running");
     expect(accepted.run.id).toBe("run_fixture_running");
+    expect(accepted).toHaveProperty("recoveredDetail.messages", detail.messages);
     expect(post).toHaveBeenCalledOnce();
     expect(get).toHaveBeenCalledOnce();
   });
