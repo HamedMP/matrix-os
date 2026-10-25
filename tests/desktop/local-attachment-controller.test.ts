@@ -50,6 +50,21 @@ describe("local Desktop attachment controller", () => {
     expect(items[1]).toMatchObject({ status: "failed", error: "Files are limited to 10 MiB." });
   });
 
+  it("reports overflow while preserving all eight accepted files and clears feedback on removal", () => {
+    const controller = createLocalAttachmentController({ api: {} as never });
+    const eight = Array.from({ length: 8 }, (_, index) => file(`accepted-${index}.txt`, 1));
+    controller.add(eight);
+    controller.add([file("ninth.txt", 1), file("tenth.txt", 1)]);
+    expect(controller.getSnapshot().map(item => item.file.name)).toEqual(eight.map(item => item.name));
+    expect(controller.getSelectionError()).toBe("You can attach up to 8 files. 2 files were not added.");
+    controller.remove(controller.getSnapshot()[0]!.localId);
+    expect(controller.getSelectionError()).toBeNull();
+    controller.add([file("replacement.txt", 1)]);
+    expect(controller.getSnapshot().at(-1)?.file.name).toBe("replacement.txt");
+    expect(controller.getSelectionError()).toBeNull();
+    controller.dispose();
+  });
+
   it("rechecks the current complete-selection policy before retrying a failed upload", async () => {
     const putBytes = vi.fn().mockRejectedValue(new Error("offline"));
     let error: string | null = null;

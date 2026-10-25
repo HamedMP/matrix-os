@@ -797,6 +797,7 @@ function CanonicalChatWorkspaceContent({
         attachments={(
           <AttachmentPreviewRow
             items={attachments.items}
+            selectionError={attachments.selectionError}
             disabled={uploadingAttachments}
             onRemove={attachments.remove}
             onRetry={(localId) => void attachments.retry(localId)}

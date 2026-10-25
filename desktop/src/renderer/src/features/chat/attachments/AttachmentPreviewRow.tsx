@@ -23,44 +23,49 @@ function sizeLabel(size: number): string {
 export function AttachmentPreviewRow({
   items,
   disabled = false,
+  selectionError,
   onRemove,
   onRetry,
 }: {
   items: readonly LocalConversationAttachment[];
   disabled?: boolean;
+  selectionError?: string | null;
   onRemove: (localId: string) => void;
   onRetry: (localId: string) => void;
 }) {
-  if (items.length === 0) return null;
+  if (items.length === 0 && !selectionError) return null;
   return (
-    <AttachmentGroup role="group" aria-label="Attachments" className="px-3 pt-2">
-      {items.slice(0, 8).map((item) => (
-        <Attachment
-          key={item.localId}
-          size="sm"
-          state={item.status === "failed" ? "error" : item.status === "uploading" ? "uploading" : "done"}
-        >
-          <AttachmentMedia variant={item.previewUrl ? "image" : "icon"}>
-            {item.previewUrl ? <img src={item.previewUrl} alt={item.file.name} /> : item.file.type.startsWith("image/") ? <ImageIcon /> : <FileText />}
-          </AttachmentMedia>
-          <AttachmentContent>
-            <AttachmentTitle>{item.file.name}</AttachmentTitle>
-            <AttachmentDescription>
-              {item.status === "failed" ? item.error : item.status === "uploading" ? "Uploading…" : sizeLabel(item.file.size)}
-            </AttachmentDescription>
-          </AttachmentContent>
-          <AttachmentActions>
-            {item.status === "failed" && item.file.size <= MAX_ATTACHMENT_FILE_BYTES ? (
-              <AttachmentAction disabled={disabled} aria-label={`Retry ${item.file.name}`} onClick={() => onRetry(item.localId)}>
-                <RotateCcw size={14} />
+    <>
+      {selectionError ? <p role="alert" className="px-3 pt-2 text-sm text-destructive">{selectionError}</p> : null}
+      <AttachmentGroup role="group" aria-label="Attachments" className="px-3 pt-2">
+        {items.slice(0, 8).map((item) => (
+          <Attachment
+            key={item.localId}
+            size="sm"
+            state={item.status === "failed" ? "error" : item.status === "uploading" ? "uploading" : "done"}
+          >
+            <AttachmentMedia variant={item.previewUrl ? "image" : "icon"}>
+              {item.previewUrl ? <img src={item.previewUrl} alt={item.file.name} /> : item.file.type.startsWith("image/") ? <ImageIcon /> : <FileText />}
+            </AttachmentMedia>
+            <AttachmentContent>
+              <AttachmentTitle>{item.file.name}</AttachmentTitle>
+              <AttachmentDescription>
+                {item.status === "failed" ? item.error : item.status === "uploading" ? "Uploading…" : sizeLabel(item.file.size)}
+              </AttachmentDescription>
+            </AttachmentContent>
+            <AttachmentActions>
+              {item.status === "failed" && item.file.size <= MAX_ATTACHMENT_FILE_BYTES ? (
+                <AttachmentAction disabled={disabled} aria-label={`Retry ${item.file.name}`} onClick={() => onRetry(item.localId)}>
+                  <RotateCcw size={14} />
+                </AttachmentAction>
+              ) : null}
+              <AttachmentAction disabled={disabled} aria-label={`Remove ${item.file.name}`} onClick={() => onRemove(item.localId)}>
+                <X size={14} />
               </AttachmentAction>
-            ) : null}
-            <AttachmentAction disabled={disabled} aria-label={`Remove ${item.file.name}`} onClick={() => onRemove(item.localId)}>
-              <X size={14} />
-            </AttachmentAction>
-          </AttachmentActions>
-        </Attachment>
-      ))}
-    </AttachmentGroup>
+            </AttachmentActions>
+          </Attachment>
+        ))}
+      </AttachmentGroup>
+    </>
   );
 }

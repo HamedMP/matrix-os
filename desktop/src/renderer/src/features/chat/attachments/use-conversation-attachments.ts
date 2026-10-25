@@ -79,6 +79,7 @@ export function useConversationAttachments(
 
   return {
     items,
+    selectionError: controller.getSelectionError(),
     add: controller.add,
     remove: controller.remove,
     retry: controller.retry,

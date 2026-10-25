@@ -29,6 +29,7 @@ export type UploadedConversationAttachments = {
 
 export interface LocalAttachmentController {
   getSnapshot(): readonly LocalConversationAttachment[];
+  getSelectionError(): string | null;
   subscribe(listener: () => void): () => void;
   add(files: readonly File[]): void;
   remove(localId: string): void;
@@ -84,6 +85,7 @@ export function createLocalAttachmentController(options: {
 }): LocalAttachmentController {
   let items: InternalAttachment[] = [];
   let snapshot: readonly LocalConversationAttachment[] = [];
+  let selectionError: string | null = null;
   let disposed = false;
   let uploadInFlight = false;
   const listeners = new Set<() => void>();
@@ -139,6 +141,7 @@ export function createLocalAttachmentController(options: {
 
   return {
     getSnapshot: () => snapshot,
+    getSelectionError: () => selectionError,
     subscribe(listener) {
       if (listeners.size >= MAX_SUBSCRIBERS) throw new Error("attachment subscribers unavailable");
       listeners.add(listener);
@@ -146,8 +149,10 @@ export function createLocalAttachmentController(options: {
     },
     add(files) {
       if (disposed || uploadInFlight) return;
+      selectionError = null;
+      let rejectedCount = 0;
       for (const file of files) {
-        if (items.length >= MAX_ATTACHMENTS) break;
+        if (items.length >= MAX_ATTACHMENTS) { rejectedCount += 1; continue; }
         if (!validFile(file)) continue;
         const uploadId = (options.createId ?? defaultId)().replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 96);
         if (!uploadId || uploadId.includes("..")) continue;
@@ -161,6 +166,7 @@ export function createLocalAttachmentController(options: {
           ...(file.size > MAX_ATTACHMENT_FILE_BYTES ? { error: "Files are limited to 10 MiB." } : {}),
         });
       }
+      if (rejectedCount) selectionError = `You can attach up to ${MAX_ATTACHMENTS} files. ${rejectedCount} ${rejectedCount === 1 ? "file was" : "files were"} not added.`;
       emit();
     },
     remove(localId) {
@@ -168,6 +174,7 @@ export function createLocalAttachmentController(options: {
       const item = items.find((candidate) => candidate.localId === localId);
       if (!item) return;
       items = items.filter((candidate) => candidate !== item);
+      selectionError = null;
       revoke(item);
       emit();
     },
@@ -222,6 +229,7 @@ export function createLocalAttachmentController(options: {
       }
     },
     clear() {
+      selectionError = null;
       if (uploadInFlight) return;
       for (const item of items) revoke(item);
       items = [];
