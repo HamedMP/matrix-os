@@ -26,6 +26,8 @@ import { createChatProviderRoutes } from "../chat/provider-routes.js";
 import { createGatewayChatProviderCatalog } from "../chat/runtime-provider-catalog.js";
 import { createCanonicalChatRuntime } from "../chat/runtime.js";
 import { createCanonicalChatRoutes } from "../chat/routes.js";
+import { createChatUsageRoutes, type ChatUsageRuntime } from "../chat-usage-routes.js";
+import { withChatUsageDeletion } from "../chat-usage-deletion.js";
 import { createCanonicalChatService, createUnavailableCanonicalChatService } from "../chat/service.js";
 import { ChatSharing } from "../chat/sharing.js";
 import { createChatSharingRoutes } from "../chat/sharing-routes.js";
@@ -62,6 +64,7 @@ export interface CollaborationChatRouteOptions {
   runtimeOwnerIds: readonly string[];
   listGmailAccounts?: (ownerId: string) => Promise<readonly GmailAccountRow[]>;
   botServices?: BotServices;
+  chatUsage?: ChatUsageRuntime;
 }
 
 export function registerCollaborationChatRoutes(options: CollaborationChatRouteOptions): { close(): Promise<void> } {
@@ -97,8 +100,9 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
   const localImports = registerLocalChatImports({ app, repository: chatRepository, storage: options.syncR2,
     runtimeOwnerId: options.runtimeOwnerId, runtimeSlot: options.runtimeSlot, getPrincipal: c => requireRequestPrincipal(c) });
   app.route("/", createBrowserGrantRoutes({ control: options.browserApprovals, getPrincipal: c => requireRequestPrincipal(c) }));
-  app.route("/", createCanonicalChatRoutes({
-    service: chatRepository
+  app.route("/", createChatUsageRoutes({ ownerId: options.runtimeOwnerId ?? null,
+    getPrincipal: c => requireRequestPrincipal(c), getRuntime: () => options.chatUsage }));
+  const chatService = chatRepository
         ? createCanonicalChatService(chatRepository, {
           ...(botServices ? { navigation: createChatNavigationRepository(chatRepository.kysely) } : {}),
           projectOwnerToolOutput,
@@ -109,7 +113,9 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
             ? { projectAssignments: gatewayCollaboration.projectChatAssignments }
             : {}),
         })
-      : createUnavailableCanonicalChatService(),
+      : createUnavailableCanonicalChatService();
+  app.route("/", createCanonicalChatRoutes({
+    service: options.chatUsage ? withChatUsageDeletion(chatService, options.chatUsage.classifier) : chatService,
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
   app.route("/", createBotRoutes({
