@@ -32,6 +32,7 @@ import type { CanonicalChatOrchestrator } from "../chat/orchestrator.js";
 import type { OwnerToolOutputProjection } from "../chat/owner-tool-output.js";
 import { ChatRepository } from "../chat/repository.js";
 import { createDiscussionOnlyChatExecutionGuard } from "../collaboration/chat-scope.js";
+import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from "../collaboration/database.js";
 import type { GatewayCollaborationConfig, GatewayCollaborationConfigurationFailure, GatewayCollaborationRuntime } from "../collaboration/wiring.js";
 import { MessagingKyselyRepository } from "../messages/repository.js";
 import { registerNativeAppStorage } from "../native-app-storage.js";
@@ -154,6 +155,10 @@ export async function initializeOwnerDatabaseServices(
       services.chatRepository = chatRepository;
       services.googleCopies = chatHistory.googleCopies;
       await chatHistory.bootstrap();
+      // Private Chat ownership/credential checks also read collaboration metadata.
+      // Schema readiness is independent of enabling the collaboration runtime;
+      // these migrations create no membership, grants or execution authority.
+      await bootstrapCollaborationDatabase(chatRepository.kysely as Kysely<OwnerCollaborationDatabase>);
       const ownerChatExecutionRoots = createChatExecutionRootResolver({
         homePath: options.homePath,
         projects: options.codingAgentProjectManager,
