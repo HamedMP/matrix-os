@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, type ReactElement } from "react";
-import { FilePreviewActions, filePreviewContentUrl, savePreviewBlob } from "@matrix-os/ui";
+import { FilePreviewActions, filePreviewContentUrl, filePreviewMetadataUrl, savePreviewBlob } from "@matrix-os/ui";
 import { useConnection } from "../../stores/connection";
 import { useFilesNavigation } from "../../stores/files-navigation";
 import { FILES_WORKSPACE_TAB_SPEC, useTabs } from "../../stores/tabs";
@@ -9,7 +9,7 @@ import type { WorkFilesScope } from "../work/work-files-scope";
 import type { InspectorTreeEntry } from "../panels/ExpandableFileTree";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 
-export function useInspectorFileActions(scope: Exclude<WorkFilesScope, { kind: "unavailable" }>, list: (path: string) => Promise<InspectorTreeEntry[]>) {
+export function useInspectorFileActions(scope: Exclude<WorkFilesScope, { kind: "unavailable" }>) {
   const api = useConnection((state) => state.api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
@@ -53,9 +53,16 @@ export function useInspectorFileActions(scope: Exclude<WorkFilesScope, { kind: "
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(60_000)]);
       try {
         if (entry.kind === "directory") {
-          const { createDirectoryArchive } = await import("./directory-download");
+          const { createDirectoryArchive, parseArchiveListing } = await import("./directory-download");
           const archive = await createDirectoryArchive(entry.path, {
-            list: async (path) => { assertCurrent(); const entries = await list(path); assertCurrent(); return entries; }, read,
+            list: async (path, listSignal) => {
+              assertCurrent();
+              if (!api) throw new Error("FilesUnavailable");
+              const url = filePreviewMetadataUrl(resource(path)).replace("/metadata?", "/directory?");
+              const response = await api.forRuntime(runtimeSlot).get<unknown>(url, { signal: listSignal });
+              assertCurrent();
+              return parseArchiveListing(response);
+            }, read,
           }, signal);
           assertCurrent(); signal.throwIfAborted();
           savePreviewBlob(new Blob([new Uint8Array(archive.bytes)], { type: "application/zip" }), archive.name);

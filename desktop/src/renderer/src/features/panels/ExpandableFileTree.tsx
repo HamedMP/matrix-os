@@ -12,6 +12,7 @@ export function ExpandableFileTree({
   onOpenFile,
   selectedPath,
   selectedDirectory = false,
+  revealKey,
   renderEntry,
   searchEntries,
 }: {
@@ -20,6 +21,7 @@ export function ExpandableFileTree({
   onOpenFile: (path: string) => void;
   selectedPath?: string;
   selectedDirectory?: boolean;
+  revealKey?: string;
   renderEntry?: (entry: InspectorTreeEntry, button: ReactElement) => ReactNode;
   searchEntries?: (query: string, signal: AbortSignal) => Promise<InspectorTreeEntry[]>;
 }) {
@@ -108,23 +110,23 @@ export function ExpandableFileTree({
     return () => observer.disconnect();
   }, [directories, expandedPaths]);
 
-  const expandedForSelection = useRef(initialView.treeInitialized ? selectedPath : undefined);
+  const expandedForSelection = useRef(initialView.treeInitialized && !revealKey ? { path: selectedPath, key: revealKey } : undefined);
   useEffect(() => {
-    if (!selectedPath || selectedPath === expandedForSelection.current) return;
-    expandedForSelection.current = selectedPath;
+    if (!selectedPath || selectedPath === expandedForSelection.current?.path && revealKey === expandedForSelection.current?.key) return;
+    expandedForSelection.current = { path: selectedPath, key: revealKey };
     const parts = selectedPath.split("/");
     const parents = (selectedDirectory ? parts : parts.slice(0, -1)).map((_, index) => parts.slice(0, index + 1).join("/"))
       .slice(0, MAX_EXPANDED_FILE_DIRECTORIES - 1);
     setExpandedPaths((current) => [...new Set([...current, ...parents])].slice(-(MAX_EXPANDED_FILE_DIRECTORIES - 1)));
     for (const parent of parents) ensureDirectory(parent);
-  }, [ensureDirectory, selectedPath, selectedDirectory, setExpandedPaths]);
+  }, [ensureDirectory, selectedPath, selectedDirectory, setExpandedPaths, revealKey]);
 
-  const revealedPath = useRef(selectedPath);
+  const revealedPath = useRef(!revealKey ? { path: selectedPath, key: revealKey } : undefined);
   useEffect(() => {
-    if (selectedPath === revealedPath.current || !selectedElement.current) return;
+    if (selectedPath === revealedPath.current?.path && revealKey === revealedPath.current?.key || !selectedElement.current) return;
     selectedElement.current.scrollIntoView?.({ block: "nearest" });
-    revealedPath.current = selectedPath;
-  }, [directories, selectedPath]);
+    revealedPath.current = { path: selectedPath, key: revealKey };
+  }, [directories, selectedPath, revealKey]);
 
   const toggleDirectory = (path: string) => {
     setExpandedPaths((current) => {

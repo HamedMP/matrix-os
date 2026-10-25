@@ -1,9 +1,10 @@
 import React from "react";
+import { View } from "react-native";
 import { act, fireEvent, render, screen } from "@testing-library/react-native";
 import * as Clipboard from "expo-clipboard";
 import { MermaidDiagram } from "../components/chat/MermaidDiagram";
 import { mermaidDocument } from "../components/chat/mermaid-document";
-import type { ChatMarkdownTheme } from "../lib/chat-markdown";
+import { renderChatMarkdown, type ChatMarkdownTheme } from "../lib/chat-markdown";
 jest.mock("../components/chat/mermaid-bundle", () => ({ MERMAID_JS: "/* offline test renderer */" }));
 jest.mock("react-native-webview", () => {
   const { View } = jest.requireActual("react-native");
@@ -45,4 +46,26 @@ it("falls back to readable source when the embedded renderer never finishes", ()
     expect(screen.queryByTestId("diagram-webview")).toBeNull();
     expect(screen.getByText("Diagram unavailable. View the source below.")).toBeTruthy();
   } finally { jest.useRealTimers(); }
+});
+
+it("renders completed Mermaid fences as diagrams and leaves unfinished streaming fences as source", () => {
+  const diagram = jest.fn((source: string, key: string) => <View key={key} testID="diagram" accessibilityLabel={source} />);
+  const source = "flowchart LR\nA-->B";
+  const { rerender } = render(<View>{renderChatMarkdown(`\`\`\`mermaid\n${source}`, theme, [], diagram)}</View>);
+  expect(diagram).not.toHaveBeenCalled();
+  rerender(<View>{renderChatMarkdown(`\`\`\`mermaid\n${source}\n\`\`\``, theme, [], diagram)}</View>);
+  expect(diagram).toHaveBeenCalledWith(source, expect.any(String));
+  expect(screen.getByTestId("diagram").props.accessibilityLabel).toBe(source);
+});
+it("keeps other languages as code", () => {
+  const diagram = jest.fn();
+  render(<View>{renderChatMarkdown("```ts\nconst value = 1;\n```", theme, [], diagram)}</View>);
+  expect(diagram).not.toHaveBeenCalled();
+  expect(screen.getByText("const value = 1;")).toBeTruthy();
+});
+it("bounds the number of live diagrams within one long message", () => {
+  const diagram = jest.fn((_source: string, key: string) => <View key={key} />);
+  const text = Array(20).fill("```mermaid\nflowchart LR; A-->B\n```").join("\n");
+  render(<View>{renderChatMarkdown(text, theme, [], diagram)}</View>);
+  expect(diagram).toHaveBeenCalledTimes(10);
 });

@@ -1,9 +1,16 @@
 import { DownloadPathSchema, safeDownloadFilename } from "@matrix-os/contracts";
+import { z } from "zod/v4";
 import { zipSync, type Zippable } from "fflate";
 
 export interface ArchiveEntry { path: string; kind: "file" | "directory" }
 const MAX_ENTRIES = 1000;
 const MAX_BYTES = 50 * 1024 * 1024;
+
+const ArchiveListingSchema = z.strictObject({
+  complete: z.literal(true),
+  entries: z.array(z.strictObject({ path: DownloadPathSchema, kind: z.enum(["file", "directory"]) })).max(MAX_ENTRIES),
+});
+export function parseArchiveListing(value: unknown): ArchiveEntry[] { return ArchiveListingSchema.parse(value).entries; }
 
 async function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted();

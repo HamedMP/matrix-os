@@ -15,7 +15,9 @@ let get: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   vi.clearAllMocks();
   useInspectorFileViews.setState({ views: [] });
-  get = vi.fn(async (url: string) => url.startsWith("/api/files/search")
+  get = vi.fn(async (url: string) => url.startsWith("/api/file-previews/directory")
+    ? { complete: true, entries: [{ path: "notes/guide.md", kind: "file" }] }
+    : url.startsWith("/api/files/search")
     ? { results: [{ path: "notes/guide.md", name: "guide.md", type: "file" }], truncated: false }
     : url.endsWith("path=notes") ? { entries: [{ name: "guide.md", type: "file", size: 10 }] }
       : { entries: [{ name: "notes", type: "directory" }, { name: "README.md", type: "file", size: 10 }] });
@@ -63,6 +65,13 @@ it("searches filenames beyond expanded folders and opens a matching file", async
     expect(screen.getByRole("button", { name: "Collapse folder notes" }).getAttribute("aria-expanded")).toBe("true");
     expect(invoke).toHaveBeenCalledWith("runtime:browse-files", expect.objectContaining({ projectId: "project-one", worktreeId: "wt_one", path: "notes" }));
     expect(get).not.toHaveBeenCalledWith(expect.stringContaining("files-location"));
+    fireEvent.click(screen.getByRole("button", { name: "Collapse folder notes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close project-one" }));
+    act(() => useFilesNavigation.getState().navigateProject({ kind: "project", projectId: "project-one", worktreeId: "wt_one", path: "notes" }, true));
+    expect(await screen.findByRole("button", { name: "Collapse folder notes" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse folder notes" }));
+    act(() => useFilesNavigation.getState().navigateProject({ kind: "project", projectId: "project-one", worktreeId: "wt_one", path: "notes" }, true));
+    expect(await screen.findByRole("button", { name: "Collapse folder notes" })).toBeTruthy();
   });
 
 
@@ -95,4 +104,19 @@ it("scopes saved file views by account, computer, chat and worktree, with bounde
   for (let i = 0; i < 40; i++) useInspectorFileViews.getState().update(`view-${i}`, { expandedPaths: ["notes"], scrollTop: i });
   expect(useInspectorFileViews.getState().views).toHaveLength(32);
   expect(useInspectorFileViews.getState().views[0]?.key).toBe("view-8");
+});
+
+it.each([
+  { entries: [] },
+  { complete: false, entries: [] },
+  { complete: true, entries: [{ path: "notes/link", kind: "symlink" }] },
+  { complete: true, entries: Array.from({ length: 1001 }, (_, i) => ({ path: `notes/file-${i}`, kind: "file" })) },
+])("does not save a ZIP from an incomplete, unsupported or oversized archive listing", async (listing) => {
+  get.mockImplementation(async (url: string) => url.startsWith("/api/file-previews/directory") ? listing : { entries: [{ name: "notes", type: "directory" }] });
+  render(<InspectorFilesPanel scope={{ kind: "home", chatId: "archive-check" }} browserOnly />);
+  fireEvent.contextMenu(await screen.findByRole("button", { name: "Expand folder notes" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Download notes" }));
+  await screen.findByRole("alert");
+  expect(save).not.toHaveBeenCalled();
+  expect(get).toHaveBeenCalledWith(expect.stringContaining("/api/file-previews/directory?"), expect.objectContaining({ signal: expect.any(AbortSignal) }));
 });

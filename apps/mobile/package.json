@@ -16,8 +16,7 @@
     "ios": "expo run:ios",
     "test": "jest",
     "lint": "expo lint",
-    "bundle:xterm": "node scripts/bundle-xterm.mjs",
-    "bundle:mermaid": "node scripts/bundle-mermaid.mjs"
+    "bundle:xterm": "node scripts/bundle-xterm.mjs"
   },
   "dependencies": {
     "@clerk/clerk-expo": "^2.10.0",

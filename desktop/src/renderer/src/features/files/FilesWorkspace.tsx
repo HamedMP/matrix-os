@@ -22,7 +22,7 @@ import { InspectorFilesPanel, InspectorFilePreview, type InspectorFileTarget } f
 const MAX_FILE_TABS = 12;
 const SAFE_FOLDER_NAME = /^[^/\\\u0000-\u001f]{1,128}$/;
 
-interface FileTab { id: string; path: string; initialPath: string; title: string; project?: { target: Extract<InspectorFileTarget, { kind: "project" }>; directory: boolean } }
+interface FileTab { id: string; path: string; initialPath: string; title: string; project?: { target: Extract<InspectorFileTarget, { kind: "project" }>; directory: boolean; revealKey?: string } }
 interface NewFolderRequest {
   parentPath: string;
   tabId: string;
@@ -113,7 +113,7 @@ export default function FilesWorkspace() {
     if (navigation.project) {
       const target = { ...navigation.project, label: pathTitle(navigation.project.path) };
       const id = `project:${target.projectId}:${target.worktreeId ?? "root"}`;
-      const tab: FileTab = { id, path: target.path, initialPath: "", title: target.projectId, project: { target, directory: navigation.directory ?? false } };
+      const tab: FileTab = { id, path: target.path, initialPath: "", title: target.projectId, project: { target, directory: navigation.directory ?? false, revealKey: crypto.randomUUID() } };
       setTabs((current) => current.some((item) => item.id === id) ? current.map((item) => item.id === id ? tab : item) : [...current, tab].slice(-MAX_FILE_TABS));
       setActiveTabId(id);
       return;
@@ -221,7 +221,7 @@ export default function FilesWorkspace() {
               <RetainedPane key={tab.id} active={active} visible={active}>
                 {tab.project ? <div className="flex min-h-0 flex-1">
                   <section aria-label="Project files" className="flex min-h-0 w-64 shrink-0 flex-col border-r" style={{ borderColor: "var(--border-subtle)" }}>
-                    <InspectorFilesPanel scope={{ kind: "project", chatId: tab.id, projectId: tab.project.target.projectId, worktreeId: tab.project.target.worktreeId, label: tab.title }} browserOnly selectedDirectory={tab.project.directory} selectedFile={tab.project.target}
+                    <InspectorFilesPanel scope={{ kind: "project", chatId: tab.id, projectId: tab.project.target.projectId, worktreeId: tab.project.target.worktreeId, label: tab.title }} browserOnly revealKey={tab.project.revealKey} selectedDirectory={tab.project.directory} selectedFile={tab.project.target}
                       onOpenFile={(target) => { if (target.kind === "project") setTabs((current) => current.map((item) => item.id === tab.id ? { ...item, project: { target, directory: false } } : item)); }} />
                   </section>
                   {!tab.project.directory ? <InspectorFilePreview target={tab.project.target} /> : <p className="p-4 text-sm">Choose a file to preview.</p>}
