@@ -38,6 +38,7 @@ import { BotBrokerActionError, untilAborted, type BotEventSink, type BotRunSourc
 import { BotRecipeCatalogError, type BotRecipeCatalog } from "./recipe-catalog.js";
 import type { BotBindingsRepository } from "./repositories/bindings.js";
 import type { BotStateTransactions } from "./events.js";
+import { beginBotTask } from "./task-begin.js";
 import type { BotInteractionService } from "./interactions.js";
 import type { BotMemoryService } from "./memory-service.js";
 import { createBotTasksRepository, type BotBlockedReason, type BotTask } from "./repositories/tasks.js";
@@ -151,18 +152,8 @@ export function createBotTaskOrchestrator(deps: {
    * Starts the run's task: the bot's task waiting for the owner continues
    * with this message; otherwise a new task begins.
    */
-  async function begin(input: { ownerId: string; botId: string; chatId: string; runId: string }): Promise<{ task: BotTask; continued: boolean }> {
-    return deps.transact(input.ownerId, async (tx) => {
-      const tasks = createBotTasksRepository(tx.db);
-      const waiting = (await tasks.listOpen({ ownerId: input.ownerId, botId: input.botId, chatId: input.chatId }, tx.db))
-        .find((task) => task.status === "waiting_person");
-      const base = waiting ?? await tasks.create({ ownerId: input.ownerId, botId: input.botId, chatId: input.chatId, now: now() }, tx.db);
-      const task = await tasks.transition({
-        ownerId: input.ownerId, taskId: base.taskId, baseRevision: base.revision, to: "running", runId: input.runId, now: now(),
-      }, tx.db);
-      await tx.publish(task.chatId, "bot.task.updated", taskEvent(task));
-      return { task, continued: waiting !== undefined };
-    });
+  async function begin(input: { ownerId: string; botId: string; chatId: string; runId: string; text: string }): Promise<{ task: BotTask; continued: boolean }> {
+    return deps.transact(input.ownerId, tx => beginBotTask(tx, { ...input, now: now() }));
   }
 
   async function settle(task: BotTask, status: BotRunStatus, blockedReason?: BotBlockedReason): Promise<BotTurnResult> {
@@ -334,7 +325,7 @@ export function createBotTaskOrchestrator(deps: {
     let continued: boolean;
     try {
       ({ task, continued } = await setup(
-        () => begin({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId }),
+        () => begin({ ownerId: input.ownerId, botId, chatId: input.chatId, runId: input.runId, text: input.text }),
         ({ task: lateTask }) => settle(lateTask, interruptedStatus()).then(() => undefined),
       ));
     } catch (error: unknown) {

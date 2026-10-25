@@ -229,7 +229,7 @@ describe("agent requests", () => {
         1, "https://app.matrix-os.com/vm/alice/api/chats/chat_inbox/bot-tasks", authenticatedGet,
       );
       expect(fetchMock).toHaveBeenNthCalledWith(
-        2, "https://app.matrix-os.com/vm/alice/api/chats/chat_inbox/interactions", authenticatedGet,
+        2, "https://app.matrix-os.com/vm/alice/api/chats/chat_inbox/interactions?includeRecovery=true", authenticatedGet,
       );
     });
 

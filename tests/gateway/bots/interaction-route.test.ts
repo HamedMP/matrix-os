@@ -48,14 +48,14 @@ describe("bot interaction and memory routes", () => {
     expect(admitContinuation).toHaveBeenCalledWith(PRINCIPAL, CONTINUATION);
   });
 
-  it("answers 503 when the continuation fails, so the same request can be retried", async () => {
+  it("confirms the saved answer when continuation admission fails, without claiming it resumed", async () => {
     const server = app({
       interactions: { resolve: vi.fn(async () => ({ response: RESOLVED, continuation: CONTINUATION })), listPending: vi.fn() },
       admitContinuation: vi.fn(async () => { throw new Error("orchestrator closed"); }),
     });
-    const response = await post(server, `/api/chats/${CHAT}/interactions/${INTERACTION}/resolve`, "{}");
-    expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ code: "unavailable", message: expect.any(String) });
+    const response = await post(server, `/api/chats/${CHAT}/interactions/${INTERACTION}/resolve?includeRecovery=true`, JSON.stringify({ kind: "question", baseRevision: 1, answer: "Casual" }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ...RESOLVED, continuationPending: true });
   });
 
   it("maps refusals to allowlisted codes, bounds bodies, and answers 503 without services", async () => {
@@ -160,4 +160,23 @@ describe("answer continuations", () => {
       repository: { findQueuedAdmission: vi.fn(async () => null), get: vi.fn(async () => null) }, orchestrator: { admitTurn: vi.fn(), enqueueQueuedTurn: vi.fn() },
     })(PRINCIPAL, CONTINUATION)).rejects.toEqual(new BotInteractionError("not_found"));
   });
+});
+
+it("preserves the legacy failure response without explicit recovery negotiation", async () => {
+  const server = app({ interactions: { resolve: vi.fn(async () => ({ response: RESOLVED, continuation: CONTINUATION })), listPending: vi.fn() },
+    admitContinuation: async () => { throw new Error("unavailable"); } });
+  const response = await post(server, `/api/chats/${CHAT}/interactions/${INTERACTION}/resolve`, JSON.stringify({ kind: "question", baseRevision: 1, answer: "Casual" }));
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({ code: "unavailable", message: expect.any(String) });
+});
+
+it("reads back a lost continuation acknowledgement without repeating admission", async () => {
+  const resolve = vi.fn().mockResolvedValueOnce({ response: RESOLVED, continuation: CONTINUATION }).mockResolvedValueOnce({ response: RESOLVED });
+  let writes = 0;
+  const server = app({ interactions: { resolve, listPending: vi.fn() }, admitContinuation: async () => { writes += 1; throw new Error("ACK lost after admission"); } });
+  const response = await post(server, `/api/chats/${CHAT}/interactions/${INTERACTION}/resolve?includeRecovery=true`, JSON.stringify({ kind: "question", baseRevision: 1, answer: "Casual" }));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual(RESOLVED);
+  expect(resolve).toHaveBeenLastCalledWith("user_owner_1", CHAT, INTERACTION, { kind: "resume", baseRevision: 2 });
+  expect(writes).toBe(1);
 });
