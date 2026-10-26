@@ -1,3 +1,4 @@
+import { createComposerAcknowledgement } from "./composer-acknowledgement";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { canonicalChatExecutionControls } from "@matrix-os/contracts";
 import { chatAttachmentComposerPolicy } from "@matrix-os/ui";
@@ -548,15 +549,16 @@ function CanonicalChatWorkspaceContent({
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = mentionRequests.resolve(client, requestScope, permissionResources.length ? input : { ...input, draftRevision }, "send");
       const clientRequestId = attempt?.clientRequestId;
-      const acknowledgeAccepted = () => {
-        if (!isCurrentRuntimeGeneration(runtimeGeneration)
-          || composerOwner.current.client !== owner.client
-          || desktopProviderIdentityKey(useConnection.getState()) !== owner.identity) return;
-        if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
-        mentionPermission.confirm(false);
-        updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
-        for (const id of submittedAttachmentIds) attachments.remove(id);
-      };
+      const acknowledgeAccepted = createComposerAcknowledgement({
+        runtimeGeneration, identity: owner.identity, retained: draftRetentionIdentity !== undefined,
+        client: owner.client, currentClient: () => composerOwner.current.client,
+        settle: () => {
+          if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
+          mentionPermission.confirm(false);
+          updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
+          for (const id of submittedAttachmentIds) attachments.remove(id);
+        },
+      });
       const admitted = attempt?.operation === "queue"
         ? await controller.queueTurn({ ...input, clientRequestId }, acknowledgeAccepted)
         : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId, acknowledgeAccepted,
@@ -627,15 +629,16 @@ function CanonicalChatWorkspaceContent({
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = permissionResources.length ? mentionRequests.resolve(client, requestScope, input, "queue") : undefined;
       const clientRequestId = attempt?.clientRequestId;
-      const acknowledgeAccepted = () => {
-        if (!isCurrentRuntimeGeneration(runtimeGeneration)
-          || composerOwner.current.client !== owner.client
-          || desktopProviderIdentityKey(useConnection.getState()) !== owner.identity) return;
-        if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
-        mentionPermission.confirm(false);
-        updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
-        for (const id of submittedAttachmentIds) attachments.remove(id);
-      };
+      const acknowledgeAccepted = createComposerAcknowledgement({
+        runtimeGeneration, identity: owner.identity, retained: draftRetentionIdentity !== undefined,
+        client: owner.client, currentClient: () => composerOwner.current.client,
+        settle: () => {
+          if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
+          mentionPermission.confirm(false);
+          updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
+          for (const id of submittedAttachmentIds) attachments.remove(id);
+        },
+      });
       const response = editingQueuedTurn
         ? await controller.updateQueuedTurn(editingQueuedTurn.id, updatedParts, acknowledgeAccepted)
         : attempt?.operation === "send"

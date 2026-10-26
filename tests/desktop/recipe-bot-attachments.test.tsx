@@ -97,3 +97,16 @@ it("retains a Bot draft and image when its actual saved coordinator is text-only
   expect(screen.getByText("image.png")).toBeTruthy();
   expect(putBytes).not.toHaveBeenCalled(); expect(client.admitTurn).not.toHaveBeenCalled();
 });
+
+it("clears the signed-in Bot composer text and attachment after Queue acknowledges the upload", async () => {
+  useConnection.setState({ status: "signed-in", userId: "owner_queue_upload", handle: "queue-owner" });
+  const { client } = fixture("running");
+  await screen.findByRole("button", { name: "Attach files" });
+  const editor = screen.getByRole("textbox", { name: "Reply to chat" });
+  await setSharedComposerText(editor, "Queue this uploaded marker");
+  fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["marker"], "queued-marker.txt", { type: "text/plain" })] } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(client.queueTurn).toHaveBeenCalledOnce());
+  await waitFor(() => expect(editor.textContent).toBe(""));
+  expect(screen.queryByRole("button", { name: "Remove queued-marker.txt" })).toBeNull();
+});
