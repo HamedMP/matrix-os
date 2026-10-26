@@ -105,9 +105,8 @@ const RuntimeChatRequestSchema = z.object({
 
 /**
  * Bot commands relayed to a `bot_agent` worker. They carry identifiers and
- * steering text only: the worker loads the run itself (prompt, route,
- * capabilities, images) from the gateway broker, so the supervisor never
- * handles prompt content.
+ * steering text and optional bounded image indices: uploaded bytes stay on
+ * the authenticated gateway broker, outside supervisor command frames.
  */
 export const ScopeRuntimeBotCommandSchema = z.discriminatedUnion("kind", [
   z.object({ version: z.literal(1), kind: z.literal("bot.run"), runId: BotRunIdSchema }).strict(),
@@ -116,6 +115,8 @@ export const ScopeRuntimeBotCommandSchema = z.discriminatedUnion("kind", [
     kind: z.literal("bot.steer"),
     runId: BotRunIdSchema,
     text: z.string().min(1).max(8 * 1024),
+    imageRange: z.object({ start: z.number().int().min(0).max(3), count: z.number().int().min(1).max(4) }).strict()
+      .refine(range => range.start + range.count <= 4).optional(),
   }).strict(),
   z.object({ version: z.literal(1), kind: z.literal("bot.cancel"), runId: BotRunIdSchema }).strict(),
 ]);

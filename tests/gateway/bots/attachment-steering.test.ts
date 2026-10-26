@@ -1,10 +1,12 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { CanonicalChatMessagePart, CanonicalProviderCatalog } from "@matrix-os/contracts";
 import { createMatrixBotChatProviderAdapter } from "../../../packages/gateway/src/bots/chat-adapter.js";
 import { createManagedPiRuntime } from "../../../packages/gateway/src/chat/managed-pi-runtime.js";
 import { MANAGED_PI_CHAT_SUPPORTS } from "../../../packages/gateway/src/chat/managed-chat-catalog.js";
 import { resolveManagedPiRoute } from "../../../packages/gateway/src/bots/route-resolver.js";
-import { ChatSteerNotDeliveredError } from "../../../packages/gateway/src/chat/steer-delivery-error.js";
 import { CanonicalChatOrchestrator } from "../../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry } from "../../../packages/gateway/src/chat/provider-adapter.js";
 import { ChatRepository } from "../../../packages/gateway/src/chat/repository.js";
@@ -21,10 +23,15 @@ function upload(kind: "image" | "file"): CanonicalChatMessagePart {
   return { type: "attachment_reference", attachmentId: `att_steer_${kind}`, kind,
     label: kind === "image" ? "photo.png" : "marker.txt",
     mimeType: kind === "image" ? "image/png" : "text/plain",
-    ownerReference: `temporary/desktop-chat/${kind}`, sizeBytes: 8 };
+    ownerReference: `temporary/desktop-chat/${kind}` };
 }
 
-function fixture(mode: "Chat" | "Bot", acknowledged = true) {
+async function fixture(mode: "Chat" | "Bot", acknowledged = true) {
+  const home = await mkdtemp(join(tmpdir(), "attachment-steer-"));
+  await mkdir(join(home, "temporary/desktop-chat"), { recursive: true });
+  await writeFile(join(home, "temporary/desktop-chat/image"), Buffer.from([137,80,78,71,13,10,26,10]));
+  await writeFile(join(home, "temporary/desktop-chat/file"), "marker");
+  cleanup.push(() => rm(home, { recursive: true, force: true }));
   let complete!: () => void;
   const held = new Promise<void>(resolve => { complete = resolve; });
   const selection = { instanceId: mode === "Chat" ? "matrix_pi_default" : "matrix_bot_default", model: "claude-sonnet-5" };
@@ -51,6 +58,7 @@ function fixture(mode: "Chat" | "Bot", acknowledged = true) {
       : { runId: request.command.runId, status: "completed", toolActions: 0 } };
   });
   const runtime = createManagedPiRuntime({
+    homePath: home, expectedOwnerId: owner.ownerId,
     admission: {
       admit: async request => ({ kind: "managed_chat" as const, ownerId: request.ownerId,
         chatId: request.chatId, runId: request.runId, runtimeHandle: `runtime_${"a".repeat(32)}`,
@@ -68,8 +76,8 @@ function fixture(mode: "Chat" | "Bot", acknowledged = true) {
   return { adapter: runtime.adapter, selection, delivered, complete };
 }
 
-it.each(["Chat", "Bot"] as const)("rejects attachment steering before %s delivery and retains text steering", async mode => {
-  const f = fixture(mode);
+it.each(["Chat", "Bot"] as const)("delivers %s attachment steering through the run's input transport", async mode => {
+  const f = await fixture(mode);
   const input = { owner, chatId: "chat_attachment_steering", runId: "run_attachment_steering",
     turnId: "cturn_attachment_steering", prompt: text.text, parts: [text], selection: f.selection,
     interactionMode: "default", permissionMode: "supervised", signal: new AbortController().signal };
@@ -79,17 +87,20 @@ it.each(["Chat", "Bot"] as const)("rejects attachment steering before %s deliver
   if (mode === "Chat") await started;
   try {
     for (const kind of ["image", "file"] as const) {
-      await expect(f.adapter.steer!({ ...input, clientRequestId: `req_steer_${kind}`, parts: [text, upload(kind)] }))
-        .rejects.toBeInstanceOf(ChatSteerNotDeliveredError);
+      await f.adapter.steer!({ ...input, clientRequestId: `req_steer_${kind}`, parts: [text, upload(kind)] });
     }
-    expect(f.delivered).not.toHaveBeenCalled();
+    expect(f.delivered).toHaveBeenCalledTimes(2);
+    if (mode === "Chat") {
+      expect(f.delivered.mock.calls[0]![0]).toMatchObject({ command: { imageRange: { start: 0, count: 1 } } });
+      expect(f.delivered.mock.calls[1]![0]).toMatchObject({ command: { text: expect.stringContaining("read_artifact path=submitted-inputs/") } });
+    } else expect(f.delivered.mock.calls[0]).toEqual([input.runId, text.text, [text, upload("image")]]);
     await f.adapter.steer!({ ...input, clientRequestId: "req_steer_text" });
-    expect(f.delivered).toHaveBeenCalledOnce();
+    expect(f.delivered).toHaveBeenCalledTimes(3);
   } finally { f.complete(); await drain; }
 });
 
-it.each(["Chat", "Bot"] as const)("keeps queued %s uploads unclaimed when text-only steering refuses them", async mode => {
-  const f = fixture(mode);
+it.each(["Chat", "Bot"] as const)("keeps queued %s uploads unclaimed when the worker refuses them", async mode => {
+  const f = await fixture(mode, false);
   const pglite = await createTestPGlite();
   const repository = new ChatRepository(pglite.dialect);
   await repository.bootstrap();
@@ -126,7 +137,7 @@ it.each(["Chat", "Bot"] as const)("keeps queued %s uploads unclaimed when text-o
   await expect(orchestrator.steerQueuedTurn(owner, chatId, admitted.run.id, queued.queuedTurn.id, {
     clientRequestId: `req_steer_queue_${mode}`, baseRevision: revision, expectedTurnId: admitted.turn.id,
   })).rejects.toMatchObject({ status: 503 });
-  expect(f.delivered).not.toHaveBeenCalled();
+  expect(f.delivered).toHaveBeenCalledOnce();
   expect(await repository.listQueuedTurns(owner, chatId)).toEqual([expect.objectContaining({
     id: queued.queuedTurn.id, parts,
   })]);
@@ -137,7 +148,7 @@ it.each(["Chat", "Bot"] as const)("keeps queued %s uploads unclaimed when text-o
 });
 
 it.each(["Chat", "Bot"] as const)("rejects a transport-successful but worker-refused %s steer", async mode => {
-  const f = fixture(mode, false);
+  const f = await fixture(mode, false);
   const input = { owner, chatId: "chat_refused", runId: "run_refused", turnId: "cturn_refused",
     prompt: text.text, parts: [text], selection: f.selection, clientRequestId: "req_refused",
     interactionMode: "default", permissionMode: "supervised", signal: new AbortController().signal };

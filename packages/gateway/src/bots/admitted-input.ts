@@ -135,6 +135,9 @@ export async function prepareBotInputs(input: {
     assertLive();
   } catch (error: unknown) { dispose(); throw error; }
   return {
+    get usage() { return { count: images.length + files.length, images: images.length,
+      imageBytes: images.reduce((sum, image) => sum + Buffer.byteLength(image.data, "base64"), 0),
+      bytes: files.reduce((sum, file) => sum + file.bytes.length, 0) + images.reduce((sum, image) => sum + Buffer.byteLength(image.data, "base64"), 0) }; },
     get imageCount() { return images.length; },
     get fileAliases() { return files.map(file => file.alias); },
     bind(binding: PiRuntimeBinding) {

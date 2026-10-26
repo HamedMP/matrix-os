@@ -313,6 +313,24 @@ describe("bot agent loop", () => {
     expect(JSON.stringify(saves[0]!.messages)).toContain("not kept in saved history");
   });
 
+  it("passes steered native images to the actual provider context and saves them once", async () => {
+    const { route } = scripted([fauxAssistantMessage(fauxText("First.")), fauxAssistantMessage(fauxText("Image received."))]);
+    const stream = vi.spyOn(route.provider, "streamSimple");
+    const { broker, saves } = memoryBroker();
+    let control!: BotTurnControl;
+    let sent = false;
+    const images = [{ mimeType: "image/png" as const, data: "AAAA" }];
+    const result = await run({ broker, route, onControl: value => { control = value; }, onAgent: agent => agent.subscribe(event => {
+      if (event.type === "agent_end" && !sent) { sent = true; expect(control.steer("Inspect correction", images)).toBe(true); }
+    }) });
+    expect(result.status).toBe("completed");
+    const context = stream.mock.calls.at(-1)![1];
+    expect(context.messages).toContainEqual(expect.objectContaining({ role: "user", content: [
+      { type: "text", text: "Inspect correction" }, { type: "image", ...images[0] },
+    ] }));
+    expect(JSON.stringify(saves[0]!.messages).split("Inspect correction")).toHaveLength(2);
+  });
+
   it("answers a steer that arrives as the agent finishes and refuses steers once the turn closes", async () => {
     const { route } = scripted([
       fauxAssistantMessage(fauxText("First answer.")),

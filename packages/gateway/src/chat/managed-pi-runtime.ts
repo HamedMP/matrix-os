@@ -1,7 +1,7 @@
 import type { BotInputHistoryReader } from "../bots/historical-input.js";
 import { createBotWorkerDrain } from "../bots/worker-drain.js";
 import { BOT_ATTACHMENT_UNAVAILABLE_MESSAGE, BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
-import { prepareBotInputs, type PreparedBotInputs } from "../bots/admitted-input.js";
+import { prepareSteerableBotInputs, type SteerableBotInputs } from "../bots/steerable-input.js";
 import { BotRunSpecSchema, BotRunOutcomeSchema, type BotEvent, type BotRunSpec } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { BotBrokerActionError, type BotEventSink, type BotRunSource } from "../bots/broker-actions.js";
@@ -18,7 +18,6 @@ import { resolveManagedPiSelection } from "./managed-pi-route.js";
 import { createManagedPiSystemPrompt, ManagedPiPersonalityError, type ManagedPiPersonalityConfig } from "./managed-pi-system-prompt.js";
 import { fundedChatError, type FundedChatFailureReason } from "./funded-chat-error.js";
 import { awaitManagedPiCleanup, createManagedPiRunCancellation } from "./managed-pi-cancellation.js";
-import { assertTextOnlySteering } from "./steer-delivery-error.js";
 
 const StateSchema = z.object({ runtimeHandle: z.string().regex(/^runtime_[a-f0-9]{32}$/), executionGeneration: z.string().regex(/^(0|[1-9][0-9]{0,19})$/) }).strict();
 // Match the supervisor's typed runtime.bot errors; never log its reply or error text.
@@ -47,7 +46,7 @@ interface Active {
   renewalStopped?: Promise<void>;
   fundedFailure?: FundedChatFailureReason;
   isolated: boolean;
-  inputs?: PreparedBotInputs;
+  inputs?: SteerableBotInputs;
   signal?: AbortSignal;
   cancellation: AbortController;
   releasing?: Promise<void>;
@@ -126,7 +125,7 @@ export function createManagedPiRuntime(deps: {
       if (signal.aborted || run.stopping) return cancelled();
       if (run.isolated) resolved.route = { ...resolved.route, maxOutputTokens: 256 };
       stage = "input";
-      run.inputs = await cancellation.wait(() => prepareBotInputs({ homePath: deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, history: run.isolated ? undefined : deps.inputHistory, parts: input.parts, route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal,
+      run.inputs = await cancellation.wait(() => prepareSteerableBotInputs({ homePath: deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId, history: run.isolated ? undefined : deps.inputHistory, parts: input.parts, route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal,
         assertActive: () => { if (run.stopping || run.finished || active.get(input.runId) !== run) throw new BotBrokerActionError("stale_generation"); } }), inputs => inputs.dispose());
       await cancellation.wait(() => run.inputs!.revalidate());
       stage = "admission";
@@ -288,10 +287,16 @@ export function createManagedPiRuntime(deps: {
       const run = active.get(input.runId);
       if (!run?.binding || run.isolated || input.owner.type !== "personal" || run.ownerId !== input.owner.ownerId
         || run.chatId !== input.chatId || run.stopping || run.finished || run.signal?.aborted) throw new Error("Matrix AI run unavailable");
-      assertTextOnlySteering(input.parts);
-      const reply = await deps.host.client.runBot({ runtimeHandle: run.binding.runtimeHandle, executionGeneration: run.binding.executionGeneration,
-        command: { version: 1, kind: "bot.steer", runId: input.runId, text: input.prompt.slice(0, 8192) } });
-      if (!reply.ok || reply.reply.acknowledged !== true) throw new Error("Matrix AI steering unavailable");
+      if (!run.inputs) throw new Error("Matrix AI steering unavailable");
+      const binding = run.binding;
+      const accepted = await run.inputs.steer(binding, input.parts, input.prompt, async payload => {
+        await deps.assertSource?.(binding, run.signal!);
+        run.inputs!.assertAuthorized(binding);
+        const reply = await deps.host.client.runBot({ runtimeHandle: binding.runtimeHandle, executionGeneration: binding.executionGeneration,
+          command: { version: 1, kind: "bot.steer", runId: input.runId, ...payload } });
+        return reply.ok && reply.reply.acknowledged === true;
+      });
+      if (!accepted) throw new Error("Matrix AI steering unavailable");
     },
     async recover(input) { await deps.ownerTools?.closeRun(input.runId); await deps.admission.release(input.state.runtimeHandle); return { outcome: "failed", messages: [] }; },
   };

@@ -2,7 +2,7 @@ import { sql } from "kysely";
 import type { BotInputHistoryReader } from "./historical-input.js";
 import { createBotWorkerDrain } from "./worker-drain.js";
 import { BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
-import { prepareBotInputs, type PreparedBotInputs } from "./admitted-input.js";
+import { prepareSteerableBotInputs, type SteerableBotInputs } from "./steerable-input.js";
 import { isolatedChatModelMatches, isManagedCustomBot, type ChatAgent } from "@matrix-os/contracts";
 import { sameCustomCoordinatorSelection } from "./custom-procedure.js";
 import { recipeCoordinatorSelection } from "./coordinator-selection.js";
@@ -82,7 +82,7 @@ export interface BotTurnHandle {
 interface ActiveRun {
   ownerId: string;
   chatId: string;
-  inputs?: PreparedBotInputs;
+  inputs?: SteerableBotInputs;
   signal: AbortSignal;
   setupAbort: AbortController;
   prelaunch: AbortController;
@@ -375,7 +375,7 @@ export function createBotTaskOrchestrator(deps: {
       return { ...await settle(task, input.signal.aborted ? "cancelled" : "blocked", "policy_denied"), inputUnavailable: !input.signal.aborted };
     }
     try {
-      run.inputs = await setup(() => prepareBotInputs({ homePath: group ? undefined : deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, history: isolatedModel || group ? undefined : deps.inputHistory, historyFileRead: recipe.capabilities.includes("artifact.read"), parts: input.parts ?? [], route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal: input.signal,
+      run.inputs = await setup(() => prepareSteerableBotInputs({ homePath: group ? undefined : deps.homePath, expectedOwnerId: deps.expectedOwnerId, ownerId: input.ownerId, chatId: input.chatId, runId: input.runId, history: isolatedModel || group ? undefined : deps.inputHistory, historyFileRead: recipe.capabilities.includes("artifact.read"), parts: input.parts ?? [], route: resolved.route, imageTotalMaximum: resolved.accessSourceId === "matrix_included" ? BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES : undefined, signal: input.signal,
         assertActive: () => { if (run.stopping || run.finished || active.get(input.runId) !== run) throw new BotBrokerActionError("stale_generation"); } }),
       (lateInputs) => lateInputs.dispose());
     } catch (error: unknown) {
@@ -566,7 +566,7 @@ export function createBotTaskOrchestrator(deps: {
       return { events: run.queue.values(), result };
     },
     /** Relays a person's steering message to the running worker. */
-    async steer(runId: string, text: string): Promise<boolean> {
+    async steer(runId: string, text: string, parts: readonly import("@matrix-os/contracts").CanonicalChatMessagePart[] = []): Promise<boolean> {
       const run = active.get(runId);
       if (!run?.runtime || run.finished || run.stopping || run.signal.aborted || run.spec?.isolatedTurn) return false;
       const binding = deps.registry.lookupRun({ ...run.runtime, runId });
@@ -577,8 +577,13 @@ export function createBotTaskOrchestrator(deps: {
           return false;
         }
       }
-      const reply = await deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.steer", runId, text: text.slice(0, 8 * 1024) } });
-      return reply.ok && reply.reply.acknowledged === true;
+      if (!run.inputs || (binding.group && parts.some(part => part.type === "attachment_reference"))) return false;
+      return run.inputs.steer(binding, parts, text, async payload => {
+        await deps.assertSource?.(binding, run.signal);
+        run.inputs!.assertAuthorized(binding);
+        const reply = await deps.client.runBot({ ...run.runtime!, command: { version: 1, kind: "bot.steer", runId, ...payload } });
+        return reply.ok && reply.reply.acknowledged === true;
+      });
     },
     async cancel(runId: string): Promise<void> {
       const run = active.get(runId);

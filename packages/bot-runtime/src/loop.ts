@@ -26,7 +26,7 @@ const SUMMARY_MAX_TOKENS = 2_048;
 
 /** Steering handle for the active turn; it refuses once the turn stops taking input. */
 export interface BotTurnControl {
-  steer(text: string): boolean;
+  steer(text: string, images?: readonly import("@matrix-os/contracts").BotImageInput[]): boolean;
 }
 
 export interface RunBotTurnInput {
@@ -215,10 +215,13 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   const steered: Array<{ message: AgentMessage; consumed: boolean }> = [];
   let steeringOpen = true;
   input.onControl?.({
-    steer(text) {
+    steer(text, images) {
       if (isolated || !steeringOpen || tools.askingPerson || tools.waitingForPerson || budgetExhausted
         || inferenceCalls >= maxInferenceCalls || input.signal?.aborted || eventFailure || agent.state.errorMessage) return false;
-      const message: AgentMessage = { role: "user", content: text, timestamp: now() };
+      if (images?.length && !command.route.input.includes("image")) return false;
+      const message: AgentMessage = { role: "user", content: images?.length
+        ? [{ type: "text", text }, ...images.map(image => ({ type: "image" as const, data: image.data, mimeType: image.mimeType }))]
+        : text, timestamp: now() };
       steered.push({ message, consumed: false });
       agent.steer(message);
       return true;

@@ -48,8 +48,8 @@ const IMAGES = [
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR4AQEFAPr/AAD/AP8EAQH/91/JVQAAAABJRU5ErkJggg==",
 ].map(value => Buffer.from(value, "base64"));
 const PNG = IMAGES[0]!;
-it.each([{ mode: "Chat", revoke: false }, { mode: "Bot", revoke: false }, { mode: "Chat", revoke: true }, { mode: "Bot", revoke: true }])("rehydrates original $mode bytes through canonical broker and Pi worker (revoke during history=$revoke)", async ({ mode, revoke }) => {
-  vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", "2");
+it.each([{ mode: "Chat", revoke: false, steering: false }, { mode: "Bot", revoke: false, steering: false }, { mode: "Chat", revoke: true, steering: false }, { mode: "Bot", revoke: true, steering: false }, { mode: "Chat", revoke: false, steering: true }, { mode: "Bot", revoke: false, steering: true }])("hydrates $mode bytes through canonical broker and Pi worker (revoke=$revoke, steering=$steering)", async ({ mode, revoke, steering }) => {
+  vi.stubEnv("MATRIX_BOT_MAX_INFERENCE_CALLS", steering ? "3" : "2");
   const { db, destroy } = await createBotStateDatabase(); cleanup.push(destroy);
   const home = await mkdtemp(join(tmpdir(), "managed-inputs-")); cleanup.push(() => rm(home, { recursive: true, force: true }));
   await mkdir(join(home, "temporary/desktop-chat"), { recursive: true });
@@ -83,24 +83,29 @@ it.each([{ mode: "Chat", revoke: false }, { mode: "Bot", revoke: false }, { mode
   const registry = new BotRuntimeRegistry(); let serial = 0;
   let actions: ReturnType<typeof createBotBrokerActions>;
   const stopRuntime = vi.fn(async () => undefined);
+  const workers = new Map<string, ReturnType<typeof createBotWorker>>(); // one active fixture runtime, evicted in finally.
   const host = { available: true, client: {
     createRuntime: async () => ({ runtimeHandle: `runtime_${(++serial).toString(16).padStart(32, "0")}`, executionGeneration: "1" }), stopRuntime,
     renewRuntime: async (input: { runtimeHandle: string; executionGeneration: string }) => ({ ...input, state: "running" as const }),
     runBot: async (request: { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }) => {
+      if (request.command.kind !== "bot.run") return { ok: true, reply: await workers.get(request.runtimeHandle)!.handle(request.command) };
       const call = async (body: Record<string, unknown>) => {
         const reply = await actions.handleFrame({ version: 1, requestId: randomUUID(), runtimeHandle: request.runtimeHandle, executionGeneration: request.executionGeneration, runId: request.command.runId, ...body });
         if (!reply?.ok) throw new BotBrokerError((reply?.code ?? "unavailable") as never); return reply.result;
       };
       const broker: BotWorkerBrokerClient = { loadRun: async () => {
         const spec = await call({ action: "bot.run.load" });
-        if (mode === "Bot") expect(spec).toMatchObject({ limits: { maxToolActions: 60, maxInferenceCalls: 2 }, turn: { imageCount: 1 } });
+        if (mode === "Bot") expect(spec).toMatchObject({ limits: { maxToolActions: 60, maxInferenceCalls: steering ? 3 : 2 }, turn: steering ? { kind: "prompt" } : { imageCount: 1 } });
         return spec as never;
       },
         readImageChunk: image => call({ action: "bot.input.image", image }) as never,
         loadSession: () => call({ action: "bot.session.load" }) as never, saveSession: session => call({ action: "bot.session.save", session }) as never,
         tool: tool => call({ action: "bot.tool", tool }) as never, event: async event => { await call({ action: "bot.event", event }); } };
       const worker = createBotWorker({ brokerFor: () => broker, bridgeOrigin: "http://127.0.0.1:41000", route: { provider: faux.provider, model: faux.getModel() } });
-      return { ok: true, reply: await worker.handle({ version: 1, kind: "bot.run", runId: request.command.runId }) };
+      if (workers.size) throw new Error("Fixture runtime already occupied");
+      workers.set(request.runtimeHandle, worker);
+      try { return { ok: true, reply: await worker.handle({ version: 1, kind: "bot.run", runId: request.command.runId }) }; }
+      finally { workers.delete(request.runtimeHandle); }
     },
   } } as unknown as ScopeRuntimeHost;
   const admission = createManagedPiAdmission({ db, homePath: home, host, registry, chatgptPlan: authority, roots: { resolve: async () => { throw new Error("No project"); } } });
@@ -144,6 +149,37 @@ it.each([{ mode: "Chat", revoke: false }, { mode: "Bot", revoke: false }, { mode
   const parts = [{ type: "text" as const, text: "Inspect and read" },
     { type: "attachment_reference" as const, attachmentId: "att_photo", label: "photo.png", kind: "image" as const, mimeType: "image/png", sizeBytes: PNG.length, ownerReference: "temporary/desktop-chat/photo.png" },
     { type: "attachment_reference" as const, attachmentId: "att_marker", label: "marker.txt", kind: "file" as const, mimeType: "text/plain", ownerReference: "temporary/desktop-chat/marker.txt" }];
+  if (steering) {
+    const started = Promise.withResolvers<void>(); const release = Promise.withResolvers<void>();
+    faux.setResponses([
+      async () => { started.resolve(); await release.promise; return fauxAssistantMessage(fauxText("Initial work finished.")); },
+      context => {
+        const user = [...context.messages].reverse().find(message => message.role === "user")!;
+        const content = user.content as Array<{ type: string; data?: string; text?: string }>;
+        expect(content.find(item => item.type === "image")).toMatchObject({ data: PNG.toString("base64"), mimeType: "image/png" });
+        const alias = content.find(item => item.type === "text")!.text!.match(/read_artifact path=(submitted-inputs\/[a-f0-9-]+)/)![1]!;
+        return fauxAssistantMessage(fauxToolCall("read_artifact", { path: alias }, { id: "read_steered" }), { stopReason: "toolUse" });
+      },
+      context => { expect(JSON.stringify(context.messages.at(-1))).toContain("FILE_CONTENT_CANARY_6291"); return fauxAssistantMessage(fauxText("STEER_ATTACHMENT_RECEIVED")); },
+    ]);
+    const common = { selection: recipeRuntime ? MATRIX_BOT_SELECTION : selection, interactionMode: "default", permissionMode: recipeRuntime ? "default" : "full_access" };
+    const run = await orchestrator.admitTurn(principal, owner, chat.chat.id, { ...common, clientRequestId: "req_steer_start", baseRevision: chat.chat.revision, parts: [{ type: "text", text: "Start working" }] });
+    await started.promise;
+    try {
+      const current = (await repository.get(owner, chat.chat.id))!;
+      const queued = await orchestrator.enqueueQueuedTurn(principal, owner, chat.chat.id, { ...common, clientRequestId: "req_attachment_queue", baseRevision: current.chat.revision, parts });
+      const revision = (await repository.get(owner, chat.chat.id))!.chat.revision;
+      const accepted = await orchestrator.steerQueuedTurn(owner, chat.chat.id, run.run.id, queued.queuedTurn.id, { clientRequestId: "req_attachment_steer", baseRevision: revision, expectedTurnId: run.turn.id });
+      expect(accepted.steering).toBe("accepted");
+      expect(await repository.listQueuedTurns(owner, chat.chat.id)).toEqual([]);
+    } finally { release.resolve(); }
+    await vi.waitFor(async () => expect((await repository.get(owner, chat.chat.id))?.activeRun).toBeUndefined(), { timeout: 5000 });
+    const detail = (await repository.getDetailPage(owner, chat.chat.id, { limit: 200 }))!;
+    expect(detail.runs.at(-1)?.status).toBe("completed");
+    expect(JSON.stringify(detail)).toContain("STEER_ATTACHMENT_RECEIVED");
+    expect(faux.state.callCount).toBe(3);
+    return;
+  }
   for (let index = 0; index < (revoke ? 2 : 3); index++) {
     if (index > 0) {
       await writeFile(join(home, "temporary/desktop-chat/marker.txt"), index === 1 ? "FILE_CONTENT_CANARY_8402" : "FILE_CONTENT_CANARY_1739");
