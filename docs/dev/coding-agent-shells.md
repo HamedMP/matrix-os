@@ -81,6 +81,12 @@ When adding an event type:
 ## Codex transcript checkpoint recovery
 
 A saved byte checkpoint is valid only for its owner, thread and provider session.
+It also belongs to one transcript generation. Hibernation removes the live
+watcher while preserving the native conversation and durable thread reference;
+it does not make the transcript an orphan. Retention cleanup must protect these
+references, including completed and history-interrupted chats, and skip deletion
+when the durable reference inventory cannot be read.
+
 If the current transcript is shorter than that checkpoint, do not replay it from
 zero: legacy records cannot establish which Matrix turn produced their text or
 terminal outcome. Replaying can duplicate output or complete a newer turn.
@@ -92,11 +98,32 @@ interruption under the existing thread-state mutation boundary, rechecking the
 current turn and checkpoint. Preserve committed transcript content and never
 resend a prompt during recovery. Repeated reconciliation must be idempotent.
 
+An interrupted transcript does not require a new chat when the existing native
+conversation can be resumed safely. A subsequent explicit user turn must retain
+the same native conversation and account binding. Before sending that turn,
+confirm the old execution is idle or stopped, establish a fresh checkpoint
+generation at the current end of the transcript, and persist it under the
+owner-state admission boundary. Recheck the accepted turn, session, native
+conversation, runtime incarnation and old checkpoint. Stale watcher generations
+must not ingest events or advance the replacement checkpoint. Generation-scoped
+event ids prevent new bytes at reused offsets from colliding with old history.
+The old interrupted outcome remains truthful; committed messages are preserved.
+An unknown execution or missing native identity cannot authorize a prompt replay
+or a silent replacement conversation.
+
 Older runners without that private proof remain protected while execution is
 unconfirmed; a live process alone proves neither model activity nor completion.
 This recovery does not reconstruct uncommitted output or infer successful
 completion from an unbound terminal record. Validate it through the real event
 bridge, durable thread store and canonical recovery consumer across restart.
+Cover the natural complete → hibernate → retention → restart → native-resume
+lifecycle, as well as migration of already-interrupted chats, stale watcher
+events, duplicate requests and failed native-identity/liveness checks.
+
+The current gateway reads legacy checkpoints without generation metadata.
+Older gateways with a strict resume-state schema cannot read newly persisted
+generation metadata. A gateway downgrade needs a reviewed compatibility
+migration; do not discard owner conversations or native history to force it.
 
 ## Provider Adapters
 

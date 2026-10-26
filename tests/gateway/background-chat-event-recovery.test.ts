@@ -112,7 +112,7 @@ describe("background Chat durable observation", () => {
       const snapshot = await f.store.getThread(principal, f.threadId);
       expect(snapshot.thread.status).toBe("failed");
       expect(snapshot.events.items.find(event => event.type === "thread.error"))
-        .toMatchObject({ error: { code: "agent_history_unavailable", retryable: false } });
+        .toMatchObject({ error: { code: "agent_transcript_interrupted", retryable: false } });
       expect(snapshot.events.items.filter(event => event.type === "assistant.text.delta").map(event => event.delta)).toEqual([output]);
       expect(proofOptions.backgroundRuntime.isRunning).toHaveBeenCalledWith(backgroundRef);
       await expect(f.store.acceptTurn(principal, f.threadId, { message: "continue", clientRequestId: "req_after_exit" }))
@@ -227,7 +227,7 @@ describe("background Chat durable observation", () => {
       const snapshot = await recovered.getThread(principal, f.threadId);
       expect(snapshot.thread.status).toBe("failed");
       expect(snapshot.events.items.filter(event => event.type === "assistant.text.delta").map(event => event.delta)).toEqual([output]);
-      expect(snapshot.events.items.find(event => event.type === "thread.error")).toMatchObject({ error: { code: "agent_history_unavailable", retryable: false } });
+      expect(snapshot.events.items.find(event => event.type === "thread.error")).toMatchObject({ error: { code: "agent_transcript_interrupted", retryable: false } });
       expect(f.provider.startThread).toHaveBeenCalledTimes(1);
       expect(f.provider.resumeTurn).not.toHaveBeenCalled();
     } finally { await bridge.shutdown(); await restarted.shutdown(); await rm(f.homePath, { recursive: true, force: true }); }
@@ -268,8 +268,8 @@ describe("background Chat durable observation", () => {
     try {
       bridge.attachThreadStore(f.store);
       const path = codexProviderEventPath(f.homePath, f.sessionId);
-      await expect(bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId, checkpoint: true })).resolves.toEqual({ path, offset: 0 });
-      await expect(bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId })).resolves.toEqual({ path });
+      await expect(bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId, checkpoint: true })).resolves.toMatchObject({ path, offset: 0 });
+      await expect(bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId })).resolves.toMatchObject({ path });
       const first = JSON.stringify({ type: "item.completed", item: { id: "msg_first", type: "agent_message", text: "first part" } }) + "\n";
       await writeFile(path, first);
       await bridge.drain();
@@ -291,6 +291,63 @@ describe("background Chat durable observation", () => {
       expect(snapshot.events.items.filter(event => event.type === "assistant.text.delta").map(event => event.delta)).toEqual(["first part", "second part"]);
       expect(snapshot.thread.status).toBe("completed");
     } finally { await bridge.shutdown(); await restarted?.shutdown(); await rm(f.homePath, { recursive: true, force: true }); }
+  });
+
+  it("commits one observation generation before dispatch and rejects stale proofs, checkpoints and late outcomes", async () => {
+    const f = await fixture();
+    const bridge = createCodexEventBridge(f.bridgeOptions);
+    let finish: (() => void) | undefined;
+    try {
+      bridge.attachThreadStore(f.store);
+      const path = codexProviderEventPath(f.homePath, f.sessionId);
+      await bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId, checkpoint: true });
+      await writeFile(path, '{"type":"thread.started","thread_id":"native_current"}\n{"type":"turn.completed"}\n');
+      await bridge.drain();
+      const readPrivate = async () => JSON.parse(await readFile(join(f.homePath, "system/coding-agents/threads.json"), "utf8"));
+      const previous = (await readPrivate()).threads[0].providerResumeState;
+      f.provider.resumeTurn.mockImplementation(() => new Promise(resolve => { finish = () => resolve({ events: [], outcome: "delivered", resumeState: previous }); }));
+      const accepted = await f.store.acceptTurn(principal, f.threadId, { message: "next", clientRequestId: "req_next" });
+      await writeFile(path, ""); // legacy-loss injection: native proof is independent of the file.
+      const proveStopped = vi.fn(async () => true);
+      const resume = { turnId: accepted.turnId, resumeState: previous, proveStopped };
+      for (const [owner, value] of [
+        [{ ...principal, userId: "foreign" }, resume],
+        [principal, { ...resume, turnId: "turn_stale" }],
+        [principal, { ...resume, resumeState: { ...previous, providerThreadId: "native_other" } }],
+        [principal, { ...resume, resumeState: { ...previous, backgroundRef: { id: "bg_00000000000000000000000000000002" } } }],
+      ] as const) await expect(f.store.prepareProviderObservation(owner, f.threadId, f.sessionId, value)).rejects.toThrow("identity changed");
+      expect(proveStopped).not.toHaveBeenCalled();
+      await expect(f.store.prepareProviderObservation(principal, f.threadId, f.sessionId,
+        { ...resume, proveStopped: async () => false })).rejects.toThrow("stop unconfirmed");
+      await expect(f.store.prepareProviderObservation(principal, f.threadId, f.sessionId,
+        { ...resume, proveStopped: async () => { await appendFile(path, "changed"); return true; } })).rejects.toThrow("changed during recovery");
+      expect((await readPrivate()).threads[0].providerResumeState.eventGeneration).toBeUndefined();
+      await writeFile(path, "");
+      let release!: () => void;
+      let entered!: () => void;
+      const started = new Promise<void>(resolve => { entered = resolve; });
+      const preparing = f.store.prepareProviderObservation(principal, f.threadId, f.sessionId, { ...resume,
+        proveStopped: async () => { entered(); await new Promise<void>(resolve => { release = resolve; }); return true; } });
+      await started;
+      const lateCheckpoint = f.store.ingestProviderEvents(principal, f.threadId, { events: [] },
+        { sessionId: f.sessionId, offset: 10_000, checkpoint: false });
+      const rejectedCheckpoint = expect(lateCheckpoint).rejects.toThrow("generation changed");
+      release();
+      const prepared = await preparing;
+      await rejectedCheckpoint;
+      expect(prepared).toMatchObject({ offset: 0, generation: expect.stringMatching(/^[a-f0-9-]{36}$/) });
+      await expect(f.store.prepareProviderObservation(principal, f.threadId, f.sessionId, resume)).rejects.toThrow("identity changed");
+      const current = (await readPrivate()).threads[0];
+      await expect(f.store.prepareProviderObservation(principal, f.threadId, f.sessionId,
+        { ...resume, resumeState: current.providerResumeState })).resolves.toBeUndefined();
+      finish?.();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const final = (await readPrivate()).threads[0];
+      expect(final.providerResumeState.eventGeneration).toBe(prepared!.generation);
+      expect(final.providerEventOffset).toBe(0);
+      expect(final.activeTurnId).toBe(accepted.turnId);
+      expect(final.status).toBe("running");
+    } finally { finish?.(); await f.store.shutdownTurns(); await bridge.shutdown(); await rm(f.homePath, { recursive: true, force: true }); }
   });
 
   it("ignores a stale background stop and settles only the current incarnation", async () => {

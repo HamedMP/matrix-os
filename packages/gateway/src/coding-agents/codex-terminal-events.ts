@@ -6,7 +6,7 @@ export function completionEvents(input: {
   outcome: "completed" | "failed" | "aborted";
   occurredAt: string;
   nextEventId: () => string;
-  failureReason?: CodexFailureReason;
+  failureReason?: CodexFailureReason | "transcript_interrupted";
 }): AgentThreadEvent[] {
   const events: AgentThreadEvent[] = [];
   if (input.outcome === "failed") {

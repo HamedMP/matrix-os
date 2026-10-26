@@ -21,6 +21,8 @@ export const CodingAgentProviderResumeStateSchema = z.object({
   conversationId: z.string().trim().min(1).max(512),
   backgroundRef: BackgroundAgentRefSchema.optional(),
   eventOffset: z.number().int().min(0).max(16 * 1024 * 1024).optional(),
+  eventGeneration: z.uuid().optional(),
+  eventStreamInterrupted: z.boolean().optional(),
   providerThreadId: z.string().trim().min(1).max(512)
     .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,511}$/)
     .optional(),
@@ -58,6 +60,7 @@ export type CodingAgentProviderEventPublisher = (
 
 export interface CodingAgentProviderAdapter {
   providerId: string;
+  prepareHistoryResume?(input: { principal: RequestPrincipal; thread: AgentThreadSummary; resumeState: CodingAgentProviderResumeState; signal: AbortSignal }): Promise<void>;
   /** Long-running initial executions are dispatched after durable thread creation. */
   initialRunExecution?: "background";
   /** Native service execution and uncertain delivery survive gateway shutdown. */

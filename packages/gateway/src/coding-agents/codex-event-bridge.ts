@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, rm } from "node:fs/promises";
+import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
@@ -19,6 +19,8 @@ import { CodexExecutableSchema, codexExecutableFromEnv } from "./codex-executabl
 import type { CodingAgentProviderEventBatch } from "./provider-adapter.js";
 import { runtimeUnavailable, type RuntimeSupervision } from "./codex-runtime-supervision.js";
 import type { ProviderIdleObservation } from "./provider-transcript-recovery.js";
+import type { ProviderObservationResume } from "./provider-observation-generation.js";
+import { cleanupProviderTranscripts } from "./provider-transcript-retention.js";
 
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
 const WatchInputSchema = z.object({
@@ -27,6 +29,7 @@ const WatchInputSchema = z.object({
   startAtEnd: z.boolean().optional(),
   startOffset: z.number().int().min(0).max(16 * 1024 * 1024).optional(),
   checkpoint: z.boolean().optional(),
+  generation: z.uuid().optional(),
 }).strict();
 const MAX_WATCHERS = 100;
 const MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024;
@@ -35,8 +38,6 @@ const DEFAULT_POLL_INTERVAL_MS = 250;
 const VERSION_TIMEOUT_MS = 5_000;
 const VERSION_CACHE_TTL_MS = 30_000;
 const STOP_DRAIN_GRACE_MS = 5_000;
-const ORPHAN_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-const MAX_ORPHAN_FILES = 200;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
 type VersionCommand = (
@@ -45,16 +46,20 @@ type VersionCommand = (
   options: { cwd: string; timeout: number; signal: AbortSignal },
 ) => Promise<{ stdout: string; stderr: string }>;
 type ProviderEventStore = {
-  recoverProviderTranscript?(principal: RequestPrincipal, threadId: string, cursor: { sessionId: string; expectedOffset: number },
+  removeUnreferencedProviderTranscript?(sessionId: string, remove: () => Promise<boolean>): Promise<boolean>;
+  prepareProviderObservation?(principal: RequestPrincipal, threadId: string, sessionId: string, resume: ProviderObservationResume): Promise<{ offset: number; generation: string } | undefined>;
+  recoverProviderTranscript?(principal: RequestPrincipal, threadId: string, cursor: { sessionId: string; expectedOffset: number; generation?: string },
     proveIdle: (observation: ProviderIdleObservation) => Promise<boolean>): Promise<boolean>;
   ingestProviderEvents(
     principal: RequestPrincipal,
     threadId: string,
     batch: CodingAgentProviderEventBatch,
-    cursor?: { sessionId: string; offset: number },
+    cursor?: { sessionId: string; offset: number; generation?: string; checkpoint?: false },
   ): Promise<unknown>;
 };
 type WatchEntry = {
+  watchId: string;
+  generation?: string;
   checkpoint?: boolean;
   supervision: RuntimeSupervision;
   failureEvents?: AgentThreadEvent[];
@@ -86,9 +91,9 @@ export function codexProviderEventPath(homePath: string, sessionId: string): str
   return join(resolve(homePath), "system", "coding-agents", "provider-events", `${parsed}.jsonl`);
 }
 
-function eventId(sessionId: string, byteOffset: number, index: number): string {
+function eventId(sessionId: string, byteOffset: number, index: number, generation?: string): string {
   const digest = createHash("sha256")
-    .update(`${sessionId}:${byteOffset}:${index}`)
+    .update(`${sessionId}:${byteOffset}:${index}${generation ? `:${generation}` : ""}`)
     .digest("hex")
     .slice(0, 32);
   return `evt_codex_${digest}`;
@@ -120,6 +125,9 @@ export function createCodexEventBridge(options: {
   let queue: Promise<void> = Promise.resolve();
   let lastCleanupAt = 0;
   let versionCache: { ok: boolean; expiresAt: number } | undefined;
+  function deleteCurrent(entry: WatchEntry) {
+    if (watchers.get(entry.sessionId) === entry) watchers.delete(entry.sessionId);
+  }
 
   async function versionIsVerified(parentSignal?: AbortSignal): Promise<boolean> {
     if (versionCache && versionCache.expiresAt > nowMs()) return versionCache.ok;
@@ -175,28 +183,8 @@ export function createCodexEventBridge(options: {
     const currentTime = nowMs();
     if (currentTime - lastCleanupAt < CLEANUP_INTERVAL_MS) return;
     lastCleanupAt = currentTime;
-    let entries;
-    try {
-      entries = await readdir(eventDir, { withFileTypes: true });
-    } catch (error: unknown) {
-      if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw error;
-    }
-    const files: Array<{ path: string; mtimeMs: number }> = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
-      const sessionId = entry.name.slice(0, -".jsonl".length);
-      if (!SessionIdSchema.safeParse(sessionId).success || watchers.has(sessionId)) continue;
-      const path = join(eventDir, entry.name);
-      const info = await lstat(path);
-      if (info.isSymbolicLink() || !info.isFile()) continue;
-      files.push({ path, mtimeMs: info.mtimeMs });
-    }
-    files.sort((left, right) => left.mtimeMs - right.mtimeMs);
-    for (const [index, file] of files.entries()) {
-      if (file.mtimeMs > currentTime - ORPHAN_RETENTION_MS && index >= files.length - MAX_ORPHAN_FILES) continue;
-      await rm(file.path, { force: true });
-    }
+    await cleanupProviderTranscripts({ directory: eventDir, now: currentTime, hasWatcher: id => watchers.has(id),
+      removeUnreferenced: store?.removeUnreferencedProviderTranscript?.bind(store) });
   }
 
   async function ingest(entry: WatchEntry, bytes: Buffer, consumedBytes: number): Promise<{ terminal: boolean; ready: boolean }> {
@@ -218,7 +206,7 @@ export function createCodexEventBridge(options: {
       const parsed = parseCodexExecJsonLine(line, {
         threadId: entry.threadId,
         now: () => new Date(occurredAt),
-        nextEventId: () => eventId(entry.sessionId, absoluteOffset, index++),
+        nextEventId: () => eventId(entry.sessionId, absoluteOffset, index++, entry.generation),
       });
       events.push(...parsed.events);
       ready ||= parsed.events.length > 0 || !!parsed.providerThreadId || !!parsed.outcome;
@@ -236,7 +224,7 @@ export function createCodexEventBridge(options: {
           outcome: parsed.outcome,
           failureReason: parsed.failureReason,
           occurredAt,
-          nextEventId: () => eventId(entry.sessionId, absoluteOffset, index++),
+          nextEventId: () => eventId(entry.sessionId, absoluteOffset, index++, entry.generation),
         }));
       }
       absoluteOffset += newline - lineStart + 1;
@@ -245,7 +233,7 @@ export function createCodexEventBridge(options: {
         await store.ingestProviderEvents(entry.principal, entry.threadId, {
           events: [...events], ...(providerThreadId ? { providerThreadId } : {}),
           ...(parsed.outcome && tokenUsage ? { tokenUsage } : {}),
-        }, { sessionId: entry.sessionId, offset: absoluteOffset });
+        }, { sessionId: entry.sessionId, offset: absoluteOffset, ...(entry.generation ? { generation: entry.generation } : {}) });
         events.length = 0;
         providerThreadId = undefined;
         tokenUsage = undefined;
@@ -260,7 +248,7 @@ export function createCodexEventBridge(options: {
         events: chunk,
         ...(index === 0 && providerThreadId ? { providerThreadId } : {}),
         ...(index === chunks.length - 1 && terminal && tokenUsage ? { tokenUsage } : {}),
-      });
+      }, { sessionId: entry.sessionId, offset: entry.offset, generation: entry.generation, checkpoint: false });
     }
     return { terminal, ready };
   }
@@ -273,21 +261,21 @@ export function createCodexEventBridge(options: {
     try {
       const info = await lstat(entry.path);
       if (info.isSymbolicLink() || !info.isFile() || info.size > MAX_TRANSCRIPT_BYTES) {
-        watchers.delete(entry.sessionId);
+        deleteCurrent(entry);
         return false;
       }
       if (info.size < entry.offset && options.isExecutionIdle && store?.recoverProviderTranscript
         && nowMs() >= (entry.nextDriftCheckAt ?? 0)) {
         entry.nextDriftCheckAt = nowMs() + 10_000;
         if (await store.recoverProviderTranscript(entry.principal, entry.threadId,
-          { sessionId: entry.sessionId, expectedOffset: entry.offset }, async observation => {
+          { sessionId: entry.sessionId, expectedOffset: entry.offset, ...(entry.generation ? { generation: entry.generation } : {}) }, async observation => {
             if (!await options.isExecutionIdle!(observation) || watchers.get(entry.sessionId) !== entry) return false;
             const current = await lstat(entry.path);
             return current.isFile() && !current.isSymbolicLink() && current.size < entry.offset
               && current.dev === info.dev && current.ino === info.ino;
           })) {
           entry.supervision.terminal = true;
-          watchers.delete(entry.sessionId);
+          deleteCurrent(entry);
           return true;
         }
       }
@@ -295,7 +283,7 @@ export function createCodexEventBridge(options: {
       // uncertain liveness cannot authorize either replay or another prompt.
       if (info.size < entry.offset) return false;
       if (info.size <= entry.offset) {
-        if (stoppedDrainExpired()) watchers.delete(entry.sessionId);
+        if (stoppedDrainExpired()) deleteCurrent(entry);
         return true;
       }
       const length = Math.min(info.size - entry.offset, MAX_DRAIN_BYTES);
@@ -305,7 +293,7 @@ export function createCodexEventBridge(options: {
       const data = bytes.subarray(0, read.bytesRead);
       const lastNewline = data.lastIndexOf(0x0a);
       if (lastNewline < 0) {
-        if (stoppedDrainExpired()) watchers.delete(entry.sessionId);
+        if (stoppedDrainExpired()) deleteCurrent(entry);
         return true;
       }
       const consumedBytes = lastNewline + 1;
@@ -316,11 +304,11 @@ export function createCodexEventBridge(options: {
       entry.supervision.terminal ||= terminal;
       entry.lastTouchedAt = nowMs();
       entry.pendingOccurredAt = undefined;
-      if (terminal && entry.stopRequestedAt !== undefined) watchers.delete(entry.sessionId);
+      if (terminal && entry.stopRequestedAt !== undefined) deleteCurrent(entry);
       return info.size - entry.offset <= data.length - consumedBytes;
     } catch (error: unknown) {
       if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
-        if (stoppedDrainExpired()) watchers.delete(entry.sessionId);
+        if (stoppedDrainExpired()) deleteCurrent(entry);
         return true;
       }
       console.warn("[coding-agents] Codex event ingestion will retry");
@@ -352,8 +340,9 @@ export function createCodexEventBridge(options: {
           })(),
         });
         try {
-          await store.ingestProviderEvents(entry.principal, entry.threadId, { events: entry.failureEvents });
-          if (watchers.get(entry.sessionId) === entry) watchers.delete(entry.sessionId);
+          await store.ingestProviderEvents(entry.principal, entry.threadId, { events: entry.failureEvents },
+            { sessionId: entry.sessionId, offset: entry.offset, generation: entry.generation, checkpoint: false });
+          deleteCurrent(entry);
         } catch (error: unknown) {
           console.warn("[coding-agents] Runtime failure persistence will retry", {
             errorType: error instanceof Error ? error.name : "UnknownError",
@@ -385,7 +374,9 @@ export function createCodexEventBridge(options: {
       startAtEnd?: boolean;
       startOffset?: number;
       checkpoint?: boolean;
-    }): Promise<{ path: string; offset?: number }> {
+      generation?: string;
+      resume?: ProviderObservationResume;
+    }): Promise<{ path: string; offset?: number; generation?: string; watchId?: string }> {
       if (closed || !await versionIsVerified()) {
         throw new Error("Codex structured events are unavailable");
       }
@@ -395,19 +386,21 @@ export function createCodexEventBridge(options: {
         ...(input.startAtEnd !== undefined ? { startAtEnd: input.startAtEnd } : {}),
         ...(input.startOffset !== undefined ? { startOffset: input.startOffset } : {}),
         ...(input.checkpoint !== undefined ? { checkpoint: input.checkpoint } : {}),
+        ...(input.generation !== undefined ? { generation: input.generation } : {}),
       });
       await ensureEventDirectory();
       const path = codexProviderEventPath(homePath, parsed.sessionId);
+      const prepared = input.resume ? await store?.prepareProviderObservation?.(input.principal, parsed.threadId, parsed.sessionId, input.resume) : undefined;
       const existing = watchers.get(parsed.sessionId);
       if (existing) {
         if (existing.threadId !== parsed.threadId || existing.principal.userId !== input.principal.userId) {
           throw new Error("Codex event watcher identity mismatch");
         }
-        if (!parsed.startAtEnd) { existing.lastTouchedAt = nowMs(); existing.checkpoint ||= parsed.checkpoint; return { path, ...(parsed.checkpoint ? { offset: existing.offset } : {}) }; }
+        if (!parsed.startAtEnd) { existing.lastTouchedAt = nowMs(); existing.checkpoint ||= parsed.checkpoint; return { path, watchId: existing.watchId, ...(parsed.checkpoint ? { offset: existing.offset } : {}) }; }
       }
       if (!existing) evictIfNeeded();
       // Renew supervision without dropping bytes already owned by an active watcher.
-      let offset = existing?.offset ?? parsed.startOffset ?? 0;
+      let offset = prepared?.offset ?? existing?.offset ?? parsed.startOffset ?? 0;
       if (parsed.startAtEnd && !existing) {
         try {
           const info = await lstat(path);
@@ -421,7 +414,10 @@ export function createCodexEventBridge(options: {
           }
         }
       }
+      const watchId = randomUUID();
       watchers.set(parsed.sessionId, {
+        watchId,
+        generation: prepared?.generation ?? parsed.generation ?? existing?.generation,
         checkpoint: parsed.checkpoint ?? existing?.checkpoint,
         supervision: { startedAt: nowMs(), nextProbeAt: nowMs() + 10_000, failures: 0,
           ready: parsed.startOffset !== undefined, terminal: false },
@@ -432,11 +428,12 @@ export function createCodexEventBridge(options: {
         offset,
         lastTouchedAt: nowMs(),
       });
-      return { path, ...(parsed.checkpoint ? { offset } : {}) };
+      return { path, watchId, ...(parsed.checkpoint ? { offset } : {}), ...((prepared?.generation ?? parsed.generation) ? { generation: prepared?.generation ?? parsed.generation } : {}) };
     },
-    unwatch(sessionId: string): void {
-      if (SessionIdSchema.safeParse(sessionId).success) watchers.delete(sessionId);
+    unwatch(sessionId: string, watchId?: string): void {
+      if (SessionIdSchema.safeParse(sessionId).success && (!watchId || watchers.get(sessionId)?.watchId === watchId)) watchers.delete(sessionId);
     },
+    async isRuntimeAlive(sessionId: string) { return options.isRuntimeAlive?.(sessionId); },
     markStopped(sessionId: string): void {
       if (!SessionIdSchema.safeParse(sessionId).success) return;
       const entry = watchers.get(sessionId);

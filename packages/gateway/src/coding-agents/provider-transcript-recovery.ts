@@ -15,12 +15,13 @@ export interface ProviderIdleObservation {
 const CursorSchema = z.object({
   sessionId: z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/),
   expectedOffset: z.number().int().min(1).max(16 * 1024 * 1024),
+  generation: z.uuid().optional(),
 }).strict();
 
 export function providerTranscriptUnavailable(thread: StoredThreadState["threads"][number], events: readonly AgentThreadEvent[]): boolean {
   const error = events.findLast(event => event.threadId === thread.id && event.type === "thread.error");
   return thread.providerId === "codex" && thread.status === "failed"
-    && error?.type === "thread.error" && error.error.code === "agent_history_unavailable";
+    && error?.type === "thread.error" && ["agent_history_unavailable", "agent_transcript_interrupted"].includes(error.error.code);
 }
 
 /** Called under the existing owner-store mutation lock; no native prompt is sent. */
@@ -38,6 +39,7 @@ export async function applyProviderTranscriptRecovery(state: StoredThreadState, 
     || !["queued", "starting", "running", "waiting_for_approval", "waiting_for_input"].includes(thread.status)
     || thread.providerResumeState?.conversationId !== cursor.sessionId
     || thread.providerEventOffset !== cursor.expectedOffset || !thread.providerResumeState.providerThreadId
+    || thread.providerResumeState.eventGeneration !== cursor.generation
     || !thread.providerResumeState.backgroundRef) {
     return { state, result: [] as AgentThreadEvent[] };
   }
@@ -48,12 +50,13 @@ export async function applyProviderTranscriptRecovery(state: StoredThreadState, 
     return { state, result: [] as AgentThreadEvent[] };
   }
   const occurredAt = input.now().toISOString();
-  const events = completionEvents({ threadId: thread.id, outcome: "failed", failureReason: "history_unavailable",
+  const events = completionEvents({ threadId: thread.id, outcome: "failed", failureReason: "transcript_interrupted",
     occurredAt, nextEventId: input.nextEventId });
   // A shorter stream cannot prove which output/terminal belongs to this turn.
   // Preserve committed text and report lost history rather than fabricate success.
   const { deliveredTurnId: _delivered, ...rest } = thread;
-  const next = { ...rest, status: "failed" as const, attention: "failed" as const, updatedAt: occurredAt };
+  const next = { ...rest, providerResumeState: { ...thread.providerResumeState, eventStreamInterrupted: true },
+    status: "failed" as const, attention: "failed" as const, updatedAt: occurredAt };
   return { state: { ...state, threads: state.threads.map(candidate => candidate === thread ? next : candidate),
     events: [...state.events, ...events] }, result: events };
 }

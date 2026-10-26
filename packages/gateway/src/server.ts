@@ -612,6 +612,7 @@ export async function createGateway(config: GatewayConfig) {
       runtime: codingAgentWorkspaceRuntime,
       homePath,
       codexEvents: codexEventBridge,
+      backgroundRuntime: backgroundAgentRuntime,
       codexAdmission: nativeCodexRuntime.admission,
       codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
       sharedBrowserEnabled: !!sharedBrowserRuntime && !!codexExecutable,

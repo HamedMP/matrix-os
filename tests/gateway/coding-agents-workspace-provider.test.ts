@@ -867,7 +867,7 @@ exec /bin/sh "$@"
         resumeState: { conversationId: "sess_cold", ...(mode === "missing-native" ? {} : { providerThreadId: "native_cold" }) },
         signal: AbortSignal.timeout(1_000), now: () => baseNow, nextEventId: () => "evt_cold",
       } as never)).rejects.toThrow();
-      expect(unwatch).toHaveBeenCalledWith("sess_cold");
+      expect(unwatch).toHaveBeenCalledWith("sess_cold", undefined);
       expect(startSession).toHaveBeenCalledTimes(mode === "launch-error" ? 1 : 0);
     } finally { warn.mockRestore(); }
   });
@@ -922,6 +922,7 @@ exec /bin/sh "$@"
       sessionId: "sess_workspace_restarted_1",
       startAtEnd: true,
       checkpoint: true,
+      resume: { turnId: "turn_workspace_restarted_1", resumeState: { conversationId: "sess_workspace_restarted_1" }, proveStopped: expect.any(Function) },
     });
     expect(watch.mock.invocationCallOrder[0]).toBeLessThan(submitTurn.mock.invocationCallOrder[0]!);
   });
