@@ -624,7 +624,12 @@ export function createCanonicalCodingChatProviderAdapter(options: {
         // provider establishes resumable state. Replace only that stale seam;
         // ordinary admission and capacity failures must continue to fail closed.
         if (error instanceof CodingAgentTurnError && error.code === "thread_not_resumable") {
-          restartFresh = true;
+          // Lost native history requires an explicit new chat, not a silent fork.
+          if (error.reason === "history_unavailable") {
+            yield { type: "run.completed", outcome: "failed", error: canonicalAgentFailure("history_unavailable")! };
+          } else {
+            restartFresh = true;
+          }
         } else {
           throw error;
         }

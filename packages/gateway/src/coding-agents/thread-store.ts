@@ -275,7 +275,10 @@ export class CodingAgentThreadError extends Error {
 }
 
 export class CodingAgentTurnError extends Error {
-  constructor(readonly code: "thread_busy" | "thread_not_found" | "thread_not_resumable" | "turn_unavailable") {
+  constructor(
+    readonly code: "thread_busy" | "thread_not_found" | "thread_not_resumable" | "turn_unavailable",
+    readonly reason?: "history_unavailable",
+  ) {
     super(code);
     this.name = "CodingAgentTurnError";
   }
@@ -1352,7 +1355,8 @@ export function createCodingAgentThreadStore(
           if (!provider.resumeTurn || !thread.providerResumeState
             || providerTranscriptUnavailable(thread, state.events)
             || isFailedCodexBootstrap({ ownerId: principal.userId, thread, events: state.events, turns: state.turns })) {
-            throw new CodingAgentTurnError("thread_not_resumable");
+            throw new CodingAgentTurnError("thread_not_resumable",
+              providerTranscriptUnavailable(thread, state.events) ? "history_unavailable" : undefined);
           }
           const acceptedAt = now().toISOString();
           const turnId = AgentTurnIdSchema.parse(`turn_${randomUUID()}`);

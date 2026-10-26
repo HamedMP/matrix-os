@@ -8,6 +8,9 @@ import { createCodexEventBridge, codexProviderEventPath } from "../../packages/g
 import { restoreBackgroundChatThread } from "../../packages/gateway/src/coding-agents/background-chat-recovery.js";
 import { recoverCodingRun } from "../../packages/gateway/src/chat/coding-run-recovery.js";
 import { createCodexExecutionIdleProof } from "../../packages/gateway/src/coding-agents/codex-execution-observation.js";
+import type { CodingAgentProviderAdapter } from "../../packages/gateway/src/coding-agents/provider-adapter.js";
+import { createCanonicalCodingChatProviderAdapter } from "../../packages/gateway/src/chat/coding-provider-adapter.js";
+import type { CanonicalProviderRunEvent } from "../../packages/gateway/src/chat/provider-adapter.js";
 
 const principal = { userId: "owner", source: "jwt" as const };
 const backgroundRef = { id: "bg_00000000000000000000000000000001" };
@@ -16,7 +19,7 @@ async function fixture() {
   const provider = {
     providerId: "codex",
     abortThread: vi.fn(),
-    startThread: vi.fn(({ thread }: { thread: { id: string } }) => ({ events: [], resumeState: { conversationId: `sess_${thread.id.slice(7)}`, backgroundRef } })),
+    startThread: vi.fn<CodingAgentProviderAdapter["startThread"]>(({ thread }) => ({ events: [], resumeState: { conversationId: `sess_${thread.id.slice(7)}`, backgroundRef } })),
     resumeTurn: vi.fn(),
   };
   const store = createCodingAgentThreadStore({ homePath, providers: [provider as never] });
@@ -29,6 +32,60 @@ async function fixture() {
 }
 
 describe("background Chat durable observation", () => {
+  it("keeps lost history fenced through canonical continuation while a new unrelated chat works", async () => {
+    const f = await fixture();
+    const bridge = createCodexEventBridge({ ...f.bridgeOptions, isExecutionIdle: async () => true });
+    const adapter = createCanonicalCodingChatProviderAdapter({ providerId: "codex", threads: f.store });
+    const runInput = {
+      owner: { type: "personal" as const, ownerId: principal.userId }, chatId: "chat_existing",
+      turnId: "cturn_followup", runId: "run_followup", prompt: "continue", parts: [{ type: "text" as const, text: "continue" }],
+      selection: { instanceId: "codex_default", model: "gpt-5.6-sol" },
+      interactionMode: "default", permissionMode: "supervised", signal: AbortSignal.timeout(2_000),
+    };
+    try {
+      bridge.attachThreadStore(f.store);
+      const path = codexProviderEventPath(f.homePath, f.sessionId);
+      await bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId, checkpoint: true });
+      const output = "committed original answer ".repeat(30);
+      await writeFile(path, [
+        { type: "thread.started", thread_id: "native_current" }, { type: "turn.started" },
+        { type: "item.completed", item: { id: "msg_original", type: "agent_message", text: output } },
+      ].map(record => JSON.stringify(record)).join("\n") + "\n");
+      await bridge.drain();
+      await writeFile(path, '{"type":"turn.completed"}\n');
+      await bridge.drain();
+      expect((await f.store.getThread(principal, f.threadId)).thread.status).toBe("failed");
+
+      // A real native creation would answer successfully, exposing a silent fork.
+      f.provider.startThread.mockImplementation(({ thread, now, nextEventId }) => ({
+        events: [
+          { type: "assistant.text.delta", threadId: thread.id, eventId: nextEventId(), occurredAt: now().toISOString(), messageId: "msg_new", delta: "new chat works" },
+          { type: "thread.completed", threadId: thread.id, eventId: nextEventId(), occurredAt: now().toISOString(), outcome: "completed" },
+        ],
+        resumeState: { conversationId: `sess_${thread.id.slice(7)}`, backgroundRef },
+      }));
+      for (const runId of ["run_followup", "run_followup_again"]) {
+        const received: CanonicalProviderRunEvent[] = [];
+        for await (const event of adapter.resume!({ ...runInput, runId, resumeState: { conversationId: f.threadId } })) received.push(event);
+        expect(f.provider.startThread).toHaveBeenCalledTimes(1);
+        expect(received).toEqual([{ type: "run.completed", outcome: "failed", error: {
+          code: "run_not_resumable", safeMessage: "Conversation could not be restored. Start a new chat.",
+          retryable: false, recoveryActions: ["start_new_chat"],
+        } }]);
+      }
+      expect(f.provider.resumeTurn).not.toHaveBeenCalled();
+      const preserved = await f.store.getThread(principal, f.threadId);
+      expect(preserved.thread.status).toBe("failed");
+      expect(preserved.events.items.filter(event => event.type === "assistant.text.delta").map(event => event.delta)).toEqual([output]);
+
+      const fresh: CanonicalProviderRunEvent[] = [];
+      for await (const event of adapter.start({ ...runInput, chatId: "chat_unrelated", runId: "run_unrelated" })) fresh.push(event);
+      expect(f.provider.startThread).toHaveBeenCalledTimes(2);
+      expect(fresh.filter(event => event.type === "assistant.delta").map(event => event.delta).join("")).toBe("new chat works");
+      expect(fresh.at(-1)).toEqual({ type: "run.completed", outcome: "completed" });
+    } finally { await f.store.shutdownTurns(); await bridge.shutdown(); await rm(f.homePath, { recursive: true, force: true }); }
+  });
+
   it("fences the invalid checkpoint when an unsupported runner's exact backing execution stopped", async () => {
     const f = await fixture();
     const proofOptions = {
