@@ -1,4 +1,4 @@
-# Spec 636: Get started polish (coding agents screen, bot name suggestions)
+# Spec 636: Get started polish (coding agents screen, bot name suggestions, App Gallery copy)
 
 Status: Draft for review.
 Ticket: [ENG-391](https://linear.app/matrix-os/issue/ENG-391/polish-the-get-started-wizard).
@@ -8,11 +8,13 @@ Reviewers suggested: product (onboarding), Yuhan (Agents & providers), Nima.
 
 ## Goal
 
-Two polish items from the Get started review, shipped in one PR:
+Three polish items from the Get started review, shipped in one PR:
 
 1. **Coding agents screen** (Part A). Signing in to Claude Code or Codex gets its own Get started screen, before "Connect the tools you use". It looks like Settings › Agents & providers › Coding agents and says how much Matrix AI credit the owner already has, so it is clear the step is optional.
 
 2. **Bot name suggestions** (Part B). The "Name your main bot" step suggests five names with emojis from a small, fast model, with a refresh button for five more.
+
+3. **Honest App Gallery copy** (Part C). The App Gallery step no longer says apps are "ready with your data": apps install empty and fill up only after the owner imports data inside them.
 
 Why (A): today the agent sign-in sits on step 3 under "Your coding agent" chips, mixed with the integrations list. It looks unlike Settings, only appears for "Write code with agents", and never says that Matrix already works with the owner's credit.
 
@@ -72,9 +74,9 @@ Steps become: name → goals → **coding agents** → connect your tools → ma
 
 Evidence: live screenshots and a short recording for Web Desktop, Web Canvas and Electron Desktop, in the PR and #tech.
 
-## Out of scope (rest of ENG-391)
+## Out of scope
 
-Not calling apps "ready with your data" before an import finishes: pending a product decision, separate PR on the same ticket.
+Prefilling apps from connected data during onboarding: [ENG-369](https://linear.app/matrix-os/issue/ENG-369/onboarding-connect-gmailcalendar-and-auto-set-up-matrix-from-them), with its consent, privacy-copy, Google policy and OAuth-ownership questions noted there. Part C only makes the copy honest.
 
 ## Risks
 
@@ -148,3 +150,17 @@ Matrix pays for the model call; the owner's credit is never used. No model key e
 ## Rollout
 
 The gateway and UI ship in the host bundle; the platform route needs a platform deploy. Until then, every surface shows the built-in names.
+
+---
+
+# Part C: honest App Gallery copy
+
+The App Gallery step lists apps whose required services are connected (App Gallery's readiness rule). Adding one installs an empty app; data arrives only when the owner runs an import inside it. The old copy promised more than that.
+
+| Where | Before | After |
+| -- | -- | -- |
+| Title (apps listed) | "Apps ready with your data" | "Apps that work with your tools" |
+| Hint | "Because you connected Gmail and Google Calendar, these apps are ready with your data." | "These apps work with Gmail and Google Calendar. Add one, then import your data from inside it." |
+| List label | "Apps ready with your data" | "Apps that work with your tools" |
+
+No behavior change. Acceptance: with Gmail and Google Calendar connected, the step shows the new title and hint on Web Desktop, Web Canvas and Electron Desktop, and nothing on it says "ready with your data".

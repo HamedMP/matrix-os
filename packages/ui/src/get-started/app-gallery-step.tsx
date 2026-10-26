@@ -34,7 +34,7 @@ function ReadyApps({ ready, gallery, wizard, dispatch }: {
   const ideasId = useId();
   return (
     <div className="mxo-gs__gallery">
-      <ul className="mxo-gs__bot-list" aria-label="Apps ready with your data">
+      <ul className="mxo-gs__bot-list" aria-label="Apps that work with your tools">
         {ready.map(({ app, using }) => {
           const adding = gallery.installing === app.id;
           return (

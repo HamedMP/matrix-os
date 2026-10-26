@@ -130,7 +130,7 @@ function stepTitle(wizard: GetStartedWizardState, ready: readonly GetStartedRead
     case "agents": return "Sign in to your coding agents";
     case "tools": return "Connect the tools you use";
     case "ai": return "Name your main bot";
-    case "gallery": return ready.length > 0 ? "Apps ready with your data" : "Build your own apps";
+    case "gallery": return ready.length > 0 ? "Apps that work with your tools" : "Build your own apps";
     case "bots": return "Meet your bots";
     case "summary": return name ? `All set, ${name}.` : "All set.";
   }
@@ -144,7 +144,8 @@ function stepHint(wizard: GetStartedWizardState, ready: readonly GetStartedReady
     case "tools": return "Each one opens the app's own sign-in. Connect any now, or later in Settings.";
     case "ai": return "This is your main bot. It uses this name and style everywhere you talk to Matrix.";
     case "gallery": return ready.length > 0
-      ? `Because you connected ${joinNames(readyServiceNames(ready))}, these apps are ready with your data.`
+      // ENG-391: apps install empty and fill up only after an import, so never say they hold the data yet.
+      ? `These apps work with ${joinNames(readyServiceNames(ready))}. Add one, then import your data from inside it.`
       : "Describe an app and Matrix builds it for you to keep and use. Pick one to start with.";
     case "bots": return "Bots are AI teammates that each do one job for you. Add any you like.";
     case "summary": return "You can change any of this later.";

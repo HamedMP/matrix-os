@@ -20,7 +20,7 @@ export function createDesktopGetStartedPort(api: ApiClient, runtimeSlot: string)
 
 const GALLERY_APP_ID = /^[a-z][a-z0-9-]{0,47}$/;
 
-/** App Gallery for the wizard's "Apps ready with your data" step, on the wizard's runtime. */
+/** App Gallery for the wizard's "Apps that work with your tools" step, on the wizard's runtime. */
 export function createDesktopGetStartedGalleryPort(api: ApiClient, runtimeSlot: string, platformHost: string): GetStartedGalleryPort {
   const runtime = api.forRuntime(runtimeSlot);
   return {

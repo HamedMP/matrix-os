@@ -42,7 +42,7 @@ export function createShellGetStartedPort(gatewayUrl: string): GetStartedPort {
 
 const GALLERY_APP_ID = /^[a-z][a-z0-9-]{0,47}$/;
 
-/** App Gallery for the wizard's "Apps ready with your data" step, on the same gateway. */
+/** App Gallery for the wizard's "Apps that work with your tools" step, on the same gateway. */
 export function createShellGetStartedGalleryPort(gatewayUrl: string): GetStartedGalleryPort {
   return {
     list: async (signal) => readJson(await fetch(`${gatewayUrl}/api/app-gallery`, {
