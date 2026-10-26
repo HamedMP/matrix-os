@@ -1990,12 +1990,7 @@ while true; do
     request_identity="$(update_request_identity)" || request_identity=""
     if prepare_triggered_update; then
       if [ "$prepare_triggered_update_action" = already-current ]; then
-        # Preparation atomically refreshes .update-available.json, which is part
-        # of the request fingerprint. Re-read the complete post-prepare identity
-        # so the exact-version claim does not restore an otherwise consumed
-        # trigger solely because its trusted manifest changed underneath it.
-        request_identity="$(update_request_identity)" || request_identity=""
-        schedule_current_funded_retry "$request_identity" || log "WARN: exact-version retry claim deferred"
+        schedule_prepared_current_funded_retry || log "WARN: exact-version retry claim deferred"
       elif run_apply_update explicit; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
