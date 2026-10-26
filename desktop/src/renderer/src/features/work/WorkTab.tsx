@@ -610,7 +610,7 @@ function WorkTabContent({
   }, [hideRail, layout, showChat]);
 
   useEffect(() => {
-    if (layout !== "medium" || !inspectorVisible) return;
+    if (!active || layout !== "medium" || !inspectorVisible) return;
     const dismissOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       pendingFocusRef.current = showToolsRef;
@@ -618,7 +618,7 @@ function WorkTabContent({
     };
     window.addEventListener("keydown", dismissOnEscape);
     return () => window.removeEventListener("keydown", dismissOnEscape);
-  }, [inspectorVisible, layout]);
+  }, [active, inspectorVisible, layout]);
 
   const resolveDraftChatId = useCallback(async (): Promise<string | null> => {
     if (!client) return null;

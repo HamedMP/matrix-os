@@ -917,6 +917,33 @@ describe("WorkTab rail integration", () => {
     expect(inspector.getAttribute("data-active")).toBe("true");
   });
 
+  it("leaves foreground Escape and focus alone while a background medium Chat keeps its inspector", async () => {
+    initialWorkWidth = 900;
+    function HostedChat({ active }: { active: boolean }) {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return <><input aria-label="Foreground Settings field" />
+        <SurfaceChromeContext.Provider value={host}><header>{chrome?.rightActions}</header>
+          <WorkTab route="chat" active={active} visible initialChatId="chat_global" initialChatView="conversation" />
+        </SurfaceChromeContext.Provider></>;
+    }
+    const view = render(<HostedChat active />);
+    fireEvent.click(await screen.findByRole("button", { name: "Show inspector" }));
+    view.rerender(<HostedChat active={false} />);
+    const foreground = screen.getByRole("textbox", { name: "Foreground Settings field" });
+    foreground.focus();
+    fireEvent.keyDown(foreground, { key: "Escape" });
+    expect(screen.getByRole("button", { name: "Hide inspector" })).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Chat inspector" })).toBeTruthy();
+    expect(document.activeElement).toBe(foreground);
+
+    view.rerender(<HostedChat active />);
+    screen.getByRole("button", { name: "Inspector action" }).focus();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("complementary", { name: "Chat inspector" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Show inspector" }));
+  });
+
   it("recovers the same toolbar when its Bot query failed and content resolves identity after Retry", async () => {
     const api = useConnection.getState().api!;
     const original = api.get;
