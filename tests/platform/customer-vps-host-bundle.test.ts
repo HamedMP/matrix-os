@@ -1388,6 +1388,19 @@ test "$(readlink "$MATRIX_LEGACY_HOME/.hermes")" = "$MATRIX_HOME/.hermes"
     expect(syncAgent).toContain('last_staging_cleanup="$(date +%s)"');
   });
 
+  it('sync agent recreates missing update staging before startup cleanup', () => {
+    const root = process.cwd();
+    const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
+    const startup = syncAgent.slice(syncAgent.indexOf('log "Started for ${MATRIX_MACHINE_ID}'));
+    const stagingBootstrap = startup.indexOf(
+      'sudo /usr/bin/install -d -o matrix -g matrix -m 0755 -- "$STAGING_DIR"',
+    );
+    const cleanup = startup.indexOf('clean_staging');
+
+    expect(stagingBootstrap).toBeGreaterThan(-1);
+    expect(cleanup).toBeGreaterThan(stagingBootstrap);
+  });
+
   it('sync agent reports low disk update failures and supports safe repair cleanup', () => {
     const root = process.cwd();
     const syncAgent = readFileSync(join(root, 'distro/customer-vps/host-bin/matrix-sync-agent'), 'utf8');
