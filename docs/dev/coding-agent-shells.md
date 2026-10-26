@@ -78,6 +78,26 @@ When adding an event type:
 4. Update desktop/mobile reducers to ignore or render the new event without breaking older snapshots.
 5. Add stream replay tests that prove replay plus live delivery remains idempotent.
 
+## Codex transcript checkpoint recovery
+
+A saved byte checkpoint is valid only for its owner, thread and provider session.
+If the current transcript is shorter than that checkpoint, do not replay it from
+zero: legacy records cannot establish which Matrix turn produced their text or
+terminal outcome. Replaying can duplicate output or complete a newer turn.
+
+Reconcile the affected thread as interrupted only after confirming its backing
+execution stopped, or obtaining an identity-bound private runner receipt proving
+that the exact admitted request is idle with no active or queued work. Commit the
+interruption under the existing thread-state mutation boundary, rechecking the
+current turn and checkpoint. Preserve committed transcript content and never
+resend a prompt during recovery. Repeated reconciliation must be idempotent.
+
+Older runners without that private proof remain protected while execution is
+unconfirmed; a live process alone proves neither model activity nor completion.
+This recovery does not reconstruct uncommitted output or infer successful
+completion from an unbound terminal record. Validate it through the real event
+bridge, durable thread store and canonical recovery consumer across restart.
+
 ## Provider Adapters
 
 Provider-specific behavior belongs behind the gateway provider adapter interface, not in desktop or mobile UI. A provider adapter should:
