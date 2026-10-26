@@ -334,3 +334,29 @@
 }
 
 .mxo-dot--on { background: var(--mxo-green); }
+
+/* Spec 636, Part B: suggested bot names, with placeholders the size of a chip while they load. */
+.mxo-gs__names-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mxo-chip--placeholder {
+  display: inline-block;
+  width: 76px;
+  height: 29px;
+  background: var(--mxo-border);
+  border-color: transparent;
+  animation: mxo-gs-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes mxo-gs-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mxo-chip--placeholder { animation: none; }
+}

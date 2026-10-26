@@ -1,4 +1,4 @@
-# Spec 636: Get started, coding agents screen
+# Spec 636: Get started polish (coding agents screen, bot name suggestions)
 
 Status: Draft for review.
 Ticket: [ENG-391](https://linear.app/matrix-os/issue/ENG-391/polish-the-get-started-wizard).
@@ -8,9 +8,13 @@ Reviewers suggested: product (onboarding), Yuhan (Agents & providers), Nima.
 
 ## Goal
 
-Signing in to Claude Code or Codex gets its own Get started screen, before "Connect the tools you use". It looks like Settings › Agents & providers › Coding agents and says how much Matrix AI credit the owner already has, so it is clear the step is optional.
+Two polish items from the Get started review, shipped in one PR:
 
-Why: today the agent sign-in sits on step 3 under "Your coding agent" chips, mixed with the integrations list. It looks unlike Settings, only appears for "Write code with agents", and never says that Matrix already works with the owner's credit.
+1. **Coding agents screen** (Part A). Signing in to Claude Code or Codex gets its own Get started screen, before "Connect the tools you use". It looks like Settings › Agents & providers › Coding agents and says how much Matrix AI credit the owner already has, so it is clear the step is optional.
+
+2. **Bot name suggestions** (Part B). The "Name your main bot" step suggests five names with emojis from a small, fast model, with a refresh button for five more.
+
+Why (A): today the agent sign-in sits on step 3 under "Your coding agent" chips, mixed with the integrations list. It looks unlike Settings, only appears for "Write code with agents", and never says that Matrix already works with the owner's credit.
 
 ## Affected surfaces
 
@@ -70,9 +74,77 @@ Evidence: live screenshots and a short recording for Web Desktop, Web Canvas and
 
 ## Out of scope (rest of ENG-391)
 
-AI-suggested bot names with a refresh button; not calling apps "ready with your data" before an import finishes. Separate PRs on the same ticket.
+Not calling apps "ready with your data" before an import finishes: pending a product decision, separate PR on the same ticket.
 
 ## Risks
 
 - **Two screens of setup instead of one.** Mitigated: the screen is one click to skip and says Matrix already works.
 - **Credit copy vs plan.** The amount is the current balance, which for a new account is the starter credit. If product wants the plan's included amount instead, that needs a new snapshot field.
+
+---
+
+# Part B: bot name suggestions
+
+## Journey
+
+On "Name your main bot", the fixed Matrix / Atlas / Nova / Ada / Sage chips become **Suggested names**: five chips such as "🌙 Luna", and a 🔄 "New names" button.
+
+- Names fit the goals picked earlier and the personality chip currently selected. Refresh asks for five names not shown yet.
+- While the first names load, five placeholder chips hold their place (no layout shift). Refresh keeps the current names until new ones arrive.
+- Clicking a chip sets the bot's name, exactly like typing it; the emoji is decoration only and is not saved. "Or type a name" stays.
+- If suggestions are unavailable (slow, failing, rate limited, or not deployed yet), the step shows names from a built-in list of names with emojis instead, and refresh pages through it. The owner never sees an error for this.
+
+## Design
+
+| Piece | What |
+| -- | -- |
+| Contracts | `GetStartedBotNamesRequest` `{ goals, personality, exclude }` and `GetStartedBotNamesResponse` `{ names: [{ name, emoji }] × 5 }`; the built-in fallback list and picker |
+| Platform | `POST /internal/containers/:handle/get-started/bot-names`: calls Gemini (`gemini-3.5-flash-lite`, overridable with `MATRIX_GET_STARTED_NAMES_MODEL`) with the platform's existing `GEMINI_API_KEY` |
+| Gateway | `POST /api/settings/get-started/bot-names`: forwards to the platform with the computer's machine bearer |
+| UI | `GetStartedPort.suggestBotNames`, the suggestions row on the AI step, Web and Electron ports |
+
+Matrix pays for the model call; the owner's credit is never used. No model key ever reaches a customer computer: the computer asks the platform, as Integrations and Speech do.
+
+## Security architecture
+
+| Route | Method | Auth | Public | Body limit | Validation |
+| -- | -- | -- | -- | -- | -- |
+| `/api/settings/get-started/bot-names` (gateway) | `POST` | Gateway global owner auth | No | 2 KiB | strict Zod request; only while the wizard is `pending` or `in_progress` |
+| `/internal/containers/:handle/get-started/bot-names` (platform) | `POST` | Machine bearer: `buildPlatformVerificationToken(handle, platformSecret)`, constant-time compare; handle must be a known machine | No | 2 KiB | handle pattern; strict Zod request |
+
+- **Input:** goals and personality are enums, mapped to fixed labels on the platform; the only free text is `exclude`, at most 30 names that must each be a suggestion-shaped name (letters, spaces, apostrophes and hyphens, at most 24 characters). Nothing else from the client reaches the prompt.
+- **Output:** the model must return JSON; every name is validated with the same rule plus the bot name schema, emojis must be emoji only, duplicates and excluded names are dropped, and anything short of five valid names is a failure. Model text never reaches the client unvalidated.
+- **Key handling:** the Gemini key is sent in the `x-goog-api-key` header, never in a URL; `redirect: "error"`.
+- **Errors:** clients get generic messages only ("Name suggestions are unavailable"); provider status codes, bodies and messages are logged server-side without the prompt.
+- **Wizard state:** the gateway route reads the Get started state through the pinned `system/` directory like the existing routes, and refuses once setup has finished (`409`) or when not eligible (`404`).
+
+| Request | Result |
+| -- | -- |
+| Gateway: not eligible / flag off | `404` |
+| Gateway: setup finished or skipped | `409` |
+| Gateway: no platform URL, token or handle | `503` |
+| Gateway: platform error, timeout or invalid response | `503` generic |
+| Platform: bad or missing bearer | `401` |
+| Platform: unknown machine | `404` |
+| Platform: over the rate limit | `429` |
+| Platform: no `GEMINI_API_KEY` | `503` |
+| Platform: model timeout, error or invalid output | `502` generic |
+
+## Failure modes and resources
+
+- **Timeouts:** platform → Gemini 8 s; gateway → platform 10 s; the UI shows fallback names when the request fails or takes longer than 12 s, and ignores a late answer.
+- **Rate limit:** 30 requests per hour per machine on the platform, in memory, at most 2,048 tracked machines, oldest evicted, expired windows swept on each request. A restart resets it, which is acceptable for a cost guard of this size.
+- **Response bounds:** model and platform responses are read up to 32 KiB; larger is a failure.
+- **Concurrency:** the UI aborts a pending request when a new one starts or the step unmounts; only the latest answer is shown.
+- **Cost:** one Flash-Lite call per request (well under a cent), capped by the rate limit.
+
+## Acceptance checks (Part B)
+
+1. On a deployed platform, the AI step shows five suggested names with emojis that fit the goals and personality; 🔄 shows five different ones.
+2. Clicking a suggestion sets the name; finishing saves it without the emoji.
+3. With the platform route unreachable, the step shows five built-in names right away and refresh still works.
+4. The gateway route refuses requests once setup is finished; the platform route refuses a wrong bearer.
+
+## Rollout
+
+The gateway and UI ship in the host bundle; the platform route needs a platform deploy. Until then, every surface shows the built-in names.

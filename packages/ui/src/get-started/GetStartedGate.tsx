@@ -161,6 +161,7 @@ export function GetStartedGate({ port, zIndex, children, connector: Connector, w
       connect={connect}
       gallery={gallery}
       agentLogin={agentLogin ?? null}
+      suggestBotNames={port.suggestBotNames ?? null}
     />
   );
   return (

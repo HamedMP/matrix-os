@@ -23,6 +23,7 @@ import { GetStartedAgentsStep } from "./agents-step.js";
 import { GetStartedConnectTools, type GetStartedConnect } from "./connect.js";
 import { joinNames, type GetStartedGallery } from "./gallery.js";
 import { GetStartedRecipeBots } from "./recipe-bots.js";
+import type { GetStartedPort } from "./use-get-started.js";
 
 export interface GetStartedWizardProps {
   wizard: GetStartedWizardState;
@@ -37,6 +38,8 @@ export interface GetStartedWizardProps {
   gallery?: GetStartedGallery | null;
   /** The surface's Settings > Agents & providers host for the coding agents screen; absent when it has none. */
   agentLogin?: GetStartedAgentLoginHost | null;
+  /** The surface's bot name suggestions for the AI step; absent means built-in names only. */
+  suggestBotNames?: GetStartedPort["suggestBotNames"] | null;
 }
 
 /** App Gallery apps the owner's current connections make ready. */
@@ -178,11 +181,12 @@ function SignInPending({ connect, step }: { connect: GetStartedConnect | null; s
 }
 
 /** The questions after the name: one body per step, under the shared heading. */
-function StepContent({ wizard, answers, connect, gallery, ready, agentLogin, dispatch, titleId }: {
+function StepContent({ wizard, answers, connect, gallery, ready, agentLogin, suggestBotNames, dispatch, titleId }: {
   wizard: GetStartedWizardState;
   answers: GetStartedAnswers;
   connect: GetStartedConnect | null;
   agentLogin: GetStartedAgentLoginHost | null;
+  suggestBotNames: GetStartedPort["suggestBotNames"] | null;
   gallery: GetStartedGallery | null;
   ready: readonly GetStartedReadyApp[];
   dispatch(event: GetStartedWizardEvent): void;
@@ -209,14 +213,14 @@ function StepContent({ wizard, answers, connect, gallery, ready, agentLogin, dis
         <GetStartedConnectTools goals={wizard.goals} connect={connect} />
       </div>
     );
-    case "ai": return <GetStartedAiStep bot={wizard.bot} answers={answers} dispatch={dispatch} />;
+    case "ai": return <GetStartedAiStep bot={wizard.bot} answers={answers} dispatch={dispatch} suggestBotNames={suggestBotNames} />;
     case "gallery": return <GetStartedAppGalleryStep wizard={wizard} dispatch={dispatch} labelledBy={titleId} gallery={gallery} ready={ready} />;
     case "bots": return <GetStartedRecipeBots wizard={wizard} connect={connect} dispatch={dispatch} />;
     case "summary": return <Summary wizard={wizard} answers={answers} />;
   }
 }
 
-export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish, onSkipAll, connect = null, gallery = null, agentLogin = null }: GetStartedWizardProps) {
+export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish, onSkipAll, connect = null, gallery = null, agentLogin = null, suggestBotNames = null }: GetStartedWizardProps) {
   const titleId = useId();
   const hintId = useId();
   const focusTarget = useRef<HTMLElement | null>(null);
@@ -281,7 +285,7 @@ export function GetStartedWizard({ wizard, submitting, error, dispatch, onFinish
           />
         ) : null}
 
-        <StepContent wizard={wizard} answers={answers} connect={connect} gallery={gallery} ready={ready} agentLogin={agentLogin} dispatch={dispatch} titleId={titleId} />
+        <StepContent wizard={wizard} answers={answers} connect={connect} gallery={gallery} ready={ready} agentLogin={agentLogin} suggestBotNames={suggestBotNames} dispatch={dispatch} titleId={titleId} />
 
         {error ? <p className="mxo-failed-line" role="alert">{error}</p> : null}
         <SignInPending connect={connect} step={wizard.step} />
