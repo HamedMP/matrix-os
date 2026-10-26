@@ -80,6 +80,7 @@ export type {
   UseProviderSettingsControllerResult,
 } from "./agents-providers/provider-settings-controller.js";
 export { createCanonicalChatRefresh } from "./canonical-chat-refresh.js";
+export { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "./canonical-chat-admission.js";
 export { applyCanonicalChatContent } from "./canonical-chat-content.js";
 export { usePlatformSpeechDraft } from "./speech/use-platform-speech-draft.js";
 export { SpeechInputWaveform } from "./speech/SpeechInputWaveform.js";

@@ -125,6 +125,22 @@ Older gateways with a strict resume-state schema cannot read newly persisted
 generation metadata. A gateway downgrade needs a reviewed compatibility
 migration; do not discard owner conversations or native history to force it.
 
+## Send acknowledgement recovery
+
+A transport timeout does not prove that a Chat message was rejected. Web
+Desktop and Electron Desktop retain the exact admission request body and id
+while its result is unknown. Reconcile against the persisted turn and its
+linked input message and run, including when acceptance arrives over the
+stream before the HTTP response. A missing turn in a bounded history page or
+a failed read remains unknown.
+
+Confirm a matching admission only once. Clear only the unchanged draft owned
+by that attempt's Chat, runtime/auth identity and editor revision; a late
+response must preserve newer edits. An explicit retry of an unresolved send
+reuses its original body and id. Reconciliation never posts a message by
+itself. Bound unresolved in-memory receipts and reject overflow rather than
+evicting an uncertain receipt and accidentally issuing another request id.
+
 ## Provider Adapters
 
 Provider-specific behavior belongs behind the gateway provider adapter interface, not in desktop or mobile UI. A provider adapter should:

@@ -194,7 +194,9 @@ function CanonicalChatWorkspaceContent({
       console.warn("[chat] credential refresh failed", error instanceof Error ? error.name : "UnknownError");
     });
   }, [client]);
+  const admissionIdentity = useConnection(desktopProviderIdentityKey);
   const controller = useCanonicalChatRouteController({
+    admissionIdentity,
     client,
     projectId,
     active: live && !explicitSharedRoute,
@@ -544,7 +546,7 @@ function CanonicalChatWorkspaceContent({
         permissionMode: mentionPermission.permissionMode,
       };
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
-      const attempt = permissionResources.length ? mentionRequests.resolve(client, requestScope, input, "send") : undefined;
+      const attempt = mentionRequests.resolve(client, requestScope, permissionResources.length ? input : { ...input, draftRevision }, "send");
       const clientRequestId = attempt?.clientRequestId;
       const acknowledgeAccepted = () => {
         if (!isCurrentRuntimeGeneration(runtimeGeneration)

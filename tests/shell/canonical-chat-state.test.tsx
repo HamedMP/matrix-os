@@ -464,7 +464,7 @@ describe("canonical shell Chat state", () => {
     }));
 
     await waitFor(() => expect(result.current.messages.at(-1)?.content)
-      .toBe("Message could not be sent. Try again."));
+      .toBe("Message status is unconfirmed. You can retry safely."));
     expect(fetchFn.mock.calls.some(([, init]) =>
       (init as RequestInit | undefined)?.method === "DELETE")).toBe(false);
   });
