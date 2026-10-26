@@ -6,21 +6,19 @@ import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod/v4";
 import {
-  AgentThreadEventSchema,
   AgentThreadSummarySchema,
-  SafeClientErrorSchema,
-  canonicalAgentFailure,
   type AgentThreadEvent,
 } from "@matrix-os/contracts";
 import type { RequestPrincipal } from "../request-principal.js";
 import type { AiTokenUsage } from "../ai-analytics.js";
 import { parseCodexExecJsonLine } from "./codex-events.js";
-import type { CodexFailureReason } from "./codex-terminal-failure.mjs";
+import { completionEvents } from "./codex-terminal-events.js";
 import { codexExecContractStatus } from "./codex-version.js";
 import { codexAppServerContractStatus } from "./codex-app-server-version.js";
 import { CodexExecutableSchema, codexExecutableFromEnv } from "./codex-executable.js";
 import type { CodingAgentProviderEventBatch } from "./provider-adapter.js";
 import { runtimeUnavailable, type RuntimeSupervision } from "./codex-runtime-supervision.js";
+import type { ProviderIdleObservation } from "./provider-transcript-recovery.js";
 
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
 const WatchInputSchema = z.object({
@@ -47,6 +45,8 @@ type VersionCommand = (
   options: { cwd: string; timeout: number; signal: AbortSignal },
 ) => Promise<{ stdout: string; stderr: string }>;
 type ProviderEventStore = {
+  recoverProviderTranscript?(principal: RequestPrincipal, threadId: string, cursor: { sessionId: string; expectedOffset: number },
+    proveIdle: (observation: ProviderIdleObservation) => Promise<boolean>): Promise<boolean>;
   ingestProviderEvents(
     principal: RequestPrincipal,
     threadId: string,
@@ -66,6 +66,7 @@ type WatchEntry = {
   lastTouchedAt: number;
   pendingOccurredAt?: string;
   stopRequestedAt?: number;
+  nextDriftCheckAt?: number;
 };
 
 const execFileAsync = promisify(execFile);
@@ -93,45 +94,6 @@ function eventId(sessionId: string, byteOffset: number, index: number): string {
   return `evt_codex_${digest}`;
 }
 
-function completionEvents(input: {
-  threadId: string;
-  outcome: "completed" | "failed" | "aborted";
-  occurredAt: string;
-  nextEventId: () => string;
-  failureReason?: CodexFailureReason;
-}): AgentThreadEvent[] {
-  const events: AgentThreadEvent[] = [];
-  if (input.outcome === "failed") {
-    const classified = canonicalAgentFailure(input.failureReason);
-    events.push(AgentThreadEventSchema.parse({
-      type: "thread.error",
-      eventId: input.nextEventId(),
-      threadId: input.threadId,
-      occurredAt: input.occurredAt,
-      error: SafeClientErrorSchema.parse(classified ? {
-        code: `agent_${input.failureReason}`,
-        safeMessage: classified.safeMessage,
-        retryable: classified.retryable,
-        recoveryActions: classified.retryable ? ["retry"]
-          : input.failureReason === "authentication_required" ? ["sign_in", "open_setup_terminal"]
-          : classified.recoveryActions?.includes("start_new_chat") ? ["start_new_session"] : ["select_runtime"],
-      } : {
-        code: "provider_failed",
-        safeMessage: "The coding agent stopped. Review the thread and try again.",
-        retryable: true,
-        recoveryActions: ["retry"],
-      }),
-    }));
-  }
-  events.push(AgentThreadEventSchema.parse({
-    type: "thread.completed",
-    eventId: input.nextEventId(),
-    threadId: input.threadId,
-    occurredAt: input.occurredAt,
-    outcome: input.outcome,
-  }));
-  return events;
-}
 
 export function createCodexEventBridge(options: {
   homePath: string;
@@ -141,6 +103,7 @@ export function createCodexEventBridge(options: {
   now?: () => Date;
   nowMs?: () => number;
   isRuntimeAlive?: (sessionId: string) => Promise<boolean>;
+  isExecutionIdle?: (observation: ProviderIdleObservation) => Promise<boolean>;
 }) {
   const homePath = resolve(options.homePath);
   const eventDir = join(homePath, "system", "coding-agents", "provider-events");
@@ -312,6 +275,21 @@ export function createCodexEventBridge(options: {
       if (info.isSymbolicLink() || !info.isFile() || info.size > MAX_TRANSCRIPT_BYTES) {
         watchers.delete(entry.sessionId);
         return false;
+      }
+      if (info.size < entry.offset && options.isExecutionIdle && store?.recoverProviderTranscript
+        && nowMs() >= (entry.nextDriftCheckAt ?? 0)) {
+        entry.nextDriftCheckAt = nowMs() + 10_000;
+        if (await store.recoverProviderTranscript(entry.principal, entry.threadId,
+          { sessionId: entry.sessionId, expectedOffset: entry.offset }, async observation => {
+            if (!await options.isExecutionIdle!(observation) || watchers.get(entry.sessionId) !== entry) return false;
+            const current = await lstat(entry.path);
+            return current.isFile() && !current.isSymbolicLink() && current.size < entry.offset
+              && current.dev === info.dev && current.ino === info.ino;
+          })) {
+          entry.supervision.terminal = true;
+          watchers.delete(entry.sessionId);
+          return true;
+        }
       }
       if (info.size <= entry.offset) {
         if (stoppedDrainExpired()) watchers.delete(entry.sessionId);

@@ -1,4 +1,5 @@
 import { assertCodingAgentProviderEnabled } from "./codex-harness-admission.js";
+import { applyProviderTranscriptRecovery, providerTranscriptUnavailable, type ProviderIdleObservation } from "./provider-transcript-recovery.js";
 import { deleteProjectThreadState } from "./project-thread-deletion.js";
 import { isFailedCodexBootstrap } from "./codex-failed-bootstrap.js";
 import { applyBackgroundThreadStop, withBackgroundResumeState, BackgroundThreadStopSchema, type BackgroundThreadStop } from "./background-thread-stop.js";
@@ -220,6 +221,8 @@ export interface CodingAgentThreadStore {
     validTaskIds: readonly string[],
   ): Promise<CodingAgentProjectThreadProjection>;
   getThread(principal: RequestPrincipal, threadId: string, cursor?: string): Promise<AgentThreadSnapshot>;
+  recoverProviderTranscript(principal: RequestPrincipal, threadId: string, cursor: { sessionId: string; expectedOffset: number },
+    proveIdle: (observation: ProviderIdleObservation) => Promise<boolean>): Promise<boolean>;
   ingestProviderEvents(
     principal: RequestPrincipal,
     threadId: string,
@@ -1347,6 +1350,7 @@ export function createCodingAgentThreadStore(
           await assertCodingAgentProviderEnabled(options.providerAdmission, thread.providerId,
             () => new CodingAgentTurnError("turn_unavailable"));
           if (!provider.resumeTurn || !thread.providerResumeState
+            || providerTranscriptUnavailable(thread, state.events)
             || isFailedCodexBootstrap({ ownerId: principal.userId, thread, events: state.events, turns: state.turns })) {
             throw new CodingAgentTurnError("thread_not_resumable");
           }
@@ -1564,6 +1568,13 @@ export function createCodingAgentThreadStore(
       const thread = state.threads.find((candidate) => candidate.ownerId === principal.userId && candidate.id === threadId);
       if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
       return snapshotFor(thread, state.events, cursor);
+    },
+    async recoverProviderTranscript(principal, threadId, cursor, proveIdle) {
+      const events = await mutate(state => applyProviderTranscriptRecovery(state, {
+        ownerId: principal.userId, threadId, cursor, proveIdle, now, nextEventId,
+      }));
+      publish(principal.userId, threadId, events);
+      return events.length > 0;
     },
     async ingestProviderEvents(principal, threadId, batch, cursor) {
       const parsed = parseCodingAgentProviderEventBatch(batch, threadId);

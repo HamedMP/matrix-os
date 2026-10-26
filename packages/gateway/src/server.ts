@@ -4,6 +4,7 @@ import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
 import { createCanonicalPhaseDiscovery } from "./server/canonical-phase-discovery.js";
 import { codexNativeEnvironment } from "./ai-providers/codex-native-environment.js";
 import { createNativeCodexRuntime } from "./server/native-codex-runtime.js";
+import { createCodexExecutionIdleProof } from "./coding-agents/codex-execution-observation.js";
 import { registerAppIntegrationCapabilities, registerAppAiCapabilities, createAppAiSubscriptionObservation, closeAppAiCapabilities } from "./server/app-capabilities.js";
 import { withMatrixAnthropicProviderInstances } from "./bots/matrix-anthropic-provider-instance.js";
 import { createMatrixAnthropicRuntime } from "./server/matrix-anthropic-runtime.js";
@@ -596,6 +597,8 @@ export async function createGateway(config: GatewayConfig) {
       ? createCodexEventBridge({
         homePath,
         codexExecutable,
+        isExecutionIdle: createCodexExecutionIdleProof({ sessions: () => codingAgentWorkspaceRuntime,
+          control: createCodexControlClient({ homePath }) }),
         isRuntimeAlive: (sessionId: string) => {
           const sessions = codingAgentWorkspaceRuntime;
           return sessions
