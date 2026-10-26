@@ -7,6 +7,7 @@ import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-
 import { createCodexEventBridge, codexProviderEventPath } from "../../packages/gateway/src/coding-agents/codex-event-bridge.js";
 import { restoreBackgroundChatThread } from "../../packages/gateway/src/coding-agents/background-chat-recovery.js";
 import { recoverCodingRun } from "../../packages/gateway/src/chat/coding-run-recovery.js";
+import { createCodexExecutionIdleProof } from "../../packages/gateway/src/coding-agents/codex-execution-observation.js";
 
 const principal = { userId: "owner", source: "jwt" as const };
 const backgroundRef = { id: "bg_00000000000000000000000000000001" };
@@ -28,6 +29,59 @@ async function fixture() {
 }
 
 describe("background Chat durable observation", () => {
+  it("fences the invalid checkpoint when an unsupported runner's exact backing execution stopped", async () => {
+    const f = await fixture();
+    const proofOptions = {
+      sessions: () => ({ getSession: async () => ({ ok: true, session: { id: f.sessionId,
+        ownerId: principal.userId, kind: "agent", agent: "codex", runtime: { type: "background" }, backgroundRef } }) }) as never,
+      control: { isExecutionIdle: async () => false },
+      backgroundRuntime: { isRunning: vi.fn().mockResolvedValue(false) },
+    };
+    const bridge = createCodexEventBridge({ ...f.bridgeOptions, isRuntimeAlive: async () => false,
+      isExecutionIdle: createCodexExecutionIdleProof(proofOptions) });
+    try {
+      bridge.attachThreadStore(f.store);
+      const path = codexProviderEventPath(f.homePath, f.sessionId);
+      await bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId, checkpoint: true });
+      const output = "preserved after runner exit ".repeat(30);
+      await writeFile(path, [
+        { type: "thread.started", thread_id: "native_current" }, { type: "turn.started" },
+        { type: "item.completed", item: { id: "msg_first", type: "agent_message", text: output } },
+      ].map(record => JSON.stringify(record)).join("\n") + "\n");
+      await bridge.drain();
+      await writeFile(path, '{"type":"turn.completed"}\n');
+      f.setClock(10_000);
+      await bridge.drain();
+      const snapshot = await f.store.getThread(principal, f.threadId);
+      expect(snapshot.thread.status).toBe("failed");
+      expect(snapshot.events.items.find(event => event.type === "thread.error"))
+        .toMatchObject({ error: { code: "agent_history_unavailable", retryable: false } });
+      expect(snapshot.events.items.filter(event => event.type === "assistant.text.delta").map(event => event.delta)).toEqual([output]);
+      expect(proofOptions.backgroundRuntime.isRunning).toHaveBeenCalledWith(backgroundRef);
+      await expect(f.store.acceptTurn(principal, f.threadId, { message: "continue", clientRequestId: "req_after_exit" }))
+        .rejects.toMatchObject({ code: "thread_not_resumable" });
+      expect(f.provider.resumeTurn).not.toHaveBeenCalled();
+    } finally { await f.store.shutdownTurns(); await bridge.shutdown(); await rm(f.homePath, { recursive: true, force: true }); }
+  });
+
+  it("does not turn uncertain liveness into retryable failure when its transcript checkpoint is invalid", async () => {
+    const f = await fixture();
+    const bridge = createCodexEventBridge({ ...f.bridgeOptions, isExecutionIdle: async () => false,
+      isRuntimeAlive: async () => { throw new Error("runtime state unavailable"); } });
+    try {
+      bridge.attachThreadStore(f.store);
+      const path = codexProviderEventPath(f.homePath, f.sessionId);
+      await bridge.watch({ principal, threadId: f.threadId, sessionId: f.sessionId, checkpoint: true });
+      await writeFile(path, '{"type":"thread.started","thread_id":"native_current"}\n{"type":"turn.started"}\n');
+      await bridge.drain();
+      await writeFile(path, '{"type":"turn.completed"}\n');
+      for (const time of [10_000, 20_000, 30_000]) { f.setClock(time); await bridge.drain(); }
+      const snapshot = await f.store.getThread(principal, f.threadId);
+      expect(snapshot.thread.status).toBe("running");
+      expect(snapshot.events.items.filter(event => event.type === "thread.completed" || event.type === "thread.error")).toEqual([]);
+    } finally { await bridge.shutdown(); await rm(f.homePath, { recursive: true, force: true }); }
+  });
+
   it("settles a shortened transcript only after its exact backing runner confirms idle without replaying output", async () => {
     const f = await fixture();
     const isExecutionIdle = vi.fn().mockResolvedValue(true);

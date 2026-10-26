@@ -598,7 +598,7 @@ export async function createGateway(config: GatewayConfig) {
         homePath,
         codexExecutable,
         isExecutionIdle: createCodexExecutionIdleProof({ sessions: () => codingAgentWorkspaceRuntime,
-          control: createCodexControlClient({ homePath }) }),
+          control: createCodexControlClient({ homePath }), backgroundRuntime: backgroundAgentRuntime }),
         isRuntimeAlive: (sessionId: string) => {
           const sessions = codingAgentWorkspaceRuntime;
           return sessions

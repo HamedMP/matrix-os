@@ -40,4 +40,3 @@ export function completionEvents(input: {
   }));
   return events;
 }
-

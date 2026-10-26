@@ -291,6 +291,9 @@ export function createCodexEventBridge(options: {
           return true;
         }
       }
+      // A bad checkpoint must not fall through retryable generic supervision:
+      // uncertain liveness cannot authorize either replay or another prompt.
+      if (info.size < entry.offset) return false;
       if (info.size <= entry.offset) {
         if (stoppedDrainExpired()) watchers.delete(entry.sessionId);
         return true;
