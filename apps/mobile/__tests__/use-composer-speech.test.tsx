@@ -347,6 +347,34 @@ describe("useComposerSpeech", () => {
     warn.mockRestore();
   });
 
+  it("refreshes the Preview allowance after a failed transcription", async () => {
+    mockClient.capabilities
+      .mockResolvedValueOnce(PREVIEW_READY)
+      .mockResolvedValueOnce({
+        ...PREVIEW_READY,
+        previewQuota: {
+          ...PREVIEW_READY.previewQuota,
+          requestsUsed: 2,
+          requestsRemaining: 23,
+        },
+      });
+    mockClient.transcribe.mockRejectedValueOnce(new Error("request failed after settlement"));
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { result } = renderSpeech();
+    await waitFor(() => expect(result.current?.phase).toBe("idle"));
+    expect(result.current?.previewQuotaLabel).toMatch(/^Preview dictation: 24 of 25 requests remaining until .+\.$/);
+
+    act(() => result.current?.start());
+    await waitFor(() => expect(result.current?.phase).toBe("recording"));
+    speak();
+    act(() => result.current?.stop());
+
+    await waitFor(() => expect(result.current?.phase).toBe("error"));
+    await waitFor(() => expect(mockClient.capabilities).toHaveBeenCalledTimes(2));
+    expect(result.current?.previewQuotaLabel).toMatch(/^Preview dictation: 23 of 25 requests remaining until .+\.$/);
+    warn.mockRestore();
+  });
+
   it("says so when the microphone is refused at the prompt", async () => {
     mockPermissions.current = { granted: false, canAskAgain: true, status: "undetermined" };
     mockPermissions.requested = { granted: false, canAskAgain: false, status: "denied" };

@@ -174,12 +174,14 @@ export function useComposerSpeech({
         retry: false,
       }),
       transcribe: async (input) => {
-        const result = await gateway.transcribe(input);
-        // A successful request spends Preview quota. Mark the cached answer
-        // stale before the shared hook asks again so mobile never shows the
-        // pre-request allowance for another five minutes.
-        await queryClient.invalidateQueries({ queryKey: capabilitiesKey, exact: true });
-        return result;
+        try {
+          return await gateway.transcribe(input);
+        } finally {
+          // The server can settle Preview quota before a response fails. Mark
+          // the cached answer stale in either outcome so the shared hook's
+          // refresh cannot show the pre-request allowance for five minutes.
+          await queryClient.invalidateQueries({ queryKey: capabilitiesKey, exact: true });
+        }
       },
     };
   }, [queryClient, capabilitiesKey, session]);
