@@ -10,8 +10,8 @@ import { useUi } from "@renderer/stores/ui";
 import type { ApiClient } from "@renderer/lib/api";
 
 const source = { commit: "b".repeat(40), ancestors: ["a".repeat(40)] };
-const compatible = { version: "v1", build: { sha: source.commit } };
-const incompatible = { version: "v2", build: { sha: "a".repeat(40) } };
+const compatible = { version: "v1", build: { sha: source.commit }, runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 1, maxDesktopProtocol: 1 } };
+const incompatible = { version: "v2", runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 2, maxDesktopProtocol: 2 } };
 beforeEach(() => {
   useUi.setState(useUi.getInitialState(), true);
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
