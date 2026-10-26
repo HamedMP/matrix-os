@@ -10,14 +10,14 @@ import { CheckIcon, ChevronDownIcon, MonitorIcon, RefreshCwIcon } from "@/lib/hu
 import { getGatewayUrl } from "@/lib/gateway";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { UserButton } from "../UserButton";
-import { GettingStartedPopover } from "../onboarding/GettingStartedPopover";
+import { GettingStartedPopover, type GettingStartedDestination } from "../onboarding/GettingStartedPopover";
 
 export type WebDesktopSettingsSection = "appearance" | "billing" | "integrations" | "agents-providers" | "organization";
 interface WebDesktopControlsProps {
   onOpenSettings: (section: WebDesktopSettingsSection) => void;
   onOpenCommandPalette: () => void;
   onOpenSupport: () => void;
-  onOpenFirstWork: () => void;
+  onOpenFirstWork: (destination?: GettingStartedDestination) => void;
 }
 
 async function loadActivity(): Promise<unknown> {

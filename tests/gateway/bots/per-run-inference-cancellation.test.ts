@@ -5,6 +5,8 @@ import { createFundedAdmissionQueue } from "../../../packages/gateway/src/funded
 import { createManagedPiRuntime } from "../../../packages/gateway/src/chat/managed-pi-runtime.js";
 import type { ScopeRuntimeHost } from "../../../packages/gateway/src/scope-runtime-host/index.js";
 import { makeAiProviderSnapshot } from "../../fixtures/ai-provider-snapshot.js";
+import { forwardBotInference } from "../../../packages/gateway/src/bots/broker-inference.js";
+import type { ScopeRuntimeBotInferenceRequest } from "@matrix-os/scope-runtime/broker-protocol";
 import type { BotInferenceDependencies } from "../../../packages/gateway/src/bots/broker-inference.js";
 
 const model = "@cf/zai-org/glm-5.3-flash";
@@ -159,5 +161,62 @@ describe("run-owned broker inference cancellation", () => {
       await expect(fixture.actions.handleFrame(frame(next))).resolves.toMatchObject({ ok: true, body: "done" });
       expect(fetchImpl).toHaveBeenCalledTimes(1);
     } finally { fixture.queue.close(); fixture.registry.shutdown(); }
+  });
+});
+
+
+describe("bounded asynchronous inference authority",()=>{
+  const allowed={allowed:true,accessSourceId:"matrix_included",allowedModelIds:[model],allowedEgressOrigins:[]} as const;
+  function fixture(){
+    const lifetime=new AbortController(),run=new AbortController(),queue=createFundedAdmissionQueue();
+    const fetchImpl=vi.fn<typeof fetch>(async()=>new Response("done",{headers:{"content-type":"text/event-stream"}}));
+    const resolveCredentials=vi.fn(async()=>({env:{ANTHROPIC_AUTH_TOKEN:"test-only",ANTHROPIC_BASE_URL:"https://relay.example.invalid"}}));
+    return {lifetime,run,queue,fetchImpl,resolveCredentials,deps:{homePath:"/tmp",lifetime:lifetime.signal,runSignal:run.signal,fundedAdmission:queue,fetchImpl,resolveCredentials}};
+  }
+  it.each(["abort","timeout"])("settles initial deferred authorization on %s without a credential or late send",async(mode)=>{
+    const f=fixture();let finish!:(value:typeof allowed)=>void;let settled=false;
+    const authorize=vi.fn(()=>new Promise<typeof allowed>(resolve=>{finish=resolve;}));
+    const pending=forwardBotInference(frame() as ScopeRuntimeBotInferenceRequest,binding,authorize,f.deps).then(result=>{settled=true;return result;});
+    try{
+      await vi.advanceTimersByTimeAsync(0);expect(authorize).toHaveBeenCalledOnce();
+      if(mode==="abort")f.run.abort();else await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(0);expect(settled).toBe(true);
+      await expect(pending).resolves.toMatchObject({ok:false,error:"action_denied"});
+      expect(f.resolveCredentials).not.toHaveBeenCalled();expect(f.fetchImpl).not.toHaveBeenCalled();expect(vi.getTimerCount()).toBe(0);
+      finish(allowed);await vi.advanceTimersByTimeAsync(0);expect(f.fetchImpl).not.toHaveBeenCalled();
+    }finally{f.run.abort();finish?.(allowed);f.queue.close();}
+  });
+  it("contains a rejected initial authority and clears its deadline before credential resolution",async()=>{
+    const f=fixture();try{await expect(forwardBotInference(frame() as ScopeRuntimeBotInferenceRequest,binding,async()=>{throw new Error("private authority failure");},f.deps)).resolves.toMatchObject({error:"action_denied"});expect(f.fetchImpl).not.toHaveBeenCalled();expect(f.resolveCredentials).not.toHaveBeenCalled();expect(vi.getTimerCount()).toBe(0);}finally{f.queue.close();}
+  });
+  it("bounds initial binding revalidation as well as model authorization",async()=>{
+    const f=fixture();let finish!:(value:boolean)=>void;let settled=false;const authorize=vi.fn(()=>allowed);
+    const pending=forwardBotInference(frame() as ScopeRuntimeBotInferenceRequest,binding,authorize,{...f.deps,revalidateBinding:()=>new Promise<boolean>(resolve=>{finish=resolve;})}).then(result=>{settled=true;return result;});
+    try{await vi.advanceTimersByTimeAsync(10_000);expect(settled).toBe(true);await expect(pending).resolves.toMatchObject({error:"action_denied"});expect(authorize).not.toHaveBeenCalled();expect(f.fetchImpl).not.toHaveBeenCalled();}
+    finally{f.run.abort();finish?.(false);f.queue.close();}
+  });
+  it.each(["abort","timeout"])("releases the real funded pump when queued reauthorization stalls then %s",async(mode)=>{
+    const f=fixture();let finish!:(value:typeof allowed)=>void;let settled=false;
+    f.fetchImpl.mockResolvedValueOnce(new Response("busy",{status:429,headers:{"x-matrix-funded-reason":"capacity"}}));
+    const authorize=vi.fn().mockResolvedValueOnce(allowed).mockResolvedValueOnce(allowed).mockImplementationOnce(()=>new Promise<typeof allowed>(resolve=>{finish=resolve;})).mockResolvedValue(allowed);
+    const first=forwardBotInference(frame() as ScopeRuntimeBotInferenceRequest,binding,authorize,f.deps).then(result=>{settled=true;return result;});
+    try{
+      await vi.advanceTimersByTimeAsync(250);expect(authorize).toHaveBeenCalledTimes(3);expect(f.fetchImpl).toHaveBeenCalledTimes(1);
+      const other={...binding,runtimeHandle:`runtime_${"d".repeat(32)}`,runId:"run_other"};
+      const next=forwardBotInference(frame(other) as ScopeRuntimeBotInferenceRequest,other,()=>allowed,{...f.deps,runSignal:new AbortController().signal});
+      await vi.advanceTimersByTimeAsync(0);expect(f.fetchImpl).toHaveBeenCalledTimes(1);
+      if(mode==="abort")f.run.abort();else await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(0);expect(settled).toBe(true);
+      await expect(first).resolves.toMatchObject({ok:false,error:"action_denied"});await expect(next).resolves.toMatchObject({ok:true});
+      expect(f.fetchImpl).toHaveBeenCalledTimes(2);finish(allowed);await vi.advanceTimersByTimeAsync(0);expect(f.fetchImpl).toHaveBeenCalledTimes(2);
+    }finally{f.run.abort();finish?.(allowed);f.queue.close();}
+  });
+  it("bounds catch-path diagnostic authorization after an unknown provider outcome without retry",async()=>{
+    const f=fixture();let finish!:(value:typeof allowed)=>void;let settled=false;const diagnostic=vi.fn();
+    f.fetchImpl.mockRejectedValue(new Error("unknown outcome"));
+    const authorize=vi.fn().mockResolvedValueOnce(allowed).mockResolvedValueOnce(allowed).mockImplementation(()=>new Promise<typeof allowed>(resolve=>{finish=resolve;}));
+    const pending=forwardBotInference(frame() as ScopeRuntimeBotInferenceRequest,binding,authorize,{...f.deps,onFundedFailure:diagnostic}).then(result=>{settled=true;return result;});
+    try{await vi.advanceTimersByTimeAsync(10_000);expect(settled).toBe(true);await expect(pending).resolves.toMatchObject({error:"provider_unavailable"});expect(f.fetchImpl).toHaveBeenCalledOnce();expect(diagnostic).not.toHaveBeenCalled();}
+    finally{f.run.abort();finish?.(allowed);f.queue.close();}
   });
 });

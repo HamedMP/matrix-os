@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { AppGalleryCatalogSchema, deriveGalleryReadiness, filterGalleryApps } from "../../packages/contracts/src/app-gallery.js";
+import { AppGalleryCatalogSchema, deriveGalleryReadiness, filterGalleryApps, galleryAppsReadyWith } from "../../packages/contracts/src/app-gallery.js";
 import { getAction } from "../../packages/gateway/src/integrations/registry.js";
 
 const catalog = async () => AppGalleryCatalogSchema.parse(JSON.parse(await readFile(new URL("../../home/system/app-gallery.json", import.meta.url), "utf8")));
@@ -35,5 +35,22 @@ describe("curated gallery contract", () => {
     expect(deriveGalleryReadiness(apps.find(a => a.id === "habits")!, null).status).toBe("ready");
     expect(filterGalleryApps(apps, { collection: "business", query: "Stripe" }).map(a => a.id)).toContain("revenue");
     expect(filterGalleryApps(apps, { collection: "personal", query: "unlikely-no-result" })).toEqual([]);
+  });
+});
+
+describe("apps ready with the owner's connections", () => {
+  it("lists apps whose required services are connected, most connections used first, capped at six", async () => {
+    const { apps } = await catalog();
+    const ready = galleryAppsReadyWith(apps, new Set(["gmail", "google_calendar"]));
+    expect(ready.map((entry) => entry.app.id)).toEqual(["atlas", "people", "meeting-briefs", "hiring", "folio", "agenda"]);
+    expect(ready[0]?.using.map((service) => service.id)).toEqual(["gmail", "google_calendar"]);
+    expect(ready[0]?.using.map((service) => service.name)).toEqual(["Gmail", "Google Calendar"]);
+  });
+
+  it("needs every required service and at least one connection", async () => {
+    const { apps } = await catalog();
+    expect(galleryAppsReadyWith(apps, new Set())).toEqual([]);
+    expect(galleryAppsReadyWith(apps, new Set(["github"]))).toEqual([]);
+    expect(galleryAppsReadyWith(apps, new Set(["github", "linear"])).map((entry) => entry.app.id)).toEqual(["releases", "projects"]);
   });
 });

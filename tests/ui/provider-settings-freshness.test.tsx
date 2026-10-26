@@ -191,7 +191,7 @@ it.each(["future", "invalid", "mismatched"])("retains conservative credit deriva
   const source = snapshotWithCredit().accessSources[0]!;
   if (source.usage.kind !== "managed_credit" || !source.usage.chatAvailability) throw new Error("fixture must provide credit");
   if (condition === "future") {
-    source.usage.asOf = new Date(Date.now() + 60_000).toISOString();
+    source.usage.asOf = new Date(Date.now() + 60_001).toISOString();
     source.usage.chatAvailability.asOf = source.usage.asOf;
   }
   if (condition === "invalid") source.usage.asOf = "not-a-date";

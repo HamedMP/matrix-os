@@ -4,7 +4,7 @@ LANES = ('unit','mechanical','web','e2e')
 ELECTRON = {
  'grid':['tests/e2e/terminal-soft-grid.e2e.test.ts'],
  'electron-download':['tests/e2e/desktop/file-download.e2e.test.ts'],
- 'electron-input':['tests/e2e/desktop/canonical-input.e2e.test.ts'],
+ 'electron-input':['tests/e2e/desktop/canonical-input.e2e.test.ts','tests/e2e/desktop/account-organization-picker.e2e.test.ts'],
  'electron-providers':['tests/e2e/provider-authorization-electron.e2e.test.ts','tests/e2e/desktop/provider-auth-terminal.e2e.test.ts','tests/e2e/desktop/agents-providers-figma.e2e.test.ts','tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts','tests/e2e/desktop/provider-settings-idle.e2e.test.ts'],
  'electron-folder':['tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts'],
  'electron-deletion':['tests/e2e/desktop/project-deletion.e2e.test.ts'],

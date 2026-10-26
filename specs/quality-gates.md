@@ -37,7 +37,15 @@ Each phase checkpoint must include:
 
 - Unit tests pass (`bun run test`)
 - Integration test that exercises the full end-to-end path (e.g., "initiate call via IPC tool -> Twilio API called -> webhook processes event -> call record persisted")
-- Manual Docker verification scenario
+- Runtime verification scenario using the actual delivery topology (customer VPS host services for production; Docker only for an explicitly local fixture)
+
+Follow [testing effectiveness](../docs/dev/testing-effectiveness.md): name each
+critical user journey's starting state, action, observable durable outcome,
+relevant failure/recovery, authority boundary, affected surface, and executing
+test lane. Keep the boundary that failed real; validate producer output with the
+actual consumer. Record bug-replay or fault-injection red/green proof. A mocked
+renderer or source-string assertion cannot qualify a full user journey. Reuse
+existing meaningful coverage and document exact proof before deleting tests.
 
 ## 6. Code Review Checklist
 
@@ -49,7 +57,7 @@ Every code review MUST check these failure-mode questions. Don't just verify "do
 - Do error responses leak internal state? (stack traces, DB column names, provider names)
 
 **Atomicity:**
-- Do multi-step mutations use a transaction? (3+ sequential DB writes need BEGIN/COMMIT/ROLLBACK)
+- Do multi-step mutations use a transaction? (2+ related DB writes need BEGIN/COMMIT/ROLLBACK)
 - Can a mid-flight crash leave inconsistent state? (orphaned rows, wrong counters, half-deleted cascades)
 - Is there a TOCTOU race? (check-then-insert without unique constraint or lock)
 

@@ -27,6 +27,12 @@ describe('customer VPS bootstrap configuration', () => {
     })).toThrow('Funded AI runtime is misconfigured');
   });
 
+  it('keeps the Get started wizard off for new computers unless explicitly enabled', () => {
+    expect(loadCustomerVpsConfig({}).getStartedEnabled).toBe(false);
+    expect(loadCustomerVpsConfig({ MATRIX_GET_STARTED_ENABLED: '1' }).getStartedEnabled).toBe(false);
+    expect(loadCustomerVpsConfig({ MATRIX_GET_STARTED_ENABLED: 'true' }).getStartedEnabled).toBe(true);
+  });
+
   it('keeps managed speech disabled unless runtime provisioning explicitly enables it', () => {
     expect(loadCustomerVpsConfig({}).platformSpeechEnabled).toBe(false);
     expect(loadCustomerVpsConfig({

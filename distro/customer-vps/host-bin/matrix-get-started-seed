@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Spec 635: mark a brand-new owner home as eligible for the Get started wizard.
+# matrix-restore.sh calls this only on a first installation (no VPS metadata and
+# no backup in R2) when MATRIX_GET_STARTED_ENABLED=true. It never replaces an
+# existing state file, so reruns and returning owners are left untouched.
+set -euo pipefail
+
+home="${1:-}"
+if [ -z "$home" ] || [ "${home#/}" = "$home" ]; then
+  echo "usage: matrix-get-started-seed <absolute-matrix-home>" >&2
+  exit 64
+fi
+system_dir="$home/system"
+target="$system_dir/get-started.json"
+
+for path in "$home" "$system_dir"; do
+  if [ -L "$path" ]; then
+    echo "matrix-get-started-seed: refusing symlinked home path" >&2
+    exit 1
+  fi
+done
+if [ ! -d "$home" ]; then
+  echo "matrix-get-started-seed: home does not exist" >&2
+  exit 1
+fi
+mkdir -p -- "$system_dir"
+if [ -e "$target" ] || [ -L "$target" ]; then
+  exit 0
+fi
+
+tmp="$(mktemp "$system_dir/.get-started.XXXXXX")"
+cleanup() { rm -f -- "$tmp"; }
+trap cleanup EXIT
+printf '%s\n' '{"version":1,"status":"pending"}' >"$tmp"
+chmod 0644 "$tmp"
+# A hard link publishes the complete file and fails instead of replacing one
+# that appeared in the meantime.
+if ! ln -- "$tmp" "$target" 2>/dev/null; then
+  if [ -e "$target" ]; then
+    exit 0
+  fi
+  echo "matrix-get-started-seed: failed to write state" >&2
+  exit 1
+fi

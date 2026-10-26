@@ -71,6 +71,8 @@ export function integrationCategory(service: IntegrationCatalogItem): string {
 }
 export function buildIntegrationSections<T extends IntegrationCatalogItem>(services: readonly T[], options: {
   query?: string; oauthOnly?: boolean; connectedOnly?: boolean; connectedIds?: readonly string[];
+  /** An optional first section of chosen apps, in this order, left out of their category sections. */
+  leading?: { title: string; ids: readonly string[] };
 } = {}): Array<{ title: string; services: T[] }> {
   const query = (options.query ?? "").trim().toLocaleLowerCase();
   const filtered = services.filter(service =>
@@ -78,7 +80,12 @@ export function buildIntegrationSections<T extends IntegrationCatalogItem>(servi
     && (!options.connectedOnly || options.connectedIds?.includes(service.id))
     && (!query || `${service.name} ${integrationDescription(service)} ${integrationCategory(service)}`.toLocaleLowerCase().includes(query)),
   );
+  const leading = options.leading
+    ? options.leading.ids.flatMap(id => filtered.filter(service => service.id === id))
+    : [];
+  const led = new Set(leading.map(service => service.id));
   const titles = ["Productivity", "Communication", "Files", "Design", "Developer tools", "Sales", "Customer support", "Marketing", "Data", "Finance", "Social", "Other apps"];
-  return titles.map(title => ({ title, services: filtered.filter(service => integrationCategory(service) === title) }))
+  const sections = titles.map(title => ({ title, services: filtered.filter(service => !led.has(service.id) && integrationCategory(service) === title) }));
+  return [...(options.leading ? [{ title: options.leading.title, services: leading }] : []), ...sections]
     .filter(section => section.services.length > 0);
 }

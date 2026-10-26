@@ -1,4 +1,5 @@
 import { createBotInputHistoryReader } from "../bots/historical-input.js";
+import { createSharedAttachmentSource } from "../bots/shared-integration-attachment.js";
 import { createHash } from "node:crypto";
 import { parseIsolatedChatEnvelope } from "@matrix-os/contracts";
 import { readReleaseInfo } from "../system-info.js";
@@ -74,6 +75,7 @@ import { createClaudeTaskObserver } from '../bots/claude-task-observation.js';
 import { createNativeBotTasks } from '../bots/native-task-service.js';
 import { createBotExecutorReadiness } from '../bots/executor-readiness.js';
 import type { NativeProviderProfileGuard } from '../ai-providers/native-provider-profile-guard.js';
+import type { createCompanyBotRuntime } from "./company-bot-runtime.js";
 
 /** Passes before the first run is admitted; any rest is finished in the background. */
 const MAX_CHECKPOINT_RECONCILE_PASSES = 50;
@@ -162,6 +164,7 @@ export async function startBots(options: {
   fundedCredentialProvider?: MatrixFundedCredentialProvider;
   fundedAdmission?: FundedAdmissionQueue;
   now?: () => Date;
+  group?: Pick<ReturnType<typeof createCompanyBotRuntime>, "authorizeGroup" | "resolveGroupRun" | "resolveGroupRoute" | "getGroupRevocation">;
   /** Test hook for startup checkpoint passes; bounded to the defaults. */
   checkpointReconcile?: { passes?: number; intervalMs?: number };
 }): Promise<BotServices | undefined> {
@@ -222,7 +225,8 @@ export async function startBots(options: {
   const transact = createBotStateTransactions(options.repository);
   const integrationClient = options.integrations ? createBotIntegrationClient(options.integrations) : undefined;
   const integrationTools = integrationClient
-    ? createBotIntegrationTools({ client: integrationClient, homePath: options.homePath, transact, recipes, resolveProcedure, agents: options.agents, assertSource: revalidateSource })
+    ? createBotIntegrationTools({ client: integrationClient, homePath: options.homePath, transact, recipes, resolveProcedure, agents: options.agents, assertSource: revalidateSource,
+      assertSharedAttachmentSource: createSharedAttachmentSource({ roots: options.executionRoots, group: options.group }) })
     : undefined;
   const connections = integrationClient && integrationTools
     ? createBotConnections({ client: integrationClient, transact, tools: integrationTools })
@@ -339,7 +343,8 @@ export async function startBots(options: {
     listGrants: (ownerId, botId) => createBotGrantsRepository(db).listLive({ ownerId, botId, audience: "direct", now: now().toISOString() }),
     ...(integrationTools ? { ensureAccess: (binding: import("../bots/runtime-registry.js").BotRuntimeBinding, signal: AbortSignal) => integrationTools.ensureAccess(binding, "gmail", ["read", "label"], signal) } : {}),
   }) : undefined;
-  const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry });
+  const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry, homePath: options.homePath,
+    ...(options.group ? { authorizeGroup: options.group.authorizeGroup, getGroupRevocation: options.group.getGroupRevocation } : {}) });
   const managedCapabilities: import("@matrix-os/contracts").BotToolCapability[] = [
     ...(options.sharedBrowser ? ["browser.action"] as const : []),
     ...(integrationClient ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
@@ -358,6 +363,7 @@ export async function startBots(options: {
     homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
     ...(isolatedChat ? { isolatedChat } : {}),
     personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId },
+    ...(options.group ?? {}),
     bindings,
     transact,
     interactions,
@@ -409,6 +415,7 @@ export async function startBots(options: {
     },
   };
   const actions = createBotBrokerActions({
+    ...(options.group ? { authorizeGroup: options.group.authorizeGroup } : {}),
     db,
     registry,
     sessions: createBotSessionsRepository(db),

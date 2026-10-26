@@ -9,6 +9,7 @@ import { useStreamedTextReveal } from "@/lib/streamed-text-reveal";
 
 import { chatMarkdownTheme } from "./chat-markdown-theme";
 import { StepsBlock } from "./StepsBlock";
+import { MermaidDiagram } from "./MermaidDiagram";
 
 export interface AssistantMessageProps {
   message: TranscriptMessage;
@@ -27,7 +28,8 @@ export function AssistantMessage({ message, chatId, results }: AssistantMessageP
   // Re-parses on every text change, which is exactly what a growing streamed
   // string needs -- markdown applies as the text arrives, not once at the end.
   const markdownNodes = useMemo(
-    () => renderChatMarkdown(reveal.text, chatMarkdownTheme(theme.v2), reveal.fades),
+    () => renderChatMarkdown(reveal.text, chatMarkdownTheme(theme.v2), reveal.fades,
+      (source, key) => <MermaidDiagram key={key} source={source} theme={chatMarkdownTheme(theme.v2)} />),
     [reveal.text, reveal.fades, theme],
   );
 

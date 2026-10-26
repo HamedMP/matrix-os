@@ -97,8 +97,8 @@ describe("funded generation metadata-only logging", () => {
     const f = fixture();
     const response = await f.request(model);
     expect(response.status).toBe(200); await response.text(); await f.relay.close();
-    expect(f.dispatches).toHaveLength(1);
-    const { headers } = f.dispatches[0]!;
+    expect(f.dispatches).toHaveLength(model === SONNET ? 2 : 1);
+    const { headers } = f.dispatches.at(-1)!;
     expect(headers.get("cf-aig-collect-log")).toBe("true");
     expectPrivateMetadata(headers, model);
     expect(headers.get("authorization")).toBe(model === GLM ? `Bearer ${CONFIG.workersAiToken}` : null);

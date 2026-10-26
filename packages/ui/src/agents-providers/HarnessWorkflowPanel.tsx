@@ -7,6 +7,7 @@ const active = (operation: import("@matrix-os/contracts").ProviderWorkflow | nul
 
 export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
   const state = useHarnessWorkflowController(props);
+  const terminalAvailable = props.terminalAvailable ?? true;
   const { source } = state;
   const { harness, capability, client, disabled, onRefresh, onOpenTerminal, onConnectSaved, connectSavedDisabled, onDisconnect, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, operation, setOperation, method, setMethod, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, setDisconnectOpen, setUninstall, connectionPanel, pendingStart: pendingStartRef, run, start, stopPolling, restartPolling, failed, connecting, reuseCodex, inlineLogin, hasSubscription, subscriptionName, back } = state;
   const codexTerminal = harness.harness === "codex" && capability.connectionOptions?.some(isCodexTerminalOption);
@@ -94,7 +95,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
               <p>Installing {harness.displayName}…</p>
               <progress aria-label={`Installing ${harness.displayName}`} />
               <p className="matrix-ap-help">
-                The installation runs in Terminal.
+                {terminalAvailable ? "The installation runs in Terminal." : "This takes a minute or two. You can keep going; it finishes in the background."}
               </p>
             </>
           ) : (
@@ -252,7 +253,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
             Cancel
           </button>
         ) : null}
-        {operation?.terminalSessionId && (operation.kind !== "login" || (harness.harness === "codex" ? state.canContinueInTerminal && codexTerminalOperation : active(operation) && harness.harness === "claude" && operation.connectionOption?.method === "terminal")) ? (
+        {terminalAvailable && operation?.terminalSessionId && (operation.kind !== "login" || (harness.harness === "codex" ? state.canContinueInTerminal && codexTerminalOperation : active(operation) && harness.harness === "claude" && operation.connectionOption?.method === "terminal")) ? (
           <button
             type="button"
             className="matrix-ap-link-button"

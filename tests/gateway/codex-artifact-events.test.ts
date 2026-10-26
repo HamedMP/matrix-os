@@ -25,6 +25,23 @@ describe("Codex app-server artifact extraction", () => {
     })[0]).toMatchObject({ providerItemId: "view_1", label: "chart.webp", mimeType: "image/webp" });
   });
 
+  it("handles the 0.164.0 fileId image shape without treating an opaque ID as a path", () => {
+    expect(extractCodexArtifactRecords({
+      id: "generated_164",
+      type: "imageGeneration",
+      status: "completed",
+      fileId: "opaque_attachment_123",
+      inputImages: [{ path: "/verified/run/input.png", sha256: "a".repeat(64) }],
+    })).toEqual([]);
+    expect(extractCodexArtifactRecords({
+      id: "generated_164",
+      type: "imageGeneration",
+      status: "completed",
+      fileId: "opaque_attachment_123",
+      savedPath: "/verified/run/generated.png",
+    })[0]).toMatchObject({ source: { type: "run_file", path: "/verified/run/generated.png" } });
+  });
+
   it("extracts function and dynamic tool image or audio content", () => {
     expect(extractCodexArtifactRecords({
       id: "function_1",

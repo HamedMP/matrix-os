@@ -6,6 +6,7 @@ import {
   Settings,
 } from "@renderer/lib/hugeicons";
 import { useEffect, useState, type ReactNode } from "react";
+import { DesktopOrganizationMenuItems } from "./DesktopOrganizationMenuItems";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
@@ -150,7 +151,9 @@ export default function AccountMenu({
               background: "var(--bg-overlay)",
               boxShadow: "var(--shadow-2)",
               borderRadius: "12px",
-              overflow: "hidden",
+              maxHeight: "var(--radix-dropdown-menu-content-available-height)",
+              overflowY: "auto",
+              overflowX: "hidden",
             }}
           >
             <DropdownMenu.Label className="px-2 py-2">
@@ -171,6 +174,7 @@ export default function AccountMenu({
               </span>
             </DropdownMenu.Label>
             <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
+            <DesktopOrganizationMenuItems itemClass={MENU_ROW_CLASS} />
             <MenuRow icon={<Settings size={14} />} label="Settings" trailing onSelect={() => openSettings("account")} />
             <MenuRow icon={<CreditCard size={14} />} label="View plans" onSelect={() => openSettings("billing")} />
             <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />

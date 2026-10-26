@@ -97,11 +97,13 @@ realDescribe("shared Chat discussion real PostgreSQL transactions", () => {
     expect(await countRows(fixture, "chat_messages")).toBe(write.status === "fulfilled" ? 1 : 0);
     await expect(repository.getMember(collaborationIds.scope, collaborationActors.editor))
       .resolves.toMatchObject({ status: "revoked" });
+    // Revocation can invalidate the scope generation before the member fence.
     await expect(adapter.appendDiscussion(editor, {
       clientRequestId: "71000000-0000-4000-8000-000000000005",
       expectedRevision: "2",
       text: "A delayed write must never pass revocation.",
-    })).rejects.toMatchObject({ code: "forbidden" });
+    })).rejects.toMatchObject({ code: expect.stringMatching(/^(forbidden|unavailable)$/) });
+    expect(await countRows(fixture, "chat_messages")).toBe(write.status === "fulfilled" ? 1 : 0);
   });
 
   it("rolls back the canonical message when its durable collaboration event cannot commit", async () => {

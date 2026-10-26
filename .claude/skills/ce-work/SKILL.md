@@ -222,6 +222,16 @@ Determine how to proceed based on what was provided in `<input_document>`.
 
    **Test Discovery** — Before implementing changes to a file, find its existing test files (search for test/spec files that import, reference, or share naming patterns with the implementation file). When a plan specifies test scenarios or test files, start there, then check for additional test coverage the plan may not have enumerated. Changes to implementation files should be accompanied by corresponding test updates — new tests for new behavior, modified tests for changed behavior, removed or updated tests for deleted behavior.
 
+   **Test effectiveness** — Follow `docs/dev/testing-effectiveness.md`. Name the
+   user outcome and plausible fault before choosing the test layer. Exercise real
+   production code and preserve the boundary responsible for the fault; fixtures
+   must validate producer output against the real consumer contract. Show the
+   regression failing for its intended reason before the fix, then passing.
+   Reuse existing meaningful cases; remove local replicas or duplicates only with
+   recorded proof. Record the actual runner/lane, skips, and material runtime
+   cost. A test count, source-string assertion, or mock-only E2E label is not
+   completion of a user journey.
+
    **Test Scenario Completeness** — Before writing tests for a feature-bearing unit, check whether the plan's `Test scenarios` cover all categories that apply to this unit. If a category is missing or scenarios are vague (e.g., "validates correctly" without naming inputs and expected outcomes), supplement from the unit's own context before writing tests:
 
    | Category | When it applies | How to derive if missing |

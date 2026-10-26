@@ -79,11 +79,12 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 direct owner route r
     directSessions = new DirectSessionService({ verifier: ticketVerifier, authority, repository, now: () => now });
     ownerRuntimeSessions = new OwnerRuntimeSessionService({
       verifier: ticketVerifier, ownerId, runtimeId, organizationPrecondition: precondition, now: () => now,
+      runtimeGeneration: () => 8,
     });
     const ownerTicket = {
       protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, ticketId: randomUUID(), nonce: randomUUID().replaceAll("-", ""),
       actorId: ownerId, organizationId, resource: { kind: "owner_runtime" }, purpose: "owner_runtime",
-      runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 1 }, proofKeyThumbprint: proofKeyThumbprint(proofPublicKey),
+      runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 8 }, proofKeyThumbprint: proofKeyThumbprint(proofPublicKey),
       maxActions: 100, issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 30_000).toISOString(),
     };
     ownerRuntimeSessionId = (await ownerRuntimeSessions.create({
@@ -172,7 +173,8 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("S18 direct owner route r
     expect((await ownerSignedRequest("POST", `/api/collaboration/scopes/${scopeId}/project/confirm`, {})).status).toBe(400);
     expect((await ownerSignedRequest("GET", `/api/collaboration/scopes/${randomUUID()}/project/inventory`)).status).toBe(404);
     await fixture.db.updateTable("collaboration_scopes").set({ authority_generation: 2 }).where("id", "=", scopeId).execute();
-    expect((await ownerSignedRequest("GET", `/api/collaboration/scopes/${scopeId}/project/inventory`)).status).toBe(401);
+    // A project's independent authority generation can differ from the runtime registration.
+    expect((await ownerSignedRequest("GET", `/api/collaboration/scopes/${scopeId}/project/inventory`)).status).toBe(503);
     await fixture.db.updateTable("collaboration_scopes").set({ authority_generation: 1, organization_id: "org_other" }).where("id", "=", scopeId).execute();
     expect((await ownerSignedRequest("GET", `/api/collaboration/scopes/${scopeId}/project/inventory`)).status).toBe(401);
   });

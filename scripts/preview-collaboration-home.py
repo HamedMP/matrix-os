@@ -2,10 +2,13 @@
 
 `<nonce> <handle> <owner> <machine ID> <binding JSON>` re-points only the
 collaboration binding in host.env, keeping the file's owner, group and mode and a
-single rollback copy of the file as it was before the first connection. It runs
+single immutable origin copy and one uncommitted-attempt rollback snapshot. It runs
 only while this run owns the connection (its guard is armed and its claim is
 recorded), under the guard's lock, so a guard restore never interleaves with it.
 Prints a fixed status only, never the file or a value."""
+import hashlib
+import hmac
+import urllib.request
 import fcntl
 import json
 import os
@@ -19,7 +22,9 @@ from pathlib import Path
 ORIGIN = r"https://[A-Za-z0-9.-]{1,253}"
 PIN = "MATRIX_UPDATE_MANIFEST_BASE_URL"
 KEYS = {"PLATFORM_INTERNAL_URL", "UPGRADE_TOKEN", "MATRIX_COLLABORATION_CLIENT_ORIGINS"}
+PREVIEW_AUTH = "MATRIX_PREVIEW_PLATFORM_AUTH_TOKEN"
 ROLLBACK = ".host.env.preview-collaboration-rollback"
+ATTEMPT_ROLLBACK = ".host.env.preview-collaboration-attempt-rollback"
 
 
 def read_env(path, root_owned):
@@ -53,9 +58,10 @@ def check_identity(lines, handle, owner, machine):
 
 
 def check_binding(config):
-    if (not isinstance(config, dict) or set(config) != KEYS
+    if (not isinstance(config, dict) or set(config) not in (KEYS, KEYS | {PREVIEW_AUTH})
             or not re.fullmatch(ORIGIN, config["PLATFORM_INTERNAL_URL"])
             or not re.fullmatch(r"[a-f0-9]{64}", config["UPGRADE_TOKEN"])
+            or (PREVIEW_AUTH in config and config[PREVIEW_AUTH] != config["UPGRADE_TOKEN"])
             or not re.fullmatch(f"{ORIGIN}(,{ORIGIN}){{0,15}}", config["MATRIX_COLLABORATION_CLIENT_ORIGINS"])):
         raise ValueError("Invalid preview collaboration binding")
 
@@ -102,7 +108,15 @@ def bind(root, handle, owner, machine, config, root_owned):
     pin = values(original, PIN) or values(original, "PLATFORM_INTERNAL_URL")
     if len(pin) != 1 or len(pin[0]) != 1 or not re.fullmatch(ORIGIN + "/?", pin[0][0]):
         raise ValueError("Invalid original platform binding")
-    config = {**config, PIN: pin[0][0]}
+    # Keep release provenance immutable, but restore this attempt to its last committed binding.
+    attempt = root / ATTEMPT_ROLLBACK
+    try:
+        baseline = read_env(attempt, root_owned)[1].splitlines()
+    except FileNotFoundError:
+        write_like(attempt, text, meta, mode)
+        baseline = lines
+    check_identity(baseline, handle, owner, machine)
+    config = {**config, PIN: pin[0][0], **({"MATRIX_PREVIEW_RUNTIME": "true"} if PREVIEW_AUTH in config else {})}
     kept = [line for line in lines if line.split("=", 1)[0] not in config]
     write_like(path, "\n".join(kept + [f"{key}={config[key]}" for key in sorted(config)]) + "\n", meta, mode)
     after = os.lstat(path)
@@ -121,7 +135,26 @@ def apply(root, nonce, handle, owner, machine, config, root_owned=True):
         os.close(lock)
 
 
+def probe(root, gateway="http://127.0.0.1:4000"):
+    lines = read_env(root / "host.env", False)[1].splitlines()
+    token = one(lines, PREVIEW_AUTH)
+    owner = one(lines, "MATRIX_CLERK_USER_ID")
+    if not re.fullmatch(r"[a-f0-9]{64}", token) or not re.fullmatch(r"user_[A-Za-z0-9_-]{1,128}", owner):
+        raise ValueError("Invalid preview authentication binding")
+    proof = hmac.new(token.encode(), owner.encode(), hashlib.sha256).hexdigest()
+    request = urllib.request.Request(f"{gateway}/api/system/info", headers={
+        "authorization": f"Bearer {token}", "x-platform-user-id": owner, "x-platform-verified": proof})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        raw = response.read(32 * 1024 + 1)
+        if response.status != 200 or len(raw) > 32 * 1024 or json.loads(raw).get("capabilities", {}).get("collaboration") is not True:
+            raise ValueError("Preview owner API authentication unavailable")
+    return {"previewAuthenticated": True}
+
+
 if __name__ == "__main__":
+    if sys.argv[1:] == ["probe"]:
+        print(json.dumps(probe(Path("/opt/matrix/env"))))
+        sys.exit(0)
     if len(sys.argv) != 6 or not re.fullmatch(r"[0-9]{1,20}-[0-9]{1,5}", sys.argv[1]):
         raise ValueError("Expected nonce, handle, owner, machine ID and binding")
     apply(Path("/opt/matrix/env"), *sys.argv[1:5], json.loads(sys.argv[5]))

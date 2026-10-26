@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, act } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, act, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import { ChatAgentsPanel } from "../../../packages/ui/src/chat-agents/ChatAgentsEntry.js";
 import type { BotClient } from "../../../packages/ui/src/chat-agents/bots/client.js";
@@ -110,6 +110,91 @@ it("preserves selected recipe data through failed refresh and retry", async () =
   await waitFor(() => expect(screen.queryByText("Recipe options are unavailable. Saved selections are preserved.")).toBeNull());
   expect(screen.getByRole("checkbox", { name: "Personal Daily Brief" })).toBeChecked();
   expect(screen.getByRole("button", { name: "Create Agent" })).toBeEnabled();
+});
+
+it("keeps model discovery inside the scratch card and restores its ready icon", async () => {
+  const x = fixture();
+  let resolve!: (value: Awaited<ReturnType<typeof x.client.catalog>>) => void;
+  x.client.catalog.mockReturnValueOnce(new Promise(value => { resolve = value; }));
+  render(<ChatAgentsPanel client={x.client} view="recipes" onClose={x.close}/>);
+  const card = screen.getByRole("button", { name: "Start from scratch" });
+  expect(card).toHaveAttribute("aria-busy", "true");
+  expect(within(card).getByRole("status")).toHaveTextContent("Loading models…");
+  expect(card.querySelector(".matrix-ap-loading-spinner")).not.toBeNull();
+  expect(card.querySelector(".lucide-plus")).toBeNull();
+  expect(document.querySelector(".matrix-chat-agent-catalog-status")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Retry models" })).toBeNull();
+  expect(card).toBeDisabled();
+  const catalog = await clientFixture({ matrix: true }).catalog();
+  await act(async () => resolve(catalog));
+  await waitFor(() => expect(screen.queryByText("Loading models…")).toBeNull());
+  expect(screen.getByRole("button", { name: "Start from scratch" })).toBe(card);
+  expect(card).toBeEnabled();
+  expect(card).toHaveAttribute("aria-busy", "false");
+  expect(card.querySelector(".matrix-ap-loading-spinner")).toBeNull();
+  expect(card.querySelector(".lucide-plus")).not.toBeNull();
+});
+
+it("offers model retry from a failed chooser and coalesces its pending requests", async () => {
+  const x = fixture(); x.client.catalog.mockRejectedValueOnce(new Error("private discovery failure"));
+  render(<ChatAgentsPanel client={x.client} view="recipes" onClose={x.close}/>);
+  await screen.findByText("Models unavailable. Retry models.");
+  const retry = await screen.findByRole("button", { name: "Retry models" });
+  expect(within(retry).getByRole("alert")).toHaveTextContent("Models unavailable. Retry models.");
+  expect(within(retry).getByText("Start from scratch")).toBeVisible();
+  expect(within(retry).getByText("Describe it in your own words")).toBeVisible();
+  expect(retry.querySelector("button")).toBeNull();
+  expect(document.querySelector(".matrix-chat-agent-catalog-status")).toBeNull();
+  expect(retry).toBeEnabled();
+  retry.focus(); expect(retry).toHaveFocus();
+  let resolve!: (value: Awaited<ReturnType<typeof x.client.catalog>>) => void;
+  const catalog = await clientFixture({ matrix: true }).catalog();
+  x.client.catalog.mockReturnValueOnce(new Promise(value => { resolve = value; }));
+  fireEvent.click(retry); fireEvent.click(retry);
+  expect(screen.queryByRole("button", { name: "Retry models" })).toBeNull();
+  const loadingCard = screen.getByRole("button", { name: "Start from scratch" });
+  expect(loadingCard).toBeDisabled();
+  expect(loadingCard).toHaveAttribute("aria-busy", "true");
+  expect(within(loadingCard).getByRole("status")).toHaveTextContent("Loading models…");
+  expect(x.client.catalog).toHaveBeenCalledTimes(2);
+  await act(async () => resolve(catalog));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Start from scratch" })).toBeEnabled());
+  expect(screen.queryByText("private discovery failure")).toBeNull();
+});
+
+it("retries failed model discovery without losing a draft or reusing stale model authority", async () => {
+  const x = fixture(); await draft(x);
+  const dialog = screen.getByRole("dialog", { name: "New Agent" });
+  expect(dialog).toHaveAttribute("open");
+  const editor = within(dialog);
+  fireEvent.click(editor.getByRole("button", { name: "Add recipe" }));
+  fireEvent.click(editor.getByRole("checkbox", { name: "Personal Daily Brief" }));
+  fireEvent.change(editor.getByRole("textbox", { name: "Expected output" }), { target: { value: "A verified report" } });
+  const model = (editor.getByRole("combobox", { name: "Model" }) as HTMLSelectElement).value;
+  x.client.catalog.mockRejectedValueOnce(new Error("private discovery failure"));
+  const retry = editor.getByRole("button", { name: "Refresh models" });
+  expect(retry).toBeVisible();
+  fireEvent.click(retry);
+  await screen.findByText("Models could not be refreshed. Your draft is still here.");
+  // Native modal editors make the chooser's outer Retry models button inert.
+  expect(editor.queryByRole("button", { name: "Retry models" })).toBeNull();
+  expect(dialog).toContainElement(retry);
+  expect(retry).toBeEnabled();
+  expect(editor.getByRole("button", { name: "Create Agent" })).toBeDisabled();
+  let resolve!: (value: Awaited<ReturnType<typeof x.client.catalog>>) => void;
+  x.client.catalog.mockReturnValueOnce(new Promise(value => { resolve = value; }));
+  fireEvent.click(retry);
+  expect(retry).toBeDisabled(); expect(editor.getByRole("button", { name: "Create Agent" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Retry models" })).toBeNull();
+  const catalog = await clientFixture({ matrix: true }).catalog();
+  await act(async () => resolve(catalog));
+  await waitFor(() => expect(editor.getByRole("button", { name: "Create Agent" })).toBeEnabled());
+  expect(editor.getByRole("textbox", { name: "Name" })).toHaveValue(agent.name);
+  expect(editor.getByRole("textbox", { name: "Instructions" })).toHaveValue(agent.instructions);
+  expect(editor.getByRole("textbox", { name: "Expected output" })).toHaveValue("A verified report");
+  expect(editor.getByRole("checkbox", { name: "Personal Daily Brief" })).toBeChecked();
+  expect(editor.getByRole("combobox", { name: "Model" })).toHaveValue(model);
+  expect(x.createCustom).not.toHaveBeenCalled();
 });
 
 it("submits a valid recipe with optional Ask when run integration", async () => {

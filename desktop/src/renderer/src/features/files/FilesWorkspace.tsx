@@ -17,11 +17,12 @@ export type { FileSelection } from "./FilePreviewPane";
 
 import { useDesktopFileDownload } from "./use-file-download";
 import { FileDownloadStatus } from "./FileDownloadStatus";
+import { InspectorFilesPanel, InspectorFilePreview, type InspectorFileTarget } from "../panels/InspectorFilesPanel";
 
 const MAX_FILE_TABS = 12;
 const SAFE_FOLDER_NAME = /^[^/\\\u0000-\u001f]{1,128}$/;
 
-interface FileTab { id: string; path: string; initialPath: string; title: string }
+interface FileTab { id: string; path: string; initialPath: string; title: string; project?: { target: Extract<InspectorFileTarget, { kind: "project" }>; directory: boolean; revealKey?: string } }
 interface NewFolderRequest {
   parentPath: string;
   tabId: string;
@@ -109,6 +110,14 @@ export default function FilesWorkspace() {
     if (!navigation) return;
     useFilesNavigation.getState().consume(navigation);
     if (navigation.runtimeSlot !== runtimeSlot || navigation.authGeneration !== authGeneration || !isCurrentRuntimeGeneration(navigation.generation)) return;
+    if (navigation.project) {
+      const target = { ...navigation.project, label: pathTitle(navigation.project.path) };
+      const id = `project:${target.projectId}:${target.worktreeId ?? "root"}`;
+      const tab: FileTab = { id, path: target.path, initialPath: "", title: target.projectId, project: { target, directory: navigation.directory ?? false, revealKey: crypto.randomUUID() } };
+      setTabs((current) => current.some((item) => item.id === id) ? current.map((item) => item.id === id ? tab : item) : [...current, tab].slice(-MAX_FILE_TABS));
+      setActiveTabId(id);
+      return;
+    }
     if (navigation.driveScopeId && organizationDrivesAvailable) {
       setDriveOpened(true); setRequestedDrive({scopeId: navigation.driveScopeId, id: navigation.driveIntentId}); setActiveTabId(ORGANIZATION_DRIVES_TAB);
     } else openFolderTab(navigation.path);
@@ -210,7 +219,13 @@ export default function FilesWorkspace() {
             const active = tab.id === visibleActiveTabId;
             return (
               <RetainedPane key={tab.id} active={active} visible={active}>
-                <ComputerFileBrowser
+                {tab.project ? <div className="flex min-h-0 flex-1">
+                  <section aria-label="Project files" className="flex min-h-0 w-64 shrink-0 flex-col border-r" style={{ borderColor: "var(--border-subtle)" }}>
+                    <InspectorFilesPanel scope={{ kind: "project", chatId: tab.id, projectId: tab.project.target.projectId, worktreeId: tab.project.target.worktreeId, label: tab.title }} browserOnly revealKey={tab.project.revealKey} selectedDirectory={tab.project.directory} selectedFile={tab.project.target}
+                      onOpenFile={(target) => { if (target.kind === "project") setTabs((current) => current.map((item) => item.id === tab.id ? { ...item, project: { target, directory: false } } : item)); }} />
+                  </section>
+                  {!tab.project.directory ? <InspectorFilePreview target={tab.project.target} /> : <p className="p-4 text-sm">Choose a file to preview.</p>}
+                </div> : <ComputerFileBrowser
                   // Keep the creation seed stable; current tab path is navigation output.
                   initialPath={tab.initialPath}
                   onPathChange={(path) => updateTabPath(tab.id, path)}
@@ -221,7 +236,7 @@ export default function FilesWorkspace() {
                   onRequestCreateFolder={(parentPath) => requestNewFolder(tab.id, parentPath)}
                   refreshRevision={refreshes[tab.id] ?? 0}
                   framed={false}
-                />
+                />}
               </RetainedPane>
             );
           })}
