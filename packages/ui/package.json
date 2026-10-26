@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./collaboration-direct-client": "./src/collaboration/direct-client.ts",
     "./default-organization": "./src/collaboration/default-organization.ts",
+    "./messaging": "./src/messaging/index.ts",
     "./speech": "./src/speech/index.ts",
     "./styles.css": "./src/styles.css",
     "./browser.css": "./src/browser/browser.css",

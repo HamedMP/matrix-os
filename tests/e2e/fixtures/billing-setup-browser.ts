@@ -30,7 +30,7 @@ export async function billingBrowser(): Promise<{ browser: Browser; script: stri
           "next/navigation": "usePathname, useSearchParams, useRouter",
           "next/image": "Image as default",
           "next/link": "Link as default",
-          "@matrix-os/ui": "useGettingStartedBlocker",
+          "@matrix-os/ui": "Empty as SlackInstallPanel, useGettingStartedBlocker",
         };
         builder.onResolve({ filter: /^(@clerk\/nextjs|next\/(navigation|image|link)|@matrix-os\/ui)$/ },
           args => ({ path: args.path, namespace: "billing-fixture" }));
