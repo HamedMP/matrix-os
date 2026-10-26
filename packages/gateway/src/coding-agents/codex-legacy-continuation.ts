@@ -60,18 +60,19 @@ export async function recoverLegacyCodexContinuation(
     if (browser && !control.prepareBrowser) throw new Error("Browser startup unavailable");
     const observation = await events.watch({ principal, threadId: context.thread.id, sessionId, startAtEnd: true, checkpoint: true });
     const startup = browser ? beginNativeBrowserBootstrap(principal.userId) : undefined;
+    const recoverySignal = startup ? AbortSignal.any([signal, startup.signal]) : signal;
     try {
       // Persist authorization before dispatch, so a restart never needs to guess.
       if (await publishEvents({ events: [], resumeState: recoveredState }) !== true) {
         throw new Error("Legacy conversation binding persistence is unavailable");
       }
-      signal.throwIfAborted();
+      recoverySignal.throwIfAborted();
       await admission.validate(principal.userId, binding, sessionId);
       const session = await recoverCodexWorkspace({ ...runtime, startSession: scope.startSession },
-        { ...context, resumeState: recoveredState }, sessionId, prompt,
+        { ...context, signal: recoverySignal, resumeState: recoveredState }, sessionId, prompt,
         browser ? () => markNativeBrowserCleanupUnconfirmed(principal.userId) : undefined);
       if (session.runtime.type !== "background" || !session.backgroundRef) throw new Error("Legacy conversation recovery is unavailable");
-      if (browser) await prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser, control, runtime, signal });
+      if (browser) await prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser, control, runtime, signal: recoverySignal });
       return { events: [], outcome: "delivered", resumeState: { ...recoveredState,
         backgroundRef: session.backgroundRef,
         ...(observation.offset !== undefined ? { eventOffset: observation.offset } : {}),

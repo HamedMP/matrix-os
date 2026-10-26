@@ -211,6 +211,18 @@ describe("old Codex Chat continuation", () => {
     }
   });
 
+  it("does not launch if the browser bootstrap is revoked while the binding is being saved", async () => {
+    const f = await fixture();
+    const bootstrap = new AbortController();
+    f.control.prepareBrowser = vi.fn(async () => undefined);
+    f.publishEvents.mockImplementationOnce(async () => { bootstrap.abort(); return true; });
+    const browser = { isLive: () => true, attemptId: "attempt_test", token: "synthetic-test-token",
+      mcpServer: { env: { MATRIX_SHARED_BROWSER_GATEWAY_PORT: "3000" } } };
+    await expect(withNativeBrowserExecution("owner", browser as never, () => f.resume(), undefined,
+      { signal: bootstrap.signal, begin: () => vi.fn() })).rejects.toThrow();
+    expect(f.startSession).not.toHaveBeenCalled();
+  });
+
   it("retains history and the recovered binding across reload, duplicate requests and prolonged inactivity", async () => {
     const f = await fixture();
     const statePath = join(f.homePath, "system/coding-agents/threads.json");
