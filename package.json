@@ -146,7 +146,7 @@
     "better-sqlite3": "^12.10.0",
     "chess.js": "1.4.0",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.11.9",
+    "hono": "^4.13.11",
     "lexical": "0.41.0",
     "lucide-react": "^0.563.0",
     "react": "^19.2.6",
