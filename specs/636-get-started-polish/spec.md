@@ -2,7 +2,7 @@
 
 Status: Draft for review.
 Ticket: [ENG-391](https://linear.app/matrix-os/issue/ENG-391/polish-the-get-started-wizard).
-Builds on: [Spec 635](../635-guided-onboarding/spec.md) (Get started wizard, ENG-366).
+Builds on: [Spec 635](../635-guided-onboarding/spec.md) (Get started wizard, ENG-366). This spec supersedes spec 635's step 3 coding agent chips and its App Gallery step copy.
 Feedback: [#tech thread](https://matrixos.slack.com/archives/C0C459830FJ/p1792775608591359?thread_ts=1792676322.691099&cid=C0C459830FJ).
 Reviewers suggested: product (onboarding), Yuhan (Agents & providers), Nima.
 
