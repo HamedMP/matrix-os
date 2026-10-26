@@ -37,6 +37,35 @@ const INFERENCE_TIMEOUT_MS = 30_000;
 const FUNDED_INFERENCE_TIMEOUT_MS = 120_000;
 export const MAX_BOT_TOOLS = 64;
 
+/** Read-only authority checks cannot hold the inference broker or funded queue.
+ * A late result is observed but never resumes the caller after cancellation or
+ * the deadline. This does not release reservations or classify provider effects.
+ */
+const AUTHORIZATION_TIMEOUT_MS = 10_000;
+
+function waitForInferenceAuthority<T>(operation: () => T | Promise<T>, signal: AbortSignal): Promise<T | undefined> {
+  if (signal.aborted) return Promise.resolve(undefined);
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = (value: T | undefined) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      resolve(value);
+    };
+    const onAbort = () => finish(undefined);
+    timer = setTimeout(onAbort, AUTHORIZATION_TIMEOUT_MS);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) { finish(undefined); return; }
+    Promise.resolve().then(() => signal.aborted ? undefined : operation()).then(finish, (error: unknown) => {
+      if (!settled) console.warn("[bots] inference authority unavailable:", error instanceof Error ? error.name : "UnknownError");
+      finish(undefined);
+    });
+  });
+}
+
 const BotInferenceBodySchema = z.object({
   model: z.string().min(1).max(256),
   stream: z.literal(true),
@@ -102,7 +131,7 @@ function failure(
 export async function forwardBotInference(
   request: ScopeRuntimeBotInferenceRequest,
   binding: PiRuntimeBinding,
-  authorize: (modelId: string) => BotInferenceAuthorization,
+  authorize: (modelId: string) => BotInferenceAuthorization | Promise<BotInferenceAuthorization>,
   deps: BotInferenceDependencies,
 ): Promise<ScopeRuntimeBrokerResponse> {
   let modelId: string;
@@ -121,13 +150,17 @@ export async function forwardBotInference(
   const isolated = deps.isolatedChat?.targets(binding) === true;
   if (isolated && !validIsolatedInference(request, binding)) return failure(request.requestId, "invalid_request");
   const lifecycle = deps.runSignal ? AbortSignal.any([deps.lifetime, deps.runSignal]) : deps.lifetime;
+  const readAuthorization = () => waitForInferenceAuthority(() => authorize(modelId), lifecycle);
+  const bindingValid = () => deps.revalidateBinding
+    ? waitForInferenceAuthority(() => deps.revalidateBinding!(binding), lifecycle) : Promise.resolve(true);
+  const anthropicValid = () => waitForInferenceAuthority(() => deps.matrixAnthropic!.revalidate(binding, lifecycle), lifecycle);
   if (lifecycle.aborted) return failure(request.requestId, "action_denied");
-  if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return failure(request.requestId, "action_denied");
+  if (await bindingValid() !== true) return failure(request.requestId, "action_denied");
   if (lifecycle.aborted) return failure(request.requestId, "action_denied");
-  const authorization = authorize(modelId);
+  const authorization = await readAuthorization();
   if (binding.anthropicApi && (!deps.matrixAnthropic || binding.accessSourceId !== "owner_anthropic_key"
-    || !await deps.matrixAnthropic.revalidate(binding, lifecycle))) return failure(request.requestId, "action_denied");
-  if (!authorization.allowed || !authorization.accessSourceId || !authorization.allowedModelIds.includes(modelId)) {
+    || await anthropicValid() !== true)) return failure(request.requestId, "action_denied");
+  if (!authorization?.allowed || !authorization.accessSourceId || !authorization.allowedModelIds.includes(modelId)) {
     return failure(request.requestId, "action_denied");
   }
   if (authorization.accessSourceId === "matrix_chatgpt_plan") {
@@ -136,10 +169,11 @@ export async function forwardBotInference(
     return forwardChatGptPlanInference(request, binding, { authority: {
       ...authority,
       infer: (candidate, body, signal) => authority.infer(candidate, body, signal),
-      revalidate: async (candidate, signal) => (!deps.revalidateBinding || await deps.revalidateBinding(candidate))
-        && !signal.aborted && await authority.revalidate(candidate, signal),
+      revalidate: async (candidate, signal) => await waitForInferenceAuthority(async () =>
+        (!deps.revalidateBinding || await deps.revalidateBinding(candidate))
+          && !signal.aborted && await authority.revalidate(candidate, signal), signal) === true,
     }, signal: lifecycle,
-      stillAuthorized: () => { const current = authorize(modelId); return !lifecycle.aborted && current.allowed && current.accessSourceId === "matrix_chatgpt_plan" && current.allowedModelIds.includes(modelId); } });
+      stillAuthorized: async () => { const current = await readAuthorization(); return !lifecycle.aborted && current?.allowed === true && current.accessSourceId === "matrix_chatgpt_plan" && current.allowedModelIds.includes(modelId); } });
   }
   // Borrowed native profiles remain task-executor-only; never substitute them for the explicit paired-device source.
   if (authorization.accessSourceId === "owner_openai_profile" || authorization.accessSourceId === "owner_anthropic_profile"
@@ -162,16 +196,18 @@ export async function forwardBotInference(
     ? JSON.stringify({ ...parsedBody, max_tokens: outputTokens }) : request.body;
 
   const accessSourceId = authorization.accessSourceId;
-  const stillAuthorized = () => {
+  const stillAuthorized = async () => {
     if (lifecycle.aborted) return false;
-    const current = authorize(modelId);
-    return current.allowed && current.accessSourceId === accessSourceId && current.allowedModelIds.includes(modelId);
+    const current = await readAuthorization();
+    if (!current?.allowed || current.accessSourceId !== accessSourceId || !current.allowedModelIds.includes(modelId)) return false;
+    if (await bindingValid() !== true) return false;
+    return !lifecycle.aborted;
   };
   const funded = !isolated && accessSourceId === "matrix_included" ? deps.fundedAdmission : undefined;
   const fetchImpl = deps.fetchImpl ?? fetch;
 
   try {
-    if (isolated && (await deps.isolatedChat!.validate?.(binding) === false || lifecycle.aborted || !stillAuthorized())) return failure(request.requestId, "action_denied");
+    if (isolated && (deps.isolatedChat!.validate && await waitForInferenceAuthority(() => deps.isolatedChat!.validate!(binding), lifecycle) !== true || lifecycle.aborted || !await stillAuthorized())) return failure(request.requestId, "action_denied");
     const launch = binding.anthropicApi ? { env: { ANTHROPIC_API_KEY: await deps.matrixAnthropic!.credential(binding, lifecycle) } } : await resolveInferenceCredentials(
       accessSourceId,
       { requestClass: binding.requestClass, claimKey: request.runtimeHandle },
@@ -195,11 +231,11 @@ export async function forwardBotInference(
     if (accessSourceId === "matrix_included") headers.set("x-matrix-funded-claim-key", request.runtimeHandle);
     // Returns "denied" instead of sending when the run lost its authorization.
     const send = async (): Promise<Response | "denied"> => {
-      if (binding.anthropicApi && !await deps.matrixAnthropic!.revalidate(binding, lifecycle)) return "denied";
-      if (deps.revalidateBinding && !await deps.revalidateBinding(binding)) return "denied";
+      if (binding.anthropicApi && await anthropicValid() !== true) return "denied";
+      if (await bindingValid() !== true) return "denied";
       if (lifecycle.aborted) return "denied";
-      if (!stillAuthorized()) return "denied";
-      if (isolated && (!await deps.isolatedChat!.consume(binding) || lifecycle.aborted || !stillAuthorized())) return "denied";
+      if (!await stillAuthorized()) return "denied";
+      if (isolated && (!await deps.isolatedChat!.consume(binding) || lifecycle.aborted || !await stillAuthorized())) return "denied";
       return fetchImpl(`${baseUrl}${request.path}`, {
         method: "POST",
         headers,
@@ -226,7 +262,7 @@ export async function forwardBotInference(
     if (response === "denied") return failure(request.requestId, "action_denied");
     if (!response.ok) {
       const reason = response.headers.get("x-matrix-funded-error");
-      if (accessSourceId === "matrix_included" && stillAuthorized()) {
+      if (accessSourceId === "matrix_included" && await stillAuthorized()) {
         deps.onFundedFailure?.(binding, response.status === 403
           && (reason === "insufficient_credit" || reason === "budget_exceeded") ? reason : undefined);
       }
@@ -234,8 +270,8 @@ export async function forwardBotInference(
       return failure(request.requestId, "provider_unavailable");
     }
     const body = await readBoundedBody(response);
-    if (binding.anthropicApi && (lifecycle.aborted || !await deps.matrixAnthropic!.revalidate(binding, lifecycle)
-      || deps.revalidateBinding && !await deps.revalidateBinding(binding) || !stillAuthorized())) return failure(request.requestId, "action_denied");
+    if (binding.anthropicApi && (lifecycle.aborted || await anthropicValid() !== true
+      || await bindingValid() !== true || !await stillAuthorized())) return failure(request.requestId, "action_denied");
     const result = ScopeRuntimeBrokerResponseSchema.parse({
       version: 1,
       requestId: request.requestId,
@@ -247,7 +283,7 @@ export async function forwardBotInference(
     if (accessSourceId === "matrix_included") deps.onFundedFailure?.(binding, undefined);
     return result;
   } catch (error: unknown) {
-    if (accessSourceId === "matrix_included" && stillAuthorized()) deps.onFundedFailure?.(binding, undefined);
+    if (accessSourceId === "matrix_included" && await stillAuthorized()) deps.onFundedFailure?.(binding, undefined);
     if (error instanceof RangeError && error.message === "response_too_large") return failure(request.requestId, "response_too_large");
     console.warn("[bots] inference forward failed:", error instanceof Error ? error.name : "UnknownError");
     return failure(request.requestId, "provider_unavailable");

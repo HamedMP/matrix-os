@@ -14,7 +14,8 @@
  */
 import { createHash } from "node:crypto";
 import { storeBotGmailAttachment } from "./integration-attachment.js";
-import type { BotEffect, BotToolRequest, BotToolResult } from "@matrix-os/contracts";
+import { parseSharedGmailAttachmentParams, sharedGmailAttachmentResult } from "./shared-integration-attachment.js";
+import type { BotAudience, BotEffect, BotToolRequest, BotToolResult } from "@matrix-os/contracts";
 import type { ChatAgentStore } from "../chat/agent-store.js";
 import { getAction, getService } from "../integrations/registry.js";
 import { BotBrokerActionError, untilAborted } from "./broker-actions.js";
@@ -27,7 +28,7 @@ import { createBotInteractionsRepository } from "./repositories/interactions.js"
 import { BotStateError, newBotStateId } from "./repositories/shared.js";
 import type { BotRuntimeBinding } from "./runtime-registry.js";
 
-const AUDIENCE = "direct";
+const audienceFor = (binding: BotRuntimeBinding): BotAudience => binding.group ? `group:${binding.chatId}` : "direct";
 const APPROVAL_TOOL = "integration.call";
 const REQUEST_LIFETIME_MS = 24 * 60 * 60_000;
 const CONNECT_LIFETIME_MS = 15 * 60_000;
@@ -82,18 +83,24 @@ export function createBotIntegrationTools(deps: {
   agents: Pick<ChatAgentStore, "get">;
   /** Live source check at the last local checkpoint before service invocation. */
   assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>;
+  assertSharedAttachmentSource?: (binding: BotRuntimeBinding, signal: AbortSignal) => Promise<void>;
   now?: () => Date;
 }) {
   const now = () => deps.now?.() ?? new Date();
 
-  async function qualifySource(binding: BotRuntimeBinding, signal?: AbortSignal) {
-    if (!deps.assertSource) return;
+  async function qualifySource(binding: BotRuntimeBinding, signal?: AbortSignal, sharedAttachment = false) {
+    if (!deps.assertSource && !sharedAttachment) return;
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(), SOURCE_CHECK_TIMEOUT_MS);
     const bounded = AbortSignal.any([deadline.signal, ...(signal ? [signal] : [])]);
     try {
       if (bounded.aborted) throw new BotBrokerActionError("timeout");
-      await untilAborted(deps.assertSource(binding, bounded), bounded);
+      if (deps.assertSource) await untilAborted(deps.assertSource(binding, bounded), bounded);
+      if (sharedAttachment) {
+        if (!deps.assertSharedAttachmentSource) throw new BotBrokerActionError("unavailable");
+        await untilAborted(deps.assertSharedAttachmentSource(binding, bounded), bounded);
+      }
+      if (bounded.aborted) throw new BotBrokerActionError("timeout");
     } catch (error: unknown) {
       if (bounded.aborted) throw new BotBrokerActionError("timeout");
       throw error;
@@ -176,7 +183,7 @@ export function createBotIntegrationTools(deps: {
   async function approved(binding: BotRuntimeBinding, args: CallArgs, grant: BotGrantRecord, preview: string): Promise<{ approved: true } | { approved: false; message: string }> {
     const argsHash = approvalDigest(args);
     const account = `${args.service}:${grant.accountLabel}`.slice(0, 256);
-    const policy = { taskId: binding.taskId, tool: APPROVAL_TOOL, argsHash, account, audience: AUDIENCE, policyRevision: grant.revision };
+    const policy = { taskId: binding.taskId, tool: APPROVAL_TOOL, argsHash, account, audience: audienceFor(binding), policyRevision: grant.revision };
     const at = now();
     return deps.transact(binding.ownerId, async (tx) => {
       const approvals = createBotApprovalsRepository(tx.db);
@@ -195,7 +202,7 @@ export function createBotIntegrationTools(deps: {
           ownerId: binding.ownerId, botId: binding.botId, chatId: binding.chatId, taskId: binding.taskId, kind: "approval",
           payload: {
             kind: "approval", tool: APPROVAL_TOOL, argsDigest: argsHash,
-            account: { service: args.service, label: grant.accountLabel }, audience: AUDIENCE, preview, policyRevision: grant.revision,
+            account: { service: args.service, label: grant.accountLabel }, audience: audienceFor(binding), preview, policyRevision: grant.revision,
           },
           responderActorId: binding.ownerId, blocking: true,
           expiresAt: new Date(at.getTime() + REQUEST_LIFETIME_MS).toISOString(), now: at.toISOString(),
@@ -221,11 +228,13 @@ export function createBotIntegrationTools(deps: {
   return {
     /** Dedicated workflows ask for their exact declared effects without executing a phantom integration call. */
     async ensureAccess(binding: BotRuntimeBinding, service: string, effects: readonly BotEffect[], signal?: AbortSignal): Promise<BotToolResult | null> {
+      // Dedicated access workflows use the private owner's approval channel.
+      if (binding.group) throw new BotBrokerActionError("denied");
       const declared = await declaredEffects(binding.ownerId, binding.botId, service);
       if (effects.some(effect => !declared.includes(effect))) throw new BotBrokerActionError("not_granted");
       const connected = await inventory(binding.ownerId, signal);
       const grants = await deps.transact(binding.ownerId, tx => createBotGrantsRepository(tx.db).listLive({
-        ownerId: binding.ownerId, botId: binding.botId, audience: AUDIENCE, now: now().toISOString(),
+        ownerId: binding.ownerId, botId: binding.botId, audience: audienceFor(binding), now: now().toISOString(),
       }, tx.db));
       const usable = grants.filter(grant => grant.service === service && effects.every(effect => grant.effects.includes(effect))
         && connected.filter(account => account.service === service && account.label === grant.accountLabel).length === 1
@@ -249,7 +258,7 @@ export function createBotIntegrationTools(deps: {
       if (integrations.length === 0) return text("This bot has no connected services for this task.");
       const connected = await inventory(binding.ownerId, signal);
       const grants = await deps.transact(binding.ownerId, (tx) => createBotGrantsRepository(tx.db).listLive({
-        ownerId: binding.ownerId, botId: binding.botId, audience: AUDIENCE, now: now().toISOString(),
+        ownerId: binding.ownerId, botId: binding.botId, audience: audienceFor(binding), now: now().toISOString(),
       }, tx.db));
       const available: typeof integrations[number][] = [];
       let skippedDeclined = false;
@@ -258,7 +267,7 @@ export function createBotIntegrationTools(deps: {
         const usable = grants.some((grant) => grant.service === service && effects.every((effect) => grant.effects.includes(effect))
           && connected.filter((connection) => connection.service === service && connection.label === grant.accountLabel).length === 1
           && connected.some((connection) => connection.service === service && connection.connectionId === grant.connectionId && connection.label === grant.accountLabel));
-        if (!usable && !args.service) {
+        if (!usable && !binding.group && !args.service) {
           const declined = await deps.transact(binding.ownerId, async (tx) => Boolean(await tx.db.selectFrom("bot_interactions")
             .select("interaction_id").where("owner_id", "=", binding.ownerId).where("task_id", "=", binding.taskId)
             .where("kind", "in", ["account_choice", "connect_request"]).where("status", "in", ["resolved", "cancelled"])
@@ -266,7 +275,7 @@ export function createBotIntegrationTools(deps: {
             .executeTakeFirst()));
           if (declined) { skippedDeclined = true; continue; }
         }
-        if (!usable && (required || args.service)) {
+        if (!usable && !binding.group && (required || args.service)) {
           return text(await deps.transact(binding.ownerId, (tx) => requestAccess(tx, binding, service, effects, connected)));
         }
         available.push(entry);
@@ -281,7 +290,7 @@ export function createBotIntegrationTools(deps: {
             `account "${grant.accountLabel}", connection ${grant.connectionId}, allowed: ${grant.effects.join(", ")}`).join("; ")}`;
         }
         const count = connected.filter((connection) => connection.service === service).length;
-        return `${serviceName(service)} (${service}): ${count > 0 ? "connected, but this bot has no access yet" : "not connected"}`;
+        return `${serviceName(service)} (${service}): ${!binding.group && count > 0 ? "connected, but this bot has no access yet" : "not connected"}`;
       });
       if (skippedDeclined) lines.push("The owner did not give access to another service in this task. Continue without it and do not ask again.");
       return text(lines.join("\n"));
@@ -289,8 +298,13 @@ export function createBotIntegrationTools(deps: {
 
     /** `integration.call`: one action on a granted account. */
     async call(binding: BotRuntimeBinding, args: CallArgs, signal?: AbortSignal): Promise<BotToolResult> {
+      const attachment = binding.group && args.service === "gmail" && args.action === "get_attachment"
+        ? parseSharedGmailAttachmentParams(args.params) : undefined;
+      if (attachment && !deps.assertSharedAttachmentSource) throw new BotBrokerActionError("unavailable");
       const effect = effectOf(args.service, args.action);
       if (!effect) throw new BotBrokerActionError("invalid_arguments");
+      // Group effects need an explicit group approval flow; the private owner prompt is never reused.
+      if (binding.group && effect !== "read") throw new BotBrokerActionError("denied");
       const declared = await declaredEffects(binding.ownerId, binding.botId, args.service);
       // A bot never exceeds what its recipe declares for a service.
       if (!declared.includes(effect)) throw new BotBrokerActionError("denied");
@@ -298,10 +312,11 @@ export function createBotIntegrationTools(deps: {
       const at = now().toISOString();
       const grant = await deps.transact(binding.ownerId, (tx) => createBotGrantsRepository(tx.db).findUsable({
         ownerId: binding.ownerId, botId: binding.botId, service: args.service, connectionId: args.connectionId,
-        audience: AUDIENCE, effect, now: at,
+        audience: audienceFor(binding), effect, now: at,
       }, tx.db));
       const account = connected.filter((connection) => connection.service === args.service && connection.label === grant?.accountLabel);
       if (!grant || account.length !== 1 || account[0]!.connectionId !== args.connectionId) {
+        if (binding.group) throw new BotBrokerActionError("not_granted");
         return text(await deps.transact(binding.ownerId, (tx) => requestAccess(tx, binding, args.service, declared, connected)));
       }
       if (effect !== "read") {
@@ -310,28 +325,35 @@ export function createBotIntegrationTools(deps: {
         const decision = await approved(binding, args, grant, preview);
         if (!decision.approved) return text(decision.message);
       }
-      // A revoked grant must be reread after awaited source preparation.
-      await qualifySource(binding, signal);
-      await deps.transact(binding.ownerId, async (tx) => {
-        const live = await createBotGrantsRepository(tx.db).findUsable({
-          ownerId: binding.ownerId, botId: binding.botId, service: args.service, connectionId: args.connectionId,
-          audience: AUDIENCE, effect, now: now().toISOString(), lockForDispatch: true,
-        }, tx.db);
-        if (!live || live.grantId !== grant.grantId || live.revision !== grant.revision || live.accountLabel !== grant.accountLabel) {
-          throw new BotBrokerActionError("not_granted");
-        }
-        // Recheck source changes during the grant read while its row lock
-        // prevents revocation/revision updates. This is the joint authority
-        // checkpoint; commit/release precedes any network transport.
-        await qualifySource(binding, signal);
-        if (live.expiresAt && Date.parse(live.expiresAt) <= now().getTime()) {
-          throw new BotBrokerActionError("not_granted");
-        }
-      });
+      const revalidateAccess = async () => {
+        await qualifySource(binding, signal, attachment !== undefined);
+        await deps.transact(binding.ownerId, async (tx) => {
+          const live = await createBotGrantsRepository(tx.db).findUsable({
+            ownerId: binding.ownerId, botId: binding.botId, service: args.service, connectionId: args.connectionId,
+            audience: audienceFor(binding), effect, now: now().toISOString(), lockForDispatch: true,
+          }, tx.db);
+          if (!live || live.grantId !== grant.grantId || live.revision !== grant.revision || live.accountLabel !== grant.accountLabel) {
+            throw new BotBrokerActionError("not_granted");
+          }
+          // Recheck source changes during the grant read while its row lock
+          // prevents revocation/revision updates. This is the joint authority
+          // checkpoint; commit/release precedes any network transport.
+          await qualifySource(binding, signal, attachment !== undefined);
+          if (live.expiresAt && Date.parse(live.expiresAt) <= now().getTime()) {
+            throw new BotBrokerActionError("not_granted");
+          }
+        });
+      };
+      await revalidateAccess();
       try {
         const result = await deps.client.call(binding.ownerId, {
-          service: args.service, action: args.action, label: grant.accountLabel, connectionId: grant.connectionId, params: args.params, read: effect === "read",
+          service: args.service, action: args.action, label: grant.accountLabel, connectionId: grant.connectionId, params: attachment?.params ?? args.params, read: effect === "read",
         }, signal);
+        if (attachment) {
+          // A read may finish after grant, canonical root or source revocation. Expose no bytes until refreshed.
+          await revalidateAccess();
+          return sharedGmailAttachmentResult(result.data, attachment.chunk);
+        }
         if (args.service === "gmail" && args.action === "get_attachment") {
           const reference = await storeBotGmailAttachment(deps.homePath, binding, result.data, signal);
           return text(JSON.stringify(reference));

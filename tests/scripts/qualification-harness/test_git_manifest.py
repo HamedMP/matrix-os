@@ -17,7 +17,7 @@ class TrustedGitManifest(unittest.TestCase):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);source,req=self.seed(root)
    value=manifest.prepare_manifest_from_git(source,req,root)
-   self.assertEqual(value['source'],source);self.assertEqual(value['parents'],req['mergeParents']);self.assertEqual(value['unit'],['tests/a.test.ts','tests/a.test.tsx']);self.assertEqual(len(value['general']),15)
+   self.assertEqual(value['source'],source);self.assertEqual(value['parents'],req['mergeParents']);self.assertEqual(value['unit'],['tests/a.test.ts','tests/a.test.tsx']);self.assertEqual(len(value['general']),16)
    self.assertEqual(value['lockSha256'],common.digest((root/'pnpm-lock.yaml').read_bytes()))
  def test_real_native_two_level_actual_parents_are_independent_of_branch_base(self):
   with tempfile.TemporaryDirectory() as td:

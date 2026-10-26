@@ -50,7 +50,7 @@ import type { CollaborationResourceDriver, CollaborationResourceServices } from 
 import { createCollaborationUploadStager } from "./upload-stages.js";
 import { createCollaborationRoutes } from "./routes.js";
 import type { ChatExecutionRootResolver } from "../chat/execution-root.js";
-import { createSharedAiRuntime, type SharedChatSandboxManifestSource } from "./shared-ai-runtime.js";
+import { createSharedAiRuntime, type SharedChatSandboxManifestSource, type SharedMatrixBotExtension } from "./shared-ai-runtime.js";
 import type { ReadinessSubject } from "./readiness-evaluator.js";
 import { sandboxRequiredForResourceKind } from "./sandbox-readiness.js";
 import type { CanonicalProviderSnapshotReader } from "../ai-providers/provider-settings-coordinators.js";
@@ -232,6 +232,7 @@ export async function createGatewayCollaboration(options: {
     ? new OwnerRuntimeSessionService({
         verifier: directVerifier, ownerId: options.config.ownerId,
         runtimeId: options.config.runtimeId, organizationPrecondition,
+        runtimeGeneration: () => controlClient?.registeredAuthorityGeneration() ?? null,
       })
     : undefined;
   // S07 / T039: lease loss also releases terminal control, stops bound sandbox runtimes and refuses input.
@@ -485,6 +486,13 @@ export async function createGatewayCollaboration(options: {
         throw error;
       }
     },
+    /** Live policy-qualified execution adapter; absent until shared AI is ready. */
+    get chatExecutionAdapter() { return sharedAiRuntime?.available === true ? chatExecutionAdapter : undefined; },
+    get sharedAiCapability() {
+      return sharedAiRuntime?.available === true
+        ? { generation: sharedAiRuntime.executionGeneration, eligibility: sharedAiRuntime.eligibility }
+        : undefined;
+    },
     async enableSharedAi(input: {
       orchestrator: CanonicalChatOrchestrator;
       homePath: string;
@@ -497,6 +505,7 @@ export async function createGatewayCollaboration(options: {
       fetchImpl?: typeof fetch;
       providerCatalog?: ChatProviderCatalogService;
       codingProviders?: Pick<CodingAgentProviderRegistry, "listProviders">;
+      matrixBot?: SharedMatrixBotExtension;
       /** S07: mounts each shared run's authoritative root; without it shared AI stays disabled. */
       sandboxManifests?: SharedChatSandboxManifestSource;
       /** S09: the canonical execution-root resolver used as the default manifest source. */
@@ -527,6 +536,7 @@ export async function createGatewayCollaboration(options: {
         resolveParticipant,
         ...(input.providerCatalog ? { providerCatalog: input.providerCatalog } : {}),
         ...(input.codingProviders ? { codingProviders: input.codingProviders } : {}),
+        ...(input.matrixBot ? { matrixBot: input.matrixBot } : {}),
         ownerSource,
         executionPolicies,
         runLoss,

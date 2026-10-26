@@ -102,6 +102,7 @@ describe("relaying a private project owner's setup requests", () => {
     directSessions = new DirectSessionService({ verifier: ticketVerifier, authority, repository, now: () => now });
     ownerRuntimeSessions = new OwnerRuntimeSessionService({
       verifier: ticketVerifier, ownerId, runtimeId, organizationPrecondition: precondition, now: () => now,
+      runtimeGeneration: () => 1,
     });
     projectSharing = {
       preview: vi.fn(async ({ scopeId }: { scopeId: string }) => ({

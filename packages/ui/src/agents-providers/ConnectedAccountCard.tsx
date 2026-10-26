@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { ProviderAccount, ProviderAccessSource, ProviderHarnessInstance } from "@matrix-os/contracts";
 import { AllowanceMeter } from "./AllowanceMeter.js";
-import { providerName, shortDate, usageLines } from "./utils.js";
+import { connectedAccountLabel, providerName, shortDate, usageLines } from "./utils.js";
 
 /** Connected presentation consumes observed identity and usage, never inferred plan limits. */
 export function ConnectedAccountCard({ harness, account, source, action, disabled, onRefresh, saved = false }: {
@@ -14,11 +14,8 @@ export function ConnectedAccountCard({ harness, account, source, action, disable
   onRefresh: () => void;
 }) {
   // A provider never shares an API key's usage with Matrix; name who bills it instead.
-  const apiKey = account?.authMethod === "api_key" || source?.fundingKind === "owner_api_key";
+  const { apiKey, label } = connectedAccountLabel(harness.harness, account, source);
   const usage = source && !apiKey ? usageLines(source.usage) : null;
-  const label = apiKey ? "API key"
-    : harness.harness === "codex" ? "ChatGPT account"
-    : harness.harness === "claude" ? "Claude account" : "Provider account";
   return <section className="matrix-ap-connected" aria-label={`${harness.displayName} ${saved ? "saved account" : "connection"}`}>
     <h3>{saved ? "Saved account" : "Connection"}</h3>
     <div className="matrix-ap-account">

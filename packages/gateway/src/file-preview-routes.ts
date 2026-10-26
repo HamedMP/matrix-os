@@ -70,6 +70,16 @@ export function createFilePreviewRoutes(options: {
     return c.json({ error: "preview_unavailable" }, 503);
   }
 
+  app.get("/directory", async (c) => {
+    const parsed = parseRef(c);
+    if (!parsed.ok) return c.json({ error: parsed.status === 404 ? "not_found" : "invalid_request" }, parsed.status);
+    try {
+      if (!options.service.listArchiveDirectory) throw new FilePreviewError("unavailable");
+      c.header("Cache-Control", "private, no-store");
+      return c.json(await options.service.listArchiveDirectory(options.getPrincipal(c), parsed.ref, c.req.raw.signal));
+    } catch (error: unknown) { return errorResponse(c, error); }
+  });
+
   app.get("/metadata", async (c) => {
     const parsed = parseRef(c);
     if (!parsed.ok) {

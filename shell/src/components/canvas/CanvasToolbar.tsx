@@ -1,6 +1,7 @@
 "use client";
 
 import { useCanvasTransform, ZOOM_MIN, ZOOM_MAX } from "@/hooks/useCanvasTransform";
+import type { GettingStartedDestination } from "../onboarding/GettingStartedPopover";
 import { useWindowManager } from "@/hooks/useWindowManager";
 import { useCanvasLabels } from "@/stores/canvas-labels";
 import { Minus, Plus, Maximize, Type, LayoutGrid, Grid3X3, MousePointer, Hand, Eye, EyeOff, EllipsisIcon, CheckIcon } from "@/lib/hugeicons";
@@ -16,7 +17,7 @@ import { useDesktopMode } from "@/stores/desktop-mode";
 
 interface CanvasToolbarProps {
   onOpenSettings?: (section: WebDesktopSettingsSection) => void;
-  onOpenFirstWork?: () => void;
+  onOpenFirstWork?: (destination?: GettingStartedDestination) => void;
   onOpenCommandPalette?: () => void;
 }
 

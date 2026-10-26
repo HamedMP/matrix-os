@@ -14,7 +14,7 @@ import type {
 import { jsonb, parseJson } from "./records.js";
 import type { SharedQueuedTurn } from "./repository.js";
 import type { CollaborationRunLossRepository } from "../collaboration/shared-run-loss.js";
-import { fenceSharedChatAuthority, type SharedChatAuthorizer } from "../collaboration/shared-chat-authority.js";
+import { lockSharedChatMembershipScope, fenceSharedChatAuthority, type SharedChatAuthorizer } from "../collaboration/shared-chat-authority.js";
 import {
   authorizedSharedChatBindingMatches,
   directSharedChatBindingMatches,
@@ -480,6 +480,7 @@ async function authorizeCommand(
   clock: () => Date,
   authority?: Awaited<ReturnType<SharedChatAuthorizer>>,
 ) {
+  await lockSharedChatMembershipScope(trx, authority);
   const scope = await trx.selectFrom("collaboration_scopes").selectAll()
     .where("id", "=", identity.scopeId).forUpdate().executeTakeFirst();
   if (!scope || scope.kind !== "chat") throw new CollaborationChatCommandError("not_found");

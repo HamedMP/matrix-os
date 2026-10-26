@@ -1,6 +1,6 @@
 "use client";
 
-import { GettingStartedVisibilityProvider, resolveRecipeHandoff, type ChatCollaborationView } from "@matrix-os/ui";
+import { GetStartedAnswersProvider, GettingStartedVisibilityProvider, resolveRecipeHandoff, type ChatCollaborationView } from "@matrix-os/ui";
 import { useState, useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useTheme } from "@/hooks/useTheme";
@@ -147,8 +147,10 @@ function ShellHomeBody({
     });
   }, [isMobile]);
 
+  const gettingStartedScope = JSON.stringify([cacheScope?.storageKey ?? cachePathname, sessionId, runtimeSlot]);
   return (
-    <GettingStartedVisibilityProvider scope={JSON.stringify([cacheScope?.storageKey ?? cachePathname, sessionId, runtimeSlot])}>
+    <GettingStartedVisibilityProvider scope={gettingStartedScope}>
+    <GetStartedAnswersProvider scope={gettingStartedScope}>
     <ChatProvider value={chat}>
       <div className="flex h-screen w-screen flex-col overflow-hidden md:flex-row">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -176,6 +178,7 @@ function ShellHomeBody({
         <ApprovalDialog />
       </div>
     </ChatProvider>
+    </GetStartedAnswersProvider>
     </GettingStartedVisibilityProvider>
   );
 }

@@ -466,6 +466,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
         id: "matrix_cloudflare", displayName: "Matrix AI", fundingKind: "matrix_included",
         vendor: "cloudflare", accountLabel: "Included",
         eligibleModelIds: fundedSources.matrix_cloudflare.eligibleModelIds,
+        discoverableModelIds: fundedSources.matrix_cloudflare.discoverableModelIds,
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, fundedSources.matrix_cloudflare.readiness),
       sourceFromReadiness({
@@ -475,6 +476,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
         vendor: "anthropic",
         accountLabel: "Included",
         eligibleModelIds: fundedSources.matrix_included.eligibleModelIds,
+        discoverableModelIds: fundedSources.matrix_included.discoverableModelIds,
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
       }, fundedSources.matrix_included.readiness),
       sourceFromReadiness({

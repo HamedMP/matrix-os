@@ -13,6 +13,8 @@ import {
   type AgentProviderSummary,
   type CanonicalProviderCatalog,
   type ProviderSettingsSnapshot,
+  ProviderManagedCreditObservationSchema,
+  type ProviderManagedCreditObservation,
 } from "@matrix-os/contracts";
 
 const NOW = "2026-09-20T00:00:00.000Z";
@@ -95,6 +97,7 @@ export async function startProviderAuthGateway(options: {
   inlineClaude?: boolean;
   catalog?: CanonicalProviderCatalog;
   settings?: (authenticated: boolean) => ProviderSettingsSnapshot;
+  managedCredit?: (snapshot: ProviderSettingsSnapshot) => ProviderManagedCreditObservation;
   failSettingsRead?: () => boolean;
 } = {}) {
   const upstream = await startStubGateway();
@@ -221,6 +224,11 @@ export async function startProviderAuthGateway(options: {
     if (req.method === "GET" && path === "/api/chat-providers" && options.catalog) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(options.catalog));
+      return;
+    }
+    if (req.method === "GET" && path === "/api/ai/provider-settings/managed-credit" && options.managedCredit) {
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(JSON.stringify(ProviderManagedCreditObservationSchema.parse(options.managedCredit(settings()))));
       return;
     }
     if (req.method === "GET" && path === "/api/ai/provider-settings") {

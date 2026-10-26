@@ -176,7 +176,7 @@ export { ChatSidebarAddAction } from "./chat-agents/ChatSidebarAddAction.js";
 export { ChatAgentsContent } from "./chat-agents/ChatAgentsContent.js";
 export { BotRunMessageBody, BotUnassignedMessageBody } from "./chat-agents/bots/BotMessageBody.js";
 export { BotChatPanel } from "./chat-agents/bots/BotChatPanel.js";
-export { ChatAgentsWorkspace, useChatAgentsNavigation } from "./chat-agents/ChatAgentsNavigation.js";
+export { ChatAgentsWorkspace, useChatAgentsNavigation, useCloseAgentsOnDraftRequest } from "./chat-agents/ChatAgentsNavigation.js";
 export { ChatMentionControls, useChatMentionPermission } from "./chat-agents/ChatMentionControls.js";
 export { chatResourceKey, isChatMention, hasChatMentionParts, canAddChatMention, orderChatResources, chatAgentAttribution } from "./chat-agents/mentions.js";
 
@@ -276,6 +276,7 @@ export * from "./chat-navigation/projection.js";
 export * from "./chat-navigation/legacy.js";
 export * from "./chat-navigation/metrics.js";
 export * from "./onboarding-widget/index.js";
+export * from "./get-started/index.js";
 
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
 export { BrowserSurface, createHostedBrowserSession, createBrowserSetupTransport } from "./browser/index.js";
@@ -289,3 +290,4 @@ export { chatAttachmentSubmissionError, chatAttachmentComposerPolicy } from "./c
 export { gatewayChatAvailableMicrousd } from "./agents-providers/utils.js";
 
 export { OwnerManagedUpdateNotice } from "./owner-managed-update-notice.js";
+export { botCreationFailureReason, type BotCreationFailureReason } from "./chat-agents/creation-error.js";

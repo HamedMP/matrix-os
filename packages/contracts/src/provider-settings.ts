@@ -2,7 +2,7 @@ import { z } from "zod/v4";
 import { canonicalReferenceId, canonicalSafeLabel } from "#canonical-chat-primitives";
 import { IsoTimestampSchema, ProviderModelReferenceSchema } from "#contract-primitives";
 import { AiProviderLocalObservationSchema } from "#ai-provider";
-import { FundedAiChatAvailabilitySchema, isManagedWorkersAiModel } from "#funded-ai";
+import { FundedAiChatAvailabilitySchema, PreviewRequestQuotaSchema, isManagedWorkersAiModel } from "#funded-ai";
 import { MatrixAnthropicConnectionSchema } from "#matrix-anthropic-connection";
 import { MATRIX_CHATGPT_PLAN_INSTANCE_ID } from "#bots/model-choice";
 
@@ -74,10 +74,11 @@ export const ProviderModelViewSchema = z.object({
   enabled: z.boolean(),
   capabilities: z.array(z.enum(["tools", "vision", "reasoning", "long_context", "audio"])).max(5).refine(unique).optional(),
 }).strict();
+export const MAX_PROVIDER_SETTINGS_MODELS = 256;
 export const ProviderModelProviderSchema = z.object({
   id: ProviderIdSchema,
   displayName: DisplayNameSchema,
-  models: z.array(ProviderModelViewSchema).max(256),
+  models: z.array(ProviderModelViewSchema).max(MAX_PROVIDER_SETTINGS_MODELS),
 }).strict().superRefine((provider, ctx) => {
   if (!unique(provider.models.map((model) => model.id))) {
     ctx.addIssue({ code: "custom", path: ["models"], message: "Duplicate model id" });
@@ -152,6 +153,7 @@ export const ProviderUsageSchema = z.discriminatedUnion("kind", [
     budget: ProviderManagedBudgetSchema,
     /** Opt-in ordinary Chat projection; legacy aggregate credit remains unchanged. */
     chatAvailability: FundedAiChatAvailabilitySchema.optional(),
+    previewQuota: PreviewRequestQuotaSchema.optional(),
   }).strict().superRefine((usage, ctx) => {
     if (usage.chatAvailability && (usage.chatAvailability.asOf !== usage.asOf
       || usage.chatAvailability.eligibleBalanceMicrousd > usage.credit.creditBalanceMicrousd

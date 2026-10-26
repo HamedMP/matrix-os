@@ -89,6 +89,7 @@ it.each(["Cancel", "Close agent settings", "Escape"])("returns an empty scratch 
   expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("");
   expect(screen.getByRole("textbox", { name: "Instructions" })).toHaveValue("");
   fireEvent.change(screen.getByRole("textbox", { name: "Name" }), { target: { value: "Discard this" } });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Refresh models" })).toBeEnabled());
   if (action === "Escape") fireEvent(screen.getByRole("dialog"), new Event("cancel", { bubbles: false, cancelable: true }));
   else fireEvent.click(screen.getByRole("button", { name: action }));
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -110,9 +111,11 @@ it("retains preset setup and its cancel path beside scratch", async () => {
 });
 
 it("keeps the scratch form open and rejects cancel and duplicate submit while creation is pending", async () => {
-  const { client } = fixture();
-  let complete!: (value: typeof saved) => void;
-  client.create.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+  const { client, bots } = fixture();
+  const response = { agent: { id: saved.id, name: "Pending bot", avatarSeed: "a".repeat(32), revision: 1, status: "active" },
+    chatId: "chat_pending01", operation: "created" };
+  let complete!: (value: typeof response) => void;
+  bots.createCustom.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
   render(<ChatAgentsPanel client={client} view="recipes" onClose={vi.fn()}/>);
   await waitFor(() => expect(scratch()).toBeEnabled());
   fireEvent.click(scratch());
@@ -127,8 +130,11 @@ it("keeps the scratch form open and rejects cancel and duplicate submit while cr
   fireEvent(screen.getByRole("dialog"), new Event("cancel", { bubbles: false, cancelable: true }));
   fireEvent.submit(screen.getByRole("textbox", { name: "Name" }).closest("form")!);
   expect(screen.getByRole("dialog")).toBeVisible();
-  expect(client.create).toHaveBeenCalledTimes(1);
-  await act(async () => { complete({ ...saved, name: "Pending bot" }); });
+  expect(bots.createCustom).toHaveBeenCalledTimes(1);
+  expect(client.create).not.toHaveBeenCalled();
+  client.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, name: "Pending bot", description: "", instructions: "Write drafts",
+    selection: { instanceId: "matrix_pi_default", model: "sonnet" }, recipeRef: { recipeId: "custom-coordinator", version: "1" } }] });
+  await act(async () => { complete(response); });
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.getByRole("heading", { name: "Your AI team" })).toBeVisible();
 });
@@ -187,8 +193,14 @@ it.each(["loading", "disabled", "limit", "catalog"])("preserves the custom-entry
   if (reason === "catalog") client.catalog.mockRejectedValue(new Error("offline"));
   render(<ChatAgentsPanel client={client} view="recipes" onClose={vi.fn()}/>);
   await act(async () => {});
-  expect(scratch()).toBeDisabled();
-  fireEvent.click(scratch()); expect(screen.queryByRole("dialog")).toBeNull();
+  if (reason === "catalog") {
+    const retry = screen.getByRole("button", { name: "Retry models" });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+  } else {
+    expect(scratch()).toBeDisabled(); fireEvent.click(scratch());
+  }
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 it("discards scratch navigation and draft when the client scope changes", async () => {
@@ -201,4 +213,43 @@ it("discards scratch navigation and draft when the client scope changes", async 
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(await screen.findByRole("heading", { name: "Your AI team" })).toBeVisible();
   expect(second.client.create).not.toHaveBeenCalled();
+});
+
+
+it.each([false, true])("keeps in-card catalog retry keyboard-focusable and respects host blocking (blocked=%s)", blocked => {
+  const start = vi.fn(), refresh = vi.fn();
+  render(<AgentRecipesPanel onStartFromScratch={start} onRefreshCatalog={refresh} scratchDisabled
+    catalogError="Models unavailable" scratchRetryDisabled={blocked}/>);
+  const retry = screen.getByRole("button", { name: "Retry models" });
+  expect(retry.tagName).toBe("BUTTON");
+  expect(retry.querySelector("button")).toBeNull();
+  if (blocked) expect(retry).toBeDisabled(); else expect(retry).toBeEnabled();
+  if (!blocked) { retry.focus(); expect(retry).toHaveFocus(); }
+  fireEvent.click(retry);
+  expect(refresh).toHaveBeenCalledTimes(blocked ? 0 : 1);
+  expect(start).not.toHaveBeenCalled();
+});
+
+
+it("returns focus to the heading when closing scratch during discovery without stealing it later", async () => {
+  const { client, bots } = fixture();
+  render(<ChatAgentsPanel client={client} view="recipes" onClose={vi.fn()}/>);
+  await waitFor(() => expect(scratch()).toBeEnabled());
+  let resolve!: (value: Awaited<ReturnType<typeof client.catalog>>) => void;
+  client.catalog.mockReturnValueOnce(new Promise(value => { resolve = value; }));
+  fireEvent.click(scratch());
+  const name = screen.getByRole("textbox", { name: "Name" });
+  act(() => name.focus());
+  fireEvent.change(name, { target: { value: "Discard this" } });
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  const heading = screen.getByRole("heading", { name: "New agent", exact: true });
+  expect(scratch()).toBeDisabled();
+  expect(heading).toHaveFocus();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  const catalog = await clientFixture({ matrix: true }).catalog();
+  await act(async () => resolve(catalog));
+  expect(scratch()).toBeEnabled();
+  expect(heading).toHaveFocus();
+  expect(client.create).not.toHaveBeenCalled();
+  expect(bots.createCustom).not.toHaveBeenCalled();
 });

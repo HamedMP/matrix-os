@@ -28,11 +28,12 @@ import { forwardBotInference, type BotInferenceDependencies } from "./broker-inf
 import type { BotCheckpointsRepository } from "./repositories/checkpoints.js";
 import type { BotSessionsRepository } from "./repositories/sessions.js";
 import { BotStateError, withTransaction, type BotExecutor } from "./repositories/shared.js";
-import { isManagedPiBinding, type PiRuntimeBinding, type BotRuntimeRegistry } from "./runtime-registry.js";
+import { requireGroupBotAuthority, isManagedPiBinding, type GroupBotAuthorizer, type PiRuntimeBinding, type BotRuntimeRegistry } from "./runtime-registry.js";
 import type { ScopeRuntimeHost } from "../scope-runtime-host/index.js";
 
 const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
 const MAX_TOOL_TIMEOUT_MS = 60_000;
+const AUTHORIZATION_TIMEOUT_MS = 10_000;
 /** Per-run event order entries kept after release; runs still bound are never evicted. */
 const MAX_TRACKED_RUNS = 256;
 
@@ -102,6 +103,7 @@ export function createBotBrokerActions(deps: {
   /** The owner database the repositories use; pre-dispatch checkpoint writes share one transaction on it. */
   db: BotExecutor;
   registry: BotRuntimeRegistry;
+  authorizeGroup?: GroupBotAuthorizer;
   sessions: BotSessionsRepository;
   managedSessions?: import("../chat/managed-pi-sessions.js").ManagedPiSessionsRepository;
   managedCheckpoints?: import("../chat/managed-pi-checkpoints.js").ManagedPiCheckpointsRepository;
@@ -168,7 +170,27 @@ export function createBotBrokerActions(deps: {
     return true;
   }
 
+  async function reauthorize(binding: PiRuntimeBinding, childSignal?: AbortSignal, finalDelivery = false): Promise<void> {
+    if (!binding.group) return;
+    const runSignal = deps.registry.inferenceSignal(binding);
+    if (!runSignal || (!finalDelivery && runSignal.aborted) || childSignal?.aborted) throw new BotBrokerActionError("stale_generation");
+    // Inference cancellation retains final event/session authority until release.
+    const signal = AbortSignal.any([...(finalDelivery ? [] : [runSignal]), deps.inference.lifetime, AbortSignal.timeout(AUTHORIZATION_TIMEOUT_MS), ...(childSignal ? [childSignal] : [])]);
+    if (signal.aborted) throw new BotBrokerActionError((!finalDelivery && runSignal.aborted) || childSignal?.aborted ? "stale_generation" : "timeout");
+    try {
+      await untilAborted(requireGroupBotAuthority({ ownerId: binding.ownerId, chatId: binding.chatId, runId: binding.runId, group: binding.group }, deps.authorizeGroup), signal);
+    } catch (error: unknown) {
+      if (signal.aborted) throw new BotBrokerActionError((!finalDelivery && runSignal.aborted) || childSignal?.aborted ? "stale_generation" : "timeout");
+      console.warn("[bots] group authorization denied:", error instanceof Error ? error.name : "UnknownError");
+      throw new BotBrokerActionError("denied");
+    }
+    if (signal.aborted) throw new BotBrokerActionError((!finalDelivery && runSignal.aborted) || childSignal?.aborted ? "stale_generation" : "timeout");
+    if (!deps.registry.lookupRun(binding)) throw new BotBrokerActionError("stale_generation");
+  }
+
   async function runTool(binding: PiRuntimeBinding, request: BotToolRequest, childSignal?: AbortSignal): Promise<BotToolResult> {
+    // Shared runs cannot reach personal artifacts, memory, or owner-private interactions.
+    if (binding.group && !["integration.inventory", "integration.call"].includes(request.capability)) throw new BotBrokerActionError("denied");
     if (!binding.capabilities.includes(request.capability)) throw new BotBrokerActionError("denied");
     const registeredSignal = deps.registry.inferenceSignal(binding);
     if (!registeredSignal || registeredSignal.aborted) throw new BotBrokerActionError("stale_generation");
@@ -212,6 +234,7 @@ export function createBotBrokerActions(deps: {
       ? 10 * 60_000 : request.capability === "browser.action" ? SHARED_BROWSER_ACTION_DEADLINE_MS : request.capability === "agent.task" ? 120_000 : toolTimeoutMs;
     const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(deadline)]);
     try {
+      await reauthorize(binding, runSignal);
       const { result, outcomeRef } = await untilAborted(deps.tools.dispatch(binding, request, signal), signal);
       await checkpoints.markObserved({ ...id, ...(outcomeRef ? { outcomeRef } : {}), now: now().toISOString() });
       return result;
@@ -249,12 +272,18 @@ export function createBotBrokerActions(deps: {
         if (!binding) return { version: 1, requestId: request.data.requestId, ok: false, error: "action_denied" };
         const runSignal = deps.registry.inferenceSignal(binding);
         if (!runSignal) return { version: 1, requestId: request.data.requestId, ok: false, error: "action_denied" };
-        return forwardBotInference(request.data, binding, (modelId) => deps.registry.authorize({
-          runtimeHandle: request.data.runtimeHandle,
-          executionGeneration: request.data.executionGeneration,
-          action: request.data.action,
-          modelId,
-        }), { ...deps.inference, runSignal });
+        return forwardBotInference(request.data, binding, async (modelId) => {
+          try { await reauthorize(binding); } catch (error: unknown) {
+            if (!(error instanceof BotBrokerActionError)) console.warn("[bots] inference reauthorization failed:", error instanceof Error ? error.name : "UnknownError");
+            return { allowed: false };
+          }
+          return deps.registry.authorize({
+            runtimeHandle: request.data.runtimeHandle,
+            executionGeneration: request.data.executionGeneration,
+            action: request.data.action,
+            modelId,
+          });
+        }, { ...deps.inference, runSignal });
       }
       const parsed = BotBrokerRequestSchema.safeParse(raw);
       if (!parsed.success) return undefined;
@@ -263,8 +292,13 @@ export function createBotBrokerActions(deps: {
       if (!binding) return refusal(request.requestId, "stale_generation");
       const sessions = isManagedPiBinding(binding) ? deps.managedSessions : deps.sessions;
       if (!sessions) return refusal(request.requestId, "not_granted");
-      const key = { ownerId: binding.ownerId, chatId: binding.chatId };
+      // Shared evidence is freshly admitted per run; never resume a prior run's
+      // source text after that evidence was erased or its audience changed.
+      const key = { ownerId: binding.ownerId, ...(!isManagedPiBinding(binding) ? { botId: binding.botId } : {}), chatId: binding.chatId,
+        ...(binding.group ? { contextRunId: binding.runId, contextGeneration: createHash("sha256").update(`group:${binding.group.scopeId}:${binding.group.sessionGeneration}:${binding.rootFingerprint}:${binding.runId}`).digest("hex") } : {}) };
+      if (binding.group && !binding.group.sessionGeneration && ["bot.session.load", "bot.session.save"].includes(request.action)) return refusal(request.requestId, "denied");
       try {
+        await reauthorize(binding, undefined, request.action === "bot.event" || request.action === "bot.session.save");
         switch (request.action) {
           case "bot.run.load":
             return success(request.requestId, BotRunSpecSchema.parse(await deps.runs.loadRunSpec(binding)));
