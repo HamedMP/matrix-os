@@ -70,9 +70,10 @@ export async function recoverLegacyCodexContinuation(
       const session = await recoverCodexWorkspace({ ...runtime, startSession: scope.startSession },
         { ...context, resumeState: recoveredState }, sessionId, prompt,
         browser ? () => markNativeBrowserCleanupUnconfirmed(principal.userId) : undefined);
+      if (session.runtime.type !== "background" || !session.backgroundRef) throw new Error("Legacy conversation recovery is unavailable");
       if (browser) await prepareCodexBrowser({ ownerId: principal.userId, sessionId, browser, control, runtime, signal });
       return { events: [], outcome: "delivered", resumeState: { ...recoveredState,
-        ...(session.backgroundRef ? { backgroundRef: session.backgroundRef } : {}),
+        backgroundRef: session.backgroundRef,
         ...(observation.offset !== undefined ? { eventOffset: observation.offset } : {}),
       } };
     } catch (error: unknown) {

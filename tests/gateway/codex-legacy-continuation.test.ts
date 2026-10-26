@@ -9,6 +9,8 @@ import { bindNativeAccountMetadata } from "../../packages/gateway/src/ai-provide
 import { createWorkspaceCodingAgentProvider } from "../../packages/gateway/src/coding-agents/workspace-provider.js";
 import { markSessionStopConfirmed } from "../../packages/gateway/src/coding-agents/session-start-cleanup-proof.js";
 import { createCodingAgentThreadStore } from "../../packages/gateway/src/coding-agents/thread-store.js";
+import { recoverLegacyCodexContinuation } from "../../packages/gateway/src/coding-agents/codex-legacy-continuation.js";
+import { withNativeBrowserExecution } from "../../packages/gateway/src/chat/native-browser-execution-context.js";
 
 const homes: string[] = [];
 afterEach(async () => { await Promise.all(homes.splice(0).map(home => rm(home, { recursive: true, force: true }))); });
@@ -50,10 +52,11 @@ async function fixture() {
       run({ startSession, cleanFailure: vi.fn(async (result: unknown) => result) })) };
   const submitTurn = vi.fn();
   const events = { healthCheck: vi.fn(), watch: vi.fn(async () => ({ offset: 42 })), unwatch: vi.fn(), markStopped: vi.fn() };
-  const control = { submitTurn, hibernate: undefined as undefined | ReturnType<typeof vi.fn> };
-  const makeProvider = () => createWorkspaceCodingAgentProvider({ providerId: "codex", agent: "codex", runtime: runtime as never,
-    codexAdmission: createCodexExecutionAdmission(admissionOptions), codexEvents: events, codexControl: control as never });
-  const provider = makeProvider();
+  const control = { submitTurn, hibernate: undefined as undefined | ReturnType<typeof vi.fn>, prepareBrowser: undefined as undefined | ReturnType<typeof vi.fn> };
+  const options = { providerId: "codex", agent: "codex" as const, runtime: runtime as never,
+    codexAdmission: admission, codexEvents: events, codexControl: control as never };
+  const makeProvider = () => createWorkspaceCodingAgentProvider({ ...options, codexAdmission: createCodexExecutionAdmission(admissionOptions) });
+  const provider = createWorkspaceCodingAgentProvider(options);
   const context = { principal: { userId: "owner", source: "jwt" as const },
     thread: { id: "thread_legacy", providerId: "codex", title: "Old Chat", status: "running", attention: "none",
       projectId: "repo", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
@@ -61,7 +64,7 @@ async function fixture() {
     resumeState: { conversationId: "sess_legacy", providerThreadId: "native_legacy", backgroundRef: session.backgroundRef },
     signal: new AbortController().signal, publishEvents, now: () => new Date(), nextEventId: () => "evt_recovered" };
   const resume = (override = {}) => provider.resumeTurn!({ ...context, ...override } as never);
-  return { homePath, admission, provider, makeProvider, runtime, startSession, confirmStoppedSession, events, control, submitTurn, publishEvents, context, resume, stopSession,
+  return { homePath, admission, options, provider, makeProvider, runtime, startSession, confirmStoppedSession, events, control, submitTurn, publishEvents, context, resume, stopSession,
     revoke: () => { authenticated = false; } };
 }
 
@@ -135,6 +138,77 @@ describe("old Codex Chat continuation", () => {
     f.publishEvents.mockResolvedValueOnce(false);
     await expect(f.resume()).rejects.toThrow("persistence");
     expect(f.startSession).not.toHaveBeenCalled();
+  });
+
+  it("rejects an untracked replacement process instead of retaining the old background reference", async () => {
+    const f = await fixture();
+    f.startSession.mockResolvedValueOnce({ ok: true, status: 201, session: { ...f.context.thread, runtime: { type: "background" } } } as never);
+    await expect(f.resume()).rejects.toThrow("recovery");
+  });
+
+  it.each(["other-harness", "no-admission", "existing-binding", "api-key"])("keeps %s out of legacy native adoption", async mode => {
+    const f = await fixture();
+    if (mode === "api-key") vi.spyOn(f.admission, "start").mockResolvedValueOnce(undefined);
+    const options = { ...f.options, ...(mode === "other-harness" ? { agent: "claude" } : {}), ...(mode === "no-admission" ? { codexAdmission: undefined } : {}) };
+    const context = { ...f.context, ...(mode === "existing-binding" ? { resumeState: { ...f.context.resumeState, nativeAccountBinding: "a".repeat(64) } } : {}) };
+    expect(await recoverLegacyCodexContinuation(options as never, context as never, "sess_legacy", "new prompt")).toBeUndefined();
+    expect(f.startSession).not.toHaveBeenCalled(); expect(f.confirmStoppedSession).not.toHaveBeenCalled();
+  });
+
+  it.each(["native-id", "background-ref", "reservation", "stop-proof", "events", "control", "publisher"])("requires retained %s recovery capability", async mode => {
+    const f = await fixture();
+    const options = { ...f.options, runtime: { ...f.runtime,
+      ...(mode === "reservation" ? { withSessionStart: undefined } : {}), ...(mode === "stop-proof" ? { confirmStoppedSession: undefined } : {}) },
+      ...(mode === "events" ? { codexEvents: undefined } : {}), ...(mode === "control" ? { codexControl: undefined } : {}) };
+    const context = { ...f.context, ...(mode === "publisher" ? { publishEvents: undefined } : {}), resumeState: { ...f.context.resumeState,
+      ...(mode === "native-id" ? { providerThreadId: undefined } : {}), ...(mode === "background-ref" ? { backgroundRef: undefined } : {}) } };
+    await expect(recoverLegacyCodexContinuation(options as never, context as never, "sess_legacy", "new prompt")).rejects.toThrow("recovery");
+    expect(f.startSession).not.toHaveBeenCalled();
+  });
+
+  it.each(["missing", "id", "owner", "kind", "agent", "project", "ref"])("rejects %s backing-session identity", async mode => {
+    const f = await fixture();
+    const original = await f.runtime.getSession();
+    f.runtime.getSession.mockResolvedValueOnce(mode === "missing" ? { ok: false } as never : { ok: true, session: { ...original.session,
+      ...(mode === "id" ? { id: "sess_other" } : {}), ...(mode === "owner" ? { ownerId: "other" } : {}),
+      ...(mode === "kind" ? { kind: "shell" } : {}), ...(mode === "agent" ? { agent: "claude" } : {}),
+      ...(mode === "project" ? { projectSlug: "other" } : {}), ...(mode === "ref" ? { backgroundRef: undefined } : {}) } } as never);
+    await expect(f.resume()).rejects.toThrow("recovery");
+    expect(f.confirmStoppedSession).not.toHaveBeenCalled(); expect(f.startSession).not.toHaveBeenCalled();
+  });
+
+  it("waits for acknowledged idle closure and does not require an event offset", async () => {
+    const f = await fixture();
+    f.confirmStoppedSession.mockResolvedValueOnce(undefined as never).mockResolvedValueOnce(undefined as never);
+    f.control.hibernate = vi.fn(async () => undefined);
+    f.events.watch.mockResolvedValueOnce({} as never);
+    await expect(f.resume()).resolves.toMatchObject({ outcome: "delivered" });
+    expect(f.confirmStoppedSession).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects account/configuration drift between the initial proof and session registration", async () => {
+    const f = await fixture();
+    vi.spyOn(f.admission, "start").mockResolvedValueOnce("a".repeat(64)).mockResolvedValueOnce("b".repeat(64));
+    await expect(f.resume()).rejects.toThrow("account is unavailable");
+    expect(f.publishEvents).not.toHaveBeenCalled(); expect(f.startSession).not.toHaveBeenCalled();
+  });
+
+  it.each(["missing-control", "success", "uncertain-launch"])("preserves shared-browser bootstrap guards during %s", async mode => {
+    const f = await fixture();
+    const finish = vi.fn(), cleanupUnconfirmed = vi.fn();
+    const browser = { isLive: () => true, attemptId: "attempt_test", token: "synthetic-test-token",
+      mcpServer: { env: { MATRIX_SHARED_BROWSER_GATEWAY_PORT: "3000" } } };
+    if (mode !== "missing-control") f.control.prepareBrowser = vi.fn(async () => undefined);
+    if (mode === "uncertain-launch") f.startSession.mockRejectedValueOnce(new Error("recovery launch uncertain"));
+    const operation = () => withNativeBrowserExecution("owner", browser as never, () => f.resume(), cleanupUnconfirmed,
+      { signal: new AbortController().signal, begin: () => finish });
+    if (mode === "success") {
+      await expect(operation()).resolves.toMatchObject({ outcome: "delivered" });
+      expect(f.control.prepareBrowser).toHaveBeenCalledOnce(); expect(finish).toHaveBeenCalledTimes(2);
+    } else {
+      await expect(operation()).rejects.toThrow(mode === "missing-control" ? "Browser startup" : "recovery launch");
+      if (mode === "uncertain-launch") expect(cleanupUnconfirmed).toHaveBeenCalledOnce();
+    }
   });
 
   it("retains history and the recovered binding across reload, duplicate requests and prolonged inactivity", async () => {
