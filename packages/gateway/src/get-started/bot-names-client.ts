@@ -3,12 +3,13 @@ import {
   type GetStartedBotNamesRequest,
   type GetStartedBotNamesResponse,
 } from "@matrix-os/contracts";
+import { readBoundedBody } from "../collaboration/scope-runtime-broker.js";
 
 // Spec 636, Part B: this computer asks the platform for bot name suggestions with
 // its machine bearer. The model and its key live on the platform only.
 
 const REQUEST_TIMEOUT_MS = 10_000;
-const RESPONSE_MAX_CHARS = 32 * 1024;
+const RESPONSE_MAX_BYTES = 32 * 1024;
 const HANDLE_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const TOKEN_PATTERN = /^[A-Za-z0-9._~+/=-]{32,512}$/;
 
@@ -56,9 +57,18 @@ export function createGetStartedBotNameClient(config: {
         redirect: "error",
         signal: AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
       });
-      if (!response.ok) throw new GetStartedBotNameClientError(`platform returned HTTP ${response.status}`);
-      const text = await response.text();
-      if (text.length > RESPONSE_MAX_CHARS) throw new GetStartedBotNameClientError("platform reply too large");
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new GetStartedBotNameClientError(`platform returned HTTP ${response.status}`);
+      }
+      let text: string;
+      try {
+        // Read up to the cap and stop: an oversized or endless reply is never buffered.
+        text = await readBoundedBody(response, RESPONSE_MAX_BYTES);
+      } catch (err) {
+        if (err instanceof RangeError) throw new GetStartedBotNameClientError("platform reply too large");
+        throw err;
+      }
       let raw: unknown;
       try {
         raw = JSON.parse(text);

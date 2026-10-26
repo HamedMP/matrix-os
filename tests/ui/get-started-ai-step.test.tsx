@@ -200,6 +200,20 @@ describe("Suggested bot names", () => {
     }
   });
 
+  it("shows every built-in name before repeating any, however many refreshes", async () => {
+    render(<GetStartedGate port={port().port} zIndex={1} />);
+    await screen.findByRole("dialog", { name: "Name your main bot" });
+    const seen = [...chipNames()];
+    const pages = Math.ceil(GET_STARTED_FALLBACK_BOT_NAMES.length / 5);
+    for (let page = 1; page < pages; page += 1) {
+      fireEvent.click(screen.getByRole("button", { name: "Suggest new names" }));
+      seen.push(...chipNames());
+    }
+    expect(new Set(seen).size).toBe(GET_STARTED_FALLBACK_BOT_NAMES.length);
+    fireEvent.click(screen.getByRole("button", { name: "Suggest new names" }));
+    expect(chipNames()).toEqual(seen.slice(0, 5));
+  });
+
   it("stops waiting after 12 seconds and ignores a late answer", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let resolve!: (value: unknown) => void;

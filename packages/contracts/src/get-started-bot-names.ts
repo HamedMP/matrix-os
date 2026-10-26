@@ -50,7 +50,7 @@ export const GetStartedBotNamesResponseSchema = z.object({
 }).strict();
 export type GetStartedBotNamesResponse = z.infer<typeof GetStartedBotNamesResponseSchema>;
 
-/** Shown when suggestions are unavailable; refresh pages through it in order. */
+/** Shown when suggestions are unavailable; refresh pages through all of it before any name repeats. */
 export const GET_STARTED_FALLBACK_BOT_NAMES: readonly GetStartedBotNameSuggestion[] = [
   { name: "Atlas", emoji: "🧭" }, { name: "Nova", emoji: "✨" }, { name: "Ada", emoji: "💡" }, { name: "Sage", emoji: "🦉" }, { name: "Mira", emoji: "🌟" },
   { name: "Ember", emoji: "🔥" }, { name: "Willow", emoji: "🌿" }, { name: "Pepper", emoji: "🌶️" }, { name: "Iris", emoji: "🌸" }, { name: "Otto", emoji: "🤖" },
@@ -62,13 +62,9 @@ export const GET_STARTED_FALLBACK_BOT_NAMES: readonly GetStartedBotNameSuggestio
   { name: "Scout", emoji: "🔭" }, { name: "Felix", emoji: "🐱" }, { name: "Cosmo", emoji: "🌌" }, { name: "Saffron", emoji: "🌼" }, { name: "Bramble", emoji: "🫐" },
 ];
 
-/** The next five built-in names not shown yet, starting over once every name has been shown. */
-export function getStartedFallbackBotNames(exclude: readonly string[]): GetStartedBotNameSuggestion[] {
-  const shown = new Set(exclude.map((name) => name.trim().toLowerCase()));
-  const picked = GET_STARTED_FALLBACK_BOT_NAMES.filter((item) => !shown.has(item.name.toLowerCase())).slice(0, GET_STARTED_BOT_NAME_SUGGESTION_COUNT);
-  for (const item of GET_STARTED_FALLBACK_BOT_NAMES) {
-    if (picked.length >= GET_STARTED_BOT_NAME_SUGGESTION_COUNT) break;
-    if (!picked.includes(item)) picked.push(item);
-  }
-  return picked;
+/** Page `page` of the built-in names, five at a time, starting over past the end. */
+export function getStartedFallbackBotNames(page: number): GetStartedBotNameSuggestion[] {
+  const total = GET_STARTED_FALLBACK_BOT_NAMES.length;
+  const start = (Math.max(0, Math.trunc(page)) * GET_STARTED_BOT_NAME_SUGGESTION_COUNT) % total;
+  return Array.from({ length: GET_STARTED_BOT_NAME_SUGGESTION_COUNT }, (_, index) => GET_STARTED_FALLBACK_BOT_NAMES[(start + index) % total]!);
 }

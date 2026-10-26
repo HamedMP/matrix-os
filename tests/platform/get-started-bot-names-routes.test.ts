@@ -91,6 +91,17 @@ describe("Platform Get started bot name suggestions", () => {
     expect(log).toHaveBeenCalled();
   });
 
+  it("stops reading a model reply past 32 KiB instead of buffering it", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let pulls = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) { pulls += 1; controller.enqueue(new Uint8Array(4096).fill(32)); },
+    });
+    const res = await setup({ fetchImpl: vi.fn(async () => new Response(endless, { status: 200 })) as unknown as typeof fetch }).post();
+    expect(res.status).toBe(502);
+    expect(pulls).toBeLessThan(20);
+  });
+
   it("refuses a missing or wrong machine bearer before looking anything up", async () => {
     const { post, resolveMachine, fetchImpl } = setup();
     expect((await post(request, null)).status).toBe(401);

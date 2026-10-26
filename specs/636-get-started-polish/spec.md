@@ -74,6 +74,11 @@ Steps become: name → goals → **coding agents** → connect your tools → ma
 
 Evidence: live screenshots and a short recording for Web Desktop, Web Canvas and Electron Desktop, in the PR and #tech.
 
+## Deliverables
+
+- Code and tests in this repository, in the ENG-391 PR.
+- **Public docs:** a separate PR in `FinnaAI/matrix-os-site` under `content/docs/` updating the Get started guide from spec 635: the coding agents screen (optional sign-in, Matrix AI credit), suggested bot names with refresh, and the App Gallery step's wording (apps fill up after an import). Opened once this PR ships.
+
 ## Out of scope
 
 Prefilling apps from connected data during onboarding: [ENG-369](https://linear.app/matrix-os/issue/ENG-369/onboarding-connect-gmailcalendar-and-auto-set-up-matrix-from-them), with its consent, privacy-copy, Google policy and OAuth-ownership questions noted there. Part C only makes the copy honest.

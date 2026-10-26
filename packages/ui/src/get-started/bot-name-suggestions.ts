@@ -24,17 +24,19 @@ export interface BotNameRequest {
 interface Suggestions {
   /** Null until the first names arrive. */
   names: GetStartedBotNameSuggestion[] | null;
-  /** Names shown so far, newest last, so a refresh asks for different ones. */
+  /** The newest names shown, capped, so a refresh asks the model for different ones. */
   shown: string[];
+  /** The next page of built-in names, kept apart from `shown` so every built-in name appears before any repeats. */
+  fallbackPage: number;
   loading: boolean;
 }
 
-function showing(previous: readonly string[], names: GetStartedBotNameSuggestion[]): Suggestions {
-  return { names, shown: [...previous, ...names.map((item) => item.name)].slice(-GET_STARTED_BOT_NAME_EXCLUDE_MAX), loading: false };
+function showing(previous: readonly string[], names: GetStartedBotNameSuggestion[], fallbackPage: number): Suggestions {
+  return { names, shown: [...previous, ...names.map((item) => item.name)].slice(-GET_STARTED_BOT_NAME_EXCLUDE_MAX), fallbackPage, loading: false };
 }
 
 export function useBotNameSuggestions(suggest: SuggestBotNames | null, initial: BotNameRequest) {
-  const [state, setState] = useState<Suggestions>(() => (suggest ? { names: null, shown: [], loading: true } : showing([], getStartedFallbackBotNames([]))));
+  const [state, setState] = useState<Suggestions>(() => (suggest ? { names: null, shown: [], fallbackPage: 0, loading: true } : showing([], getStartedFallbackBotNames(0), 1)));
   const suggestRef = useRef(suggest);
   const initialRef = useRef(initial);
   const pending = useRef<{ controller: AbortController; timer: ReturnType<typeof setTimeout> } | null>(null);
@@ -51,45 +53,48 @@ export function useBotNameSuggestions(suggest: SuggestBotNames | null, initial: 
   }, []);
 
   /** Only the newest request shows; a late or superseded answer is dropped. */
-  const request = useCallback((params: BotNameRequest, shown: readonly string[]) => {
+  const request = useCallback((params: BotNameRequest, shown: readonly string[], fallbackPage: number) => {
     cancel();
     const exclude = shown.slice(-GET_STARTED_BOT_NAME_EXCLUDE_MAX);
-    const fallback = () => getStartedFallbackBotNames(exclude);
+    const showFallback = () => setState(showing(exclude, getStartedFallbackBotNames(fallbackPage), fallbackPage + 1));
     const current = suggestRef.current;
     if (!current) {
-      setState(showing(exclude, fallback()));
+      showFallback();
       return;
     }
     const controller = new AbortController();
-    const finish = (names: GetStartedBotNameSuggestion[]) => {
-      if (pending.current?.controller !== controller) return;
+    /** True only for the newest request, once; a late or superseded answer is dropped. */
+    const claim = () => {
+      if (pending.current?.controller !== controller) return false;
       clearTimeout(pending.current.timer);
       pending.current = null;
-      setState(showing(exclude, names));
+      return true;
     };
     const timer = setTimeout(() => {
-      finish(fallback());
+      if (claim()) showFallback();
       controller.abort();
     }, SUGGESTION_TIMEOUT_MS);
     pending.current = { controller, timer };
     current({ goals: [...params.goals], personality: params.personality, exclude }, controller.signal).then((raw) => {
+      if (!claim()) return;
       const parsed = GetStartedBotNamesResponseSchema.safeParse(raw);
-      finish(parsed.success ? parsed.data.names : fallback());
+      if (parsed.success) setState(showing(exclude, parsed.data.names, fallbackPage));
+      else showFallback();
     }, (error: unknown) => {
       if (!controller.signal.aborted) console.warn("[get-started] Name suggestions unavailable:", error instanceof Error ? error.name : typeof error);
-      finish(fallback());
+      if (claim()) showFallback();
     });
   }, [cancel]);
 
   useEffect(() => {
-    if (suggestRef.current) request(initialRef.current, []);
+    if (suggestRef.current) request(initialRef.current, [], 0);
     return cancel;
   }, [request, cancel]);
 
   const refresh = useCallback((params: BotNameRequest) => {
     setState((previous) => ({ ...previous, loading: true }));
-    request(params, state.shown);
-  }, [request, state.shown]);
+    request(params, state.shown, state.fallbackPage);
+  }, [request, state.shown, state.fallbackPage]);
 
   return { names: state.names, loading: state.loading, refresh };
 }

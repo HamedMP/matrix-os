@@ -130,6 +130,16 @@ describe("Gateway bot name client", () => {
     expect(createGetStartedBotNameClient({ platformUrl: "http://127.0.0.1:9000", token: "t".repeat(40), handle: "alice", fetchImpl: fetchImpl as unknown as typeof fetch })).not.toBeNull();
   });
 
+  it("stops reading a platform reply past 32 KiB instead of buffering it", async () => {
+    let pulls = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) { pulls += 1; controller.enqueue(new Uint8Array(4096).fill(32)); },
+    });
+    const client = createGetStartedBotNameClient({ platformUrl: "https://platform.example.test", token: "t".repeat(40), handle: "alice", fetchImpl: vi.fn(async () => new Response(endless, { status: 200 })) });
+    await expect(client!.suggest(request, new AbortController().signal)).rejects.toBeInstanceOf(GetStartedBotNameClientError);
+    expect(pulls).toBeLessThan(20);
+  });
+
   it("rejects platform failures and answers that are not five valid names", async () => {
     for (const response of [
       new Response("{}", { status: 502 }),

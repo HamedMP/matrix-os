@@ -12,6 +12,7 @@ import { z } from 'zod/v4';
 import { getContainer, getRunningUserMachineByHandle, type PlatformDB } from './db.js';
 import { buildPlatformVerificationToken, timingSafeTokenEquals } from './platform-token.js';
 import { HANDLE_PATTERN } from './platform-route-utils.js';
+import { readBoundedHostJson } from './speech/host-readiness.js';
 
 /**
  * Spec 636, Part B: Get started bot name suggestions. A customer computer asks
@@ -22,7 +23,7 @@ const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
 const MODEL_PATTERN = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 const BODY_LIMIT_BYTES = 2 * 1024;
 const MODEL_TIMEOUT_MS = 8_000;
-const MODEL_RESPONSE_MAX_CHARS = 32 * 1024;
+const MODEL_RESPONSE_MAX_BYTES = 32 * 1024;
 const RATE_WINDOW_MS = 60 * 60 * 1000;
 const RATE_MAX_REQUESTS = 30;
 const RATE_MAX_MACHINES = 2_048;
@@ -122,11 +123,15 @@ export function createGetStartedBotNameRoutes(options: GetStartedBotNameRoutesOp
       redirect: 'error',
       signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
     });
-    if (!response.ok) throw new ModelReplyError(`model returned HTTP ${response.status}`);
-    const body = await response.text();
-    if (body.length > MODEL_RESPONSE_MAX_CHARS) throw new ModelReplyError('reply too large');
-    const text = (JSON.parse(body) as { candidates?: { content?: { parts?: { text?: unknown }[] } }[] })
-      .candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new ModelReplyError(`model returned HTTP ${response.status}`);
+    }
+    // Read up to the cap and stop: an oversized or endless reply is never buffered.
+    const body = await readBoundedHostJson(response, MODEL_RESPONSE_MAX_BYTES);
+    if (body === undefined) throw new ModelReplyError('reply too large');
+    const text = (body as { candidates?: { content?: { parts?: { text?: unknown }[] } }[] } | null)
+      ?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (typeof text !== 'string') throw new ModelReplyError('reply has no text');
     return pickNames(text, request.exclude);
   }
