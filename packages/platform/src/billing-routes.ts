@@ -442,6 +442,15 @@ export function createBillingRoutes(options: {
           code: 'checkout_pending',
         }, 409);
       }
+      if (!attempt.attempt.requestPayload) {
+        // Pre-migration creating rows may already have a Stripe session whose
+        // response was lost. Without the original request snapshot we cannot
+        // safely replay or abandon that idempotency key, so keep it unresolved.
+        return c.json({
+          error: 'Checkout is already starting',
+          code: 'checkout_pending',
+        }, 409);
+      }
       const session = await createStoredCheckoutSession({
         db: options.db,
         stripe: options.stripe,
