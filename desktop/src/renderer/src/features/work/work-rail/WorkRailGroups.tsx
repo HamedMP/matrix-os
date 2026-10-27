@@ -7,7 +7,7 @@ import { SharedWorkRailProjectList } from "./SharedWorkRailProjects";
 import { Plus } from "lucide-react";
 import { WorkRailSection } from "./WorkRailSection";
 
-export type WorkRailSectionKey = "pinned" | "projects" | "needsYou" | "working" | "done";
+export type WorkRailSectionKey = "pinned" | "projects" | "needsYou" | "failed" | "working" | "done";
 export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCreateProject, renderProject, renderChat, bots, onOpenBotChat, organizationDrives, sharedProjects, revealSharedProjectRequest }: {
   model: WorkRailModel;
   activeChatId?: string;
@@ -57,6 +57,9 @@ export function WorkRailGroups({ model, activeChatId, sections, onToggle, onCrea
             <span className="min-w-0 flex-1"><span className="block truncate">{bot.name}</span><span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>Approval required</span></span>
             <span aria-label={`${bot.pendingApprovalCount} pending approvals`} className="text-xs tabular-nums">{bot.pendingApprovalCount}</span>
           </button>)}
+        </WorkRailSection>
+        <WorkRailSection label="Failed" failure count={model.failed.length} expanded={sections.failed} onToggle={() => onToggle("failed")}>
+          {model.failed.map(record => renderChat(record, "recent"))}
         </WorkRailSection>
         <WorkRailSection label="Working" count={model.working.length} expanded={sections.working} onToggle={() => onToggle("working")}>
           {model.working.map(record => renderChat(record, "recent"))}

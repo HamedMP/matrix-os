@@ -1,7 +1,7 @@
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
-export type StatusTone = "waiting" | "active";
+export type StatusTone = "waiting" | "active" | "failed";
 
 export interface StatusDotProps {
   tone: StatusTone;
@@ -37,5 +37,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   active: {
     backgroundColor: theme.v2.colors.success,
+  },
+  failed: {
+    backgroundColor: theme.v2.colors.danger,
   },
 }));

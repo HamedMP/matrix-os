@@ -18,7 +18,7 @@ import {
 import { PRESSED_OPACITY } from "@/components/ui/pressable-state";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { chatActivityAt } from "@/lib/requests/canonical-chat";
-import { chatNeedsUser } from "@/lib/side-panel-chats";
+import { chatFailed, chatNeedsUser } from "@/lib/side-panel-chats";
 
 const CHAT_TILE_SIZE = 40 satisfies IconTileSize;
 const SKELETON_TEXT_WIDTHS = ["72%", "58%", "66%"] as const;
@@ -37,6 +37,7 @@ export function SidePanelChatRow({ record, now, onSelect }: SidePanelChatRowProp
   const preview = chat.lastMessagePreview?.replace(/\s+/g, " ").trim() || undefined;
   const time = formatRelativeTime(chatActivityAt(record), now) || undefined;
   const needsUser = chatNeedsUser(record);
+  const failed = chatFailed(record);
 
   return (
     <ChatContextMenu chatId={chat.id}>
@@ -45,10 +46,10 @@ export function SidePanelChatRow({ record, now, onSelect }: SidePanelChatRowProp
         density="compact"
         leading={<IconTile icon={ChatIcon} size={CHAT_TILE_SIZE} shape="circle" tone="subtle" />}
         title={title}
-        titleAccessory={needsUser ? <StatusDot testID="side-panel-waiting-dot" tone="waiting" /> : undefined}
+        titleAccessory={needsUser ? <StatusDot testID="side-panel-waiting-dot" tone="waiting" /> : failed ? <StatusDot testID="side-panel-failed-dot" tone="failed" /> : undefined}
         subtitle={preview}
         meta={time}
-        accessibilityLabel={[title, needsUser ? "needs you" : undefined, preview, time].filter(Boolean).join(", ")}
+        accessibilityLabel={[title, needsUser ? "needs you" : failed ? "agent failed" : undefined, preview, time].filter(Boolean).join(", ")}
         onPress={() => onSelect(chat.id)}
       />
     </ChatContextMenu>

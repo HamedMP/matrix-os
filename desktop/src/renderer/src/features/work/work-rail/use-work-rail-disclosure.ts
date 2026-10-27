@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useConnection } from "../../../stores/connection";
 
-export const DEFAULT_RAIL_DISCLOSURE = { agents: true, pinned: true, projects: true, needsYou: true, working: true, done: true };
+export const DEFAULT_RAIL_DISCLOSURE = { agents: true, pinned: true, projects: true, needsYou: true, failed: true, working: true, done: true };
 export type RailDisclosureKey = keyof typeof DEFAULT_RAIL_DISCLOSURE;
 type Disclosure = Record<RailDisclosureKey, boolean>;
 type StoredDisclosure = { identity: string; sections: Disclosure; unsaved: Partial<Disclosure> };

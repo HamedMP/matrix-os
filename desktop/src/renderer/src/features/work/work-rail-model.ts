@@ -15,6 +15,7 @@ export interface WorkRailModel {
   pinnedProjects: WorkRailProjectGroup[];
   projects: WorkRailProjectGroup[];
   needsYou: ChatNavigationRecord[];
+  failed: ChatNavigationRecord[];
   working: ChatNavigationRecord[];
   done: ChatNavigationRecord[];
   recents: ChatNavigationRecord[];
@@ -120,6 +121,7 @@ export function buildWorkRailModel(
   const recents: ChatNavigationRecord[] = [];
   const excluded = new Set(excludedChatIds);
   const needsYou: ChatNavigationRecord[] = [];
+  const failed: ChatNavigationRecord[] = [];
   const working: ChatNavigationRecord[] = [];
   const done: ChatNavigationRecord[] = [];
   const doneDisplay: ChatNavigationRecord[] = [];
@@ -136,7 +138,7 @@ export function buildWorkRailModel(
       continue;
     }
     const group = resolveCanonicalChatLifecycleGroup(record);
-    ({needsYou, working, done, recent:recents})[group].push(record);
+    ({needsYou, failed, working, done, recent:recents})[group].push(record);
     if (group === "done" || group === "recent") doneDisplay.push(record);
   }
   return {
@@ -144,6 +146,7 @@ export function buildWorkRailModel(
     pinnedProjects: groups.filter((group) => group.project.pinned),
     projects: groups.filter((group) => !group.project.pinned),
     needsYou,
+    failed,
     working,
     done,
     recents,
