@@ -23,16 +23,20 @@ export function ShellGetStartedAgentLogin({ children }: { children: (port: GetSt
     if (isIdentityCurrent()) window.dispatchEvent(new Event(PROVIDER_SETTINGS_CHANGED_EVENT));
   }, [isIdentityCurrent]);
   const controller = useProviderSettingsController({ identityKey: `${identityKey}:${runtimeSlot}`, transport, onCatalogChanged });
-  const { snapshot, error, refresh } = controller;
+  const { snapshot, error, refresh, refreshForConnection } = controller;
   const port = useMemo<GetStartedAgentLoginPort>(() => ({
     snapshot,
     failed: snapshot === null && error !== null,
     workflowClient,
     refresh: () => refresh(),
+    refreshAfterLogin: async receipt => {
+      if (!isIdentityCurrent()) return;
+      if (!await refreshForConnection(receipt) && isIdentityCurrent()) throw new Error("Connection status is unavailable.");
+    },
     openAuthorizationUrl: (url) => {
       if (!isIdentityCurrent()) return;
       if (!openWebProviderWorkflowAuthorization(url)) throw new Error("Browser unavailable");
     },
-  }), [snapshot, error, workflowClient, refresh, isIdentityCurrent]);
+  }), [snapshot, error, workflowClient, refresh, refreshForConnection, isIdentityCurrent]);
   return <>{children(port)}</>;
 }

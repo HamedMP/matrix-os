@@ -5,6 +5,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { CanonicalProviderCatalogSchema, type ProviderWorkflow } from "@matrix-os/contracts";
 import { ProviderSettingsController } from "../../packages/ui/src/agents-providers/provider-settings-controller";
 import { useHarnessWorkflowController } from "../../packages/ui/src/agents-providers/use-harness-workflow-controller";
+import { DesktopGetStartedAgentLogin } from "../../desktop/src/renderer/src/features/get-started/DesktopGetStartedAgentLogin";
+import { GetStartedAgentDetails } from "../../packages/ui/src/get-started/agent-login";
 import { HarnessWorkflowPanel } from "../../packages/ui/src/agents-providers/HarnessWorkflowPanel";
 import { useChatProviderCatalog } from "../../desktop/src/renderer/src/features/chat/chat-provider-catalog";
 import { startDesktopProviderCatalogCoordinator, stopDesktopProviderCatalogCoordinator } from "../../desktop/src/renderer/src/features/chat/provider-catalog-coordinator";
@@ -191,4 +193,44 @@ it("targets only independent ChatGPT plan routes when IPC confirms login for an 
   expect(hook.result.current.initialLoading).toBe(false);
   await act(async () => next.resolve(initial));
   expect(hook.result.current.catalog).toEqual(initial);
+});
+
+it("updates mounted Chat from Get started login before advisory Settings returns", async () => {
+  const advisory = deferred<typeof snapshot>(), catalogRead = deferred<typeof catalog>();
+  const reads: string[] = [];
+  let settingsReads = 0, catalogReads = 0;
+  const initial = CanonicalProviderCatalogSchema.parse({ ...catalog, instances: catalog.instances.map(instance => {
+    if (instance.driverKind !== "codex") return instance;
+    const { defaultSelection: _selection, ...rest } = instance;
+    return { ...rest, availability: "auth_required" };
+  }) });
+  const option = { id: "openai_device_code", providerId: "openai", authKind: "subscription", method: "device_code",
+    billingKind: "subscription", executionKind: "native", availability: "available" } as const;
+  const get = vi.fn((path: string) => {
+    reads.push(path);
+    if (path.startsWith("/api/chat-providers?")) return ++catalogReads === 1 ? Promise.resolve(initial) : catalogRead.promise;
+    if (path.startsWith("/api/ai/provider-settings")) return ++settingsReads === 1 ? Promise.resolve(snapshot) : advisory.promise;
+    throw new Error(`Unexpected synthetic read ${path}`);
+  });
+  const post = vi.fn(async () => ({ ...receipt, id: "get_started_codex", harnessInstanceId: "codex_default", connectionOption: option }));
+  const pinned = { get, post }, api = { ...pinned, forRuntime: vi.fn(() => pinned) };
+  useConnection.setState({ status: "signed-in", handle: "synthetic-owner", userId: "synthetic-user", runtimeSlot: "primary", api: api as never });
+  startDesktopProviderCatalogCoordinator();
+  const chat = renderHook(() => useChatProviderCatalog(initial));
+  await waitFor(() => expect(chat.result.current.hasTrustedCatalog).toBe(true));
+  render(<DesktopGetStartedAgentLogin>{port => <GetStartedAgentDetails agent="codex" port={port}
+    capabilities={{ codex: { harnessInstanceId: "codex_default", harness: "codex", displayName: "Codex", installState: "installed",
+      loginMethods: ["device_code"], connectionOptions: [option], apiKeyProviders: [], install: false, uninstall: false, logs: false } }}
+    onStateChange={() => {}} />}</DesktopGetStartedAgentLogin>);
+  fireEvent.click(await screen.findByRole("button", { name: /ChatGPT account.*Sign in with a code/ }));
+  await waitFor(() => expect(settingsReads).toBe(2));
+  // Advisory read is still pending. The receipt must already wake the same Chat.
+  expect(catalogReads).toBe(2);
+  expect(useConnection.getState().providerCatalogAffectedInstanceIds).toEqual(["codex_default"]);
+  expect(reads.every(path => !path.includes("refresh=true"))).toBe(true);
+  await act(async () => catalogRead.resolve(catalog));
+  expect(chat.result.current.hasTrustedCatalog).toBe(true);
+  expect(chat.result.current.catalog.instances.find(row => row.id === "codex_default")?.availability).toBe("available");
+  expect(post).toHaveBeenCalledOnce();
+  await act(async () => advisory.resolve(snapshot));
 });

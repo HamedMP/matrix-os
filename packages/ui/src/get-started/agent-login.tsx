@@ -1,4 +1,4 @@
-import type { GetStartedAgentKind, ProviderAccessSource, ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import type { GetStartedAgentKind, ProviderAccessSource, ProviderSettingsSnapshot, ProviderWorkflow } from "@matrix-os/contracts";
 import { useState, type ComponentType, type ReactNode } from "react";
 import { ConnectedAccountCard } from "../agents-providers/ConnectedAccountCard.js";
 import { HarnessWorkflowPanel } from "../agents-providers/HarnessWorkflowPanel.js";
@@ -13,6 +13,7 @@ export interface GetStartedAgentLoginPort {
   failed: boolean;
   workflowClient: ProviderWorkflowClient;
   refresh(): void | Promise<void>;
+  refreshAfterLogin?(receipt: ProviderWorkflow): Promise<void>;
   openAuthorizationUrl(url: string): void;
 }
 
@@ -42,6 +43,7 @@ function AgentSignIn({ capability, harness, source, snapshot, port, onStateChang
         client={port.workflowClient}
         disabled={readOnly !== null}
         onRefresh={port.refresh}
+        onRefreshAfterLogin={port.refreshAfterLogin}
         onOpenTerminal={ignoreTerminal}
         onOpenAuthorizationUrl={port.openAuthorizationUrl}
         operationId={operationId ?? capability.activeOperationId ?? null}
