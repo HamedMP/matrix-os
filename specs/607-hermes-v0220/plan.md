@@ -32,3 +32,12 @@ Broken committed records must not select stale venvs; source symlinks must produ
 upstream's canonical install key; restricted imports must use the selected ABI;
 custom-host tokens must retain endpoint binding; PM updates must retain optional
 SDKs and Matrix-owned global tool installs.
+
+## Local continuation: 27 October 2026
+
+See [local-unblock-2026-10-27.md](local-unblock-2026-10-27.md) for the
+first-boot staging source fix, actual locked SDK/Git boundary probes, and the
+explicit restricted-admission proposal awaiting approval. The preceding scope
+paragraph records an earlier phase; current authorization permits bounded local
+implementation and isolated dependency verification, while publication and host
+operations remain held.
