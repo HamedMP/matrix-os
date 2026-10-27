@@ -11,7 +11,7 @@ import {
   type PlatformSpeechCaptureAdapter,
 } from "@matrix-os/ui";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { Attachments, AttachmentButton, useAttachments } from "@/components/ai-elements/attachments";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -104,7 +104,7 @@ export function ChatInput({
   const mergedDraft = useRef<TrySuggestionDraft | null>(null);
   const { attachments, addFiles, removeFile, getBase64Files } = useAttachments();
   const currentComposer = useRef({ composer, scope });
-  currentComposer.current = { composer, scope };
+  useLayoutEffect(() => { currentComposer.current = { composer, scope }; }, [composer, scope]);
   const botMention = useBotMentionNavigation(agentClient, `${scope}:${composer.requestId}`, onOpenBotMention, attachments.length ? BOT_ATTACHMENT_HANDOFF_REASON : undefined);
   const [defaultSpeechClient] = useState(() => createBrowserSpeechClient());
   const [defaultSpeechCapture] = useState(() => createWebPcmSpeechCaptureAdapter());

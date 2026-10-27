@@ -98,14 +98,15 @@ export function useCanonicalChatRouteController({
   const [error, setError] = useState<string | null>(null);
   const activeChatIdRef = useRef<string | null>(initialChatId);
   const detailRef = useRef<CanonicalChatDetailResponse | null>(null);
-  useEffect(() => { admissions.observe(admissionIdentity, detail); }, [admissions, admissionIdentity, detail]);
+  useEffect(() => { if (active) admissions.observe(admissionIdentity, detail); }, [admissions, admissionIdentity, detail, active]);
+  useEffect(() => { if (active) admissions.invalidate(admissionIdentity); }, [admissions, admissionIdentity, active]);
   const onInvalidationRef = useRef(onInvalidation);
   onInvalidationRef.current = onInvalidation;
   const streamedMessagesRef = useRef<{ chatId: string | null; ids: string[] }>({
     chatId: initialChatId,
     ids: [],
   });
-  const routeScopeRef = useRef<{ active: boolean; client: CanonicalChatClient; projectId: string | null } | null>(null);
+  const routeScopeRef = useRef<{ active: boolean; client: CanonicalChatClient; projectId: string | null; identity: unknown } | null>(null);
   const listRequestSequence = useRef(0);
   const detailRequestSequence = useRef(0);
   // Keep the stream checkpoint synchronous. React may defer/replay a state
@@ -205,14 +206,24 @@ export function useCanonicalChatRouteController({
 
   useLayoutEffect(() => {
     const previousScope = routeScopeRef.current;
+    const visibilityOnly = previousScope?.active !== active && previousScope?.client === client
+      && previousScope.projectId === projectId && previousScope.identity === admissionIdentity && initialChatId === activeChatIdRef.current;
     const scopeChanged = previousScope?.active !== active
       || previousScope.client !== client
+      || previousScope.identity !== admissionIdentity
       || previousScope.projectId !== projectId;
-    routeScopeRef.current = { active, client, projectId };
+    routeScopeRef.current = { active, client, projectId, identity: admissionIdentity };
     if (!scopeChanged && initialChatId === activeChatIdRef.current) return;
     listRequestSequence.current += 1;
     detailRequestSequence.current += 1;
     acknowledgementAttemptRef.current = null;
+    if (visibilityOnly) {
+      if (active) {
+        void load("", { background: true });
+        if (initialChatId) void loadDetail(initialChatId, { background: true });
+      }
+      return;
+    }
     setItems([]);
     detailRef.current = null;
     setDetail(null);
@@ -221,7 +232,7 @@ export function useCanonicalChatRouteController({
     setStatus("idle");
     setError(null);
     if (active) void load();
-  }, [active, initialChatId, load, projectId]);
+  }, [active, initialChatId, load, loadDetail, projectId, admissionIdentity]);
 
   useEffect(() => {
     if (!active || !eventSource) return;
@@ -448,6 +459,7 @@ export function useCanonicalChatRouteController({
     title: string,
     initialProjectId: string | null = projectId,
     onAccepted?: () => void,
+    onRejected?: () => void,
   ) => {
     const routeScope = routeScopeRef.current;
     const selectedChatId = activeChatIdRef.current;
@@ -462,16 +474,18 @@ export function useCanonicalChatRouteController({
       const admitted = await admitDesktopChatTurn({ client, tracker: admissions, identity: admissionIdentity,
         scope: selectedChatId ?? `new:${initialProjectId ?? "global"}:${selectionEpoch.current}`, input, title, projectId: initialProjectId, detail,
         current: () => detailRef.current,
-        isCurrent: () => authority.valid && admissionAuthority.current === authority,
+        isCurrent: () => admissionAuthority.current.valid && admissionAuthority.current.mounted
+          && admissionAuthority.current.client === client && admissionAuthority.current.identity === admissionIdentity,
         canAcknowledge: () => admissionAuthority.current.mounted && admissionAuthority.current.client === client
           && admissionAuthority.current.identity === admissionIdentity,
         mayDispatch: isCurrentScope,
         onPrepared: id => { latestAdmissionId.current = id; },
-        onAccepted: () => onAccepted?.(),
+        onAccepted: () => onAccepted?.(), onRejected,
         onConfirmed: id => {
-          if (!isCurrentScope()) return;
-          if (admissionSequence.current === sequence) setError(null);
-          else if (latestAdmissionId.current === id) setError(current => current === CHAT_ADMISSION_UNCONFIRMED ? null : current);
+          const current = admissionAuthority.current;
+          if (!current.valid || !current.mounted || current.client !== client || current.identity !== admissionIdentity
+            || activeChatIdRef.current !== selectedChatId) return;
+          if (latestAdmissionId.current === id) setError(current => current === CHAT_ADMISSION_UNCONFIRMED ? null : current);
         },
         onSnapshot: fresh => {
           if (!isCurrentScope() || admissionSequence.current !== sequence) return;

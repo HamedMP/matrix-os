@@ -460,6 +460,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         const submittedDraft = composerDraftSequence.current;
         const admitted = await admitShellChatTurn({ tracker: admissions, identity: navigationIdentity, client, record, input,
           seed: options.clientRequestId, current: () => detailRef.current, isCurrent,
+          onRejected: () => mentionRequests.accepted(requestScope, input.clientRequestId),
           onPrepared: id => { latestAdmissionId.current = id; },
           onAccepted: () => options.onAccepted?.(),
           onConfirmed: id => {

@@ -1,3 +1,4 @@
+import { createChatMentionRequestTracker } from "../../packages/ui/src/chat-agents/request-tracker";
 import { describe, expect, it, vi } from "vitest";
 import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed } from "../../packages/ui/src/canonical-chat-admission";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
@@ -86,10 +87,27 @@ describe("canonical Chat admission confirmation", () => {
     const f = fixture();
     const post = vi.fn(async () => { throw new Error("unknown original outcome"); });
     const options = { post, read: async () => ({ ...f.detail, turns: [] }), current: () => null,
-      isCurrent: () => true, onAccepted: vi.fn(), definitive: () => false };
+      isCurrent: () => true, onAccepted: vi.fn(), onRejected: vi.fn(), definitive: () => false };
     await expect(f.tracker.send(f.attempt, options)).rejects.toBeInstanceOf(ChatAdmissionUnconfirmed);
     await expect(f.tracker.send(f.attempt, { ...options, definitive: () => true })).rejects.toBeInstanceOf(ChatAdmissionUnconfirmed);
     expect(f.tracker.prepare("runtime-a", f.detail.record.chat.id, f.input, f.attempt.seed)).toBe(f.attempt);
+    expect(options.onRejected).not.toHaveBeenCalled();
+  });
+
+  it("releases definitely rejected composer ids so healthy explicit sends do not exhaust capacity", async () => {
+    const f = fixture();
+    const seeds = createChatMentionRequestTracker();
+    const onAccepted = vi.fn();
+    for (let index = 0; index < 101; index++) {
+      const input = { ...f.input, parts: [{ type: "text" as const, text: `message ${index}` }] };
+      const seed = seeds.resolve("runtime-a", f.detail.record.chat.id, input, "send").clientRequestId;
+      const attempt = f.tracker.prepare("runtime-a", f.detail.record.chat.id, input, seed);
+      f.tracker.bind(attempt, f.detail.record);
+      await expect(f.tracker.send(attempt, { post: async () => { throw new Error("rejected"); },
+        read: async () => f.detail, current: () => null, isCurrent: () => true, onAccepted,
+        onRejected: () => seeds.accepted(f.detail.record.chat.id, seed), definitive: () => true })).rejects.toThrow("rejected");
+    }
+    expect(onAccepted).not.toHaveBeenCalled();
   });
 
   it.each(["parts", "seed"])("rejects locally invalid %s before tracking an attempt", field => {
@@ -116,4 +134,15 @@ describe("canonical Chat admission confirmation", () => {
     expect(result).toMatchObject({ admission: "already_accepted" });
     expect(accepted).toHaveBeenCalledTimes(1);
   });
+});
+
+it("holds one hundred unknown requests without evicting an earlier draft into a new id", () => {
+  const tracker = createChatMentionRequestTracker();
+  const owner = {};
+  const original = tracker.resolve(owner, "new:global", { text: "original" }, "send");
+  for (let index = 1; index < 100; index++) tracker.resolve(owner, "new:global", { text: `draft ${index}` }, "send");
+  expect(() => tracker.resolve(owner, "new:global", { text: "overflow" }, "send")).toThrow(ChatAdmissionUnconfirmed);
+  expect(tracker.resolve(owner, "new:global", { text: "original" }, "queue")).toEqual(original);
+  tracker.accepted("new:global", original.clientRequestId);
+  expect(tracker.resolve(owner, "new:global", { text: "overflow" }, "send").clientRequestId).not.toBe(original.clientRequestId);
 });

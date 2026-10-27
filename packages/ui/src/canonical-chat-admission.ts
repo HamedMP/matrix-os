@@ -106,7 +106,7 @@ export function createCanonicalChatAdmissionTracker() {
       current: () => CanonicalChatDetailResponse | null;
       isCurrent: () => boolean; onAccepted: () => void;
       canAcknowledge?: () => boolean;
-      onConfirmed?: () => void;
+      onConfirmed?: () => void; onRejected?: () => void;
       definitive: (error: unknown) => boolean;
     }) {
       if (attempt.accepted) return Promise.resolve(attempt.accepted);
@@ -125,6 +125,7 @@ export function createCanonicalChatAdmissionTracker() {
           if (options.definitive(error) && !attempt.uncertain) {
             const index = attempts.indexOf(attempt);
             if (index >= 0) attempts.splice(index, 1);
+            options.onRejected?.();
             throw error;
           }
           attempt.uncertain = true;

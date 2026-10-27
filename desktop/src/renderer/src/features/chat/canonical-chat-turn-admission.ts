@@ -11,7 +11,7 @@ export async function admitDesktopChatTurn(options: {
   onSnapshot: (detail: CanonicalChatDetailResponse) => void;
   isCurrent: () => boolean; mayDispatch: () => boolean; onAccepted: () => void;
   onConfirmed: (requestId: string) => void; onPrepared: (requestId: string) => void;
-  canAcknowledge: () => boolean;
+  canAcknowledge: () => boolean; onRejected?: () => void;
 }) {
   const { clientRequestId: seed, ...input } = options.input;
   const attempt = options.tracker.prepare(options.identity, options.scope, input, seed);
@@ -27,7 +27,7 @@ export async function admitDesktopChatTurn(options: {
     read: async () => { const detail = await options.client.getDetail(record.chat.id, { limit: 200 });
       if (options.isCurrent() && detail.record.chat.id === record.chat.id) options.onSnapshot(detail); return detail; }, current: options.current,
     isCurrent: options.isCurrent, canAcknowledge: options.canAcknowledge,
-    onAccepted: options.onAccepted, onConfirmed: () => options.onConfirmed(attempt.id),
+    onAccepted: options.onAccepted, onRejected: options.onRejected, onConfirmed: () => options.onConfirmed(attempt.id),
     definitive: error => error instanceof AppError && error.httpStatus !== undefined && error.httpStatus >= 400 && error.httpStatus < 500 && error.httpStatus !== 408,
   });
 }

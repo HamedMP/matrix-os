@@ -140,6 +140,15 @@ response must preserve newer edits. An explicit retry of an unresolved send
 reuses its original body and id. Reconciliation never posts a message by
 itself. Bound unresolved in-memory receipts and reject overflow rather than
 evicting an uncertain receipt and accidentally issuing another request id.
+Apply the same rule to the composer request seed: neither elapsed time nor
+other drafts may replace an unresolved new-chat request's identity. Release
+known dispositions so the bounded tracker remains usable.
+
+Hiding and reopening the same mounted Chat with the same runtime/auth identity
+must resume passive receipt checks without another Send action. Keep original
+draft ownership separate from current status ownership, so confirming that
+receipt preserves edited drafts and newer errors. An unmount or identity
+change must still prevent the old attempt from mutating the new view.
 
 ## Provider Adapters
 

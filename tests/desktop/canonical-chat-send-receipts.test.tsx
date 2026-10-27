@@ -122,6 +122,53 @@ describe("canonical send admission receipts", () => {
     expect(client.admitTurn).toHaveBeenCalledTimes(2);
   });
 
+  it("passively confirms an unknown send on reopening the same mounted runtime without another send", async () => {
+    const client = createCanonicalChatWorkspaceClient();
+    let fresh = await client.getDetail(snapshot.chat.id);
+    vi.mocked(client.getDetail).mockImplementation(async () => fresh);
+    vi.mocked(client.admitTurn).mockRejectedValue(new AppError("timeout"));
+    const accepted = vi.fn();
+    const hook = renderHook(({ active }) => useCanonicalChatRouteController({ client, admissionIdentity: "runtime:auth1",
+      projectId: "matrix-os", active, initialChatId: snapshot.chat.id }), { initialProps: { active: true } });
+    await waitFor(() => expect(hook.result.current.detail).not.toBeNull());
+    await act(async () => { await hook.result.current.submitTurn(input, "continue", "matrix-os", accepted); });
+    hook.rerender({ active: false });
+    fresh = committed(vi.mocked(client.admitTurn).mock.calls[0]![1]);
+    expect(accepted).not.toHaveBeenCalled();
+    hook.rerender({ active: true });
+    await waitFor(() => expect(accepted).toHaveBeenCalledTimes(1));
+    expect(hook.result.current.error).toBeNull();
+    expect(client.admitTurn).toHaveBeenCalledTimes(1);
+    expect(client.create).not.toHaveBeenCalled();
+    hook.unmount();
+  });
+
+  it("keeps a different route selected when reopening after a hidden chat change", async () => {
+    const client = createCanonicalChatWorkspaceClient();
+    let original = await client.getDetail(snapshot.chat.id);
+    const otherId = "chat_other_route";
+    const other = { ...original, record: { ...original.record, chat: { ...original.record.chat, id: otherId } },
+      messages: [], turns: [], runs: [], activities: [] };
+    vi.mocked(client.list).mockResolvedValue({ items: [canonicalChatRecord, other.record] });
+    vi.mocked(client.getDetail).mockImplementation(async id => id === otherId ? other : original);
+    vi.mocked(client.admitTurn).mockRejectedValue(new AppError("timeout"));
+    const accepted = vi.fn();
+    const hook = renderHook(({ active, chatId }) => useCanonicalChatRouteController({ client,
+      admissionIdentity: "runtime:auth1", projectId: "matrix-os", active, initialChatId: chatId }),
+      { initialProps: { active: true, chatId: snapshot.chat.id } });
+    await waitFor(() => expect(hook.result.current.detail).not.toBeNull());
+    await act(async () => { await hook.result.current.submitTurn(input, "continue", "matrix-os", accepted); });
+    hook.rerender({ active: false, chatId: snapshot.chat.id });
+    hook.rerender({ active: false, chatId: otherId });
+    original = committed(vi.mocked(client.admitTurn).mock.calls[0]![1]);
+    hook.rerender({ active: true, chatId: otherId });
+    await waitFor(() => expect(hook.result.current.detail?.record.chat.id).toBe(otherId));
+    expect(hook.result.current.activeChatId).toBe(otherId);
+    expect(client.admitTurn).toHaveBeenCalledTimes(1);
+    expect(client.create).not.toHaveBeenCalled();
+    hook.unmount();
+  });
+
   it("preserves local format validation before creating or sending anything", async () => {
     const client = createCanonicalChatWorkspaceClient();
     const hook = renderHook(() => useCanonicalChatRouteController({ client, projectId: "matrix-os", active: true, initialChatId: snapshot.chat.id }));
@@ -178,7 +225,7 @@ describe("canonical send admission receipts", () => {
     expect(client.admitTurn).toHaveBeenCalledTimes(1);
   });
 
-  it("does not clear a newer definitive error when an older unknown attempt is confirmed", async () => {
+  it.each([false, true])("does not clear a newer definitive error when an older unknown attempt is confirmed (reopen=%s)", async reopen => {
     const client = createCanonicalChatWorkspaceClient();
     let fresh = await client.getDetail(snapshot.chat.id);
     vi.mocked(client.getDetail).mockImplementation(async () => fresh);
@@ -187,15 +234,46 @@ describe("canonical send admission receipts", () => {
     let notify!: (event: CanonicalChatInvalidation) => void;
     const eventSource = { subscribe: (listener: typeof notify) => { notify = listener; return { dispose() {} }; } };
     const accepted = vi.fn();
-    const hook = renderHook(() => useCanonicalChatRouteController({ client, projectId: "matrix-os", active: true, initialChatId: snapshot.chat.id, eventSource }));
+    const hook = renderHook(({ active }) => useCanonicalChatRouteController({ client, projectId: "matrix-os", active, initialChatId: snapshot.chat.id, eventSource }), { initialProps: { active: true } });
     await waitFor(() => expect(hook.result.current.detail).not.toBeNull());
     await act(async () => { await hook.result.current.submitTurn(input, "first", "matrix-os", accepted); });
     await act(async () => { await hook.result.current.submitTurn({ ...input, parts: [{ type: "text", text: "new draft" }] }, "second"); });
+    if (reopen) hook.rerender({ active: false });
     fresh = committed(vi.mocked(client.admitTurn).mock.calls[0]![1]);
-    act(() => { notify({ type: "chat.full_refresh" }); });
+    if (reopen) hook.rerender({ active: true });
+    else act(() => { notify({ type: "chat.full_refresh" }); });
     await waitFor(() => expect(accepted).toHaveBeenCalledTimes(1));
     expect(hook.result.current.error).toContain("Your session has expired");
     expect(client.admitTurn).toHaveBeenCalledTimes(2);
+  });
+
+  it("retains an unchanged new-chat request after more than thirty minutes of unknown admission", async () => {
+    globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
+    useBoard.setState(useBoard.getInitialState(), true);
+    useConnection.setState(useConnection.getInitialState(), true);
+    window.operator = { invoke: vi.fn(async () => ({ ok: true })), on: vi.fn(() => () => undefined) };
+    const client = createCanonicalChatWorkspaceClient();
+    vi.mocked(client.list).mockResolvedValue({ items: [] });
+    vi.mocked(client.create).mockResolvedValue(canonicalChatRecord);
+    vi.mocked(client.admitTurn).mockRejectedValue(new AppError("timeout"));
+    const now = Date.now();
+    let clock: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      render(<CanonicalChatWorkspace client={client} projectId="matrix-os" initialView="conversation"
+        active catalog={providerCatalog} />);
+      const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+      await setSharedComposerText(editor, "continue once");
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await screen.findByText("Message status is unconfirmed. You can retry safely.");
+      clock = vi.spyOn(Date, "now").mockReturnValue(now + 31 * 60_000);
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(client.admitTurn).toHaveBeenCalledTimes(2));
+      await screen.findByText("Message status is unconfirmed. You can retry safely.");
+      expect(client.create).toHaveBeenCalledTimes(1);
+      const calls = vi.mocked(client.admitTurn).mock.calls;
+      expect(calls[1]![1]).toEqual(calls[0]![1]);
+      expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe("continue once");
+    } finally { clock?.mockRestore(); cleanup(); }
   });
 
   it("does not clear an edited Electron draft when its original timed-out message is later confirmed", async () => {
@@ -214,17 +292,20 @@ describe("canonical send admission receipts", () => {
     } };
     const notify = (event: CanonicalChatInvalidation) => { for (const listener of [...listeners]) listener(event); };
     try {
-      render(<CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={snapshot.chat.id}
+      const view = render(<CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={snapshot.chat.id}
         initialView="conversation" active catalog={providerCatalog} eventSource={eventSource} />);
       const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
       await setSharedComposerText(editor, "continue once");
       fireEvent.click(screen.getByRole("button", { name: "Send" }));
       await screen.findByText("Message status is unconfirmed. You can retry safely.");
       await setSharedComposerText(editor, "my newer unsent draft");
+      view.rerender(<CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={snapshot.chat.id}
+        initialView="conversation" active={false} catalog={providerCatalog} eventSource={eventSource} />);
       fresh = committed(vi.mocked(client.admitTurn).mock.calls[0]![1]);
-      act(() => { notify({ type: "chat.full_refresh" }); });
+      view.rerender(<CanonicalChatWorkspace client={client} projectId="matrix-os" initialChatId={snapshot.chat.id}
+        initialView="conversation" active catalog={providerCatalog} eventSource={eventSource} />);
       await waitFor(() => expect(screen.queryByText("Message status is unconfirmed. You can retry safely.")).toBeNull());
-      expect(editor.textContent).toBe("my newer unsent draft");
+      expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe("my newer unsent draft");
       expect(client.admitTurn).toHaveBeenCalledTimes(1);
     } finally { cleanup(); }
   });
