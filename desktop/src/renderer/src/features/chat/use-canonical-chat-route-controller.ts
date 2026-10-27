@@ -165,7 +165,7 @@ export function useCanonicalChatRouteController({
     }
   }, [client]);
 
-  const reconcileStop = useCanonicalChatStopRecovery(client, active ? activeChatId : null,
+  const reconcileStop = useCanonicalChatStopRecovery(admissionIdentity, active ? activeChatId : null,
     (chatId) => loadDetail(chatId, { background: true }));
 
   const load = useCallback(async (query = "", options: { background?: boolean } = {}) => {

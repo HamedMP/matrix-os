@@ -43,3 +43,29 @@ describe("Electron Stop snapshot recovery", () => {
     },
   );
 });
+
+it("drops a pending Stop read obligation when the auth/runtime identity changes with the same client", async () => {
+  vi.useFakeTimers();
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  const nextRunning = { ...running, record: { ...running.record,
+    activeRun: { ...running.record.activeRun, runId: "run_next_source" } } };
+  const getDetail = vi.fn().mockResolvedValueOnce(running).mockRejectedValueOnce(new TypeError("offline"))
+    .mockResolvedValue(nextRunning);
+  const client = { list: vi.fn(async () => ({ items: [record] })), getDetail,
+    cancelRun: vi.fn(async () => ({ cancellation: "aborted" })) } as unknown as CanonicalChatClient;
+  const hook = renderHook(({ identity }) => useCanonicalChatRouteController({ client, admissionIdentity: identity,
+    projectId: null, active: true, initialChatId: record.chat.id, eventSource: events }),
+    { initialProps: { identity: "runtime:auth1" } });
+  try {
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { await hook.result.current.cancelActiveRun(); });
+    expect(getDetail).toHaveBeenCalledTimes(2);
+    hook.rerender({ identity: "runtime:auth2" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(hook.result.current.detail?.record.activeRun?.runId).toBe("run_next_source");
+    const initialReads = getDetail.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(getDetail).toHaveBeenCalledTimes(initialReads);
+    expect(client.cancelRun).toHaveBeenCalledOnce();
+  } finally { hook.unmount(); vi.useRealTimers(); warn.mockRestore(); }
+});
