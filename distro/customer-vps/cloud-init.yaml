@@ -449,7 +449,7 @@ runcmd:
     rm -f /var/lib/matrix/golden-snapshot-sanitized
     systemd-machine-id-setup
     ssh-keygen -A
-    # Restart Docker disabled by snapshot sanitation.
+    # Snapshot disables Docker.
     . /opt/matrix/env/host.env
     if [ "${MATRIX_IMAGE_SOURCE:-clean_image}" = "snapshot" ]; then
       systemctl enable --now docker.service containerd.service
