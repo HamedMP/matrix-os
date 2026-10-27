@@ -152,7 +152,7 @@ install -m 0755 "$DIST_DIR/$GH_DIST/bin/gh" "$STAGE_DIR/app/node_modules/.bin/gh
 cp -a "$ROOT_DIR/packages" "$STAGE_DIR/app/packages"
 test -f "$STAGE_DIR/app/packages/gateway/dist/collaboration/filesystem-identity.node"
 cp -a "$ROOT_DIR/shell" "$STAGE_DIR/app/shell"
-cp -a "$ROOT_DIR/home" "$STAGE_DIR/app/home"
+bash "$ROOT_DIR/scripts/copy-host-runtime-home.sh" "$ROOT_DIR/home" "$STAGE_DIR/app/home"
 mkdir -p "$STAGE_DIR/app/scripts"
 cp -a "$ROOT_DIR/scripts/build-default-apps.mjs" "$STAGE_DIR/app/scripts/build-default-apps.mjs"
 cp -a "$ROOT_DIR/scripts/reset-shipped-icons.mjs" "$STAGE_DIR/app/scripts/reset-shipped-icons.mjs"
