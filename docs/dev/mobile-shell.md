@@ -78,10 +78,13 @@ app/(drawer)/(tabs)/settings.tsx                /settings
 - **Android does not shrink the window for the keyboard.** The app is edge to
   edge, so the keyboard is drawn over the screen on both platforms. A screen
   with a text field near the bottom makes room for it itself: the chat, project
-  and agent chat screens use `KeyboardAvoidingView` with `behavior="padding"`
-  on iOS and Android alike. On Android React Native reports the keyboard on
-  its next layout pass, a moment after it appears, so the composer moves up
-  just after the keyboard rather than with it.
+  and agent chat screens use `react-native-keyboard-controller`'s
+  `KeyboardAvoidingView` with `behavior="padding"` on iOS and Android alike,
+  so the composer moves with the keyboard frame by frame. Its `KeyboardProvider`
+  is mounted in `app/_layout.tsx` on both platforms. React Native's own
+  Android keyboard events arrive on the next layout pass, a moment after the
+  keyboard appears; read the controller's events (as `useKeyboardVisible`
+  does) when something has to change as the keyboard starts to move.
 - **Moving between tabs from code** goes through the helpers in
   `lib/shell-routes.ts`. They build new params on every call because the
   navigator ignores params it has already used.

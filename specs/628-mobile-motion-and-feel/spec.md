@@ -66,19 +66,48 @@ screens and actions look, move and feel.
 - One confirm dialog replaces the two hand-made popups; a destructive one
   plays the warning haptic as it opens.
 
+### Keyboard and sending (layer 5)
+
+- The chat, project and agent screens follow the keyboard frame by frame on
+  iOS and Android (`react-native-keyboard-controller`), so the composer
+  travels with the keyboard instead of jumping to where it will end, or on
+  Android after it has landed. The composer's smaller gap above the keyboard
+  applies as the keyboard starts to move, on both platforms.
+- A message sent from the phone rises into place above the composer as it
+  fades in, and a reply fades in as it starts. The greeting fades out as the
+  first message takes its place. Only messages still arriving animate, so
+  scrolling never replays one. With Reduce Motion a new message only fades in.
+- The messages already there move as before. Gliding them was tried: in a long
+  chat it ran only some of the time, and it made a streaming reply wobble as
+  each line was added.
+- The package's provider is mounted on both platforms. The app is edge to
+  edge, so Android draws the keyboard over the screen as iOS does, and these
+  screens already make room for it themselves (HamedMP/matrix-os#2706). The
+  provider sees the edge-to-edge setup and keeps the status and navigation
+  bars translucent by itself, so its `statusBarTranslucent`,
+  `navigationBarTranslucent` and `preserveEdgeToEdge` options stay unset.
+
 ## Acceptance checks
 
 - Unit tests cover the tokens' use, the press scale and its reduced-motion
   fallback, each haptic call site, the launch theme, the root presentations,
   the placeholders' shapes and every new or changed dialog, menu and toast.
 - On the iPhone 17 simulator: tab changes, a press held on a row, a Settings
-  page pushed and swiped back, the Files sheet swiped down, and a dark-mode
-  cold launch, each recorded and checked frame by frame.
+  page pushed and swiped back, the Files sheet swiped down, a dark-mode
+  cold launch, and the keyboard opening and a message sent in a chat, each
+  recorded and checked frame by frame.
+- On the Android emulator with the on-screen keyboard: the keyboard opening
+  and closing on a new chat, an open chat, a project and an agent chat, with
+  the status bar, tab bar and terminal unchanged.
 
 ## Risks and limits
 
-- Every change is JavaScript and ships as an over-the-air update. A dark
-  native splash image needs a store build and is not part of this.
+- Layers 1 to 4 are JavaScript and can ship as an over-the-air update.
+  Layer 5 adds a native module, so it bumps the app version to 0.2.8, and
+  updates from then on reach only 0.2.8 builds. Merged together, all five
+  layers reach people with the 0.2.8 store build; merging layers 1 to 4
+  first lets them reach 0.2.7 installs over the air. A dark native splash
+  image also needs a store build and is not part of this.
 - Moving the agent chat and new-agent screens out of the tabs (so the tab bar
   leaves with them) changes navigation structure and is left for its own
   change.
@@ -88,4 +117,10 @@ screens and actions look, move and feel.
   React Native's Modal. Moving them into the shared native sheet needs their
   list and keyboard layout reworked inside it, and they only appear in
   shared sessions; it is left for its own change, checked on a shared session.
+- Other screens with a text field (sign-in, shared chats, the terminal
+  session, the text-entry dialog and the discussion sheet) still use React
+  Native's keyboard-avoiding view with no Android behaviour, so on Android
+  the keyboard can cover what sits at their bottom edge. The terminal
+  session's key row also sits under Android's navigation bar, on `main` too.
+  Both are left for their own change.
 - Public docs: none. No user-facing capability or setting changes.
