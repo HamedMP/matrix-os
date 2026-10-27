@@ -164,7 +164,14 @@ NODE
 
 verify_transition() {
   [ "$enabled" = "true" ] || return 0
-  local service_json live_revision revision_json live_version
+  local existing_service service_json live_revision revision_json live_version
+  existing_service="$(gcloud run services list \
+    --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
+    --filter="metadata.name=${CLOUD_RUN_SERVICE}" --limit=1 \
+    --format='value(metadata.name)')"
+  # An empty, successful list is the one-time bootstrap path. List failures
+  # still stop the release so permission and connectivity errors are not hidden.
+  [ -n "$existing_service" ] || return 0
   service_json="$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
     --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json)"
   live_revision="$(printf '%s\n' "$service_json" | jq -r \

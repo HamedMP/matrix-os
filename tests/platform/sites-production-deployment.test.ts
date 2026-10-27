@@ -35,7 +35,11 @@ function fakeGcloud() {
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 const secret = args[args.indexOf('--secret') + 1];
-if (args.includes('services')) process.stdout.write(process.env.MOCK_SERVICE || '{}');
+if (args.includes('services') && args.includes('list')) {
+  if (process.env.MOCK_SERVICE_LIST_FAIL === 'true') process.exit(1);
+  process.stdout.write(process.env.MOCK_SERVICE_NAME || '');
+}
+else if (args.includes('services')) process.stdout.write(process.env.MOCK_SERVICE || '{}');
 else if (args.includes('revisions')) process.stdout.write(process.env.MOCK_REVISION || '{}');
 else if (args.includes('get-iam-policy')) process.stdout.write('serviceAccount:runtime@example.com\\n');
 else if (args.includes('access')) {
@@ -61,7 +65,8 @@ const goodValues = {
   'r2-bundles-bucket': 'matrixos-bundles',
 };
 
-function run(mode: string, values: Record<string, string> = goodValues, revision: unknown = {}, service: unknown = {}) {
+function run(mode: string, values: Record<string, string> = goodValues, revision: unknown = {}, service: unknown = {},
+  serviceName = 'matrix-platform', serviceListFails = false) {
   const bin = fakeGcloud();
   return spawnSync('bash', ['scripts/ci/platform-sites-env.sh', mode, 'reviewed-revision'], {
     cwd: root,
@@ -80,6 +85,8 @@ function run(mode: string, values: Record<string, string> = goodValues, revision
       MOCK_VALUES: JSON.stringify(values),
       MOCK_REVISION: JSON.stringify(revision),
       MOCK_SERVICE: JSON.stringify(service),
+      MOCK_SERVICE_NAME: serviceName,
+      MOCK_SERVICE_LIST_FAIL: String(serviceListFails),
     },
   });
 }
@@ -192,6 +199,8 @@ describe('production Matrix.page deployment contract', () => {
     expect(run('verify-transition', goodValues, revision('1'), service).status).toBe(0);
     expect(run('verify-transition', goodValues, revision('2'), service).status).toBe(0);
     expect(run('verify-transition', goodValues, revision('7'), service).status).not.toBe(0);
+    expect(run('verify-transition', goodValues, {}, {}, '').status).toBe(0);
+    expect(run('verify-transition', goodValues, {}, {}, '', true).status).not.toBe(0);
   });
 
   it('checks candidate storage, deploys the fixed-domain Worker, and verifies the edge after promotion', () => {
