@@ -527,7 +527,8 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
           )}
         </div>
       ) : (
-        <CanvasAppViewer path={win.path} active={isFocused && !win.minimized && !hidden && !isPreview} />
+        <CanvasAppViewer path={win.path} active={isFocused && !win.minimized && !hidden && !isPreview}
+          onOpenRepairChat={(chatId) => chatState?.switchConversation(chatId)} />
       )}
     </>
   );

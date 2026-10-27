@@ -446,6 +446,10 @@ export const INVOKE_CHANNELS = {
     request: z.object({ embedId: z.string().min(1).max(64) }).strict(),
     response: Ok,
   },
+  "embed:repair": {
+    request: z.strictObject({ embedId: z.string().min(1).max(64) }),
+    response: z.strictObject({ chatId: z.string().min(1).max(160) }),
+  },
   notify: {
     request: z
       .object({
@@ -508,6 +512,7 @@ export const INVOKE_CHANNELS = {
 export const EVENT_CHANNELS = {
   ...LOCAL_CHAT_IMPORT_EVENTS,
   "app:generate": AppGenerateEventSchema,
+  "app:repair-opened": z.strictObject({ chatId: z.string().min(1).max(160), runtimeSlot: z.string().min(1).max(64), authGeneration: z.number().int().nonnegative() }),
   "app:open": NativeAppOpenEventSchema,
   "analytics:capture": DesktopAnalyticsDetailSchema,
   "analytics:flush-requested": Empty,

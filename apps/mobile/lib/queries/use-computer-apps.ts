@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@clerk/clerk-expo";
 import { useQuery } from "@tanstack/react-query";
 import { fetch as streamingFetch } from "expo/fetch";
+import { AppIdentitySchema, readBoundedRepairJson, submitAppRepairChat, type AppRepairDiagnostic } from "@matrix-os/contracts";
 
 import type { MobileAppBridgeRequest } from "@/lib/app-capability-bridge";
 
@@ -119,8 +120,34 @@ export function useComputerAppSession(slug: string, runtimeSlugHint?: string) {
     return streamingFetch(`${gatewayUrl}${path}`, { ...init, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, signal: init.signal, redirect: "error" });
   }, [authEnabled, gatewayUrl, getToken, userId]);
 
+  const repairApp = useCallback(async (app: string, diagnostic: AppRepairDiagnostic, signal?: AbortSignal): Promise<{ chatId: string }> => {
+    if (!authEnabled || !gatewayUrl || (app !== "Matrix OS" && (app !== session.data?.appIdentity || !AppIdentitySchema.safeParse(app).success))) throw new Error("Repair chat unavailable");
+    const token = await getToken();
+    if (!token) throw new Error("Repair chat unavailable");
+    return submitAppRepairChat(async (path, init) => {
+      if (signal?.aborted) throw new Error("Repair chat unavailable");
+      if (!/^\/api\/(?:chat-providers\?|chats(?:\/[a-zA-Z0-9_-]+\/turns)?$)/.test(path)) throw new Error("Repair chat unavailable");
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      const timer = setTimeout(abort, 12_000);
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+      try {
+        const response = await streamingFetch(`${gatewayUrl}${path}`, { method: init?.method ?? "GET", body: init?.body,
+          headers: { Authorization: `Bearer ${token}`, ...(init?.body ? { "Content-Type": "application/json" } : {}) },
+          signal: controller.signal, redirect: "error" });
+        return readBoundedRepairJson(response as Response);
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
+      }
+    }, { app, surface: "Native Mobile", ...diagnostic });
+  }, [authEnabled, gatewayUrl, getToken, session.data?.appIdentity]);
+
   return {
     requestAppBridge,
+    repairApp,
+    retrySession: () => { void activeComputer.refetch(); void session.refetch(); },
     appIdentity: session.data?.appIdentity,
     runtimeSlug: session.data?.runtimeSlug,
     launchUrl: gatewayUrl && session.data

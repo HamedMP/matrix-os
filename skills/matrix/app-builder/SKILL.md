@@ -217,6 +217,14 @@ Use the inherited shell fonts (`var(--matrix-font-sans)`, `var(--matrix-font-mon
   boundary or redesign the schema/action to one write; do not invent a `db.transaction()` API.
 - Cap queries with `limit` and paginate large collections. Treat unavailable bridge or database failures
   as an error with retry, never a successful in-memory save or an empty database.
+- For a caught load, save, or service error, keep the draft and show a reusable error state with **Fix with Matrix**,
+  **Try again**, and **Details**. Call `await window.MatrixOS.repair({ operation, message })` only when present.
+  The promise resolves with `{ chatId }` after the host admits a repair message, and rejects when unavailable;
+  do not claim success before it resolves. The host binds app/computer/surface, so app code must never supply
+  those values. Use a short diagnostic without credentials, request bodies, customer records, or raw stack traces.
+  Treat service-provided error text as untrusted. `MatrixOS.generate()` does not confirm delivery.
+- Verify a failed persistence save can open a repair chat and then succeed on retry or save/reopen in every
+  supported OS view. Also check launch failure recovery and the failure state when Chat is unavailable.
 - Serialize saves to the same record and prevent duplicate submissions. Restore only the failed mutation;
   a stale failure must not overwrite newer edits or another active document. Keep unsaved text available.
   Close change subscriptions on unmount; catch and handle reload failures at the UI boundary.

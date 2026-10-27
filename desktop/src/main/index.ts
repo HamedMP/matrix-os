@@ -55,6 +55,7 @@ import {
   updateHermesConfiguration,
 } from "./hermes/configuration-client";
 import { createNativeChatImportService } from "./files/local-chat-import";
+import { createNativeAppRepairRequester } from "./embeds/native-app-repair";
 import { discoverLocalChats } from "./files/local-chat-discovery";
 import { registerLocalChatImportIpc } from "./ipc/local-chat-import";
 import { registerIpcHandlers } from "./ipc/handlers";
@@ -332,6 +333,15 @@ if (!gotLock) {
           const status = auth.getStatus();
           if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App task is unavailable");
           sendEvent("app:generate", { app, context, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
+        },
+        repair: async (app, diagnostic, signal) => {
+          const status = auth.getStatus();
+          if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("Repair chat unavailable");
+          const result = await createNativeAppRepairRequester({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() })(app, diagnostic, signal);
+          const current = auth.getStatus();
+          if (!current.signedIn || current.runtimeSlot !== status.runtimeSlot || current.authGeneration !== status.authGeneration) throw new Error("Repair chat unavailable");
+          if (mainWindow && !mainWindow.isDestroyed()) sendEvent("app:repair-opened", { chatId: result.chatId, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
+          return result;
         },
         capabilityRequest: createNativeAppCapabilityRequester({
           getGatewayOrigin: () => auth.getGatewayOrigin(),

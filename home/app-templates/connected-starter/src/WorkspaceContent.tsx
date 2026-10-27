@@ -1,4 +1,5 @@
 import Views from "./Views";
+import { AppErrorRecovery } from "./AppErrorRecovery";
 import type { Definition, OwnerRecord } from "./types";
 interface Props {
   app: Definition;
@@ -16,6 +17,7 @@ interface Props {
   onImport?: () => void;
   canImport?: boolean;
   onSave: (r: OwnerRecord) => Promise<unknown>;
+  onRetry: () => void;
   creationScope?: "personal" | "work";
 }
 export default function WorkspaceContent({
@@ -34,6 +36,7 @@ export default function WorkspaceContent({
   onImport,
   canImport,
   onSave,
+  onRetry,
   creationScope,
 }: Props) {
   return (
@@ -44,11 +47,7 @@ export default function WorkspaceContent({
           {unavailable}
         </p>
       )}
-      {(error || exportError) && (
-        <p className="notice error" role="alert">
-          {error || exportError}
-        </p>
-      )}
+      {(error || exportError) && <AppErrorRecovery message={error || exportError} retry={onRetry} />}
       {loading && !records.length && (
         <p className="notice" role="status">
           Loading your saved records…

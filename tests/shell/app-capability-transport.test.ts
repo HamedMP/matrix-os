@@ -11,6 +11,20 @@ import { MAX_APP_DATABASE_REPLY_BYTES } from "@matrix-os/contracts";
 const runtime = "https://app.matrix-os.com/vm/test/apps/notes/?session=private";
 
 describe("app capability transport", () => {
+  it("binds native repair requests to the launched app and confirms the reply", async () => {
+    const repair = vi.fn(async () => ({ chatId: "chat_repair" }));
+    const reply = vi.fn();
+    const request = vi.fn();
+    const broker = createMobileAppCapabilityBroker({ app: "notes", runtimeUrl: runtime, launchId: "launch", request, reply, repair });
+    await broker.receive(JSON.stringify({ type: "matrix:app-ready", launchId: "launch", documentId: "doc" }), runtime);
+    await broker.receive(JSON.stringify({ type: "matrix:app-request", launchId: "launch", documentId: "doc", id: 1, kind: "repair", input: { app: "other", operation: "save", message: "failed" } }), runtime);
+    expect(repair).not.toHaveBeenCalled();
+    await broker.receive(JSON.stringify({ type: "matrix:app-request", launchId: "launch", documentId: "doc", id: 2, kind: "repair", input: { operation: "save", message: "failed" } }), runtime);
+    expect(repair).toHaveBeenCalledWith("notes", { operation: "save", message: "failed" }, expect.any(AbortSignal));
+    expect(reply.mock.calls[1]![0]).toContain('"chatId":"chat_repair"');
+    expect(request).not.toHaveBeenCalled();
+    broker.dispose();
+  });
   it("keeps nested persisted identity distinct from its migrated runtime slug and another leaf app", async () => {
     const identity = appIdentityFromPath("apps/games/chess/index.html");
     expect(identity).toBe("games/chess");

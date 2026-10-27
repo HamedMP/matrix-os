@@ -1,4 +1,4 @@
-import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_RESPONSE_CHUNKS, AppAiInputSchema, AppCapabilityInputSchema, type AppCapabilityInput, type AppAiInput } from "@matrix-os/contracts";
+import { APP_GENERATE_CHANNEL, AppGenerateContextSchema, APP_AI_CHANNEL, APP_REPAIR_CHANNEL, AppRepairDiagnosticSchema, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_RESPONSE_CHUNKS, AppAiInputSchema, AppCapabilityInputSchema, type AppCapabilityInput, type AppAiInput, type AppRepairDiagnostic } from "@matrix-os/contracts";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import { registerNativeAppCapabilityIpc } from "./native-app-capabilities";
 export { createNativeAppAiRequester } from "./native-app-ai";
@@ -65,6 +65,7 @@ function isSafeAppIdentity(value: string): boolean {
 interface NativeAppBridgeOptions {
   authGeneration: () => number;
   generate: (app: string, context: string) => void;
+  repair?: (app: string, diagnostic: AppRepairDiagnostic, signal?: AbortSignal) => Promise<{ chatId: string }>;
   aiRequest: (slug: string, input: AppAiInput, signal?: AbortSignal) => Promise<unknown>;
   capabilityRequest?: (app: string, input: AppCapabilityInput, signal?: AbortSignal) => Promise<unknown>;
   aiRoutesRequest?: (app: string, signal?: AbortSignal) => Promise<unknown>;
@@ -368,6 +369,18 @@ export class NativeAppBridge {
     this.options.generate(identity.appIdentity, context);
   }
 
+  async repair(sender: NativeAppSender, rawDiagnostic: unknown): Promise<{ chatId: string }> {
+    const identity = this.authorizeCapability(sender);
+    if (!this.options.repair || this.pendingCapabilities >= 32) throw new Error("Repair chat unavailable");
+    const diagnostic = AppRepairDiagnosticSchema.parse(rawDiagnostic);
+    this.pendingCapabilities++;
+    try {
+      const result = await this.options.repair(identity.appIdentity, diagnostic, identity.controller.signal);
+      if (this.authorizeCapability(sender) !== identity) throw new Error("not authorized");
+      return result;
+    } finally { this.pendingCapabilities--; }
+  }
+
   async openApp(sender: NativeAppSender, rawRequest: unknown): Promise<void> {
     const identity = this.senders.get(sender.id);
     const authorized = () => identity && this.senders.get(sender.id) === identity
@@ -428,6 +441,18 @@ export class NativeAppBridge {
       } catch (error) {
         console.warn("[native-app-bridge] task failed:", error instanceof Error ? error.name : "UnknownError");
         throw new Error("App task is unavailable");
+      }
+    });
+    ipcMain.handle(APP_REPAIR_CHANNEL, async (event: IpcMainInvokeEvent, rawDiagnostic: unknown) => {
+      try {
+        if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");
+        return await this.repair({ id: event.sender.id, get url() {
+          if (event.senderFrame !== event.sender.mainFrame || event.sender.isDestroyed()) return "";
+          return event.sender.getURL();
+        } }, rawDiagnostic);
+      } catch (error: unknown) {
+        console.warn("[native-app-bridge] repair failed:", error instanceof Error ? error.name : "UnknownError");
+        throw new Error("Repair chat unavailable");
       }
     });
     ipcMain.handle(APP_AI_CHANNEL, async (event: IpcMainInvokeEvent, rawInput: unknown) => {

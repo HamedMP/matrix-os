@@ -52,6 +52,7 @@ const ERR_ABORTED = -3;
 
 interface EmbedRecord {
   id: string;
+  appIdentity: string | null;
   url: string;
   view: EmbedViewLike;
   live: boolean;
@@ -156,6 +157,7 @@ export class EmbedManager {
     });
     record = {
       id,
+      appIdentity: kind === "app" ? slug : null,
       url,
       view,
       live: active,
@@ -175,6 +177,10 @@ export class EmbedManager {
     this.enforceMaxLive();
     this.enforceTotalCap();
     return id;
+  }
+
+  appIdentityForEmbed(embedId: string): string | null {
+    return this.records.get(embedId)?.appIdentity ?? null;
   }
 
   setBounds(embedId: string, bounds: Bounds): boolean {

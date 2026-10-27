@@ -34,6 +34,7 @@
     "#chat-event-wire": "./src/chat-event-wire.ts",
     "#sync": "./src/sync.ts",
     "#app-ai": "./src/app-ai.ts",
+    "#app-repair": "./src/app-repair.ts",
     "#file-download": "./src/file-download.ts",
     "#release-alignment": "./src/release-alignment.ts",
     "#runtime-compatibility": "./src/runtime-compatibility.ts",

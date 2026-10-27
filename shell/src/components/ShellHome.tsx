@@ -42,6 +42,12 @@ function readRecipePromptFromLocation(): string | null {
   return values.length === 1 ? resolveRecipeHandoff(values[0]!)?.prompt ?? null : null;
 }
 
+function readRepairChatFromLocation(): string | null {
+  if (typeof window === "undefined") return null;
+  const chatId = new URLSearchParams(window.location.search).get("repairChat");
+  return chatId && /^[a-zA-Z0-9_-]{1,128}$/.test(chatId) ? chatId : null;
+}
+
 // The launch path lives in window.location.search (read once at load). useSyncExternalStore
 // returns null on the server and during hydration (matching the server snapshot) and the real
 // value on the client, so it is applied without a setState-in-effect mount cascade or a
@@ -105,6 +111,10 @@ function ShellHomeBody({
     navigationScope: createShellChatNavigationScope(cacheScope, sessionId, chatGatewayUrl),
     navigationGeneration: sessionId ?? "self-hosted",
   });
+  const repairChatId = useSyncExternalStore(subscribeLaunchPathNoop, readRepairChatFromLocation, getLaunchPathServerSnapshot);
+  useEffect(() => {
+    if (repairChatId) chat.switchConversation(repairChatId);
+  }, [repairChatId, chat.switchConversation]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const locationLaunchAppPath = useSyncExternalStore(
     subscribeLaunchPathNoop,

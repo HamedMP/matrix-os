@@ -201,6 +201,14 @@ export function wireKernel(): () => void {
     useThreads.getState().startThread({ text, requestId, title: `App: ${request.app}` });
     activeSocket.send({ type: "message", text, requestId });
   });
+  const offAppRepair = onEvent("app:repair-opened", (request) => {
+    const current = useConnection.getState();
+    if (request.runtimeSlot !== runtimeSlot || current.runtimeSlot !== runtimeSlot
+      || request.authGeneration !== authGeneration || current.authGeneration !== authGeneration
+      || current.status !== "signed-in") return;
+    useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatId: request.chatId,
+      chatView: "conversation", closable: false });
+  });
 
   activeSocket.connect();
 
@@ -212,6 +220,7 @@ export function wireKernel(): () => void {
     unsubscribeState();
     offNotificationClick();
     offAppGenerate();
+    offAppRepair();
     activeSocket.dispose();
     if (socket === activeSocket) socket = null;
     if (cleanupKernel === cleanup) cleanupKernel = null;

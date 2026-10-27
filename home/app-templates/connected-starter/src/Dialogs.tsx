@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { RecordConflictError } from "./persistence";
+import { AppErrorRecovery } from "./AppErrorRecovery";
 import Sheet from "./Sheet";
 export { ImportDialog } from "./ImportDialog";
 import { safeUrl, validateFields } from "./model";
@@ -32,17 +33,23 @@ export function Editor({
       record?.scope ?? creationScope ?? (app.collection === "business" ? "work" : "personal"),
     ),
     [error, setError] = useState(""),
+    [retryOperation, setRetryOperation] = useState<"save" | "archive" | null>(null),
     [busy, setBusy] = useState(false);
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    await saveDraft();
+  }
+  async function saveDraft() {
     if (busy || conflict) return;
     const errors = validateFields(app, fields);
     if (errors.length) {
       setError(errors.join(". "));
+      setRetryOperation(null);
       return;
     }
     setBusy(true);
     setError("");
+    setRetryOperation(null);
     try {
       await onSave({
         ...baseline.current,
@@ -65,6 +72,7 @@ export function Editor({
     } catch (cause) {
       console.error("Editor save failed", cause);
       if (cause instanceof RecordConflictError) { setConflict(true); setLatest(null); }
+      setRetryOperation(cause instanceof RecordConflictError ? null : "save");
       setError(
         cause instanceof RecordConflictError
           ? cause.message
@@ -77,12 +85,14 @@ export function Editor({
   async function archive() {
     if (!baseline.current || busy || conflict) return;
     setBusy(true);
+    setRetryOperation(null);
     try {
       await onArchive(baseline.current);
       onClose();
     } catch (cause) {
       console.error("Editor archive failed", cause);
       if (cause instanceof RecordConflictError) { setConflict(true); setLatest(null); }
+      setRetryOperation(cause instanceof RecordConflictError ? null : "archive");
       setError(
         cause instanceof RecordConflictError
           ? cause.message
@@ -212,7 +222,8 @@ export function Editor({
             <option value="work">Work</option>
           </select>
         </label>
-        {error && (
+        {error && retryOperation ? <AppErrorRecovery message={error}
+          retry={() => { void (retryOperation === "save" ? saveDraft() : archive()); }} /> : error && (
           <p role="alert" className="notice error">
             {error}
           </p>

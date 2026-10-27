@@ -679,7 +679,8 @@ function MobileAppFrame({
       </div>
     );
   }
-  return <AppViewer path={app.path} onOpenApp={onOpenApp} />;
+  return <AppViewer path={app.path} onOpenApp={onOpenApp}
+    onOpenRepairChat={(chatId) => { chat?.switchConversation(chatId); onOpenApp("Chat", "__chat__"); }} />;
 }
 
 function AppSwitcher({
