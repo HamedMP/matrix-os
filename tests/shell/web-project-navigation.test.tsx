@@ -185,3 +185,20 @@ it("ignores a late project chat page after the account or computer changes", asy
   await waitFor(() => expect(screen.queryByRole("button", { name: "Old account chat" })).toBeNull());
   expect(chatRequests).toBe(2);
 });
+
+it("updates project row titles after a canonical or active-chat rename", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: "proj_title", slug: "title", name: "Writing" }] })
+    : Response.json({ items: [
+      { chat: { id: "chat_known", title: "Old known title", titleVersion: 1 } },
+      { chat: { id: "chat_older", title: "Old older title", titleVersion: 1 } },
+    ] })));
+  const props = { gatewayUrl: "https://example.test/vm/main", scopeKey: "owner/main", onSelectChat: vi.fn() };
+  const view = render(<WebProjectsNav {...props} knownChats={[{ id: "chat_known", title: "Stale navigation title", titleVersion: 0 }]} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Open Writing project" }));
+  expect(await screen.findByRole("button", { name: "Old known title" })).toBeTruthy();
+  view.rerender(<WebProjectsNav {...props} knownChats={[{ id: "chat_known", title: "Renamed known chat", titleVersion: 2 }]} />);
+  expect(screen.getByRole("button", { name: "Renamed known chat" })).toBeTruthy();
+  view.rerender(<WebProjectsNav {...props} knownChats={[]} activeChatId="chat_older" activeChatTitle="Renamed older chat" />);
+  expect(screen.getByRole("button", { name: "Renamed older chat" })).toBeTruthy();
+});

@@ -23,10 +23,19 @@ async function loadProjects(gatewayUrl: string, signal: AbortSignal): Promise<Pr
   return ProjectsResponseSchema.parse(await response.json()).projects;
 }
 const ProjectChatsResponseSchema = z.object({
-  items: z.array(z.object({ chat: z.object({ id: z.string().min(1), title: z.string().min(1) }) })).max(100),
+  items: z.array(z.object({ chat: z.object({ id: z.string().min(1), title: z.string().min(1),
+    titleVersion: z.number().int().nonnegative().optional() }) })).max(100),
   nextCursor: z.string().regex(/^chatcur_[A-Za-z0-9_-]+$/).max(512).optional(),
 });
-type ProjectChat = { id: string; title: string };
+type ProjectChat = { id: string; title: string; titleVersion: number };
+type KnownChatTitle = { id: string; title?: string; titleVersion?: number };
+function indexKnownChatTitles(chats: readonly KnownChatTitle[]): Record<string, { title: string; titleVersion: number }> {
+  const titles: Record<string, { title: string; titleVersion: number }> = {};
+  for (const chat of chats) {
+    if (chat.title) titles[chat.id] = { title: chat.title, titleVersion: chat.titleVersion ?? 0 };
+  }
+  return titles;
+}
 async function loadProjectChats(gatewayUrl: string, projectId: string, cursor: string | null, signal: AbortSignal) {
   const query = new URLSearchParams({ projectId, limit: "100" });
   if (cursor) query.set("cursor", cursor);
@@ -37,8 +46,10 @@ async function loadProjectChats(gatewayUrl: string, projectId: string, cursor: s
   return ProjectChatsResponseSchema.parse(await response.json());
 }
 
-function WebProjectChats({ gatewayUrl, projectId, activeChatId, onSelectChat, mobile }: {
-  gatewayUrl: string; projectId: string; activeChatId?: string; onSelectChat(chatId: string): void; mobile: boolean;
+function WebProjectChats({ gatewayUrl, projectId, activeChatId, activeChatTitle, knownTitles, onSelectChat, mobile }: {
+  gatewayUrl: string; projectId: string; activeChatId?: string; activeChatTitle?: string;
+  knownTitles: Readonly<Record<string, { title: string; titleVersion: number }>>;
+  onSelectChat(chatId: string): void; mobile: boolean;
 }) {
   const [pageCursor, setPageCursor] = useState<string | null>(null);
   const [chats, setChats] = useState<ProjectChat[]>([]);
@@ -54,7 +65,8 @@ function WebProjectChats({ gatewayUrl, projectId, activeChatId, onSelectChat, mo
     const controller = new AbortController();
     void loadProjectChats(gatewayUrl, projectId, pageCursor, controller.signal).then(result => {
       if (controller.signal.aborted) return;
-      const page = result.items.map(item => ({ id: item.chat.id, title: item.chat.title }));
+      const page = result.items.map(item => ({ id: item.chat.id, title: item.chat.title,
+        titleVersion: item.chat.titleVersion ?? 0 }));
       setChats(previous => pageCursor === null ? page : [
         ...previous,
         ...page.filter(item => !previous.some(existing => existing.id === item.id)),
@@ -71,10 +83,15 @@ function WebProjectChats({ gatewayUrl, projectId, activeChatId, onSelectChat, mo
   }, [gatewayUrl, projectId, pageCursor, retry]);
 
   return <div className="ml-4 border-l border-border pl-2">
-    {chats.map(chat => <button key={chat.id} type="button"
-      aria-current={activeChatId === chat.id ? "page" : undefined}
-      className={`w-full truncate rounded px-2 text-left text-xs hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "min-h-11" : "min-h-9"}`}
-      onClick={() => onSelectChat(chat.id)}>{chat.title}</button>)}
+    {chats.map(chat => {
+      const known = knownTitles[chat.id];
+      const title = activeChatId === chat.id && activeChatTitle ? activeChatTitle
+        : known && known.titleVersion > chat.titleVersion ? known.title : chat.title;
+      return <button key={chat.id} type="button"
+        aria-current={activeChatId === chat.id ? "page" : undefined}
+        className={`w-full truncate rounded px-2 text-left text-xs hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "min-h-11" : "min-h-9"}`}
+        onClick={() => onSelectChat(chat.id)}>{title}</button>;
+    })}
     {loading ? <p role="status" className="px-2 py-2 text-xs text-muted-foreground">Loading chats…</p> : null}
     {error ? <div className="px-2 py-2 text-xs text-muted-foreground">
       <p role="alert">Project chats could not be loaded.</p>
@@ -93,10 +110,12 @@ function WebProjectChats({ gatewayUrl, projectId, activeChatId, onSelectChat, mo
   </div>;
 }
 
-export function WebProjectsNav({ gatewayUrl, scopeKey, activeChatId, onSelectChat, mobile = false }: {
+export function WebProjectsNav({ gatewayUrl, scopeKey, knownChats = [], activeChatId, activeChatTitle, onSelectChat, mobile = false }: {
   gatewayUrl: string;
   scopeKey: string;
+  knownChats?: readonly KnownChatTitle[];
   activeChatId?: string;
+  activeChatTitle?: string;
   onSelectChat(chatId: string): void;
   mobile?: boolean;
 }) {
@@ -127,6 +146,7 @@ export function WebProjectsNav({ gatewayUrl, scopeKey, activeChatId, onSelectCha
   const projects = snapshot?.identity === identity && !error ? snapshot.projects : [];
   const loading = snapshot?.identity !== identity && !error;
   const expandedProjectIds = new Set(expandedProjects);
+  const knownTitles = indexKnownChatTitles(knownChats);
   return <nav aria-label="Projects" className="mx-2 space-y-1 text-sm">
     <ChatRailSection label="Projects" count={projects.length} countLabel={`${projects.length} hidden ${projects.length === 1 ? "project" : "projects"}`}
       expanded={groupExpanded} onExpandedChange={setGroupExpanded}>
@@ -152,7 +172,8 @@ export function WebProjectsNav({ gatewayUrl, scopeKey, activeChatId, onSelectCha
             <OverflowingChatTitle title={project.name} />
           </button>
           {expanded ? <WebProjectChats key={`${identity}/${project.id}`} gatewayUrl={gatewayUrl} projectId={project.id}
-            activeChatId={activeChatId} onSelectChat={onSelectChat} mobile={mobile} /> : null}
+            activeChatId={activeChatId} activeChatTitle={activeChatTitle} knownTitles={knownTitles}
+            onSelectChat={onSelectChat} mobile={mobile} /> : null}
         </div>;
       })}
     </ChatRailSection>
