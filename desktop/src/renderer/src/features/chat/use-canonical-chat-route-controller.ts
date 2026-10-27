@@ -18,7 +18,7 @@ import type {
   CanonicalChatInvalidation,
 } from "../../lib/canonical-chat-client";
 import { diagnosticErrorKind } from "../../lib/errors";
-import { createCanonicalChatRefresh, applyCanonicalChatContent } from "@matrix-os/ui";
+import { createCanonicalChatRefresh, applyCanonicalChatContent, useCanonicalChatStopRecovery } from "@matrix-os/ui";
 import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 import { completedResponseAnalytics } from "../../lib/canonical-chat-analytics";
@@ -164,6 +164,9 @@ export function useCanonicalChatRouteController({
       return null;
     }
   }, [client]);
+
+  const reconcileStop = useCanonicalChatStopRecovery(client, active ? activeChatId : null,
+    (chatId) => loadDetail(chatId, { background: true }));
 
   const load = useCallback(async (query = "", options: { background?: boolean } = {}) => {
     const sequence = ++listRequestSequence.current;
@@ -528,19 +531,20 @@ export function useCanonicalChatRouteController({
     const activeRun = detail?.record.activeRun;
     if (!detail || !activeRun) return;
     const routeScope = routeScopeRef.current;
-    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope);
+    const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
+      && activeChatIdRef.current === detail.record.chat.id);
     try {
       await client.cancelRun(detail.record.chat.id, activeRun.runId, {
         clientRequestId: canonicalChatRequestId(),
       });
       if (!isCurrentScope()) return;
-      await loadDetail(detail.record.chat.id);
+      reconcileStop(detail.record.chat.id, activeRun.runId);
     } catch (error: unknown) {
       console.warn("[canonical-chat] cancel failed:", diagnosticErrorKind(error));
       if (!isCurrentScope()) return;
       setError("The active Run could not be stopped. Try again.");
     }
-  }, [client, detail, loadDetail]);
+  }, [client, detail, reconcileStop]);
 
   const steerActiveRun = useCallback(async (parts: CanonicalSteerChatRunRequest["parts"]) => {
     const current = detailRef.current;
@@ -970,9 +974,6 @@ export function useCanonicalChatRouteController({
     submitInput,
     retryTurn,
     deleteChat,
-    startNewChat: () => {
-      submissionRequests.current = createChatMentionRequestTracker();
-      selectChat(null);
-    },
+    startNewChat: () => selectChat(null),
   };
 }

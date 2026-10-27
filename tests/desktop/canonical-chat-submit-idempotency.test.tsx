@@ -55,18 +55,20 @@ describe("Electron admission retry identity", () => {
   it.each([
     { projectId: null, explicitNewChat: false }, { projectId: null, explicitNewChat: true },
     { projectId: "project_retry", explicitNewChat: false }, { projectId: "project_retry", explicitNewChat: true },
-  ])("respects New Chat after a lost first-send acknowledgement (project: $projectId, New Chat: $explicitNewChat)", async ({ projectId, explicitNewChat }) => {
+  ])("respects New Chat after an unknown first send with offline readback (project: $projectId, New Chat: $explicitNewChat)", async ({ projectId, explicitNewChat }) => {
     const { snapshot } = createCanonicalChatFixture("running");
     const created: Array<{ key: string; record: CanonicalChatRecord }> = [];
     const admissions: Array<{ key: string; response: CanonicalChatTurnAdmissionResponse }> = [];
     const createKeys: string[] = [];
     const admissionKeys: string[] = [];
     let loseAcknowledgement = true;
+    let readbackAvailable = false;
     const client = createCanonicalChatClient({
       get: vi.fn(async (path: string) => {
         const url = new URL(path, "https://matrix.test");
         if (url.pathname === "/api/chats") return { items: [] };
         if (url.pathname.includes("/turn-admissions/")) throw new AppError("offline");
+        if (!readbackAvailable) throw new AppError("offline");
         const admitted = admissions.find(row => url.pathname === `/api/chats/${row.response.record.chat.id}`)?.response;
         if (!admitted) throw new AppError("offline");
         return { record: admitted.record, messages: [admitted.message], turns: [admitted.turn], runs: [admitted.run], activities: [] };
@@ -115,11 +117,13 @@ describe("Electron admission retry identity", () => {
       expect(hook.result.current.activeChatId).toBeNull();
       expect(admissions).toHaveLength(1);
       if (explicitNewChat) act(() => hook.result.current.startNewChat());
+      readbackAvailable = true;
       await act(async () => { expect(await hook.result.current.submitTurn(input, "Same draft")).not.toBeNull(); });
       expect(hook.result.current.activeChatId).toBe(explicitNewChat ? "chat_created_2" : "chat_created_1");
       expect(created).toHaveLength(explicitNewChat ? 2 : 1);
       expect(admissions).toHaveLength(explicitNewChat ? 2 : 1);
-      expect(createKeys[1] === createKeys[0]).toBe(!explicitNewChat);
+      expect(createKeys).toHaveLength(explicitNewChat ? 2 : 1);
+      expect(new Set(createKeys).size).toBe(explicitNewChat ? 2 : 1);
       expect(admissionKeys[1] === admissionKeys[0]).toBe(!explicitNewChat);
     } finally { hook.unmount(); }
   });
