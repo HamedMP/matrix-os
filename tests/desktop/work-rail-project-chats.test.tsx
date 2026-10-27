@@ -73,3 +73,25 @@ it("formats compact start labels", () => {
   expect(compactChatStartLabel(new Date(NOW - 2 * 24 * 60 * 60_000).toISOString(), NOW)).toBe("2d");
   expect(compactChatStartLabel("not a date", NOW)).toBe("");
 });
+
+it("hands focused Project rows their original records so row actions keep the Project", async () => {
+  const { FocusedProjectRail } = await import("@desktop/renderer/src/features/work/work-rail/FocusedProjectRail");
+  const records = [chat(1), chat(2)];
+  const renderChat = vi.fn((record: ChatNavigationRecord) => <div key={record.chat.id}>{record.chat.title}</div>);
+  render(<FocusedProjectRail group={{ id: alpha.id, slug: alpha.slug, name: alpha.name, project: alpha, chats: records }} records={records}
+    sections={{ pinned: true, projects: true, needsYou: true, working: true, done: true }} onToggle={vi.fn()}
+    renderChat={renderChat} onBack={vi.fn()} onNewChat={vi.fn()} />);
+  expect(renderChat).toHaveBeenCalledTimes(2);
+  for (const [record] of renderChat.mock.calls) expect(records).toContain(record);
+});
+
+it("refreshes Chat start ages when a long-collapsed Project expands", () => {
+  const group = { id: alpha.id, slug: alpha.slug, name: alpha.name, project: alpha, chats: [chat(1)] };
+  const props = { group, pinning: {}, onToggle: vi.fn(), onNewChat: vi.fn(), onDeleteProject: vi.fn(), onSelectChat: vi.fn(),
+    renamingChatId: null, renamePending: false, onRenameChat: vi.fn(), onRenameCommit: vi.fn(), onRenameCancel: vi.fn(),
+    onPinChat: vi.fn(), onDeleteChat: vi.fn() };
+  const { rerender } = render(<WorkRailProjectGroup {...props} expanded={false} />);
+  vi.setSystemTime(NOW + 3 * 60 * 60 * 1000);
+  rerender(<WorkRailProjectGroup {...props} expanded />);
+  expect(within(screen.getByRole("button", { name: "Chat 1" })).getByText("4h")).toBeTruthy();
+});

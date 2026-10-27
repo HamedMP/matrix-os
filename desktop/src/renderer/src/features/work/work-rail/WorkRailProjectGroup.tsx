@@ -20,6 +20,8 @@ function useMinuteClock(active: boolean) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active) return;
+    // Catch up immediately after a long collapse, then tick each minute.
+    setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, [active]);

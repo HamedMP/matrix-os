@@ -21,8 +21,12 @@ export function FocusedProjectRail({ group, records, sections, onToggle, renderC
   onBack: () => void;
   onNewChat: (project: Project) => void;
 }) {
-  // Without a Project reference the model places each Chat in its lifecycle group.
-  const model = buildWorkRailModel(records.map(({ projectId: _projectId, ...record }) => record), []);
+  // Without a Project reference the model places each Chat in its lifecycle group;
+  // rows still receive the original record so Move, Delete and selection keep the Project.
+  const grouped = buildWorkRailModel(records.map(({ projectId: _projectId, ...record }) => record), []);
+  const originals = new Map(records.map((record) => [record.chat.id, record]));
+  const restore = (list: readonly ChatNavigationRecord[]) => list.flatMap((record) => originals.get(record.chat.id) ?? []);
+  const model = { pinned: restore(grouped.pinned), needsYou: restore(grouped.needsYou), working: restore(grouped.working), doneDisplay: restore(grouped.doneDisplay) };
   const empty = records.length === 0;
   return <>
     <div className="work-rail-project flex min-w-0 items-center gap-1 px-1 pb-1">
