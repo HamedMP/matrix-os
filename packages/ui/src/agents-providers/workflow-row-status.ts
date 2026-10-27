@@ -17,7 +17,8 @@ export function resolvedWorkflowRowStatus(harness: ProviderHarnessInstance, sour
   if (harness.installState === "failed") return "Install failed";
   if (harness.installState === "installing") return "Installing";
   if (override === "Connecting" || harness.authState === "authenticating") return "Connecting";
-  if (hasConfiguredConnection(harness, source)) return "Connected";
-  if (hasStaleHermesConnection(harness, source)) return "Checking connection";
+  const configured = hasConfiguredConnection(harness, source);
+  if (configured && harness.authState === "authenticated") return "Connected";
+  if (configured || hasStaleHermesConnection(harness, source)) return "Configured";
   return override === "Couldn't connect" ? override : "Not connected";
 }

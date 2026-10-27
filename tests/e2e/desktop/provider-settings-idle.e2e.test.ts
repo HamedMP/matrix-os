@@ -97,8 +97,9 @@ suite("Electron Desktop idle provider Settings (synthetic gateway)", () => {
     expect(await refresh().isEnabled()).toBe(true);
     expect(await settings().getAttribute("aria-busy")).not.toBe("true");
     expect(await hermes().getAttribute("aria-expanded")).toBe("true");
-    // Expiry is still truthful and does not remove the saved native connection.
-    expect(await hermes().innerText()).toContain("Checking connection");
+    // Passive expiry does not imply an active connection check. The saved
+    // route remains configured until an explicit refresh obtains new evidence.
+    expect(await hermes().innerText()).toContain("Configured");
     expect(mutations).toBe(0);
   }, 20_000);
 
