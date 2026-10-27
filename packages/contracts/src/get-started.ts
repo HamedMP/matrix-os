@@ -9,8 +9,8 @@ import { GET_STARTED_RECIPE_BOT_IDS, GET_STARTED_RECIPE_BOTS_MAX } from "#get-st
 
 export const GET_STARTED_NAME_MAX_CHARS = 40;
 export const GET_STARTED_DRAFT_MAX_BYTES = 4 * 1024;
-/** Name, goals, tools, the main bot's name and style, App Gallery, bots, and the summary: the last step index is this minus one. */
-export const GET_STARTED_STEP_COUNT = 7;
+/** Name, goals, coding agents, tools, the main bot's name and style, App Gallery, bots, and the summary: the last step index is this minus one. */
+export const GET_STARTED_STEP_COUNT = 8;
 
 export const GET_STARTED_GOALS = [
   { id: "code", label: "Write code with agents" },
@@ -109,47 +109,36 @@ export const GET_STARTED_STARTERS = [
 
 export type GetStartedStarterId = (typeof GET_STARTED_STARTERS)[number]["id"];
 
-export type GetStartedChoiceGroup =
-  | ({ kind: "tools" } & GetStartedToolGroup)
-  | { kind: "starter"; goal: "explore"; title: string; options: typeof GET_STARTED_STARTERS };
+export type GetStartedChoiceGroup = { kind: "starter"; goal: "explore"; title: string; options: typeof GET_STARTED_STARTERS };
 
 const STARTER_GROUP = { kind: "starter", goal: "explore", title: "Sounds fun", options: GET_STARTED_STARTERS } as const;
 
 /**
- * Coding agents are signed into in Settings, not connected as integrations, so step 3 asks for them.
- * OpenCode has no sign-in there yet, so it is not offered (saved answers that include it still load).
- */
-const CODING_AGENT_IDS: ReadonlySet<GetStartedToolId> = new Set(["claude-code", "codex"]);
-const CODING_AGENT_GROUP = {
-  kind: "tools",
-  goal: "code",
-  title: "Your coding agent",
-  tools: GET_STARTED_TOOL_GROUPS.flatMap((group) => group.tools).filter((tool) => CODING_AGENT_IDS.has(tool.id)),
-} as const satisfies GetStartedChoiceGroup;
-
-/**
- * Step 3's choices that are not integrations (those connect through the marketplace on the same
- * step), in the order the owner picked their goals; exploring when nothing was picked. The first
- * app idea is picked on the App Gallery step.
+ * The tools step's choices that are not integrations (those connect through the marketplace on the
+ * same step): the starters when exploring, or when nothing was picked. Coding agents sign in on
+ * their own screen before it (spec 636), and the first app idea is picked on the App Gallery step.
  */
 export function getStartedToolGroupsForGoals(goals: readonly GetStartedGoalId[]): GetStartedChoiceGroup[] {
-  if (goals.length === 0) return [STARTER_GROUP];
-  return goals.flatMap((goal): GetStartedChoiceGroup[] => {
-    if (goal === "explore") return [STARTER_GROUP];
-    return goal === "code" ? [CODING_AGENT_GROUP] : [];
-  });
+  return goals.length === 0 || goals.includes("explore") ? [STARTER_GROUP] : [];
 }
 
-/** The coding agents step 3 signs in through Settings > Agents & providers. */
-export type GetStartedAgentKind = "claude" | "codex";
-const TOOL_AGENTS: Partial<Record<GetStartedToolId, GetStartedAgentKind>> = { "claude-code": "claude", codex: "codex" };
+/**
+ * Spec 636: the coding agents the agents screen signs in through Settings > Agents & providers, in
+ * display order. OpenCode has no sign-in there yet, so it is not offered (saved answers that include
+ * it still load).
+ */
+export const GET_STARTED_AGENTS = ["claude", "codex"] as const;
+export type GetStartedAgentKind = (typeof GET_STARTED_AGENTS)[number];
+const AGENT_TOOLS: Record<GetStartedAgentKind, GetStartedToolId> = { claude: "claude-code", codex: "codex" };
 
-/** The picked coding agents that sign in on step 3, in pick order. */
-export function getStartedAgentsForTools(tools: readonly GetStartedToolId[]): GetStartedAgentKind[] {
-  return tools.flatMap((tool) => {
-    const agent = TOOL_AGENTS[tool];
-    return agent ? [agent] : [];
-  });
+/** The saved tool id for a connected coding agent. */
+export function getStartedToolForAgent(agent: GetStartedAgentKind): GetStartedToolId {
+  return AGENT_TOOLS[agent];
+}
+
+/** The coding agent a saved tool id stands for, or null for any other tool. */
+export function getStartedAgentForTool(tool: GetStartedToolId): GetStartedAgentKind | null {
+  return GET_STARTED_AGENTS.find((agent) => AGENT_TOOLS[agent] === tool) ?? null;
 }
 
 const goalIds = GET_STARTED_GOALS.map((goal) => goal.id) as [GetStartedGoalId, ...GetStartedGoalId[]];

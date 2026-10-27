@@ -23,4 +23,5 @@ export {
   type GetStartedPhase,
   type GetStartedPort,
 } from "./use-get-started.js";
-export { GetStartedAgentLogin, type GetStartedAgentLoginHost, type GetStartedAgentLoginPort } from "./agent-login.js";
+export { type GetStartedAgentLoginHost, type GetStartedAgentLoginPort } from "./agent-login.js";
+export { GetStartedAgentsStep } from "./agents-step.js";

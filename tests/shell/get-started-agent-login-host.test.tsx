@@ -13,7 +13,6 @@ vi.mock("@matrix-os/ui", async (importOriginal) => ({
     controllerOptions.push(options);
     return { snapshot: null, error: null, refresh: vi.fn() };
   },
-  GetStartedAgentLogin: () => null,
 }));
 
 import { ShellGetStartedAgentLogin } from "../../shell/src/components/get-started/ShellGetStartedAgentLogin";
@@ -29,7 +28,7 @@ describe("Web Get started agent sign-in", () => {
     const changed = vi.fn();
     window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, changed);
     try {
-      render(<ShellGetStartedAgentLogin agent="claude" />);
+      render(<ShellGetStartedAgentLogin>{() => null}</ShellGetStartedAgentLogin>);
       const onCatalogChanged = controllerOptions.at(-1)?.onCatalogChanged;
       expect(onCatalogChanged).toBeTypeOf("function");
       onCatalogChanged?.();
@@ -41,5 +40,13 @@ describe("Web Get started agent sign-in", () => {
     } finally {
       window.removeEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, changed);
     }
+  });
+
+  it("builds one port for the whole coding agents screen", () => {
+    controllerOptions.length = 0;
+    const children = vi.fn(() => null);
+    render(<ShellGetStartedAgentLogin>{children}</ShellGetStartedAgentLogin>);
+    expect(controllerOptions).toHaveLength(1);
+    expect(children).toHaveBeenLastCalledWith(expect.objectContaining({ snapshot: null, failed: false }));
   });
 });

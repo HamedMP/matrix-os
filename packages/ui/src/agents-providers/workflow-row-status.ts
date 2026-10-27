@@ -22,3 +22,13 @@ export function resolvedWorkflowRowStatus(harness: ProviderHarnessInstance, sour
   if (configured || hasStaleHermesConnection(harness, source)) return "Configured";
   return override === "Couldn't connect" ? override : "Not connected";
 }
+
+/** An agent detected or offered on this computer that has no harness instance yet. */
+export function capabilityRowStatus(installState: string, override?: string): string {
+  if (override && (installState === "installed" || override === "Installing" || override === "Uninstalling")) return override;
+  if (installState === "missing") return "Not installed";
+  if (installState === "installing") return "Installing";
+  if (installState === "failed") return "Install failed";
+  if (installState === "unknown") return "Checking installation";
+  return "Not connected";
+}

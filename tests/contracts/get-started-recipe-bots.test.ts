@@ -33,7 +33,7 @@ describe("Bots for you", () => {
   });
 
   it("keeps added bots only while they are still suggested for the goals", () => {
-    let state = initialGetStartedWizard({ step: 5, goals: ["business"], tools: [] });
+    let state = initialGetStartedWizard({ step: 6, goals: ["business"], tools: [] });
     state = reduceGetStartedWizard(state, { type: "toggle-bot", id: "jev-inbox-triage" });
     expect(getStartedAnswersFromWizard(state).bots).toEqual(["jev-inbox-triage"]);
     state = reduceGetStartedWizard(state, { type: "toggle-goal", goal: "business" });
