@@ -26,7 +26,7 @@ import type { CodingAgentProviderAdapter } from "./thread-store.js";
 import type { CodexEventBridge } from "./codex-event-bridge.js";
 import type { CodexControlClient } from "./codex-control-client.js";
 import { recoverCodexWorkspace } from "./codex-workspace-recovery.js";
-import { proveCodexResumeStopped } from "./codex-resume-proof.js";
+import { proveCodexResumeStopped } from "./provider-transcript-recovery.js";
 import type { BackgroundAgentRuntime } from "../background-agent-runtime.js";
 
 type WorkspaceRuntime = Pick<WorkspaceSessionOrchestrator, "startSession" | "stopSession"> &

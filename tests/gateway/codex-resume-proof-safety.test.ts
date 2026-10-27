@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentThreadSummarySchema } from "@matrix-os/contracts";
 import { boundedOperation } from "../../packages/gateway/src/bounded-operation.js";
-import { proveCodexResumeStopped } from "../../packages/gateway/src/coding-agents/codex-resume-proof.js";
+import { proveCodexResumeStopped } from "../../packages/gateway/src/coding-agents/provider-transcript-recovery.js";
 import { createSessionStartGuard, SessionStartBusyError } from "../../packages/gateway/src/session-start-guard.js";
 import { createWorkspaceSessionOrchestrator, type WorkspaceSessionOrchestrator } from "../../packages/gateway/src/workspace-session-orchestrator.js";
 import { createWorkspaceEventPublisher } from "../../packages/gateway/src/workspace-event-publisher.js";

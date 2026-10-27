@@ -19,7 +19,7 @@ import { CodexExecutableSchema, codexExecutableFromEnv } from "./codex-executabl
 import type { CodingAgentProviderEventBatch } from "./provider-adapter.js";
 import { runtimeUnavailable, type RuntimeSupervision } from "./codex-runtime-supervision.js";
 import type { ProviderIdleObservation } from "./provider-transcript-recovery.js";
-import type { ProviderObservationResume } from "./provider-observation-generation.js";
+import type { ProviderObservationResume } from "./provider-transcript-recovery.js";
 import { cleanupProviderTranscripts } from "./provider-transcript-retention.js";
 
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);

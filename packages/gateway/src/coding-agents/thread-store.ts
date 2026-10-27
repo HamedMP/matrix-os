@@ -1,6 +1,5 @@
 import { assertCodingAgentProviderEnabled } from "./codex-harness-admission.js";
-import { applyProviderTranscriptRecovery, providerTranscriptUnavailable, type ProviderIdleObservation } from "./provider-transcript-recovery.js";
-import { prepareProviderObservation, retainedProviderSessions, type ProviderObservationResume } from "./provider-observation-generation.js";
+import { applyProviderTranscriptRecovery, providerTranscriptUnavailable, prepareProviderObservation, retainedProviderSessions, type ProviderIdleObservation, type ProviderObservationResume } from "./provider-transcript-recovery.js";
 import { boundedOperation } from "../bounded-operation.js";
 import { deleteProjectThreadState } from "./project-thread-deletion.js";
 import { isFailedCodexBootstrap } from "./codex-failed-bootstrap.js";
