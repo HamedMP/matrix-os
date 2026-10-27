@@ -11,6 +11,7 @@ export function registerSiteRoutes(app: Hono<any>, options: {
     platformSecret: string;
     storage?: CustomerVpsObjectStore;
     edgeSecret?: string;
+    edgePreviousSecret?: string;
     dispatcher?: Agent;
     env?: NodeJS.ProcessEnv;
 }) {

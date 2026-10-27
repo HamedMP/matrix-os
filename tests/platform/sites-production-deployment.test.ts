@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import YAML from 'yaml';
 import { checkPublicSitesEnv } from '../../packages/platform/src/platform-startup-env.js';
 
-type Step = { name?: string; run?: string };
+type Step = { name?: string; run?: string; if?: string };
 const root = process.cwd();
 const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
 const operations = readFileSync(join(root, 'specs/551-public-app-sites/operations.md'), 'utf8');
@@ -35,7 +35,8 @@ function fakeGcloud() {
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 const secret = args[args.indexOf('--secret') + 1];
-if (args.includes('revisions')) process.stdout.write(process.env.MOCK_REVISION || '{}');
+if (args.includes('services')) process.stdout.write(process.env.MOCK_SERVICE || '{}');
+else if (args.includes('revisions')) process.stdout.write(process.env.MOCK_REVISION || '{}');
 else if (args.includes('get-iam-policy')) process.stdout.write('serviceAccount:runtime@example.com\\n');
 else if (args.includes('access')) {
   const values = JSON.parse(process.env.MOCK_VALUES || '{}');
@@ -60,7 +61,7 @@ const goodValues = {
   'r2-bundles-bucket': 'matrixos-bundles',
 };
 
-function run(mode: string, values: Record<string, string> = goodValues, revision: unknown = {}) {
+function run(mode: string, values: Record<string, string> = goodValues, revision: unknown = {}, service: unknown = {}) {
   const bin = fakeGcloud();
   return spawnSync('bash', ['scripts/ci/platform-sites-env.sh', mode, 'reviewed-revision'], {
     cwd: root,
@@ -71,10 +72,14 @@ function run(mode: string, values: Record<string, string> = goodValues, revision
       GCP_PROJECT_ID: 'example',
       GCP_REGION: 'europe-west3',
       CLOUD_RUN_SERVICE_ACCOUNT: 'runtime@example.com',
+      CLOUD_RUN_SERVICE: 'matrix-platform',
       MATRIX_PUBLIC_SITES_ENABLED: 'true',
+      SITES_EDGE_SECRET_VERSION: '2',
+      SITES_EDGE_SECRET_PREVIOUS_VERSION: '1',
       PLATFORM_PUBLIC_URL: 'https://platform.example.com',
       MOCK_VALUES: JSON.stringify(values),
       MOCK_REVISION: JSON.stringify(revision),
+      MOCK_SERVICE: JSON.stringify(service),
     },
   });
 }
@@ -90,6 +95,7 @@ describe('production Matrix.page deployment contract', () => {
     expect(checkPublicSitesEnv({ MATRIX_PUBLIC_SITES_ENABLED: 'false' })).toEqual([]);
     expect(checkPublicSitesEnv({ MATRIX_PUBLIC_SITES_ENABLED: 'true' }, () => {})).toEqual([
       'SITES_EDGE_SECRET',
+      'SITES_EDGE_SECRET_PREVIOUS',
       'R2_SITES_ACCOUNT_ID/R2_SITES_ENDPOINT',
       'R2_SITES_BUCKET',
       'R2_SITES_ACCESS_KEY_ID',
@@ -98,6 +104,7 @@ describe('production Matrix.page deployment contract', () => {
     expect(checkPublicSitesEnv({
       MATRIX_PUBLIC_SITES_ENABLED: 'true',
       SITES_EDGE_SECRET: 's'.repeat(40),
+      SITES_EDGE_SECRET_PREVIOUS: 'p'.repeat(40),
       R2_SITES_ACCOUNT_ID: 'a'.repeat(32),
       R2_SITES_ENDPOINT: `https://${'a'.repeat(32)}.eu.r2.cloudflarestorage.com`,
       R2_SITES_BUCKET: 'matrix-public-sites',
@@ -109,6 +116,7 @@ describe('production Matrix.page deployment contract', () => {
     expect(checkPublicSitesEnv({
       MATRIX_PUBLIC_SITES_ENABLED: 'true',
       SITES_EDGE_SECRET: `${'s'.repeat(40)}\n`,
+      SITES_EDGE_SECRET_PREVIOUS: 'p'.repeat(40),
       R2_SITES_ACCOUNT_ID: 'a'.repeat(32),
       R2_SITES_ENDPOINT: 'https://other.invalid',
       R2_SITES_BUCKET: 'matrixos-sync',
@@ -129,7 +137,10 @@ describe('production Matrix.page deployment contract', () => {
     expect(bindings.status, bindings.stderr).toBe(0);
     for (const name of secretNames) expect(bindings.stdout).toContain(name);
     expect(workflow).toContain('${sites_secret_bindings}');
+    expect(workflow).toContain('SITES_EDGE_SECRET_VERSION');
+    expect(workflow).toContain('SITES_EDGE_SECRET_PREVIOUS_VERSION');
     expect(workflow).toContain('scripts/ci/platform-sites-env.sh preflight-secrets');
+    expect(workflow).toContain('scripts/ci/platform-sites-env.sh verify-transition');
     expect(operations).toContain('sites-edge-secret');
     expect(operations).toContain('r2-sites-bucket');
     expect(operations).toContain('CLOUDFLARE_API_TOKEN');
@@ -140,6 +151,7 @@ describe('production Matrix.page deployment contract', () => {
     expect(run('preflight-secrets').status).toBe(0);
     for (const values of [
       { ...goodValues, 'sites-edge-secret': 'short' },
+      { ...goodValues, 'sites-edge-secret': ` ${'s'.repeat(40)}` },
       { ...goodValues, 'r2-sites-bucket': goodValues['r2-bucket'] },
       { ...goodValues, 'r2-sites-bucket': goodValues['r2-bundles-bucket'] },
       { ...goodValues, 'r2-sites-endpoint': 'http://private.invalid' },
@@ -154,11 +166,16 @@ describe('production Matrix.page deployment contract', () => {
   });
 
   it('rejects a candidate or promoted revision that drops or rewires a Sites binding', () => {
+    const bindings = [
+      { env: 'SITES_EDGE_SECRET', secret: 'sites-edge-secret', version: '2' },
+      { env: 'SITES_EDGE_SECRET_PREVIOUS', secret: 'sites-edge-secret', version: '1' },
+      ...secretNames.slice(1).map((name) => ({ env: name.replaceAll('-', '_').toUpperCase(), secret: name, version: 'latest' })),
+    ];
     const env = [
       { name: 'MATRIX_PUBLIC_SITES_ENABLED', value: 'true' },
-      ...secretNames.map((name) => ({
-        name: name.replaceAll('-', '_').toUpperCase(),
-        valueFrom: { secretKeyRef: { name, key: 'latest' } },
+      ...bindings.map((binding) => ({
+        name: binding.env,
+        valueFrom: { secretKeyRef: { name: binding.secret, key: binding.version } },
       })),
     ];
     const valid = run('verify-revision', goodValues, { spec: { containers: [{ env }] } });
@@ -168,16 +185,45 @@ describe('production Matrix.page deployment contract', () => {
     expect(run('verify-revision', goodValues, { spec: { containers: [{ env: plaintext }] } }).status).not.toBe(0);
   });
 
+  it('allows only a pinned no-op or one-overlap edge-secret transition', () => {
+    const service = { status: { traffic: [{ revisionName: 'live-revision', percent: 100 }] } };
+    const revision = (version: string) => ({ spec: { containers: [{ env: [{ name: 'SITES_EDGE_SECRET',
+      valueFrom: { secretKeyRef: { name: 'sites-edge-secret', key: version } } }] }] } });
+    expect(run('verify-transition', goodValues, revision('1'), service).status).toBe(0);
+    expect(run('verify-transition', goodValues, revision('2'), service).status).toBe(0);
+    expect(run('verify-transition', goodValues, revision('7'), service).status).not.toBe(0);
+  });
+
   it('checks candidate storage, deploys the fixed-domain Worker, and verifies the edge after promotion', () => {
-    expect(step('Smoke candidate revision')).toContain('$CANDIDATE_URL/vps/sites-storage-check');
+    const candidateSmoke = step('Smoke candidate revision');
+    expect(candidateSmoke).toContain('if [ "$MATRIX_PUBLIC_SITES_ENABLED" = "true" ]');
+    expect(candidateSmoke).toContain('$CANDIDATE_URL/vps/sites-storage-check');
+    expect(candidateSmoke).toContain('$CANDIDATE_URL/public/sites/_edge-health');
+    expect(candidateSmoke).toContain('x-matrix-sites-edge');
     const deployWorker = step('Deploy Matrix.page Worker');
     expect(deployWorker).toContain('--config wrangler.sites.toml');
     expect(deployWorker).not.toContain('--config packages/edge-router/wrangler.sites.toml');
     expect(deployWorker).toContain('SITES_PLATFORM_ORIGIN:${PLATFORM_PUBLIC_URL}');
     expect(deployWorker).toContain('--secrets-file');
     expect(deployWorker).not.toContain('echo "$sites_edge_secret"');
+    expect(deployWorker).toContain('wrangler deployments status');
+    expect(deployWorker).toContain('wrangler rollback');
+    const deployIndex = deployment.steps.findIndex((entry: Step) => entry.name === 'Deploy Matrix.page Worker');
+    const promotionIndex = deployment.steps.findIndex((entry: Step) => entry.name === 'Verify promoted revision traffic');
+    expect(deployIndex).toBeGreaterThan(promotionIndex);
     const verify = step('Verify Matrix.page routing');
+    expect(verify).toContain('https://matrix.page/_edge-health');
+    expect(verify).toContain('.status == "ok"');
     expect(verify).toContain('https://matrix.page/sites-deployment-smoke');
     expect(verify).toContain('expected a 404');
+    for (const name of [
+      'Set up pnpm for Matrix.page Worker',
+      'Set up Node for Matrix.page Worker',
+      'Install locked Matrix.page Worker dependencies',
+      'Deploy Matrix.page Worker',
+      'Verify Matrix.page routing',
+    ]) {
+      expect(deployment.steps.find((entry: Step) => entry.name === name)?.if).toContain("env.MATRIX_PUBLIC_SITES_ENABLED == 'true'");
+    }
   });
 });

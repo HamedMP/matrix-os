@@ -10,7 +10,8 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
         const url = new URL(request.url);
         if (url.pathname === '/' && (request.method === 'GET' || request.method === 'HEAD'))
             return new Response(null, { status: 302, headers: { Location: 'https://matrix-os.com', 'Cache-Control': 'no-store' } });
-        const valid = request.method === 'GET' ? read.test(url.pathname) : request.method === 'POST' && write.test(url.pathname);
+        const edgeHealth = request.method === 'GET' && url.pathname === '/_edge-health';
+        const valid = edgeHealth || (request.method === 'GET' ? read.test(url.pathname) : request.method === 'POST' && write.test(url.pathname));
         if (!valid || blocked.has(url.pathname.split('/')[1]!))
             return new Response('Site unavailable', { status: 404 });
         let origin: URL;

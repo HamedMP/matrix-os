@@ -9,9 +9,11 @@ export function checkPublicSitesEnv(
   if (env.MATRIX_PUBLIC_SITES_ENABLED !== 'true') return [];
   const problems: string[] = [];
   const add = (name: string) => { if (!problems.includes(name)) problems.push(name); };
-  if (!env.SITES_EDGE_SECRET || env.SITES_EDGE_SECRET.trim().length < 32
-    || /[\r\n]/.test(env.SITES_EDGE_SECRET)) {
-    problems.push('SITES_EDGE_SECRET');
+  for (const name of ['SITES_EDGE_SECRET', 'SITES_EDGE_SECRET_PREVIOUS'] as const) {
+    const value = env[name];
+    if (!value || value.length < 32 || value !== value.trim() || /[\r\n]/.test(value)) {
+      problems.push(name);
+    }
   }
   const accountId = env.R2_SITES_ACCOUNT_ID?.trim();
   const endpoint = env.R2_SITES_ENDPOINT?.trim();

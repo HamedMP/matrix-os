@@ -73,6 +73,8 @@ jobs:
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_SERVICE_ACCOUNT }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL }}
       MATRIX_PUBLIC_SITES_ENABLED: ${{ vars.MATRIX_PUBLIC_SITES_ENABLED || 'true' }}
+      SITES_EDGE_SECRET_VERSION: ${{ vars.SITES_EDGE_SECRET_VERSION }}
+      SITES_EDGE_SECRET_PREVIOUS_VERSION: ${{ vars.SITES_EDGE_SECRET_PREVIOUS_VERSION }}
       WHATSAPP_ENABLED: ${{ vars.WHATSAPP_ENABLED || 'false' }}
       SLACK_ENABLED: ${{ vars.SLACK_ENABLED || 'false' }}
       SLACK_TOKEN_ENCRYPTION_KEY_VERSION: ${{ vars.SLACK_TOKEN_ENCRYPTION_KEY_VERSION || '1' }}
@@ -872,6 +874,9 @@ jobs:
       - name: Verify public Sites secrets
         run: scripts/ci/platform-sites-env.sh preflight-secrets
 
+      - name: Verify public Sites secret transition
+        run: scripts/ci/platform-sites-env.sh verify-transition
+
       - name: Build platform image
         run: |
           set -euo pipefail
@@ -1272,10 +1277,23 @@ jobs:
             --request POST \
             --header "Authorization: Bearer ${platform_secret}" \
             "$CANDIDATE_URL/vps/storage-check" >/dev/null
-          curl --fail --silent --show-error --max-time 45 \
-            --request POST \
-            --header "Authorization: Bearer ${platform_secret}" \
-            "$CANDIDATE_URL/vps/sites-storage-check" >/dev/null
+          if [ "$MATRIX_PUBLIC_SITES_ENABLED" = "true" ]; then
+            curl --fail --silent --show-error --max-time 45 \
+              --request POST \
+              --header "Authorization: Bearer ${platform_secret}" \
+              "$CANDIDATE_URL/vps/sites-storage-check" >/dev/null
+            sites_edge_secret="$(gcloud secrets versions access "$SITES_EDGE_SECRET_VERSION" \
+              --secret sites-edge-secret --project "$GCP_PROJECT_ID")"
+            echo "::add-mask::$sites_edge_secret"
+            sites_health_body="$(curl --fail --silent --show-error --max-time 15 \
+              --header "x-matrix-sites-edge: ${sites_edge_secret}" \
+              "$CANDIDATE_URL/public/sites/_edge-health")"
+            if ! printf '%s\n' "$sites_health_body" | \
+               jq -e '.status == "ok" and keys == ["status"]' >/dev/null; then
+              echo "Candidate Sites edge proof was not accepted." >&2
+              exit 1
+            fi
+          fi
 
       - name: Deploy production-role revision
         if: ${{ github.event_name == 'push' || inputs.promote }}
@@ -1444,51 +1462,19 @@ jobs:
           scripts/ci/platform-sites-env.sh verify-revision "$worker_revision"
 
       - name: Set up pnpm for Matrix.page Worker
-        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' }}
+        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
         uses: pnpm/action-setup@v6
 
       - name: Set up Node for Matrix.page Worker
-        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' }}
+        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
         uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
 
       - name: Install locked Matrix.page Worker dependencies
-        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' }}
+        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
         run: pnpm install --frozen-lockfile --filter @matrix-os/edge-router...
-
-      - name: Deploy Matrix.page Worker
-        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' }}
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "Matrix.page Worker deployment credentials are unavailable." >&2
-            exit 1
-          fi
-          sites_edge_secret_file="$(mktemp)"
-          wrangler_secrets="$(mktemp)"
-          cleanup() { rm -f "$sites_edge_secret_file" "$wrangler_secrets"; }
-          trap cleanup EXIT
-          chmod 600 "$sites_edge_secret_file" "$wrangler_secrets"
-          gcloud secrets versions access latest \
-            --secret sites-edge-secret \
-            --project "$GCP_PROJECT_ID" \
-            --out-file="$sites_edge_secret_file" \
-            --quiet
-          node - "$sites_edge_secret_file" "$wrangler_secrets" <<'NODE'
-          const { readFileSync, writeFileSync } = require('node:fs');
-          const edgeSecret = readFileSync(process.argv[2], 'utf8').trim();
-          if (edgeSecret.length < 32 || /[\r\n]/.test(edgeSecret)) process.exit(1);
-          writeFileSync(process.argv[3], JSON.stringify({ SITES_EDGE_SECRET: edgeSecret }));
-          NODE
-          pnpm --filter @matrix-os/edge-router exec wrangler deploy \
-            --config wrangler.sites.toml \
-            --var "SITES_PLATFORM_ORIGIN:${PLATFORM_PUBLIC_URL}" \
-            --secrets-file "$wrangler_secrets"
 
       - name: Promote revision
         if: ${{ github.event_name == 'push' || inputs.promote }}
@@ -1535,8 +1521,74 @@ jobs:
             exit 1
           fi
 
+      - name: Deploy Matrix.page Worker
+        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Matrix.page Worker deployment credentials are unavailable." >&2
+            exit 1
+          fi
+          sites_edge_secret_file="$(mktemp)"
+          wrangler_secrets="$(mktemp)"
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          worker_switched=false
+          previous_worker_version=""
+          cleanup() { rm -f "$sites_edge_secret_file" "$wrangler_secrets" "$headers" "$body"; }
+          rollback_worker() {
+            trap - ERR
+            if [ "$worker_switched" = "true" ] && [ -n "$previous_worker_version" ]; then
+              pnpm --filter @matrix-os/edge-router exec wrangler rollback "$previous_worker_version" \
+                --config wrangler.sites.toml --message "Rollback failed Matrix.page deployment ${GITHUB_SHA}" || \
+                echo "Automatic Matrix.page Worker rollback failed; operator action is required." >&2
+            fi
+          }
+          trap cleanup EXIT
+          trap rollback_worker ERR
+          chmod 600 "$sites_edge_secret_file" "$wrangler_secrets" "$headers" "$body"
+          if deployment_json="$(pnpm --filter @matrix-os/edge-router exec wrangler deployments status \
+            --config wrangler.sites.toml --json 2>/dev/null)"; then
+            previous_worker_version="$(printf '%s\n' "$deployment_json" | jq -r \
+              '.versions[]? | select((.percentage | tonumber) == 100) | .version_id' | head -1)"
+          fi
+          gcloud secrets versions access "$SITES_EDGE_SECRET_VERSION" \
+            --secret sites-edge-secret \
+            --project "$GCP_PROJECT_ID" \
+            --out-file="$sites_edge_secret_file" \
+            --quiet
+          node - "$sites_edge_secret_file" "$wrangler_secrets" <<'NODE'
+          const { readFileSync, writeFileSync } = require('node:fs');
+          const edgeSecret = readFileSync(process.argv[2], 'utf8');
+          if (edgeSecret.length < 32 || edgeSecret !== edgeSecret.trim() || /[\r\n]/.test(edgeSecret)) process.exit(1);
+          writeFileSync(process.argv[3], JSON.stringify({ SITES_EDGE_SECRET: edgeSecret }));
+          NODE
+          pnpm --filter @matrix-os/edge-router exec wrangler deploy \
+            --config wrangler.sites.toml \
+            --var "SITES_PLATFORM_ORIGIN:${PLATFORM_PUBLIC_URL}" \
+            --secrets-file "$wrangler_secrets"
+          worker_switched=true
+          root_status="$(curl --silent --show-error --max-time 15 \
+            --dump-header "$headers" --output "$body" --write-out '%{http_code}' \
+            'https://matrix.page/?discard=private')"
+          if [ "$root_status" != "302" ] || ! grep -Eqi '^location: https://matrix-os\.com/?[[:space:]]*$' "$headers"; then
+            echo "Matrix.page root did not return the reviewed query-dropping redirect." >&2
+            false
+          fi
+          health_status="$(curl --silent --show-error --max-time 30 \
+            --output "$body" --write-out '%{http_code}' 'https://matrix.page/_edge-health')"
+          if [ "$health_status" != "200" ] || ! jq -e '.status == "ok" and keys == ["status"]' "$body" >/dev/null; then
+            echo "Matrix.page did not accept the deployed edge proof." >&2
+            false
+          fi
+          worker_switched=false
+          trap - ERR
+
       - name: Verify Matrix.page routing
-        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' }}
+        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
         run: |
           set -euo pipefail
           headers="$(mktemp)"
@@ -1548,6 +1600,14 @@ jobs:
             'https://matrix.page/?discard=private')"
           if [ "$root_status" != "302" ] || ! grep -Eqi '^location: https://matrix-os\.com/?[[:space:]]*$' "$headers"; then
             echo "Matrix.page root did not return the reviewed query-dropping redirect." >&2
+            exit 1
+          fi
+          health_status="$(curl --silent --show-error --max-time 30 \
+            --output "$body" --write-out '%{http_code}' \
+            'https://matrix.page/_edge-health')"
+          if [ "$health_status" != "200" ] || \
+             ! jq -e '.status == "ok" and keys == ["status"]' "$body" >/dev/null; then
+            echo "Matrix.page edge proof was not accepted by the promoted platform." >&2
             exit 1
           fi
           public_status="$(curl --silent --show-error --max-time 30 \

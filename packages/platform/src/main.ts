@@ -696,7 +696,8 @@ export function createApp(deps: {
   }
 
   registerSiteRoutes(app, { db, platformSecret, storage: deps.sitesObjectStore,
-    edgeSecret: appEnv.SITES_EDGE_SECRET, dispatcher: customerVpsProxyDispatcher, env: appEnv });
+    edgeSecret: appEnv.SITES_EDGE_SECRET, edgePreviousSecret: appEnv.SITES_EDGE_SECRET_PREVIOUS,
+    dispatcher: customerVpsProxyDispatcher, env: appEnv });
 
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
