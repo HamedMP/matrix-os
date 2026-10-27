@@ -1391,7 +1391,7 @@ describe("canonical Chat route controller", () => {
     });
 
     expect(result.current.error).toBe(
-      "The message could not be sent. Reason: Can't reach Matrix OS. Check your connection.",
+      "Message status is unconfirmed. You can retry safely.",
     );
     expect(warn).toHaveBeenCalledWith("[canonical-chat] submit failed:", "offline");
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("provider secret detail"));

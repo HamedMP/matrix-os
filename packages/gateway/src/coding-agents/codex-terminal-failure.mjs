@@ -8,7 +8,7 @@ export const CODEX_FAILURE_REASONS = [
   "authentication_required", "usage_limit", "credit_required", "billing_required",
   "rate_limited", "execution_timeout", "request_timeout", "connection_failed", "service_busy", "service_failed",
   "context_limit", "session_budget", "permission_denied", "policy_blocked", "invalid_request",
-  "environment_failed", "history_unavailable",
+  "environment_failed", "history_unavailable", "transcript_interrupted",
 ];
 export class CodexExecutionTimeout extends Error {
   constructor() { super("Coding execution deadline exceeded"); this.name = "CodexExecutionTimeout"; }

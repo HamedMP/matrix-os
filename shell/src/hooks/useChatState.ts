@@ -86,6 +86,7 @@ export interface ChatState {
 }
 
 export interface ChatSubmitOptions {
+  onAccepted?: () => void;
   resources?: CanonicalChatResourceReference[];
   clientRequestId?: string;
   displayText?: string;

@@ -27,6 +27,8 @@ import type { CodexEventBridge } from "./codex-event-bridge.js";
 import type { CodexControlClient } from "./codex-control-client.js";
 import { recoverCodexWorkspace } from "./codex-workspace-recovery.js";
 import { recoverLegacyCodexContinuation } from "./codex-legacy-continuation.js";
+import { proveCodexResumeStopped } from "./provider-transcript-recovery.js";
+import type { BackgroundAgentRuntime } from "../background-agent-runtime.js";
 
 type WorkspaceRuntime = Pick<WorkspaceSessionOrchestrator, "startSession" | "stopSession"> &
   Partial<Pick<WorkspaceSessionOrchestrator, "sendInput" | "getSession" | "withSessionStart" | "confirmStoppedSession">>;
@@ -48,19 +50,21 @@ export interface WorkspaceCodingAgentProviderOptions {
   agent: SupportedAgent;
   runtime: WorkspaceRuntime;
   runnable?: boolean;
-  codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped">;
+  codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped"> & Partial<Pick<CodexEventBridge, "isRuntimeAlive">>;
   codexControl?: CodexControlClient;
   sharedBrowserEnabled?: boolean;
   codexAdmission?: CodexExecutionAdmission;
+  backgroundRuntime?: Pick<BackgroundAgentRuntime, "isRunning" | "stop">;
 }
 
 export interface WorkspaceCodingAgentProviderSetOptions {
   agents: readonly SupportedAgent[];
   runtime: WorkspaceRuntime;
-  codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped">;
+  codexEvents?: Pick<CodexEventBridge, "healthCheck" | "watch" | "unwatch" | "markStopped"> & Partial<Pick<CodexEventBridge, "isRuntimeAlive">>;
   codexControl?: CodexControlClient;
   sharedBrowserEnabled?: boolean;
   codexAdmission?: CodexExecutionAdmission;
+  backgroundRuntime?: Pick<BackgroundAgentRuntime, "isRunning" | "stop">;
   homePath?: string;
   pi?: Omit<PiCodingAgentProviderOptions, "homePath">;
   opencode?: Omit<OpenCodeCodingAgentProviderOptions, "homePath">;
@@ -226,6 +230,12 @@ export function createWorkspaceCodingAgentProvider(
 
   return {
     providerId,
+    ...(agent === "codex" && options.codexControl && options.codexEvents ? {
+      async prepareHistoryResume(input: Parameters<typeof proveCodexResumeStopped>[0]) {
+        if (!await proveCodexResumeStopped(input, { runtime: options.runtime, control: options.codexControl,
+          admission: options.codexAdmission, backgroundRuntime: options.backgroundRuntime })) throw new Error("Native resume stop unconfirmed");
+      },
+    } : {}),
     backgroundExecution: agent === "codex" && !!options.codexEvents && !!options.codexControl,
     async getSummary({ now, signal }) {
       const executable = runnable && (
@@ -371,6 +381,11 @@ export function createWorkspaceCodingAgentProvider(
           sessionId,
           startAtEnd: true,
           checkpoint: true,
+          ...(resumeState.eventGeneration ? { generation: resumeState.eventGeneration } : {}),
+          resume: { turnId: turn.turnId, resumeState, proveStopped: proofSignal => proveCodexResumeStopped({ principal, thread, resumeState, signal: AbortSignal.any([signal, proofSignal]) }, {
+            runtime: options.runtime, control: options.codexControl, admission: options.codexAdmission,
+            backgroundRuntime: options.backgroundRuntime,
+          }) },
         });
         const prompt = workspaceTurnPrompt(turn.message, turn.attachments);
         const browser = nativeBrowserExecution(principal.userId);
@@ -388,7 +403,7 @@ export function createWorkspaceCodingAgentProvider(
           signal.throwIfAborted();
           if (!(error instanceof Error) || error.name !== "CodexControlUnavailableError") {
             // An accepted frame with a lost acknowledgement must not be replayed into a new process.
-            options.codexEvents.unwatch(sessionId);
+            options.codexEvents.unwatch(sessionId, observation.watchId);
             throw error;
           }
           console.warn(
@@ -411,13 +426,16 @@ export function createWorkspaceCodingAgentProvider(
               occurredAt: now().toISOString(), terminalRef,
               terminalSessionId: `${terminalRef.workspaceId}:${terminalRef.tabId}`,
               terminalSessionCreatedAt: session.runtime.createdAt,
-            })] : [], outcome: "delivered", resumeState: { ...resumeState, ...(session.backgroundRef ? { backgroundRef: session.backgroundRef } : {}), ...(observation.offset !== undefined ? { eventOffset: observation.offset } : {}) } };
+            })] : [], outcome: "delivered", resumeState: { ...resumeState, ...(session.backgroundRef ? { backgroundRef: session.backgroundRef } : {}),
+              ...(observation.generation ? { eventGeneration: observation.generation, eventStreamInterrupted: false } : {}),
+              ...(observation.offset !== undefined ? { eventOffset: observation.offset } : {}) } };
           } catch (recoveryError: unknown) {
-            options.codexEvents.unwatch(sessionId);
+            options.codexEvents.unwatch(sessionId, observation.watchId);
             throw recoveryError;
           } finally { recovery?.finish(); }
         }
-        return { events: [], outcome: "delivered", resumeState };
+        return { events: [], outcome: "delivered", resumeState: { ...resumeState,
+          ...(observation.generation ? { eventGeneration: observation.generation, eventStreamInterrupted: false, eventOffset: observation.offset } : {}) } };
       }
       if (!options.runtime.sendInput) {
         throw new Error("Workspace provider turn resume unavailable");
@@ -535,6 +553,7 @@ export function createWorkspaceCodingAgentProviderSet(
     codexControl: agent === "codex" ? options.codexControl : undefined,
     sharedBrowserEnabled: agent === "codex" && options.sharedBrowserEnabled,
     codexAdmission: agent === "codex" ? options.codexAdmission : undefined,
+    backgroundRuntime: agent === "codex" ? options.backgroundRuntime : undefined,
     });
   });
   return {

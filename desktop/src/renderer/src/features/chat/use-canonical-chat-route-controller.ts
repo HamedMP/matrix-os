@@ -22,6 +22,8 @@ import { createCanonicalChatRefresh, applyCanonicalChatContent } from "@matrix-o
 import { canonicalChatSubmitFailureMessage } from "./canonical-chat-submit-error";
 import { canonicalChatRequestId } from "./canonical-chat-submission";
 import { completedResponseAnalytics } from "../../lib/canonical-chat-analytics";
+import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "@matrix-os/ui";
+import { admitDesktopChatTurn } from "./canonical-chat-turn-admission";
 
 export type CanonicalChatRouteStatus = "idle" | "loading" | "ready" | "error";
 const INITIAL_DETAIL_RETRY_MS = 200;
@@ -67,6 +69,7 @@ export function useCanonicalChatRouteController({
   externalNavigation = false,
   eventSource,
   onInvalidation,
+  admissionIdentity = client,
 }: {
   client: CanonicalChatClient;
   projectId: string | null;
@@ -76,7 +79,18 @@ export function useCanonicalChatRouteController({
   externalNavigation?: boolean;
   eventSource?: CanonicalChatEventConsumer;
   onInvalidation?: (event: CanonicalChatInvalidation) => void;
+  admissionIdentity?: unknown;
 }) {
+  const [admissions] = useState(createCanonicalChatAdmissionTracker);
+  const admissionSequence = useRef(0);
+  const latestAdmissionId = useRef<string | undefined>(undefined);
+  const selectionEpoch = useRef(0);
+  const admissionAuthority = useRef({ client, identity: admissionIdentity, valid: active, mounted: true });
+  useLayoutEffect(() => {
+    const value = { client, identity: admissionIdentity, valid: active, mounted: true };
+    admissionAuthority.current = value;
+    return () => { value.valid = false; value.mounted = false; };
+  }, [client, admissionIdentity, active]);
   const [items, setItems] = useState<CanonicalChatRecord[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(initialChatId);
   const [detail, setDetail] = useState<CanonicalChatDetailResponse | null>(null);
@@ -84,13 +98,15 @@ export function useCanonicalChatRouteController({
   const [error, setError] = useState<string | null>(null);
   const activeChatIdRef = useRef<string | null>(initialChatId);
   const detailRef = useRef<CanonicalChatDetailResponse | null>(null);
+  useEffect(() => { if (active) admissions.observe(admissionIdentity, detail); }, [admissions, admissionIdentity, detail, active]);
+  useEffect(() => { if (active) admissions.invalidate(admissionIdentity); }, [admissions, admissionIdentity, active]);
   const onInvalidationRef = useRef(onInvalidation);
   onInvalidationRef.current = onInvalidation;
   const streamedMessagesRef = useRef<{ chatId: string | null; ids: string[] }>({
     chatId: initialChatId,
     ids: [],
   });
-  const routeScopeRef = useRef<{ active: boolean; client: CanonicalChatClient; projectId: string | null } | null>(null);
+  const routeScopeRef = useRef<{ active: boolean; client: CanonicalChatClient; projectId: string | null; identity: unknown } | null>(null);
   const listRequestSequence = useRef(0);
   const detailRequestSequence = useRef(0);
   // Keep the stream checkpoint synchronous. React may defer/replay a state
@@ -190,14 +206,24 @@ export function useCanonicalChatRouteController({
 
   useLayoutEffect(() => {
     const previousScope = routeScopeRef.current;
+    const visibilityOnly = previousScope?.active !== active && previousScope?.client === client
+      && previousScope.projectId === projectId && previousScope.identity === admissionIdentity && initialChatId === activeChatIdRef.current;
     const scopeChanged = previousScope?.active !== active
       || previousScope.client !== client
+      || previousScope.identity !== admissionIdentity
       || previousScope.projectId !== projectId;
-    routeScopeRef.current = { active, client, projectId };
+    routeScopeRef.current = { active, client, projectId, identity: admissionIdentity };
     if (!scopeChanged && initialChatId === activeChatIdRef.current) return;
     listRequestSequence.current += 1;
     detailRequestSequence.current += 1;
     acknowledgementAttemptRef.current = null;
+    if (visibilityOnly) {
+      if (active) {
+        void load("", { background: true });
+        if (initialChatId) void loadDetail(initialChatId, { background: true });
+      }
+      return;
+    }
     setItems([]);
     detailRef.current = null;
     setDetail(null);
@@ -206,7 +232,7 @@ export function useCanonicalChatRouteController({
     setStatus("idle");
     setError(null);
     if (active) void load();
-  }, [active, initialChatId, load, projectId]);
+  }, [active, initialChatId, load, loadDetail, projectId, admissionIdentity]);
 
   useEffect(() => {
     if (!active || !eventSource) return;
@@ -229,6 +255,7 @@ export function useCanonicalChatRouteController({
       listRefreshInFlight = false;
     };
     const subscription = eventSource.subscribe((event) => {
+      admissions.invalidate(admissionIdentity, event.type === "chat.changed" ? event.chatId : undefined);
       if (event.type === "chat.changed" && event.chatId === activeChatIdRef.current) {
         onInvalidationRef.current?.(event);
       }
@@ -274,7 +301,7 @@ export function useCanonicalChatRouteController({
       detailRefresh.dispose();
       subscription.dispose();
     };
-  }, [active, activeChatId, eventSource, load, loadDetail]);
+  }, [active, activeChatId, eventSource, load, loadDetail, admissions, admissionIdentity]);
 
   useEffect(() => {
     if (!active || !activeChatId || detail?.record.chat.id === activeChatId) return;
@@ -383,6 +410,8 @@ export function useCanonicalChatRouteController({
   }, [active, activeChatId, Boolean(detail?.record.activeRun), eventStreamState, loadDetail]);
 
   const selectChat = useCallback((chatId: string | null) => {
+    admissionSequence.current += 1;
+    selectionEpoch.current += 1;
     detailRequestSequence.current += 1;
     setActiveChatId(chatId);
     activeChatIdRef.current = chatId;
@@ -430,47 +459,50 @@ export function useCanonicalChatRouteController({
     title: string,
     initialProjectId: string | null = projectId,
     onAccepted?: () => void,
+    onRejected?: () => void,
   ) => {
     const routeScope = routeScopeRef.current;
     const selectedChatId = activeChatIdRef.current;
+    const authority = admissionAuthority.current;
+    const sequence = ++admissionSequence.current;
+    latestAdmissionId.current = undefined;
     const isCurrentScope = () => Boolean(routeScope?.active && routeScopeRef.current === routeScope
-      && activeChatIdRef.current === selectedChatId);
+      && activeChatIdRef.current === selectedChatId && authority.valid && admissionAuthority.current === authority);
     if (!isCurrentScope()) return null;
     try {
-      let current = detail;
-      if (!current) {
-        const record = await client.create({
-          clientRequestId: input.clientRequestId ? `${input.clientRequestId}_chat` : canonicalChatRequestId(),
-          title,
-          ...(initialProjectId === null ? {} : { projectId: initialProjectId }),
-          currentSelection: input.selection,
-        });
-        if (!isCurrentScope()) return null;
-        current = {
-          record,
-          messages: [],
-          turns: [],
-          runs: [],
-          activities: [],
-        };
-      }
-      const admitted = await client.admitTurn(current.record.chat.id, {
-        ...input,
-        clientRequestId: input.clientRequestId ?? canonicalChatRequestId(),
-        baseRevision: current.record.chat.revision,
-      }, {
-        chatScope: current.record.projectId ? "project" : "global",
+      const current = detail;
+      const admitted = await admitDesktopChatTurn({ client, tracker: admissions, identity: admissionIdentity,
+        scope: selectedChatId ?? `new:${initialProjectId ?? "global"}:${selectionEpoch.current}`, input, title, projectId: initialProjectId, detail,
+        current: () => detailRef.current,
+        isCurrent: () => admissionAuthority.current.valid && admissionAuthority.current.mounted
+          && admissionAuthority.current.client === client && admissionAuthority.current.identity === admissionIdentity,
+        canAcknowledge: () => admissionAuthority.current.mounted && admissionAuthority.current.client === client
+          && admissionAuthority.current.identity === admissionIdentity,
+        mayDispatch: isCurrentScope,
+        onPrepared: id => { latestAdmissionId.current = id; },
+        onAccepted: () => onAccepted?.(), onRejected,
+        onConfirmed: id => {
+          const current = admissionAuthority.current;
+          if (!current.valid || !current.mounted || current.client !== client || current.identity !== admissionIdentity
+            || activeChatIdRef.current !== selectedChatId) return;
+          if (latestAdmissionId.current === id) setError(current => current === CHAT_ADMISSION_UNCONFIRMED ? null : current);
+        },
+        onSnapshot: fresh => {
+          if (!isCurrentScope() || admissionSequence.current !== sequence) return;
+          const previous = detailRef.current;
+          if (previous && previous.record.chat.revision > fresh.record.chat.revision) return;
+          detailRef.current = fresh; setDetail(fresh);
+        },
       });
-      // Actual admission settles the original draft even when current-view publication is stale.
-      onAccepted?.();
-      if (!isCurrentScope()) return null;
+      if (!admitted) return null;
+      if (!isCurrentScope() || admissionSequence.current !== sequence) return null;
       const streamed = detailRef.current;
       const next: CanonicalChatDetailResponse = {
-        ...current,
+        ...(current ?? { activities: [] }),
         record: admitted.record,
-        messages: [...current.messages, admitted.message],
-        turns: [...current.turns, admitted.turn],
-        runs: [...current.runs, admitted.run],
+        messages: [...(current?.messages ?? []), admitted.message],
+        turns: [...(current?.turns ?? []), admitted.turn],
+        runs: [...(current?.runs ?? []), admitted.run],
       };
       const resolved = streamed?.record.chat.id === next.record.chat.id
         && streamed.record.chat.revision >= next.record.chat.revision ? streamed : next;
@@ -485,12 +517,12 @@ export function useCanonicalChatRouteController({
       setError(null);
       return admitted;
     } catch (error: unknown) {
-      console.warn("[canonical-chat] submit failed:", diagnosticErrorKind(error));
-      if (!isCurrentScope()) return null;
-      setError(canonicalChatSubmitFailureMessage(error));
+      console.warn("[canonical-chat] submit failed:", diagnosticErrorKind(error instanceof ChatAdmissionUnconfirmed ? error.cause : error));
+      if (!isCurrentScope() || admissionSequence.current !== sequence) return null;
+      setError(error instanceof ChatAdmissionUnconfirmed ? CHAT_ADMISSION_UNCONFIRMED : canonicalChatSubmitFailureMessage(error));
       return null;
     }
-  }, [client, detail, projectId]);
+  }, [client, detail, projectId, admissions, admissionIdentity]);
 
   const cancelActiveRun = useCallback(async () => {
     const activeRun = detail?.record.activeRun;

@@ -292,6 +292,7 @@ describe("Codex structured event runtime", () => {
         sessionId: "sess_version_retry_1",
       })).resolves.toEqual({
         path: codexProviderEventPath(homePath, "sess_version_retry_1"),
+        watchId: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
       });
       expect(runVersionCommand).toHaveBeenCalledTimes(2);
       expect(runVersionCommand).toHaveBeenLastCalledWith(

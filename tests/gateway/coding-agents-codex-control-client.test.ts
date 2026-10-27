@@ -48,6 +48,12 @@ async function listen(homePath: string, sessionId: string, reply?: string, reply
 }
 
 describe("Codex control client", () => {
+  it("treats an unsupported legacy idle observation as unconfirmed rather than stopping its runtime", async () => {
+    const homePath = await mkdtemp(join(socketTempRoot, "mx-observe-legacy-"));
+    const frames = await listen(homePath, "sess_legacy", '{"ok":false}\n');
+    await expect(createCodexControlClient({ homePath }).isExecutionIdle({ sessionId: "sess_legacy", providerThreadId: "native_legacy" })).resolves.toBe(false);
+    expect(frames).toEqual([expect.objectContaining({ type: "execution_idle", providerThreadId: "native_legacy" })]);
+  });
   it("distinguishes a request that was never sent from an ambiguous lost acknowledgement", async () => {
     const absentHome = await mkdtemp(join(socketTempRoot, "mx-unsent-"));
     cleanup.push(() => rm(absentHome, { recursive: true, force: true }));
