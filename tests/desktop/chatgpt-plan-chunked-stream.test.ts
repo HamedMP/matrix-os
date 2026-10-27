@@ -2,7 +2,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { requestPlanResponse, requestPlanResponseStream } from '../../desktop/src/main/chatgpt-plan/responses';
 import { createPlanNativePeer } from '../../desktop/src/main/chatgpt-plan/peer';
-import { INFERENCE_RESPONSE_BUFFER_MAX_BYTES } from '@matrix-os/contracts';
+import { INFERENCE_RESPONSE_BUFFER_MAX_BYTES, INFERENCE_RESPONSE_CHUNK_MAX_BYTES } from '@matrix-os/contracts';
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
@@ -100,16 +100,20 @@ const binding = { runtimeSlot: 'primary', authGeneration: 1, ownerId: 'owner', c
 const peerRequest = { version: 1, action: 'infer', responseMode: 'stream', id: `${sessionId.slice(0, 24)}000000000001`, sequence: 1,
   expiresAt: new Date(Date.now() + 120000).toISOString(), accountId: 'account', grantRevision: 1, computerId: 'computer', requestClass: 'interactive', runId: 'run', model, body };
 
-it('awaits each reply ACK before reading another chunk and stops immediately on 409', async () => {
+it('serializes reply ACKs with bounded read-ahead and discards unsent chunks on 409', async () => {
   const posted: Array<Record<string, unknown>> = [];
   const pulls: number[] = [];
-  let pollCount = 0;
+  let pollCount = 0, sourceClosed = false;
   let releaseAck!: () => void;
   const ack = new Promise<void>(resolve => { releaseAck = resolve; });
+  const chunks = Array.from({ length: 6 }, (_, index) =>
+    delta(String(index).repeat(INFERENCE_RESPONSE_CHUNK_MAX_BYTES - Buffer.byteLength(delta('')))));
+  expect(chunks.every(chunk => Buffer.byteLength(chunk) === INFERENCE_RESPONSE_CHUNK_MAX_BYTES)).toBe(true);
   const inferStream = vi.fn(async function* () {
-    pulls.push(0); yield delta('one');
-    pulls.push(1); yield delta('two');
-    pulls.push(2); yield completion;
+    try {
+      for (const [index, chunk] of chunks.entries()) { pulls.push(index); yield chunk; }
+      yield completion;
+    } finally { sourceClosed = true; }
   });
   const peer = createPlanNativePeer({ current: () => true, connected: vi.fn(), infer: vi.fn(async () => { throw new Error('legacy infer called'); }), inferStream,
     fetchFn: vi.fn(async (url, init) => {
@@ -133,14 +137,23 @@ it('awaits each reply ACK before reading another chunk and stops immediately on 
     await peer.start(binding, { deviceId: 'a'.repeat(64), accountId: 'account', grantRevision: 1, enabled: true, background: false,
       models: [{ id: model, displayName: 'Model', input: ['text'], contextWindow: 8192, maxOutputTokens: 256 }] });
     await vi.waitFor(() => expect(posted).toHaveLength(1));
-    expect(pulls).toEqual([0]);
-    expect(posted[0]).toMatchObject({ ok: true, stream: 'chunk', sequence: 0, body: delta('one') });
+    await vi.waitFor(() => expect(pulls.length).toBeGreaterThan(1));
+    // One in-flight, one pending and at most one held source item, each 64KiB.
+    expect(pulls.length).toBeLessThanOrEqual(3);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toMatchObject({ ok: true, stream: 'chunk', sequence: 0, body: chunks[0] });
     releaseAck();
     await vi.waitFor(() => expect(posted).toHaveLength(2));
-    expect(pulls).toEqual([0, 1]);
+    expect(posted[1]).toMatchObject({ ok: true, stream: 'chunk', sequence: 1, body: chunks[1] });
+    await vi.waitFor(() => expect(sourceClosed).toBe(true));
+    // The first chunk was consumed; only three more items may be retained.
+    expect(pulls.length).toBeLessThanOrEqual(4);
+    const stoppedPulls = [...pulls];
     await new Promise(resolve => setTimeout(resolve, 10));
     expect(posted).toHaveLength(2);
-    expect(pulls).toEqual([0, 1]);
+    expect(pulls).toEqual(stoppedPulls);
+    expect(posted.some(reply => reply.stream === 'end')).toBe(false);
+    expect(inferStream).toHaveBeenCalledTimes(1);
   } finally { releaseAck(); await peer.stop(); }
 });
 
