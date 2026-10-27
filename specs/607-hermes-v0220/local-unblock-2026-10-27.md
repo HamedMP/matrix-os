@@ -121,3 +121,12 @@ new resources, paid model calls, permission/credential changes or Slack messages
 Public documentation in the separate site repository remains a follow-up once
 behavior and admission policy are approved; no site PR or deployment is created
 under this local-only authorization.
+
+## Subsequent local continuation
+
+[Exact admission options and packaging spike](admission-options-2026-10-27.md)
+supersede the earlier generic proposal. The four Mac workload-root failures are
+now resolved in a portable component fixture without skips or system changes;
+real Linux timeout/native/Host execution remains a separate queued lane. The
+original failure logs are retained as historical evidence. No admission exception
+or production packaging change has been implemented.
