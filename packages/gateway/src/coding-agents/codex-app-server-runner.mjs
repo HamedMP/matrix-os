@@ -24,6 +24,7 @@ import { CodexDeferredInputControlSchema, deferCodexNativeInput } from "./codex-
 import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
 import { ProviderStartupCleanupUnconfirmed, signalCodexProviderChild } from "./codex-provider-startup.mjs";
 import { MATRIX_INTEGRATIONS_INSTRUCTIONS } from "./codex-matrix-integration-instructions.mjs";
+import { createCodexSendTiming } from "./codex-send-timing.mjs";
 
 process.on("uncaughtException", () => {
   process.stderr.write("Codex app-server runner stopped unexpectedly.\n");
@@ -329,6 +330,7 @@ let nativeSession;
 const artifactHomePath = resolve(dirname(eventPath), "../../..");
 const artifactStorageDirectory = join(artifactHomePath, "data", "chat-artifacts", "codex", "sha256");
 const artifactSessionId = basename(eventPath, extname(eventPath));
+const sendTiming = createCodexSendTiming(artifactSessionId, undefined, process.env.MATRIX_CODEX_SEND_TIMINGS === "1");
 const artifactRoots = await Promise.all([process.cwd(), ...config.writableRoots].map((root) => realpath(root)));
 
 function withinArtifactRoot(path) {
@@ -579,6 +581,9 @@ async function persist(value) {
   }
   await eventFile.write(`${line}\n`);
   transcriptBytes += bytes;
+  if (value.type === "matrix.codex.assistant.delta" && typeof value.delta === "string" && value.delta.length > 0) {
+    sendTiming.firstPersistedText();
+  }
 }
 
 async function flushAssistantDelta(messageId) {
@@ -1015,6 +1020,7 @@ async function handleProviderMessage(raw) {
   }
   const delta = AgentDeltaSchema.safeParse(raw);
   if (delta.success) {
+    if (delta.data.params.delta.length > 0) sendTiming.firstProviderDelta();
     const messageId = itemIdentity(delta.data.params.turnId, delta.data.params.itemId);
     assertTrackedItemCapacity(assistantItemsWithDelta, messageId);
     await bufferAssistantDelta(messageId, delta.data.params.delta);
@@ -1371,13 +1377,18 @@ async function runTurn(threadId, turn) {
     activeTurnOutcome = resolve;
   });
   activeTurn = true;
+  sendTiming.beginTurn(terminalEventCount + 1);
   subagentRuntime.reset();
   executionExpired = false;
   activeTurnTokenUsage = undefined;
   activeTurnFailureReason = undefined;
   try {
+    const proofStartedAt = sendTiming.now();
     await verifyNativeSubscription?.(request);
+    sendTiming.mark("native_account_proof", proofStartedAt);
+    const turnStartAt = sendTiming.now();
     const started = await request("turn/start", turnStartParams(threadId, turn));
+    sendTiming.mark("turn_start", turnStartAt);
     activeNativeTurnId = z.object({
       turn: z.object({ id: NativeReferenceSchema }).passthrough(),
     }).passthrough().parse(started).turn.id;
@@ -1421,6 +1432,7 @@ process.once("SIGINT", () => { userStopped = true; stop(); });
 
 async function startNativeSession(lease) {
   const resumeId = nativeThreadId ?? config.providerThreadId;
+  const processStartedAt = sendTiming.now();
   nativeSession = await startCodexNativeProviderSession({ command, args: commandArgs,
     cwd: process.cwd(), env: codexBrowserChildEnvironment(process.env, lease), signal: startupController.signal,
     onChild(value) { child = value; },
@@ -1435,10 +1447,14 @@ async function startNativeSession(lease) {
     },
     onRetry: async ({ label }) => { startupReconnecting = true; await persist({ type: "matrix.codex.tool.started", toolCallId: "startup_reconnect", kind: "phase", displayName: label }); },
   });
+  sendTiming.mark("process_ready", processStartedAt, terminalEventCount + 1);
   childExit = nativeSession.closed; providerOutput = nativeSession.output; providerErrors = nativeSession.errors;
   if (startupReconnecting) { await persist({ type: "matrix.codex.tool.completed", toolCallId: "startup_reconnect", outcome: "success" }); startupReconnecting = false; }
   startupController.signal.throwIfAborted(); sendProvider({ method: "initialized", params: {} });
+  const proofStartedAt = sendTiming.now();
   await verifyNativeSubscription?.(request);
+  sendTiming.mark("thread_account_proof", proofStartedAt, terminalEventCount + 1);
+  const threadStartedAt = sendTiming.now();
   const started = await request(resumeId ? "thread/resume" : "thread/start", {
     ...(resumeId ? { threadId: resumeId, excludeTurns: true } : {}), model: config.model,
     ...(config.nativeSubscription ? { modelProvider: "openai" } : {}),
@@ -1451,11 +1467,14 @@ async function startNativeSession(lease) {
   const identity = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() }).passthrough().parse(started).thread.id;
   if (resumeId && identity !== resumeId) throw new Error("provider_resume_identity_mismatch");
   nativeThreadId = identity;
+  sendTiming.mark("thread_ready", threadStartedAt, terminalEventCount + 1);
   if (lease) {
+    const browserStartedAt = sendTiming.now();
     const catalog = await request("mcpServerStatus/list", { threadId: identity, serverName: "matrix_shared_browser", limit: 10 });
     const parsed = z.object({ data: z.array(z.object({ name: z.string(), runtimeStatus: z.string().nullable().optional(), tools: z.record(z.string(), z.unknown()) }).passthrough()).max(10) }).passthrough().parse(catalog);
     const entry = parsed.data.find(server => server.name === "matrix_shared_browser");
     if (!entry || entry.runtimeStatus !== "connected" || Object.keys(entry.tools).length !== 1 || !entry.tools.shared_browser) throw new Error("Browser startup unavailable");
+    sendTiming.mark("browser_mcp_ready", browserStartedAt, terminalEventCount + 1);
   }
   currentBrowserLease = lease;
   await persist({ type: "thread.started", thread_id: identity });
@@ -1465,11 +1484,19 @@ let exitCode = 0;
 let verifyNativeSubscription;
 let pendingAdmittedTurn = false;
 try {
-  if (config.nativeSubscription) verifyNativeSubscription = await createNativeCodexExecutionProof(config.expectedNativePrincipal, process.env, config.expectedNativeConsent);
+  if (config.nativeSubscription) {
+    const proofStartedAt = sendTiming.now();
+    verifyNativeSubscription = await createNativeCodexExecutionProof(config.expectedNativePrincipal, process.env, config.expectedNativeConsent);
+    sendTiming.mark("native_proof_setup", proofStartedAt, 1);
+  }
+  const leaseStartedAt = sendTiming.now();
   const initialBrowser = await browserBootstrap.waitLease(startupController.signal);
+  sendTiming.mark("browser_lease_wait", leaseStartedAt, 1);
   await startNativeSession(initialBrowser);
   browserBootstrap.markReady();
+  const browserReleaseStartedAt = sendTiming.now();
   await browserBootstrap.waitRelease(startupController.signal);
+  sendTiming.mark("browser_release_wait", browserReleaseStartedAt, 1);
   let turn = PendingTurnSchema.parse({
     prompt: config.prompt,
     model: config.model,
@@ -1484,7 +1511,9 @@ try {
     if (!firstTurn && (currentBrowserLease || turn.browser)) {
       renewingNativeTurn = true;
       try {
+        const closeStartedAt = sendTiming.now();
         await nativeSession.close(); startupController.signal.throwIfAborted();
+        sendTiming.mark("previous_session_close", closeStartedAt, terminalEventCount + 1);
         await startNativeSession(turn.browser ?? undefined);
       } finally {
         renewingNativeTurn = false;

@@ -19,6 +19,8 @@ import type { ChatExecutionRootResolver, ResolvedChatExecutionRoot } from "./exe
 import { CanonicalChatOrchestrationError, mapRepositoryError, safeError, requirementsFor } from "./orchestration-input.js";
 import { loadChatResumeState } from "./resume-checkpoint.js";
 import { unsupportedAgentPermissionMode } from "./agent-permission.js";
+import { performance } from "node:perf_hooks";
+import { createChatSendTimer } from "./send-timing.js";
 
 export interface TurnAdmissionOptions {
   repository: Pick<ChatRepository, "get" | "getDetailPage" | "findTurnAdmission" | "getLatestAdapterStateForChat" | "admitTurn" | "finishRun">;
@@ -48,6 +50,22 @@ export async function admitCanonicalTurn(
   chatId: string, inputValue: CanonicalCreateChatTurnRequest,
   provenance?: { previewTurnProof?: string },
 ): Promise<CanonicalChatTurnAdmissionResponse> {
+  const timer = inputValue.selection?.instanceId === "codex_default" && process.env.MATRIX_CODEX_SEND_TIMINGS === "1"
+    ? createChatSendTimer(inputValue.clientRequestId) : undefined;
+  const startedAt = performance.now();
+  try {
+    return await admitCanonicalTurnImpl(deps, principal, owner, chatId, inputValue, provenance, timer);
+  } finally {
+    timer?.mark("admission_total", startedAt);
+  }
+}
+
+async function admitCanonicalTurnImpl(
+  deps: TurnAdmissionOptions, principal: RequestPrincipal, owner: ChatOwner,
+  chatId: string, inputValue: CanonicalCreateChatTurnRequest,
+  provenance: { previewTurnProof?: string } | undefined,
+  timer: ReturnType<typeof createChatSendTimer> | undefined,
+): Promise<CanonicalChatTurnAdmissionResponse> {
     deps.assertOpen();
     await deps.assertPersonalExecutionAllowed(owner, chatId);
     await deps.reconcileActiveRuns(owner);
@@ -68,7 +86,11 @@ export async function admitCanonicalTurn(
     try { prepared = await deps.agentContext?.prepare(owner, chatId, input); }
     catch (error: unknown) { return mapRepositoryError(error); }
     const effective = { ...input, ...prepared };
-    const catalog = await deps.catalog.getCatalog(principal, effective.selection);
+    const catalogStartedAt = performance.now();
+    const catalog = timer
+      ? await timer.run(() => deps.catalog.getCatalog(principal, effective.selection))
+      : await deps.catalog.getCatalog(principal, effective.selection);
+    timer?.mark("catalog_admission", catalogStartedAt);
     const requirements = requirementsFor({ ...effective, parts: prepared ? input.parts.filter((part) =>
       part.type !== "resource_reference" || !["agent", "chat"].includes(part.resource.kind)) : input.parts });
     const validated = validateChatProviderSelection({
@@ -212,6 +234,7 @@ export async function admitCanonicalTurn(
     deps.reservePendingDispatch(run.id);
     try {
       deps.assertOpen();
+      const repositoryStartedAt = performance.now();
       admitted = await deps.repository.admitTurn(owner, {
         chatId,
         baseRevision: input.baseRevision,
@@ -221,6 +244,8 @@ export async function admitCanonicalTurn(
         run,
         ...(adapterState ? { adapterState } : {}),
       });
+      timer?.mark("repository_admission", repositoryStartedAt);
+      timer?.linkRun(admitted.run.id);
     } catch (error: unknown) {
       deps.releasePendingDispatch(run.id);
       return mapRepositoryError(error);

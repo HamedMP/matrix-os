@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import { mkdtemp, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import type { SpawnOptionsWithoutStdio } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
@@ -165,6 +168,175 @@ const codexProvider = { id: "codex", kind: "codex", availability: "available" } 
 >[0];
 
 describe("Codex model catalog source retry and cache behavior", () => {
+  it("serves a verified expired catalog while one refresh runs in the background", async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const attempts: ReturnType<typeof fakeCodexChild>[] = [];
+    const source = createCodexModelCatalogSource({
+      executable: "/owner-bin/codex", cwd: "/owner-home", cacheTtlMs: 10,
+      cacheIdentity: async () => "account-a:codex-v1",
+      spawnProcess: () => {
+        const child = fakeCodexChild();
+        attempts.push(child);
+        return child.child as never;
+      },
+    });
+    try {
+      const first = source(codexProvider);
+      await vi.waitFor(() => expect(attempts).toHaveLength(1));
+      respondWithRealCatalog(attempts[0]!.stdout, attempts[0]!.writes);
+      const verified = await first;
+      now += 11;
+      await expect(source(codexProvider)).resolves.toBe(verified);
+      await expect(source(codexProvider)).resolves.toBe(verified);
+      expect(attempts).toHaveLength(2);
+      respondWithRealCatalog(attempts[1]!.stdout, attempts[1]!.writes);
+      await vi.waitFor(() => expect(attempts[1]!.kill).toHaveBeenCalled());
+    } finally { clock.mockRestore(); }
+  });
+
+  it("invalidates the catalog when account or executable identity changes", async () => {
+    let identity = "account-a:codex-v1";
+    const attempts: ReturnType<typeof fakeCodexChild>[] = [];
+    const source = createCodexModelCatalogSource({
+      executable: "/owner-bin/codex", cwd: "/owner-home",
+      cacheIdentity: async () => identity,
+      spawnProcess: () => {
+        const child = fakeCodexChild();
+        attempts.push(child);
+        return child.child as never;
+      },
+    });
+    const first = source(codexProvider);
+    await vi.waitFor(() => expect(attempts).toHaveLength(1));
+    respondWithRealCatalog(attempts[0]!.stdout, attempts[0]!.writes);
+    await first;
+    identity = "account-b:codex-v1";
+    const second = source(codexProvider);
+    await vi.waitFor(() => expect(attempts).toHaveLength(2));
+    respondWithRealCatalog(attempts[1]!.stdout, attempts[1]!.writes);
+    await second;
+    identity = "account-b:codex-v2";
+    const third = source(codexProvider);
+    await vi.waitFor(() => expect(attempts).toHaveLength(3));
+    respondWithRealCatalog(attempts[2]!.stdout, attempts[2]!.writes);
+    await third;
+    expect(attempts).toHaveLength(3);
+  });
+
+  it("uses local account and executable file identities for production invalidation", async () => {
+    const home = await mkdtemp(join(tmpdir(), "codex-catalog-identity-"));
+    const executable = join(home, "codex");
+    const codexHome = join(home, ".codex");
+    const auth = join(codexHome, "auth.json");
+    const settings = join(home, "system", "ai-providers", "settings.json");
+    const attempts: ReturnType<typeof fakeCodexChild>[] = [];
+    try {
+      await mkdir(codexHome);
+      await writeFile(executable, "version-1");
+      await writeFile(auth, "account-1");
+      await mkdir(join(home, "system", "ai-providers"), { recursive: true });
+      await writeFile(settings, "selected-account-1");
+      const source = createCodexModelCatalogSource({
+        executable, cwd: home, environment: { HOME: home, CODEX_HOME: codexHome },
+        spawnProcess: () => {
+          const child = fakeCodexChild();
+          attempts.push(child);
+          return child.child as never;
+        },
+      });
+      const request = async (count: number) => {
+        const result = source(codexProvider);
+        await vi.waitFor(() => expect(attempts).toHaveLength(count));
+        respondWithRealCatalog(attempts[count - 1]!.stdout, attempts[count - 1]!.writes);
+        await result;
+      };
+      await request(1);
+      await writeFile(`${auth}.new`, "account-2");
+      await rename(`${auth}.new`, auth);
+      await request(2);
+      await writeFile(`${executable}.new`, "version-2");
+      await rename(`${executable}.new`, executable);
+      await request(3);
+      await writeFile(`${settings}.new`, "selected-account-2");
+      await rename(`${settings}.new`, settings);
+      await request(4);
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+
+  it("drops verified metadata on provider revocation", async () => {
+    const attempts: ReturnType<typeof fakeCodexChild>[] = [];
+    const source = createCodexModelCatalogSource({
+      executable: "/owner-bin/codex", cwd: "/owner-home",
+      cacheIdentity: async () => "account-a:codex-v1",
+      spawnProcess: () => {
+        const child = fakeCodexChild();
+        attempts.push(child);
+        return child.child as never;
+      },
+    });
+    const first = source(codexProvider);
+    await vi.waitFor(() => expect(attempts).toHaveLength(1));
+    respondWithRealCatalog(attempts[0]!.stdout, attempts[0]!.writes);
+    await first;
+    await expect(source({ ...codexProvider, availability: "unavailable" })).resolves.toBeNull();
+    const restored = source(codexProvider);
+    await vi.waitFor(() => expect(attempts).toHaveLength(2));
+    respondWithRealCatalog(attempts[1]!.stdout, attempts[1]!.writes);
+    await restored;
+  });
+
+  it("stops serving stale metadata after the bounded stale window", async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const attempts: ReturnType<typeof fakeCodexChild>[] = [];
+    const source = createCodexModelCatalogSource({
+      executable: "/owner-bin/codex", cwd: "/owner-home", cacheTtlMs: 10, staleTtlMs: 20,
+      cacheIdentity: async () => "account-a:codex-v1",
+      spawnProcess: () => {
+        const child = fakeCodexChild();
+        attempts.push(child);
+        return child.child as never;
+      },
+    });
+    try {
+      const first = source(codexProvider);
+      await vi.waitFor(() => expect(attempts).toHaveLength(1));
+      respondWithRealCatalog(attempts[0]!.stdout, attempts[0]!.writes);
+      await first;
+      now += 21;
+      const blocked = source(codexProvider);
+      await vi.waitFor(() => expect(attempts).toHaveLength(2));
+      let settled = false;
+      void blocked.then(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      respondWithRealCatalog(attempts[1]!.stdout, attempts[1]!.writes);
+      await expect(blocked).resolves.toMatchObject({ defaultModel: "gpt-5.6-sol" });
+    } finally { clock.mockRestore(); }
+  });
+
+  it("never revives a catalog from an in-flight lookup after revocation", async () => {
+    const attempts: ReturnType<typeof fakeCodexChild>[] = [];
+    const source = createCodexModelCatalogSource({
+      executable: "/owner-bin/codex", cwd: "/owner-home",
+      cacheIdentity: async () => "account-a:codex-v1",
+      spawnProcess: () => {
+        const child = fakeCodexChild();
+        attempts.push(child);
+        return child.child as never;
+      },
+    });
+    const first = source(codexProvider);
+    await vi.waitFor(() => expect(attempts).toHaveLength(1));
+    await expect(source({ ...codexProvider, availability: "unavailable" })).resolves.toBeNull();
+    respondWithRealCatalog(attempts[0]!.stdout, attempts[0]!.writes);
+    await first;
+    const restored = source(codexProvider);
+    await vi.waitFor(() => expect(attempts).toHaveLength(2));
+    respondWithRealCatalog(attempts[1]!.stdout, attempts[1]!.writes);
+    await restored;
+  });
   it("retries once after a transient app-server failure and returns real models", async () => {
     const attempts: ReturnType<typeof fakeCodexChild>[] = [];
     const spawnProcess = vi.fn(() => {

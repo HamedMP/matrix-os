@@ -14,11 +14,13 @@ const base = { agent: "codex" as const, cwd: "/tmp", runtimeHome: "/tmp/owner", 
 describe("native Codex final launch isolation", () => {
   it("pins native auth/config and prevents inherited environment in the verified runner", () => {
     for (const [key, value] of Object.entries(hostile)) vi.stubEnv(key, value);
+    vi.stubEnv("MATRIX_CODEX_SEND_TIMINGS", "1");
     for (const providerEventPath of ["/tmp/owner/events.jsonl"]) {
       const launch = buildAgentLaunch({ ...base, providerEventPath, nativeCodexSubscription: { codexHome: "/tmp/owner/.codex", expectedPrincipalFingerprint: "a".repeat(64), expectedConsentRevision: 1, expectedConfigurationFingerprint: "b".repeat(64), expectedHarnessInstanceId: "codex_owner_openai_profile", expectedAccountId: "owner_codex" } });
       expect(launch.inheritEnv).toBe(false);
       expect(launch.env.HOME).toBe(base.runtimeHome);
       expect(launch.env.CODEX_HOME).toBe("/tmp/owner/.codex");
+      expect(launch.env.MATRIX_CODEX_SEND_TIMINGS).toBe("1");
       for (const key of Object.keys(hostile).filter(key => key !== "CODEX_HOME")) expect(launch.env[key]).toBeUndefined();
       expect(launch.args).toContain('forced_login_method="chatgpt"');
       expect(launch.args).toContain('model_provider="openai"');
