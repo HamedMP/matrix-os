@@ -15,6 +15,7 @@ import { createChatDriveProjectRoutes } from "./chat/drive-projects.js";
 import { createProductionChatDriveContext } from "./chat/drive-context-production.js";
 import { createOwnerAnthropicKeyPreflight } from "./ai-providers/owner-key-preflight.js";
 import { createOwnerOpenRouterKeyPreflight } from "./ai-providers/openrouter-key-preflight.js";
+import { isOpenRouterMultiHarnessEnabled } from "./ai-providers/openrouter-capability.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import {
@@ -1482,7 +1483,9 @@ export async function createGateway(config: GatewayConfig) {
     : undefined;
   const anthropicOwnerHealth = createOwnerAnthropicKeyPreflight({ homePath });
   const openRouterOwnerHealth = createOwnerOpenRouterKeyPreflight({ homePath });
-  const openRouterEnabled = process.env.MATRIX_OPENROUTER_MULTI_HARNESS_ENABLED === "1";
+  const openRouterEnabled = isOpenRouterMultiHarnessEnabled(
+    process.env.MATRIX_OPENROUTER_MULTI_HARNESS_ENABLED,
+  );
   const aiProviderService = new AiProviderService({
     observationScope: canonicalPhaseDiscovery.observationScope,
     chatGptPlanObservation: createAppAiSubscriptionObservation(appSubscriptionSource),
