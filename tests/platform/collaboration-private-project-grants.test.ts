@@ -86,6 +86,7 @@ describe("choosing access on a private project before sharing it", () => {
     directSessions = new DirectSessionService({ verifier: ticketVerifier, authority, repository, now: () => now, startTimers: false });
     ownerRuntimeSessions = new OwnerRuntimeSessionService({
       verifier: ticketVerifier, ownerId, runtimeId, organizationPrecondition: precondition, now: () => now,
+      runtimeGeneration: () => 1,
     });
     const home = new Hono();
     home.route("/", createDirectSessionRoutes({ sessions: directSessions, ownerRuntimeSessions }));

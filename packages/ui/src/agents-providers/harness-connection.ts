@@ -10,6 +10,8 @@ function fresh(observation: ProviderHarnessInstance["localObservation"]): boolea
 /** A configured credential is a connection; execution readiness stays canonical. */
 export function hasConfiguredConnection(harness: Pick<ProviderHarnessInstance, "installState" | "authState">
   & Partial<Pick<ProviderHarnessInstance, "enabled" | "configuredEnabled" | "localObservation" | "harness" | "route" | "accessSourceId">>, source?: ProviderAccessSource): boolean {
+  // Older gateways may still report a ready Matrix route as native Claude.
+  if (harness.harness === "claude" && source?.kind === "matrix_gateway") return false;
   if (harness.installState !== "installed" || (harness.configuredEnabled ?? harness.enabled) === false
     || ["unauthenticated", "failed", "expired", "authenticating"].includes(harness.authState)
     || (source && ["invalid", "expired", "auth_required"].includes(source.readiness.state))) return false;

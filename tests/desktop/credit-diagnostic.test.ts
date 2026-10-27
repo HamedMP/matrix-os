@@ -70,12 +70,19 @@ it("reduces actual managed credit to booleans and excludes sensitive source text
   expect(result.sources[0]).toMatchObject({ rawAvailableBalancePositive: true, displayedChatCreditAvailable: true, displayedChatCreditPositive: true });
   for (const privateText of ["1234567", "5000000", "source_matrix", "claude-sonnet", '"USD"', '"Provider"', '"Model"']) expect(JSON.stringify(result)).not.toContain(privateText);
 });
+it.each([1, 2650, 60000])("reports displayed credit within the inclusive future tolerance (%dms) without restamping", async skewMs => {
+  const now = Date.parse(at) - skewMs;
+  const result = await projectDesktopCreditDiagnostic(managedSnapshot(), now);
+  expect(result.observedAt).toBe(new Date(now).toISOString());
+  expect(result.sources[0]).toMatchObject({ asOf: at, chatAvailabilityAsOf: at,
+    rawAvailableBalancePositive: true, displayedChatCreditAvailable: true, displayedChatCreditPositive: true });
+});
 it.each(["budget_zero", "stale", "future", "expired"])("uses existing displayed credit gates for %s", async variant => {
   const value = managedSnapshot(); const usage = value.accessSources[0]!.usage;
   if (usage.kind !== "managed_credit") throw new Error("fixture");
   if (variant === "budget_zero") { usage.budget.remainingBudgetMicrousd = 0; usage.budget.reservedThisMonthMicrousd = 5000000; usage.remainingMicrousd = 0; }
   if (variant === "stale") usage.state = "stale";
-  const now = Date.parse(at) + (variant === "future" ? -1 : variant === "expired" ? 300001 : 0);
+  const now = Date.parse(at) + (variant === "future" ? -60001 : variant === "expired" ? 300001 : 0);
   const result = await projectDesktopCreditDiagnostic(value, now);
   expect(result.sources[0]).toMatchObject({ rawAvailableBalancePositive: true, displayedChatCreditAvailable: variant === "budget_zero", displayedChatCreditPositive: variant === "budget_zero" ? false : null });
 });

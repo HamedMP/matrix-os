@@ -97,6 +97,7 @@ file so the rules have one source of truth.
 ## Development Rules
 
 - **TDD**: failing tests FIRST, then implement (Red -> Green -> Refactor)
+- **Test effectiveness**: follow `docs/dev/testing-effectiveness.md`. Name the user outcome and fault a test detects; exercise production code, preserve real producer/consumer boundaries, and show regression red/green evidence. Do not test local replicas, freeze invented policy, or add duplicate suites for coverage. Delete only with recorded no-protection or equivalent-retained-coverage proof. Required lanes must execute assertions, not silently skip.
 - **Conventional Commits and PR Titles**: commits and PR titles use semantic Conventional Commit style such as `feat(canvas): add workspace canvas`; never prefix PR titles with agent/tool tags like `[codex]`.
 - **Specs go in `specs/`**: NEVER `docs/plans/`. Format: `specs/{NNN}-{feature-name}/`
 - **Kysely/Postgres only**: never add alternative embedded databases or ORMs for new persistence

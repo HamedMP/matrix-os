@@ -400,6 +400,11 @@
 
 .mxo-chip:hover,
 .mxo-btn--outline:hover { background: var(--mxo-soft); }
+.mxo-chip[aria-pressed="true"] {
+  border-color: var(--mxo-ink);
+  background: var(--mxo-ink);
+  color: #ffffff;
+}
 
 .mxo-btn-row {
   display: flex;

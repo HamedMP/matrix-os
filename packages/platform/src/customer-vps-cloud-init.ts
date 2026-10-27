@@ -29,6 +29,7 @@ export interface CustomerHostConfig {
   posthogApiHost: string;
   fundedAiEnabled: string;
   fundedAiRelayUrl: string;
+  getStartedEnabled: string;
   imageSource?: 'snapshot' | 'clean_image';
   targetBundleSha256?: string;
   snapshotSourceVersion?: string;

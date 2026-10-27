@@ -23,7 +23,7 @@ function setup(upstream: () => Response | Promise<Response>, model = SONNET) {
     check: vi.fn(async () => ({ identity: IDENTITY })),
     authorize: vi.fn(async (input: { requestId: string; modelId: string }) => ({
       identity: IDENTITY, reservation: { reservationId: "reservation_1", requestId: input.requestId,
-        modelId: input.modelId, reservedMicrousd: 100_000, billingMode: "usage" },
+        modelId: input.modelId, reservedMicrousd: 1, billingMode: "usage" },
     })),
     start: vi.fn(async (input: { executionId?: string }) => ({ executionId: input.executionId, contractVersion: 1, status: "in_flight", startedAt: NOW.toISOString(), expiresAt: "2026-09-10T12:10:00.000Z", reservationId: "reservation_1", requestId: "request_1", tokenId: IDENTITY.tokenId })),
     release: vi.fn(), terminal: vi.fn(async () => ({})), finalize: vi.fn(async (task: unknown, signal: AbortSignal) => { void task; void signal; return {}; }),
@@ -37,7 +37,11 @@ function setup(upstream: () => Response | Promise<Response>, model = SONNET) {
     AI_RELAY_METADATA_SECRET: "metadata-secret-12345678901234567890123",
   })!;
   const fetchMock = vi.fn(async () => upstream());
-  const relay = createFundedRelay({ ...config, fetch: fetchMock, now: () => NOW,
+  const fetchWithCount = vi.fn<typeof fetch>().mockImplementation(async (input) =>
+    String(input).endsWith("/v1/messages/count_tokens")
+      ? Response.json({ input_tokens: 100 })
+      : fetchMock());
+  const relay = createFundedRelay({ ...config, fetch: fetchWithCount, now: () => NOW,
     requestIdFactory: () => "request_1", platformClient: control as unknown as FundedPlatformClient });
   const app = new Hono(); relay.register(app);
   const send = () => app.request(model === SONNET ? "/v1/messages" : "/v1/chat/completions", {

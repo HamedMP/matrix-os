@@ -9,6 +9,7 @@ fi
 restore_flag="/opt/matrix/restore-complete"
 latest_file="/var/lib/matrix/db/latest"
 snapshot_path="/var/lib/matrix/db/latest.dump"
+get_started_seed="/opt/matrix/bin/matrix-get-started-seed"
 runtime_slot="${MATRIX_RUNTIME_SLOT:-primary}"
 case "$runtime_slot" in
   ""|[!a-z0-9]*|*[^a-z0-9-]*|*-) echo "matrix-restore: invalid runtime slot" >&2; exit 1 ;;
@@ -31,6 +32,14 @@ if [ -f "$restore_flag" ]; then
 fi
 
 mkdir -p /home/matrix/home /home/matrix/projects /var/lib/matrix/db
+
+seed_get_started() {
+  # Spec 635: only a brand-new owner on the primary runtime is offered the Get
+  # started wizard. Seeding is best effort and never blocks the restore gate.
+  if [ "$runtime_slot" = "primary" ] && [ "${MATRIX_GET_STARTED_ENABLED:-}" = "true" ]; then
+    "$get_started_seed" /home/matrix/home || echo "matrix-restore: get started seed skipped" >&2
+  fi
+}
 
 mark_restore_complete() {
   local incoming=""
@@ -81,6 +90,7 @@ check_r2_exists "$latest_pointer_key" "latest snapshot pointer" || latest_pointe
 
 if [ "$vps_meta_status" -eq 44 ] && [ "$latest_pointer_status" -eq 44 ]; then
   # First installation: neither registration metadata nor a backup exists.
+  seed_get_started
   mark_restore_complete
   exit 0
 fi

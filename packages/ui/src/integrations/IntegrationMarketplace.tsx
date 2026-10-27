@@ -7,19 +7,31 @@ const muted = { color: "var(--text-tertiary, var(--muted-foreground))" };
 const pill = { background: "var(--bg-surface-hover, var(--muted))" };
 
 export function IntegrationMarketplace<T extends IntegrationCatalogItem>({
-  services, connectedIds, connectingId, onConnect, renderService,
+  services, connectedIds, connectingId, onConnect, renderService, leadingSection, failedIds, lockWhileConnecting = true, addAccounts = true,
 }: {
   services: readonly T[];
   connectedIds: readonly string[];
   connectingId?: string | null;
   onConnect: (id: string) => void;
   renderService?: (service: T) => ReactNode;
+  /** An optional first section of chosen apps, shown in full (e.g. Get started's suggestions). */
+  leadingSection?: { title: string; ids: readonly string[] };
+  /** Apps whose last sign-in did not finish; their rows say so and offer Try again. */
+  failedIds?: readonly string[];
+  /**
+   * Settings locks every Connect while a sign-in is pending. Get started keeps them all usable,
+   * so a cancelled or stuck sign-in never blocks the next app; a new connect replaces it.
+   */
+  lockWhileConnecting?: boolean;
+  /** Settings lets a connected app add another account; Get started only shows that it is connected. */
+  addAccounts?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const [connectedOnly, setConnectedOnly] = useState(false);
   const [oauthOnly, setOauthOnly] = useState(false);
   const [expanded, setExpanded] = useState<string[]>([]);
-  const sections = buildIntegrationSections(services, { query, oauthOnly, connectedOnly, connectedIds });
+  const failed = new Set(failedIds);
+  const sections = buildIntegrationSections(services, { query, oauthOnly, connectedOnly, connectedIds, ...(leadingSection ? { leading: leadingSection } : {}) });
   const connectedCount = services.filter(service => connectedIds.includes(service.id)).length;
 
   return (
@@ -43,7 +55,7 @@ export function IntegrationMarketplace<T extends IntegrationCatalogItem>({
         </div>
       </div>
       {sections.map(section => {
-        const showAll = query.trim() || connectedOnly || oauthOnly || expanded.includes(section.title);
+        const showAll = query.trim() || connectedOnly || oauthOnly || expanded.includes(section.title) || section.title === leadingSection?.title;
         const visible = showAll ? section.services : section.services.slice(0, 4);
         return (
           <section key={section.title} aria-label={section.title} className="space-y-4">
@@ -57,7 +69,7 @@ export function IntegrationMarketplace<T extends IntegrationCatalogItem>({
             <div className="grid grid-cols-1 gap-x-8 gap-y-2 sm:grid-cols-2">
               {visible.map(service => renderService ? <div key={service.id}>{renderService(service)}</div> : (
                 <MarketplaceRow key={service.id} service={service} connected={connectedIds.includes(service.id)} connecting={connectingId === service.id}
-                  disabled={Boolean(connectingId)} onConnect={() => onConnect(service.id)} />
+                  failed={failed.has(service.id)} disabled={lockWhileConnecting && Boolean(connectingId)} addAccount={addAccounts} onConnect={() => onConnect(service.id)} />
               ))}
             </div>
           </section>
@@ -73,10 +85,29 @@ export function IntegrationMarketplace<T extends IntegrationCatalogItem>({
   );
 }
 
-function MarketplaceRow({ service, connected, connecting, disabled, onConnect }: {
-  service: IntegrationCatalogItem; connected: boolean; connecting: boolean; disabled: boolean; onConnect: () => void;
+type RowState = "adding" | "connected" | "connecting" | "failed" | "idle";
+
+/** The row's button for its state; a failed sign-in says so and offers Try again. */
+const ROW_BUTTON: Record<RowState, { label: (name: string) => string; text: string }> = {
+  adding: { label: (name) => `Add another ${name} account`, text: "Connecting…" },
+  connected: { label: (name) => `Add another ${name} account`, text: "Add account" },
+  connecting: { label: (name) => `Connect ${name}`, text: "Connecting…" },
+  failed: { label: (name) => `Try connecting ${name} again`, text: "Try again" },
+  idle: { label: (name) => `Connect ${name}`, text: "Connect" },
+};
+
+function rowState(connected: boolean, connecting: boolean, failed: boolean): RowState {
+  if (connecting) return connected ? "adding" : "connecting";
+  if (connected) return "connected";
+  return failed ? "failed" : "idle";
+}
+
+function MarketplaceRow({ service, connected, connecting, failed, disabled, addAccount, onConnect }: {
+  service: IntegrationCatalogItem; connected: boolean; connecting: boolean; failed: boolean; disabled: boolean; addAccount: boolean; onConnect: () => void;
 }) {
   const auth = integrationAuthType(service);
+  const state = rowState(connected, connecting, failed);
+  const button = ROW_BUTTON[state];
   return (
     <div className="flex min-w-0 items-center gap-3 py-4" data-testid={`integration-card-${service.id}`}>
       <MarketplaceIcon key={service.logoUrl} name={service.name} logoUrl={service.logoUrl} />
@@ -85,16 +116,26 @@ function MarketplaceRow({ service, connected, connecting, disabled, onConnect }:
         <p className="mt-1 truncate text-sm" style={muted} title={integrationDescription(service)}>{integrationDescription(service)}</p>
         <p className="mt-1 text-xs" style={muted}>{auth === "keys" ? "API key required" : auth === "oauth" ? "Sign in securely" : "Connect your account"}</p>
       </div>
-      <div className="flex shrink-0 flex-col items-end gap-1.5">
+      {connected && !addAccount ? (
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium" style={connectedPill}>
+          <span aria-hidden="true" className="size-1.5 rounded-full" style={{ background: "var(--surface-success-emphasis, var(--primary))" }} />Connected
+        </span>
+      ) : <div className="flex shrink-0 flex-col items-end gap-1.5">
         {connected ? <span className="text-xs" style={{ color: "var(--surface-success-emphasis, var(--primary))" }}>✓ Connected</span> : null}
-        <button type="button" aria-label={connected ? `Add another ${service.name} account` : `Connect ${service.name}`} disabled={disabled} onClick={onConnect}
+        {state === "failed" ? <span className="text-xs" role="status" style={{ color: "var(--surface-danger-emphasis, var(--destructive))" }}>Sign-in didn't finish</span> : null}
+        <button type="button" aria-label={button.label(service.name)} disabled={disabled} onClick={onConnect}
           className="rounded-full px-4 py-2 text-sm transition-opacity hover:opacity-75 disabled:opacity-50 focus-visible:outline-2" style={pill}>
-          {connecting ? "Connecting…" : connected ? "Add account" : "Connect"}
+          {button.text}
         </button>
-      </div>
+      </div>}
     </div>
   );
 }
+
+const connectedPill = {
+  color: "var(--surface-success-emphasis, var(--primary))",
+  background: "color-mix(in srgb, var(--surface-success-emphasis, var(--primary)) 12%, transparent)",
+};
 
 function MarketplaceIcon({ name, logoUrl }: { name: string; logoUrl?: string }) {
   const [imageFailed, setImageFailed] = useState(false);

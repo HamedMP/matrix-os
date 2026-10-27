@@ -220,7 +220,14 @@ function MountedUserButton({
           align={isMenubar ? "end" : "start"}
           side={isMenubar ? "bottom" : "top"}
           sideOffset={10}
-          style={{ zIndex: SHELL_Z_INDEX.popover }}
+          style={{
+            zIndex: SHELL_Z_INDEX.popover,
+            ...(isMenubar ? {
+              maxHeight: "var(--radix-dropdown-menu-content-available-height)",
+              overflowY: "auto" as const,
+              overflowX: "hidden" as const,
+            } : {}),
+          }}
           className={isMenubar ? "w-[224px] rounded-xl border bg-card p-1.5 text-foreground shadow-xl" : "w-[272px] overflow-hidden rounded-[20px] border border-border/60 bg-popover p-2 text-popover-foreground shadow-[0_24px_70px_rgba(50,53,46,0.28)]"}
         >
           {isMenubar ? <TopBarAccountContent
@@ -359,6 +366,7 @@ function TopBarAccountContent({ label, signingOut, onSignOut, onOpenSettings }: 
   const row = "flex cursor-default items-center gap-2.5 rounded-md px-2 py-2 text-[13px] outline-none data-[highlighted]:bg-foreground/5";
   return <>
     <div className="px-2 pb-2 pt-1 text-[11px] text-muted-foreground"><p className="mb-1 tracking-wider">PERSONAL ACCOUNT</p><p className="truncate">{label}</p></div>
+    <OrganizationMenuItems itemClass={row} />
     {onOpenSettings ? <>
       <DropdownMenuPrimitive.Item className={row} onSelect={() => onOpenSettings("appearance")}><SettingsIcon className="size-3.5" aria-hidden="true" />Settings</DropdownMenuPrimitive.Item>
       <DropdownMenuPrimitive.Item className={row} onSelect={() => onOpenSettings("billing")}><CreditCardIcon className="size-3.5" aria-hidden="true" />View plans</DropdownMenuPrimitive.Item>

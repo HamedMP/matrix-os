@@ -86,7 +86,10 @@ describe("generic funded model pricing reviews", () => {
     const config = requireFundedRelayServiceConfig({ ...env(), ...reviewEnv(model) });
     let now = new Date("2026-10-02T12:00:00.000Z");
     const control = platformControl();
-    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      if (String(input).endsWith("/v1/messages/count_tokens")) {
+        return Response.json({ input_tokens: 1_000 });
+      }
       // An already-started request may finish beyond the review horizon.
       now = new Date(Date.parse(validThrough) + 1);
       return inferenceReply(model);
@@ -99,7 +102,7 @@ describe("generic funded model pricing reviews", () => {
       expect(response.status).toBe(200);
       await response.text();
       expect(control.authorize).toHaveBeenCalledWith(expect.objectContaining({ modelId: model.id, billingMode: "usage" }), expect.any(AbortSignal));
-      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(fetchFn).toHaveBeenCalledTimes(model.prefix === "SONNET" ? 2 : 1);
     } finally { await relay.close(); }
     expect(control.finalize).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ mode: "exact", actualCostMicrousd: model.prefix === "GLM" ? 24 : 400 }), expect.any(AbortSignal));
   });
@@ -107,7 +110,9 @@ describe("generic funded model pricing reviews", () => {
     const config = requireFundedRelayServiceConfig({ ...env(), ...reviewEnv(model) });
     let now = new Date(Date.parse(validThrough) - 1);
     const control = platformControl(() => { now = new Date(Date.parse(validThrough) + 1); });
-    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async () => inferenceReply(model));
+    const fetchFn = vi.fn<typeof fetch>().mockImplementation(async (input) => String(input).endsWith("/v1/messages/count_tokens")
+      ? Response.json({ input_tokens: 1_000 })
+      : inferenceReply(model));
     const relay = createFundedRelay({ ...config, now: () => now, fetch: fetchFn, requestIdFactory: () => "request_1",
       platformClient: control as unknown as FundedPlatformClient });
     const app = new Hono(); relay.register(app);
@@ -116,7 +121,7 @@ describe("generic funded model pricing reviews", () => {
       expect(response.status).toBe(503);
       expect(control.release).toHaveBeenCalledExactlyOnceWith({ reservationId: "reservation_1", tokenId: "credential_123", reason: "pre_upstream_failure" }, expect.any(AbortSignal));
       expect(control.start).not.toHaveBeenCalled();
-      expect(fetchFn).not.toHaveBeenCalled();
+      expect(fetchFn).toHaveBeenCalledTimes(model.prefix === "SONNET" ? 1 : 0);
       expect(control.finalize).not.toHaveBeenCalled();
     } finally { await relay.close(); }
   });

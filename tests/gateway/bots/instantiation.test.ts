@@ -109,6 +109,59 @@ describe("bot instantiation", () => {
     ]);
   });
 
+  it("reads a creation request's reserved bot, payload and whether it finished", async () => {
+    const instantiation = setup();
+    await expect(instantiation.attempt(OWNER, "req_instantiate_1")).resolves.toBeNull();
+    const created = await instantiation.instantiate(OWNER, request({ name: "Essay Partner" }));
+    await expect(instantiation.attempt(OWNER, "req_instantiate_1")).resolves.toEqual({
+      active: true, botId: created.agent.id, payloadHash: instantiationPayloadHash(request({ name: "Essay Partner" })),
+    });
+  });
+
+  it("finishes an unfinished creation from its saved definition, and only when it has one", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // The definition was written, then the workspace failed.
+    const workspaceFailed = setup({ ensureWorkspace: failOnce((botId: string) => ensureBotWorkspace(home, botId)) });
+    await expect(workspaceFailed.instantiate(OWNER, request())).rejects.toEqual(new BotInstantiationError("unavailable"));
+    await expect(workspaceFailed.attempt(OWNER, "req_instantiate_1")).resolves.toMatchObject({ active: false });
+    await expect(workspaceFailed.finishFromDefinition(OWNER, "req_instantiate_1")).resolves.toBe(true);
+    await expect(workspaceFailed.attempt(OWNER, "req_instantiate_1")).resolves.toMatchObject({ active: true });
+    // Nothing was written: there is nothing to finish from.
+    const definitionFailed = setup({ agents: { createRecipeBot: async () => { throw new Error("disk full"); } } });
+    await expect(definitionFailed.instantiate(OWNER, request({ clientRequestId: "req_instantiate_2" }))).rejects.toEqual(new BotInstantiationError("unavailable"));
+    await expect(definitionFailed.finishFromDefinition(OWNER, "req_instantiate_2")).resolves.toBe(false);
+    await expect(definitionFailed.finishFromDefinition(OWNER, "req_never_made")).resolves.toBe(false);
+  });
+
+  it("waits for another request finishing the same creation instead of calling it unfinished", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const failing = setup({ ensureWorkspace: failOnce((botId: string) => ensureBotWorkspace(home, botId)) });
+    await expect(failing.instantiate(OWNER, request())).rejects.toEqual(new BotInstantiationError("unavailable"));
+    // A marks the files created and pauses before activating; B read the creation earlier, so it loses the race.
+    let paused!: () => void;
+    const aPaused = new Promise<void>((resolve) => { paused = resolve; });
+    let release!: () => void;
+    const aReleased = new Promise<void>((resolve) => { release = resolve; });
+    const a = setup({ chats: { withTransaction: async <T>(work: (repository: ChatRepository) => Promise<T>) => {
+      paused();
+      await aReleased;
+      return chats.withTransaction(work);
+    } } });
+    const b = setup({ ensureWorkspace: async (botId: string) => {
+      await aPaused;
+      setTimeout(release, 200);
+      await ensureBotWorkspace(home, botId);
+    } });
+    await expect(Promise.all([a.finishFromDefinition(OWNER, "req_instantiate_1"), b.finishFromDefinition(OWNER, "req_instantiate_1")]))
+      .resolves.toEqual([true, true]);
+    await expect(operation()).resolves.toMatchObject({ status: "active" });
+    await expect(agents.count(scope)).resolves.toBe(1);
+  });
+
+  it("never finishes a custom bot's creation from a saved file", async () => {
+    await expect(setup().finishFromDefinition(OWNER, "req_managedcustom_recover_0123")).rejects.toEqual(new BotInstantiationError("invalid_request"));
+  });
+
   it("refuses another payload for the same request, unknown recipes, and malformed input", async () => {
     const instantiation = setup();
     await instantiation.instantiate(OWNER, request());
