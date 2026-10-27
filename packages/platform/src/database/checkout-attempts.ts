@@ -8,6 +8,7 @@ import type {
   PlatformDB,
 } from '../db.js';
 import type { MatrixBillingInterval, MatrixBillingPlanSlug } from '../billing.js';
+import type { CheckoutRequest } from '../billing/checkout-schemas.js';
 import {
   DEFAULT_DEVELOPER_TOOLS,
   parseDeveloperToolsJson,
@@ -59,6 +60,7 @@ export async function insertCheckoutAttempt(
       clerk_user_id: record.clerkUserId,
       stripe_session_id: record.stripeSessionId,
       checkout_url: null,
+      request_payload: null,
       runtime_slot: record.runtimeSlot ?? 'primary',
       plan_slug: record.planSlug ?? null,
       billing_interval: record.billingInterval ?? null,
@@ -85,6 +87,7 @@ export interface BillingCheckoutClaimInput {
   trialPeriodDays?: number | null;
   developerTools?: DeveloperToolId[];
   createdAt: string;
+  checkoutRequest?: CheckoutRequest;
 }
 
 export async function claimCheckoutAttempt(
@@ -101,6 +104,7 @@ export async function claimCheckoutAttempt(
     clerk_user_id: record.clerkUserId,
     stripe_session_id: null,
     checkout_url: null,
+    request_payload: record.checkoutRequest ? JSON.stringify(record.checkoutRequest) : null,
     runtime_slot: record.runtimeSlot,
     plan_slug: record.planSlug,
     billing_interval: record.billingInterval,

@@ -11,14 +11,18 @@ describe('checkout return reconciliation', () => {
   beforeEach(async () => {
     ({ db } = await createTestPlatformDb());
     stripe = {
-      apiTimeoutMs: 10_000, createCheckoutSession: vi.fn(), createAiCreditCheckoutSession: vi.fn(),
+      apiTimeoutMs: 10_000, createCheckoutSession: vi.fn().mockResolvedValue({
+        id: 'cs_recovered', url: 'https://checkout.stripe.test/recovered',
+      }), createAiCreditCheckoutSession: vi.fn(),
       createPortalSession: vi.fn(), constructWebhookEvent: vi.fn(), retrieveRecurringPrice: vi.fn(),
       retrieveCheckoutSession: vi.fn().mockResolvedValue({ status: 'open', clerkUserId: 'owner', url: null, priceId: null, regionSlug: null }),
     };
   });
   afterEach(async () => { vi.restoreAllMocks(); await destroyTestPlatformDb(db); });
   function app(user: string | null = 'owner', prebilling?: PrebillingCheckoutCoordinator) {
-    return new Hono().route('/billing', createBillingRoutes({ db, stripe, env: {}, now,
+    return new Hono().route('/billing', createBillingRoutes({ db, stripe, env: {
+      STRIPE_PRICE_MATRIX_BUILDER_MONTHLY: 'price_builder',
+    }, now,
       resolveClerkUserId: async () => user, prebilling }));
   }
   function request(body: unknown = {}, user: string | null = 'owner', prebilling?: PrebillingCheckoutCoordinator) {
@@ -47,18 +51,42 @@ describe('checkout return reconciliation', () => {
     expect(res.status).toBe(400);
   });
   it('caps repeated checks per owner', async () => {
+    await seed();
     const instance = app();
     for (let i = 0; i < 12; i++) {
       expect((await instance.request('/billing/checkout/reconcile', { method: 'POST', body: '{}' })).status).toBe(200);
     }
     expect((await instance.request('/billing/checkout/reconcile', { method: 'POST', body: '{}' })).status).toBe(429);
-    expect(stripe.retrieveCheckoutSession).not.toHaveBeenCalled();
+    expect(stripe.retrieveCheckoutSession).toHaveBeenCalledTimes(12);
   });
-  it('keeps an ambiguous checkout create unavailable instead of inviting another purchase', async () => {
+  it('keeps a legacy ambiguous checkout create unavailable without an exact request snapshot', async () => {
     await claimCheckoutAttempt(db, { id: 'creating', clerkUserId: 'owner', runtimeSlot: 'primary',
       planSlug: 'matrix_builder', billingInterval: 'monthly', regionSlug: 'region_fsn1', createdAt: now().toISOString() });
     expect((await request()).status).toBe(503);
     expect(stripe.retrieveCheckoutSession).not.toHaveBeenCalled();
+  });
+  it('recovers an ambiguous create with the persisted request and the same idempotency key', async () => {
+    await claimCheckoutAttempt(db, { id: 'creating', clerkUserId: 'owner', runtimeSlot: 'primary',
+      planSlug: 'matrix_builder', billingInterval: 'monthly', regionSlug: 'region_fsn1',
+      createdAt: now().toISOString(), developerTools: ['codex'], checkoutRequest: {
+        planSlug: 'matrix_builder', interval: 'monthly', regionSlug: 'region_fsn1',
+        developerTools: ['codex'], returnPath: '/?billing=setup&handoff=add-computer',
+        attribution: { utm_source: 'saved-source', landing_path: '/pricing' },
+      } });
+
+    const res = await request();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'open' });
+    expect(stripe.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: 'creating', clerkUserId: 'owner', priceId: 'price_builder',
+      runtimeSlot: 'primary', regionSlug: 'region_fsn1', attribution: {
+        utm_source: 'saved-source', landing_path: '/pricing',
+      },
+    }));
+    expect(await getLatestCheckoutAttempt(db, 'owner')).toMatchObject({
+      status: 'open', stripeSessionId: 'cs_recovered', checkoutUrl: 'https://checkout.stripe.test/recovered',
+    });
   });
   it('does not retrieve another owner or slot checkout', async () => {
     await seed('studio');

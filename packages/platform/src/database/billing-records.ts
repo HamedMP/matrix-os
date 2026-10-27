@@ -217,6 +217,7 @@ export function mapCheckoutAttempt(row: BillingCheckoutAttemptsTable): BillingCh
     clerkUserId: row.clerk_user_id,
     stripeSessionId: row.stripe_session_id,
     checkoutUrl: row.checkout_url,
+    requestPayload: row.request_payload,
     runtimeSlot: row.runtime_slot,
     planSlug: row.plan_slug as MatrixBillingPlanSlug | null,
     billingInterval: row.billing_interval as MatrixBillingInterval | null,

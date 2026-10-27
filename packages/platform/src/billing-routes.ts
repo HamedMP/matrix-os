@@ -1,10 +1,12 @@
-import { rememberGoogleAttribution } from './billing/google-attribution-store.js';
 import { createStripeWebhookHandler } from './billing/webhook-handler.js';
 import { createBillingTrackingRoutes } from './billing/tracking-routes.js';
 import { resolveNewCardTrialDays } from './billing/trial-policy.js';
 import { Hono, type Context } from 'hono';
 import { createBillingStatusHandler } from './billing-status-route.js';
-import { createCheckoutReconciliationHandler } from './billing/checkout-reconciliation.js';
+import {
+  createCheckoutReconciliationHandler,
+  createStoredCheckoutSession,
+} from './billing/checkout-reconciliation.js';
 import { bodyLimit } from 'hono/body-limit';
 import { randomUUID } from 'node:crypto';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
@@ -13,7 +15,6 @@ import {
   abandonCreatingCheckoutAttempt,
   claimCardTrialCheckoutAttempt,
   claimCheckoutAttempt,
-  finalizeCheckoutAttempt,
   getBillingCustomerByClerkUserId,
   getBillingSubscription,
   getActiveCheckoutAttempt,
@@ -43,7 +44,6 @@ import { loadAiCreditCheckoutConfig } from './ai-credit-checkout.js';
 import { createAiCreditCheckoutHandler } from './billing/ai-credit-checkout-route.js';
 import { createAiCreditHistoryHandler } from './billing/ai-credit-history-route.js';
 import type { RedditConversionsClient } from './reddit-conversions.js';
-import { createRedditAttributionExpiry } from './reddit-purchase-attribution.js';
 
 import {
   MAX_STRIPE_API_TIMEOUT_MS,
@@ -337,6 +337,7 @@ export function createBillingRoutes(options: {
         clerkUserId,
         createdAt: currentTime.toISOString(),
         developerTools,
+        checkoutRequest: { ...parsed.data, developerTools },
         runtimeSlot: parsed.data.runtimeSlot,
         planSlug: parsed.data.planSlug,
         billingInterval: parsed.data.interval,
@@ -441,74 +442,16 @@ export function createBillingRoutes(options: {
           code: 'checkout_pending',
         }, 409);
       }
-      const customer = await getBillingCustomerByClerkUserId(options.db, clerkUserId);
-      let preparation: { intentId: string; expiresAt: string } | undefined;
-      if (options.prebilling && serverType && parsed.data.runtimeSlot === 'primary') {
-        try {
-          preparation = await options.prebilling.createIntent({
-            checkoutAttemptId: attempt.attempt.id,
-            clerkUserId,
-            runtimeSlot: 'primary',
-            planSlug: parsed.data.planSlug,
-            billingInterval: parsed.data.interval,
-            serverType,
-            regionSlug: parsed.data.regionSlug,
-            developerTools,
-            now: currentTime.toISOString(),
-          });
-        } catch (err: unknown) {
-          console.warn('[billing] prebilling intent unavailable:', err instanceof Error ? err.name : typeof err);
-        }
-      }
-      if (options.prebilling && parsed.data.runtimeSlot === 'primary' && !preparation) {
+      const session = await createStoredCheckoutSession({
+        db: options.db,
+        stripe: options.stripe,
+        env,
+        now,
+        prebilling: options.prebilling,
+      }, attempt.attempt);
+      if (!session) {
         await abandonCreatingCheckoutAttempt(options.db, attempt.attempt.id, currentTime.toISOString());
         return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
-      }
-      const googleAnalytics = await rememberGoogleAttribution(options.db, attempt.attempt.id, clerkUserId,
-        parsed.data.googleAnalytics, currentTime.toISOString());
-      const session = await options.stripe.createCheckoutSession({
-        idempotencyKey: attempt.attempt.id,
-        clerkUserId,
-        customerId: customer?.stripeCustomerId,
-        priceId,
-        mode: 'subscription',
-        automaticTax: true,
-        allowPromotionCodes: true,
-        regionSlug: parsed.data.regionSlug,
-        runtimeSlot: parsed.data.runtimeSlot,
-        redditAttributionExpiresAt: createRedditAttributionExpiry(
-          attempt.attempt.createdAt,
-          attempt.attempt.trialPeriodDays,
-        ),
-        trialPeriodDays: attempt.attempt.trialPeriodDays,
-        paymentMethodMode: attempt.attempt.trialPeriodDays ? 'card_required' : 'dynamic',
-        ...(preparation ? {
-          prebillingIntentId: preparation.intentId,
-          expiresAt: preparation.expiresAt,
-        } : {}),
-        attribution: parsed.data.attribution,
-        googleAnalytics,
-        planSlug: parsed.data.planSlug,
-        interval: parsed.data.interval,
-        successUrl: resolveBillingReturnUrl(env, 'success', parsed.data.returnPath),
-        cancelUrl: resolveBillingReturnUrl(env, 'canceled', parsed.data.returnPath),
-      });
-      if (!await finalizeCheckoutAttempt(options.db, attempt.attempt.id, session.id, session.url)) {
-        throw new Error('checkout_attempt_finalize_failed');
-      }
-      if (preparation) {
-        try {
-          const started = await options.prebilling?.startPreparation({
-            intentId: preparation.intentId,
-            stripeSessionId: session.id,
-            stripeSessionExpiresAt: session.expiresAt ?? preparation.expiresAt,
-          });
-          if (!started) {
-            console.warn('[billing] prebilling preparation deferred');
-          }
-        } catch (err: unknown) {
-          console.warn('[billing] prebilling preparation unavailable:', err instanceof Error ? err.name : typeof err);
-        }
       }
       emitTelemetry(BILLING_CHECKOUT_CREATED_EVENT, {
         distinctId: clerkUserId,
@@ -530,7 +473,7 @@ export function createBillingRoutes(options: {
   });
 
   app.post('/checkout/reconcile', bodyLimit({ maxSize: BILLING_BODY_LIMIT }), createCheckoutReconciliationHandler({
-    db: options.db, stripe: options.stripe, now, prebilling: options.prebilling,
+    db: options.db, stripe: options.stripe, env, now, prebilling: options.prebilling,
     resolveClerkUserId: c => resolveRouteClerkUserId(c, 'checkout reconciliation'),
   }));
 

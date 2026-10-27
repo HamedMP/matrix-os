@@ -11,6 +11,7 @@ export async function migrateCheckout(db: PlatformMigrationExecutor): Promise<vo
       clerk_user_id TEXT NOT NULL,
       stripe_session_id TEXT UNIQUE,
       checkout_url TEXT,
+      request_payload TEXT,
       runtime_slot TEXT NOT NULL DEFAULT 'primary',
       plan_slug TEXT,
       billing_interval TEXT,
@@ -25,6 +26,7 @@ export async function migrateCheckout(db: PlatformMigrationExecutor): Promise<vo
   `.execute(db);
   await sql`ALTER TABLE billing_checkout_attempts ALTER COLUMN stripe_session_id DROP NOT NULL`.execute(db);
   await sql`ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS checkout_url TEXT`.execute(db);
+  await sql`ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS request_payload TEXT`.execute(db);
   await sql`ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS developer_tools TEXT NOT NULL DEFAULT '["codex","claude-code","opencode","pi"]'`.execute(db);
   await sql`ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS runtime_slot TEXT NOT NULL DEFAULT 'primary'`.execute(db);
   await sql`ALTER TABLE billing_checkout_attempts ADD COLUMN IF NOT EXISTS plan_slug TEXT`.execute(db);
