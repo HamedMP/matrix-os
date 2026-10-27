@@ -46,7 +46,7 @@ export function GetStartedAgentsStep({ port, onAgentsConnected }: {
   port: GetStartedAgentLoginPort;
   onAgentsConnected(agents: GetStartedAgentKind[]): void;
 }) {
-  const capabilities = useAgentCapabilities(port.workflowClient, port.snapshot?.refreshedAt);
+  const capabilities = useAgentCapabilities(port.workflowClient, port.snapshot);
   const [expanded, setExpanded] = useState<GetStartedAgentKind | null>(null);
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const now = useLocalObservationExpiry(port.snapshot?.accessSources.map(gatewayCreditStaleAfter) ?? []);

@@ -98,6 +98,24 @@ describe("Get started coding agents screen", () => {
     expect(screen.queryByText(/Terminal/)).not.toBeInTheDocument();
   });
 
+  it("shows the connected instance when an agent has a disconnected one listed first", async () => {
+    const connected = snapshot({ connection: { authMethod: "api_key" } });
+    const both = { ...connected, harnesses: [
+      { ...snapshot().harnesses[0]!, id: "claude_old" },
+      { ...connected.harnesses[0]!, id: "claude_work" },
+    ] } as ProviderSettingsSnapshot;
+    const onAgentsConnected = vi.fn();
+    render(<GetStartedAgentsStep
+      port={port({ snapshot: both }, Promise.resolve([{ ...claude, harnessInstanceId: "claude_old" }, { ...claude, harnessInstanceId: "claude_work" }, codex]))}
+      onAgentsConnected={onAgentsConnected}
+    />);
+    await waitFor(() => expect(row("Claude Code")).toHaveTextContent("Connected"));
+    fireEvent.click(row("Claude Code"));
+    const card = await screen.findByRole("region", { name: "Claude Code connection" });
+    expect(within(card).getByText("API key")).toBeInTheDocument();
+    expect(onAgentsConnected).toHaveBeenLastCalledWith(["claude"]);
+  });
+
   it("shows a connected agent with the Settings connection card", async () => {
     const { rerender } = render(<GetStartedAgentsStep port={port({ snapshot: snapshot({ connection: { authMethod: "api_key" } }) })} onAgentsConnected={vi.fn()} />);
     await waitFor(() => expect(row("Claude Code")).toHaveTextContent("Connected"));
