@@ -497,7 +497,7 @@ function ChatAppContent({
           <div className="px-2 pb-3">
             <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
               projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} gatewayUrl={projectGatewayUrl} scopeKey={authorityKey ?? projectGatewayUrl}
-                chats={sourceConversations} activeChatId={sessionId} onSelectChat={onSwitchConversation} mobile={mobile}/>
+                activeChatId={sessionId} onSelectChat={onSwitchConversation} mobile={mobile}/>
                 <OrganizationDrivesNav chats={sourceConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/></>}
               attention={botSummaries.conversations.some(bot => bot.pendingApprovalCount > 0) ? <WebBotAttention heading={false} conversations={botSummaries.conversations} onOpen={onSwitchConversation}/> : undefined}
               renderRow={conv => (
