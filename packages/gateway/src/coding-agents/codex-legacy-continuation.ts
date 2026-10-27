@@ -53,8 +53,8 @@ export async function recoverLegacyCodexContinuation(
     if (!isSessionStopConfirmed(proof, principal.userId, sessionId)) throw new Error("Legacy conversation recovery is unavailable");
     signal.throwIfAborted();
     // Recheck fresh identity/consent after the asynchronous liveness proof.
-    const binding = await admission.start(principal.userId, sessionId);
-    if (binding !== expectedBinding) throw new Error("Selected Codex account is unavailable");
+    const binding = expectedBinding;
+    await admission.validate(principal.userId, binding, sessionId);
     const recoveredState = { ...resumeState, nativeAccountBinding: binding };
     const browser = nativeBrowserExecution(principal.userId);
     if (browser && !control.prepareBrowser) throw new Error("Browser startup unavailable");

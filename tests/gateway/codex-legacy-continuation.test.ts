@@ -20,6 +20,7 @@ async function fixture() {
   const settingsPath = join(homePath, "system/ai-providers/settings.json");
   const principal = "private-account-A";
   let authenticated = true;
+  let revision = 1;
   await mkdir(join(homePath, "system/ai-providers"), { recursive: true });
   await writeFile(settingsPath, JSON.stringify({ schemaVersion: 1, revision: 1, harnesses: [{
     id: "codex", driverId: "codex", harness: "codex", displayName: "Codex", accentColor: null, enabled: true,
@@ -31,7 +32,7 @@ async function fixture() {
   const admissionOptions = {
     homePath, isOwner: id => id === "owner",
     stopSession,
-    getSnapshot: async () => ({ revision: 1, access: { mode: "writable" },
+    getSnapshot: async () => ({ revision, access: { mode: "writable" },
       accessSources: [{ id: "owner_openai_profile", providerId: "openai", accountId: "owner_codex", kind: "provider_account", fundingKind: "owner_account" }],
       accounts: [{ id: "owner_codex", providerId: "openai", accessSourceId: "owner_openai_profile", authMethod: "terminal", authState: "authenticated" }],
     } as unknown as ProviderSettingsSnapshot),
@@ -65,6 +66,12 @@ async function fixture() {
     signal: new AbortController().signal, publishEvents, now: () => new Date(), nextEventId: () => "evt_recovered" };
   const resume = (override = {}) => provider.resumeTurn!({ ...context, ...override } as never);
   return { homePath, admission, options, provider, makeProvider, runtime, startSession, confirmStoppedSession, events, control, submitTurn, publishEvents, context, resume, stopSession,
+    changeModel: async (modelId: string) => {
+      const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+      settings.revision = ++revision;
+      settings.harnesses[0].route.modelId = modelId;
+      await writeFile(settingsPath, JSON.stringify(settings));
+    },
     revoke: () => { authenticated = false; } };
 }
 
@@ -191,6 +198,20 @@ describe("old Codex Chat continuation", () => {
     vi.spyOn(f.admission, "start").mockResolvedValueOnce("a".repeat(64)).mockResolvedValueOnce("b".repeat(64));
     await expect(f.resume()).rejects.toThrow("account is unavailable");
     expect(f.publishEvents).not.toHaveBeenCalled(); expect(f.startSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps a rejected configuration change from poisoning a later valid recovery", async () => {
+    const f = await fixture();
+    f.confirmStoppedSession.mockImplementationOnce(async () => {
+      await f.changeModel("other-model");
+      return markSessionStopConfirmed({}, "owner", "sess_legacy");
+    });
+    await expect(f.resume()).rejects.toThrow("account is unavailable");
+    expect(f.publishEvents).not.toHaveBeenCalled();
+    expect(f.startSession).not.toHaveBeenCalled();
+    await f.changeModel("provider-default");
+    await expect(f.resume()).resolves.toMatchObject({ outcome: "delivered" });
+    expect(f.startSession).toHaveBeenCalledOnce();
   });
 
   it.each(["missing-control", "success", "uncertain-launch"])("preserves shared-browser bootstrap guards during %s", async mode => {
