@@ -364,7 +364,7 @@ function ConversationTurn({
           showMetadata={!turn.active}
           streaming={turn.active}
           animateOnMount={
-            !initialFinalIds.has(turn.final.id)
+            turn.active && !initialFinalIds.has(turn.final.id)
             && !(turn.final.kind === "message" && turn.final.wasStreamed)
           }
         />
