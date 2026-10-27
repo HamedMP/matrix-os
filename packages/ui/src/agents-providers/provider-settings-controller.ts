@@ -17,6 +17,7 @@ const LOAD_ERROR = "Provider settings are unavailable.";
 const MUTATION_ERROR = "Changes were not saved. Refresh and try again.";
 const CONFLICT_ERROR = "Provider settings changed. Latest settings were loaded.";
 const LOGIN_ACTION_ERROR = "Sign-in started. Use Continue to open it again.";
+const SIGN_OUT_ERROR = "Sign-out could not be confirmed. Check account status and try again.";
 const MAX_LISTENERS = 64;
 const MAX_ACTIVE_REQUESTS = 4;
 
@@ -59,6 +60,9 @@ export interface ProviderSettingsControllerState {
 export interface ProviderSettingsControllerOptions {
   identityKey: string;
   automaticCreditRefreshEnabled?: boolean;
+  /** Web surfaces probe native CLI state on open and foreground return. */
+  initialRefresh?: boolean;
+  foregroundRefresh?: boolean;
   transport: ProviderSettingsTransport;
   /** Called only after an explicit refresh or mutation snapshot is accepted. */
   onCatalogChanged?: (intent?: ProviderSettingsMutationIntent, previousSnapshot?: ProviderSettingsSnapshot) => void;
@@ -153,10 +157,10 @@ export class ProviderSettingsController {
 
   refreshManagedCredit = (signal?: AbortSignal) => this.managedCredit.refresh(signal);
 
-  refresh = async (options: { refresh?: boolean } = { refresh: true }): Promise<void> => {
+  refresh = async (options: { refresh?: boolean; notifyCatalog?: boolean } = { refresh: true }): Promise<void> => {
     if (this.disposed) return;
     if (this.pendingMutations > 0) await this.mutationTail;
-    if (!this.disposed) await this.runRefresh(options.refresh ?? true);
+    if (!this.disposed) await this.runRefresh(options.refresh ?? true, options.notifyCatalog !== false);
   };
 
   refreshForConnection = async (): Promise<ProviderSettingsSnapshot | null> => {
@@ -195,7 +199,7 @@ export class ProviderSettingsController {
     this.listeners.clear();
   };
 
-  private async runRefresh(refresh = true): Promise<boolean> {
+  private async runRefresh(refresh = true, notifyCatalog = true): Promise<boolean> {
     this.managedCredit.invalidate();
     const operationId = ++this.operationClock;
     const request = this.beginRequest("refresh");
@@ -205,7 +209,7 @@ export class ProviderSettingsController {
       const parsed = ProviderSettingsSnapshotSchema.safeParse(raw);
       if (!parsed.success) throw new ProviderSettingsTransportError("invalid_response");
       const applied = this.applySnapshot(parsed.data, { operationId });
-      if (applied && refresh) this.options.onCatalogChanged?.();
+      if (applied && refresh && notifyCatalog) this.options.onCatalogChanged?.();
       return applied;
     } catch (error) {
       if (request.signal.aborted) return false;
@@ -296,6 +300,13 @@ export class ProviderSettingsController {
         if (refreshed) this.update({ error: CONFLICT_ERROR });
         return false;
       }
+      if (intent.type === "logout_account") {
+        // A stale native principal can reject logout before it runs. Read its
+        // current identity again instead of leaving the old account on screen.
+        await this.runRefresh();
+        if (!this.disposed) this.update({ error: SIGN_OUT_ERROR });
+        return false;
+      }
       if (operationId >= this.appliedOperationId) this.update({ error: MUTATION_ERROR });
       return false;
     } finally {
@@ -360,7 +371,7 @@ export class ProviderSettingsController {
 
 export interface UseProviderSettingsControllerResult extends ProviderSettingsControllerState {
   onSelectHarness: (harnessInstanceId: string) => void;
-  refresh: (options?: { refresh?: boolean }) => Promise<void>;
+  refresh: (options?: { refresh?: boolean; notifyCatalog?: boolean }) => Promise<void>;
   refreshForConnection: () => Promise<ProviderSettingsSnapshot | null>;
   mutate: (intent: ProviderSettingsMutationIntent, options?: ProviderSettingsMutationOptions) => Promise<boolean>;
 }
@@ -403,15 +414,25 @@ export function useProviderSettingsController(
 
   useEffect(() => {
     const effectGeneration = ++lifecycle.effectGeneration;
-    void controller.refresh({ refresh: false });
+    void controller.refresh({ refresh: options.initialRefresh === true, notifyCatalog: false });
+    const onFocus = () => { void controller.refresh(); };
+    const onVisibility = () => { if (document.visibilityState === "visible") onFocus(); };
+    if (options.foregroundRefresh && typeof window !== "undefined") {
+      window.addEventListener("focus", onFocus);
+      document.addEventListener("visibilitychange", onVisibility);
+    }
     return () => {
+      if (options.foregroundRefresh && typeof window !== "undefined") {
+        window.removeEventListener("focus", onFocus);
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
       // React Strict Mode replays an effect's cleanup and setup while retaining
       // memoized state. Let the replay reclaim this generation before disposal.
       queueMicrotask(() => {
         if (lifecycle.effectGeneration === effectGeneration) controller.dispose();
       });
     };
-  }, [controller, lifecycle]);
+  }, [controller, lifecycle, options.initialRefresh, options.foregroundRefresh]);
 
   return {
     ...state,

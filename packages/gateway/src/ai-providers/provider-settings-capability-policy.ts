@@ -213,6 +213,12 @@ export function supportedProviderSettingsActions(input: {
     }).length > 0)) {
     actions.push("start_login");
   }
+  if (input.runtime?.supportedActions.includes("set_harness_enabled")
+    && input.codexNativeAccountMetadata?.authMethod === "terminal"
+    && input.canonical.drivers.some(driver => driver.id === "codex" && driver.installState === "installed")
+    && input.config.harnesses.some(harness => harness.harness === "codex")) {
+    actions.push("complete_native_codex");
+  }
   const lifecycleAccounts = input.lifecycle
     ? coordinatorLifecycleAccounts({ config: input.config, canonical: input.canonical, claudeNativeAccountMetadata: input.claudeNativeAccountMetadata, claudeNativeSignedOut: input.claudeNativeSignedOut, codexNativeAccountMetadata: input.codexNativeAccountMetadata })
     : [];

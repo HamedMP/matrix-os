@@ -138,9 +138,10 @@ function TwoPaneChatProviderChoices({
             const instance = chatPickerEntryInstance(entry);
             const unavailable = instance?.availability !== "available";
             const locked = lockedInstanceId !== undefined && !entry.instances.some(candidate => candidate.id === lockedInstanceId);
-            const setupBrowsable = unavailable && Boolean(onSetupAction && instance?.setupActions.length);
-            const disabledReasonBrowsable = entry.id === "matrix-ai" || instance?.unavailabilityReason === "disabled_in_settings";
-            const disabled = (locked || unavailable) && !setupBrowsable && !disabledReasonBrowsable;
+            // Browsing a provider only explains its state. Executing a model
+            // still requires an admitted choice below, so unavailable entries
+            // must remain inspectable even without a setup action.
+            const disabled = locked;
             const active = activeEntry?.id === entry.id;
             const availability = loading && (!instance || canonicalProviderFundingState(instance) !== "credit_reserved")
               ? "Checking model availability" : instance ? canonicalProviderAvailabilityLabel(instance) : "Unavailable";
@@ -217,9 +218,11 @@ function TwoPaneChatProviderChoices({
       {activeEntry?.id === "matrix-ai" ? onSetupAction && matrixSettingsInstance && matrixSettingsAction
         ? <div className="matrix-chat-provider-setup" data-has-models={activeRows.length > 0 || undefined}>
           <button type="button" onClick={() => onSetupAction(matrixSettingsInstance, matrixSettingsAction)}>Agents &amp; providers</button>
-        </div> : null
+        </div> : activeInstance && activeInstance.availability !== "available" ? <div className="matrix-chat-provider-setup"><p>{canonicalProviderAvailabilityLabel(activeInstance)}</p></div> : null
         : recoveryInstances.filter(instance => !loading || canonicalProviderFundingState(instance) === "credit_reserved").map(recoveryInstance => <div key={recoveryInstance.id} className="matrix-chat-provider-setup" data-has-models={activeRows.length > 0 || undefined}>
         <p>{activeEntry && activeEntry.instances.length > 1 ? `${recoveryInstance.id === MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID ? "ChatGPT subscription" : recoveryInstance.id === "matrix_pi_default" ? "Matrix AI credit" : recoveryInstance.connectionLabel ?? recoveryInstance.displayName} · ` : null}{canonicalProviderAvailabilityLabel(recoveryInstance)}</p>
+        {recoveryInstance.driverKind === "hermes" && recoveryInstance.unavailabilityReason === "authentication_required"
+          ? <p>Hermes needs its own provider login. Matrix AI and Codex connections do not sign Hermes in.</p> : null}
         {canonicalProviderFundingState(recoveryInstance) === "credit_reserved"
           ? <p>Your credit is reserved while usage is confirmed.</p> : null}
         {onSetupAction ? recoveryInstance.setupActions.map((action) => <button key={action.id} type="button"

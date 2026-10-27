@@ -128,14 +128,15 @@ export function useChatProviderState(
     let refreshing = false;
     let pending = false;
     let forcePending = false;
-    const refresh = async (force = false) => {
-      forcePending = forcePending || force;
+    const refresh = async (force = false, queueIfBusy = false) => {
       if (refreshing) {
         // Focus/visibility belong to the read already in progress. Only an
         // explicit post-change refresh must queue a newer observation.
-        pending = pending || force;
+        pending = pending || queueIfBusy;
+        forcePending = forcePending || (queueIfBusy && force);
         return;
       }
+      forcePending = forcePending || force;
       refreshing = true;
       if (!cancelled) setLoading(true);
       do {
@@ -161,12 +162,12 @@ export function useChatProviderState(
       if (!cancelled) setLoading(false);
     };
     const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") refresh();
+      if (document.visibilityState === "visible") void refresh(true);
     };
-    const onFocus = () => { void refresh(); };
-    const onSettingsChange = () => { void refresh(true); };
-    refreshRef.current = () => { void refresh(true); };
-    void refresh();
+    const onFocus = () => { void refresh(true); };
+    const onSettingsChange = () => { void refresh(true, true); };
+    refreshRef.current = () => { void refresh(true, true); };
+    void refresh(true);
     window.addEventListener("focus", onFocus);
     window.addEventListener(PROVIDER_SETTINGS_CHANGED_EVENT, onSettingsChange);
     document.addEventListener("visibilitychange", onVisibilityChange);

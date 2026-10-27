@@ -75,6 +75,15 @@ it.each(["off", "consent"] as const)("offers explicit normal native Reconnect fo
   await waitFor(() => expect(client.startConnection).toHaveBeenCalledWith(expect.objectContaining({ harnessInstanceId: "codex", optionId: "openai_device_code" }), expect.any(AbortSignal)));
   expect(mutate).not.toHaveBeenCalled();
 });
+it("offers explicit Matrix execution consent for an already signed-in Codex CLI", async () => {
+  const snapshot = codexFixture("consent");
+  snapshot.supportedActions.push("complete_native_codex");
+  const { mutate, client } = await mount(snapshot);
+  expect(screen.getByText(/CLI is signed in.*execution permission/i)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Use this Codex account in Matrix" }));
+  await waitFor(() => expect(mutate).toHaveBeenCalledExactlyOnceWith({ type: "complete_native_codex", harnessInstanceId: "codex" }));
+  expect(client.startConnection).not.toHaveBeenCalled();
+});
 it("retains initial sign-in and API-key choices without authenticated identity", async () => {
   await mount(codexFixture("none"));
   expect(screen.getByRole("button", { name: /ChatGPT account · Sign in with a code/ })).toBeEnabled();

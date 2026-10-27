@@ -47,6 +47,8 @@ export function AgentSection({
   const controller = useProviderSettingsController({
     identityKey: `${identityKey}:${runtimeSlot}`,
     automaticCreditRefreshEnabled,
+    initialRefresh: true,
+    foregroundRefresh: true,
     transport,
   });
 
