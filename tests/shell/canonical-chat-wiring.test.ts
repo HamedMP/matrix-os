@@ -6,6 +6,7 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
   it("provides one canonical Chat state to every shared shell renderer", () => {
     const shellHome = readFileSync(join(process.cwd(), "shell/src/components/ShellHome.tsx"), "utf8");
     const canonicalState = readFileSync(join(process.cwd(), "shell/src/hooks/useCanonicalChatState.ts"), "utf8");
+    const turnAdmission = readFileSync(join(process.cwd(), "shell/src/hooks/canonical-chat-turn-admission.ts"), "utf8");
     const providerState = readFileSync(join(process.cwd(), "shell/src/components/chat-app-provider-setup.tsx"), "utf8");
     const desktop = readFileSync(join(process.cwd(), "shell/src/components/Desktop.tsx"), "utf8");
     const mobile = readFileSync(join(process.cwd(), "shell/src/components/mobile/MobileShell.tsx"), "utf8");
@@ -21,7 +22,8 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     expect(mobile).toContain("collaborationView={chat.collaborationView}");
     expect(mobile).toContain("onOpenSharedChat={chat.openSharedChat}");
     expect(userButton).toContain("showSharedWithMe={!isMobile}");
-    expect(canonicalState).toContain("client.admitTurn(");
+    expect(canonicalState).toContain("admitShellChatTurn({");
+    expect(turnAdmission).toContain("options.client.admitTurn(");
     expect(canonicalState).toContain("client.uploadAttachment(");
     expect(canonicalState).toContain("activeChatId && detailRef.current?.record.chat.id !== activeChatId");
     expect(canonicalState).not.toContain('type: "message"');

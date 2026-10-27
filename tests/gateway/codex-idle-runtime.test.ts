@@ -48,6 +48,24 @@ describe("Codex idle runtime handshake", () => {
       await waitFor(eventPath, active ? "Task started" : "turn.completed");
       expect(await readFile(eventPath, "utf8")).toContain('"type":"thread.started","thread_id":"native_idle_test"');
       await expect(control(eventPath.replace(/\.jsonl$/, ".sock"), "wrong_native_id")).resolves.toEqual({ ok: false });
+      const observer = createCodexControlClient({ homePath: home });
+      await expect(observer.isExecutionIdle({ sessionId: "sess_idle", providerThreadId: "wrong_native_id" })).resolves.toBe(false);
+      await expect(observer.isExecutionIdle({ sessionId: "sess_idle", providerThreadId: "native_idle_test" })).resolves.toBe(!active);
+      await expect(observer.isExecutionIdle({ sessionId: "sess_idle", providerThreadId: "native_idle_test", requestId: "req_unobserved" })).resolves.toBe(false);
+      expect(child.exitCode).toBeNull();
+      if (active) {
+        await observer.submitTurn({ sessionId: "sess_idle", turnId: "turn_queued", prompt: "Queued task", modelOptions: [] });
+        await expect(observer.isExecutionIdle({ sessionId: "sess_idle", providerThreadId: "native_idle_test", requestId: "req_queued" })).resolves.toBe(false);
+      }
+      if (!active) {
+        await observer.submitTurn({ sessionId: "sess_idle", turnId: "turn_next", prompt: "Another small task", modelOptions: [] });
+        for (let attempt = 0; attempt < 250; attempt++) {
+          if ((await readFile(eventPath, "utf8")).match(/"type":"turn.completed"/g)?.length === 2) break;
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        await expect(observer.isExecutionIdle({ sessionId: "sess_idle", providerThreadId: "native_idle_test" })).resolves.toBe(false);
+        await expect(observer.isExecutionIdle({ sessionId: "sess_idle", providerThreadId: "native_idle_test", requestId: "req_next" })).resolves.toBe(true);
+      }
       const hibernate = () => createCodexControlClient({ homePath: home }).hibernate({
         sessionId: "sess_idle", providerThreadId: "native_idle_test", clientRequestId: "req_hibernate_client",
       });

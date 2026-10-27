@@ -10,7 +10,7 @@ const agent = { id: "hermes", harness: "hermes", displayName: "Hermes", installS
 const props = { harnesses: [agent], sources: [], selectedId: "hermes", disabled: false, canEnable: () => true, onSelect: vi.fn(), onEnable: vi.fn(), renderDetails: () => <div>Connection details</div> };
 it("shows credential connection separately from inference readiness and removes Enable", () => {
   render(<HarnessRail {...props} />);
-  expect(screen.getByRole("button", { name: /Hermes.*Connected/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Hermes.*Configured/ })).toBeVisible();
   expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   expect(screen.queryByText(/Local login|Off in Settings|Enable this agent/)).not.toBeInTheDocument();
   expect(agent.authState).toBe("unknown");
@@ -41,7 +41,7 @@ it("keeps the expanded agent when catalog inventory becomes a saved instance on 
   const view = render(<AgentsProvidersView {...p} />);
   fireEvent.click(screen.getByRole("button", { name: /Hermes.*Not installed/ }));
   view.rerender(<AgentsProvidersView {...p} snapshot={{ ...snapshot, harnesses: [{ ...agent, accountIds: [], loginMethods: [], selectedAccountId: null, route: { kind: "configurable", providerId: "openai-codex", modelId: "test" } }], refreshedAt: "2026-01-01T00:00:08Z" }} />);
-  expect(screen.getByRole("button", { name: /Hermes.*Connected/ })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByRole("button", { name: /Hermes.*Configured/ })).toHaveAttribute("aria-expanded", "true");
   expect(screen.queryByRole("switch")).not.toBeInTheDocument();
 });
 

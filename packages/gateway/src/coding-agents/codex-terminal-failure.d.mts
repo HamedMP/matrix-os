@@ -16,6 +16,7 @@ export const CODEX_FAILURE_REASONS: readonly [
   "invalid_request",
   "environment_failed",
   "history_unavailable",
+  "transcript_interrupted",
 ];
 export type CodexFailureReason = (typeof CODEX_FAILURE_REASONS)[number];
 export function codexTerminalFailureReason(value: unknown): CodexFailureReason | undefined;

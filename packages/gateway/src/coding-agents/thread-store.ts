@@ -1,4 +1,6 @@
 import { assertCodingAgentProviderEnabled } from "./codex-harness-admission.js";
+import { applyProviderTranscriptRecovery, providerTranscriptUnavailable, prepareProviderObservation, retainedProviderSessions, type ProviderIdleObservation, type ProviderObservationResume } from "./provider-transcript-recovery.js";
+import { boundedOperation } from "../bounded-operation.js";
 import { deleteProjectThreadState } from "./project-thread-deletion.js";
 import { isFailedCodexBootstrap } from "./codex-failed-bootstrap.js";
 import { applyBackgroundThreadStop, withBackgroundResumeState, BackgroundThreadStopSchema, type BackgroundThreadStop } from "./background-thread-stop.js";
@@ -220,11 +222,16 @@ export interface CodingAgentThreadStore {
     validTaskIds: readonly string[],
   ): Promise<CodingAgentProjectThreadProjection>;
   getThread(principal: RequestPrincipal, threadId: string, cursor?: string): Promise<AgentThreadSnapshot>;
+  retainedProviderSessions(): Promise<string[]>;
+  removeUnreferencedProviderTranscript(sessionId: string, remove: () => Promise<boolean>): Promise<boolean>;
+  prepareProviderObservation(principal: RequestPrincipal, threadId: string, sessionId: string, resume: ProviderObservationResume): Promise<{ offset: number; generation: string } | undefined>;
+  recoverProviderTranscript(principal: RequestPrincipal, threadId: string, cursor: { sessionId: string; expectedOffset: number; generation?: string },
+    proveIdle: (observation: ProviderIdleObservation) => Promise<boolean>): Promise<boolean>;
   ingestProviderEvents(
     principal: RequestPrincipal,
     threadId: string,
     batch: CodingAgentProviderEventBatch,
-    cursor?: { sessionId: string; offset: number },
+    cursor?: { sessionId: string; offset: number; generation?: string; checkpoint?: false },
   ): Promise<AgentThreadSnapshot>;
   abortThread(principal: RequestPrincipal, threadId: string, clientRequestId: string, scope?: CodingAbortScope): Promise<AgentThreadSnapshot>;
   steerTurn(
@@ -272,7 +279,10 @@ export class CodingAgentThreadError extends Error {
 }
 
 export class CodingAgentTurnError extends Error {
-  constructor(readonly code: "thread_busy" | "thread_not_found" | "thread_not_resumable" | "turn_unavailable") {
+  constructor(
+    readonly code: "thread_busy" | "thread_not_found" | "thread_not_resumable" | "turn_unavailable",
+    readonly reason?: "history_unavailable",
+  ) {
     super(code);
     this.name = "CodingAgentTurnError";
   }
@@ -359,7 +369,7 @@ function statePath(homePath: string): string {
   return join(homePath, ...THREAD_STORE_RELATIVE_PATH);
 }
 
-async function readState(homePath: string): Promise<StoredThreadState> {
+async function readState(homePath: string, missingIsEmpty = true): Promise<StoredThreadState> {
   try {
     const raw = await readFile(statePath(homePath), "utf-8");
     const parsed = StoredThreadStateSchema.parse(JSON.parse(raw));
@@ -368,7 +378,7 @@ async function readState(homePath: string): Promise<StoredThreadState> {
       threads: parsed.threads.map(normalizeThreadAttention),
     };
   } catch (err: unknown) {
-    if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+    if (missingIsEmpty && err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
       return emptyState();
     }
     throw err;
@@ -693,8 +703,8 @@ export function createCodingAgentThreadStore(
     return run;
   }
 
-  async function inspect<T>(fn: (state: StoredThreadState) => T): Promise<T> {
-    const run = queue.then(async () => fn(await readState(options.homePath)));
+  async function inspect<T>(fn: (state: StoredThreadState) => T | Promise<T>, missingIsEmpty = true): Promise<T> {
+    const run = queue.then(async () => fn(await readState(options.homePath, missingIsEmpty)));
     queue = run.then(() => undefined, () => undefined);
     return run;
   }
@@ -877,6 +887,9 @@ export function createCodingAgentThreadStore(
         candidate.activeTurnId === input.turnId
       );
       if (!thread) return { state, result: [] as AgentThreadEvent[] };
+      if (input.resumeState && thread.providerResumeState?.eventGeneration !== input.resumeState.eventGeneration) {
+        return { state, result: [] as AgentThreadEvent[] };
+      }
       if (input.providerEvents.some((event) =>
         event.type === "turn.accepted" ||
         event.type === "turn.status" ||
@@ -1346,9 +1359,16 @@ export function createCodingAgentThreadStore(
           const provider = providerFor(thread.providerId);
           await assertCodingAgentProviderEnabled(options.providerAdmission, thread.providerId,
             () => new CodingAgentTurnError("turn_unavailable"));
+          const interrupted = providerTranscriptUnavailable(thread, state.events);
           if (!provider.resumeTurn || !thread.providerResumeState
+            || (interrupted && !provider.prepareHistoryResume)
             || isFailedCodexBootstrap({ ownerId: principal.userId, thread, events: state.events, turns: state.turns })) {
-            throw new CodingAgentTurnError("thread_not_resumable");
+            throw new CodingAgentTurnError("thread_not_resumable",
+              providerTranscriptUnavailable(thread, state.events) ? "history_unavailable" : undefined);
+          }
+          if (interrupted) {
+            try { await boundedOperation(signal => provider.prepareHistoryResume!({ principal, thread: stripOwner(thread), resumeState: thread.providerResumeState!, signal }), 5_000); }
+            catch (error) { logCodingAgentWarning("native conversation resume preparation unavailable", error); throw new CodingAgentTurnError("thread_not_resumable", "history_unavailable"); }
           }
           const acceptedAt = now().toISOString();
           const turnId = AgentTurnIdSchema.parse(`turn_${randomUUID()}`);
@@ -1375,6 +1395,7 @@ export function createCodingAgentThreadStore(
           const acceptedEvents = [acceptedEvent, userMessageEvent];
           const nextThread: StoredThread = {
             ...thread,
+            ...(interrupted ? { providerResumeState: { ...thread.providerResumeState!, eventStreamInterrupted: true } } : {}),
             activeTurnId: turnId,
             deliveredTurnId: undefined,
             status: "running",
@@ -1565,6 +1586,21 @@ export function createCodingAgentThreadStore(
       if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
       return snapshotFor(thread, state.events, cursor);
     },
+    async retainedProviderSessions() { return retainedProviderSessions(await readState(options.homePath)); },
+    async removeUnreferencedProviderTranscript(sessionId, remove) {
+      WorkspaceSessionIdSchema.parse(sessionId);
+      return inspect(async state => !retainedProviderSessions(state).includes(sessionId) && await remove(), false);
+    },
+    async prepareProviderObservation(principal, threadId, sessionId, resume) {
+      return mutate(state => prepareProviderObservation(state, { homePath: options.homePath, ownerId: principal.userId, threadId, sessionId, resume }));
+    },
+    async recoverProviderTranscript(principal, threadId, cursor, proveIdle) {
+      const events = await mutate(state => applyProviderTranscriptRecovery(state, {
+        ownerId: principal.userId, threadId, cursor, proveIdle, now, nextEventId,
+      }));
+      publish(principal.userId, threadId, events);
+      return events.length > 0;
+    },
     async ingestProviderEvents(principal, threadId, batch, cursor) {
       const parsed = parseCodingAgentProviderEventBatch(batch, threadId);
       if (parsed.resumeState) {
@@ -1579,7 +1615,8 @@ export function createCodingAgentThreadStore(
           WorkspaceSessionIdSchema.parse(cursor.sessionId);
           z.number().int().min(0).max(16 * 1024 * 1024).parse(cursor.offset);
           if (thread.providerResumeState?.conversationId !== cursor.sessionId) throw new Error("Provider cursor identity mismatch");
-          if ((thread.providerEventOffset ?? -1) >= cursor.offset) return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] as AgentThreadEvent[] } };
+          if (thread.providerResumeState.eventGeneration !== cursor.generation) throw new Error("Provider observation generation changed");
+          if (cursor.checkpoint !== false && (thread.providerEventOffset ?? -1) >= cursor.offset) return { state, result: { snapshot: snapshotFor(thread, state.events), eventsToPublish: [] as AgentThreadEvent[] } };
         }
         const existingEventIds = new Set(
           state.events
@@ -1607,7 +1644,7 @@ export function createCodingAgentThreadStore(
             },
           };
         }
-        if (cursor) nextThread = { ...nextThread, providerEventOffset: cursor.offset };
+        if (cursor && cursor.checkpoint !== false) nextThread = { ...nextThread, providerEventOffset: cursor.offset };
         const nextState = {
           ...state,
           threads: state.threads.map((candidate) => candidate === thread ? nextThread : candidate),

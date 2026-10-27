@@ -78,6 +78,78 @@ When adding an event type:
 4. Update desktop/mobile reducers to ignore or render the new event without breaking older snapshots.
 5. Add stream replay tests that prove replay plus live delivery remains idempotent.
 
+## Codex transcript checkpoint recovery
+
+A saved byte checkpoint is valid only for its owner, thread and provider session.
+It also belongs to one transcript generation. Hibernation removes the live
+watcher while preserving the native conversation and durable thread reference;
+it does not make the transcript an orphan. Retention cleanup must protect these
+references, including completed and history-interrupted chats, and skip deletion
+when the durable reference inventory cannot be read.
+
+If the current transcript is shorter than that checkpoint, do not replay it from
+zero: legacy records cannot establish which Matrix turn produced their text or
+terminal outcome. Replaying can duplicate output or complete a newer turn.
+
+Reconcile the affected thread as interrupted only after confirming its backing
+execution stopped, or obtaining an identity-bound private runner receipt proving
+that the exact admitted request is idle with no active or queued work. Commit the
+interruption under the existing thread-state mutation boundary, rechecking the
+current turn and checkpoint. Preserve committed transcript content and never
+resend a prompt during recovery. Repeated reconciliation must be idempotent.
+
+An interrupted transcript does not require a new chat when the existing native
+conversation can be resumed safely. A subsequent explicit user turn must retain
+the same native conversation and account binding. Before sending that turn,
+confirm the old execution is idle or stopped, establish a fresh checkpoint
+generation at the current end of the transcript, and persist it under the
+owner-state admission boundary. Recheck the accepted turn, session, native
+conversation, runtime incarnation and old checkpoint. Stale watcher generations
+must not ingest events or advance the replacement checkpoint. Generation-scoped
+event ids prevent new bytes at reused offsets from colliding with old history.
+The old interrupted outcome remains truthful; committed messages are preserved.
+An unknown execution or missing native identity cannot authorize a prompt replay
+or a silent replacement conversation.
+
+Older runners without that private proof remain protected while execution is
+unconfirmed; a live process alone proves neither model activity nor completion.
+This recovery does not reconstruct uncommitted output or infer successful
+completion from an unbound terminal record. Validate it through the real event
+bridge, durable thread store and canonical recovery consumer across restart.
+Cover the natural complete → hibernate → retention → restart → native-resume
+lifecycle, as well as migration of already-interrupted chats, stale watcher
+events, duplicate requests and failed native-identity/liveness checks.
+
+The current gateway reads legacy checkpoints without generation metadata.
+Older gateways with a strict resume-state schema cannot read newly persisted
+generation metadata. A gateway downgrade needs a reviewed compatibility
+migration; do not discard owner conversations or native history to force it.
+
+## Send acknowledgement recovery
+
+A transport timeout does not prove that a Chat message was rejected. Web
+Desktop and Electron Desktop retain the exact admission request body and id
+while its result is unknown. Reconcile against the persisted turn and its
+linked input message and run, including when acceptance arrives over the
+stream before the HTTP response. A missing turn in a bounded history page or
+a failed read remains unknown.
+
+Confirm a matching admission only once. Clear only the unchanged draft owned
+by that attempt's Chat, runtime/auth identity and editor revision; a late
+response must preserve newer edits. An explicit retry of an unresolved send
+reuses its original body and id. Reconciliation never posts a message by
+itself. Bound unresolved in-memory receipts and reject overflow rather than
+evicting an uncertain receipt and accidentally issuing another request id.
+Apply the same rule to the composer request seed: neither elapsed time nor
+other drafts may replace an unresolved new-chat request's identity. Release
+known dispositions so the bounded tracker remains usable.
+
+Hiding and reopening the same mounted Chat with the same runtime/auth identity
+must resume passive receipt checks without another Send action. Keep original
+draft ownership separate from current status ownership, so confirming that
+receipt preserves edited drafts and newer errors. An unmount or identity
+change must still prevent the old attempt from mutating the new view.
+
 ## Provider Adapters
 
 Provider-specific behavior belongs behind the gateway provider adapter interface, not in desktop or mobile UI. A provider adapter should:
