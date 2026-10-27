@@ -161,6 +161,17 @@ export const CanonicalChatQueuedTurnIdSchema = canonicalReferenceId(128)
     message: "Invalid queued Turn identifier",
   });
 
+/** Original admission identity, before Agent/Bot execution settings are applied.
+ * Hash this exact preimage with SHA-256 in the caller's runtime. Revision and
+ * request key fence the write separately and are intentionally excluded.
+ */
+export function canonicalChatTurnRequestIdentity(input: Pick<CanonicalCreateChatTurnRequest,
+  "parts" | "selection" | "interactionMode" | "permissionMode" | "executionRoot">): string {
+  return JSON.stringify({ parts: input.parts, selection: input.selection,
+    interactionMode: input.interactionMode, permissionMode: input.permissionMode,
+    executionRoot: input.executionRoot ?? null });
+}
+
 export const CanonicalQueueChatTurnRequestSchema = CanonicalCreateChatTurnRequestSchema;
 
 export const CanonicalUpdateQueuedChatTurnRequestSchema = z.object({

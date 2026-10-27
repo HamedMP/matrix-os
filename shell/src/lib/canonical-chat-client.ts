@@ -266,6 +266,7 @@ export function createCanonicalShellChatClient(options: {
           || error instanceof CanonicalShellChatRequestError && error.status >= 500;
         if (ambiguous) {
           const recovered = await recoverCanonicalChatAdmission(id, body,
+            requestHash => request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turn-admissions/${encodeURIComponent(body.clientRequestId)}?requestHash=${requestHash}`)),
             () => request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?limit=200`)));
           if (recovered) return recovered;
         }

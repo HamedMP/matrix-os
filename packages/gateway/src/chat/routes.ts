@@ -20,6 +20,7 @@ import {
   CanonicalChatIdSchema,
   CanonicalChatListResponseSchema,
   CanonicalChatRecordSchema,
+  CanonicalChatRequestIdSchema,
   CanonicalChatApprovalSubmissionResponseSchema,
   CanonicalChatRunCancellationResponseSchema,
   CanonicalChatRunSteeringResponseSchema,
@@ -161,6 +162,9 @@ export interface CanonicalChatRouteService {
     limit: number;
     cursor?: string;
   }): Promise<CanonicalChatDetailResponse | null>;
+  getTurnAdmission?(
+    owner: ChatOwner, chatId: string, clientRequestId: string, requestHash: string,
+  ): Promise<CanonicalChatTurnAdmissionResponse | null>;
   admitTurn(
     principal: RequestPrincipal,
     owner: ChatOwner,
@@ -546,6 +550,27 @@ export function createCanonicalChatRoutes(options: {
       if (!result) return notFound(context);
       return chatJson(context, projectChatMessageResponse(
         CanonicalChatDetailResponseSchema.parse(result),
+        ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
+        ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
+        ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),
+      ));
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
+  routes.get("/api/chats/:chatId/turn-admissions/:clientRequestId", async (context) => {
+    try {
+      const chatId = CanonicalChatIdSchema.parse(context.req.param("chatId"));
+      const clientRequestId = CanonicalChatRequestIdSchema.parse(context.req.param("clientRequestId"));
+      const requestHash = z.string().regex(/^[a-f0-9]{64}$/).parse(context.req.query("requestHash"));
+      if (context.req.queries("requestHash")?.length !== 1) return validationError(context);
+      const owner = ownerFromPrincipal(options.getPrincipal(context));
+      if (!options.service.getTurnAdmission) throw new Error("Canonical Chat admission lookup unavailable");
+      const result = await options.service.getTurnAdmission(owner, chatId, clientRequestId, requestHash);
+      if (!result) return notFound(context);
+      return chatJson(context, projectChatMessageResponse(
+        CanonicalChatTurnAdmissionResponseSchema.parse(result),
         ChatMessageWireVersionSchema.parse(context.req.query("messageVersion")),
         ChatInputWireVersionSchema.parse(context.req.query("inputVersion")),
         ChatCommandPreviewWireVersionSchema.parse(context.req.query("commandPreviewVersion")),

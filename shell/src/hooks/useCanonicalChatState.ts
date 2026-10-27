@@ -147,6 +147,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string; merge?: boolean } | null>(null);
   // One active input attempt per hook; bounded and retained for ambiguous retries.
   const inputAttempt = useRef<{ key: string; clientRequestId: string; inFlight: boolean } | null>(null);
+  // One unresolved draft send; replaced on changed payload, cleared on acceptance or a new draft.
+  const draftSendAttempt = useRef<{ payload: string; clientRequestId: string } | null>(null);
   const composerDraftSequence = useRef(0);
   const detailRequestGeneration = useRef(0);
   const pendingEventSourceDisposalRef = useRef<{
@@ -173,6 +175,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSelectedCollaborationView(null);
     setSafeError(null);
     inputAttempt.current = null;
+    draftSendAttempt.current = null;
     submittingRef.current = false;
     setSubmitting(false);
     if (previousComposerIdentity.current !== composerIdentity) {
@@ -396,6 +399,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       const uploadedReferences: string[] = [];
       let turnAdmitted = false;
       let admissionAttempted = false;
+      let draftRequestId: string | undefined;
       try {
         const selection = {
           instanceId: options.instanceId!,
@@ -406,9 +410,18 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         };
         let record = detailRef.current?.record ?? null;
         if (!record) {
+          const payload = JSON.stringify({ title: generatedChatTitle(options.displayText?.trim() || text),
+            text: text.trim() ? options.promptText?.trim() || text.trim() : "",
+            files: files ?? [], resources: options.resources ?? [], selection,
+            interactionMode: options.interactionMode, permissionMode: options.permissionMode,
+            clientRequestId: options.clientRequestId });
+          if (draftSendAttempt.current?.payload !== payload) {
+            draftSendAttempt.current = { payload, clientRequestId: options.clientRequestId ?? requestId() };
+          }
+          draftRequestId = draftSendAttempt.current.clientRequestId;
           setActiveChatId(undefined);
           record = await client.create({
-            clientRequestId: options.clientRequestId ? `${options.clientRequestId}_chat` : requestId(),
+            clientRequestId: `${draftRequestId}_chat`,
             title: generatedChatTitle(options.displayText?.trim() || text),
             currentSelection: selection,
           });
@@ -416,8 +429,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         }
         if ((files?.length ?? 0) > 8) throw new Error("TooManyAttachments");
         const uploadResults = await Promise.allSettled((files ?? []).map(async (file, index) => {
-          const retryKey = options.clientRequestId
-            ? `${options.clientRequestId}:${index}` : undefined;
+          const retryId = draftRequestId ?? options.clientRequestId;
+          const retryKey = retryId ? `${retryId}:${index}` : undefined;
           const reference = await client.uploadAttachment(file, retryKey);
           if (!reference.ownerReference) throw new Error("InvalidAttachmentReference");
           uploadedReferences.push(reference.ownerReference);
@@ -435,14 +448,14 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           ...attachmentParts,
         ];
         const input = {
-          clientRequestId: options.clientRequestId ?? requestId(), baseRevision: record.chat.revision,
+          clientRequestId: draftRequestId ?? options.clientRequestId ?? requestId(), baseRevision: record.chat.revision,
           parts, selection, interactionMode: options.interactionMode!, permissionMode: options.permissionMode!,
         };
         const requestScope = record.chat.id;
         let operation = record.activeRun && options.resources?.length ? "queue" as const : "send" as const;
         {
           const { clientRequestId: _generatedId, baseRevision: _revision, ...semanticInput } = input;
-          const attempt = mentionRequests.resolve(authority.summaryClient ?? client, requestScope, semanticInput, operation, options.clientRequestId);
+          const attempt = mentionRequests.resolve(authority.summaryClient ?? client, requestScope, semanticInput, operation, draftRequestId ?? options.clientRequestId);
           input.clientRequestId = attempt.clientRequestId;
           operation = attempt.operation;
         }
@@ -463,7 +476,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         }
         const submittedDraft = composerDraftSequence.current;
         const admitted: CanonicalChatClientAdmission = await admitShellChatTurn({ tracker: admissions, identity: navigationIdentity, client, record, input,
-          seed: options.clientRequestId, current: () => detailRef.current, isCurrent,
+          seed: input.clientRequestId, current: () => detailRef.current, isCurrent,
           onRejected: () => mentionRequests.accepted(requestScope, input.clientRequestId),
           onPrepared: id => { latestAdmissionId.current = id; },
           onAccepted: () => {
@@ -478,6 +491,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           } });
         if (!isCurrent()) return false;
         turnAdmitted = true;
+        if (draftSendAttempt.current?.clientRequestId === draftRequestId) draftSendAttempt.current = null;
         mentionRequests.accepted(requestScope, admitted.turn.clientRequestId);
         if (activeChatIdRef.current === sourceChatId) {
           activeChatIdRef.current = record.chat.id;
@@ -536,6 +550,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
 
   const newChat = useCallback(async () => {
     if (!isCurrent()) return;
+    draftSendAttempt.current = null;
     activeChatIdRef.current = undefined;
     detailRef.current = null;
     detailRequestGeneration.current += 1;

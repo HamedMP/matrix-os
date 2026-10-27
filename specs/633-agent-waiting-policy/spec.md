@@ -120,3 +120,14 @@ Electron Desktop and shared Web Chat treat admission transport failure as an unk
 A successful Stop retains a selected-Chat snapshot synchronization obligation even when the event stream reports open. Reads retry with capped backoff until the cancelled Run is no longer active; navigation, authority changes and unmount dispose the obligation. The canonical terminal state stays authoritative; clients do not invent revisions or turn a completed Run into a cancellation.
 
 Qualification separates controlled transport-fault regression tests from Electron Desktop live observations. Previous long-run evidence remains pinned to its original source; a new UI build does not retroactively qualify other surfaces, providers or untested output/expiry boundaries.
+# Admission readback after lost acknowledgement
+
+An unchanged first send retains its create, upload and admission request identity before Chat creation. A lost create/admission response must not produce another Chat or model turn on an explicit unchanged retry. Edited payloads and a deliberate new draft get a separate identity; acceptance clears the retained attempt.
+
+Agent/Bot execution can legitimately override composer settings. Recovery therefore checks the saved original request hash through a read-only authenticated lookup, rather than comparing those effective settings. The browser and server share the same original-request preimage (parts, selection, modes and optional execution root); revision and request key fence writes separately. Existing strict Run response schemas are unchanged.
+
+|Method/path|Authentication and scope|Validation|Effects and failures|
+|---|---|---|---|
+|GET `/api/chats/:chatId/turn-admissions/:clientRequestId?requestHash=<sha256>`|Existing authenticated principal, personal owner scope and owner-filtered canonical repository lookup|Bounded canonical Chat/request IDs; exactly one lowercase 64-hex original-request hash; existing message/input projection versions|Reads an existing first admission only; no mutation, reconciliation, inference, queue dispatch or authority expansion. Missing/mismatched ownership, request or hash does not acknowledge admission; missing service is a safe server failure.|
+
+An optional subsequent transcript read improves local hydration; its failure cannot erase an already confirmed admission, and a stale transcript cannot replace the confirmed snapshot. An older Host without the lookup fails closed and never triggers an automatic second admission. Tests cover create/response loss, ordinary attachments, effective Agent/Bot overrides, mismatched original hashes, cross-owner reads and old-Host compatibility.

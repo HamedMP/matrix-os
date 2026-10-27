@@ -1,6 +1,7 @@
 import {
   CanonicalChatDetailResponseSchema,
   CanonicalChatTurnAdmissionResponseSchema,
+  canonicalChatTurnRequestIdentity,
   type CanonicalChatTurnAdmissionResponse,
   type CanonicalCreateChatTurnRequest,
   type CanonicalChatDetailResponse,
@@ -11,33 +12,39 @@ export type CanonicalChatClientAdmission = CanonicalChatTurnAdmissionResponse & 
   recoveredDetail?: CanonicalChatDetailResponse;
 };
 
-/** A lost HTTP acknowledgement is not proof of rejection. Read the exact
- * idempotency key once; never repeat a potentially admitted write here.
+/** A lost acknowledgement is not proof of rejection. Ask the authenticated
+ * admission lookup to attest to the saved original request hash, before Agent
+ * or Bot execution overrides. Never repeat a potentially admitted write here.
  */
 export async function recoverCanonicalChatAdmission(
   chatId: string,
   request: CanonicalCreateChatTurnRequest,
-  read: () => Promise<unknown>,
+  readAdmission: (requestHash: string) => Promise<unknown>,
+  readDetail?: () => Promise<unknown>,
 ): Promise<CanonicalChatClientAdmission | null> {
+  let admission: CanonicalChatTurnAdmissionResponse;
   try {
-    const detail = CanonicalChatDetailResponseSchema.parse(await read());
-    if (detail.record.chat.id !== chatId) return null;
-    const turn = detail.turns.find((candidate) => candidate.clientRequestId === request.clientRequestId);
-    if (!turn) return null;
-    const message = detail.messages.find((candidate) => candidate.id === turn.inputMessageId);
-    const run = detail.runs.filter((candidate) => candidate.turnId === turn.id)
-      .sort((a, b) => a.attempt - b.attempt)[0];
-    if (!message || message.role !== "user" || !run || run.attempt !== 1
-      || JSON.stringify(message.parts) !== JSON.stringify(request.parts)
-      || JSON.stringify(run.selection) !== JSON.stringify(request.selection)
-      || run.interactionMode !== request.interactionMode || run.permissionMode !== request.permissionMode
-      || request.executionRoot && JSON.stringify(run.executionRoot) !== JSON.stringify(request.executionRoot)) return null;
-    const parsed = CanonicalChatTurnAdmissionResponseSchema.safeParse({
-      record: detail.record, message, turn, run, admission: "already_accepted",
-    });
-    return parsed.success ? { ...parsed.data, recoveredDetail: detail } : null;
+    const digest = await globalThis.crypto.subtle.digest("SHA-256",
+      new TextEncoder().encode(canonicalChatTurnRequestIdentity(request)));
+    const requestHash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+    admission = CanonicalChatTurnAdmissionResponseSchema.parse(await readAdmission(requestHash));
+    if (admission.record.chat.id !== chatId || admission.turn.clientRequestId !== request.clientRequestId
+      || admission.admission !== "already_accepted" || admission.message.role !== "user"
+      || admission.run.attempt !== 1 || JSON.stringify(admission.message.parts) !== JSON.stringify(request.parts)) return null;
   } catch (error: unknown) {
     console.warn("[canonical-chat] admission readback unavailable:", error instanceof Error ? error.name : "UnknownError");
     return null;
   }
+  if (readDetail) {
+    try {
+      const detail = CanonicalChatDetailResponseSchema.parse(await readDetail());
+      if (detail.record.chat.id === chatId && detail.record.chat.revision >= admission.record.chat.revision
+        && detail.turns.some(turn => turn.id === admission.turn.id)
+        && detail.messages.some(message => message.id === admission.message.id)
+        && detail.runs.some(run => run.id === admission.run.id)) return { ...admission, recoveredDetail: detail };
+    } catch (error: unknown) {
+      console.warn("[canonical-chat] recovered detail unavailable:", error instanceof Error ? error.name : "UnknownError");
+    }
+  }
+  return admission;
 }
