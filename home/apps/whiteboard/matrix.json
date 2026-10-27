@@ -3,7 +3,7 @@
   "slug": "whiteboard",
   "description": "Infinite sketching and diagramming canvas with shapes, sticky notes, and export.",
   "category": "productivity",
-  "icon": "whiteboard",
+  "icon": "v3-whiteboard",
   "author": "system",
   "version": "1.0.0",
   "runtime": "vite",

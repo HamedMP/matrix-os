@@ -87,6 +87,110 @@ function isUserOwnedTemplatePath(relPath: string): boolean {
     || USER_OWNED_TEMPLATE_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
+function lstatOrMissing(path: string): fs.Stats | null {
+  try {
+    return fs.lstatSync(path);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+function ensureRegularDirectory(path: string): void {
+  if (!lstatOrMissing(path)) mkdirSync(path);
+  const stat = fs.lstatSync(path);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(`Bundled icon directory is not a regular directory (symlink rejected): ${path}`);
+  }
+}
+
+function readRegularIcon(path: string): Buffer | null {
+  const stat = lstatOrMissing(path);
+  if (!stat?.isFile() || stat.isSymbolicLink() || stat.size > 4 * 1024 * 1024) return null;
+  let fd: number;
+  try {
+    fd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  } catch (err: unknown) {
+    if (["ENOENT", "ELOOP"].includes((err as NodeJS.ErrnoException).code ?? "")) return null;
+    throw err;
+  }
+  try {
+    const opened = fs.fstatSync(fd);
+    if (!opened.isFile() || opened.size > 4 * 1024 * 1024 || opened.ino !== stat.ino || opened.dev !== stat.dev) return null;
+    const bytes = Buffer.alloc(opened.size + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const count = fs.readSync(fd, bytes, length, bytes.length - length, length);
+      if (count === 0) break;
+      length += count;
+    }
+    if (length !== opened.size || fs.fstatSync(fd).size !== opened.size) return null;
+    return bytes.subarray(0, length);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function addMissingBundledIcon(
+  homePath: string,
+  templateDir: string,
+  relPath: string,
+  report: SyncReport,
+  logLines: string[],
+  now: string,
+): void {
+  const destination = join(homePath, relPath);
+  // Any existing file, including a dangling symlink, belongs to the owner.
+  if (lstatOrMissing(destination)) {
+    report.skipped.push(relPath);
+    logLines.push(`[${now}] Skipped: ${relPath} (existing owner icon)`);
+    return;
+  }
+
+  // Icon resolution prefers PNG over SVG. Keep a custom same-stem SVG visible
+  // instead of silently hiding it behind a newly added bundled PNG.
+  if (relPath.endsWith(".png")) {
+    const svgRelPath = relPath.slice(0, -4) + ".svg";
+    const selectedSvgPath = join(homePath, svgRelPath);
+    if (lstatOrMissing(selectedSvgPath)) {
+      const selectedSvg = readRegularIcon(selectedSvgPath);
+      const bundledSvg = readRegularIcon(join(templateDir, svgRelPath));
+      if (!selectedSvg || !bundledSvg || !selectedSvg.equals(bundledSvg)) {
+        report.skipped.push(relPath);
+        logLines.push(`[${now}] Skipped: ${relPath} (owner SVG selection)`);
+        return;
+      }
+    }
+  }
+
+  const source = join(templateDir, relPath);
+  const bytes = readRegularIcon(source);
+  if (!bytes) throw new Error(`Invalid bundled icon source: ${relPath}`);
+  let destinationFd: number;
+  try {
+    destinationFd = fs.openSync(destination, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o644);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+      report.skipped.push(relPath);
+      logLines.push(`[${now}] Skipped: ${relPath} (existing owner icon)`);
+      return;
+    }
+    throw err;
+  }
+  try {
+    fs.writeFileSync(destinationFd, bytes);
+  } catch (err: unknown) {
+    const created = fs.fstatSync(destinationFd);
+    const current = lstatOrMissing(destination);
+    if (current && current.ino === created.ino && current.dev === created.dev) fs.unlinkSync(destination);
+    throw err;
+  } finally {
+    fs.closeSync(destinationFd);
+  }
+  report.added.push(relPath);
+  logLines.push(`[${now}] Added: ${relPath}`);
+}
+
 export function generateTemplateManifest(templateDir: string): Record<string, string> {
   const manifest: Record<string, string> = {};
 
@@ -199,11 +303,29 @@ export function smartSyncTemplate(
     readFileSync(templateManifestPath, "utf-8"),
   );
 
+  // Existing homes keep every icon they already have, but receive missing
+  // bundled art when the local gateway starts directly through ensureHome.
+  ensureRegularDirectory(homePath);
+  ensureRegularDirectory(join(homePath, "system"));
+  ensureRegularDirectory(join(homePath, "system", "icons"));
+
   // Load installed manifest (what was last synced to user's home)
   const installedManifestPath = join(homePath, ".template-manifest.json");
   const installedManifest = readInstalledManifest(installedManifestPath, logLines, now);
 
   for (const [relPath, templateHash] of Object.entries(templateManifest)) {
+    if (relPath.startsWith("system/icons/")) {
+      if (!/^system\/icons\/[a-z0-9][a-z0-9-]*\.(?:png|svg)$/.test(relPath)) {
+        throw new Error(`Invalid bundled icon path: ${relPath}`);
+      }
+      try {
+        addMissingBundledIcon(homePath, templateDir, relPath, report, logLines, now);
+      } catch (err: unknown) {
+        report.skipped.push(relPath);
+        logLines.push(`[${now}] Error adding: ${relPath} (${err instanceof Error ? err.message : String(err)})`);
+      }
+      continue;
+    }
     const homeFilePath = join(homePath, relPath);
     const templateFilePath = join(templateDir, relPath);
 
