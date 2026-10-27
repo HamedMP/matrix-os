@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { AppCapabilityRequestSchema, MAX_APP_CAPABILITY_BYTES } from "@matrix-os/contracts";
 import { BotIntegrationError, type BotIntegrationClient } from "../bots/integration-client.js";
 import { validateActionParams } from "../integrations/parameter-validation.js";
-import { readAppCapabilityGrant } from "./policy.js";
+import { appCapabilityActionAllowed, appCapabilityIntegrationsAvailable, appCapabilityServiceAllowed, readAppCapabilityAccess } from "./policy.js";
 
 interface Options {
   homePath: string;
@@ -45,27 +45,27 @@ export function createAppCapabilityRoutes(options: Options): Hono {
     if (requests >= 120 || inFlight >= 8) return context.json({ error: "App integrations are busy" }, 429);
     requests++; inFlight++;
     try {
-      const grant = await readAppCapabilityGrant(options.homePath, app);
+      const access = await readAppCapabilityAccess(options.homePath, app);
       if (input.kind === "capabilities") return context.json({
         version: 1,
-        integrations: Boolean(options.integrations && grant && Object.keys(grant.services).length),
+        integrations: Boolean(options.integrations && appCapabilityIntegrationsAvailable(access)),
         ai: await options.aiAllowed(app),
       });
-      if (!grant || (input.kind !== "integrations.list" && !grant.services[input.service])) return context.json(failures.denied, 403);
+      if (!access || (input.kind !== "integrations.list" && !appCapabilityServiceAllowed(access, input.service))) return context.json(failures.denied, 403);
       if (!options.integrations) return context.json(failures.unavailable, 503);
-      if (input.kind === "integrations.call" && !grant.services[input.service]?.includes(input.action)) return context.json(failures.denied, 403);
+      if (input.kind === "integrations.call" && !appCapabilityActionAllowed(access, input.service, input.action)) return context.json(failures.denied, 403);
       const signal = AbortSignal.any([context.req.raw.signal, AbortSignal.timeout(30_000)]);
       {
         signal.throwIfAborted();
         const client = options.integrations;
         if (input.kind === "integrations.list") {
           const connections = await client.inventory(owner, signal);
-          return context.json({ services: connections.filter(row => Object.hasOwn(grant.services, row.service)).map(row => ({
+          return context.json({ services: connections.filter(row => appCapabilityServiceAllowed(access, row.service)).map(row => ({
             service: row.service, account_label: row.label, status: "active",
           })) });
         }
         const actions = await client.describe(owner, { service: input.service, readOnly: false }, signal);
-        const allowed = actions.filter(action => grant.services[input.service]?.includes(action.id));
+        const allowed = actions.filter(action => appCapabilityActionAllowed(access, input.service, action.id));
         if (input.kind === "integrations.describe") return context.json({
           service: input.service, name: input.service, actions: allowed.map(({ id, description, risk, params }) => ({ id, description, risk, params })),
         });
@@ -80,8 +80,8 @@ export function createAppCapabilityRoutes(options: Options): Hono {
         if (accounts.length === 0) return context.json(failures.missing, 404);
         if (accounts.length !== 1) return context.json(failures.ambiguous, 409);
         // Authorization may change during discovery or an account lookup.
-        const current = await readAppCapabilityGrant(options.homePath, app);
-        if (!current?.services[input.service]?.includes(input.action)) return context.json(failures.denied, 403);
+        const current = await readAppCapabilityAccess(options.homePath, app);
+        if (!appCapabilityActionAllowed(current, input.service, input.action)) return context.json(failures.denied, 403);
         signal.throwIfAborted();
         const result = await client.callAppAction(owner, {
           service: input.service, action: input.action, label: accounts[0].label,
