@@ -36,6 +36,7 @@ import { logSessionStartupFailure } from "./session-startup-diagnostics.js";
 import type { BackgroundAgentRuntime, BackgroundAgentRef } from "./background-agent-runtime.js";
 import { agentLaunchTerminalCommand } from "./coding-agents/agent-launch-environment.js";
 import type { NativeCodexSubscriptionLaunch } from "./coding-agents/native-codex-launch-policy.js";
+import type { OpenRouterCodexLaunch } from "./coding-agents/openrouter-codex-launch-policy.js";
 import { startBackgroundSession } from "./background-session-lifecycle.js";
 
 export type SessionKind = "shell" | "agent";
@@ -339,7 +340,7 @@ export function createAgentSessionManager(options: {
   terminalRuntime: TerminalRuntimeClient;
   backgroundRuntime?: BackgroundAgentRuntime;
   beforeProjectSessionRemove?: (input: { ownerId: string; sessionId: string; proof: object }) => Promise<void>;
-  resolveNativeCodexSubscription?: (ownerId: string, sessionId: string) => Promise<NativeCodexSubscriptionLaunch | undefined>;
+  resolveNativeCodexSubscription?: (ownerId: string, sessionId: string) => Promise<NativeCodexSubscriptionLaunch | OpenRouterCodexLaunch | undefined>;
   legacyZellij?: LegacySessionRuntime;
   now?: () => string;
   idGenerator?: () => string;
@@ -392,9 +393,9 @@ export function createAgentSessionManager(options: {
     // Native admission can wait for a revocation queue that itself needs the
     // background lock. Capture it before acquiring that lock; the child still
     // checks current private authority immediately before spawn and inference.
-    let nativeCodexSubscription: NativeCodexSubscriptionLaunch | undefined;
+    let codexCredentialLaunch: NativeCodexSubscriptionLaunch | OpenRouterCodexLaunch | undefined;
     try {
-      nativeCodexSubscription = request.kind === "agent" && request.agent === "codex"
+      codexCredentialLaunch = request.kind === "agent" && request.agent === "codex"
         ? await options.resolveNativeCodexSubscription?.(request.ownerId, sessionId) : undefined;
     } catch (error: unknown) {
       await logSessionStartupFailure("launch_preflight", sessionId, error);
@@ -457,7 +458,9 @@ export function createAgentSessionManager(options: {
         launch = request.kind === "agent"
           ? options.agentLauncher.buildLaunch({
             agent: request.agent!,
-            ...(nativeCodexSubscription ? { nativeCodexSubscription } : {}),
+            ...(codexCredentialLaunch && "kind" in codexCredentialLaunch
+              ? { openRouterCodex: codexCredentialLaunch }
+              : codexCredentialLaunch ? { nativeCodexSubscription: codexCredentialLaunch } : {}),
             cwd,
             prompt: launchPromptWithReferences(request.prompt, request.attachments),
             providerThreadId: request.providerThreadId,

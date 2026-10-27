@@ -2,8 +2,20 @@ import { isRunnableGenericHarnessCredentialRoute, isLocallyObservedNativeHarness
   type AiProviderSnapshotV3, type CanonicalProviderDriverKind, type CanonicalProviderInstanceDescriptor, type CanonicalProviderSetupAction,
   type ProviderAccessSource, type ProviderHarnessInstance, type ProviderHarnessKind, type ProviderSettingsSnapshot } from "@matrix-os/contracts";
 import { hermesNativeModelId } from "../ai-providers/hermes-native-catalog.js";
+import { OPENROUTER_ANTHROPIC_MODEL_IDS, OPENROUTER_CODEX_MODEL_IDS } from "../ai-providers/model-catalog.js";
 import { configuredHarnessInstanceFromAiSnapshot, unavailableInstance, unavailableReasonFor } from "./configured-harness-catalog.js";
 type InstanceDraft = Omit<CanonicalProviderInstanceDescriptor, "catalogRevision">;
+
+function selectedOpenRouterModel(instance: InstanceDraft, modelId: string): InstanceDraft["models"][number] {
+  return instance.models.find(model => model.id === modelId) ?? {
+    id: modelId,
+    displayName: modelId,
+    availability: "available",
+    capabilities: ["reasoning", "tools"],
+    supportsVision: false,
+    supportsToolUse: true,
+  };
+}
 
 const GENERIC_DRIVERS = ["hermes", "openclaw", "pi", "opencode"] as const;
 type GenericDriverKind = typeof GENERIC_DRIVERS[number];
@@ -97,6 +109,34 @@ export function applyHarnessSettings(input: {
       const ownerKey = instance.driverKind === "claude_code" && enabled.length === 1
         && enabled[0]!.accessSourceId === "owner_anthropic_key" && enabled[0]!.selectedAccountId === "owner_anthropic"
         && (enabled[0]!.configuredAccessSourceId === undefined || enabled[0]!.configuredAccessSourceId === "owner_anthropic_key");
+      const openRouterRow = enabled.length === 1 ? enabled[0] : undefined;
+      const openRouterSource = openRouterRow
+        ? input.settings?.accessSources.find((candidate) => candidate.id === openRouterRow.accessSourceId) : undefined;
+      const openRouterAccount = openRouterRow
+        ? input.settings?.accounts.find((candidate) => candidate.id === openRouterRow.selectedAccountId) : undefined;
+      const openRouterModels = instance.driverKind === "claude_code"
+        ? OPENROUTER_ANTHROPIC_MODEL_IDS : OPENROUTER_CODEX_MODEL_IDS;
+      const openRouterSelected = openRouterRow?.route.providerId === "openrouter"
+        || openRouterRow?.accessSourceId === "owner_openrouter"
+        || openRouterRow?.configuredAccessSourceId === "owner_openrouter"
+        || openRouterRow?.selectedAccountId === "owner_openrouter";
+      const openRouter = openRouterRow?.route.providerId === "openrouter"
+        && openRouterRow.accessSourceId === "owner_openrouter"
+        && openRouterRow.configuredAccessSourceId === "owner_openrouter"
+        && openRouterRow.selectedAccountId === "owner_openrouter"
+        && (openRouterModels as readonly string[]).includes(openRouterRow.route.modelId)
+        && openRouterRow.credentialGeneration !== undefined
+        && openRouterSource?.kind === "provider_account"
+        && openRouterSource.providerId === "openrouter"
+        && openRouterSource.fundingKind === "owner_api_key"
+        && openRouterSource.accountId === "owner_openrouter"
+        && openRouterSource.credentialGeneration === openRouterRow.credentialGeneration
+        && openRouterSource.readiness.state === "ready"
+        && openRouterSource.eligibleModelIds.includes(openRouterRow.route.modelId)
+        && openRouterAccount?.providerId === "openrouter"
+        && openRouterAccount.accessSourceId === "owner_openrouter"
+        && openRouterAccount.authMethod === "api_key"
+        && openRouterAccount.authState === "authenticated";
       if (instance.driverKind === "codex" && input.settingsAvailable && enabled.length === 1) {
         const source = input.settings?.accessSources.find((candidate) => candidate.id === enabled[0]!.accessSourceId);
         const staleNativeBinding = source?.id === "owner_openai_profile"
@@ -125,7 +165,13 @@ export function applyHarnessSettings(input: {
             }
           : unavailable;
       }
-      if (instance.driverKind === "claude_code" && saved.length > 0 && !ownerKey
+      if (openRouterSelected && !openRouter && openRouterRow) {
+        const unavailable = unavailableInstance(instance, "runtime_unavailable");
+        const model = selectedOpenRouterModel(instance, openRouterRow.route.modelId);
+        return { ...unavailable, connectionLabel: "Billed by OpenRouter",
+          models: [{ ...model, availability: "unavailable" as const }] };
+      }
+      if (instance.driverKind === "claude_code" && saved.length > 0 && !ownerKey && !openRouter
         && (enabled.length !== 1 || enabled[0]!.accessSourceId !== "owner_claude_profile"
           || enabled[0]!.selectedAccountId !== "owner_claude_profile"
           || (enabled[0]!.configuredAccessSourceId !== undefined
@@ -133,6 +179,11 @@ export function applyHarnessSettings(input: {
         return unavailableInstance(instance, "runtime_not_runnable");
       }
       if (ownerKey) return { ...instance, connectionLabel: "Anthropic API key" };
+      if (openRouter) {
+        const model = selectedOpenRouterModel(instance, openRouterRow.route.modelId);
+        return { ...instance, connectionLabel: "Billed by OpenRouter", models: [model],
+          defaultSelection: { instanceId: instance.id, model: model.id } };
+      }
       const selectedSourceMatches = instance.driverKind === "codex" && input.settingsAvailable
         && enabled.length === 1
         && enabled[0]!.accessSourceId === "owner_openai_profile";

@@ -2,6 +2,7 @@ import { CodexBrowserBindSchema, CodexBrowserStartSchema, createCodexBrowserBoot
 import { startCodexNativeProviderSession } from "./codex-native-provider-session.mjs";
 import { RunnerConfigSchema, ModelOptionSchema, PendingTurnSchema, EffortSchema, ServiceTierSchema } from "./codex-runner-config.mjs";
 import { createNativeCodexExecutionProof, assertNativeCodexThreadProvider, verifyNativeCodexHumanControl } from "./native-codex-execution-proof.mjs";
+import { createOpenRouterCodexExecutionProof, assertOpenRouterCodexThreadProvider } from "./openrouter-codex-execution-proof.mjs";
 import { createCodexSubagentRuntime } from "./codex-subagent-runtime.mjs";
 import { CodexExecutionTimeout, codexExecutionFailureReason, codexTerminalFailureReason } from "./codex-terminal-failure.mjs";
 import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
@@ -1441,13 +1442,15 @@ async function startNativeSession(lease) {
   await verifyNativeSubscription?.(request);
   const started = await request(resumeId ? "thread/resume" : "thread/start", {
     ...(resumeId ? { threadId: resumeId, excludeTurns: true } : {}), model: config.model,
-    ...(config.nativeSubscription ? { modelProvider: "openai" } : {}),
+    ...(config.nativeSubscription ? { modelProvider: "openai" }
+      : config.openRouter ? { modelProvider: "openrouter" } : {}),
     developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS + (lease ? "\n\n" + CODEX_BROWSER_INSTRUCTIONS : ""),
     serviceTier: config.serviceTier, cwd: process.cwd(), approvalPolicy: config.approvalPolicy,
     sandbox: config.sandbox, runtimeWorkspaceRoots: config.writableRoots, experimentalRawEvents: false,
     config: codexBrowserThreadConfig(lease),
   });
   if (config.nativeSubscription) assertNativeCodexThreadProvider(started);
+  if (config.openRouter) assertOpenRouterCodexThreadProvider(started);
   const identity = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() }).passthrough().parse(started).thread.id;
   if (resumeId && identity !== resumeId) throw new Error("provider_resume_identity_mismatch");
   nativeThreadId = identity;
@@ -1466,6 +1469,12 @@ let verifyNativeSubscription;
 let pendingAdmittedTurn = false;
 try {
   if (config.nativeSubscription) verifyNativeSubscription = await createNativeCodexExecutionProof(config.expectedNativePrincipal, process.env, config.expectedNativeConsent);
+  if (config.openRouter) verifyNativeSubscription = await createOpenRouterCodexExecutionProof(
+    config.expectedCredentialGeneration,
+    config.model,
+    config.expectedOpenRouterBinding,
+    process.env,
+  );
   const initialBrowser = await browserBootstrap.waitLease(startupController.signal);
   await startNativeSession(initialBrowser);
   browserBootstrap.markReady();
