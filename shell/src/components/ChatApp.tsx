@@ -229,9 +229,10 @@ function ChatAppContent({
   mobile = false,
   // react-doctor-disable-next-line react-doctor/prefer-useReducer -- these useState fields are independent UI concerns with separate update sites and lifecycles, not one related state machine.
 }: ChatAppProps) {
-  // Chat and its project list must stay on the computer selected when this
-  // surface mounted; shared-chat history routes can later change pathname.
-  const [projectGatewayUrl] = useState(() => gatewayUrl ?? getGatewayUrl());
+  // Explicit computer changes take effect immediately. The fallback is fixed
+  // at mount so shared-chat history routes cannot silently retarget the rail.
+  const [mountedGatewayUrl] = useState(getGatewayUrl);
+  const projectGatewayUrl = gatewayUrl ?? mountedGatewayUrl;
   const webProjects = useWebProjects(projectGatewayUrl, authorityKey ?? projectGatewayUrl);
   const agentsNavigation = useChatAgentsNavigation();
   useCloseAgentsOnDraftRequest(composerDraftRequest?.id);
@@ -393,10 +394,11 @@ function ChatAppContent({
       );
 
   const sourceConversations = filterChatsByImportSource(filteredConversations, sourceFilter, item => item.canonicalRecord?.importSource);
+  const visibleConversations = unreadOnly ? sourceConversations.filter(item => item.readState?.unread) : sourceConversations;
   // As on Electron Desktop, a Chat in a listed Project appears under that Project only; search still finds it.
-  const projectChatIds = new Set(webProjects.projects.flatMap(project => projectChats(sourceConversations, project).map(chat => chat.id)));
-  const railConversations = trimmedSearch ? sourceConversations : sourceConversations.filter(item => !projectChatIds.has(item.id));
-  const listedConversations = unreadOnly ? railConversations.filter((item) => item.readState?.unread) : railConversations;
+  const projectChatIds = new Set(webProjects.projects.flatMap(project => projectChats(visibleConversations, project)
+    .filter(chat => !chat.canonicalRecord?.chat.userState?.pinned).map(chat => chat.id)));
+  const listedConversations = trimmedSearch ? visibleConversations : visibleConversations.filter(item => !projectChatIds.has(item.id));
 
   const renderConversationRow = (conv: ConversationMeta, nowMs?: number) => <RenameableConversationRow
     key={conv.id}
@@ -514,7 +516,8 @@ function ChatAppContent({
 
         }
         <div className="px-3 pb-2"><ChatImportSourceFilter value={sourceFilter} onChange={setSourceFilter}/></div>
-        {sourceFilter !== "all" && listedConversations.length === 0 ? <p className="px-3 pb-2 text-xs text-muted-foreground">No chats match this source.</p> : null}
+        {sourceFilter !== "all" && listedConversations.length === 0 && !webProjects.loading && !webProjects.error
+          && webProjects.projects.length === 0 ? <p className="px-3 pb-2 text-xs text-muted-foreground">No chats match this source.</p> : null}
         <ScrollArea className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">
         {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
           onOpenSharedHome();
@@ -526,13 +529,16 @@ function ChatAppContent({
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={unreadOnly} onClick={() => { setUnreadOnly(true); onUnreadFilterChange?.(true); }}>Unread</Button>
         </div>
         : null}
-        {unreadOnly && listedConversations.length === 0 ? <p className="px-3 text-xs text-muted-foreground">No unread chats.</p> : null}
+        {unreadOnly && visibleConversations.length === 0 && !webProjects.loading && !webProjects.error
+          && webProjects.projects.length === 0 ? <p className="px-3 text-xs text-muted-foreground">No unread chats.</p> : null}
         {/* Conversation list */}
 
           <div className="px-2 pb-3">
             <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
-              projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} state={webProjects}
-                chats={sourceConversations} activeChatId={sessionId} renderChat={renderConversationRow} mobile={mobile}/>
+              projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} state={webProjects} gatewayUrl={projectGatewayUrl}
+                chats={visibleConversations} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
+                onSelectChat={onSwitchConversation} renderChat={renderConversationRow} mobile={mobile} unreadOnly={unreadOnly}
+                sourceFilter={sourceFilter} searchQuery={searchQuery}/>
                 <OrganizationDrivesNav chats={sourceConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/></>}
               attention={botSummaries.conversations.some(bot => bot.pendingApprovalCount > 0) ? <WebBotAttention heading={false} conversations={botSummaries.conversations} onOpen={onSwitchConversation}/> : undefined}
               renderRow={conv => <ChatRailOrderItem key={conv.id} id={conv.id} kind="chat" group={webChatLifecycleGroup(conv)}>{renderConversationRow(conv)}</ChatRailOrderItem>}/>

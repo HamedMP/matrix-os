@@ -5,11 +5,13 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ChatApp } from "../../shell/src/components/ChatApp";
 import { WebProjectsNav } from "../../shell/src/components/chat/WebProjectsNav";
 import { useWebProjects } from "../../shell/src/components/chat/web-projects";
+import { ChatRailOrderContext } from "@matrix-os/ui";
 import type { RenameableConversation } from "../../shell/src/components/chat/ChatTitleRename";
 
-function Nav({ gatewayUrl, scopeKey, chats = [] }: { gatewayUrl: string; scopeKey: string; chats?: RenameableConversation[]; onSelectChat?: unknown }) {
+function Nav({ gatewayUrl, scopeKey, chats = [], onSelectChat = vi.fn() }: { gatewayUrl: string; scopeKey: string; chats?: RenameableConversation[]; onSelectChat?: (chatId: string) => void }) {
   const state = useWebProjects(gatewayUrl, scopeKey);
-  return <WebProjectsNav state={state} chats={chats} renderChat={chat => <button key={chat.id} type="button">{chat.title}</button>} />;
+  return <WebProjectsNav state={state} gatewayUrl={gatewayUrl} chats={chats} onSelectChat={onSelectChat}
+    renderChat={chat => <button key={chat.id} type="button">{chat.title}</button>} />;
 }
 import { OrganizationStateProvider } from "../../shell/src/lib/collaboration-organization-state";
 
@@ -132,6 +134,24 @@ it("keeps project requests on the mounted computer while shared-chat history cha
   expect(projectCalls).toEqual([`${window.location.origin}/vm/main/api/workspace/projects`, `${window.location.origin}/vm/main/api/workspace/projects`]);
 });
 
+it("switches project reads when Chat moves to a different explicit computer", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const request = vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: url.includes("/vm/old/") ? "proj_old" : "proj_new",
+      slug: url.includes("/vm/old/") ? "old" : "new", name: url.includes("/vm/old/") ? "Old" : "New" }] })
+    : Response.json({}));
+  vi.stubGlobal("fetch", request);
+  const props = { messages: [], busy: false, connected: true, conversations: [], onNewChat: vi.fn(),
+    onSwitchConversation: vi.fn(), onSubmit: vi.fn(), authorityKey: "owner" };
+  const view = render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp {...props}
+    gatewayUrl="https://example.test/vm/old" /></OrganizationStateProvider>);
+  expect(await screen.findByRole("button", { name: "Open Old project" })).toBeTruthy();
+  view.rerender(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp {...props}
+    gatewayUrl="https://example.test/vm/new" /></OrganizationStateProvider>);
+  expect(screen.queryByRole("button", { name: "Open Old project" })).toBeNull();
+  expect(await screen.findByRole("button", { name: "Open New project" })).toBeTruthy();
+});
+
 function projectConversation(index: number, projectId = "proj_france"): RenameableConversation {
   const createdAt = new Date(Date.now() - index * 60 * 60 * 1000).toISOString();
   return { id: `chat_${index}`, title: `Chat ${index}`, preview: "", messageCount: 1, updatedAt: 1,
@@ -143,7 +163,7 @@ function renderChatApp(conversations: RenameableConversation[], sessionId?: stri
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
     ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }], nextCursor: null })
-    : Response.json({})));
+    : url.includes("/api/chats?") ? Response.json({ items: [], nextCursor: null }) : Response.json({})));
   render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected conversations={conversations}
     sessionId={sessionId} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} authorityKey="user_owner/runtime/main" /></OrganizationStateProvider>);
 }
@@ -178,4 +198,168 @@ it("matches project Chats by project slug as well as id", async () => {
   const projectsNav = await screen.findByRole("navigation", { name: "Projects" });
   fireEvent.click(await within(projectsNav).findByRole("button", { name: "Open France project" }));
   expect(within(projectsNav).getByRole("button", { name: "Chat 1" })).toBeTruthy();
+});
+
+it("opens an existing project chat outside the global navigation window", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const request = vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })
+    : url.includes("/api/chats?projectId=france") ? Response.json({ items: [{ chat: { id: "chat_old", title: "Older project chat", titleVersion: 1,
+      createdAt: "2025-01-01T00:00:00Z" } }], nextCursor: null })
+      : url.includes("/api/chats?") ? Response.json({ items: [], nextCursor: null }) : Response.json({}));
+  vi.stubGlobal("fetch", request);
+  const select = vi.fn();
+  const props = { messages: [], busy: false, connected: true, conversations: [], onNewChat: vi.fn(),
+    onSwitchConversation: select, onSubmit: vi.fn(), authorityKey: "owner/main", gatewayUrl: "https://example.test/vm/main" };
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp {...props} /></OrganizationStateProvider>);
+  const projectsNav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(await within(projectsNav).findByRole("button", { name: "Open France project" }));
+  fireEvent.click(await within(projectsNav).findByRole("button", { name: "Older project chat" }));
+  expect(select).toHaveBeenCalledWith("chat_old");
+  expect(request).toHaveBeenCalledWith(expect.stringContaining("/api/chats?projectId=france"), expect.anything());
+  cleanup();
+  const reopened = vi.fn();
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp {...props} onSwitchConversation={reopened} /></OrganizationStateProvider>);
+  const reopenedNav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(await within(reopenedNav).findByRole("button", { name: "Open France project" }));
+  fireEvent.click(await within(reopenedNav).findByRole("button", { name: "Older project chat" }));
+  expect(reopened).toHaveBeenCalledWith("chat_old");
+});
+
+it("only shows unread project chats in the mobile filter", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })
+    : url.includes("/api/chats?") ? Response.json({ items: [], nextCursor: null }) : Response.json({})));
+  const pinned = projectConversation(1);
+  pinned.canonicalRecord!.chat.userState = { pinned: true } as NonNullable<typeof pinned.canonicalRecord>["chat"]["userState"];
+  const unread = projectConversation(2);
+  unread.readState = { unread: true } as NonNullable<typeof unread.readState>;
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected
+    conversations={[pinned, unread, projectConversation(3)]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()}
+    onSubmit={vi.fn()} authorityKey="owner/main" mobile filterUnreadOnly /></OrganizationStateProvider>);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(await within(nav).findByRole("button", { name: "Open France project" }));
+  expect(within(nav).getByRole("button", { name: "Chat 2" })).toBeTruthy();
+  expect(within(nav).queryByRole("button", { name: "Chat 1" })).toBeNull();
+  expect(within(nav).queryByRole("button", { name: "Chat 3" })).toBeNull();
+  expect(screen.queryByText("No unread chats.")).toBeNull();
+});
+
+it("does not claim there are no unread chats when an older project chat is unread", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const request = vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })
+    : url.includes("/api/chats?projectId=proj_france")
+      ? Response.json({ items: [{ chat: { id: "chat_unread", title: "Older unread chat" } }], nextCursor: null })
+      : Response.json({ items: [], nextCursor: null }));
+  vi.stubGlobal("fetch", request);
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected
+    conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="owner/main" mobile filterUnreadOnly /></OrganizationStateProvider>);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(await within(nav).findByRole("button", { name: "Open France project" }));
+  expect(await within(nav).findByRole("button", { name: "Older unread chat" })).toBeTruthy();
+  expect(screen.queryByText("No unread chats.")).toBeNull();
+  expect(request).toHaveBeenCalledWith(expect.stringContaining("unread=true"), expect.anything());
+});
+
+it("applies the Chat source filter to older project rows", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })
+    : url.includes("/api/chats?projectId=proj_france")
+      ? Response.json({ items: [
+        { chat: { id: "chat_ordinary", title: "Ordinary chat" } },
+        { chat: { id: "chat_imported", title: "Imported chat" }, importSource: { harness: "codex" } },
+      ], nextCursor: null }) : Response.json({ items: [], nextCursor: null })));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected
+    conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="owner/main" mobile /></OrganizationStateProvider>);
+  fireEvent.change(screen.getByRole("combobox", { name: "Chat source" }), { target: { value: "codex" } });
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(await within(nav).findByRole("button", { name: "Open France project" }));
+  expect(await within(nav).findByRole("button", { name: "Imported chat" })).toBeTruthy();
+  expect(within(nav).queryByRole("button", { name: "Ordinary chat" })).toBeNull();
+  expect(screen.queryByText("No chats match this source.")).toBeNull();
+  fireEvent.change(screen.getByRole("combobox", { name: "Chat source" }), { target: { value: "all" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Search chats" }), { target: { value: "Ordinary" } });
+  fireEvent.click(await within(nav).findByRole("button", { name: "Open France project" }));
+  expect(await within(nav).findByRole("button", { name: "Ordinary chat" })).toBeTruthy();
+  expect(within(nav).queryByRole("button", { name: "Imported chat" })).toBeNull();
+});
+
+it("keeps pinned project chats in Pinned instead of moving them into Projects", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })
+    : url.includes("/api/chats?") ? Response.json({ items: [], nextCursor: null }) : Response.json({})));
+  const pinned = projectConversation(1);
+  pinned.canonicalRecord!.chat.userState = { pinned: true } as NonNullable<typeof pinned.canonicalRecord>["chat"]["userState"];
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected
+    conversations={[pinned]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="owner/main" /></OrganizationStateProvider>);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(await within(nav).findByRole("button", { name: "Open France project" }));
+  expect(within(nav).queryByRole("button", { name: "Chat 1" })).toBeNull();
+  expect(within(screen.getByRole("region", { name: "Pinned" })).getByRole("button", { name: "Chat 1" })).toBeTruthy();
+});
+
+it("keeps known project chats keyboard reorderable inside their project", async () => {
+  const move = vi.fn();
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })
+    : Response.json({ items: [], nextCursor: null })));
+  render(<ChatRailOrderContext.Provider value={{ manual: true, scopeKey: "owner/main", move }}>
+    <Nav gatewayUrl="https://example.test/vm/main" scopeKey="owner/main" chats={[projectConversation(1), projectConversation(2)]} />
+  </ChatRailOrderContext.Provider>);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(await within(nav).findByRole("button", { name: "Open France project" }));
+  const row = within(nav).getByRole("button", { name: "Chat 1" }).closest<HTMLElement>("[data-rail-order-id]");
+  expect(row?.dataset.railOrderGroup).toBe("project:proj_france");
+  fireEvent.keyDown(row!, { altKey: true, key: "ArrowDown" });
+  expect(move).toHaveBeenCalledWith("chat", "chat_1", "chat_2");
+});
+
+it("pages past known chats and retries a failed older-chat page", async () => {
+  let olderAttempts = 0;
+  const request = vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })
+    : url.includes("projectId=france") ? Response.json({ items: [], nextCursor: null })
+    : url.includes("cursor=chatcur_next")
+      ? (++olderAttempts === 1 ? new Response(null, { status: 503 })
+        : Response.json({ items: [{ chat: { id: "chat_old", title: "Older chat" } }], nextCursor: null }))
+      : Response.json({ items: [{ chat: { id: "chat_1", title: "Chat 1" } }], nextCursor: "chatcur_next" }));
+  vi.stubGlobal("fetch", request);
+  const select = vi.fn();
+  render(<Nav gatewayUrl="https://example.test/vm/main" scopeKey="owner/main" chats={[projectConversation(1)]} onSelectChat={select} />);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(await within(nav).findByRole("button", { name: "Open France project" }));
+  fireEvent.click(await within(nav).findByRole("button", { name: "Load more chats" }));
+  expect(await within(nav).findByRole("alert")).toHaveProperty("textContent", "Project chats could not be loaded.");
+  fireEvent.click(within(nav).getByRole("button", { name: "Retry chats" }));
+  fireEvent.click(await within(nav).findByRole("button", { name: "Older chat" }));
+  expect(select).toHaveBeenCalledWith("chat_old");
+  expect(olderAttempts).toBe(2);
+  expect(within(nav).getAllByRole("button", { name: "Chat 1" })).toHaveLength(1);
+});
+
+it("ignores a late project-chat page after the account changes", async () => {
+  let finishOld!: (response: Response) => void;
+  const oldPage = new Promise<Response>(resolve => { finishOld = resolve; });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: "proj_shared_name", slug: "shared-name", name: "Project" }] })
+    : auth.userId === "user_owner" ? oldPage
+      : Response.json({ items: [{ chat: { id: "chat_new", title: "New account chat" } }], nextCursor: null })));
+  const props = { gatewayUrl: "https://example.test/vm/main", scopeKey: "main", chats: [], onSelectChat: vi.fn() };
+  const view = render(<Nav {...props} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Open Project project" }));
+  await waitFor(() => expect(screen.getByText("Loading chats…")).toBeTruthy());
+  auth.userId = "user_next";
+  auth.sessionId = "session_next";
+  view.rerender(<Nav {...props} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Open Project project" }));
+  expect(await screen.findByRole("button", { name: "New account chat" })).toBeTruthy();
+  finishOld(Response.json({ items: [{ chat: { id: "chat_old", title: "Old account chat" } }], nextCursor: null }));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Old account chat" })).toBeNull());
 });

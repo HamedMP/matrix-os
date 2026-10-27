@@ -14,6 +14,7 @@ export type WebProject = z.infer<typeof ProjectsResponseSchema>["projects"][numb
 // `projects: null` records a failed load for that request key.
 type ProjectsResult = { key: string; projects: WebProject[] | null };
 export interface WebProjectsState {
+  identity: string;
   projects: WebProject[];
   loading: boolean;
   error: boolean;
@@ -51,6 +52,7 @@ export function useWebProjects(gatewayUrl: string, scopeKey: string): WebProject
 
   const settled = result?.key === key ? result : null;
   return {
+    identity,
     projects: settled?.projects ?? [],
     loading: settled === null,
     error: settled !== null && settled.projects === null,
