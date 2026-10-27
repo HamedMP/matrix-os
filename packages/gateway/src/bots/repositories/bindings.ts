@@ -12,7 +12,9 @@ export interface BotChatBinding {
   ownerId: string;
   botId: string;
   chatId: string;
-  kind: "direct" | "group";
+  kind: "direct" | "group" | "thread";
+  /** Retained v9 metadata; this build does not create or execute thread bindings. */
+  projectId: string | null;
   createdAt: string;
   removedAt: string | null;
 }
@@ -23,6 +25,7 @@ function fromRow(row: Selectable<BotChatBindingsTable>): BotChatBinding {
     botId: row.bot_id,
     chatId: row.chat_id,
     kind: row.kind,
+    projectId: row.project_id ?? null,
     createdAt: isoTimestamp(row.created_at),
     removedAt: optionalIsoTimestamp(row.removed_at),
   };

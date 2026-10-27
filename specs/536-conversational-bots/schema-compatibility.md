@@ -96,3 +96,38 @@ justify a deployment or model/funding fallback.
 Documentation deliverable: update the public developer/support documentation in
 a separate `FinnaAI/matrix-os-site` PR with dormant v6 preservation and this
 schema-only boundary; retain private operational snapshots outside public docs.
+
+## Deployed v9 thread-binding compatibility
+
+Tracking: [ENG-291](https://linear.app/matrix-os/issue/ENG-291).
+
+The preview implementation at `736d251d7bd097db1e7fb2822309767ffb1a9332`
+records v9, `bot_chat_threads`. It expands binding kinds with `thread`, adds
+nullable `project_id`, enforces the thread/project relationship, and adds a
+partial thread index. A registry ending at v8 correctly refuses this schema,
+which also prevents the shared managed Pi adapter from starting.
+
+Register the exact deployed DDL under the unchanged schema advisory lock and
+version/name validator. Preserve existing migration records, project bindings,
+owner history, authorizations and financial state. Fresh databases apply v9
+once; existing v9 databases apply nothing. Wrong v9 names and unknown v10
+remain incompatible before pending DDL.
+
+Read models retain thread kind and project metadata. A retained thread must
+fail with the existing unavailable error before ordinary Chat or Bot execution;
+it must never silently become a normal Chat. This compatibility patch does not
+enable thread creation, project-scoped execution, navigation or preview UI.
+Ordinary managed Pi Chats retain their independent owner/route admission.
+
+Verification uses an independent frozen deployed-v9 fixture, actual pooled
+Postgres startup and retained thread/history rows. Cover fresh v8 upgrades,
+concurrent and repeated bootstrap, existing v9, unsupported schemas, unchanged
+direct/group behavior, and fail-closed retained-thread execution. Deploy a
+reviewed exact bundle to the affected runtime, verify loaded source and all
+services, then use one normal managed Chat and its accounting audit. A healthy
+general gateway or loaded funding configuration alone is insufficient.
+
+Public documentation is updated in the separate Matrix OS site activation PR.
+Private machine and database evidence stays outside the public repositories.
+An older registry cannot serve a v9 database; rollback must use a compatible
+reviewed build and must never delete or relabel migration records.
