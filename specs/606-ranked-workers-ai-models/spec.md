@@ -49,6 +49,38 @@ Eight additions increase worst-case paid health fanout. Keep shared probes coale
 
 ## Operator configuration and rollout checks
 
+### Existing customer policy alignment
+
+Publishing a global funded-model policy through the existing operator endpoint must
+also append its enabled ordinary model IDs to every existing authorized, nondeleted
+customer runtime policy in the same transaction. Ordinary means Sonnet plus the
+reviewed Workers AI registry; global publication remains an explicit operator
+action after route support and readiness qualification. The registry alone does
+not activate a model. New customer activation uses this same ordinary-model list.
+
+Keep existing model order and additional explicit permissions, including Jev and
+funded-native models. Do not automatically grant those specialized permissions.
+Preserve enabled state, budgets, expiry, cooldowns, owner/runtime binding, balances,
+holds, freezes, debt, usage and every ledger entry. Suspended, failed and secondary
+customer runtimes with an existing policy receive the same list alignment while
+retaining their lifecycle/access restrictions. Do not create missing policies or
+modify Preview, Private Preview, unauthorized, deleted or mismatched records.
+
+Only changed runtime lists increment their revision. Retrying an already-aligned
+global list leaves runtime policies unchanged. Global revocation remains effective
+through the existing global/runtime intersection even if the runtime retains an ID.
+Global revision conflicts, lock/deadline failures, corrupt data or a merged list
+exceeding the 64-model contract must roll back the entire global publication and
+alignment. Return only aggregate alignment state; do not load the fleet into an
+unbounded application inventory. Global policy writes and dependent alignment must
+stay within one bounded transaction so concurrent publications cannot split them.
+
+Verify with existing-customer, restricted-policy, exclusion, no-op, rollback,
+revocation and competing-publication tests on PostgreSQL. The operational backfill
+must record a private before/after policy and funding comparison, then independently
+query for remaining missing ordinary IDs. Catalog API observations establish model
+visibility separately from paid request/settlement acceptance.
+
 The eight new immutable snapshots can be attested together with `MATRIX_FUNDED_WORKERS_PRICING_REVIEW_VERSION=cloudflare-2026-10-15-workers-eight`, canonical UTC `MATRIX_FUNDED_WORKERS_PRICING_REVIEWED_AT` and `MATRIX_FUNDED_WORKERS_PRICING_VALID_THROUGH` (at most 31 days). Omission keeps all eight expired. Existing Flash/Sonnet reviews remain independent. Per-model reviews remain supported; duplicate bundle/per-model entries fail startup. Cloud Run workflow validates the optional bundle before authentication and omits unset bindings.
 
 Ten enabled text routes require a reviewed health budget that admits a complete cold fanout; shared healthy receipts are reused for five minutes across replicas. Proposed feature allowance: 20/minute and 3,000/day, under existing caps, with usage counters preserved. Current-day budget rows require explicit coordinated limit migration or next UTC-day activation; changing environment limits alone cannot override the pinned same-day limits. Do not reset counters. Monitor global probe counts, timeout/invalid-response outcomes, reservation finalizations and per-model availability during staged activation. Roll back new policy entries first if settlement or availability is incorrect; retain every admitted reservation's pricing version.

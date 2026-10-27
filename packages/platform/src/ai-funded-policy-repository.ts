@@ -21,6 +21,7 @@ import { createFundedTerminalOutcome } from "./ai-funded-terminal-outcome.js";
 import { createFundedExecutionBatch } from "./ai-funded-execution-batch.js";
 import { createFundedExecutionRecovery } from "./ai-funded-execution-recovery.js";
 import { isBoundedPreviewProvisioningClass } from "./preview-runtime-access.js";
+import { alignCustomerOrdinaryModels } from "./customer-ordinary-model-policy.js";
 
 export { AiFundedPolicyError, type AiFundedPolicyErrorCode } from "./ai-funded-policy-errors.js";
 
@@ -162,19 +163,24 @@ export function createAiFundedPolicyRepository(options: AiFundedPolicyRepository
     const allowedModelIds = parsed.allowedModelIds;
     const updatedAt = now().toISOString();
     await options.db.ready;
-    const row = await options.db.executor.updateTable("ai_funded_global_policy").set({
-      enabled: parsed.enabled,
-      allowed_model_ids: JSON.stringify(allowedModelIds),
-      revision: parsed.expectedRevision + 1,
-      updated_at: updatedAt,
-    }).where("policy_id", "=", "default").where("revision", "=", parsed.expectedRevision)
-      .returningAll().executeTakeFirst();
-    if (!row) throw new AiFundedPolicyError("revision_conflict");
-    return FundedAiGlobalPolicySchema.parse({
-      enabled: row.enabled,
-      revision: row.revision,
-      allowedModelIds,
-      updatedAt: row.updated_at,
+    return options.db.transaction(async trx => {
+      await sql`set local statement_timeout = '5000ms'`.execute(trx.executor);
+      await sql`set local lock_timeout = '1000ms'`.execute(trx.executor);
+      const row = await trx.executor.updateTable("ai_funded_global_policy").set({
+        enabled: parsed.enabled,
+        allowed_model_ids: JSON.stringify(allowedModelIds),
+        revision: parsed.expectedRevision + 1,
+        updated_at: updatedAt,
+      }).where("policy_id", "=", "default").where("revision", "=", parsed.expectedRevision)
+        .returningAll().executeTakeFirst();
+      if (!row) throw new AiFundedPolicyError("revision_conflict");
+      await alignCustomerOrdinaryModels(trx, allowedModelIds, updatedAt);
+      return FundedAiGlobalPolicySchema.parse({
+        enabled: row.enabled,
+        revision: row.revision,
+        allowedModelIds,
+        updatedAt: row.updated_at,
+      });
     });
   }
 

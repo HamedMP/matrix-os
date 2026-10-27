@@ -23,6 +23,32 @@ async function createInitializedDb(snapshot?: Blob): Promise<TestPlatformDb> {
   const instance = snapshot
     ? await KyselyPGlite.create({ loadDataDir: snapshot })
     : await KyselyPGlite.create();
+  // PGlite has one SQL session. Its driver otherwise hands out overlapping
+  // connections, allowing one concurrent transaction to roll back another.
+  // Retain connection ownership through COMMIT/ROLLBACK, like a size-one pool.
+  const createDriver = instance.dialect.createDriver;
+  instance.dialect.createDriver = () => {
+    const driver = createDriver();
+    const acquire = driver.acquireConnection.bind(driver);
+    const release = driver.releaseConnection.bind(driver);
+    let tail = Promise.resolve();
+    let unlockActive = () => {};
+    driver.acquireConnection = async () => {
+      const previous = tail;
+      let unlock!: () => void;
+      tail = new Promise<void>(resolve => { unlock = resolve; });
+      await previous;
+      try {
+        const connection = await acquire();
+        unlockActive = unlock;
+        return connection;
+      } catch (error) { unlock(); throw error; }
+    };
+    driver.releaseConnection = async connection => {
+      try { await release(connection); } finally { unlockActive(); }
+    };
+    return driver;
+  };
   let db: PlatformDB | undefined;
   try {
     db = createPlatformDb({ dialect: instance.dialect });
