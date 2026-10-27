@@ -79,3 +79,54 @@ it("preserves a newer Web rejection when an older timed-out send is confirmed by
   expect(hook.result.current.messages.at(-1)?.content).toBe("You do not have permission to send this message.");
   expect(posts).toBe(2);
 });
+
+it("releases one hundred passively confirmed resource sends while retaining an unknown retry identity", async () => {
+  const { snapshot } = createCanonicalChatFixture("completed");
+  const { project, providerBinding, activeRun, ...chat } = snapshot.chat;
+  const record = { chat, projectId: project?.id, providerBinding, activeRun };
+  let fresh = { record, messages: snapshot.messages, turns: snapshot.turns, runs: snapshot.runs, activities: snapshot.activities };
+  const requests: Array<{ clientRequestId: string; parts: typeof snapshot.messages[0]["parts"] }> = [];
+  const accepted = vi.fn();
+  const fetchFn = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/api/chats?")) return Response.json({ items: [fresh.record] });
+    if (url.includes(`/api/chats/${chat.id}?`)) return Response.json(fresh);
+    if (url.includes(`/api/chats/${chat.id}/turns?`)) {
+      requests.push(JSON.parse(String(init?.body)));
+      throw new DOMException("deadline", "TimeoutError");
+    }
+    throw new Error(`Unexpected ${url}`);
+  });
+  stubLegacyChatFetch(fetchFn);
+  const hook = renderHook(() => useCanonicalChatState());
+  await waitFor(() => expect(hook.result.current.sessionId).toBe(chat.id));
+  const options = { instanceId: "codex_default", model: "gpt-5.6-sol", interactionMode: "default", permissionMode: "supervised",
+    resources: [{ kind: "file" as const, id: "file_readme", label: "readme", path: "README.md" }], onAccepted: accepted };
+  try {
+    for (let index = 0; index < 100; index++) {
+      let result: unknown;
+      await act(async () => { result = await hook.result.current.submitMessage(`resource message ${index}`, undefined,
+        { ...options, clientRequestId: `req_passive_${index}` }); });
+      expect(result).toBe(false);
+      expect(requests).toHaveLength(index + 1);
+      const request = requests[index]!;
+      const turn = { ...snapshot.turns[0]!, id: `cturn_passive_${index}`, clientRequestId: request.clientRequestId,
+        inputMessageId: `msg_passive_${index}`, baseMessageSeq: fresh.record.chat.messageCount };
+      fresh = { ...fresh, record: { ...fresh.record, chat: { ...fresh.record.chat,
+        revision: fresh.record.chat.revision + 2, messageCount: fresh.record.chat.messageCount + 1 } },
+        turns: [...snapshot.turns, turn], messages: [...snapshot.messages, { ...snapshot.messages[0]!, id: turn.inputMessageId,
+          turnId: turn.id, parts: request.parts, seq: fresh.record.chat.messageCount + 1 }],
+        runs: [...snapshot.runs, { ...snapshot.runs[0]!, id: `run_passive_${index}`, turnId: turn.id }] };
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      expect(accepted).toHaveBeenCalledTimes(index + 1);
+    }
+    // The next unresolved send can still be posted, and a manual retry retains its exact id/body.
+    await act(async () => { await hook.result.current.submitMessage("still unknown", undefined,
+      { ...options, clientRequestId: "req_still_unknown" }); });
+    expect(requests).toHaveLength(101);
+    await act(async () => { await hook.result.current.submitMessage("still unknown", undefined,
+      { ...options, clientRequestId: "req_still_unknown" }); });
+    expect(requests).toHaveLength(102);
+    expect(requests[101]).toEqual(requests[100]);
+    expect(accepted).toHaveBeenCalledTimes(100);
+  } finally { hook.unmount(); }
+}, 15_000);

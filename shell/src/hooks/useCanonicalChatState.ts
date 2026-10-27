@@ -462,7 +462,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           seed: options.clientRequestId, current: () => detailRef.current, isCurrent,
           onRejected: () => mentionRequests.accepted(requestScope, input.clientRequestId),
           onPrepared: id => { latestAdmissionId.current = id; },
-          onAccepted: () => options.onAccepted?.(),
+          onAccepted: () => {
+            mentionRequests.accepted(requestScope, input.clientRequestId);
+            options.onAccepted?.();
+          },
           onConfirmed: id => {
             if (isCurrent() && latestAdmissionId.current === id && activeChatIdRef.current === sourceChatId && composerDraftSequence.current === submittedDraft) {
               setSafeError(current => current === CHAT_ADMISSION_UNCONFIRMED ? null : current);
