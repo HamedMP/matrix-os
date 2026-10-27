@@ -1,5 +1,7 @@
 # ENG-318 Main-only continuation — 18 October 2026
 
+Historical receipt. See [27 October rebase and current acceptance](rebase-20261027.md): producer merge is complete; old artifacts and runtime inventory do not qualify current source.
+
 Code candidate; not human-review-ready. [ENG-318](https://linear.app/matrix-os/issue/ENG-318/fixchat-refresh-cached-providers-after-confirmed-login) and [Draft PR #2691](https://github.com/HamedMP/matrix-os/pull/2691) retain their original scope. The [canonical acceptance audit](https://linear.app/matrix-os/document/eng-318-requirements-design-audit-and-live-evidence-72e989f70838) contains original requirement sources and the full live checklist.
 
 ## Exact source and rebase

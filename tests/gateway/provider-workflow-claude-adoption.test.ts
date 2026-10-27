@@ -36,12 +36,12 @@ function fixture(previousSource: string) {
     attach: vi.fn(() => ({ close: vi.fn(), send: vi.fn() })),
   } as unknown as Pick<TerminalRuntimeSocketClient, "ensureWorkspace" | "createTab" | "terminateTab" | "attach" | "listWorkspaces">;
   const browserLogin = vi.fn(async () => ({ cancel: vi.fn(async () => {}), submitCode: vi.fn(async () => {}) }));
-  return { store, terminal, browserLogin, snapshot, row };
+  return { store, terminal, browserLogin, snapshot, row, onLoginSucceeded: vi.fn() };
 }
 
 async function adapterFor(f: ReturnType<typeof fixture>) {
   const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal,
-    claudeBrowserLogin: f.browserLogin, runtimePrefix: "/synthetic/native-adoption-runtime",
+    claudeBrowserLogin: f.browserLogin, onLoginSucceeded: f.onLoginSucceeded, runtimePrefix: "/synthetic/native-adoption-runtime",
     hostControl: { available: false, run: vi.fn() } });
   return adapter!;
 }
@@ -54,7 +54,7 @@ it.each(["owner_anthropic_profile", "owner_anthropic_key", "matrix_anthropic"])(
   "foreground Connect adopts an authenticated native Claude account instead of repeating OAuth from %s", async previousSource => {
     const f = fixture(previousSource);
     const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal,
-      claudeBrowserLogin: f.browserLogin, runtimePrefix: "/synthetic/native-adoption-runtime",
+      claudeBrowserLogin: f.browserLogin, onLoginSucceeded: f.onLoginSucceeded, runtimePrefix: "/synthetic/native-adoption-runtime",
       hostControl: { available: false, run: vi.fn() } });
     // Reading connection capabilities must never select an account or enable Off.
     expect(f.store.completeClaudeNativeLogin).not.toHaveBeenCalled();
@@ -73,6 +73,9 @@ it.each(["owner_anthropic_profile", "owner_anthropic_key", "matrix_anthropic"])(
         idempotencyKey: `connect-${createHash("sha256").update(key).digest("hex")}`,
       });
       expect(publish).toHaveBeenCalledWith({ state: "succeeded", safeFailure: null });
+      expect(f.onLoginSucceeded).toHaveBeenCalledExactlyOnceWith("claude");
+      expect(vi.mocked(f.store.completeClaudeNativeLogin!).mock.invocationCallOrder[0]).toBeLessThan(f.onLoginSucceeded.mock.invocationCallOrder[0]!);
+      expect(f.onLoginSucceeded.mock.invocationCallOrder[0]).toBeLessThan(publish.mock.invocationCallOrder.at(-1)!);
       expect(f.browserLogin).not.toHaveBeenCalled();
       expect(f.terminal.createTab).not.toHaveBeenCalled();
       expect(f.terminal.attach).not.toHaveBeenCalled();
@@ -141,6 +144,7 @@ it.each(["revision_conflict", "principal_changed", "proof_expired", "writer_busy
     const f = fixture("owner_anthropic_profile");
     vi.mocked(f.store.completeClaudeNativeLogin!).mockRejectedValueOnce(new Error(reason));
     await expect(start(await adapterFor(f))).rejects.toThrow(reason);
+    expect(f.onLoginSucceeded).not.toHaveBeenCalled();
     expect(f.browserLogin).not.toHaveBeenCalled();
     expect(f.terminal.createTab).not.toHaveBeenCalled();
     expect(f.terminal.attach).not.toHaveBeenCalled();

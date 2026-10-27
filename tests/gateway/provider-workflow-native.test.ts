@@ -486,12 +486,16 @@ it('advertises only official native Terminal Codex subscription alongside keys',
 it('completes Codex Terminal consent only through the exact private native completion', async () => {
   const f = nativeFixture();
   f.store.completeCodexNativeLogin = vi.fn(async () => ({ kind: 'snapshot', snapshot: await f.store.getSnapshot() }));
-  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal });
+  const onLoginSucceeded = vi.fn();
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store: f.store, terminal: f.terminal, onLoginSucceeded });
   const publish = vi.fn();
   await adapter!.start({ registerCleanup: vi.fn(), request: { harnessInstanceId: f.row.id, kind: 'login', method: 'terminal', idempotencyKey: 'codex-consent' }, publish });
   f.observer().onFrame({ type: 'exit', revision: 1, exitCode: 0, terminalRef: ref });
   await vi.waitFor(() => expect(f.store.completeCodexNativeLogin).toHaveBeenCalledWith(expect.objectContaining({ harnessInstanceId: f.row.id, expectedRevision: 0 })));
   await vi.waitFor(() => expect(publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null }));
+  expect(onLoginSucceeded).toHaveBeenCalledExactlyOnceWith("codex");
+  expect(vi.mocked(f.store.completeCodexNativeLogin).mock.invocationCallOrder[0]).toBeLessThan(onLoginSucceeded.mock.invocationCallOrder[0]!);
+  expect(onLoginSucceeded.mock.invocationCallOrder[0]).toBeLessThan(publish.mock.invocationCallOrder.at(-1)!);
   expect(f.store.mutate).toHaveBeenCalledTimes(1);
   expect(f.store.mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'start_login', method: 'terminal' }));
 });

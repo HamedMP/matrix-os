@@ -140,6 +140,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
         if (startRevision === undefined || fresh.revision !== startRevision || fresh.access.mode !== 'writable' || !options.store.completeCodexNativeLogin) throw new ProviderWorkflowError('unavailable');
         await options.store.completeCodexNativeLogin({ harnessInstanceId: harness.id, expectedRevision: startRevision,
           idempotencyKey: `connect-${createHash('sha256').update(idempotencyKey).digest('hex')}`, ...(verifyNativeAccount ? { verifyNativeAccount } : {}) });
+        options.onLoginSucceeded?.("codex");
         return;
       }
       const exact = authenticatedNativeHarness(fresh, harness.id, harness.harness);

@@ -1,5 +1,7 @@
 # Native Codex login → open Chat cache contract
 
+Historical source split. See [27 October integration](rebase-20261027.md) for the normally merged producer, actual adapter notification tests and outstanding live evidence. No historical combined artifact qualifies current source.
+
 **Current continuation (18 October):** see [Main-only source, current verification and live checklist](main-only-continuation.md). Production checkpoint `fb0b93ce7e` rebases only these cache commits onto Main `101fbd5f`. Claude and local ChatGPT plan no longer depend on the historical bcb+6f combination; native Codex remains gated on its producer landing normally. The sections below preserve the 17 October checkpoint and are not current publication or runtime receipts.
 
 Status: local code candidate, synthetic contract qualified; no combined runtime or live acceptance. Tracking: ENG-318 / Draft #2691, related ENG-268 / #2545. This document extends the original cache plan; it does not restore native Codex login on the cache branch's fixed base.

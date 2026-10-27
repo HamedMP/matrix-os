@@ -14,7 +14,8 @@ import type { ApiClient } from "../../desktop/src/renderer/src/lib/api";
 import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/canonical-chat";
 import { disconnectedSnapshot } from "../ui/chat-provider-settings-fixture";
 
-// A public DTO fake, not the unmerged native producer. No native login start is enabled here.
+// A public DTO fake: this renderer suite does not exercise native login start.
+// Actual merged producer notification is tested in the gateway workflow suites.
 const option = { id: "openai_device_code", providerId: "openai", authKind: "subscription", method: "device_code",
   billingKind: "subscription", executionKind: "native", availability: "available" } as const;
 const receipt = ProviderWorkflowV2Schema.parse({ id: "native_codex_receipt", harnessInstanceId: "codex_default", kind: "login", state: "succeeded",
