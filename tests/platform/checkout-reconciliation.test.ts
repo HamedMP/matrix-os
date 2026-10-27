@@ -59,11 +59,14 @@ describe('checkout return reconciliation', () => {
     expect((await instance.request('/billing/checkout/reconcile', { method: 'POST', body: '{}' })).status).toBe(429);
     expect(stripe.retrieveCheckoutSession).toHaveBeenCalledTimes(12);
   });
-  it('keeps a legacy ambiguous checkout create unavailable without an exact request snapshot', async () => {
+  it('routes a legacy ambiguous create to a support-safe journey without replaying it', async () => {
     await claimCheckoutAttempt(db, { id: 'creating', clerkUserId: 'owner', runtimeSlot: 'primary',
       planSlug: 'matrix_builder', billingInterval: 'monthly', regionSlug: 'region_fsn1', createdAt: now().toISOString() });
-    expect((await request()).status).toBe(503);
+    const res = await request();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'unresolved' });
     expect(stripe.retrieveCheckoutSession).not.toHaveBeenCalled();
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
   it('recovers an ambiguous create with the persisted request and the same idempotency key', async () => {
     await claimCheckoutAttempt(db, { id: 'creating', clerkUserId: 'owner', runtimeSlot: 'primary',
@@ -72,6 +75,8 @@ describe('checkout return reconciliation', () => {
         planSlug: 'matrix_builder', interval: 'monthly', regionSlug: 'region_fsn1',
         developerTools: ['codex'], returnPath: '/?billing=setup&handoff=add-computer',
         attribution: { utm_source: 'saved-source', landing_path: '/pricing' },
+        googleAnalytics: { clientId: 'saved.client', analyticsConsent: 'granted',
+          adUserData: 'denied', adPersonalization: 'denied', expiresAt: 1 },
       } });
 
     const res = await request();
@@ -82,11 +87,22 @@ describe('checkout return reconciliation', () => {
       idempotencyKey: 'creating', clerkUserId: 'owner', priceId: 'price_builder',
       runtimeSlot: 'primary', regionSlug: 'region_fsn1', attribution: {
         utm_source: 'saved-source', landing_path: '/pricing',
-      },
+      }, googleAnalytics: expect.objectContaining({ clientId: 'saved.client', expiresAt: 1 }),
     }));
     expect(await getLatestCheckoutAttempt(db, 'owner')).toMatchObject({
       status: 'open', stripeSessionId: 'cs_recovered', checkoutUrl: 'https://checkout.stripe.test/recovered',
     });
+  });
+  it('never replays a creating attempt after the provider idempotency window', async () => {
+    await claimCheckoutAttempt(db, { id: 'old-creating', clerkUserId: 'owner', runtimeSlot: 'primary',
+      planSlug: 'matrix_builder', billingInterval: 'monthly', regionSlug: 'region_fsn1',
+      createdAt: '2026-10-23T07:59:59.999Z', developerTools: ['codex'], checkoutRequest: {
+        planSlug: 'matrix_builder', interval: 'monthly', regionSlug: 'region_fsn1', developerTools: ['codex'],
+      } });
+    const res = await request();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'unresolved' });
+    expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
   it('does not retrieve another owner or slot checkout', async () => {
     await seed('studio');

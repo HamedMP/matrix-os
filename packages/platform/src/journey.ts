@@ -132,6 +132,19 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
   if (!access.runtimeProxyAllowed) {
     // Billing branch. Settling only applies pre-activation; a lapsed entitlement
     // falls straight through to plan_required.
+    if (isPreActivationEntitlement(entitlement) && checkoutAttempt?.status === 'creating') {
+      const since = checkoutAttempt.createdAt;
+      const ageMs = now.getTime() - new Date(since).getTime();
+      const delayed = ageMs > settlingWindowMs;
+      return {
+        phase: 'payment_settling',
+        detail: delayed
+          ? 'Your checkout could not be confirmed automatically.'
+          : 'Confirming your checkout…',
+        nextAction: delayed ? { kind: 'contact_support' } : { kind: 'wait' },
+        settling: { since, delayed },
+      };
+    }
     if (isPreActivationEntitlement(entitlement) && checkoutAttempt?.status === 'paid') {
       const since = checkoutAttempt.resolvedAt ?? checkoutAttempt.createdAt;
       const ageMs = now.getTime() - new Date(since).getTime();

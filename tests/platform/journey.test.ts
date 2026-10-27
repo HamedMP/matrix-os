@@ -52,11 +52,13 @@ function attempt(status: BillingCheckoutAttemptRecord['status'], createdAt: stri
     clerkUserId: 'user_123',
     stripeSessionId: 'cs_1',
     checkoutUrl: 'https://checkout.stripe.test/session',
+    requestPayload: null,
     runtimeSlot: 'primary',
     planSlug: 'matrix_builder',
     billingInterval: 'monthly',
     regionSlug: 'region_fsn1',
     serverType: 'cpx32',
+    trialPeriodDays: null,
     status,
     developerTools: ['codex', 'claude-code', 'opencode', 'pi'],
     createdAt,
@@ -114,6 +116,19 @@ describe('platform/journey deriveJourneyPhase', () => {
     expect(s.phase).toBe('plan_required');
     expect(s.nextAction.kind).toBe('open_plans');
     expect(s.nextAction.url).toContain('plans=1');
+  });
+
+  it('unresolved creating attempt stays in payment settling instead of offering another checkout', () => {
+    const s = derive({ checkoutAttempt: attempt('creating', '2026-06-11T11:59:00.000Z') });
+    expect(s.phase).toBe('payment_settling');
+    expect(s.nextAction.kind).toBe('wait');
+  });
+
+  it('routes an old unresolved create to support without offering another checkout', () => {
+    const s = derive({ checkoutAttempt: attempt('creating', '2026-06-11T11:00:00.000Z') });
+    expect(s.phase).toBe('payment_settling');
+    expect(s.settling?.delayed).toBe(true);
+    expect(s.nextAction.kind).toBe('contact_support');
   });
 
   it('open attempt immediately returns to recoverable billing instead of activation', () => {

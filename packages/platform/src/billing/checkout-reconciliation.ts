@@ -1,6 +1,7 @@
 import type { Context, Handler } from 'hono';
 import {
   finalizeCheckoutAttempt,
+  canRetryCreatingCheckoutAttempt,
   getActiveCheckoutAttempt,
   getBillingCustomerByClerkUserId,
   resolveCheckoutAttempt,
@@ -9,7 +10,7 @@ import {
 } from '../db.js';
 import { createBoundedRateLimiter } from '../request-admission.js';
 import type { PrebillingCheckoutCoordinator } from '../billing-routes.js';
-import { CheckoutAbandonRequestSchema, CheckoutRequestSchema } from './checkout-schemas.js';
+import { CheckoutAbandonRequestSchema, StoredCheckoutRequestSchema } from './checkout-schemas.js';
 import { rememberGoogleAttribution } from './google-attribution-store.js';
 import { resolveBillingReturnUrl, resolvePriceId } from './checkout-support.js';
 import { createRedditAttributionExpiry } from '../reddit-purchase-attribution.js';
@@ -30,7 +31,9 @@ export async function createStoredCheckoutSession(
   attempt: BillingCheckoutAttemptRecord,
 ): Promise<Awaited<ReturnType<StripeBillingClient['createCheckoutSession']>> | null> {
   if (!attempt.requestPayload) return null;
-  const parsed = CheckoutRequestSchema.safeParse(JSON.parse(attempt.requestPayload) as unknown);
+  const currentTime = options.now();
+  if (!canRetryCreatingCheckoutAttempt(attempt, currentTime.toISOString())) return null;
+  const parsed = StoredCheckoutRequestSchema.safeParse(JSON.parse(attempt.requestPayload) as unknown);
   if (!parsed.success) throw new Error('checkout_request_snapshot_invalid');
   const request = parsed.data;
   if (
@@ -44,7 +47,6 @@ export async function createStoredCheckoutSession(
   }
   const priceId = resolvePriceId(options.env, request.planSlug, request.interval);
   if (!priceId) throw new Error('checkout_price_config_missing');
-  const currentTime = options.now();
   const customer = await getBillingCustomerByClerkUserId(options.db, attempt.clerkUserId);
   let preparation: { intentId: string; expiresAt: string } | undefined;
   if (options.prebilling && attempt.serverType && request.runtimeSlot === 'primary') {
@@ -136,9 +138,11 @@ export function createCheckoutReconciliationHandler(options: CheckoutReconciliat
       const attempt = await getActiveCheckoutAttempt(options.db, clerkUserId, parsed.data.runtimeSlot);
       if (!attempt) return c.json({ status: 'none' }, 200);
       if (!limiter.check(clerkUserId)) return c.json(UNAVAILABLE, 429);
-      if (attempt.status === 'creating' && attempt.requestPayload) {
-        const recovered = await createStoredCheckoutSession(options, attempt);
-        if (recovered) return c.json({ status: 'open' }, 200);
+      if (attempt.status === 'creating') {
+        const recovered = attempt.requestPayload
+          ? await createStoredCheckoutSession(options, attempt)
+          : null;
+        return c.json({ status: recovered ? 'open' : 'unresolved' }, 200);
       }
       if (attempt.status !== 'open' || !attempt.stripeSessionId) {
         // An ambiguous create may already have a provider session. Never route

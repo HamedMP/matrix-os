@@ -23,6 +23,17 @@ const CHECKOUT_IDEMPOTENCY_RETRY_WINDOW_MS = 23 * 60 * 60 * 1000;
 
 const CHECKOUT_SESSION_MAX_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
+export function canRetryCreatingCheckoutAttempt(
+  attempt: Pick<BillingCheckoutAttemptRecord, 'status' | 'createdAt'>,
+  now: string,
+): boolean {
+  const ageMs = Date.parse(now) - Date.parse(attempt.createdAt);
+  return attempt.status === 'creating'
+    && Number.isFinite(ageMs)
+    && ageMs >= 0
+    && ageMs <= CHECKOUT_IDEMPOTENCY_RETRY_WINDOW_MS;
+}
+
 function isExpiredLegacyCheckoutAttempt(
   attempt: BillingCheckoutAttemptRecord,
   now: string,
@@ -182,11 +193,7 @@ export async function claimCheckoutAttempt(
     && activeRow.trial_period_days === (record.trialPeriodDays ?? null)
     && activeRow.developer_tools
       === serializeDeveloperTools(record.developerTools ?? DEFAULT_DEVELOPER_TOOLS);
-  const retryAgeMs = Date.parse(record.createdAt) - Date.parse(activeRow.created_at);
-  const withinIdempotencyWindow = Number.isFinite(retryAgeMs)
-    && retryAgeMs >= 0
-    && retryAgeMs <= CHECKOUT_IDEMPOTENCY_RETRY_WINDOW_MS;
-  if (activeRow.status === 'creating' && sameSelection && withinIdempotencyWindow) {
+  if (sameSelection && canRetryCreatingCheckoutAttempt(mapCheckoutAttempt(activeRow), record.createdAt)) {
     // A previous Stripe response may have timed out after creating the
     // provider session. Re-run with this persisted attempt id so Stripe's
     // idempotency key reconciles the ambiguous result instead of creating a

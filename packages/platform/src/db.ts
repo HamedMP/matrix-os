@@ -1768,6 +1768,7 @@ export {
 export {
   insertCheckoutAttempt,
   claimCheckoutAttempt,
+  canRetryCreatingCheckoutAttempt,
   claimCardTrialCheckoutAttempt,
   isCardTrialOfferEligible,
   consumeCardTrial,
