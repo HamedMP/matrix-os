@@ -135,6 +135,27 @@ describe("canonical shell Chat client", () => {
     );
   });
 
+  it("deletes a Chat through the canonical idempotent endpoint", async () => {
+    const fetchFn = vi.fn(async () => Response.json({ chatId: "chat_shell_test", deletedAt: "2026-08-31T00:00:01.000Z" }));
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+
+    await expect(client.delete("chat_shell_test", "req_delete_1")).resolves.toEqual({
+      chatId: "chat_shell_test",
+      deletedAt: "2026-08-31T00:00:01.000Z",
+    });
+    expect(fetchFn).toHaveBeenCalledWith(
+      "https://matrix.test/api/chats/chat_shell_test?clientRequestId=req_delete_1&readStateVersion=1&fundingVersion=1&importSourceVersion=1",
+      expect.objectContaining({ method: "DELETE", signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("rejects a delete response for a different Chat", async () => {
+    const fetchFn = vi.fn(async () => Response.json({ chatId: "chat_other", deletedAt: "2026-08-31T00:00:01.000Z" }));
+    const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+
+    await expect(client.delete("chat_shell_test", "req_delete_1")).rejects.toThrow();
+  });
+
   it("projects canonical parts without exposing raw structured payloads", () => {
     expect(projectCanonicalMessages([{
       id: "msg_shell_user", chatId: "chat_shell_test", seq: 1, role: "user", state: "committed",

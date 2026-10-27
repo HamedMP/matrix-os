@@ -63,6 +63,8 @@ export interface ChatState {
   conversations: ReturnType<typeof useConversation>["conversations"];
   activeConversationTitle?: string;
   renameConversation?: (id: string, title: string) => Promise<boolean>;
+  /** Permanently deletes a Chat; resolves false when the server refused it. */
+  deleteConversation?: (id: string) => Promise<boolean>;
   composerDraftRequest: { id: number; text: string; merge?: boolean } | null;
   /** `merge` keeps the owner's own text and adds the request below it. */
   requestComposerDraft: (text: string, options?: { merge?: boolean }) => void;

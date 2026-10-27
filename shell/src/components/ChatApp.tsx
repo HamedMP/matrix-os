@@ -84,6 +84,7 @@ import {
   RenameableConversationRow,
   type RenameableConversation,
 } from "./chat/ChatTitleRename";
+import { DeleteChatDialog, useDeleteChatDialog } from "./chat/DeleteChatDialog";
 import {
   PlusIcon,
   PanelLeftIcon,
@@ -155,6 +156,7 @@ interface ChatAppProps {
   onSwitchConversation: (id: string) => void;
   activeConversationTitle?: string;
   onRenameConversation?: (id: string, title: string) => Promise<boolean>;
+  onDeleteConversation?: (id: string) => Promise<boolean>;
   onSubmit: (
     text: string,
     files?: Array<{ name: string; type: string; data: string }>,
@@ -209,6 +211,7 @@ function ChatAppContent({
   onSwitchConversation: switchConversation,
   activeConversationTitle,
   onRenameConversation,
+  onDeleteConversation,
   onSubmit,
   providerSelection,
   executionControls,
@@ -295,6 +298,7 @@ function ChatAppContent({
   }, [collaborationViewKey]);
   const [editingChat, setEditingChat] = useState<{ id: string; source: "header" | "rail" } | null>(null);
   const [renamePending, setRenamePending] = useState(false);
+  const deleteChat = useDeleteChatDialog(onDeleteConversation);
   const initialHermesSetupRef = useRef<ReturnType<typeof readHermesSetup> | null>(null);
   const getInitialHermesSetup = () => {
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot yet lower the `??=` logical-assignment operator (BuildHIR Todo); this lazy one-time ref cache is a deliberate first-render localStorage read and rewriting it would not change behavior.
@@ -506,6 +510,7 @@ function ChatAppContent({
                     onSelect={() => onSwitchConversation(conv.id)}
                     onRenameStart={!mobile && onRenameConversation && !renamePending ? () => setEditingChat({ id: conv.id, source: "rail" }) : undefined}
                     onRenameCancel={() => setEditingChat(null)}
+                    onDelete={!mobile && deleteChat.open ? () => deleteChat.open?.({ id: conv.id, title: conv.title || conv.preview || "New chat" }) : undefined}
                     onRenameCommit={(title) => {
                       if (!onRenameConversation || renamePending) return;
                       setRenamePending(true);
@@ -526,6 +531,7 @@ function ChatAppContent({
             )}
           </div>
         </ScrollArea>
+        <DeleteChatDialog {...deleteChat.dialog} />
       </aside></ChatRailOrderContext.Provider>
 
       {/* Main content */}

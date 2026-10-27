@@ -72,6 +72,7 @@ export function RenameableConversationRow({
   onRenameStart,
   onRenameCommit,
   onRenameCancel,
+  onDelete,
 }: {
   conversation: RenameableConversation;
   active: boolean;
@@ -83,13 +84,16 @@ export function RenameableConversationRow({
   onRenameStart?: () => void;
   onRenameCommit: (title: string) => void;
   onRenameCancel: () => void;
+  onDelete?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const selectTimerRef = useRef<number | null>(null);
   const renameTimerRef = useRef<number | null>(null);
+  const deleteTimerRef = useRef<number | null>(null);
   useEffect(() => () => {
     if (selectTimerRef.current !== null) window.clearTimeout(selectTimerRef.current);
     if (renameTimerRef.current !== null) window.clearTimeout(renameTimerRef.current);
+    if (deleteTimerRef.current !== null) window.clearTimeout(deleteTimerRef.current);
   }, []);
   const title = conversation.title || conversation.preview || "New chat";
   const row = editing ? (
@@ -130,7 +134,7 @@ export function RenameableConversationRow({
   if (editing) return row;
   return (
     <div data-chat-title-row className="matrix-web-chat-row-item" data-current={active} data-menu-open={menuOpen}>
-    <ChatContextMenu dropdownTrigger={<button type="button" className="matrix-web-chat-row-more" aria-label={`Actions for ${title}`}><Ellipsis aria-hidden="true" size={15} strokeWidth={1.5}/></button>} onDropdownOpenChange={setMenuOpen} chatId={conversation.id} zIndex={SHELL_Z_INDEX.popover} primaryAction={onToggleRead ? { label: conversation.readState?.unread ? "Mark as read" : "Mark as unread", onSelect: onToggleRead } : undefined} items={onRenameStart ? [{
+    <ChatContextMenu dropdownTrigger={<button type="button" className="matrix-web-chat-row-more" aria-label={`Actions for ${title}`}><Ellipsis aria-hidden="true" size={15} strokeWidth={1.5}/></button>} onDropdownOpenChange={setMenuOpen} chatId={conversation.id} zIndex={SHELL_Z_INDEX.popover} primaryAction={onToggleRead ? { label: conversation.readState?.unread ? "Mark as read" : "Mark as unread", onSelect: onToggleRead } : undefined} items={[...(onRenameStart ? [{
         label: "Rename", onSelect: () => {
           if (renameTimerRef.current !== null) window.clearTimeout(renameTimerRef.current);
           renameTimerRef.current = window.setTimeout(() => {
@@ -138,7 +142,16 @@ export function RenameableConversationRow({
             onRenameStart();
           }, 0);
         },
-    }] : []}>{row}</ChatContextMenu>
+    }] : []), ...(onDelete ? [{
+        // Open after the menu closes so the dialog receives focus.
+        label: "Delete", danger: true, onSelect: () => {
+          if (deleteTimerRef.current !== null) window.clearTimeout(deleteTimerRef.current);
+          deleteTimerRef.current = window.setTimeout(() => {
+            deleteTimerRef.current = null;
+            onDelete();
+          }, 0);
+        },
+    }] : [])]}>{row}</ChatContextMenu>
     </div>
   );
 }

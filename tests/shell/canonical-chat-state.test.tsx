@@ -190,6 +190,50 @@ describe("canonical shell Chat state", () => {
     expect(result.current.activeConversationTitle).toBe("New title");
   });
 
+  it("deletes a Chat and leaves it when it was the active Chat", async () => {
+    let deleteUrl: string | undefined;
+    stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?") && init?.method === undefined) {
+        return Response.json({ items: deleteUrl ? [record("chat_b", "Keep")] : [record("chat_a", "Remove"), record("chat_b", "Keep")] });
+      }
+      if (url.includes("/api/chats/chat_a?") && init?.method === undefined) return Response.json(detail("chat_a", "Remove"));
+      if (url.includes("/api/chats/chat_a?clientRequestId=req_") && init?.method === "DELETE") {
+        deleteUrl = url;
+        return Response.json({ chatId: "chat_a", deletedAt: "2026-08-31T00:00:01.000Z" });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.conversations).toHaveLength(2));
+    act(() => result.current.switchConversation("chat_a"));
+    await act(async () => {
+      await expect(result.current.deleteConversation?.("chat_a")).resolves.toBe(true);
+    });
+
+    expect(deleteUrl).toBeDefined();
+    expect(result.current.conversations.map((conversation) => conversation.id)).toEqual(["chat_b"]);
+    expect(result.current.sessionId).toBeUndefined();
+  });
+
+  it("keeps a Chat listed when deletion fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?") && init?.method === undefined) return Response.json({ items: [record("chat_a", "Busy")] });
+      if (url.includes("/api/chats/chat_a?") && init?.method === undefined) return Response.json(detail("chat_a", "Busy"));
+      if (init?.method === "DELETE") return Response.json({ error: { code: "chat_busy" } }, { status: 409 });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    await act(async () => {
+      await expect(result.current.deleteConversation?.("chat_a")).resolves.toBe(false);
+    });
+
+    expect(result.current.conversations.map((conversation) => conversation.id)).toEqual(["chat_a"]);
+  });
+
   it("does not let an older rename response regress a newer canonical refresh", async () => {
     let resolveRename!: (response: Response) => void;
     const renameResponse = new Promise<Response>((resolve) => { resolveRename = resolve; });

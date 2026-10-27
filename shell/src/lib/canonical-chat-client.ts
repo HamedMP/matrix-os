@@ -43,8 +43,15 @@ import {
 } from "@matrix-os/contracts";
 import type { ChatMessage } from "@/lib/chat";
 import { botCreationFailureReason, canonicalChatSafeFailureReason, type BotCreationFailureReason } from "@matrix-os/ui";
+import { z } from "zod/v4";
 
 const REQUEST_TIMEOUT_MS = 10_000;
+
+const CanonicalShellChatDeletionSchema = z.object({
+  chatId: CanonicalChatIdSchema,
+  deletedAt: z.string().max(64),
+});
+export type CanonicalShellChatDeletion = z.infer<typeof CanonicalShellChatDeletionSchema>;
 
 export interface CanonicalShellChatClient {
   agents?: ChatAgentClient;
@@ -57,6 +64,8 @@ export interface CanonicalShellChatClient {
   detail(chatId: string, cursor?: string): Promise<CanonicalChatDetailResponse>;
   updateReadState(chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<CanonicalChatRecord>;
   updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
+  /** Permanently deletes the Chat; retrying with the same request id is idempotent. */
+  delete(chatId: string, clientRequestId: string): Promise<CanonicalShellChatDeletion>;
   admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatTurnAdmissionResponse>;
   queueTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatQueueAdmissionResponse>;
   cancelQueuedTurn(chatId: string, queuedTurnId: string, input: CanonicalCancelQueuedChatTurnRequest): Promise<CanonicalChatQueueCancellationResponse>;
@@ -243,6 +252,15 @@ export function createCanonicalShellChatClient(options: {
       return CanonicalChatRecordSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}/read-state`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       }));
+    },
+    async delete(chatId, clientRequestId) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const query = new URLSearchParams({ clientRequestId: CanonicalChatRequestIdSchema.parse(clientRequestId) });
+      const deletion = CanonicalShellChatDeletionSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}?${query}`, {
+        method: "DELETE",
+      }));
+      if (deletion.chatId !== id) throw new Error("UnexpectedChatDeletion");
+      return deletion;
     },
     async updateTitle(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
