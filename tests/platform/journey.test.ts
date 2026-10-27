@@ -14,6 +14,7 @@ import type {
 import type { PrebillingProvisioningIntent } from '../../packages/platform/src/prebilling-provisioning-store.js';
 import {
   getLatestJourneyEvent,
+  claimCheckoutAttempt,
   getOnboardingFirstRun,
   insertCheckoutAttempt,
   insertUserMachine,
@@ -314,6 +315,19 @@ describe('platform/journey loadJourney', () => {
     });
     const state = await loadJourney('user_pay', { db, now: () => NOW, maxProvisionAttempts: 3, appOrigin: APP_ORIGIN });
     expect(state.phase).toBe('plan_required');
+  });
+
+  it('reads an unresolved creating attempt as payment settling instead of opening plans', async () => {
+    await claimCheckoutAttempt(db, {
+      id: 'creating-1', clerkUserId: 'user_creating', runtimeSlot: 'primary',
+      planSlug: 'matrix_builder', billingInterval: 'monthly', regionSlug: 'region_fsn1',
+      createdAt: '2026-06-11T11:59:30.000Z',
+    });
+    const state = await loadJourney('user_creating', {
+      db, now: () => NOW, maxProvisionAttempts: 3, appOrigin: APP_ORIGIN,
+    });
+    expect(state.phase).toBe('payment_settling');
+    expect(state.nextAction.kind).toBe('wait');
   });
 
   it('keeps a paid attempt sticky even when a newer open attempt exists past the window', async () => {

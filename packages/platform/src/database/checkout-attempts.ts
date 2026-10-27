@@ -406,7 +406,7 @@ export async function getActiveCheckoutAttempt(
 
 /**
  * The attempt that governs payment settling: a confirmed `paid` attempt always
- * wins over a newer still-`open` one, so a paying user who opens a second
+ * wins over a newer still-`open`/`creating` one, so a paying user who opens a second
  * checkout before activation is never bounced back to plan selection. Terminal
  * (`expired`/`abandoned`) attempts never sustain settling and are excluded.
  */
@@ -421,7 +421,7 @@ export async function getSettlingCheckoutAttempt(
     .selectFrom('billing_checkout_attempts')
     .selectAll()
     .where('clerk_user_id', '=', clerkUserId)
-    .where('status', 'in', ['paid', 'open']);
+    .where('status', 'in', ['paid', 'creating', 'open']);
   if (runtimeSlot) query = query.where('runtime_slot', '=', runtimeSlot);
   const row = await query
     .orderBy(sql`CASE status WHEN 'paid' THEN 0 ELSE 1 END`)
