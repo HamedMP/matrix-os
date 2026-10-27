@@ -67,9 +67,12 @@ import { writeFileSync } from "node:fs";
 
 const resultPath = process.argv[2];
 function recordSize() {
+  const [ioctlCols, ioctlRows] = process.stdout.getWindowSize();
   writeFileSync(resultPath, JSON.stringify({
     cols: process.stdout.columns,
     rows: process.stdout.rows,
+    ioctlCols,
+    ioctlRows,
   }));
 }
 process.on("SIGWINCH", recordSize);
@@ -100,6 +103,9 @@ const isolatedEnv = {
   ZELLIJ_CONFIG_FILE: configPath,
 };
 
+let interactiveExit = null;
+let interactiveOutput = "";
+
 function answerHostQueries(terminal) {
   let answered = false;
   let capture = "";
@@ -126,7 +132,8 @@ async function waitForSize(expected) {
   while (Date.now() < deadline) {
     try {
       observed = JSON.parse(await readFile(resultPath, "utf8"));
-      if (observed.cols === expected.cols && observed.rows === expected.rows) return;
+      if (observed.cols === expected.cols && observed.rows === expected.rows
+        && observed.ioctlCols === expected.cols && observed.ioctlRows === expected.rows) return;
     } catch (error) {
       const retryable = error instanceof SyntaxError
         || (error instanceof Error && "code" in error && error.code === "ENOENT");
@@ -135,7 +142,8 @@ async function waitForSize(expected) {
     await new Promise((resolveWait) => setTimeout(resolveWait, 50));
   }
   throw new Error(
-    `pane size did not reach ${expected.cols}x${expected.rows}; observed ${JSON.stringify(observed)}`,
+    `pane size did not reach ${expected.cols}x${expected.rows}; observed ${JSON.stringify(observed)}; `
+    + `interactiveExit=${JSON.stringify(interactiveExit)}; output=${JSON.stringify(interactiveOutput.slice(-4096))}`,
   );
 }
 
@@ -228,6 +236,12 @@ try {
     ...INITIAL_SIZE,
     cwd: homeDir,
     env: isolatedEnv,
+  });
+  interactive.onExit((event) => {
+    interactiveExit = event;
+  });
+  interactive.onData((data) => {
+    interactiveOutput = (interactiveOutput + data).slice(-MAX_CAPTURE_BYTES);
   });
   interactiveHostReplies = answerHostQueries(interactive);
   await waitForSize(INITIAL_SIZE);
