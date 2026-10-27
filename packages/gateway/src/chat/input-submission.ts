@@ -1,5 +1,6 @@
 import { buildCanonicalChatInputAnswer, CanonicalChatRunActivitySchema, type CanonicalChatRunActivity, type CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 import type { Kysely, Transaction } from "kysely";
+import { sql } from "kysely";
 import type { ChatDatabase } from "./database.js";
 import type { ChatOwner } from "./records.js";
 import { ChatConflictError } from "./errors.js";
@@ -17,13 +18,28 @@ export function validateChatInputAnswer(request: Pick<Request, "questions" | "ex
   if (!buildCanonicalChatInputAnswer(request, values)) throw new ChatInputAnswerValidationError("Invalid answers");
 }
 export async function getChatInputState(db: Kysely<ChatDatabase> | Transaction<ChatDatabase>, owner: ChatOwner, input: { chatId: string; runId: string; requestId: string }) {
-  const rows = await db.selectFrom("chat_run_events")
+  const latestByType = db.selectFrom("chat_run_events")
     .innerJoin("chat_runs", "chat_runs.id", "chat_run_events.run_id")
     .innerJoin("chats", "chats.id", "chat_runs.chat_id")
-    .select("chat_run_events.event")
+    .select([
+      "chat_run_events.event",
+      "chat_run_events.run_seq",
+      sql<number>`row_number() over (
+        partition by chat_run_events.event ->> 'type'
+        order by chat_run_events.run_seq desc
+      )`.as("type_rank"),
+    ])
     .where("chats.owner_type", "=", owner.type).where("chats.owner_id", "=", owner.ownerId)
     .where("chats.id", "=", input.chatId).where("chat_runs.id", "=", input.runId)
-    .orderBy("chat_run_events.run_seq").limit(500).execute();
+    .where(sql<string>`chat_run_events.event ->> 'requestId'`, "=", input.requestId)
+    .where(sql<string>`chat_run_events.event ->> 'type'`, "in", ["input.requested", "input.submitted", "input.resolved"])
+    .as("latest_by_type");
+  const rows = await db.selectFrom(latestByType)
+    .select(["event", "run_seq"])
+    .where("type_rank", "=", 1)
+    .orderBy("run_seq")
+    .limit(3)
+    .execute();
   let request: Request | undefined;
   let submitted: Extract<CanonicalChatRunActivity, { type: "input.submitted" }> | undefined;
   let resolved = false;
@@ -52,19 +68,35 @@ export async function assertInputClaim(db: Kysely<ChatDatabase> | Transaction<Ch
 
 /** A late response to one request must not clear a newer pending question. */
 export async function pendingInputTransition(db: Kysely<ChatDatabase> | Transaction<ChatDatabase>, runId: string) {
-  const rows = await db.selectFrom("chat_run_events").select("event").where("run_id", "=", runId).orderBy("run_seq").limit(500).execute();
-  const pending = new Map<string, "input" | "async_input" | "approval">();
-  for (const row of rows) {
-    const parsed = CanonicalChatRunActivitySchema.safeParse(row.event);
-    if (!parsed.success) continue;
-    const event = parsed.data;
-    if (event.type === "input.requested") pending.set(`input:${event.requestId}`, event.asynchronous ? "async_input" : "input");
-    if (event.type === "input.resolved") pending.delete(`input:${event.requestId}`);
-    if (event.type === "approval.requested") pending.set(`approval:${event.approvalId}`, "approval");
-    if (event.type === "approval.resolved") pending.delete(`approval:${event.approvalId}`);
-  }
-  if ([...pending.values()].includes("approval")) return { runStatus: "waiting_for_approval" as const, attention: "approval_required" as const };
-  if ([...pending.values()].includes("input")) return { runStatus: "waiting_for_input" as const, attention: "input_required" as const };
-  if (pending.size) return { runStatus: "running" as const, attention: "input_required" as const };
+  const state = await db.selectNoFrom([
+    sql<boolean>`EXISTS (
+      SELECT 1 FROM chat_run_events requested
+      WHERE requested.run_id = ${runId} AND (requested.event ->> 'type') = 'approval.requested'
+        AND NOT EXISTS (SELECT 1 FROM chat_approval_outcomes outcomes
+          WHERE outcomes.run_id = requested.run_id
+            AND outcomes.approval_id = (requested.event ->> 'approvalId'))
+        AND NOT EXISTS (SELECT 1 FROM chat_run_events resolved
+          WHERE resolved.run_id = requested.run_id AND (resolved.event ->> 'type') = 'approval.resolved'
+            AND (resolved.event ->> 'approvalId') = (requested.event ->> 'approvalId'))
+    )`.as("approval"),
+    sql<boolean>`EXISTS (
+      SELECT 1 FROM chat_run_events requested
+      WHERE requested.run_id = ${runId} AND (requested.event ->> 'type') = 'input.requested'
+        AND (requested.event ->> 'asynchronous') IS DISTINCT FROM 'true'
+        AND NOT EXISTS (SELECT 1 FROM chat_run_events resolved
+          WHERE resolved.run_id = requested.run_id AND (resolved.event ->> 'type') = 'input.resolved'
+            AND (resolved.event ->> 'requestId') = (requested.event ->> 'requestId'))
+    )`.as("input"),
+    sql<boolean>`EXISTS (
+      SELECT 1 FROM chat_run_events requested
+      WHERE requested.run_id = ${runId} AND (requested.event ->> 'type') = 'input.requested'
+        AND NOT EXISTS (SELECT 1 FROM chat_run_events resolved
+          WHERE resolved.run_id = requested.run_id AND (resolved.event ->> 'type') = 'input.resolved'
+            AND (resolved.event ->> 'requestId') = (requested.event ->> 'requestId'))
+    )`.as("anyInput"),
+  ]).executeTakeFirstOrThrow();
+  if (state.approval) return { runStatus: "waiting_for_approval" as const, attention: "approval_required" as const };
+  if (state.input) return { runStatus: "waiting_for_input" as const, attention: "input_required" as const };
+  if (state.anyInput) return { runStatus: "running" as const, attention: "input_required" as const };
   return { runStatus: "running" as const, attention: "none" as const };
 }

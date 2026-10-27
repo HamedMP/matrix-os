@@ -122,6 +122,25 @@ describe("gateway organization membership client (S03 seam for the S20 precondit
     await expect(client.assertMembership({ organizationId: org, actorId: member })).rejects.toThrow();
   });
 
+  it.each(["actor", "organization"] as const)("rejects only matching in-flight results after %s eviction", async (scope) => {
+    const clock = new Date("2026-09-20T12:00:00.000Z");
+    const other = "user_other000000000000000000";
+    let release!: () => void;
+    const fetchImpl = vi.fn(async () => {
+      await new Promise<void>(resolve => { release = resolve; });
+      return Response.json([member, other].map(actorId => assertionFrame({ member: true, requestStartedAt: clock, actorId })));
+    });
+    const client = new OrganizationMembershipClient({ platformBaseUrl: "https://platform.example", runtimeId,
+      serviceToken: "t".repeat(40), fetchImpl: fetchImpl as typeof fetch, now: () => clock });
+    const results = Promise.allSettled([member, other].map(actorId => client.assertMembership({ organizationId: org, actorId })));
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    client.evict({ organizationId: org, ...(scope === "actor" ? { actorId: member } : {}) });
+    release();
+    expect((await results).map(result => result.status)).toEqual(scope === "actor"
+      ? ["rejected", "fulfilled"] : ["rejected", "rejected"]);
+    expect(client.describe()).toEqual({ cacheEntries: scope === "actor" ? 1 : 0, inflight: 0 });
+  });
+
   it("evicts cached and in-flight evidence for an actor or a whole organization so a pushed denial is served at once", async () => {
     let clock = new Date("2026-09-20T12:00:00.000Z");
     const other = "user_other000000000000000000";
@@ -139,7 +158,7 @@ describe("gateway organization membership client (S03 seam for the S20 precondit
     await expect(client.assertMembership({ organizationId: org, actorId: member })).resolves.toEqual({ member: false });
     await expect(client.assertMembership({ organizationId: org, actorId: other })).resolves.toMatchObject({ member: true });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-    // Evidence that was in flight when the denial arrived is settled but never cached.
+    // Evidence crossing a pushed denial must be rejected, not merely excluded from the cache.
     client.evict({ organizationId: org, actorId: member });
     let release!: () => void;
     fetchImpl.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve(assertionResponse({ member: true, requestStartedAt: clock, actorId: member })); }));
@@ -147,7 +166,7 @@ describe("gateway organization membership client (S03 seam for the S20 precondit
     await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(3));
     client.evict({ organizationId: org, actorId: member });
     release();
-    await expect(pending).resolves.toMatchObject({ member: true });
+    await expect(pending).rejects.toThrow("Organization membership is unavailable");
     fetchImpl.mockImplementationOnce(async () => assertionResponse({ member: false, requestStartedAt: clock }));
     await expect(client.assertMembership({ organizationId: org, actorId: member })).resolves.toEqual({ member: false });
     // An organization-wide denial drops every cached actor of that organization.

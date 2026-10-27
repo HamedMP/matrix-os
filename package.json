@@ -77,6 +77,11 @@
       }
     },
     "packageExtensions": {
+      "react-native-webview@*": {
+        "dependencies": {
+          "@types/react": "^19.2.14"
+        }
+      },
       "eslint-config-next@16.2.3": {
         "dependencies": {
           "next": "16.2.6"

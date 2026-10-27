@@ -897,6 +897,18 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/gateway/browser-approval-repository.test.ts --maxWorkers=1 --no-file-parallelism
 
+      - name: Qualify remaining real PostgreSQL suites
+        run: node scripts/ci/remaining-postgres.mjs
+
+      - name: Upload remaining PostgreSQL qualification
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: remaining-postgres-qualification
+          path: output/ci/remaining-postgres/*.json
+          if-no-files-found: error
+          retention-days: 7
+
   collaboration-postgres:
     name: Collaboration PostgreSQL
     needs: changes
@@ -1136,6 +1148,21 @@ jobs:
         env:
           MATRIX_DESKTOP_E2E_REQUIRED: "1"
         run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/canonical-input.e2e.test.ts
+
+      - name: Run required Electron Desktop large Chat regression
+        if: needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
+        env:
+          MATRIX_DESKTOP_E2E_REQUIRED: "1"
+        run: xvfb-run --auto-servernum bun run test:e2e:run -- tests/e2e/desktop/chat-large-transcript.e2e.test.ts
+
+      - name: Upload Electron Desktop large Chat evidence
+        if: always() && needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-large-chat-evidence
+          path: output/chat-large-transcript/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload Desktop Chat input evidence
         if: always() && needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'

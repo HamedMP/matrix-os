@@ -22,8 +22,9 @@ const platformKey = ed25519PrivateKeyFromSeed(Buffer.alloc(32, 7).toString("base
 // find the budget empty still had five left and the exhaustion path stopped being exercised.
 const TICKET_MAX_ACTIONS = 8;
 
-function makeFixture() {
+function makeFixture(options: { beforeMembership?: () => Promise<void> } = {}) {
   let member = true;
+  let runtimeGeneration: number | null = 1;
   const key = generateKeyPairSync("ed25519");
   const proofPublicKey = ed25519PublicKeyRaw(key.publicKey);
   const verifier = new DirectTicketVerifier({
@@ -32,11 +33,15 @@ function makeFixture() {
     replay: new DirectReplayCache({ now: () => clock }), now: () => clock,
   });
   const precondition = createOrganizationPrecondition({
-    source: { assertMembership: async ({ actorId, organizationId: org }) => actorId === ownerId && org === organizationId && member
-      ? { member: true, expiresAt: new Date(clock.getTime() + 20_000).toISOString() } : { member: false } },
+    source: { assertMembership: async ({ actorId, organizationId: org }) => {
+      await options.beforeMembership?.();
+      return actorId === ownerId && org === organizationId && member
+        ? { member: true, expiresAt: new Date(clock.getTime() + 20_000).toISOString() } : { member: false };
+    } },
     now: () => clock,
   });
-  const service = new OwnerRuntimeSessionService({ verifier, ownerId, runtimeId, organizationPrecondition: precondition, now: () => clock });
+  const service = new OwnerRuntimeSessionService({ verifier, ownerId, runtimeId, organizationPrecondition: precondition,
+    runtimeGeneration: () => runtimeGeneration, now: () => clock });
   const ticket = (overrides: Record<string, unknown> = {}) => {
     const value = {
       protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, ticketId: randomUUID(), nonce: randomUUID().replaceAll("-", ""),
@@ -64,10 +69,54 @@ function makeFixture() {
     return { sessionId, signature, proof: signEd25519(key.privateKey, requestSigningPayload(signature)),
       method, path, query: "", body };
   };
-  return { service, create, signedRequest, setMember: (value: boolean) => { member = value; } };
+  return { service, create, signedRequest, setMember: (value: boolean) => { member = value; },
+    setRuntimeGeneration: (value: number | null) => { runtimeGeneration = value; } };
 }
 
 describe("owner runtime direct sessions", () => {
+  it("rejects an owner ticket from a superseded runtime registration", async () => {
+    const fixture = makeFixture();
+    fixture.setRuntimeGeneration(8);
+    await expect(fixture.service.create(fixture.create())).rejects.toMatchObject({ code: "expired" });
+  });
+
+  it("ends an existing owner session when the runtime generation advances", async () => {
+    const fixture = makeFixture();
+    const session = await fixture.service.create(fixture.create());
+    fixture.setRuntimeGeneration(8);
+    await expect(fixture.service.authenticate(fixture.signedRequest(session.id,
+      `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`)))
+      .rejects.toMatchObject({ code: "expired" });
+  });
+
+  it("fails closed when current runtime registration/control evidence is unavailable", async () => {
+    const fixture = makeFixture();
+    fixture.setRuntimeGeneration(null);
+    await expect(fixture.service.create(fixture.create())).rejects.toMatchObject({ code: "unavailable" });
+  });
+
+  it("admits a fresh generation-8 ticket after refusing its stale predecessor", async () => {
+    const fixture = makeFixture();
+    fixture.setRuntimeGeneration(8);
+    await expect(fixture.service.create(fixture.create())).rejects.toMatchObject({ code: "expired" });
+    await expect(fixture.service.create(fixture.create({ runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 8 } })))
+      .resolves.toMatchObject({ authorityGeneration: 8 });
+  });
+
+  it("does not install a session if registration advances during membership verification", async () => {
+    const fixture = makeFixture({ beforeMembership: async () => { fixture.setRuntimeGeneration(8); } });
+    await expect(fixture.service.create(fixture.create())).rejects.toMatchObject({ code: "expired" });
+  });
+
+  it("does not authorize an in-flight request after membership verification crosses a runtime fence", async () => {
+    let advance = false;
+    const fixture = makeFixture({ beforeMembership: async () => { if (advance) fixture.setRuntimeGeneration(8); } });
+    const session = await fixture.service.create(fixture.create());
+    advance = true;
+    const request = fixture.signedRequest(session.id, `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`);
+    await expect(fixture.service.authenticate(request)).rejects.toMatchObject({ code: "expired" });
+  });
+
   it("admits only exact prepared-project owner routes without granting general scope access", async () => {
     const fixture = makeFixture();
     const session = await fixture.service.create(fixture.create());

@@ -46,5 +46,6 @@
   "tests/platform/platform-migration-revision-db.test.ts",
   "tests/platform/slack-app.test.ts",
   "tests/platform/slack-delivery-recovery.test.ts",
-  "tests/platform/slack-repository.test.ts"
+  "tests/platform/slack-repository.test.ts",
+  "tests/ui/project-sharing-owner-generation-postgres.test.tsx"
 ]

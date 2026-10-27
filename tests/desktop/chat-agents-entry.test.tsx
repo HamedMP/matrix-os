@@ -3,7 +3,7 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatAgentsEntry as AgentsLauncher, ChatAgentsRailSection } from "../../packages/ui/src/chat-agents/ChatAgentsEntry.js";
-import { ChatAgentsWorkspace } from "../../packages/ui/src/chat-agents/ChatAgentsNavigation.js";
+import { ChatAgentsWorkspace, useCloseAgentsOnDraftRequest } from "../../packages/ui/src/chat-agents/ChatAgentsNavigation.js";
 import { AgentRecipesPanel } from "../../packages/ui/src/chat-agents/AgentRecipesPanel.js";
 import { ChatAgentsContent } from "../../packages/ui/src/chat-agents/ChatAgentsContent.js";
 import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
@@ -278,6 +278,30 @@ describe("shared Agents entry", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
     await screen.findByRole("button", { name: "New Agent" });
     view.rerender(<ChatAgentsEntry client={client} scopeKey="chat_two" />);
+    expect(screen.queryByRole("region", { name: "Agents" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Chat draft" })).toBeTruthy();
+  });
+
+  it("leaves Agents when a draft is put into the Chat composer from elsewhere", async () => {
+    const client = clientFixture({ matrix: true });
+    function DraftRequest({ request }: { request: number }) {
+      useCloseAgentsOnDraftRequest(request);
+      return null;
+    }
+    const entry = (request: number) => <ChatAgentsWorkspace>
+      <aside><AgentsLauncher client={client} /></aside>
+      <main><ChatAgentsContent client={client} scopeKey="chat_one">
+        <textarea aria-label="Chat draft" defaultValue="Original draft" />
+        <DraftRequest request={request} />
+      </ChatAgentsContent></main>
+    </ChatAgentsWorkspace>;
+    const view = render(entry(3));
+    fireEvent.click(await screen.findByRole("button", { name: "Agents" }));
+    await screen.findByRole("button", { name: "New Agent" });
+    // The request that was already pending is not a new one.
+    view.rerender(entry(3));
+    expect(screen.getByRole("button", { name: "New Agent" })).toBeTruthy();
+    view.rerender(entry(4));
     expect(screen.queryByRole("region", { name: "Agents" })).toBeNull();
     expect(screen.getByRole("textbox", { name: "Chat draft" })).toBeTruthy();
   });

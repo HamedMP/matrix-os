@@ -153,13 +153,18 @@ it("joins slow reads and ignores completions after manual refresh, mutation or d
     expect(t.controller.getState().snapshot).toBe(before);
   }
 });
-it.each(["revision", "source", "older", "future", "mismatched", "expired"])("rejects %s observations without restamping", async kind => {
+it.each(["revision", "source", "older", "future", "invalid", "stale", "mismatched", "expired"])("rejects %s observations without restamping", async kind => {
   const t = setup(); await t.controller.refresh({ refresh: false }); const before = t.controller.getState().snapshot;
   vi.setSystemTime(Date.now() + 45_000); const next = observation();
   if (kind === "revision") next.revision++;
   if (kind === "source") next.gatewayPolicyAccessSourceId = "other";
   if (kind === "older") next.usage.asOf = next.policy.checkedAt = next.usage.chatAvailability!.asOf = new Date(Date.parse(start) - 1).toISOString();
-  if (kind === "future") next.usage.asOf = next.policy.checkedAt = next.usage.chatAvailability!.asOf = new Date(Date.now() + 1).toISOString();
+  if (kind === "future") {
+    next.usage.asOf = next.policy.checkedAt = next.usage.chatAvailability!.asOf = new Date(Date.now() + 60_001).toISOString();
+    next.policy.staleAfter = new Date(Date.now() + 120_001).toISOString();
+  }
+  if (kind === "invalid") next.usage.asOf = "not-a-date";
+  if (kind === "stale") next.usage.state = "stale";
   if (kind === "mismatched") next.usage.chatAvailability!.asOf = start;
   if (kind === "expired") next.policy.staleAfter = new Date(Date.now()).toISOString();
   t.getManagedCredit.mockResolvedValue(next); expect(await t.controller.refreshManagedCredit()).toBe("retry");

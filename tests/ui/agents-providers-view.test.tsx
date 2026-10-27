@@ -9,6 +9,7 @@ import type {
   ProviderConnectionAttempt,
   ProviderSettingsSnapshot,
 } from "@matrix-os/contracts";
+import { ProviderSettingsSnapshotSchema } from "@matrix-os/contracts";
 import {
   AgentsProvidersView,
   type ProviderSettingsMutationIntent,
@@ -1347,7 +1348,26 @@ it("keeps the real grouped Claude row Connecting until scoped refresh settles", 
   expect(screen.getByRole("status",{name:"Updating connection"})).toBeVisible();
   expect(screen.getByRole("button",{name:/Claude Code.*Connecting/})).toBeVisible();
   const connected=structuredClone(next);const current=connected.harnesses.find(h=>h.id===row.id)!;
-  current.authState="authenticated";current.enabled=true;current.configuredEnabled=true;connected.refreshedAt=new Date().toISOString();
+  const checkedAt = new Date().toISOString();
+  // Successful native completion selects the exact CLI account. Merely marking
+  // the historical Matrix-funded binding authenticated cannot connect Claude.
+  connected.accessSources.push({
+    id: "owner_claude_profile", kind: "provider_account", fundingKind: "owner_account",
+    providerId: "anthropic", accountId: "owner_claude_profile", displayName: "Claude account",
+    eligibleModelIds: [current.route.modelId],
+    readiness: { state: "unknown", checkedAt, staleAfter: null, action: "retry", safeReason: "unknown" },
+    usage: { kind: "unavailable", authority: "unavailable", state: "unavailable", scope: "account",
+      reason: "provider_does_not_report", asOf: checkedAt },
+  });
+  connected.accounts.push({
+    id: "owner_claude_profile", providerId: "anthropic", displayName: "Claude account", authMethod: "terminal",
+    authState: "authenticated", lastCheckedAt: checkedAt, accessSourceId: "owner_claude_profile",
+    dependencies: { activeChatCount: 0, resumableChatCount: 0, harnessInstanceCount: 1 },
+  });
+  Object.assign(current, { authState: "authenticated", enabled: true, configuredEnabled: true, connectivity: "unknown",
+    accessSourceId: "owner_claude_profile", selectedAccountId: "owner_claude_profile", accountIds: ["owner_claude_profile"] });
+  connected.refreshedAt=checkedAt;
+  ProviderSettingsSnapshotSchema.parse(connected);
   await act(async()=>{view.rerender(<AgentsProvidersView {...view.props} snapshot={connected} />);finish(connected);});
   expect(screen.queryByRole("status",{name:"Updating connection"})).not.toBeInTheDocument();
   expect(screen.getByRole("button",{name:/Claude Code.*Connected/})).toBeVisible();

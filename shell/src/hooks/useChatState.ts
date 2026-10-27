@@ -63,8 +63,9 @@ export interface ChatState {
   conversations: ReturnType<typeof useConversation>["conversations"];
   activeConversationTitle?: string;
   renameConversation?: (id: string, title: string) => Promise<boolean>;
-  composerDraftRequest: { id: number; text: string } | null;
-  requestComposerDraft: (text: string) => void;
+  composerDraftRequest: { id: number; text: string; merge?: boolean } | null;
+  /** `merge` keeps the owner's own text and adds the request below it. */
+  requestComposerDraft: (text: string, options?: { merge?: boolean }) => void;
   consumeComposerDraft: (id: number) => void;
   submitMessage: (
     text: string,
@@ -104,7 +105,7 @@ export function useChatState(): ChatState {
   const [busy, setBusy] = useState(false);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueuedMessage[]>([]);
-  const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string } | null>(null);
+  const [composerDraftRequest, setComposerDraftRequest] = useState<{ id: number; text: string; merge?: boolean } | null>(null);
   const composerDraftSequence = useRef(0);
   const { connected, connectionEpoch, subscribe, send } = useSocket();
   const { conversations, load } = useConversation();
@@ -299,8 +300,8 @@ export function useChatState(): ChatState {
     // show a "stopping..." pending state in the meantime if needed.
   }, [send]);
 
-  const requestComposerDraft = useCallback((text: string) => {
-    setComposerDraftRequest({ id: ++composerDraftSequence.current, text });
+  const requestComposerDraft = useCallback((text: string, options?: { merge?: boolean }) => {
+    setComposerDraftRequest({ id: ++composerDraftSequence.current, text, ...(options?.merge ? { merge: true } : {}) });
   }, []);
 
   const consumeComposerDraft = useCallback((id: number) => {

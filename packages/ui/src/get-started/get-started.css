@@ -1,0 +1,325 @@
+/* Spec 635: the Get started wizard is the onboarding widget's setup step.
+   Controls, chips, buttons, app rows and tokens come from
+   onboarding-widget.css (`.mxo-root`); this file only lays the widget out
+   over the whole desktop. */
+.mxo-root.mxo-gs {
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+/* The wizard draws its own blurred copy of the wallpaper on an opaque layer,
+   so icons, the dock and windows never show through. `place-items: center`
+   on the parent also aligns absolutely positioned children, which would
+   shrink these empty layers to 0x0; stretch them explicitly. GetStartedGate sets the
+   fallback colour from the brand tokens. */
+.mxo-gs__backdrop {
+  position: absolute;
+  inset: 0;
+  place-self: stretch;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Extends past the edges so the blur doesn't fade to the fallback colour. */
+.mxo-gs__backdrop-image {
+  position: absolute;
+  inset: -120px;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  filter: blur(56px) saturate(1.1);
+}
+
+.mxo-gs__scrim {
+  position: absolute;
+  inset: 0;
+  place-self: stretch;
+  width: 100%;
+  height: 100%;
+  background: color-mix(in srgb, var(--mxo-ink) 18%, transparent);
+}
+
+.mxo-gs__card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: min(640px, calc(100vh - 32px));
+  border: 1px solid var(--mxo-border);
+  border-radius: 20px;
+  background: var(--mxo-bg);
+  box-shadow: 0 24px 64px color-mix(in srgb, var(--mxo-ink) 18%, transparent);
+  animation: mxo-rise 320ms var(--mxo-ease) both;
+}
+
+.mxo-gs__header,
+.mxo-gs__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 24px;
+}
+
+.mxo-gs__header { padding-bottom: 0; }
+.mxo-gs__footer { padding-top: 16px; }
+
+.mxo-gs__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--mxo-ink);
+}
+
+.mxo-gs__progress {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mxo-gs__progress li {
+  width: 24px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--mxo-border);
+}
+
+.mxo-gs__progress li[data-done] { background: var(--mxo-ink); }
+
+.mxo-gs__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  padding: 28px 24px 8px;
+}
+
+.mxo-gs__body h3,
+.mxo-gs__body h4 { margin: 0 0 8px; font-weight: 500; }
+
+.mxo-gs__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--mxo-ink);
+  outline: none;
+}
+
+.mxo-gs__hint { margin: -10px 0 4px; }
+
+.mxo-gs__input {
+  width: 100%;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--mxo-border);
+  border-radius: 12px;
+  background: var(--mxo-surface);
+  font: inherit;
+  font-size: 15px;
+  color: var(--mxo-ink);
+  outline: none;
+}
+
+.mxo-gs__input::placeholder { color: var(--mxo-placeholder); }
+.mxo-gs__input:focus { border-color: var(--mxo-muted); }
+
+.mxo-gs__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.mxo-gs__summary {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 16px;
+  font-size: 13px;
+}
+
+.mxo-gs__summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mxo-gs__summary dt { color: var(--mxo-muted); }
+.mxo-gs__summary dd { margin: 0; text-align: right; color: var(--mxo-ink); }
+
+.mxo-gs__why { display: block; font-weight: 400; }
+
+.mxo-gs__textarea {
+  height: auto;
+  padding: 10px 14px;
+  resize: vertical;
+}
+
+.mxo-gs__soul {
+  margin: 0;
+  padding: 12px 14px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.mxo-gs__connect-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* App Gallery: the ideas as a two-column grid of cards. */
+.mxo-gs__gallery {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mxo-gs__ideas {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mxo-gs__idea {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: var(--mxo-muted);
+  cursor: pointer;
+  transition: border-color 160ms var(--mxo-ease);
+}
+
+.mxo-gs__idea strong { font-size: 13px; font-weight: 600; color: var(--mxo-ink); }
+.mxo-gs__idea[aria-pressed="true"] { border-color: var(--mxo-ink); }
+
+.mxo-gs__idea-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: 4px;
+  border-radius: 8px;
+  background: var(--mxo-soft);
+  color: var(--mxo-ink);
+}
+
+@media (max-width: 480px) {
+  .mxo-gs__ideas { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Step 3 shows the Settings integrations list as is. The card is narrower than
+   Settings, so its two-column grid (a viewport breakpoint) stays one column. */
+.mxo-gs__marketplace .sm\:grid-cols-2 { grid-template-columns: minmax(0, 1fr); }
+
+/* App Gallery's own app icons on the ready apps. */
+.mxo-gs__ready-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  font-weight: 600;
+  color: var(--mxo-ink);
+}
+
+.mxo-gs__ready-icon img { width: 40px; height: 40px; object-fit: contain; }
+
+/* "Meet your bots": one card per bot, its gallery avatar on the left. */
+.mxo-gs__bots {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mxo-gs__bot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mxo-gs__bot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  transition: border-color 160ms var(--mxo-ease);
+  animation: mxo-rise 320ms var(--mxo-ease) both;
+}
+
+.mxo-gs__bot:nth-child(2) { animation-delay: 60ms; }
+.mxo-gs__bot:nth-child(3) { animation-delay: 120ms; }
+.mxo-gs__bot[data-added] { border-color: var(--mxo-ink); }
+
+.mxo-gs__bot > .matrix-recipe-rabbit { flex-shrink: 0; }
+
+/* On narrow cards the action wraps to its own line instead of squeezing the text. */
+.mxo-gs__bot-text {
+  display: flex;
+  flex: 1 1 180px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.mxo-gs__bot-text strong { font-weight: 600; color: var(--mxo-ink); }
+.mxo-gs__bot-text + * { margin-left: auto; }
+
+.mxo-gs__bot-facts {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0 0 0 16px;
+  font-size: 12px;
+}
+
+.mxo-gs button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--mxo-ink) 30%, transparent);
+  outline-offset: 2px;
+}
+
+/* The step title takes focus for screen readers; it is not a control, so it draws no outline. */
+.mxo-gs__title:focus { outline: none; }
+
+@media (max-width: 480px) {
+  .mxo-gs__body { padding: 20px 16px 8px; }
+  .mxo-gs__header,
+  .mxo-gs__footer { padding-left: 16px; padding-right: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mxo-gs__card,
+  .mxo-gs__bot { animation: none; }
+}
+
+/* Step 3: a signed-in coding agent. */
+.mxo-gs__agent-connected {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mxo-dot--on { background: var(--mxo-green); }

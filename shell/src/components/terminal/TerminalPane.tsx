@@ -53,6 +53,7 @@ import {
   copyTerminalClipboardText,
   pasteClipboardIntoTerminal,
 } from "./terminal-rich-paste";
+import { sendTerminalInputFrame } from "./terminal-input-frame";
 import {
   IMAGE_ADDON_OPTIONS,
   MAX_OSC52_BASE64_LENGTH,
@@ -110,13 +111,6 @@ const TERMINAL_OVERLAY_BASE_STYLE: CSSProperties = {
   boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
 };
 const TERMINAL_INPUT_CHUNK_CHARS = 32_768;
-
-function sendTerminalInputFrame(ws: WebSocket, terminalKey: string | null, data: string): boolean {
-  const terminalRef = parseTerminalRefKey(terminalKey);
-  if (!terminalRef || ws.readyState !== WebSocket.OPEN) return false;
-  ws.send(JSON.stringify({ type: "input", terminalRef, data }));
-  return true;
-}
 
 function sendTerminalBinaryFrame(ws: WebSocket, terminalKey: string | null, data: string): boolean {
   const terminalRef = parseTerminalRefKey(terminalKey);
@@ -297,6 +291,7 @@ export function TerminalPane({
       clipboard: typeof navigator !== "undefined" ? navigator.clipboard : undefined,
       gatewayUrl: getGatewayUrl(),
       ws: initiatingSocket,
+      terminalKey: initiatingSession,
       submit,
       canCommit,
     }).then((result) => {

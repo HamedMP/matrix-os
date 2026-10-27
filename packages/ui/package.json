@@ -5,6 +5,7 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "exports": {
+    "./chat-diagram-policy": "./src/chat/diagram-policy.ts",
     ".": "./src/index.ts",
     "./collaboration-direct-client": "./src/collaboration/direct-client.ts",
     "./default-organization": "./src/collaboration/default-organization.ts",
@@ -15,6 +16,7 @@
     "./chat-agents.css": "./src/chat-agents/chat-agents.css",
     "./appearance": "./src/appearance/index.ts",
     "./onboarding-widget.css": "./src/onboarding-widget/onboarding-widget.css",
+    "./get-started.css": "./src/get-started/get-started.css",
     "./onboarding-support-dock.css": "./src/onboarding-widget/support-dock.css",
     "./chat-import.css": "./src/chat-import/chat-import.css"
   },

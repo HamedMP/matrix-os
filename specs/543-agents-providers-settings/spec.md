@@ -165,6 +165,14 @@ Wrong: native login exits0 -> check a generic unverified canonical profile -> re
 Correct: native writer exits and releases its fence -> read and independently bind current native subscription status -> private serialized fixed-Claude completion -> production specialized coordinator -> revalidate current principal/catalog -> persist the exact account selection and enablement -> refresh the scoped Settings projection. Keep inference readiness and quota unknown unless their own authoritative observations exist.
 
 
+## Native Claude defaults and legacy funded bindings
+
+Fresh Settings chooses an owner-funded Anthropic route for native Claude Code, preferring its exact `owner_claude_profile` CLI binding over the legacy SDK profile when Matrix AI is the active system route. An active owner API key remains selectable. Matrix included/add-on credit never supplies a native Claude default, authenticated state, or runnable route. Matrix-only inventory cannot fabricate a native account.
+
+Existing saved source, model and enabled/Off intent remain durable. A historical Matrix-bound Claude row stays visible for recovery but projects unknown authentication/connectivity and disabled execution, without borrowing Matrix readiness; the shared Web Canvas, Web Desktop and Electron Desktop connection UI also rejects such bindings from older Gateways. Genuine verified native account and explicit owner-key connections retain their existing proof rules. Unknown native status does not establish either login or logout. The existing native execution ban remains authoritative; managed Claude models continue through the owned managed runtime.
+
+Validation includes fresh defaults, Matrix-only inventory, legacy on/off bindings through file read/reconciliation and projection, verified native metadata, owner key selection, preserved owner intent and mounted shared Settings status/actions. Synthetic regression coverage is separate from exact-client Electron acceptance. This restores the existing connection contract and adds no public workflow or endpoint.
+
 ## Foreground sign-in progress (2026-10-07)
 
 A connection click immediately shows a spinner on its selected card and a labelled “Starting sign-in…” status while the start response is pending. After a running receipt arrives without an authorization URL/code, show “Preparing sign-in page…” rather than an apparently idle finish panel. Once the authorization action is available, retain visible waiting feedback. Failed start, cancellation, terminal receipts and runtime/identity changes clear the scoped loading state; late results from an old scope cannot restore its action or spinner. Use the shared 16px current-color ring, stable indicator slot and reduced-motion treatment.
@@ -183,3 +191,11 @@ The native quota adapter reads a bounded owner-only regular credential file with
 Validation covers delayed completion refresh in the actual grouped view, refresh timeout/failure/runtime change, private credential safety, bounded malformed upstream data, quota throttling, principal/credential changes, exact-source projection and quota-independent completion. Simulated tests are separate from actual owner Preview/Electron acceptance.
 
 A five-hour reset ends positive-cache reuse immediately, even inside its five-minute TTL; the next read fetches the new authoritative window. Negative results retain their one-minute cooldown. Quota invalidation during either the post-fetch CLI observation or final metadata binding removes only the attached allowance. A still-current, matching CLI principal retains authenticated identity and plan; changed principals, expired identity observations and active writer fences still reject metadata.
+
+## Managed credit display clock tolerance
+
+Web Canvas, Web Desktop and Electron Desktop share the managed-credit display and quiet-refresh age check. Match Gateway funding freshness: accept signed age `clientNow - usage.asOf` from -60,000 through 300,000 milliseconds, inclusive. Reject malformed timestamps, more than 60 seconds of future skew, expired usage, stale state and mismatched Chat availability projections. Preserve the original `asOf`; the mounted display expires at `asOf + 300,000ms`, becoming unavailable on the following millisecond. Never restamp an observation or extend its five-minute source age.
+
+Quiet refresh retains schema, saved revision, policy-source, identity/generation and monotonic observation fences. An expired policy still rejects independently of credit timestamp tolerance. Credit observations may update funding and narrow existing routes, but cannot certify native authentication or restore execution readiness. Preserve native observation TTL rules, financial arithmetic and the existing bounded Settings-only scheduler; local display expiry never starts full provider discovery or mutations.
+
+Regression tests cover 2,650ms of negative age, both future-skew boundaries, both past-age boundaries, malformed/mismatched/stale usage, policy expiry, the real controller refresh and mounted view renewal/deadline without request fanout. Synthetic tests establish this behavior; affected-device clock attribution and exact-client Electron acceptance remain separate evidence.

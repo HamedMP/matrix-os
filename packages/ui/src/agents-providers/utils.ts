@@ -1,5 +1,6 @@
 import type {
   ProviderAccessSource,
+  ProviderAccount,
   ProviderAuthenticationState,
   ProviderDependencyCounts,
   ProviderGatewayPolicy,
@@ -7,6 +8,7 @@ import type {
   ProviderSettingsSnapshot,
   ProviderUsage,
 } from "@matrix-os/contracts";
+import { isManagedCreditTimestampCurrent, MANAGED_CREDIT_MAX_AGE_MS } from "./managed-credit-freshness.js";
 
 export function gatewayPolicyAllowsModel(policy: ProviderGatewayPolicy | null, modelId: string): boolean {
   return policy !== null && policy.allowedModelIds.includes(modelId)
@@ -44,6 +46,15 @@ const PROVIDER_NAMES: Record<string, string> = { anthropic: "Anthropic", openai:
 /** A provider's proper name for owner-facing copy; null for one we do not name. */
 export function providerName(providerId: string | null | undefined): string | null {
   return providerId ? PROVIDER_NAMES[providerId] ?? null : null;
+}
+
+/** How a connected agent is connected: an API key (billed per request) or the agent's own account. */
+export function connectedAccountLabel(harness: string, account?: Pick<ProviderAccount, "authMethod" | "providerId">, source?: Pick<ProviderAccessSource, "fundingKind" | "providerId">): { apiKey: boolean; label: string } {
+  const apiKey = account?.authMethod === "api_key" || source?.fundingKind === "owner_api_key";
+  const label = apiKey ? "API key"
+    : harness === "codex" ? "ChatGPT account"
+    : harness === "claude" ? "Claude account" : "Provider account";
+  return { apiKey, label };
 }
 
 export function titleCase(value: string): string {
@@ -88,11 +99,9 @@ export function usageLines(usage: ProviderUsage): { primary: string; secondary: 
   };
 }
 
-const GATEWAY_CREDIT_MAX_AGE_MS = 5 * 60_000;
-
 export function gatewayCreditStaleAfter(source: ProviderAccessSource | null): string | null {
   if (source?.usage.kind !== "managed_credit" || source.usage.state !== "current") return null;
-  const expiry = new Date(Date.parse(source.usage.asOf) + GATEWAY_CREDIT_MAX_AGE_MS);
+  const expiry = new Date(Date.parse(source.usage.asOf) + MANAGED_CREDIT_MAX_AGE_MS);
   return Number.isFinite(expiry.getTime()) ? expiry.toISOString() : null;
 }
 
@@ -100,9 +109,8 @@ export function gatewayChatAvailableMicrousd(source: ProviderAccessSource | null
   if (source?.usage.kind !== "managed_credit") return null;
   const usage = source.usage;
   const projection = usage.chatAvailability;
-  const age = now - Date.parse(usage.asOf);
   if (!projection || projection.asOf !== usage.asOf || usage.state !== "current"
-    || !Number.isFinite(age) || age < 0 || age > GATEWAY_CREDIT_MAX_AGE_MS) return null;
+    || !isManagedCreditTimestampCurrent(usage.asOf, now)) return null;
   return Math.min(projection.availableBalanceMicrousd, usage.budget.remainingBudgetMicrousd);
 }
 
@@ -110,8 +118,7 @@ export function gatewayCreditLines(source: ProviderAccessSource, now = Date.now(
   if (source.usage.kind !== "managed_credit") {
     return { primary: "Chat credit unavailable", secondary: null, stale: false };
   }
-  const age = now - Date.parse(source.usage.asOf);
-  const stale = source.usage.state === "stale" || !Number.isFinite(age) || age < 0 || age > GATEWAY_CREDIT_MAX_AGE_MS;
+  const stale = source.usage.state === "stale" || !isManagedCreditTimestampCurrent(source.usage.asOf, now);
   const balance = gatewayChatAvailableMicrousd(source, now);
   if (balance === null) {
     return { primary: "Chat credit unavailable", secondary: null, stale };

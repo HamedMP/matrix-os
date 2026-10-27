@@ -1,6 +1,7 @@
 import {BotUseAuthorizationPanel} from "./BotUseAuthorizationPanel.js";
 import type { ProviderWorkflowUICapability } from "./types.js";
 import { HarnessWorkflowPanel } from "./HarnessWorkflowPanel.js";
+import { ReadOnlyNotice } from "./ReadOnlyNotice.js";
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 import { hasConfiguredConnection, hasStaleHermesConnection, resolveHarnessConnection, isNativeAccountSource } from "./harness-connection.js";
 import { updateWorkflowRowStatus } from "./workflow-row-status.js";
@@ -26,7 +27,7 @@ import { HarnessRail } from "./HarnessRail.js";
 import { ConnectionChoices } from "./ConnectionChoices.js";
 import { settingsErrorPresentation } from "./settings-error-presentation.js";
 import type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
-import { selectedHarness, titleCase } from "./utils.js";
+import { selectedHarness } from "./utils.js";
 
 export type { AgentsProvidersViewProps, ProviderSettingsMutationIntent } from "./types.js";
 
@@ -159,12 +160,7 @@ export function AgentsProvidersView({
         </div>
       </header>
 
-      {snapshot.access.mode === "read_only" ? (
-        <div className="matrix-ap-notice" data-tone="neutral" role="status">
-          <strong>Read only</strong>
-          <span>{snapshot.access.reason === "remote_policy" ? "Your organization controls these settings." : `Changes are unavailable: ${titleCase(snapshot.access.reason).toLowerCase()}.`}</span>
-        </div>
-      ) : null}
+      {snapshot.access.mode === "read_only" ? <ReadOnlyNotice access={snapshot.access} /> : null}
       {visibleError || gatewayError ? (
         <div className="matrix-ap-notice" data-tone="danger" role="alert">
           <strong>{errorPresentation.title}</strong>

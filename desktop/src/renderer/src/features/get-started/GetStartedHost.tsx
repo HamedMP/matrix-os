@@ -1,0 +1,42 @@
+import { GetStartedGate } from "@matrix-os/ui";
+import { useMemo, type ReactNode } from "react";
+import { DESKTOP_Z_INDEX } from "../../design/layering";
+import type { ApiClient } from "../../lib/api";
+import { useConnection } from "../../stores/connection";
+import { createDesktopGetStartedGalleryPort, createDesktopGetStartedPort } from "./desktop-get-started-port";
+import { useOnboardingOverlayLease } from "../onboarding-widget/use-onboarding-overlay-lease";
+import { DesktopGetStartedAgentLogin } from "./DesktopGetStartedAgentLogin";
+import { DesktopGetStartedConnector } from "./DesktopGetStartedConnector";
+
+/** Native app views paint above the renderer, so the open wizard holds the overlay lease like the widget does. */
+function GetStartedOverlayLease() {
+  useOnboardingOverlayLease(true);
+  return null;
+}
+
+/** Electron paints the wallpaper on the DesktopBackground layer. */
+const desktopBackdrop = () => document.querySelector<HTMLElement>('[data-testid="desktop-background"]');
+
+function DesktopGetStartedGate({ api, runtimeSlot, platformHost, children }: { api: ApiClient; runtimeSlot: string; platformHost: string; children: ReactNode }) {
+  // The sign-in account's name (from Google or GitHub) pre-fills the name step.
+  const displayName = useConnection((state) => state.displayName);
+  const port = useMemo(() => createDesktopGetStartedPort(api, runtimeSlot), [api, runtimeSlot]);
+  const gallery = useMemo(() => createDesktopGetStartedGalleryPort(api, runtimeSlot, platformHost), [api, runtimeSlot, platformHost]);
+  return (
+    <GetStartedGate port={port} zIndex={DESKTOP_Z_INDEX.getStarted} connector={DesktopGetStartedConnector} whileActive={GetStartedOverlayLease} gallery={gallery} backdropSource={desktopBackdrop} suggestedName={displayName} agentLogin={DesktopGetStartedAgentLogin}>
+      {children}
+    </GetStartedGate>
+  );
+}
+
+/** Electron Desktop: the wizard runs first for a signed-in computer, then the onboarding widget it wraps. */
+export default function GetStartedHost({ children }: { children: ReactNode }) {
+  const status = useConnection((state) => state.status);
+  const api = useConnection((state) => state.api);
+  const handle = useConnection((state) => state.handle);
+  const runtimeSlot = useConnection((state) => state.runtimeSlot);
+  const platformHost = useConnection((state) => state.platformHost);
+  if (status !== "signed-in" || !api || !handle) return <>{children}</>;
+  // A computer or runtime switch starts a fresh check against the new gateway.
+  return <DesktopGetStartedGate key={`${handle}:${runtimeSlot}`} api={api} runtimeSlot={runtimeSlot} platformHost={platformHost}>{children}</DesktopGetStartedGate>;
+}
