@@ -321,7 +321,7 @@ function ConversationTurn({
     ...(callbacks.resolveApp ? { resolveApp: resolveRunApp } : {}),
     ...(callbacks.openApp ? { openApp: openRunApp } : {}),
   };
-  const { showWork, visibleWork, visibleTimeline, pendingRequestIds } = visibility;
+  const { showWork, visibleWork, visibleTimeline, pendingRequestIds, partialCopyMessageId } = visibility;
   const hasWork = turn.work.length > 0;
   const timeline = turn.timeline;
   return (
@@ -344,13 +344,15 @@ function ConversationTurn({
           <div data-turn-timeline className="flex min-w-0 flex-col gap-0.5">
             {visibleTimeline.map((entry) => entry.kind === "user-followup"
               ? <UserMessage key={entry.message.id} message={entry.message} callbacks={scopedCallbacks} />
-              : <PresentationItem key={entry.item.id} item={entry.item} callbacks={scopedCallbacks} />)}
+              : <PresentationItem key={entry.item.id} item={entry.item} callbacks={scopedCallbacks}
+                  showMetadata={entry.item.id === partialCopyMessageId} />)}
           </div>
         ) : null
       ) : visibleWork.length > 0 ? (
         <div data-work-items className="flex min-w-0 flex-col gap-0.5">
           {visibleWork.map((item) => (
-            <PresentationItem key={item.id} item={item} callbacks={scopedCallbacks} />
+            <PresentationItem key={item.id} item={item} callbacks={scopedCallbacks}
+              showMetadata={item.id === partialCopyMessageId} />
           ))}
         </div>
       ) : null}

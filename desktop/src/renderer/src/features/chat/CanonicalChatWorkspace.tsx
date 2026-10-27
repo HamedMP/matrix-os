@@ -1,4 +1,5 @@
 import { createComposerAcknowledgement } from "./composer-acknowledgement";
+import { useChatSubmissionError } from "./use-chat-submission-error";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { canonicalChatExecutionControls } from "@matrix-os/contracts";
 import { chatAttachmentComposerPolicy } from "@matrix-os/ui";
@@ -262,7 +263,6 @@ function CanonicalChatWorkspaceContent({
   } | null>(null);
   const [optimisticQueuedTurns, setOptimisticQueuedTurns] = useState<CanonicalChatQueuedTurn[] | null>(null);
   const [editingQueuedTurn, setEditingQueuedTurn] = useState<CanonicalChatQueuedTurn | null>(null);
-  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [localComposerFocusRequestId, setLocalComposerFocusRequestId] = useState(0);
   const previousRoute = useRef({ initialChatId, initialView, projectId });
   const reportedChatId = useRef<string | null>(initialChatId ?? null);
@@ -303,6 +303,7 @@ function CanonicalChatWorkspaceContent({
   const botPresentation = botExecution.presentation;
   const attachmentPolicy = chatAttachmentComposerPolicy(providerCatalog, directBotId ? botExecution.agent?.selection : providerSelection, botPresentation?.kind === "recipe");
   const attachments = useConversationAttachments(controller.activeChatId, api ?? null, attachmentPolicy.error);
+  const [submissionError, setSubmissionError] = useChatSubmissionError(draftScope, draftRevision, attachments.items.map(item => item.localId));
   const selection = botIdentityUnknown ? null : directBotId ? botPresentation ? { ...botPresentation.selection, options: botPresentation.selection.options ?? [], interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.permissionMode } : null : providerSelection;
   const botRouteAvailable = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : canonicalComposerSelectionIsAvailable(providerCatalog, selection));
   const permissionResources = directBotId ? botExecution.consentResources : mentionResources;
