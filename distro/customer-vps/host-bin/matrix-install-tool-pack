@@ -50,6 +50,7 @@ resolve_runtime_user
 usage() {
   cat >&2 <<'EOF'
 Usage: matrix-install-tool-pack <claude-code|codex|opencode|pi|coding-agents|code-server|hermes|linux-tools|all>
+       matrix-install-tool-pack codex --reconcile-only
 EOF
 }
 
@@ -306,6 +307,14 @@ install_linux_tools() {
 }
 
 pack="${1:-}"
+if [ "$pack" = "codex" ] && [ "$#" -ne 1 ]; then
+  if [ "$#" -eq 2 ] && [ "$2" = "--reconcile-only" ]; then
+    with_pack_lock "$pack" reconcile_agent_npm_prefix
+    exit
+  fi
+  usage
+  exit 2
+fi
 case "$pack" in
   claude-code) with_pack_lock "$pack" install_claude_code ;;
   codex) with_pack_lock "$pack" install_codex ;;

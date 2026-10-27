@@ -1,6 +1,26 @@
 # ENG-298 — English local cases and evidence
 
-This is an unpublished local candidate on Maine8cc2cb1e19a6b0afc0d9e30490aaced9a8d8aaf. The exact candidate commit and measured totals live in the final local receipt. It is not a customer installation or production acceptance.
+## Current integration — 2026-10-27
+
+The original task was rebased locally onto main97f4bbec1cbbab5b71469db9054adae83437aa31.
+Main#2617/#2618 supersedes the old installer/scope promotions: the current qualified
+baseline remains0.162.1, with healthy newer binaries preserved. The shared npm
+reconciler and owner-env bytes are retained fromce625. A new subprocess regression
+exercises the actual developer installer, tool-pack and reconciler after a partial
+failure. A healthy CLI now retries the locked repair-only path without npm install
+or downgrade. Original-fault RED: both0.162.1 and0.163.0 retain the stale npm shim.
+GREEN: repair converges after failure removal and the installed version survives.
+
+Current exact HEAD, commands, measured results and outstanding matching-host/client
+acceptance are sealed outside the source checkout in `../resume-20261027/`.
+No current-source real-machine/English screenshot or human-review-ready claim.
+
+## Historical evidence through 2026-10-17 (preserved)
+
+The following records describe the earlier e8cc2cb1/ce625 candidate, not the current
+Main version policy or rebased source. The task-local October17 native receipt later
+passed the exact0.163 Darwin process and produced an unsigned ce625 client, without
+an installed matching Linux host. Neither is a current candidate artifact.
 
 ## Verified source distinctions
 

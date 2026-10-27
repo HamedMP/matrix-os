@@ -1,46 +1,70 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, writeFile, chmod, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, readlink } from 'node:fs/promises';
+import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { CODEX_VERIFIED_VERSION } from '../../packages/contracts/src/index.js';
 
 describe('managed Codex update recovery', () => {
-  it('retries a failed post-install reconciliation even after the binary has upgraded', async () => {
+  it.each([CODEX_VERIFIED_VERSION, '0.163.0'])('retries only failed npm repair while retaining installed %s', async installedVersion => {
     const root = await mkdtemp(join(tmpdir(), 'codex-update-retry-'));
     try {
       const opt = join(root, 'opt/matrix');
       const state = join(root, 'state');
-      await Promise.all([mkdir(join(opt, 'bin'), { recursive: true }), mkdir(join(opt, 'runtime/node/bin'), { recursive: true }), mkdir(join(root, 'usr/local/bin'), { recursive: true }), mkdir(state), mkdir(join(root, 'test-bin'))]);
-      // Keep the fixture from invoking real OS provisioning on minimal Linux.
-      await writeFile(join(root, 'test-bin/zsh'), '#!/bin/sh\nexit 0\n');
-      await chmod(join(root, 'test-bin/zsh'), 0o755);
-      const version = join(root, 'version');
-      const attempts = join(root, 'attempts');
-      await writeFile(version, 'codex-cli 0.156.1\n');
-      await writeFile(attempts, '0\n');
+      const home = join(root, 'owner');
+      const prefix = join(opt, 'runtime/node');
+      const app = join(opt, 'app');
+      const hermesConfig = join(home, '.hermes/node/etc/npmrc');
+      const local = join(home, '.local/bin/codex');
+      const previous = '../lib/node_modules/@openai/codex/bin/codex.js';
+      await Promise.all(['bin', 'runtime/node/bin', 'runtime/node/lib/node_modules', 'app/scripts'].map(p => mkdir(join(opt, p), { recursive: true })));
+      await Promise.all([mkdir(join(home, '.hermes/node/etc'), { recursive: true }), mkdir(join(home, '.local/bin'), { recursive: true }), mkdir(join(root, 'usr/local/bin'), { recursive: true }), mkdir(state), mkdir(join(root, 'test-bin'))]);
+      await writeFile(join(root, 'test-bin/zsh'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      await symlink(process.execPath, join(prefix, 'bin/node'));
+      await writeFile(join(app, 'scripts/reconcile-agent-npm-prefix.mjs'), await readFile('scripts/reconcile-agent-npm-prefix.mjs'));
+      const untouched = join(root, 'owner-choice');
+      await writeFile(untouched, 'owner setting\n');
+      await symlink(untouched, hermesConfig); // Required repair fails safely after npm has installed.
+      await symlink(previous, local);
+      const codex = join(prefix, 'bin/codex');
+      const attempts = join(root, 'npm-attempts');
+      await writeFile(codex, '#!/bin/sh\nprintf "codex-cli 0.156.1\\n"\n', { mode: 0o755 });
       await writeFile(join(state, 'installed-tools'), 'codex\n');
-      const codex = join(opt, 'runtime/node/bin/codex');
-      await writeFile(codex, '#!/bin/sh\ncat "$TEST_CODEX_VERSION"\n');
-      await chmod(codex, 0o755);
-      const pack = join(opt, 'bin/matrix-install-tool-pack');
-      await writeFile(pack, `#!/bin/sh
-count=$(cat "$TEST_CODEX_ATTEMPTS")
-count=$((count + 1))
-printf '%s\\n' "$count" > "$TEST_CODEX_ATTEMPTS"
-printf 'codex-cli 0.163.0\\n' > "$TEST_CODEX_VERSION"
-# Reproduce an installed binary followed by a failed npm-prefix migration.
-[ "$count" -gt 1 ]
-`);
-      await chmod(pack, 0o755);
-      const source = (await readFile('distro/customer-vps/host-bin/matrix-install-developer-tools', 'utf8')).replaceAll('/opt/matrix', opt).replaceAll('/usr/local/bin', join(root, 'usr/local/bin'));
-      const script = join(root, 'install');
-      await writeFile(script, source);
-      const run = () => spawnSync('bash', [script, '--tools-only'], { encoding: 'utf8', timeout: 5_000, env: { ...process.env, PATH: `${join(root, 'test-bin')}:${process.env.PATH ?? '/usr/bin:/bin'}`, MATRIX_DEVELOPER_TOOLS: 'codex', MATRIX_DEVELOPER_TOOLS_STATE_DIR: state, TEST_CODEX_VERSION: version, TEST_CODEX_ATTEMPTS: attempts } });
-      expect(run().status).toBe(1);
+      await writeFile(attempts, '');
+      await writeFile(join(prefix, 'bin/npm'), `#!/bin/sh
+printf 'install\\n' >> "$TEST_CODEX_ATTEMPTS"
+printf '#!/bin/sh\\nprintf "codex-cli ${installedVersion}\\\\n"\\n' > "$MATRIX_NODE_PREFIX/bin/codex"
+chmod +x "$MATRIX_NODE_PREFIX/bin/codex"
+`, { mode: 0o755 });
+      for (const name of ['matrix-install-developer-tools', 'matrix-install-tool-pack']) {
+        const source = (await readFile(`distro/customer-vps/host-bin/${name}`, 'utf8'))
+          .replaceAll('/opt/matrix', opt).replaceAll('/usr/local/bin', join(root, 'usr/local/bin'))
+          .replaceAll('/tmp/matrix-tool-pack-', join(root, 'lock-'));
+        await writeFile(join(opt, 'bin', name), source, { mode: 0o755 });
+      }
+      const run = () => spawnSync('bash', [join(opt, 'bin/matrix-install-developer-tools'), '--tools-only'], {
+        encoding: 'utf8', timeout: 10_000, env: {
+          PATH: `${join(root, 'test-bin')}:/usr/bin:/bin`, HOME: home,
+          MATRIX_DEVELOPER_TOOLS: 'codex', MATRIX_DEVELOPER_TOOLS_STATE_DIR: state,
+          MATRIX_NODE_PREFIX: prefix, MATRIX_RUNTIME_HOME: home, MATRIX_APP_DIR: app,
+          MATRIX_RUNTIME_USER: userInfo().username, TEST_CODEX_ATTEMPTS: attempts,
+        },
+      });
+      const initial = run();
+      expect(initial.status, initial.stderr).toBe(1);
       expect(await readFile(join(state, 'failed-tools'), 'utf8')).toBe('codex\n');
+      expect(await readFile(untouched, 'utf8')).toBe('owner setting\n');
+      const failedRepair = run();
+      expect(failedRepair.status, failedRepair.stderr).toBe(1);
+      expect(await readFile(attempts, 'utf8')).toBe('install\n');
+      expect(await readlink(local)).toBe(previous);
+      await rm(hermesConfig); // Remove fixture failure; the next real startup must repair.
       const retry = run();
       expect(retry.status, retry.stderr).toBe(0);
-      expect(await readFile(attempts, 'utf8')).toBe('2\n');
+      expect(await readlink(local)).toBe(codex);
+      expect(await readFile(hermesConfig, 'utf8')).toBe(`prefix=${prefix}\n`);
+      expect(await readFile(attempts, 'utf8')).toBe('install\n');
+      expect(spawnSync(codex, ['--version'], { encoding: 'utf8' }).stdout.trim()).toBe(`codex-cli ${installedVersion}`);
       expect(await readFile(join(state, 'failed-tools'), 'utf8')).toBe('');
       expect(await readFile(join(state, 'installed-tools'), 'utf8')).toBe('codex\n');
     } finally { await rm(root, { recursive: true, force: true }); }

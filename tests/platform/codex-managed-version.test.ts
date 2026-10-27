@@ -6,8 +6,8 @@ import { SCOPE_RUNTIME_CODEX_HARNESS_VERSION } from '../../packages/scope-runtim
 import { CODEX_EXEC_CONTRACT } from '../../packages/gateway/src/coding-agents/codex-version.js';
 import { CODEX_APP_SERVER_CONTRACT } from '../../packages/gateway/src/coding-agents/codex-app-server-version.js';
 
-describe('explicitly promoted managed Codex version', () => {
-  it('uses 0.162.1 only after both protocol contracts record it on both native targets', () => {
+describe('managed Codex version ownership', () => {
+  it('retains main qualification on both native targets', () => {
     expect(CODEX_VERIFIED_VERSION).toBe('0.162.1');
     expect(CODEX_EXEC_CONTRACT.verifiedVersions[CODEX_VERIFIED_VERSION]).toBeDefined();
     const app = CODEX_APP_SERVER_CONTRACT.verifiedVersions[CODEX_VERIFIED_VERSION];

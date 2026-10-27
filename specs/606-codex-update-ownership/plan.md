@@ -1,23 +1,45 @@
-# ENG-298 — local implementation plan
+# ENG-298 — local integration plan (2026-10-27)
 
 Ticket: https://linear.app/matrix-os/issue/ENG-298/codex-pinned-at-01561-on-customer-vpses-npm-i-g-openaicodex-lands-in-a
 Existing PR: https://github.com/HamedMP/matrix-os/pull/2593
 
-## Current scope and base
+## Current base and scope
 
-Resume the original worktree only. Preserve original checkpoint5ee65261, old publishedaadfe9b6 and the pre-rebase source/patch. Rebase local work onto maine8cc2cb1e19a6b0afc0d9e30490aaced9a8d8aaf; do not force-push the existing remote branch. Main#2657 already qualifies0.163.0 protocols but retains installer0.156.1 and scope0.154.0 pins. Preserve all Main protocol records and promote the shared managed executable consistently to0.163.0.
+Resume the original worktree. Preserve ce625 and historical receipts/artifacts in
+backup refs, patch and verified full bundle. Rebase onto origin/main
+97f4bbec1cbbab5b71469db9054adae83437aa31. Main #2617/#2618 already installs and
+qualifies0.162.1, aligns scope and preserves healthy newer versions without a
+state marker. Keep that policy: do not replay the old candidate's0.163 promotion.
+Protocol qualification records are retained without granting future compatibility.
 
-1. Write failing ownership/PM/consistency fixtures, implement the minimum repair, and record RED→GREEN.
-2. Keep legacy Hermes config support. For v0.22 PM, select only validated active owner-local Node/npm entries from bounded schema1 facts. Never mutate their digest-bound trees or recorded facts.
-3. Put the Matrix PM default outside the store. Activate it only in fresh non-root Matrix owner environments when no explicit environment/owner globalconfig choice exists. Bound the read-only npm config probe; reject symlinks/path escapes. Preserve private tool links, owner/project prefix settings and CLI overrides.
-4. Retain exact recognized local Codex shim migration, atomic replacement and the failed-pack retry fix. Ship helper in the explicit bundle allowlist.
-5. Run copied-real-PM Node/npm process fixtures without installation or credentials, affected regression suites, native typecheck, shell syntax and pattern checks. Obtain independent local read-only review and fix its findings.
-6. Save a local candidate, English cases, immutable receipt and recovery bundle. This round authorizes no push, new CI, external review, model/provider call, installation, GUI, Private repository, Slack, machine/service mutation, merge or substitute task.
+1. Resolve rebase conflicts while preserving Main's version constants, scope
+   digest/acceptance fixtures and existing minimum-version behavior.
+2. Retain the single legacy/PM npm reconciler, external digest-safe Matrix
+   default, non-root owner-env activation, recognized npm shim migration and
+   explicit bundle copy. Preserve custom commands and operator overrides.
+3. Demonstrate RED on real developer installer + tool-pack + helper subprocesses:
+   after npm succeeds but required repair fails, the next startup skips repair.
+   Fix it by retrying only the locked owner repair for a healthy existing CLI;
+   do not reinstall or downgrade it. Exercise repeated failure and later recovery.
+4. Run serial affected suites, relevant type checks, shell/Node syntax and pattern
+   scan. Record actual failures separately from setup/permission limitations.
+5. Seal a local exact HEAD and dependency handoff for Hermes2695. Keep the
+   helper/owner-env source interface single-owned here. Do not rebase its branch.
 
-## ENG-306 ownership
+## Downstream and acceptance
 
-ENG-298/#2593 owns the single npm reconciler and owner-environment activation. ENG-306's original author alone owns the Hermes upgrade flags, managed Python resolution and credential compatibility. Its installer must retain the shared reconciler hook after successful provisioning; no copied implementation. Standard native Hermes inherits the owner environment via hermes-stdio-client. Restricted profiles remain unchanged and do not inherit that environment. Custom PM payload/runtime overrides are not claimed supported.
+Hermes2695 currently targets oldce625 at376baeb01073193d7de7536023f0ee501bf01e39.
+Its original author owns the upgrade, PM/extras/Python/auth work. It must replay
+its own two commits onto the new frozen2593 local baseline and retain the shared
+repair hook after PM/extras installation, rather than copying the reconciler.
 
-## Deferred qualification and landing
+Only local code and bounded verification are authorized. No push, CI dispatch,
+external review request, merge, deployment, paid environment, new privilege,
+account/provider use, Slack or GUI. Another Runtime task owns its own worktree,
+processes and builds; no heavy concurrent build is started here.
 
-An exact0.163.0 scope-process fixture remains required before landing; this local round supplies no new native CLI and explicitly skips that opt-in test. User account model visibility, native Linux isolation, live Hermes/browser surfaces and rollout need separate coordinated acceptance. Main removed automatic Claude review in#2666; do not reuse the old push-side-effect statement. Publication remains separately authorized, with current-head review/CI and a non-author approval last. Public docs coordination in FinnaAI/matrix-os-site is a separate deliverable, blocked this round by the explicit no-Private/no-publication scope.
+Historical ce625 client/native0.163 evidence remains true for that historical
+source. It does not qualify this rebased source. A new matching host/client
+manifest, installed CLI/version/hash, supported real entry and English captures
+remain required before human review. Public site documentation remains a separate
+coordinated deliverable under the existing no-Private/no-publication boundary.
