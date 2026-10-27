@@ -1,4 +1,4 @@
-import { validateBotImageInferenceBody } from "@matrix-os/contracts";
+import { validateBotImageInferenceBody, INFERENCE_RESPONSE_BODY_MAX_BYTES } from "@matrix-os/contracts";
 /**
  * Model calls from bot workloads (spec 536, contracts/bot-broker-protocol.md).
  * The worker's loopback bridge sends each provider request as a broker frame;
@@ -348,7 +348,7 @@ export async function forwardBotInference(
           signal: responseSignal, authorized, abort: () => streamLifetime.abort(),
         }) };
     }
-    const body = await readBoundedBody(response, "inference");
+    const body = await readBoundedBody(response, INFERENCE_RESPONSE_BODY_MAX_BYTES);
     if (binding.anthropicApi && (lifecycle.aborted || await anthropicValid() !== true
       || await bindingValid() !== true || !await stillAuthorized())) return failure(request.requestId, "action_denied");
     const result = ScopeRuntimeBrokerResponseSchema.parse({
