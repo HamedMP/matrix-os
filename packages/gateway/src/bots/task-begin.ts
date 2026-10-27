@@ -25,8 +25,8 @@ export async function beginBotTask(tx: BotStateTransaction, input: {
     if (!waiting || waiting.chatId !== input.chatId || waiting.botId !== input.botId || waiting.status !== "waiting_person") {
       throw new BotInteractionError("conflict");
     }
-    if (interaction.kind === "question" && (!interaction.sourceRunId
-      || waiting.runId !== interaction.sourceRunId)) throw new BotInteractionError("conflict");
+    if ((interaction.kind === "question" && !interaction.sourceRunId)
+      || (interaction.sourceRunId && waiting.runId !== interaction.sourceRunId)) throw new BotInteractionError("conflict");
   } else {
     waiting = (await tasks.listOpen({ ownerId: input.ownerId, botId: input.botId, chatId: input.chatId }, tx.db))
       .find(task => task.status === "waiting_person");

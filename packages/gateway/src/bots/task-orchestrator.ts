@@ -1,3 +1,4 @@
+import { sql } from "kysely";
 import type { BotInputHistoryReader } from "./historical-input.js";
 import { createBotWorkerDrain } from "./worker-drain.js";
 import { BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
@@ -163,15 +164,21 @@ export function createBotTaskOrchestrator(deps: {
     const reason = status === "waiting_capacity" ? "capacity_unavailable" : blockedReason;
     try {
       await deps.transact(task.ownerId, async (tx) => {
-        // A run that ended with a request to the owner still open leaves its task waiting for them.
+        const at = now();
+        // A fast answer may already be queued while its source turn is settling.
+        // Retain that exact run's continuation; a later run must still complete.
         const waiting = to === "completed" && await tx.db.selectFrom("bot_interactions").select("interaction_id")
           .where("owner_id", "=", task.ownerId).where("task_id", "=", task.taskId)
-          .where("blocking", "=", true).where("status", "=", "pending")
+          .where("blocking", "=", true).where(eb => eb.or([
+            eb("status", "=", "pending"),
+            eb.and([eb("status", "=", "resolved"), eb("source_run_id", "=", task.runId ?? ""),
+              eb("expires_at", ">", at), eb(sql<string>`jsonb_typeof(resolution -> 'continuation')`, "=", "string")]),
+          ]))
           .executeTakeFirst() !== undefined;
         const settled = await createBotTasksRepository(tx.db).transition({
           ownerId: task.ownerId, taskId: task.taskId, baseRevision: task.revision, to: waiting ? "waiting_person" : to,
           ...(to === "blocked" ? { blockedReason: reason ?? "tool_unavailable" } : {}),
-          now: now(),
+          now: at,
         }, tx.db);
         await tx.publish(settled.chatId, "bot.task.updated", taskEvent(settled));
       });

@@ -101,7 +101,7 @@ export function createBotConnections(deps: {
     const { interaction: choice } = await interactions.create({
       ownerId: interaction.ownerId, botId: interaction.botId, chatId: interaction.chatId, taskId: interaction.taskId, kind: "account_choice",
       payload: { kind: "account_choice", service: payload.service, access: payload.access, options: options.slice(0, MAX_ACCOUNT_OPTIONS).map((option) => ({ connectionId: option.connectionId, label: option.label })) },
-      responderActorId: interaction.responderActorId, blocking: true,
+      sourceRunId: interaction.sourceRunId ?? undefined, responderActorId: interaction.responderActorId, blocking: true,
       expiresAt: new Date(Date.parse(at) + CHOICE_LIFETIME_MS).toISOString(), now: at,
     }, tx.db);
     await tx.publish(choice.chatId, "interaction.requested", {
