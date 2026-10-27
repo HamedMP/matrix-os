@@ -1,6 +1,6 @@
 import { RailCollapse } from "./RailCollapse";
 import { WorkRailOrderItem } from "./WorkRailOrderItem";
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { OverflowingChatTitle } from "@matrix-os/ui";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { ChevronRight, Folder, FolderOpen, SquarePen as PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2, UsersIcon } from "lucide-react";
@@ -12,6 +12,19 @@ import type { WorkRailProjectGroup as WorkRailProjectGroupModel } from "../work-
 import { WorkRailChatRow } from "./WorkRailChatRow";
 import type { DesktopProjectSharingContext } from "../../project/DesktopProjectSharing";
 import { projectShareMenuItems } from "./project-share-action";
+
+const PROJECT_CHAT_PAGE = 6;
+
+/** Re-renders once a minute while visible so Chat start ages stay current. */
+function useMinuteClock(active: boolean) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return now;
+}
 
 export function WorkRailProjectGroup({
   group,
@@ -67,6 +80,11 @@ export function WorkRailProjectGroup({
   movingChatId?: string | null;
 }) {
   const actionButtonRef = useRef<HTMLButtonElement>(null);
+  const [limit, setLimit] = useState(PROJECT_CHAT_PAGE);
+  const nowMs = useMinuteClock(expanded);
+  // Never hide the open Chat behind Show more.
+  const shownCount = Math.max(limit, group.chats.findIndex((record) => record.chat.id === activeChatId) + 1);
+  const hiddenCount = group.chats.length - shownCount;
   const actions = useProjectActions(group.project);
   const items: ProjectMenuAction[] = [
     { label: group.project.pinned ? "Unpin" : "Pin", icon: group.project.pinned ? <PinOffIcon size={16} aria-hidden /> : <PinIcon size={16} aria-hidden />, disabled: !actions.available || actions.pending, onSelect: () => { void actions.update({ pinned: !group.project.pinned }); } },
@@ -121,12 +139,13 @@ export function WorkRailProjectGroup({
       {actions.error && actions.dialog !== "edit" ? <p role="alert" className="px-2 text-xs" style={{ color: "var(--danger)" }}>{actions.error}</p> : null}
       {actions.dialog === "edit" ? <ProjectEditDialog returnFocusRef={actionButtonRef} project={group.project} pending={actions.pending} error={actions.error} onClose={() => actions.setDialog(null)} onSave={actions.update} /> : null}
       <RailCollapse expanded={expanded} className="flex flex-col gap-0.5">
-          {group.chats.map((record) => (
+          {group.chats.slice(0, shownCount).map((record) => (
             <WorkRailOrderItem key={record.chat.id} id={record.chat.id} kind="chat" group={`project:${group.id}`}><WorkRailChatRow fresh={fresh}
               record={record}
               moveItems={moveItems?.(record)}
               moving={movingChatId === record.chat.id}
               placement="project"
+              nowMs={nowMs}
               active={record.chat.id === activeChatId}
               pinning={Boolean(pinning[record.chat.id])}
               renaming={renamingChatId === record.chat.id}
@@ -142,6 +161,10 @@ export function WorkRailProjectGroup({
               onDelete={() => onDeleteChat(record)}
             /></WorkRailOrderItem>
           ))}
+          {hiddenCount > 0 ? <button type="button" aria-label={`Show more ${group.name} chats`}
+            className="rounded-[8px] px-2.5 py-1 pl-[24px] text-left text-xs outline-none hover:bg-[var(--matrix-chat-rail-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
+            style={{ color: "var(--matrix-chat-rail-muted, var(--text-secondary))" }}
+            onClick={() => setLimit(shownCount + PROJECT_CHAT_PAGE)}>Show more</button> : null}
       </RailCollapse>
     </div>
   );
