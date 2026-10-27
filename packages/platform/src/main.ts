@@ -141,6 +141,7 @@ import {
   checkCustomerVpsPrimaryStorageEnv,
   checkHomeMirrorS3Env,
   checkHostBundleStorageEnv,
+  checkPublicSitesEnv,
   checkUnsafeDefaultSecrets,
   collectTenantPublicTelemetryEnv,
 } from './platform-startup-env.js';
@@ -153,6 +154,7 @@ export {
   checkCustomerVpsPrimaryStorageEnv,
   checkHomeMirrorS3Env,
   checkHostBundleStorageEnv,
+  checkPublicSitesEnv,
   checkUnsafeDefaultSecrets,
 } from './platform-startup-env.js';
 export {
@@ -291,6 +293,7 @@ export function createApp(deps: {
   hostBundleObjectStore?: CustomerVpsObjectStore;
   sitesObjectStore?: CustomerVpsObjectStore;
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
+  assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   env?: NodeJS.ProcessEnv;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
@@ -807,6 +810,7 @@ export function createApp(deps: {
       recordRuntimeMetrics: platformMetricsRoutes.recordRuntimeMetrics,
       captureEvent: captureFunnelEvent,
       assertPrimaryStorageReady: deps.assertPrimaryStorageReady,
+      assertSitesStorageReady: deps.assertSitesStorageReady,
     }));
   }
 
@@ -1009,6 +1013,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     checkCustomerVpsPrimaryStorageEnv,
     checkHomeMirrorS3Env,
     checkHostBundleStorageEnv,
+    checkPublicSitesEnv,
     collectTenantPublicTelemetryEnv,
     stripeBillingEntitlementsEnabled,
     resolveEffectiveBillingEntitlement,

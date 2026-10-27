@@ -54,6 +54,7 @@ export interface CustomerVpsRoutesDeps {
   platformSecret: string;
   goldenSnapshotOperatorSecret?: string;
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
+  assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   probeMachineHealth?: (machine: { machineId: string; handle: string; publicIPv4: string | null }) => Promise<boolean>;
   probeMachineRuntime?: (machine: { machineId: string; handle: string; publicIPv4: string | null }) => Promise<{
     healthy: boolean;
@@ -171,6 +172,21 @@ export function createCustomerVpsRoutes(deps: CustomerVpsRoutesDeps): Hono {
       return c.json({ status: 'ok' });
     } catch (err: unknown) {
       logCustomerVpsError('primary storage capability check failed', err);
+      return c.json({ error: 'Storage unavailable' }, 503);
+    }
+  });
+
+  app.post('/sites-storage-check', bodyLimit({ maxSize: VPS_BODY_LIMIT }), async (c) => {
+    const authError = requirePlatformAuth(c);
+    if (authError) return authError;
+    if (!deps.assertSitesStorageReady) {
+      return c.json({ error: 'Storage unavailable' }, 503);
+    }
+    try {
+      await deps.assertSitesStorageReady({ force: true });
+      return c.json({ status: 'ok' });
+    } catch (err: unknown) {
+      logCustomerVpsError('Sites storage capability check failed', err);
       return c.json({ error: 'Storage unavailable' }, 503);
     }
   });

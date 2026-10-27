@@ -1,6 +1,6 @@
 # Public app sites: release and validation
 
-The code does not automatically deploy infrastructure. Release platform and host bundles through their normal reviewed pipelines. Use a scoped disposable customer test runtime for live validation; preview/operator machines cannot publish.
+The reviewed platform pipeline preserves and verifies Sites configuration on every replacement deployment and deploys the fixed-domain Worker for promoted production releases. Initial bucket, credential and secret creation remains an operator action. Release platform and host bundles through their normal reviewed pipelines. Use a scoped disposable customer test runtime for live validation; preview/operator machines cannot publish.
 
 ## Prerequisites
 
@@ -12,6 +12,21 @@ The code does not automatically deploy infrastructure. Release platform and host
 - The already provisioned `MATRIX_SYNC_RUNTIME_TOKEN` authorizes owner publication delegation and signs scoped submission capabilities. It binds the machine ID, runtime slot and rotation epoch. Sites never accept the legacy handle-only token, and hosts without the scoped credential fail closed.
 
 Cloudflare documents this routing mode in [Worker Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/). Customer-owned domains require a later verified-hostname design.
+
+## Durable production deployment contract
+
+The production GitHub environment sets `MATRIX_PUBLIC_SITES_ENABLED=true`. Store the platform values in Google Secret Manager with these exact names:
+
+- `sites-edge-secret`
+- `r2-sites-account-id`
+- `r2-sites-bucket`
+- `r2-sites-endpoint`
+- `r2-sites-access-key-id`
+- `r2-sites-secret-access-key`
+
+Grant the configured Cloud Run service account direct `secretAccessor` access to each Sites secret. Keep the dedicated bucket name different from the values in `r2-bucket` and `r2-bundles-bucket`. The endpoint must be the canonical HTTPS R2 endpoint for the Sites account. Supply `CLOUDFLARE_ACCOUNT_ID` and a least-privilege `CLOUDFLARE_API_TOKEN` through the production GitHub environment; do not copy either value into the workflow or repository.
+
+`.github/workflows/platform-cloud-run.yml` runs `scripts/ci/platform-sites-env.sh` before replacement. The preflight checks enabled secret versions, direct runtime access, edge-secret shape, dedicated bucket separation and account/endpoint agreement without printing secret values. It then binds every value by Secret Manager reference, checks the candidate's actual bindings, performs a write/read/delete probe against the private Sites bucket, deploys the Matrix.page Worker using the same edge secret, and repeats revision and anonymous-routing checks after promotion. A failed check stops the release instead of silently deploying a 503 configuration.
 
 ## Domain homepage
 

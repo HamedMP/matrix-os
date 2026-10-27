@@ -99,6 +99,37 @@ describe('platform/customer-vps-routes', () => {
     expect(await unavailable.json()).toEqual({ error: 'Storage unavailable' });
   });
 
+  it('exposes only an authenticated, coarse Sites-storage capability check', async () => {
+    const service = {} as Parameters<typeof createCustomerVpsRoutes>[0]['service'];
+    const assertSitesStorageReady = vi.fn().mockResolvedValue(undefined);
+    const app = new Hono();
+    app.route('/vps', createCustomerVpsRoutes({
+      service,
+      platformSecret,
+      assertSitesStorageReady,
+    }));
+
+    const unauthorized = await app.request('/vps/sites-storage-check', { method: 'POST' });
+    expect(unauthorized.status).toBe(401);
+    expect(assertSitesStorageReady).not.toHaveBeenCalled();
+
+    const ok = await app.request('/vps/sites-storage-check', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ status: 'ok' });
+    expect(assertSitesStorageReady).toHaveBeenCalledWith({ force: true });
+
+    assertSitesStorageReady.mockRejectedValueOnce(new Error('private provider detail'));
+    const unavailable = await app.request('/vps/sites-storage-check', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${platformSecret}` },
+    });
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.json()).toEqual({ error: 'Storage unavailable' });
+  });
+
   it('protects and validates the preview provision route contract', async () => {
     const provision = vi.fn();
     const provisionPreview = vi.fn().mockResolvedValue({

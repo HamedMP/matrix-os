@@ -256,6 +256,7 @@ type CreatePlatformApp = (deps: {
   hostBundleObjectStore?: CustomerVpsObjectStore;
   sitesObjectStore?: CustomerVpsObjectStore;
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
+  assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   env?: NodeJS.ProcessEnv;
 }) => PlatformApp;
 
@@ -269,6 +270,7 @@ export interface StartPlatformServerOptions {
   createApp: CreatePlatformApp;
   checkUnsafeDefaultSecrets(): string[];
   checkCustomerVpsPrimaryStorageEnv(): string[];
+  checkPublicSitesEnv(): string[];
   checkHomeMirrorS3Env(): string[];
   checkHostBundleStorageEnv(): string[];
   collectTenantPublicTelemetryEnv(): string[];
@@ -308,6 +310,7 @@ async function startPlatformServerWithCleanup(
     createApp: createPlatformApp,
     checkUnsafeDefaultSecrets,
     checkCustomerVpsPrimaryStorageEnv,
+    checkPublicSitesEnv,
     checkHomeMirrorS3Env,
     checkHostBundleStorageEnv,
     collectTenantPublicTelemetryEnv,
@@ -321,6 +324,9 @@ async function startPlatformServerWithCleanup(
     process.exit(1);
   }
   if (checkCustomerVpsPrimaryStorageEnv().length > 0) {
+    process.exit(1);
+  }
+  if (checkPublicSitesEnv().length > 0) {
     process.exit(1);
   }
   const backgroundWorkersEnabled = shouldEnablePlatformBackgroundWorkers(process.env);
@@ -754,6 +760,7 @@ async function startPlatformServerWithCleanup(
   let hostBundleObjectStore: CustomerVpsObjectStore | undefined;
   let sitesObjectStore: GatewayR2Client | undefined;
   let primaryStorageGate: R2CapabilityGate | undefined;
+  let sitesStorageGate: R2CapabilityGate | undefined;
   const storageConfig = resolvePlatformObjectStorage(process.env);
   let createR2Client: GatewayR2ClientModule['createR2Client'] | undefined;
   if (storageConfig.primary && platformSecret) {
@@ -786,6 +793,7 @@ async function startPlatformServerWithCleanup(
   if (sitesStorageConfig) {
     createR2Client ??= (await importRuntimeModule<GatewayR2ClientModule>('./r2-client.js')).createR2Client;
     sitesObjectStore = await createR2Client(sitesStorageConfig);
+    sitesStorageGate = createR2CapabilityGate({ storage: sitesObjectStore });
     registerCustomMcpStartupCleanup(async () => { sitesObjectStore?.destroy(); });
   }
 
@@ -1097,6 +1105,7 @@ async function startPlatformServerWithCleanup(
     hostBundleObjectStore,
     sitesObjectStore,
     assertPrimaryStorageReady: primaryStorageGate?.assertReady,
+    assertSitesStorageReady: sitesStorageGate?.assertReady,
     env: appEnv,
   });
   const processPosthogErrorTracker = createPostHogErrorTracker({
