@@ -89,4 +89,36 @@ describe("kernel canonical Chat adapter", () => {
 
     expect(events.at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
   });
+
+  it("binds an OpenRouter kernel run and resume to the exact credential generation and model", async () => {
+    const dispatch = vi.fn(async (_prompt, sessionId, onEvent) => {
+      await onEvent({ type: "init", sessionId: sessionId ?? "session_openrouter" });
+      await onEvent({ type: "result", data: { result: "ok", cost: 0, durationMs: 1, tokensIn: 1, tokensOut: 1 } });
+    });
+    const adapter = createKernelChatProviderAdapter({ dispatcher: { dispatch } as unknown as Dispatcher });
+    const generation = "11111111-1111-4111-8111-111111111111";
+    const input = runInput({ selection: {
+      instanceId: "kernel_owner_openrouter", model: "anthropic/claude-sonnet-5",
+      options: [{ id: "credentialGeneration", value: generation }],
+    } });
+    for await (const _event of adapter.start(input)) { /* drain */ }
+    for await (const _event of adapter.resume!({ ...input, resumeState: { sessionId: "session_openrouter" } })) { /* drain */ }
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    for (const call of dispatch.mock.calls) {
+      expect(call[5]).toMatchObject({ model: "anthropic/claude-sonnet-5", accessSourceId: "owner_openrouter",
+        credentialGeneration: generation });
+    }
+  });
+
+  it("refuses an OpenRouter kernel selection without its generation fingerprint", async () => {
+    const dispatch = vi.fn();
+    const adapter = createKernelChatProviderAdapter({ dispatcher: { dispatch } as unknown as Dispatcher });
+    const input = runInput({ selection: {
+      instanceId: "kernel_owner_openrouter", model: "anthropic/claude-sonnet-5",
+    } });
+    await expect(async () => {
+      for await (const _event of adapter.start(input)) { /* drain */ }
+    }).rejects.toThrow();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
 });

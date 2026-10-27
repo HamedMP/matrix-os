@@ -124,6 +124,7 @@ export interface BotServices {
   providerConnections?: BotProviderConnectionsService;
   chatgptPlanPeers?: ChatGptPlanPeers;
   cancelAnthropicInference?(): void;
+  cancelOpenRouterInference?(): void;
   recipes: BotRecipeCatalog;
   instantiation: BotInstantiation;
   recovery: ManagedCustomRecovery;
@@ -470,6 +471,7 @@ export async function startBots(options: {
     adapter,
     managedAdapter: managed.adapter,
     cancelAnthropicInference: () => registry.cancelAnthropicInference(),
+    cancelOpenRouterInference: () => registry.cancelOpenRouterInference(),
     async close() {
       chatgptPlanPeers?.close();
       lifetime.abort();

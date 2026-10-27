@@ -8,6 +8,7 @@ export const MATRIX_CHATGPT_PLAN_INSTANCE_ID = "matrix_chatgpt_plan";
 /** Ordinary private Chat uses its own Pi admission, never the recipe-only Bot route. */
 export const MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID = "matrix_pi_chatgpt_plan";
 export const MATRIX_PI_ANTHROPIC_API_INSTANCE_ID = "matrix_pi_anthropic_api";
+export const MATRIX_PI_OPENROUTER_INSTANCE_ID = "matrix_pi_owner_openrouter";
 export const MATRIX_ANTHROPIC_API_INSTANCE_ID = "matrix_anthropic_api";
 export function isMatrixAnthropicChatRoute(route: { instanceId: string; driverKind: string }): boolean {
   return route.instanceId === MATRIX_PI_ANTHROPIC_API_INSTANCE_ID && route.driverKind === "matrix_pi";
@@ -16,6 +17,12 @@ export function isMatrixAnthropicBotRoute(route: { instanceId: string; driverKin
   return route.instanceId === MATRIX_ANTHROPIC_API_INSTANCE_ID && route.driverKind === "matrix_bot";
 }
 export interface MatrixAnthropicBinding { connectionRevision: number; credentialGeneration: string }
+export interface OpenRouterSelectionBinding { credentialGeneration: string }
+export function openRouterSelectionBinding(options?: CanonicalChatModelSelection["options"]): OpenRouterSelectionBinding | null {
+  if (options?.length !== 1 || options[0]?.id !== "credentialGeneration") return null;
+  const parsed = MatrixAnthropicCredentialGenerationSchema.safeParse(options[0].value);
+  return parsed.success ? { credentialGeneration: parsed.data } : null;
+}
 export function matrixAnthropicSelectionBinding(options?: CanonicalChatModelSelection["options"]): MatrixAnthropicBinding | null {
   if (options?.length !== 2) return null;
   const revision = options.find(option => option.id === "connectionRevision")?.value;

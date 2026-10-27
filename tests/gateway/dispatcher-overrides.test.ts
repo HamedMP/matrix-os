@@ -96,6 +96,35 @@ describe("dispatcher per-message kernel overrides", () => {
     expect(configs[1].env?.ANTHROPIC_API_KEY).toBe("sk-ant-owner-key");
   });
 
+  it("rejects OpenRouter generation drift before spawning and cancels matching active runs", async () => {
+    const homePath = makeHomePath();
+    mkdirSync(join(homePath, "system/ai-providers"), { recursive: true, mode: 0o700 });
+    const generation = "11111111-1111-4111-8111-111111111111";
+    writeFileSync(join(homePath, "system/ai-providers/openrouter-key.json"), JSON.stringify({
+      version: 1, apiKey: "sk-or-test", credentialGeneration: generation,
+    }), { mode: 0o600 });
+    const started = Promise.withResolvers<void>();
+    const spawn = vi.fn<SpawnFn>(async function* (_message, _config, controller) {
+      started.resolve();
+      await new Promise<void>((resolve) => controller?.signal.addEventListener("abort", () => resolve(), { once: true }));
+      yield { type: "aborted" };
+    });
+    const dispatcher = createDispatcher({ homePath, spawnFn: spawn, maxConcurrency: 1 });
+    await expect(dispatcher.dispatch("stale", undefined, () => {}, undefined, undefined, {
+      model: "anthropic/claude-sonnet-5", accessSourceId: "owner_openrouter",
+      credentialGeneration: "22222222-2222-4222-8222-222222222222",
+    })).rejects.toThrow();
+    expect(spawn).not.toHaveBeenCalled();
+
+    const active = dispatcher.dispatch("current", undefined, () => {}, undefined, undefined, {
+      model: "anthropic/claude-sonnet-5", accessSourceId: "owner_openrouter", credentialGeneration: generation,
+    });
+    await started.promise;
+    dispatcher.cancelOpenRouterRuns();
+    await active;
+    expect(spawn).toHaveBeenCalledOnce();
+  });
+
   it("rejects an explicit Matrix SDK route before credential acquisition or spawn", async () => {
     const getCredential = vi.fn();
     const spawn = vi.fn<SpawnFn>(async function* () { yield resultEvent(); });

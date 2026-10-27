@@ -12,7 +12,7 @@
  * are never selected.
  */
 import type { AiProviderSnapshotV3, BotModelRoute, CanonicalChatModelSelection } from "@matrix-os/contracts";
-import { BotModelRouteSchema, MANAGED_WORKERS_AI_MODEL_IDS } from "@matrix-os/contracts";
+import { BotModelRouteSchema, MANAGED_WORKERS_AI_MODEL_IDS, MATRIX_PI_OPENROUTER_INSTANCE_ID, openRouterSelectionBinding } from "@matrix-os/contracts";
 import type { BotCredentialAccessSourceId } from "./credentials.js";
 import { MATRIX_DEFAULT_MODEL_ID } from "../ai-providers/model-catalog.js";
 
@@ -31,6 +31,7 @@ export interface ResolvedBotRoute {
   accessSourceId: BotCredentialAccessSourceId;
   subscription?: import("./chatgpt-plan.js").ChatGptPlanBinding;
   anthropicApi?: import("@matrix-os/contracts").MatrixAnthropicBinding;
+  openRouter?: { credentialGeneration: string };
 }
 
 export class BotRouteError extends Error {
@@ -55,7 +56,7 @@ function routeFor(snapshot: AiProviderSnapshotV3, entry: (typeof SOURCES_IN_ORDE
   const model = snapshot.models.find((candidate) => candidate.id === modelId);
   if (!model || model.status === "retired" || model.status === "unavailable" || !model.eligibleAccessSourceIds.includes(entry.id)) return undefined;
   if (!model.capabilities.includes("tools")) return undefined;
-  const anthropic = model.vendor === "anthropic";
+  const anthropic = model.vendor === "anthropic" || model.vendor === "openrouter" && model.id.startsWith("anthropic/");
   if (!anthropic && entry.anthropicOnly) return undefined;
   const route = BotModelRouteSchema.safeParse({
     api: anthropic ? "anthropic-messages" : "openai-completions",
@@ -92,6 +93,23 @@ export function resolveBotRoute(snapshot: AiProviderSnapshotV3, now = Date.now()
 }
 
 export const MANAGED_PI_INSTANCE_ID = "matrix_pi_default";
+
+/** An explicit owner-funded OpenRouter choice is generation-bound and never enters fallback order. */
+export function resolveManagedPiOpenRouterRoute(snapshot: AiProviderSnapshotV3, selection: CanonicalChatModelSelection, now = Date.now()): ResolvedBotRoute {
+  const binding = openRouterSelectionBinding(selection.options);
+  if (selection.instanceId !== MATRIX_PI_OPENROUTER_INSTANCE_ID || !binding) throw new BotRouteError("model_unavailable");
+  const source = snapshot.accessSources.find(candidate => candidate.id === "owner_openrouter");
+  const instance = snapshot.instances.find(candidate => candidate.id === MATRIX_PI_OPENROUTER_INSTANCE_ID
+    && candidate.driverId === "matrix_pi" && candidate.accessSourceId === source?.id);
+  if (!source || !instance || source.credentialGeneration !== binding.credentialGeneration
+    || source.state !== "ready" || !fresh(source.staleAfter, now) || instance.readiness.state !== "ready"
+    || !fresh(instance.readiness.staleAfter, now) || !source.eligibleModelIds.includes(selection.model)
+    || !instance.modelIds.includes(selection.model)) throw new BotRouteError("model_unavailable");
+  const entry = { id: source.id, credential: "owner_openrouter" as const, anthropicOnly: false };
+  const resolved = routeFor(snapshot, entry, selection.model, now);
+  if (!resolved) throw new BotRouteError("model_unavailable");
+  return { ...resolved, openRouter: binding };
+}
 
 /** A concrete managed choice never falls back to the active provider or owner keys. */
 export function resolveManagedPiRoute(snapshot: AiProviderSnapshotV3, selection: CanonicalChatModelSelection, now = Date.now()): ResolvedBotRoute {
