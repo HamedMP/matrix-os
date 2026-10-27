@@ -970,6 +970,9 @@ export function useCanonicalChatRouteController({
     submitInput,
     retryTurn,
     deleteChat,
-    startNewChat: () => selectChat(null),
+    startNewChat: () => {
+      submissionRequests.current = createChatMentionRequestTracker();
+      selectChat(null);
+    },
   };
 }

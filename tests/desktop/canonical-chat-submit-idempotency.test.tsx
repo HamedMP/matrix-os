@@ -2,7 +2,9 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useCanonicalChatRouteController } from "@desktop/renderer/src/features/chat/use-canonical-chat-route-controller";
-import type { CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
+import { createCanonicalChatClient, type CanonicalChatClient } from "@desktop/renderer/src/lib/canonical-chat-client";
+import { CanonicalCreateChatRequestSchema, CanonicalCreateChatTurnRequestSchema,
+  type CanonicalChatRecord, type CanonicalChatTurnAdmissionResponse } from "@matrix-os/contracts";
 import { AppError } from "@desktop/shared/app-error";
 import { createCanonicalChatFixture } from "../contracts/fixtures/canonical-chat";
 
@@ -50,4 +52,76 @@ describe("Electron admission retry identity", () => {
       expect(admitTurn.mock.calls[2][1].clientRequestId).not.toBe(original);
     } finally { hook.unmount(); }
   });
+  it.each([
+    { projectId: null, explicitNewChat: false }, { projectId: null, explicitNewChat: true },
+    { projectId: "project_retry", explicitNewChat: false }, { projectId: "project_retry", explicitNewChat: true },
+  ])("respects New Chat after a lost first-send acknowledgement (project: $projectId, New Chat: $explicitNewChat)", async ({ projectId, explicitNewChat }) => {
+    const { snapshot } = createCanonicalChatFixture("running");
+    const created: Array<{ key: string; record: CanonicalChatRecord }> = [];
+    const admissions: Array<{ key: string; response: CanonicalChatTurnAdmissionResponse }> = [];
+    const createKeys: string[] = [];
+    const admissionKeys: string[] = [];
+    let loseAcknowledgement = true;
+    const client = createCanonicalChatClient({
+      get: vi.fn(async (path: string) => {
+        const url = new URL(path, "https://matrix.test");
+        if (url.pathname === "/api/chats") return { items: [] };
+        if (url.pathname.includes("/turn-admissions/")) throw new AppError("offline");
+        const admitted = admissions.find(row => url.pathname === `/api/chats/${row.response.record.chat.id}`)?.response;
+        if (!admitted) throw new AppError("offline");
+        return { record: admitted.record, messages: [admitted.message], turns: [admitted.turn], runs: [admitted.run], activities: [] };
+      }),
+      post: vi.fn(async (path: string, body: unknown) => {
+        const url = new URL(path, "https://matrix.test");
+        if (url.pathname === "/api/chats") {
+          const request = CanonicalCreateChatRequestSchema.parse(body);
+          createKeys.push(request.clientRequestId);
+          const existing = created.find(row => row.key === request.clientRequestId);
+          if (existing) return existing.record;
+          const { activeRun: _activeRun, providerBinding: _binding, project: _project, ...chat } = snapshot.chat;
+          const record: CanonicalChatRecord = { chat: { ...chat,
+            id: `chat_created_${created.length + 1}`, revision: 0, messageCount: 0 } };
+          if (request.projectId) record.projectId = request.projectId;
+          created.push({ key: request.clientRequestId, record });
+          return record;
+        }
+        const request = CanonicalCreateChatTurnRequestSchema.parse(body);
+        const target = created.find(row => url.pathname === `/api/chats/${row.record.chat.id}/turns`);
+        if (!target) throw new Error("Unexpected test admission target");
+        admissionKeys.push(request.clientRequestId);
+        const key = `${target.record.chat.id}:${request.clientRequestId}`;
+        let accepted = admissions.find(row => row.key === key)?.response;
+        if (!accepted) {
+          const suffix = created.length;
+          const turnId = `cturn_created_${suffix}`;
+          const messageId = `msg_created_${suffix}`;
+          const runId = `run_created_${suffix}`;
+          accepted = { record: { ...target.record, chat: { ...target.record.chat, revision: 1, messageCount: 1 },
+            activeRun: { runId, turnId, status: "running" } },
+            message: { ...snapshot.messages[0], id: messageId, chatId: target.record.chat.id, turnId, parts: request.parts },
+            turn: { ...snapshot.turns[0], id: turnId, chatId: target.record.chat.id, inputMessageId: messageId, clientRequestId: request.clientRequestId },
+            run: { ...snapshot.runs[0], id: runId, chatId: target.record.chat.id, turnId,
+              instanceId: request.selection.instanceId, selection: request.selection }, admission: "accepted" };
+          admissions.push({ key, response: accepted });
+        }
+        if (loseAcknowledgement) { loseAcknowledgement = false; throw new AppError("timeout"); }
+        return accepted;
+      }), patch: vi.fn(), delete: vi.fn(),
+    });
+    const hook = renderHook(() => useCanonicalChatRouteController({ client, projectId, active: true, autoSelectFirst: false }));
+    try {
+      await act(async () => {});
+      await act(async () => { expect(await hook.result.current.submitTurn(input, "Same draft")).toBeNull(); });
+      expect(hook.result.current.activeChatId).toBeNull();
+      expect(admissions).toHaveLength(1);
+      if (explicitNewChat) act(() => hook.result.current.startNewChat());
+      await act(async () => { expect(await hook.result.current.submitTurn(input, "Same draft")).not.toBeNull(); });
+      expect(hook.result.current.activeChatId).toBe(explicitNewChat ? "chat_created_2" : "chat_created_1");
+      expect(created).toHaveLength(explicitNewChat ? 2 : 1);
+      expect(admissions).toHaveLength(explicitNewChat ? 2 : 1);
+      expect(createKeys[1] === createKeys[0]).toBe(!explicitNewChat);
+      expect(admissionKeys[1] === admissionKeys[0]).toBe(!explicitNewChat);
+    } finally { hook.unmount(); }
+  });
+
 });
