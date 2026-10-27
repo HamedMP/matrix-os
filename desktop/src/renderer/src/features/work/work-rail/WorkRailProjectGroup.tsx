@@ -1,7 +1,7 @@
 import { RailCollapse } from "./RailCollapse";
 import { WorkRailOrderItem } from "./WorkRailOrderItem";
-import { useEffect, useRef, useState } from "react";
-import { OverflowingChatTitle } from "@matrix-os/ui";
+import { useRef, useState } from "react";
+import { OverflowingChatTitle, useMinuteClock } from "@matrix-os/ui";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { ChevronRight, Folder, FolderOpen, SquarePen as PencilEditIcon, PinIcon, PinOffIcon, Settings, Trash2, UsersIcon } from "lucide-react";
 import { ProjectActionsMenu, ProjectActionsButton, type ProjectMenuAction } from "./ProjectActionsMenu";
@@ -14,19 +14,6 @@ import type { DesktopProjectSharingContext } from "../../project/DesktopProjectS
 import { projectShareMenuItems } from "./project-share-action";
 
 const PROJECT_CHAT_PAGE = 6;
-
-/** Re-renders once a minute while visible so Chat start ages stay current. */
-function useMinuteClock(active: boolean) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    // Catch up immediately after a long collapse, then tick each minute.
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
-    return () => window.clearInterval(timer);
-  }, [active]);
-  return now;
-}
 
 export function WorkRailProjectGroup({
   group,

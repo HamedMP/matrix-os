@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ChatNavigationRecord } from "@matrix-os/ui";
 import { WorkRailProjectGroup } from "@desktop/renderer/src/features/work/work-rail/WorkRailProjectGroup";
-import { compactChatStartLabel } from "@desktop/renderer/src/features/work/work-rail/chat-start-label";
+import { compactChatStartLabel } from "@matrix-os/ui";
 
 const NOW = Date.parse("2026-10-27T12:00:00.000Z");
 const alpha = { id: "proj_alpha", slug: "alpha", name: "Alpha", kind: "folder" as const };

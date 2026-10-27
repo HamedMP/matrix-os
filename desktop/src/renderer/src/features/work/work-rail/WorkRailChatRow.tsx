@@ -3,7 +3,7 @@ import {
   PinIcon,
   PinOffIcon,
 } from "lucide-react";
-import { isChatUnread, ChatContextMenu, ChatImportSourceIcon } from "@matrix-os/ui";
+import { isChatUnread, ChatContextMenu, ChatImportSourceIcon, chatStartTitle, compactChatStartLabel } from "@matrix-os/ui";
 import { OverflowingChatTitle } from "../OverflowingChatTitle";
 import { ChatTitleEditor } from "../../chat/ChatTitleEditor";
 import {
@@ -11,7 +11,6 @@ import {
   type WorkRailAgentState,
 } from "../work-rail-model";
 import { WorkRailChatMenu, type RailChatAction } from "./WorkRailChatMenu";
-import { chatStartTitle, compactChatStartLabel } from "./chat-start-label";
 import { useEffect, useRef, useState } from "react";
 
 const railStateLabel: Record<Exclude<WorkRailAgentState, "idle">, string> = {

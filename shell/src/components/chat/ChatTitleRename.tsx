@@ -2,7 +2,7 @@
 
 import { Ellipsis } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { ChatContextMenu, OverflowingChatTitle, ChatImportSourceIcon } from "@matrix-os/ui";
+import { ChatContextMenu, OverflowingChatTitle, ChatImportSourceIcon, chatStartTitle, compactChatStartLabel } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 
 export interface RenameableConversation {
@@ -73,6 +73,7 @@ export function RenameableConversationRow({
   onRenameCommit,
   onRenameCancel,
   onDelete,
+  nowMs,
 }: {
   conversation: RenameableConversation;
   active: boolean;
@@ -85,6 +86,8 @@ export function RenameableConversationRow({
   onRenameCommit: (title: string) => void;
   onRenameCancel: () => void;
   onDelete?: () => void;
+  /** When set, the row shows how long ago the Chat started, as in Project lists. */
+  nowMs?: number;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const selectTimerRef = useRef<number | null>(null);
@@ -96,6 +99,7 @@ export function RenameableConversationRow({
     if (deleteTimerRef.current !== null) window.clearTimeout(deleteTimerRef.current);
   }, []);
   const title = conversation.title || conversation.preview || "New chat";
+  const startedAt = conversation.canonicalRecord?.chat.createdAt;
   const row = editing ? (
     <div className={`flex w-full items-center px-2.5 ${mobile ? "py-3" : "py-1.5"}`}>
       <ChatTitleEditor title={title} pending={renamePending} onCommit={onRenameCommit} onCancel={onRenameCancel} />
@@ -128,6 +132,7 @@ export function RenameableConversationRow({
     >
       {conversation.canonicalRecord?.importSource ? <ChatImportSourceIcon harness={conversation.canonicalRecord.importSource.harness}/> : null}
       <span className={`matrix-web-chat-title flex min-w-0 flex-1 ${conversation.readState?.unread ? "font-semibold" : ""}`}><OverflowingChatTitle title={title}/></span>
+      {nowMs !== undefined && startedAt ? <time dateTime={startedAt} title={chatStartTitle(startedAt)} className="matrix-web-chat-row-started">{compactChatStartLabel(startedAt, nowMs)}</time> : null}
       {conversation.readState?.unread ? <span aria-label={`Unread ${title}`} className="size-2 shrink-0 rounded-full bg-primary" /> : null}
     </button>
   );

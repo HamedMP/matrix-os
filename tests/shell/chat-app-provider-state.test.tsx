@@ -14,6 +14,11 @@ vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({
   ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+// The Projects rail loads its own list; these suites count only provider requests.
+vi.mock("../../shell/src/components/chat/web-projects", async (original) => ({
+  ...await original<typeof import("../../shell/src/components/chat/web-projects")>(),
+  useWebProjects: () => ({ projects: [], loading: false, error: false, retry: () => {} }),
+}));
 vi.mock("@clerk/nextjs", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@clerk/nextjs")>()),
   useOrganization: () => ({ organization: null }),

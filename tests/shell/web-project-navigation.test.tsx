@@ -4,6 +4,13 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, expect, it, vi } from "vitest";
 import { ChatApp } from "../../shell/src/components/ChatApp";
 import { WebProjectsNav } from "../../shell/src/components/chat/WebProjectsNav";
+import { useWebProjects } from "../../shell/src/components/chat/web-projects";
+import type { RenameableConversation } from "../../shell/src/components/chat/ChatTitleRename";
+
+function Nav({ gatewayUrl, scopeKey, chats = [] }: { gatewayUrl: string; scopeKey: string; chats?: RenameableConversation[]; onSelectChat?: unknown }) {
+  const state = useWebProjects(gatewayUrl, scopeKey);
+  return <WebProjectsNav state={state} chats={chats} renderChat={chat => <button key={chat.id} type="button">{chat.title}</button>} />;
+}
 import { OrganizationStateProvider } from "../../shell/src/lib/collaboration-organization-state";
 
 const auth = vi.hoisted(() => ({ userId: "user_owner", sessionId: "session_owner" }));
@@ -70,9 +77,9 @@ it("shows an empty state and a retryable error without making project records di
     .mockResolvedValueOnce(Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }], nextCursor: null }));
   vi.stubGlobal("fetch", response);
   const props = { gatewayUrl: "https://example.test/vm/main", scopeKey: "owner/main", chats: [], onSelectChat: vi.fn() };
-  const view = render(<WebProjectsNav {...props} />);
+  const view = render(<Nav {...props} />);
   expect(await screen.findByText("No projects on this computer yet.")).toBeTruthy();
-  view.rerender(<WebProjectsNav {...props} scopeKey="owner/main/reloaded" />);
+  view.rerender(<Nav {...props} scopeKey="owner/main/reloaded" />);
   expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Projects could not be loaded.");
   fireEvent.click(screen.getByRole("button", { name: "Retry projects" }));
   expect(await screen.findByRole("button", { name: "Open France project" })).toBeTruthy();
@@ -87,8 +94,8 @@ it("drops prior computer projects immediately and ignores their late response", 
     : Response.json({ projects: [{ id: "proj_new", slug: "new", name: "New computer" }], nextCursor: null }));
   vi.stubGlobal("fetch", response);
   const props = { scopeKey: "owner", chats: [], onSelectChat: vi.fn() };
-  const view = render(<WebProjectsNav {...props} gatewayUrl="https://example.test/vm/old" />);
-  view.rerender(<WebProjectsNav {...props} gatewayUrl="https://example.test/vm/new" />);
+  const view = render(<Nav {...props} gatewayUrl="https://example.test/vm/old" />);
+  view.rerender(<Nav {...props} gatewayUrl="https://example.test/vm/new" />);
   expect(await screen.findByRole("button", { name: "Open New computer project" })).toBeTruthy();
   finishOld(Response.json({ projects: [{ id: "proj_old", slug: "old", name: "Old computer" }], nextCursor: null }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Open Old computer project" })).toBeNull());
@@ -99,11 +106,11 @@ it("does not show one account's projects when the account changes on the same co
   const response = vi.fn(async () => Response.json({ projects: [{ id: `proj_${auth.userId}`, slug: auth.userId, name: auth.userId }], nextCursor: null }));
   vi.stubGlobal("fetch", response);
   const props = { gatewayUrl: "https://example.test/vm/main", scopeKey: "main", chats: [], onSelectChat: vi.fn() };
-  const view = render(<WebProjectsNav {...props} />);
+  const view = render(<Nav {...props} />);
   expect(await screen.findByRole("button", { name: "Open user_owner project" })).toBeTruthy();
   auth.userId = "user_next";
   auth.sessionId = "session_next";
-  view.rerender(<WebProjectsNav {...props} />);
+  view.rerender(<Nav {...props} />);
   expect(screen.queryByRole("button", { name: "Open user_owner project" })).toBeNull();
   expect(await screen.findByRole("button", { name: "Open user_next project" })).toBeTruthy();
   expect(response).toHaveBeenCalledTimes(2);
@@ -123,4 +130,52 @@ it("keeps project requests on the mounted computer while shared-chat history cha
   expect(await screen.findByText("No projects on this computer yet.")).toBeTruthy();
   const projectCalls = response.mock.calls.map(([url]) => url).filter(url => url.includes("/api/workspace/projects"));
   expect(projectCalls).toEqual([`${window.location.origin}/vm/main/api/workspace/projects`, `${window.location.origin}/vm/main/api/workspace/projects`]);
+});
+
+function projectConversation(index: number, projectId = "proj_france"): RenameableConversation {
+  const createdAt = new Date(Date.now() - index * 60 * 60 * 1000).toISOString();
+  return { id: `chat_${index}`, title: `Chat ${index}`, preview: "", messageCount: 1, updatedAt: 1,
+    canonicalRecord: { projectId, chat: { id: `chat_${index}`, title: `Chat ${index}`, revision: 1, messageCount: 1,
+      lifecycle: "active", attention: "none", createdAt, updatedAt: createdAt } } as unknown as RenameableConversation["canonicalRecord"] };
+}
+
+function renderChatApp(conversations: RenameableConversation[], sessionId?: string) {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }], nextCursor: null })
+    : Response.json({})));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected conversations={conversations}
+    sessionId={sessionId} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} authorityKey="user_owner/runtime/main" /></OrganizationStateProvider>);
+}
+
+it("lists a project Chat under its Project only, as on Electron Desktop", async () => {
+  renderChatApp([projectConversation(1), { id: "chat_loose", title: "Loose chat", preview: "", messageCount: 1, updatedAt: 1 }]);
+  const projectsNav = await screen.findByRole("navigation", { name: "Projects" });
+  await waitFor(() => expect(screen.queryAllByRole("button", { name: "Chat 1" })).toHaveLength(0));
+  fireEvent.click(await within(projectsNav).findByRole("button", { name: "Open France project" }));
+  expect(within(projectsNav).getAllByRole("button", { name: "Chat 1" })).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: "Chat 1" })).toHaveLength(1);
+  expect(within(projectsNav).queryByRole("button", { name: "Loose chat" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Loose chat" })).toBeTruthy();
+});
+
+it("shows project Chats six at a time, with start times and the open Chat always visible", async () => {
+  renderChatApp(Array.from({ length: 14 }, (_, index) => projectConversation(index + 1)), "chat_10");
+  const projectsNav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(await within(projectsNav).findByRole("button", { name: "Open France project" }));
+  const shown = () => within(projectsNav).getAllByRole("button", { name: /^Chat \d+$/ });
+  expect(shown()).toHaveLength(10);
+  const started = within(within(projectsNav).getByRole("button", { name: "Chat 2" })).getByText("2h");
+  expect(started.tagName).toBe("TIME");
+  expect(started.getAttribute("title")).toMatch(/^Started /);
+  fireEvent.click(within(projectsNav).getByRole("button", { name: "Show more France chats" }));
+  expect(shown()).toHaveLength(14);
+  expect(within(projectsNav).queryByRole("button", { name: "Show more France chats" })).toBeNull();
+});
+
+it("matches project Chats by project slug as well as id", async () => {
+  renderChatApp([projectConversation(1, "france")]);
+  const projectsNav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(await within(projectsNav).findByRole("button", { name: "Open France project" }));
+  expect(within(projectsNav).getByRole("button", { name: "Chat 1" })).toBeTruthy();
 });

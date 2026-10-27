@@ -26,6 +26,7 @@ import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
 import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
 import { WebProjectsNav } from "./chat/WebProjectsNav";
+import { projectChats, useWebProjects } from "./chat/web-projects";
 import { getGatewayUrl } from "@/lib/gateway";
 import { SharedWithMeNav } from "./chat/SharedWithMeNav";
 import { ShellChatCollaboration } from "./chat/ShellChatCollaboration";
@@ -231,6 +232,7 @@ function ChatAppContent({
   // Chat and its project list must stay on the computer selected when this
   // surface mounted; shared-chat history routes can later change pathname.
   const [projectGatewayUrl] = useState(() => gatewayUrl ?? getGatewayUrl());
+  const webProjects = useWebProjects(projectGatewayUrl, authorityKey ?? projectGatewayUrl);
   const agentsNavigation = useChatAgentsNavigation();
   useCloseAgentsOnDraftRequest(composerDraftRequest?.id);
   const summaryClient = agentSummaryClient ?? agentClient;
@@ -391,7 +393,36 @@ function ChatAppContent({
       );
 
   const sourceConversations = filterChatsByImportSource(filteredConversations, sourceFilter, item => item.canonicalRecord?.importSource);
-  const listedConversations = unreadOnly ? sourceConversations.filter((item) => item.readState?.unread) : sourceConversations;
+  // As on Electron Desktop, a Chat in a listed Project appears under that Project only; search still finds it.
+  const projectChatIds = new Set(webProjects.projects.flatMap(project => projectChats(sourceConversations, project).map(chat => chat.id)));
+  const railConversations = trimmedSearch ? sourceConversations : sourceConversations.filter(item => !projectChatIds.has(item.id));
+  const listedConversations = unreadOnly ? railConversations.filter((item) => item.readState?.unread) : railConversations;
+
+  const renderConversationRow = (conv: ConversationMeta, nowMs?: number) => <RenameableConversationRow
+    key={conv.id}
+    nowMs={nowMs}
+    conversation={conv}
+    onToggleRead={onUpdateReadState ? () => { void onUpdateReadState(conv.id, conv.readState?.unread
+      ? { type: "mark_read", throughSeq: conv.readState.latestIncomingSeq, baseVersion: conv.readState.version }
+      : { type: "mark_unread" }); } : undefined}
+    active={conv.id === sessionId && (!agentsNavigation?.opened || agentsNavigation.opened.client !== agentClient)}
+    mobile={mobile}
+    editing={editingChat?.source === "rail" && editingChat.id === conv.id}
+    renamePending={renamePending && editingChat?.id === conv.id}
+    onSelect={() => onSwitchConversation(conv.id)}
+    onRenameStart={!mobile && onRenameConversation && !renamePending ? () => setEditingChat({ id: conv.id, source: "rail" }) : undefined}
+    onRenameCancel={() => setEditingChat(null)}
+    onDelete={!mobile && deleteChat.open ? () => deleteChat.open?.({ id: conv.id, title: conv.title || conv.preview || "New chat" }) : undefined}
+    onRenameCommit={(title) => {
+      if (!onRenameConversation || renamePending) return;
+      setRenamePending(true);
+      void onRenameConversation(conv.id, title).then((saved) => {
+        if (saved) setEditingChat(null);
+      }).catch((error: unknown) => {
+        console.warn("[chat] Rename failed:", error instanceof Error ? error.name : "UnknownError");
+      }).finally(() => setRenamePending(false));
+    }}
+  />;
 
   const suggestions = getMessageSuggestions(messages);
 
@@ -500,35 +531,11 @@ function ChatAppContent({
 
           <div className="px-2 pb-3">
             <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
-              projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} gatewayUrl={projectGatewayUrl} scopeKey={authorityKey ?? projectGatewayUrl}
-                chats={sourceConversations} activeChatId={sessionId} onSelectChat={onSwitchConversation} mobile={mobile}/>
+              projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} state={webProjects}
+                chats={sourceConversations} activeChatId={sessionId} renderChat={renderConversationRow} mobile={mobile}/>
                 <OrganizationDrivesNav chats={sourceConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/></>}
               attention={botSummaries.conversations.some(bot => bot.pendingApprovalCount > 0) ? <WebBotAttention heading={false} conversations={botSummaries.conversations} onOpen={onSwitchConversation}/> : undefined}
-              renderRow={conv => (
-                <ChatRailOrderItem key={conv.id} id={conv.id} kind="chat" group={webChatLifecycleGroup(conv)}><RenameableConversationRow
-                    key={conv.id}
-                    conversation={conv}
-                    onToggleRead={onUpdateReadState ? () => { void onUpdateReadState(conv.id, conv.readState?.unread
-                      ? { type: "mark_read", throughSeq: conv.readState.latestIncomingSeq, baseVersion: conv.readState.version }
-                      : { type: "mark_unread" }); } : undefined}
-                    active={conv.id === sessionId && (!agentsNavigation?.opened || agentsNavigation.opened.client !== agentClient)}
-                    mobile={mobile}
-                    editing={editingChat?.source === "rail" && editingChat.id === conv.id}
-                    renamePending={renamePending && editingChat?.id === conv.id}
-                    onSelect={() => onSwitchConversation(conv.id)}
-                    onRenameStart={!mobile && onRenameConversation && !renamePending ? () => setEditingChat({ id: conv.id, source: "rail" }) : undefined}
-                    onRenameCancel={() => setEditingChat(null)}
-                    onDelete={!mobile && deleteChat.open ? () => deleteChat.open?.({ id: conv.id, title: conv.title || conv.preview || "New chat" }) : undefined}
-                    onRenameCommit={(title) => {
-                      if (!onRenameConversation || renamePending) return;
-                      setRenamePending(true);
-                      void onRenameConversation(conv.id, title).then((saved) => {
-                        if (saved) setEditingChat(null);
-                      }).catch((error: unknown) => {
-                        console.warn("[chat] Rename failed:", error instanceof Error ? error.name : "UnknownError");
-                      }).finally(() => setRenamePending(false));
-                    }}
-                  /></ChatRailOrderItem>              )}/>
+              renderRow={conv => <ChatRailOrderItem key={conv.id} id={conv.id} kind="chat" group={webChatLifecycleGroup(conv)}>{renderConversationRow(conv)}</ChatRailOrderItem>}/>
             {ordinaryConversations.length === 0 && !botSummaries.loading && (
               <div className="flex flex-col items-center gap-2 px-3 py-10 text-center">
                 <span className="inline-flex size-9 items-center justify-center rounded-full bg-foreground/5 text-muted-foreground/60">

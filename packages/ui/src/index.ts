@@ -109,6 +109,8 @@ export {
 
 export { ChatShareDialog } from "./chat/ChatShareDialog.js";
 export { ChatContextMenu } from "./chat/ChatContextMenu.js";
+export { chatStartTitle, compactChatStartLabel } from "./chat/chat-start-label.js";
+export { useMinuteClock } from "./chat/use-minute-clock.js";
 export { ChatSharingButton } from "./chat/ChatSharingButton.js";
 export { ChatAttachments, AttachmentImage, type ChatMessageAttachment } from "./chat/ChatAttachments.js";
 export { ChatCollaboratorsDialog, type CollaborationApi } from "./collaboration/ChatCollaboratorsDialog.js";
