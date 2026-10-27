@@ -135,12 +135,15 @@ async function setup(revisionRace = false) {
   expect(company.getGroupRevocation()).toBeUndefined();
   cleanup.push(() => { company.close(); return Promise.resolve(); });
   const faux = fauxProvider({ models: [{ id: ROUTE.modelId, input: ["text"], contextWindow: ROUTE.contextWindow, maxTokens: ROUTE.maxOutputTokens }] });
+  let releaseInitialLease!: () => void;
+  const initialLease = new Promise<void>(resolve => { releaseInitialLease = resolve; });
   let releaseInitializer!: () => void;
   const initializerResponse = new Promise<void>(resolve => { releaseInitializer = resolve; });
   if (!revisionRace) releaseInitializer();
   let releaseEmployee!: () => void;
   const employeeResponse = new Promise<void>(resolve => { releaseEmployee = resolve; });
-  faux.setResponses([async () => { await initializerResponse; return fauxAssistantMessage(fauxText("Company thread initialized.")); }, async () => {
+  // A fast single-session fixture must not hide a missing supervisor renewal port.
+  faux.setResponses([async () => { await initialLease; await initializerResponse; return fauxAssistantMessage(fauxText("Company thread initialized.")); }, async () => {
     await employeeResponse; return fauxAssistantMessage(fauxText(ANSWER));
   }]);
   const stream = vi.spyOn(faux.provider, "streamSimple");
@@ -150,9 +153,15 @@ async function setup(revisionRace = false) {
     expect(input).toMatchObject({ workload: "bot_agent", sandbox: { actorId: expect.any(String), network: "broker_only", worktree: { hostPath: await realpath(projectPath) } } });
     return { runtimeHandle: `runtime_${randomUUID().replaceAll("-", "")}`, executionGeneration: "1" };
   });
+  const renewRuntime = vi.fn(async (input: { runtimeHandle: string; executionGeneration: string }) => {
+    const created = await Promise.all(createRuntime.mock.results.map(result => result.value));
+    expect(created).toContainEqual({ runtimeHandle: input.runtimeHandle, executionGeneration: input.executionGeneration });
+    releaseInitialLease();
+    return { runtimeHandle: input.runtimeHandle, executionGeneration: input.executionGeneration, state: "running" as const };
+  });
   const host = { available: true, registerAuthorizer(authorizer: Parameters<ScopeRuntimeHost["registerAuthorizer"]>[0]) {
     frames = authorizer.handleFrame; return () => { frames = undefined; };
-  }, client: { createRuntime, stopRuntime: async () => undefined, async runBot(input: Parameters<ScopeRuntimeHost["client"]["runBot"]>[0]) {
+  }, client: { createRuntime, renewRuntime, stopRuntime: async () => undefined, async runBot(input: Parameters<ScopeRuntimeHost["client"]["runBot"]>[0]) {
     if (input.command.kind !== "bot.run") return { ok: true, reply: {} };
     const broker = createBotBrokerClient({ ...input, runId: input.command.runId, socketPath: "transport-fixture",
       connectFn: () => socketTransport(frame => frames!(frame)) });
@@ -173,7 +182,7 @@ async function setup(revisionRace = false) {
   const canonical = new CanonicalChatOrchestrator({ repository: chats, executionRoots: roots,
     adapters: new CanonicalChatProviderRegistry([bots!.adapter!]), catalog: { getCatalog: async () => { throw new Error("Private catalog must not be consulted"); } } });
   cleanup.push(() => canonical.close());
-  cleanup.push(async () => { releaseInitializer(); releaseEmployee(); });
+  cleanup.push(async () => { releaseInitialLease(); releaseInitializer(); releaseEmployee(); });
   const readinessChecks: Array<{ boundDriverKind: string | null; result: string }> = [];
   const execution = new CollaborationChatExecutionAdapter({ repository: chats,
     commands: { cancel: async () => { throw new Error("unused"); }, retry: async () => { throw new Error("unused"); }, decideApproval: async () => { throw new Error("unused"); } },
@@ -209,7 +218,7 @@ async function setup(revisionRace = false) {
     }) });
   const collaboration = { ...sharedCollaboration, chatExecutionAdapter: execution,
     sharedAiCapability: { generation: 1, eligibility: { ...collaborationExecutionEligibility(), matrixBot: SHARED_MATRIX_BOT_ELIGIBILITY } } } as unknown as GatewayCollaborationRuntime;
-  return { fixture, db, home, chats, authority, roots, bots: bots!, canonical, collaboration, specs, stream, privateMemory, createRuntime, readinessChecks, releaseEmployee, runtimes, revocationBindings };
+  return { fixture, db, home, chats, authority, roots, bots: bots!, canonical, collaboration, specs, stream, privateMemory, createRuntime, renewRuntime, readinessChecks, releaseEmployee, runtimes, revocationBindings };
 }
 
 async function setupSlack(s: Awaited<ReturnType<typeof setup>>, beforeMetadata?: () => Promise<void>) {
@@ -315,6 +324,8 @@ describe("Slack company Pi composition", () => {
       expect(check).toEqual({ boundDriverKind: "matrix_bot", result: "ready" });
     }
     expect(s.createRuntime.mock.calls.map(([input]) => input.sandbox.actorId)).toEqual([actors.owner, actors.editor]);
+    expect(s.renewRuntime).toHaveBeenCalled();
+    expect(s.renewRuntime.mock.calls[0]![0]).toMatchObject(await s.createRuntime.mock.results[0]!.value);
     expect(JSON.stringify(s.stream.mock.calls[1]![1])).not.toContain("Company thread initialized.");
     const tasks = await s.fixture.db.selectFrom("bot_tasks").select("status").execute();
     expect(tasks).toEqual([{ status: "completed" }, { status: "completed" }]);
