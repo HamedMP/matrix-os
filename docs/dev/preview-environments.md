@@ -99,7 +99,10 @@ Add the **`preview-vps`** label to a same-repo PR. The `Preview VPS` workflow:
    that version to exactly that handle. Shared access applies only to
    server-classified preview machines; customer and primary runtimes remain
    owner-only.
-4. Comments the URL on the PR: `https://app.matrix-os.com/vm/pr-<N>`.
+4. Activates one short-lived, exact-machine Preview allowance for Matrix-funded
+   Chat and dictation, verifies both host configurations, and fails the deploy
+   if either capability is unavailable.
+5. Comments the URL on the PR: `https://app.matrix-os.com/vm/pr-<N>`.
 
 Teardown is automatic on PR close. A daily reaper deletes any `pr-*` VPS whose
 PR is closed or that is older than 72h — orphaned previews cannot accumulate
@@ -115,6 +118,61 @@ with the configured value without recreating the VPS. Removing a collaborator
 blocks subsequent HTTP requests and new WebSocket handshakes after that deploy.
 An already-established WebSocket remains connected until it disconnects or is
 closed; active connection draining is intentionally deferred.
+
+### Bounded funded Chat and dictation
+
+Same-repository shared `preview-vps` deployments and owner-only Private
+Previews receive a Preview-specific allowance only when the production Platform
+has explicitly opted into bounded Preview runtime access. Platform must have
+funded AI and Platform speech enabled, and its deployment must bind a dedicated
+Preview runtime secret that is distinct from the production Platform secret.
+The default allowance is six hours, 25 Chat requests, 25 dictation requests, a
+$1 AI ceiling, and one active operation; deployment variables may reduce those
+values and hard maximums cap them at 24 hours, 100 requests per capability, $5,
+and one active operation.
+
+The Platform database row is authoritative. Activation binds the canonical
+owner, exact machine ID, runtime slot, and current runtime token epoch for a
+running, authorized machine whose explicit class is `preview` or
+`private-preview`. A `pr-*` or `pv-*` handle alone never grants access.
+Rerunning activation does not refill or extend an allowance. Expiry, deletion,
+or a token-epoch rotation invalidates old access, and teardown deletes the
+allocation with the machine.
+
+The Preview host receives only exact-generation runtime tokens. It never
+receives provider keys, the Preview root secret, or access to the owner's
+customer-primary balance. Speech uses a zero-charge Preview counter and never
+falls back to paid owner credit. Preview Chat cannot use top-ups or configured
+owner promotions. Shared users receive the same bounded machine capability but
+do not gain access to the owner's personal Integrations, Custom MCP accounts,
+or billing state. Private Preview routing remains owner-only. Matrix OS shows
+the remaining Preview Chat and dictation request counts; treat missing or
+exhausted quota as unavailable, not as a cue to edit the host.
+
+Platform deployment configuration:
+
+- Set `MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED=true` only after funded AI control
+  plane/runtime and Platform speech runtime are enabled.
+- Bind the dedicated Secret Manager secret `matrix-preview-runtime-secret` to
+  `MATRIX_PREVIEW_RUNTIME_SECRET`. Never reuse `PLATFORM_SECRET`.
+- Optional bounded variables are `MATRIX_PREVIEW_RUNTIME_TTL_MS`,
+  `MATRIX_PREVIEW_AI_BUDGET_MICROUSD`, `MATRIX_PREVIEW_AI_REQUEST_LIMIT`, and
+  `MATRIX_PREVIEW_SPEECH_REQUEST_LIMIT`. Concurrency remains exactly one.
+- Disable the feature flag to stop new activation. Rotate a machine's runtime
+  token epoch or delete that Preview for immediate per-machine revocation.
+
+The workflow prints only coarse readiness, expiry, and remaining counters.
+Never print host environment files, derived runtime tokens, or provider
+credentials while debugging. A failed activation is a deployment failure;
+inspect Platform and host service logs, fix the control-plane condition, and
+rerun the same workflow. The existing allocation remains bounded and is not
+refilled.
+
+This path does not enable the Preview-owned control plane or wildcard routing
+from [spec 530](../../specs/530-per-pr-preview-hostnames/spec.md). If funded
+access ever depends on unmerged Platform code, finish spec 530's isolated
+database, identity, secrets, and routing first; never pass unrestricted
+credentials or branch-controlled authorization through production.
 
 Preview VPSes cannot use machine credentials alone for personal Integrations or
 Custom MCP accounts. A collaborator with a shared Terminal can read the machine credential,
@@ -199,6 +257,23 @@ reach it, it can use your personal Integrations and Custom MCP from Settings,
 Chat agents, and Terminal agent CLIs. Spec:
 [537](../../specs/537-private-preview/spec.md).
 
+When bounded Preview runtime access is enabled in production Platform, a newly
+registered Private Preview also receives the independent funded Chat and
+zero-charge dictation allowance described above. Platform activates it from the
+exact owner, machine ID, runtime slot, and token epoch recorded during
+registration; no workflow secret or host edit is required. The allowance never
+uses the owner's primary-machine balance, and the UI shows its own remaining
+requests and expiry. An existing Private Preview created before this host marker
+and registration hook must be destroyed and started again after the Platform
+change is deployed.
+
+If host configuration fails after registration, Platform keeps a durable
+pending activation and retries it during normal reconciliation without reusing
+the consumed registration token. A stale in-flight claim is also reclaimed
+after the reconciliation lease expires. The machine remains available but its
+funded capabilities correctly remain unavailable until both host configurations
+verify; do not edit the host or recreate it for a transient activation warning.
+
 Who can use it: members of the internal Clerk organization named by
 `MATRIX_INTERNAL_CLERK_ORG_ID`. Membership is read through the collaboration
 organization projection, so the platform needs collaboration configured; without
@@ -250,6 +325,9 @@ What keeps it safe:
   organization. When a PR with either preview label closes, the Preview
   workflow destroys its Private Previews, and the daily reaper catches any
   whose PR closed without that run.
+- Funded access is Preview-only: deletion, expiry, or recreation invalidates
+  the old generation's Chat and speech credentials and allocation. Replaying
+  them against another owner, machine, or runtime slot is denied.
 
 It still runs the PR's unmerged code as your production account, much like
 running the branch locally with your own credentials. Only start it for PRs

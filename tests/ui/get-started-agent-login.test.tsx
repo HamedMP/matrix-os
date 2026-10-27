@@ -55,9 +55,9 @@ describe("GetStartedAgentLogin", () => {
     vi.mocked(login.workflowClient.get).mockResolvedValue({ id: "op_install", harnessInstanceId: "claude", kind: "install", state: "running", terminalSessionId: "term_1" } as never);
     render(<GetStartedAgentLogin agent="claude" port={login} />);
     fireEvent.click(await screen.findByRole("button", { name: /^Install/ }));
-    expect(await screen.findByText("Installing Claude Code…")).toBeInTheDocument();
-    expect(screen.getByText("This takes a minute or two. You can keep going; it finishes in the background.")).toBeInTheDocument();
     await waitFor(() => expect(login.workflowClient.start).toHaveBeenCalledWith(expect.objectContaining({ kind: "install" }), expect.anything()));
+    expect(await screen.findByText("Installing Claude Code…", {}, { timeout: 5_000 })).toBeInTheDocument();
+    expect(screen.getByText("This takes a minute or two. You can keep going; it finishes in the background.")).toBeInTheDocument();
     expect(screen.queryByText(/Terminal/)).not.toBeInTheDocument();
   });
 

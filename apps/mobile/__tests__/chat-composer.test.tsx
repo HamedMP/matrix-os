@@ -298,6 +298,8 @@ describe("Composer", () => {
     function speechOf(overrides: Partial<ComposerSpeech> = {}): ComposerSpeech {
       return {
         phase: "idle",
+        control: { active: false, disabled: false, label: "Start voice input", visible: true },
+        previewQuotaLabel: null,
         elapsedMs: 0,
         inputLevel: 0,
         inputLevelSequence: 0,
@@ -305,6 +307,7 @@ describe("Composer", () => {
         start: jest.fn(),
         stop: jest.fn(),
         cancel: jest.fn(),
+        retryCapabilities: jest.fn(),
         ...overrides,
       };
     }
@@ -427,6 +430,44 @@ describe("Composer", () => {
 
       fireEvent.press(screen.getByRole("button", { name: "Start voice input" }));
       expect(speech.start).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows the Preview allowance and its expiry inside the composer", () => {
+      renderComposer({ speech: speechOf({
+        previewQuotaLabel: "Preview dictation: 24 of 25 requests remaining until Oct 24, 2026, 2:00 AM GMT+2.",
+      }) });
+
+      const quota = screen.getByTestId("composer-speech-quota");
+      expect(quota.props.children).toContain("24 of 25 requests remaining");
+      expect(quota.props.accessibilityLiveRegion).toBe("polite");
+    });
+
+    it("retries stale speech availability without starting a recording", () => {
+      const speech = speechOf({
+        phase: "unavailable",
+        control: { active: false, disabled: false, label: "Retry speech availability", visible: true },
+      });
+      renderComposer({ speech });
+
+      fireEvent.press(screen.getByRole("button", { name: "Retry speech availability" }));
+
+      expect(speech.retryCapabilities).toHaveBeenCalledTimes(1);
+      expect(speech.start).not.toHaveBeenCalled();
+    });
+
+    it("keeps an exhausted Preview allowance visible but disables dictation", () => {
+      const speech = speechOf({
+        phase: "unavailable",
+        control: { active: false, disabled: true, label: "Preview dictation allowance exhausted", visible: true },
+        previewQuotaLabel: "Preview dictation: 0 of 25 requests remaining until Oct 24, 2026, 2:00 AM GMT+2.",
+      });
+      renderComposer({ speech });
+
+      const button = screen.getByRole("button", { name: "Preview dictation allowance exhausted" });
+      expect(button.props.accessibilityState).toMatchObject({ disabled: true });
+      fireEvent.press(button);
+      expect(speech.start).not.toHaveBeenCalled();
+      expect(speech.retryCapabilities).not.toHaveBeenCalled();
     });
   });
 });

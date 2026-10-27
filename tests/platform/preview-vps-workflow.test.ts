@@ -115,6 +115,32 @@ describe('Preview VPS provisioning workflow', () => {
     expect(artifact.with.path.trim()).toBe('preview-runtime-route.json');
   });
 
+  it('activates only the exact server-authoritative Preview generation after deployment', () => {
+    const workflow = YAML.parse(readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'));
+    const step = workflow.jobs.deploy.steps.find(
+      (candidate: { name?: string }) => candidate.name === 'Activate bounded Preview AI and speech',
+    );
+    const run = step.run as string;
+    expect(run).toContain('.provisioningClass == "preview"');
+    expect(run).toContain('.activationState == "authorized"');
+    expect(run).toContain('expectedRuntimeTokenEpoch:$epoch');
+    expect(run).toContain('/vps/preview/access/activate');
+    expect(run).toContain('.allocation.ai.requestsRemaining > 0');
+    expect(run).toContain('.allocation.speech.requestsRemaining > 0');
+    expect(run).not.toContain('MATRIX_PREVIEW_RUNTIME_SECRET');
+  });
+
+  it('keeps funded activation behind the same-repository trusted deploy gate', () => {
+    const workflow = YAML.parse(readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8'));
+    const gate = workflow.jobs.gate.steps.find(
+      (candidate: { name?: string }) => candidate.name === 'Decide action',
+    ).run as string;
+    expect(gate).toContain('if [ "$head_repo" != "$GITHUB_REPOSITORY" ]');
+    expect(gate).toContain('Fork PRs never get preview VPSes');
+    expect(workflow.jobs.deploy.if).toContain("needs.gate.outputs.action == 'deploy'");
+    expect(workflow.jobs.deploy.needs).toEqual(['execution_origin', 'gate', 'build']);
+  });
+
   it('collects bounded updater diagnostics before an install timeout', () => {
     const workflow = readFileSync(join(root, '.github/workflows/preview-vps.yml'), 'utf8');
     const deployStep = YAML.parse(workflow).jobs.deploy.steps.find(

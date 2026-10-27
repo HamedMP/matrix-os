@@ -93,6 +93,42 @@ prepare_triggered_update || exit 6
     else expect(result.stdout).toContain("retry:installed");
   });
 
+  it("consumes an idempotent deploy trigger after preparation refreshes its manifest", () => {
+    const root = mkdtempSync(join(tmpdir(), "matrix-funded-idempotent-")); roots.push(root);
+    const source = readFileSync("distro/customer-vps/host-bin/matrix-sync-agent", "utf8");
+    const branch = source.slice(
+      source.indexOf('  if [ -f "$UPDATE_TRIGGER" ]; then'),
+      source.indexOf('  if [ -f "$ROLLBACK_TRIGGER" ]; then'),
+    );
+    const library = readFileSync("distro/customer-vps/host-bin/matrix-update-request-rejection", "utf8");
+    const script = `
+APP_DIR=${JSON.stringify(root)}
+UPDATE_TRIGGER="$APP_DIR/.update-now"
+UPDATE_MARKER="$APP_DIR/.update-available.json"
+UPDATE_VERSION_FILE="$APP_DIR/.update-version"
+UPDATE_CHANNEL_FILE="$APP_DIR/.update-channel"
+AUTO_APPLY_FAILED_MARKER="$APP_DIR/.auto-apply-failed"
+sudo() { command "$@"; }
+log() { :; }
+current_version() { echo installed; }
+funded_host_bootstrap() { echo "retry:$2"; }
+prepare_triggered_update() {
+  echo '{"version":"installed","channel":"stable"}' > "$UPDATE_MARKER"
+  prepare_triggered_update_action=already-current
+}
+${library}
+echo '{"version":"prior","channel":"stable"}' > "$UPDATE_MARKER"
+echo installed > "$UPDATE_VERSION_FILE"
+echo stable > "$UPDATE_CHANNEL_FILE"
+touch "$UPDATE_TRIGGER"
+${branch}
+[ ! -e "$UPDATE_TRIGGER" ] || exit 2
+`;
+    const result = spawnSync("bash", ["-c", script], { encoding: "utf8", timeout: 10_000 });
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(result.stdout).toContain("retry:installed");
+  });
+
   it.each(["explicit", "passive"])("%s prior-version request retains current artifact pending guarded rollback", trigger => {
     const source = readFileSync("distro/customer-vps/host-bin/matrix-sync-agent", "utf8");
     const start = source.indexOf("apply_update() {");

@@ -10,6 +10,7 @@ import type {
 } from "@matrix-os/ui";
 import { BrowserSpeechClientError } from "@matrix-os/ui";
 import { DesktopSpeechInputControl } from "../../desktop/src/renderer/src/features/chat/DesktopSpeechInputControl";
+import { localDateTimeWithZone } from "../../packages/ui/src/agents-providers/utils";
 
 const capabilities = {
   contractVersion: 1 as const,
@@ -24,6 +25,32 @@ const capabilities = {
       languageHints: false,
     },
     ownerAudio: { enabled: false as const },
+  },
+};
+
+const exhaustedPreviewCapabilities = {
+  ...capabilities,
+  previewQuota: {
+    requestLimit: 3,
+    requestsUsed: 3,
+    requestsRemaining: 0,
+    expiresAt: "2026-10-20T16:45:00.000Z",
+  },
+};
+
+const unavailablePreviewCapabilities = {
+  ...capabilities,
+  fileTranscription: {
+    ...capabilities.fileTranscription,
+    status: "unavailable" as const,
+    reason: "disabled" as const,
+    dictation: { ...capabilities.fileTranscription.dictation, enabled: false as const },
+  },
+  previewQuota: {
+    requestLimit: 3,
+    requestsUsed: 1,
+    requestsRemaining: 2,
+    expiresAt: "2026-10-20T16:45:00.000Z",
   },
 };
 
@@ -159,5 +186,37 @@ describe("Electron shared Chat speech input", () => {
     await waitFor(() => expect(onDraft).toHaveBeenCalledWith("spoken draft"));
     expect(captureAdapter.start).toHaveBeenCalledTimes(2);
     expect(speechClient.transcribe).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the exhausted Preview quota visible and disables dictation", async () => {
+    const speechClient = client();
+    vi.mocked(speechClient.capabilities).mockResolvedValue(exhaustedPreviewCapabilities);
+    render(<DesktopSpeechInputControl
+      scopeKey="account-a:pr-2383:chat-a"
+      client={speechClient}
+      captureAdapter={{ isSupported: () => true, start: vi.fn() }}
+      onDraft={vi.fn()}
+      disabled={false}
+    />);
+
+    const expiry = localDateTimeWithZone(exhaustedPreviewCapabilities.previewQuota.expiresAt);
+    expect(await screen.findByText(`Preview dictation: 0 of 3 requests remaining until ${expiry}.`)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Preview dictation allowance exhausted" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("keeps remaining Preview quota visible but disables an unavailable microphone", async () => {
+    const speechClient = client();
+    vi.mocked(speechClient.capabilities).mockResolvedValue(unavailablePreviewCapabilities);
+    render(<DesktopSpeechInputControl
+      scopeKey="account-a:pr-2383:chat-a"
+      client={speechClient}
+      captureAdapter={{ isSupported: () => true, start: vi.fn() }}
+      onDraft={vi.fn()}
+      disabled={false}
+    />);
+
+    const expiry = localDateTimeWithZone(unavailablePreviewCapabilities.previewQuota.expiresAt);
+    expect(await screen.findByText(`Preview dictation: 2 of 3 requests remaining until ${expiry}.`)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Speech is unavailable" }).hasAttribute("disabled")).toBe(true);
   });
 });

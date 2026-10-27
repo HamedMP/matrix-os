@@ -7,6 +7,7 @@ import { ChatInput } from "../../shell/src/components/chat/ChatInput.js";
 import { useChatComposerDraft } from "../../shell/src/components/chat/useChatComposerDraft.js";
 import type { BrowserSpeechClient } from "../../shell/src/lib/platform-speech-client.js";
 import type { PlatformSpeechCaptureAdapter } from "../../packages/ui/src/index.js";
+import { localDateTimeWithZone } from "../../packages/ui/src/agents-providers/utils.js";
 
 const requestId = "sp_1788998400000_abcdefghijklmnop";
 
@@ -201,5 +202,36 @@ describe("shared chat platform speech input", () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(lateCancel).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps exhausted Preview dictation visible and disabled on Web Desktop and Web Canvas", async () => {
+    const exhausted = speechClient();
+    vi.mocked(exhausted.capabilities).mockResolvedValue({
+      contractVersion: 1,
+      fileTranscription: {
+        status: "ready",
+        dictation: {
+          enabled: true,
+          maxBytes: 1_024,
+          maxDurationMs: 120_000,
+          maxTranscriptChars: 32_000,
+          supportedMediaTypes: ["audio/wav"],
+          languageHints: false,
+        },
+        ownerAudio: { enabled: false },
+      },
+      previewQuota: {
+        requestLimit: 3,
+        requestsUsed: 3,
+        requestsRemaining: 0,
+        expiresAt: "2026-10-20T16:00:00.000Z",
+      },
+    });
+    render(<TestComposer onSubmit={vi.fn()} client={exhausted} />);
+
+    const expiry = localDateTimeWithZone("2026-10-20T16:00:00.000Z");
+    expect(await screen.findByText(`Preview dictation: 0 of 3 requests remaining until ${expiry}.`)).toBeTruthy();
+    const microphone = screen.getByRole("button", { name: "Preview dictation allowance exhausted" });
+    expect(microphone.hasAttribute("disabled")).toBe(true);
   });
 });

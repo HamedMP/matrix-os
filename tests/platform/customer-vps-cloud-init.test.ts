@@ -792,6 +792,14 @@ exit 99
     expect(registration).toContain('After=network-online.target matrix-gateway.service');
     expect(registration).not.toContain('Requires=matrix-gateway.service');
     expect(registration).toContain('ConditionPathExists=/opt/matrix/bin/matrix-register-vps');
+    expect(registration).toContain('StateDirectory=matrix-vps-registration');
+    expect(registration).toContain(
+      'Environment=MATRIX_REGISTER_FLAG=/var/lib/matrix-vps-registration/register-complete',
+    );
+    expect(registration).toContain(
+      'ConditionPathExists=!/var/lib/matrix-vps-registration/register-complete',
+    );
+    expect(registration).not.toContain('ConditionPathExists=!/opt/matrix/register-complete');
     expect(registration).toContain('ExecStart=/opt/matrix/bin/matrix-register-vps');
     expect(registration).toContain('Restart=on-failure');
     expect(registration).toContain('SuccessExitStatus=64');

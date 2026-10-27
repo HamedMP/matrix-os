@@ -1966,7 +1966,7 @@ fi
 if [ -x "$BIN_DIR/matrix-ensure-swap" ]; then
   sudo "$BIN_DIR/matrix-ensure-swap" || log "WARN: swap ensure failed (non-fatal)"
 fi
-mkdir -p "$STAGING_DIR"
+sudo /usr/bin/install -d -o matrix -g matrix -m 0755 -- "$STAGING_DIR"
 clean_staging
 clean_legacy_upgrade_artifacts || true
 recover_interrupted_update
@@ -1990,7 +1990,7 @@ while true; do
     request_identity="$(update_request_identity)" || request_identity=""
     if prepare_triggered_update; then
       if [ "$prepare_triggered_update_action" = already-current ]; then
-        schedule_current_funded_retry "$request_identity" || log "WARN: exact-version retry claim deferred"
+        schedule_prepared_current_funded_retry || log "WARN: exact-version retry claim deferred"
       elif run_apply_update explicit; then
         rm -f "$UPDATE_CHANNEL_FILE" "$UPDATE_VERSION_FILE"
       else
