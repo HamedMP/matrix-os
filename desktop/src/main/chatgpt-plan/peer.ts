@@ -3,6 +3,7 @@ import { z } from 'zod/v4';
 import { CHATGPT_PLAN_PEER_POLL_BYTE_LIMIT, CHATGPT_PLAN_PEER_CLOCK_SKEW_MS, CHATGPT_PLAN_PEER_REPLY_BYTE_LIMIT, CHATGPT_PLAN_PEER_REQUEST_LIFETIME_MS, chatGptPlanPeerRequestId, ChatGptPlanPeerChallengeSchema, ChatGptPlanPeerSessionSchema, ChatGptPlanPeerReplySchema, ChatGptPlanPeerPollSchema, chatGptPlanPeerProof, type ChatGptPlanPeerSnapshot, type ChatGptPlanPeerRequest } from '@matrix-os/contracts';
 import { logPlanFailure, PlanFailure, planPeerNetworkFailureDiagnostic, type PlanNetworkDiagnostic } from './diagnostics';
 import { sendNativeStreamReply } from './reply-delivery';
+import { coalesceNativeResponse } from './stream-coalescing';
 import { blocksPollDeliveryRecovery, createNativePollDelivery } from './poll-delivery';
 const POST_CONFLICT = Symbol('reply already settled');
 // A failed poll may already have dequeued a cancel. Only failures establishing
@@ -267,7 +268,10 @@ export function createPlanNativePeer(deps: PeerDependencies) {
                                         if (!validated.success) throw new PlanFailure('peer_reply', 'invalid_schema');
                                         return true;
                                     };
-                                    for await (const chunk of deps.inferStream(request, signal, progress)) {
+                                    const inferStream = deps.inferStream;
+                                    for await (const chunk of coalesceNativeResponse(
+                                        sourceSignal => inferStream(request, sourceSignal, progress), signal,
+                                        () => connection === value && deps.current(binding) && qualified())) {
                                         signal.throwIfAborted();
                                         if (!chunk) continue;
                                         progress();

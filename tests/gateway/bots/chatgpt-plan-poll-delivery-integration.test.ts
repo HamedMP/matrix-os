@@ -75,7 +75,11 @@ describe('real Native -> Hono -> registry receipt delivery, synthetic inference 
     const stop = new AbortController(), source = await f.peers.inferStream(await f.binding(), '{}', stop.signal);
     const received: string[] = [];
     const consumer = (async () => { for await (const part of source.body) received.push(part); })().then(() => 'completed', error => error.message);
-    await ready.promise; stop.abort();
+    await ready.promise;
+    // Read-ahead can reach the provider wait before its first bytes are ACKed.
+    // This case cancels after actual Host consumption, not merely source yield.
+    await vi.waitFor(() => expect(received).toEqual(['first']), { interval: 2 });
+    stop.abort();
     expect(await consumer).toBe('unavailable');
     await vi.waitFor(() => expect(closed).toBe(true), { interval: 2 });
     expect(lost).toBe(true); expect(sourceSignal?.aborted).toBe(true);

@@ -141,6 +141,22 @@ The same authenticated capabilities request can explicitly opt into reply delive
 
 Host retains only the current chunk sequence, UTF-8 SHA-256 and consumption ACK. An identical replay does not enqueue bytes twice or renew idle. Each chunk admits at most two HTTP ACK subscriptions in total, including timed-out/aborted attempts, so abandoned Promise reactions cannot grow under sequential disconnects. The authenticated reply route reserves at most eight input/emission slots before buffering, at most two concurrent ACK waiters per stream, and a fixed 10-second body/ACK/emission deadline. Actual bytes are bounded even without an accurate Content-Length. Aborting an HTTP waiter preserves accepted bytes; it does not cancel inference. Slots release on response emission completion/abort or an earlier error.
 
+Electron coalesces small upstream reads while the one current reply waits for its
+ACK. The first nonempty item is sent immediately; later pending bytes flush
+within 50ms, at the 64KiB chunk boundary, or on source completion/failure. This
+avoids spending a network round trip on every small SSE delta. The pending batch
+is capped at 64KiB; the producer can additionally hold one already-read source
+item of at most 64KiB while waiting for space. Together with the immutable
+64KiB reply in flight, retained raw payload is bounded at 192KiB, independently
+of the existing parser allowance and JS/string/JSON overhead. A full pending
+batch pauses reading. Stop, source changes and refusal discard unsent buffers
+and cancel the producer; non-cooperative iterator cleanup cannot delay Stop.
+Earlier partial bytes may flush before a source error, but no success end is
+sent for that error. Completion still requires the existing EOF validation.
+Batching neither adds concurrent POSTs nor changes receipts, retry budgets,
+credential/funding checks, or the Host/Relay protocol. See
+`specs/633-agent-waiting-policy/stream-coalescing.md` for regression evidence.
+
 At most 32 final transport receipts per peer expire after 120 seconds, with FIFO eviction and session/shutdown cleanup. They acknowledge only an already accepted ordered end, independently of normal EOF cleanup of the old inference signal. Cancellation before end acceptance creates no receipt; a receipt never asserts canonical run success, renews credentials or re-enrolls another session. This negotiated extension changes Host/Gateway and Native readers, not the central Relay. See `specs/633-agent-waiting-policy/reply-delivery-v2-plan.md` for compatibility and rollout gates.
 
 Electron Desktop keeps failure-only subscription diagnostics in a dedicated, profile-isolated subdirectory of its application logs. The recorder accepts fixed error categories, stages, HTTP statuses, strict request/run/computer IDs and a generated UTC timestamp; it does not persist prompts, responses, credentials, account labels, raw errors or filesystem paths. Records are capped at 128 entries and 64 KiB, have a 24-hour TTL with recurring cleanup, and use a single asynchronous writer. Shutdown drains for at most one second; an atomic filesystem rename already in progress may still complete afterward. Storage failure does not fail inference or prevent exit, and diagnostics are never uploaded automatically.
