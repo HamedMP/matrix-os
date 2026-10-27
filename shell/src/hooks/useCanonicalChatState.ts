@@ -93,7 +93,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
 } = {}): ChatState {
   const [mentionRequests] = useState(createChatMentionRequestTracker);
   const [admissions] = useState(createCanonicalChatAdmissionTracker);
-  const client = useMemo(() => createCanonicalShellChatClient({ gatewayUrl: getGatewayUrl() }), []);
+  const [gatewayUrl] = useState(getGatewayUrl);
+  const client = useMemo(() => createCanonicalShellChatClient({ gatewayUrl }), [gatewayUrl]);
   const eventSource = useMemo(() => createSharedCanonicalChatEventSource({
     openStream: (input) => client.openEventStream(input),
   }), [client]);
@@ -771,6 +772,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     browserPermissions: client.browserPermissions,
     agentSummaryClient: authority.summaryClient,
     authorityKey: navigationIdentity,
+    gatewayUrl,
     composerIdentity,
     isCurrentAuthority: isCurrent,
     botEventRevision,

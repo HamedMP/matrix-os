@@ -42,6 +42,7 @@ export interface ChatState {
   browserPermissions?: BrowserPermissionClient;
   agentSummaryClient?: ChatAgentClient;
   authorityKey?: string;
+  gatewayUrl?: string;
   composerIdentity?: object;
   isCurrentAuthority?: () => boolean;
   botEventRevision?: number;
