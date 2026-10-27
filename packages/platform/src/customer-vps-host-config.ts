@@ -2,6 +2,7 @@ import type { CustomerVpsConfig } from './customer-vps-config.js';
 import type { ProvisionRequest } from './customer-vps-schema.js';
 import type { HostBundleRef } from './customer-vps-host-bundle.js';
 import type { CustomerHostConfig } from './customer-vps-cloud-init.js';
+import { validateSupportPublicKey } from './customer-vps-cloud-init.js';
 import type { UserMachineProvisioningClass } from './db.js';
 import {
   buildPlatformRuntimeVerificationToken,
@@ -88,6 +89,7 @@ export function buildHostConfig(
     runtimeSlot: input.runtimeSlot,
   };
   return {
+    supportPublicKey: validateSupportPublicKey(config.supportPublicKey ?? ''),
     machineId,
     clerkUserId: input.clerkUserId,
     handle: input.handle,

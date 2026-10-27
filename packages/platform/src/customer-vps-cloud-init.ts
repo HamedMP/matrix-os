@@ -38,6 +38,7 @@ export interface CustomerHostConfig {
   collaborationDisabledEnv?: string;
   /** Server-authoritative runtime marker for shared and owner-only PR Preview machines. */
   previewRuntimeEnv?: string;
+  supportPublicKey?: string;
 }
 
 const SECRET_KEYS = [
@@ -56,8 +57,27 @@ function assertRenderable(input: CustomerHostConfig): void {
   }
 }
 
+/** Validate the SSH wire format as well as the one-line authorized_keys form. */
+export function validateSupportPublicKey(value: string): string {
+  const key = value.endsWith('\n') ? value.slice(0, -1) : value;
+  const match = /^ssh-ed25519 ([A-Za-z0-9+/]+={0,2})(?: [A-Za-z0-9@._+-]{1,128})?$/.exec(key);
+  if (!match || key.length > 1023) throw new Error('Support SSH public key is missing or invalid');
+  const decoded = Buffer.from(match[1], 'base64');
+  if (decoded.length !== 51 || decoded.readUInt32BE(0) !== 11
+    || decoded.subarray(4, 15).toString('ascii') !== 'ssh-ed25519'
+    || decoded.readUInt32BE(15) !== 32
+    || decoded.toString('base64') !== match[1]) {
+    throw new Error('Support SSH public key is missing or invalid');
+  }
+  return key;
+}
+
 export function renderCloudInitTemplate(template: string, input: CustomerHostConfig): string {
   assertRenderable(input);
+  // The production template must never deliver unvalidated operator input as YAML.
+  const supportPublicKey = template.includes('{{supportPublicKey}}')
+    ? validateSupportPublicKey(input.supportPublicKey ?? '')
+    : undefined;
   const optionalDefaults: Partial<Record<keyof CustomerHostConfig, string>> = {
     imageSource: 'clean_image',
     targetBundleSha256: '',
@@ -68,7 +88,7 @@ export function renderCloudInitTemplate(template: string, input: CustomerHostCon
   };
   return template.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (match, rawKey: string) => {
     const key = rawKey as keyof CustomerHostConfig;
-    const value = input[key] ?? optionalDefaults[key];
+    const value = key === 'supportPublicKey' ? supportPublicKey : input[key] ?? optionalDefaults[key];
     if (typeof value !== 'string') return match;
     return value;
   });

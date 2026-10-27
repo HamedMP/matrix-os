@@ -15,6 +15,7 @@ import {
   markGoldenSnapshotReady, recordGoldenSnapshotProviderImage,
 } from '../../packages/platform/src/golden-snapshot-repository.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
 
 const now = '2026-10-18T12:00:00.000Z';
@@ -29,6 +30,7 @@ const template = await readFile(new URL('../../distro/customer-vps/cloud-init.ya
 
 function config(overrides: NodeJS.ProcessEnv = {}) {
   return loadCustomerVpsConfig({
+    MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
     PLATFORM_PUBLIC_URL: 'https://app.matrix-os.com', PLATFORM_SECRET: platformSecret,
     MATRIX_FUNDED_AI_RUNTIME_ENABLED: 'true', MATRIX_FUNDED_AI_RELAY_URL: 'https://relay.matrix-os.com',
     MATRIX_PLATFORM_SPEECH_RUNTIME_ENABLED: 'true',

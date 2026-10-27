@@ -2,13 +2,34 @@ import { describe, it, expect, vi } from 'vitest';
 import { getActiveUserMachineByClerkId, getUserMachine, promoteHostBundleChannel, updateUserMachine, upsertHostBundleRelease, type PlatformDB } from '../../packages/platform/src/db.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { CustomerVpsError } from '../../packages/platform/src/customer-vps-errors.js';
+import { loadCustomerVpsCloudInitTemplate } from '../../packages/platform/src/customer-vps-cloud-init.js';
 import { getProvisioningJobByMachineId } from '../../packages/platform/src/customer-vps-provisioning-jobs.js';
 import { createMockHetznerClient } from './customer-vps-fixtures.js';
 import { createTestConfig, activeEntitlement, useCustomerVpsFixture } from './customer-vps-service-test-helper.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
 
 describe('platform/customer-vps', () => {
   let db: PlatformDB;
   const { createService } = useCustomerVpsFixture(value => { db = value!; });
+
+  it('delivers the operator key to a new VPS through production provisioning', async () => {
+    const { service, hetzner } = createService({ cloudInitTemplate: await loadCustomerVpsCloudInitTemplate() });
+    await service.provision({ clerkUserId: 'user_123', handle: 'alice' });
+    const userData = vi.mocked(hetzner.createServer).mock.calls[0]?.[0].userData;
+    expect(userData).toContain(`      ${SUPPORT_PUBLIC_KEY_FIXTURE}`);
+    expect(userData).toContain('/usr/local/libexec/matrix-support-access install');
+  });
+
+  it('does not create a VPS when its support credential is missing', async () => {
+    const { service, hetzner } = createService({
+      config: createTestConfig({ supportPublicKey: undefined }),
+      cloudInitTemplate: await loadCustomerVpsCloudInitTemplate(),
+    });
+    await expect(service.provision({ clerkUserId: 'user_123', handle: 'alice' })).rejects.toMatchObject({
+      code: 'provider_unavailable',
+    });
+    expect(hetzner.createServer).not.toHaveBeenCalled();
+  });
 
   it('provisions a user machine idempotently by clerkUserId', async () => {
     const { service, hetzner } = createService({

@@ -12,6 +12,7 @@ import {
 import { createCustomerVpsRoutes } from '../../packages/platform/src/customer-vps-routes.js';
 import { createCustomerVpsService } from '../../packages/platform/src/customer-vps.js';
 import { loadCustomerVpsConfig } from '../../packages/platform/src/customer-vps-config.js';
+import { SUPPORT_PUBLIC_KEY_FIXTURE } from './support-public-key-fixture.js';
 import { hashRegistrationToken } from '../../packages/platform/src/customer-vps-auth.js';
 import { createMockCustomerVpsSystemStore, createMockHetznerClient } from './customer-vps-fixtures.js';
 import { createTestPlatformDb, destroyTestPlatformDb } from './platform-db-test-helper.js';
@@ -39,6 +40,7 @@ describe('platform/customer-vps provisioning durability', () => {
     const service = createCustomerVpsService({
       db,
       config: loadCustomerVpsConfig({
+        MATRIX_SUPPORT_SSH_PUBLIC_KEY: SUPPORT_PUBLIC_KEY_FIXTURE,
         PLATFORM_SECRET,
         HETZNER_API_TOKEN: 'provider-token',
         PLATFORM_PUBLIC_URL: 'https://api.matrix-os.com',
