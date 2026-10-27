@@ -863,18 +863,85 @@ describe("WorkTab rail integration", () => {
     expect(screen.getByRole("navigation", { name: "Chat navigation" })).toBeTruthy();
   });
 
-  it("replaces the generic title with a Bot identity target on the existing native toolbar after authenticated binding", async () => {
+  it.each([640, 900, 1400])("keeps one Bot identity and inspector chrome when a visible %ipx Chat loses focus", async (width) => {
+    initialWorkWidth = width;
     chatTabProps.contentClient = botContentClient(vi.fn(async () => saved.id));
-    function HostedBot() {
+    function HostedBot({ active }: { active: boolean }) {
       const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
-      const host = React.useMemo(() => ({setChrome}), []);
-      return <SurfaceChromeContext.Provider value={host}><header>{chrome?.title}{chrome?.rightActions}</header>
-        <WorkTab route="chat" active initialChatId="chat_global" initialChatView="conversation"/></SurfaceChromeContext.Provider>;
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return <SurfaceChromeContext.Provider value={host}><header>{chrome?.title}{chrome?.rightActions}
+        <output data-testid="bot-inspector-width">{chrome?.rightPaneWidth}</output></header>
+        <WorkTab route="chat" active={active} visible initialChatId="chat_global" initialChatView="conversation" /></SurfaceChromeContext.Provider>;
     }
-    render(<HostedBot/>);
-    await waitFor(()=>expect(document.querySelector("header [data-slot='desktop-bot-header']")).toBeTruthy());
-    expect(screen.queryByRole("button", { name: "Rename Chat" })).toBeNull();
-    expect(within(document.querySelector("header")!).getByRole("button", { name: "Share", exact: true })).toBeTruthy();
+    const view = render(<HostedBot active />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Details" }).closest("header")).toBeTruthy());
+    const header = document.querySelector("header")!;
+    const identityHost = header.querySelector("[data-slot='desktop-bot-header']");
+    const identity = header.querySelector(".matrix-bot-identity-bar");
+    if (screen.queryByRole("button", { name: "Show inspector" })) fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
+    const inspectorWidth = screen.getByTestId("bot-inspector-width").textContent;
+
+    for (const active of [false, true, false, true]) {
+      view.rerender(<HostedBot active={active} />);
+      expect(header.querySelector("[data-slot='desktop-bot-header']")).toBe(identityHost);
+      expect(header.querySelector(".matrix-bot-identity-bar")).toBe(identity);
+      expect(document.querySelectorAll(".matrix-bot-identity-bar")).toHaveLength(1);
+      expect(within(header).getByRole("button", { name: "Details" })).toBeTruthy();
+      expect(within(header).getByRole("button", { name: "Share", exact: true })).toBeTruthy();
+      expect(within(header).getByRole("button", { name: "Hide inspector" })).toBeTruthy();
+      expect(screen.getByTestId("bot-inspector-width").textContent).toBe(inspectorWidth);
+      expect(screen.queryByRole("button", { name: "Rename Chat" })).toBeNull();
+    }
+  });
+
+  it("keeps a background inspector visible without activating its native browser or terminal", async () => {
+    function HostedChat({ active }: { active: boolean }) {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return <SurfaceChromeContext.Provider value={host}><header>{chrome?.title}{chrome?.rightActions}</header>
+        <WorkTab route="chat" active={active} visible initialChatId="chat_global" initialChatView="conversation" />
+      </SurfaceChromeContext.Provider>;
+    }
+    const view = render(<HostedChat active />);
+    if (screen.queryByRole("button", { name: "Show inspector" })) fireEvent.click(screen.getByRole("button", { name: "Show inspector" }));
+    const inspector = await screen.findByRole("complementary", { name: "Chat inspector" });
+    expect(inspector.getAttribute("data-active")).toBe("true");
+
+    view.rerender(<HostedChat active={false} />);
+    expect(screen.getByRole("complementary", { name: "Chat inspector" })).toBe(inspector);
+    expect(inspector.getAttribute("data-active")).toBe("false");
+    expect(screen.getByRole("button", { name: "Hide inspector" })).toBeTruthy();
+
+    view.rerender(<HostedChat active />);
+    expect(screen.getByRole("complementary", { name: "Chat inspector" })).toBe(inspector);
+    expect(inspector.getAttribute("data-active")).toBe("true");
+  });
+
+  it("leaves foreground Escape and focus alone while a background medium Chat keeps its inspector", async () => {
+    initialWorkWidth = 900;
+    function HostedChat({ active }: { active: boolean }) {
+      const [chrome, setChrome] = React.useState<SurfaceChromeSpec | null>(null);
+      const host = React.useMemo(() => ({ setChrome }), []);
+      return <><input aria-label="Foreground Settings field" />
+        <SurfaceChromeContext.Provider value={host}><header>{chrome?.rightActions}</header>
+          <WorkTab route="chat" active={active} visible initialChatId="chat_global" initialChatView="conversation" />
+        </SurfaceChromeContext.Provider></>;
+    }
+    const view = render(<HostedChat active />);
+    fireEvent.click(await screen.findByRole("button", { name: "Show inspector" }));
+    view.rerender(<HostedChat active={false} />);
+    const foreground = screen.getByRole("textbox", { name: "Foreground Settings field" });
+    foreground.focus();
+    fireEvent.keyDown(foreground, { key: "Escape" });
+    expect(screen.getByRole("button", { name: "Hide inspector" })).toBeTruthy();
+    expect(screen.getByRole("complementary", { name: "Chat inspector" })).toBeTruthy();
+    expect(document.activeElement).toBe(foreground);
+
+    view.rerender(<HostedChat active />);
+    screen.getByRole("button", { name: "Inspector action" }).focus();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("complementary", { name: "Chat inspector" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Show inspector" }));
   });
 
   it("recovers the same toolbar when its Bot query failed and content resolves identity after Retry", async () => {

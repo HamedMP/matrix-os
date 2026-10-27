@@ -12,6 +12,7 @@ interface AppMenuTemplateOptions {
   adjustZoom(action: ZoomAction): void;
   checkForUpdates(): void;
   quitApp(): void;
+  reloadWindow?(): void;
 }
 
 export function createAppMenuTemplate({
@@ -23,6 +24,7 @@ export function createAppMenuTemplate({
   adjustZoom,
   checkForUpdates,
   quitApp,
+  reloadWindow,
 }: AppMenuTemplateOptions): MenuItemConstructorOptions[] {
   const isMac = platform === "darwin";
   const primary = (keys: string) => `${isMac ? "Cmd" : "CmdOrCtrl"}+${keys}`;
@@ -43,9 +45,9 @@ export function createAppMenuTemplate({
       click: () => send("menu:navigate", { kind: "terminals" }),
     },
     {
-      label: "Refresh Home",
+      label: "Reload",
       accelerator: "CmdOrCtrl+R",
-      click: () => send("menu:action", { action: "refresh-home" }),
+      click: () => reloadWindow?.(),
     },
     { type: "separator" },
     {

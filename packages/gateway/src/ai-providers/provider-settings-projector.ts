@@ -1,3 +1,4 @@
+import { boundProviderSettingsModels, retainFailedCatalogRoutes } from "./provider-settings-model-catalog.js";
 import { projectManagedCreditUsage } from "./provider-managed-credit-usage.js";
 import { nativeAccountPrincipalFingerprint } from "./native-account-metadata-binding.js";
 import { readLifecycleAccountDependencies } from "./provider-lifecycle-account-dependencies.js";
@@ -190,61 +191,6 @@ function projectAccessSources(
     };
   });
   return { sources, sourceByAccount };
-}
-
-function fallbackRouteLabel(reference: string, fallback: string): string {
-  const leaf = reference.split(/[/:]/).at(-1) ?? reference;
-  const label = leaf.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
-  const value = label || fallback;
-  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`.slice(0, 120);
-}
-
-function retainFailedCatalogRoutes(input: {
-  modelProviders: ProviderSettingsSnapshot["modelProviders"];
-  sources: ProviderAccessSource[];
-  config: ProviderSettingsConfiguration;
-  failures: ReadonlySet<ProviderHarnessKind>;
-  canonicalProviderIds: ReadonlySet<string>;
-}): void {
-  const referencedProviders = new Set(input.config.harnesses.map((harness) => harness.route.providerId));
-  const referencedModels = new Set(input.config.harnesses.map((harness) => harness.route.modelId));
-  for (const harness of input.config.harnesses) {
-    if (!input.failures.has(harness.harness)) continue;
-    let provider = input.modelProviders.find((candidate) => candidate.id === harness.route.providerId);
-    if (!provider) {
-      while (input.modelProviders.length >= 32) {
-        const removable = input.modelProviders.findLastIndex((candidate) =>
-          !input.canonicalProviderIds.has(candidate.id)
-          && !referencedProviders.has(candidate.id));
-        if (removable < 0) break;
-        const [removed] = input.modelProviders.splice(removable, 1);
-        for (let index = input.sources.length - 1; index >= 0; index -= 1) {
-          const source = input.sources[index]!;
-          if (source.kind === "harness_profile" && source.providerId === removed!.id) {
-            input.sources.splice(index, 1);
-          }
-        }
-      }
-      if (input.modelProviders.length >= 32) continue;
-      provider = {
-        id: harness.route.providerId,
-        displayName: fallbackRouteLabel(harness.route.providerId, "Unavailable provider"),
-        models: [],
-      };
-      input.modelProviders.push(provider);
-    }
-    if (provider.models.some((model) => model.id === harness.route.modelId)) continue;
-    if (provider.models.length >= 256) {
-      const removable = provider.models.findLastIndex((model) => !referencedModels.has(model.id));
-      if (removable < 0) continue;
-      provider.models.splice(removable, 1);
-    }
-    provider.models.push({
-      id: harness.route.modelId,
-      displayName: fallbackRouteLabel(harness.route.modelId, "Unavailable model"),
-      enabled: true,
-    });
-  }
 }
 
 async function projectAccounts(input: {
@@ -443,7 +389,7 @@ export async function projectProviderSettings(input: {
   );
   const generatedSourceIds = new Set(input.config.harnesses.filter((harness) => harness.enablementOrigin === "generated_default")
     .flatMap((harness) => harness.accessSourceId ? [harness.accessSourceId] : []));
-  const sources: ProviderAccessSource[] = [
+  let sources: ProviderAccessSource[] = [
     ...projected.sources,
     ...(input.genericModelCatalog?.accessSources ?? []).filter((source) =>
       !projected.sources.some((candidate) => candidate.id === source.id))
@@ -513,7 +459,7 @@ export async function projectProviderSettings(input: {
   for (const model of input.canonical.models) {
     modelsByVendor.set(model.vendor, [...(modelsByVendor.get(model.vendor) ?? []), model]);
   }
-  const modelProviders: ProviderSettingsSnapshot["modelProviders"] = [...modelsByVendor].map(([id, models]) => ({
+  let modelProviders: ProviderSettingsSnapshot["modelProviders"] = [...modelsByVendor].map(([id, models]) => ({
     id,
     displayName: id === "cloudflare" ? "Cloudflare Workers AI" : id[0]!.toUpperCase() + id.slice(1),
     models: models.map((model) => ({
@@ -547,6 +493,8 @@ export async function projectProviderSettings(input: {
     failures: failedCatalogs,
     canonicalProviderIds,
   });
+  ({ modelProviders, sources } = boundProviderSettingsModels({ modelProviders, sources,
+    canonical: input.canonical, config: input.config, nativeDefaults: input.genericModelCatalog?.nativeDefaults }));
   modelProviders.sort((left, right) => left.displayName.localeCompare(right.displayName));
   const gatewayPolicy = input.config.gatewayPolicy
     && sources.some((source) => source.id === input.config.gatewayPolicy?.accessSourceId && source.kind === "matrix_gateway")

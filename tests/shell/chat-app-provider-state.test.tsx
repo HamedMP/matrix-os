@@ -4,7 +4,7 @@ import React from "react";
 import "@testing-library/jest-dom/vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
+import { CanonicalCreateChatTurnRequestSchema, CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { ChatApp } from "../../shell/src/components/ChatApp.js";
 import { OPEN_PROVIDER_SETTINGS_EVENT, PROVIDER_SETTINGS_CHANGED_EVENT } from "../../shell/src/lib/canonical-provider-setup.js";
 import { TERMINAL_AGENT_OPTIONS } from "../../shell/src/components/terminal/terminal-agent-options.js";
@@ -321,7 +321,7 @@ describe("Chat canonical provider state", () => {
   it("uses the canonical catalog, preserves the draft, and submits the exact harness route", async () => {
     const fetchMock = vi.fn(async () => Response.json(providerCatalog()));
     vi.stubGlobal("fetch", fetchMock);
-    const onSubmit = vi.fn();
+    const onSubmit = vi.fn(async () => false);
     render(<ChatApp
       messages={[]} sessionId={undefined} busy={false} connected conversations={[]}
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
@@ -352,6 +352,8 @@ describe("Chat canonical provider state", () => {
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(
       "Keep this draft", undefined, {
         displayText: "Keep this draft",
+        clientRequestId: expect.any(String),
+        onAccepted: expect.any(Function),
         instanceId: "pi_default",
         model: "anthropic:claude-sonnet-5",
         interactionMode: "plan",
@@ -359,6 +361,11 @@ describe("Chat canonical provider state", () => {
         modelOptions: [{ id: "effort", value: "high" }, { id: "thinking", value: true }],
       },
     ));
+    const options = onSubmit.mock.calls[0]![2]!;
+    expect(CanonicalCreateChatTurnRequestSchema.shape.clientRequestId.safeParse(options.clientRequestId).success).toBe(true);
+    expect(draft).toHaveValue("Keep this draft");
+    act(() => { options.onAccepted?.(); });
+    expect(draft).toHaveValue("");
   });
 
   it("keeps offline drafts editable while disabling submission for settings-disabled harnesses", async () => {

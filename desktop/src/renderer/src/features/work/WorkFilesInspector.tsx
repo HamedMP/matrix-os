@@ -3,16 +3,19 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import type { CanonicalChatDetailResponse, TerminalSessionSummary } from "@matrix-os/contracts";
 import { FileCode2, PanelRightCloseIcon, Plus, SquareTerminal, X } from "@renderer/lib/hugeicons";
-import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import type { Project } from "../../stores/board";
 import { useCodingAgentWorkspace } from "../../stores/coding-agent-workspace";
 import { useConnection } from "../../stores/connection";
+import { useUi } from "../../stores/ui";
+import { inspectorFileViewKey, useInspectorFileViews } from "../../stores/files-navigation";
 import {
   InspectorFilePreview,
   InspectorFilesPanel,
   type InspectorFileTarget,
 } from "../panels/InspectorFilesPanel";
 import TerminalView from "../terminal/TerminalView";
+import SidebarBrowser from "../browser/SidebarBrowser";
 import { resolveWorkFilesScope, type WorkFilesScope } from "./work-files-scope";
 import { projectWorkTerminalSessions } from "./work-terminal-scope";
 import { parseTerminalRefKey, runtimeTerminalTabs } from "../../lib/terminal-workspaces";
@@ -26,9 +29,11 @@ const FILE_LIST_DIVIDER_WIDTH = 8;
 
 type WorkInspectorTab =
   | { id: "files"; kind: "files"; label: "Files" }
+  | { id: "browser"; kind: "browser"; label: "Browser" }
   | { id: string; kind: "terminal"; label: string; sessionId: string };
 
 const FILES_TAB: WorkInspectorTab = { id: "files", kind: "files", label: "Files" };
+const BROWSER_TAB: WorkInspectorTab = { id: "browser", kind: "browser", label: "Browser" };
 
 function collectTerminalBindingIds(detail: CanonicalChatDetailResponse): string[] {
   const bindingIds = [...(detail.terminalSessionIds ?? [])];
@@ -103,7 +108,7 @@ export function WorkFilesInspector({
     : { kind: "unavailable", chatId: "draft" });
   return (
     <WorkInspectorContent
-      key={`${detail?.record.chat.id ?? resolvedScope.chatId}:${runtimeSlot}:${authGeneration}`}
+      key={`${inspectorFileViewKey(resolvedScope)}:${runtimeSlot}:${authGeneration}`}
       detail={detail}
       scope={resolvedScope}
       initialTerminal={initialTerminal}
@@ -142,6 +147,12 @@ function WorkInspectorContent({
   closeButtonRef?: Ref<HTMLButtonElement>;
 }) {
   const api = useConnection((state) => state.api);
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => {
+    if (!menuOpen) return;
+    useUi.getState().acquireRendererOverlay();
+    return () => useUi.getState().releaseRendererOverlay();
+  }, [menuOpen]);
   const summary = useCodingAgentWorkspace((state) => state.summary);
   const refreshSummary = useCodingAgentWorkspace((state) => state.refresh);
   const [createdSessions, setCreatedSessions] = useState<TerminalSessionSummary[]>(
@@ -169,14 +180,19 @@ function WorkInspectorContent({
     initialTerminalTab ? [FILES_TAB, initialTerminalTab] : [FILES_TAB],
   );
   const [selectedId, setSelectedId] = useState(initialTerminalTab?.id ?? FILES_TAB.id);
-  const [selectedFile, setSelectedFile] = useState<InspectorFileTarget | null>(null);
+  const viewKey = inspectorFileViewKey(scope);
+  const savedFile = useInspectorFileViews((state) => state.views.find((entry) => entry.key === viewKey)?.view.selectedFile ?? null);
+  const selectedFile = useMemo<InspectorFileTarget | null>(() => savedFile && savedFile.kind !== "artifact"
+    ? { ...savedFile, label: savedFile.path.split("/").at(-1) ?? savedFile.path } : null, [savedFile]);
+  const setSelectedFile = useCallback(({ label: _label, ...target }: InspectorFileTarget) => useInspectorFileViews.getState().update(viewKey, { selectedFile: target }), [viewKey]);
+  const fileTreeVisible = useInspectorFileViews((state) => state.views.find((entry) => entry.key === viewKey)?.view.treeVisible ?? true);
   const navigation = useChatFileNavigation();
   const requestedFile = navigation?.request;
   useEffect(() => {
     if (!requestedFile || requestedFile.chatId !== scope.chatId) return;
     setSelectedFile(requestedFile.target);
     setSelectedId(FILES_TAB.id);
-  }, [requestedFile, scope.chatId]);
+  }, [requestedFile, scope.chatId, setSelectedFile]);
   const [resolvedChatId, setResolvedChatId] = useState<string | null>(
     detail?.record.chat.id ?? initialTerminal?.chatId ?? null,
   );
@@ -281,7 +297,8 @@ function WorkInspectorContent({
   };
 
   const splitRef = useRef<HTMLDivElement>(null);
-  const [fileListWidth, setFileListWidth] = useState(300);
+  const [fileListWidth, setFileListWidth] = useState(() => useInspectorFileViews.getState().views.find((entry) => entry.key === viewKey)?.view.treeWidth ?? 300);
+  useEffect(() => { useInspectorFileViews.getState().update(viewKey, { treeWidth: fileListWidth }); }, [viewKey, fileListWidth]);
   const clampFileListWidth = (nextWidth: number, splitWidth: number) => Math.max(
     MIN_FILE_LIST_WIDTH,
     Math.min(
@@ -363,7 +380,9 @@ function WorkInspectorContent({
               </div>
             ))}
           </div>
-          <DropdownMenu.Root>
+          {selected.kind === "files" ? <button type="button" aria-label={fileTreeVisible ? "Hide file tree" : "Show file tree"} title={fileTreeVisible ? "Hide file tree" : "Show file tree"} aria-pressed={!fileTreeVisible}
+            onClick={() => useInspectorFileViews.getState().update(viewKey, { treeVisible: !fileTreeVisible })} className="flex size-8 shrink-0 items-center justify-center rounded-md hover:bg-[var(--bg-hover)]"><FileCode2 size={15} /></button> : null}
+          <DropdownMenu.Root open={menuOpen} onOpenChange={setMenuOpen}>
             <DropdownMenu.Trigger asChild>
               <button
                 type="button"
@@ -382,6 +401,10 @@ function WorkInspectorContent({
                 style={{ background: "var(--bg-overlay)", borderColor: "var(--border-default)", boxShadow: "var(--shadow-2)" }}
               >
                 <InspectorMenuItem label="Files" icon={<FileCode2 size={14} />} onSelect={() => setSelectedId(FILES_TAB.id)} />
+                <InspectorMenuItem label="Browser" icon={<FileCode2 size={14} />} onSelect={() => {
+                  setTabs((current) => current.some((tab) => tab.id === BROWSER_TAB.id) ? current : [...current, BROWSER_TAB]);
+                  setSelectedId(BROWSER_TAB.id);
+                }} />
                 {detail || resolveDraftChatId ? (
                   <>
                     <DropdownMenu.Separator className="my-1 h-px" style={{ background: "var(--border-subtle)" }} />
@@ -434,7 +457,8 @@ function WorkInspectorContent({
           {selected.kind === "files" ? (
             <section
               aria-label="Files"
-              className={selectedFile
+              hidden={!fileTreeVisible}
+              className={!fileTreeVisible ? "hidden" : selectedFile
                 ? "flex min-h-0 min-w-0 shrink-0 flex-col overflow-hidden"
                 : "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"}
               style={{
@@ -445,7 +469,7 @@ function WorkInspectorContent({
               <InspectorFilesPanel scope={selectedFile?.kind === "home" ? { kind: "home", chatId: scope.chatId } : scope} selectedFile={selectedFile} browserOnly forceList onOpenFile={openFile} />
             </section>
           ) : null}
-          {selected.kind === "files" && selectedFile ? (
+          {selected.kind === "files" && selectedFile && fileTreeVisible ? (
             <div
               role="separator"
               aria-label="Resize file list"
@@ -471,6 +495,9 @@ function WorkInspectorContent({
               : "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"}
             style={{ background: "var(--bg-surface)" }}
           >
+            {tabs.some((tab) => tab.kind === "browser") ? <div hidden={selected.kind !== "browser"} className={selected.kind === "browser" ? "flex min-h-0 flex-1 flex-col" : "hidden"} role="tabpanel" aria-label="Browser" id="work-inspector-panel-browser">
+              <SidebarBrowser active={active && selected.kind === "browser"} />
+            </div> : null}
             {selected.kind === "files" && selectedFile ? (
               <div
                 id={`work-inspector-panel-${FILES_TAB.id}`}

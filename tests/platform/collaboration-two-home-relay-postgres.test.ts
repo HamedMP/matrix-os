@@ -99,6 +99,7 @@ describe.skipIf(!connectionString)("T092 two-home direct relay boundary on real 
       services.push(sessions);
       const ownerRuntimeSessions = new OwnerRuntimeSessionService({
         verifier, ownerId: actorId, runtimeId: home.runtimeId,
+        runtimeGeneration: () => 1,
         organizationPrecondition: allowAllOrganizationPrecondition, now: () => now,
       });
       ownerServices.push(ownerRuntimeSessions);

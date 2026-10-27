@@ -123,6 +123,7 @@ function ResponsiveWorkInspector({
   detail,
   scope,
   projects,
+  visible,
   active,
   layout,
   onClose,
@@ -142,6 +143,7 @@ function ResponsiveWorkInspector({
   detail?: CanonicalChatDetailResponse;
   scope?: WorkFilesScope;
   projects: Project[];
+  visible: boolean;
   active: boolean;
   layout: WorkLayout;
   onClose: () => void;
@@ -158,7 +160,7 @@ function ResponsiveWorkInspector({
   resolveDraftChatId?: () => Promise<string | null>;
   onDraftTerminalCreated?: (chatId: string, session: TerminalSessionSummary) => void;
 }) {
-  if (!active) {
+  if (!visible) {
     return (
       <>
         <div hidden><WorkFilesInspector detail={detail} scope={scope} projects={projects} active={false} /></div>
@@ -180,8 +182,8 @@ function ResponsiveWorkInspector({
     <div
       ref={regionRef}
       id="work-inspector"
-      aria-hidden={!active}
-      hidden={!active}
+      aria-hidden={!visible}
+      hidden={!visible}
       className={layout === "narrow"
         ? "absolute inset-0 z-20 flex w-full"
         : "relative flex min-h-0 shrink-0"}
@@ -302,10 +304,11 @@ function WorkTabContent({
   const eventSource = hostedRuntime?.eventSource ?? localEventSource;
   const activeChatScopeRef = useRef({ client, chatId: initialChatId });
   activeChatScopeRef.current = { client, chatId: initialChatId };
-  const routeKey = `${active}:${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? ""}`;
-  const hasInspector = Boolean(active && (route === "chat" || route === "project"));
+  const presentationVisible = hostedChrome ? visible : active;
+  const routeKey = `${presentationVisible}:${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? ""}`;
+  const hasInspector = Boolean(presentationVisible && (route === "chat" || route === "project"));
   const narrowPane = effectiveNarrowPane(responsive, routeKey, hasInspector);
-  const inspectorVisible = active && hasInspector && (
+  const inspectorVisible = presentationVisible && hasInspector && (
     ((layout === "wide" || layout === "medium") && inspectorOpen)
     || (layout === "narrow" && narrowPane === "inspector")
   );
@@ -607,7 +610,7 @@ function WorkTabContent({
   }, [hideRail, layout, showChat]);
 
   useEffect(() => {
-    if (layout !== "medium" || !inspectorVisible) return;
+    if (!active || layout !== "medium" || !inspectorVisible) return;
     const dismissOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       pendingFocusRef.current = showToolsRef;
@@ -615,7 +618,7 @@ function WorkTabContent({
     };
     window.addEventListener("keydown", dismissOnEscape);
     return () => window.removeEventListener("keydown", dismissOnEscape);
-  }, [inspectorVisible, layout]);
+  }, [active, inspectorVisible, layout]);
 
   const resolveDraftChatId = useCallback(async (): Promise<string | null> => {
     if (!client) return null;
@@ -663,7 +666,8 @@ function WorkTabContent({
     <ResponsiveWorkInspector
       detail={detail}
       projects={projects}
-      active={inspectorVisible}
+      visible={inspectorVisible}
+      active={active && inspectorVisible}
       layout={layout}
       onClose={closeInspector}
       onOpen={openInspector}
@@ -689,7 +693,8 @@ function WorkTabContent({
     <ResponsiveWorkInspector
       scope={draftScope}
       projects={projects}
-      active={inspectorVisible}
+      visible={inspectorVisible}
+      active={active && inspectorVisible}
       layout={layout}
       onClose={closeInspector}
       onOpen={openInspector}
@@ -822,10 +827,10 @@ function WorkTabContent({
   }), [agentsOpen, agentsNavigation?.opened?.title, headerAgentId, sharedChromeSlot, chromeTitle, closeInspector, hasInspector, hostedChrome, inspectorVisible, inspectorWidth, layout, navigationVisible, openInspector]);
 
   useLayoutEffect(() => {
-    if (!active || !surfaceChromeHost) return;
+    if (!surfaceChromeHost) return;
     surfaceChromeHost.setChrome(chromeSpec);
     return () => surfaceChromeHost.setChrome(null);
-  }, [active, chromeSpec, surfaceChromeHost]);
+  }, [chromeSpec, surfaceChromeHost]);
 
   return (
     <CanonicalChatClientProvider api={api} client={client} runtimeSlot={runtimeSlot} authGeneration={authGeneration}>

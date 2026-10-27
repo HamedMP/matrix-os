@@ -21,7 +21,7 @@ import {
   sharedChatMembershipFromProjection,
 } from "@matrix-os/ui";
 import type { ChatAgentDraftRequest } from "@matrix-os/ui";
-import { createChatMentionRequestTracker } from "@matrix-os/ui";
+import { createChatMentionRequestTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "@matrix-os/ui";
 import { ChatMentionControls, useChatMentionPermission } from "@matrix-os/ui";
 import { BotDetailsContext, BotHeaderBindingContext, BotHeaderContext, useSurfaceChromeHost } from "../desktop-shell/SurfaceChrome";
 import { ChatSharingButton } from "./ChatSharingButton";
@@ -194,7 +194,9 @@ function CanonicalChatWorkspaceContent({
       console.warn("[chat] credential refresh failed", error instanceof Error ? error.name : "UnknownError");
     });
   }, [client]);
+  const admissionIdentity = useConnection(desktopProviderIdentityKey);
   const controller = useCanonicalChatRouteController({
+    admissionIdentity,
     client,
     projectId,
     active: live && !explicitSharedRoute,
@@ -544,7 +546,7 @@ function CanonicalChatWorkspaceContent({
         permissionMode: mentionPermission.permissionMode,
       };
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
-      const attempt = permissionResources.length ? mentionRequests.resolve(client, requestScope, input, "send") : undefined;
+      const attempt = mentionRequests.resolve(client, requestScope, permissionResources.length ? input : { ...input, draftRevision }, "send");
       const clientRequestId = attempt?.clientRequestId;
       const acknowledgeAccepted = () => {
         if (!isCurrentRuntimeGeneration(runtimeGeneration)
@@ -557,7 +559,8 @@ function CanonicalChatWorkspaceContent({
       };
       const admitted = attempt?.operation === "queue"
         ? await controller.queueTurn({ ...input, clientRequestId }, acknowledgeAccepted)
-        : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId, acknowledgeAccepted);
+        : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId, acknowledgeAccepted,
+          () => { if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId); });
       if (!admitted || !isCurrentOwner()) return;
       if ("record" in admitted) {
         reportedChatId.current = admitted.record.chat.id;
@@ -570,6 +573,9 @@ function CanonicalChatWorkspaceContent({
         setGlobalView("conversation");
         setDraftProjectId(admittedProjectId);
       }
+    } catch (error) {
+      console.warn("[chat] Submission unavailable", error instanceof Error ? error.name : "UnknownError");
+      if (isCurrentOwner()) setSubmissionError(error instanceof ChatAdmissionUnconfirmed ? CHAT_ADMISSION_UNCONFIRMED : chatSendFailureMessage("submission_failed"));
     } finally {
       if (sequence === submissionSequence.current) setUploadingAttachments(false);
     }
@@ -638,6 +644,9 @@ function CanonicalChatWorkspaceContent({
       if (!isCurrentOwner()) return;
       if (!response) return;
       setEditingQueuedTurn(null);
+    } catch (error) {
+      console.warn("[chat] Queue submission unavailable", error instanceof Error ? error.name : "UnknownError");
+      if (isCurrentOwner()) setSubmissionError(error instanceof ChatAdmissionUnconfirmed ? CHAT_ADMISSION_UNCONFIRMED : chatSendFailureMessage("submission_failed"));
     } finally {
       if (sequence === submissionSequence.current) {
         setComposerAction(null);

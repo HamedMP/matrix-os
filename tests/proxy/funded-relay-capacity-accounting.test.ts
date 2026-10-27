@@ -33,7 +33,11 @@ function fixture(options: Record<string, unknown> = {}) {
   };
   const upstream = vi.fn(async () => new Response(JSON.stringify({ id: "response_1", model: MODEL, choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }),
     { headers: { "content-type": "application/json" } }));
-  const relay: FundedRelay = createFundedRelay({ ...config, runtimeConcurrency: 1, rateLimitPerMinute: 1, fetch: upstream, now: () => NOW,
+  const fetchWithCount = vi.fn<typeof fetch>().mockImplementation(async (input) =>
+    String(input).endsWith("/v1/messages/count_tokens")
+      ? Response.json({ input_tokens: 100 })
+      : upstream());
+  const relay: FundedRelay = createFundedRelay({ ...config, runtimeConcurrency: 1, rateLimitPerMinute: 1, fetch: fetchWithCount, now: () => NOW,
     requestIdFactory: () => `request_${++id}`, platformClient: control as unknown as FundedPlatformClient, ...options });
   closables.push(relay);
   const app = new Hono(); relay.register(app);

@@ -11,7 +11,7 @@ import {
   type PlatformSpeechCaptureAdapter,
 } from "@matrix-os/ui";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { Attachments, AttachmentButton, useAttachments } from "@/components/ai-elements/attachments";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -102,7 +102,9 @@ export function ChatInput({
   const consumedDraftRequest = useRef<number | null>(null);
   // The last merged suggestion, to tell an untouched suggestion from the owner's own words.
   const mergedDraft = useRef<TrySuggestionDraft | null>(null);
-  const { attachments, addFiles, removeFile, clearAll, getBase64Files } = useAttachments();
+  const { attachments, addFiles, removeFile, getBase64Files } = useAttachments();
+  const currentComposer = useRef({ composer, scope });
+  useLayoutEffect(() => { currentComposer.current = { composer, scope }; }, [composer, scope]);
   const botMention = useBotMentionNavigation(agentClient, `${scope}:${composer.requestId}`, onOpenBotMention, attachments.length ? BOT_ATTACHMENT_HANDOFF_REASON : undefined);
   const [defaultSpeechClient] = useState(() => createBrowserSpeechClient());
   const [defaultSpeechCapture] = useState(() => createWebPcmSpeechCaptureAdapter());
@@ -160,13 +162,20 @@ export function ChatInput({
     const text = input.trim();
     setSending(true);
     setError(null);
+    const submittedIds = attachments.map(item => item.id);
+    let acknowledged = false;
+    const acknowledge = () => {
+      if (acknowledged || currentComposer.current.scope !== scope || currentComposer.current.composer.requestId !== composer.requestId) return;
+      acknowledged = true; permission.confirm(false); composer.clear();
+      for (const id of submittedIds) removeFile(id);
+    };
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot lower try/finally yet; the finally is required to release the submission guard on every failure.
     try {
       const files = attachments.length ? await getBase64Files() : undefined;
       const accepted = await onSubmit(text || (files?.length ? `Attached ${files.length} file(s)` : ""), files, {
-        resources, clientRequestId: composer.requestId || crypto.randomUUID(), permissionMode: permission.permissionMode,
+        resources, clientRequestId: composer.requestId || crypto.randomUUID(), permissionMode: permission.permissionMode, onAccepted: acknowledge,
       });
-      if (accepted !== false) { permission.confirm(false); composer.clear(); clearAll(); }
+      if (accepted !== false) acknowledge();
     } catch (failure: unknown) {
       console.warn("[chat] Message submission failed:", failure instanceof Error ? failure.name : "UnknownError");
       setError("Message could not be sent. Try again.");

@@ -73,6 +73,23 @@ describe("short failure copy and persisted compatibility", () => {
 
 
 describe("distinct concise terminal recovery", () => {
+  it("keeps an interrupted response manually continuable without retrying the old request", () => {
+    const copy = "Response interrupted. You can continue in this chat.";
+    const error = canonicalAgentFailure("transcript_interrupted");
+    expect(error).toEqual({ code: "run_failed", safeMessage: copy, retryable: false, recoveryActions: [] });
+    const { snapshot } = createCanonicalChatFixture("failed");
+    const run = snapshot.runs[0]!;
+    const detail = { ...snapshot, activities: [{ id: "interrupted_response", chatId: run.chatId,
+      runId: run.id, type: "run.error" as const, sequence: 1, occurredAt: run.updatedAt, error: error! }] };
+    for (const view of [detail, JSON.parse(JSON.stringify(detail))]) {
+      expect(canonicalChatPresentation(view)[0]?.final).toMatchObject({ markdown: copy });
+      expect(canonicalChatPresentation(view)[0]?.final).not.toHaveProperty("actions");
+      expect(canonicalChatTerminalNotices(view)[0]?.text).toBe(copy);
+    }
+    expect(canonicalAgentFailure("history_unavailable")).toMatchObject({
+      code: "run_not_resumable", recoveryActions: ["start_new_chat"],
+    });
+  });
   it("does not override a server Retry restriction for a known transient cause", () => {
     const { snapshot } = createCanonicalChatFixture("failed");
     const run = snapshot.runs[0]!;

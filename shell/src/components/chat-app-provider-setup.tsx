@@ -126,6 +126,7 @@ export function useChatProviderState(
   useEffect(() => {
     let cancelled = false;
     let refreshing = false;
+    let hasTrustedCatalog = false;
     let pending = false;
     let forcePending = false;
     const refresh = async (force = false) => {
@@ -137,7 +138,7 @@ export function useChatProviderState(
         return;
       }
       refreshing = true;
-      if (!cancelled) setLoading(true);
+      if (!cancelled && !hasTrustedCatalog) setLoading(true);
       do {
         pending = false;
         const forceRefresh = forcePending;
@@ -149,8 +150,10 @@ export function useChatProviderState(
           if (!response.ok) throw new Error("ProviderCatalogUnavailable");
           const value = CanonicalProviderCatalogSchema.parse(await response.json());
           if (!cancelled) {
+            hasTrustedCatalog = true;
             setCatalog(value);
             setUnavailable(false);
+            setLoading(false);
           }
         } catch (error: unknown) {
           console.warn("[chat] Canonical Provider catalog unavailable:", error instanceof Error ? error.name : "UnknownError");

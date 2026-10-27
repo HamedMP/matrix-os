@@ -89,6 +89,7 @@ general_native_suites=(
   agents-providers-figma
   bot-visual
   canonical-input
+  chat-large-transcript
   chat-dock-badge
   chat-onboarding
   chat-picker-responsive
@@ -180,6 +181,7 @@ run_suite() {
         pnpm exec vitest run --config vitest.e2e.config.ts --maxWorkers=2 \
         tests/e2e/desktop/account-organization-picker.e2e.test.ts \
         tests/e2e/desktop/file-download.e2e.test.ts tests/e2e/desktop/canonical-input.e2e.test.ts \
+        tests/e2e/desktop/chat-large-transcript.e2e.test.ts \
         tests/e2e/provider-authorization-electron.e2e.test.ts tests/e2e/desktop/provider-auth-terminal.e2e.test.ts \
         tests/e2e/desktop/agents-providers-figma.e2e.test.ts tests/e2e/desktop/agents-providers-button-contrast.e2e.test.ts \
         tests/e2e/desktop/provider-settings-idle.e2e.test.ts tests/e2e/desktop/project-folder-picker-layout.e2e.test.ts \

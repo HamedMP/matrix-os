@@ -41,6 +41,8 @@ import {
   isDefinitiveCanonicalChatRejection,
 } from "@/lib/canonical-chat-client";
 import { projectCanonicalTranscript } from "@/lib/canonical-chat-terminal-notices";
+import { createCanonicalChatAdmissionTracker, ChatAdmissionUnconfirmed, CHAT_ADMISSION_UNCONFIRMED } from "@matrix-os/ui";
+import { admitShellChatTurn } from "./canonical-chat-turn-admission";
 
 const ACTIVE_RUN_FALLBACK_POLL_MS = 2_000;
 const EVENT_INVALIDATION_COALESCE_MS = 200;
@@ -90,6 +92,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   initialCollaborationView?: ChatCollaborationView;
 } = {}): ChatState {
   const [mentionRequests] = useState(createChatMentionRequestTracker);
+  const [admissions] = useState(createCanonicalChatAdmissionTracker);
   const client = useMemo(() => createCanonicalShellChatClient({ gatewayUrl: getGatewayUrl() }), []);
   const eventSource = useMemo(() => createSharedCanonicalChatEventSource({
     openStream: (input) => client.openEventStream(input),
@@ -133,6 +136,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
   const [detail, setDetail] = useState<CanonicalChatDetailResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
+  const latestAdmissionId = useRef<string | undefined>(undefined);
   const [safeError, setSafeError] = useState<string | null>(null);
   const [eventConnectionState, setEventConnectionState] = useState<CanonicalChatEventConnectionState>(
     eventSource.connectionState(),
@@ -148,6 +152,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     cancelled: boolean;
   } | null>(null);
   const detailRef = useRef(detail);
+  useEffect(() => { if (isCurrent()) admissions.observe(navigationIdentity, detail); }, [admissions, navigationIdentity, detail, isCurrent]);
   const activeChatIdRef = useRef(activeChatId);
   const initialDraftConsumed = useRef(false);
   const previousNavigationIdentity = useRef(navigationIdentity);
@@ -229,7 +234,6 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       detailRef.current = value;
       setDetail(value);
       setDetailError(null);
-      setSafeError(null);
       return value;
     } catch (error: unknown) {
       if (!isCurrent() || activeChatIdRef.current !== chatId || detailRequestGeneration.current !== generation) {
@@ -271,6 +275,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     ));
     const subscription = eventSource.subscribe((event) => {
       if (!isCurrent()) return;
+      admissions.invalidate(navigationIdentity, event.type === "chat.changed" ? event.chatId : undefined);
       if (event.type === "chat.changed" && event.chatId === activeChatId
         && /^(?:interaction\.|bot\.)/.test(event.eventType)) {
         setBotEventRevision((revision) => revision + 1);
@@ -288,7 +293,6 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
             detailRef.current = merged;
             setDetail(merged);
             setDetailError(null);
-            setSafeError(null);
           } else selectedRefresh.schedule();
         }
         return;
@@ -380,6 +384,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       return false;
     }
     submittingRef.current = true;
+    latestAdmissionId.current = undefined;
     const sourceChatId = activeChatId;
     setSubmitting(true);
     setSafeError(null);
@@ -407,7 +412,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         }
         if ((files?.length ?? 0) > 8) throw new Error("TooManyAttachments");
         const uploadResults = await Promise.allSettled((files ?? []).map(async (file, index) => {
-          const retryKey = options.resources?.length && options.clientRequestId
+          const retryKey = options.clientRequestId
             ? `${options.clientRequestId}:${index}` : undefined;
           const reference = await client.uploadAttachment(file, retryKey);
           if (!reference.ownerReference) throw new Error("InvalidAttachmentReference");
@@ -452,10 +457,24 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
           await loadDetail(record.chat.id);
           return isCurrent();
         }
-        const admitted = await client.admitTurn(record.chat.id, input);
+        const submittedDraft = composerDraftSequence.current;
+        const admitted = await admitShellChatTurn({ tracker: admissions, identity: navigationIdentity, client, record, input,
+          seed: options.clientRequestId, current: () => detailRef.current, isCurrent,
+          onRejected: () => mentionRequests.accepted(requestScope, input.clientRequestId),
+          onPrepared: id => { latestAdmissionId.current = id; },
+          onAccepted: () => {
+            mentionRequests.accepted(requestScope, input.clientRequestId);
+            options.onAccepted?.();
+          },
+          onConfirmed: id => {
+            if (isCurrent() && latestAdmissionId.current === id && activeChatIdRef.current === sourceChatId && composerDraftSequence.current === submittedDraft) {
+              setSafeError(current => current === CHAT_ADMISSION_UNCONFIRMED ? null : current);
+              activeChatIdRef.current = record.chat.id; setActiveChatId(record.chat.id);
+            }
+          } });
         if (!isCurrent()) return false;
         turnAdmitted = true;
-        mentionRequests.accepted(requestScope, input.clientRequestId);
+        mentionRequests.accepted(requestScope, admitted.turn.clientRequestId);
         if (activeChatIdRef.current === sourceChatId) {
           activeChatIdRef.current = record.chat.id;
           setActiveChatId(record.chat.id);
@@ -482,7 +501,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         }
         if (!isCurrent()) return false;
         console.warn("[canonical-chat] Shell Turn admission failed:", error instanceof Error ? error.name : "UnknownError");
-        if (activeChatIdRef.current === sourceChatId) setSafeError(canonicalShellChatFailureMessage(error));
+        if (activeChatIdRef.current === sourceChatId) setSafeError(error instanceof ChatAdmissionUnconfirmed
+          ? CHAT_ADMISSION_UNCONFIRMED : canonicalShellChatFailureMessage(error));
         return turnAdmitted;
       }
     };
@@ -491,7 +511,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       submittingRef.current = false;
       setSubmitting(false);
     });
-  }, [activeChatId, client, loadDetail, loadList, mentionRequests, setActiveChatId, isCurrent, authority.summaryClient]);
+  }, [activeChatId, client, loadDetail, loadList, mentionRequests, setActiveChatId, isCurrent, authority.summaryClient, admissions, navigationIdentity]);
 
   const cancelQueuedTurn = useCallback(async (queuedTurnId: string) => {
     if (!isCurrent()) return false;

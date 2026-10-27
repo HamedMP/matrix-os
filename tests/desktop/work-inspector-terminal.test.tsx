@@ -3,6 +3,8 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { CanonicalChatDetailResponse, RuntimeSummary, TerminalSessionSummary } from "@matrix-os/contracts";
+import { useUi } from "@desktop/renderer/src/stores/ui";
+import { useInspectorFileViews } from "@desktop/renderer/src/stores/files-navigation";
 import { WorkFilesInspector } from "@desktop/renderer/src/features/work/WorkFilesInspector";
 import { ChatFileNavigationProvider, useChatFileNavigation } from "@desktop/renderer/src/features/work/ChatFileNavigation";
 import type { Project } from "@desktop/renderer/src/stores/board";
@@ -14,8 +16,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 const resizeObserverCallbacks: ResizeObserverCallback[] = [];
 
 class NoopResizeObserver implements ResizeObserver {
-  constructor(callback: ResizeObserverCallback) { resizeObserverCallbacks.push(callback); }
-  observe() {}
+  constructor(private callback: ResizeObserverCallback) {}
+  observe(target: Element) { if (target.hasAttribute("data-layout")) resizeObserverCallbacks.push(this.callback); }
   unobserve() {}
   disconnect() {}
   takeRecords() { return []; }
@@ -133,6 +135,7 @@ describe("Work Files and Terminal inspector", () => {
 
   beforeAll(() => { globalThis.ResizeObserver = NoopResizeObserver; });
   beforeEach(() => {
+    useInspectorFileViews.setState({ views: [] });
     resizeObserverCallbacks.length = 0;
     terminalViewMock.props = [];
     useConnection.setState({
@@ -212,6 +215,64 @@ describe("Work Files and Terminal inspector", () => {
     });
   });
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+  it("keeps the inspector menu above native browser views and releases its overlay on unmount", async () => {
+    useUi.setState({ rendererOverlayCount: 0 });
+    const view = render(<WorkFilesInspector scope={{ kind: "home", chatId: "overlay-menu" }} projects={[]} active />);
+    const trigger = screen.getByRole("button", { name: "Add inspector tab" });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    await screen.findByRole("menuitem", { name: "Browser" });
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+    view.unmount();
+    expect(useUi.getState().rendererOverlayCount).toBe(0);
+  });
+
+  it("restores the selected file, folder expansion, filter, scroll and tree width after closing the inspector", async () => {
+    const scope = { kind: "home" as const, chatId: "remember-files" };
+    const api = useConnection.getState().api!;
+    vi.mocked(api.get).mockImplementation(async (url: string) => url.startsWith("/api/files/list")
+      ? { entries: url.endsWith("path=notes") ? [{ name: "guide.md", type: "file" }] : [{ name: "notes", type: "directory" }] } : {
+        resource: { kind: "home", path: "notes/guide.md" }, name: "guide.md", kind: "text", mimeType: "text/plain", sizeBytes: 6, version: "v1", canDownload: true,
+      });
+    let view = render(<WorkFilesInspector scope={scope} projects={[]} active />);
+    fireEvent.click(await screen.findByRole("button", { name: "Expand folder notes" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open file notes/guide.md" }));
+    const scroller = view.container.querySelector("[data-file-tree-scroll]") as HTMLElement;
+    scroller.scrollTop = 165;
+    fireEvent.scroll(scroller);
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize file list" }), { key: "ArrowRight" });
+    view.unmount();
+    const persisted = localStorage.getItem("matrix-inspector-file-views-v1")!;
+    useInspectorFileViews.setState({ views: [] });
+    localStorage.setItem("matrix-inspector-file-views-v1", persisted);
+    await useInspectorFileViews.persist.rehydrate();
+    view = render(<WorkFilesInspector scope={scope} projects={[]} active />);
+    expect(await screen.findByRole("button", { name: "Collapse folder notes" })).toBeTruthy();
+    expect(await screen.findByRole("tabpanel", { name: "File preview" })).toBeTruthy();
+    expect((view.container.querySelector("[data-file-tree-scroll]") as HTMLElement).scrollTop).toBe(165);
+    expect(screen.getByRole("separator", { name: "Resize file list" }).getAttribute("aria-valuenow")).toBe("316");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "guide" } });
+    fireEvent.click(screen.getByRole("button", { name: "Hide file tree" }));
+    view.unmount();
+    const restored = render(<WorkFilesInspector scope={scope} projects={[]} active />);
+    fireEvent.click(screen.getByRole("button", { name: "Show file tree" }));
+    expect((screen.getByRole("searchbox") as HTMLInputElement).value).toBe("guide");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Collapse folder notes" }));
+    restored.unmount();
+    render(<WorkFilesInspector scope={scope} projects={[]} active />);
+    expect(await screen.findByRole("button", { name: "Expand folder notes" })).toBeTruthy();
+    expect(screen.getByRole("tabpanel", { name: "File preview" })).toBeTruthy();
+  });
+
+  it("hides and restores the file tree while preserving its search", () => {
+    render(<WorkFilesInspector scope={{ kind: "home", chatId: "chat" }} projects={[]} active />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Filter files" }), { target: { value: "notes" } });
+    fireEvent.click(screen.getByRole("button", { name: "Hide file tree" }));
+    expect(screen.queryByRole("searchbox", { name: "Filter files" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show file tree" }));
+    expect((screen.getByRole("searchbox", { name: "Filter files" }) as HTMLInputElement).value).toBe("notes");
+  });
 
   it("uses addable tabs without a Conversation tools header", () => {
     render(<WorkFilesInspector detail={detail("chat_first", "terminal_first")} projects={[]} active />);

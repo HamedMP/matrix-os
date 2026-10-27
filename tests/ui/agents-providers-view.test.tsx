@@ -327,7 +327,7 @@ describe("AgentsProvidersView", () => {
       route: { kind: "fixed", providerId: "openai", modelId: "openai/gpt-5.6" },
     }];
     const { rerender, props } = setup({ snapshot: next, selectedHarnessId: "harness_codex" });
-    expect(screen.getByRole("button", { name: /Codex.*Connected/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Codex.*Configured/ })).toBeVisible();
     expect(screen.queryByText(/Local login|visible Terminal flow/)).not.toBeInTheDocument();
     expect(screen.queryByText("Authenticated · Oauth")).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(5_001));
@@ -350,7 +350,7 @@ describe("AgentsProvidersView", () => {
       enabled: true, configuredEnabled: true, authState: "unknown", connectivity: "unknown",
       selectedAccountId: null, accountIds: [], accessSourceId: source.id }];
     setup({ snapshot: next, selectedHarnessId: `harness_${harness}` });
-    expect(screen.getByRole("button", { name: new RegExp(`${harness}.*Connected`) })).toBeVisible();
+    expect(screen.getByRole("button", { name: new RegExp(`${harness}.*Configured`) })).toBeVisible();
     expect(screen.queryByText(/Local login|visible Terminal flow/)).not.toBeInTheDocument();
     act(() => vi.advanceTimersByTime(5001));
     expect(screen.queryByText("Local login found; access not verified")).not.toBeInTheDocument();

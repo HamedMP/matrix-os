@@ -348,6 +348,7 @@ function ChatAppContent({
         interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.kind === "custom" ? mentionOptions?.permissionMode ?? botPresentation.permissionMode : "default", modelOptions: botPresentation.selection.options ?? [],
         ...((botPresentation.kind === "custom" ? botExecution.consentResources : mentionOptions?.resources)?.length ? { resources: botPresentation.kind === "custom" ? botExecution.consentResources : mentionOptions?.resources } : {}),
         ...(mentionOptions?.clientRequestId ? { clientRequestId: mentionOptions.clientRequestId } : {}),
+        ...(mentionOptions?.onAccepted ? { onAccepted: mentionOptions.onAccepted } : {}),
       });
     }
     if (!providerState.selected) return Promise.resolve(false);
@@ -360,7 +361,9 @@ function ChatAppContent({
       model: providerState.selected.modelId,
       interactionMode: providerState.selected.interactionMode,
       permissionMode: mentionOptions?.permissionMode ?? providerState.selected.permissionMode,
-      ...(mentionOptions?.resources?.length ? { resources: mentionOptions.resources, clientRequestId: mentionOptions.clientRequestId } : {}),
+      ...(mentionOptions?.resources?.length ? { resources: mentionOptions.resources } : {}),
+      ...(mentionOptions?.clientRequestId ? { clientRequestId: mentionOptions.clientRequestId } : {}),
+      ...(mentionOptions?.onAccepted ? { onAccepted: mentionOptions.onAccepted } : {}),
       modelOptions: providerState.selected.selectedOptions,
     });
   };

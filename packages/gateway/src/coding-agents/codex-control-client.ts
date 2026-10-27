@@ -14,6 +14,9 @@ import {
 import { codexProviderEventPath } from "./codex-event-bridge.js";
 import { CodexHibernateControlSchema } from "./codex-idle-hibernation.mjs";
 import { CodexDeferredInputControlSchema } from "./codex-deferred-input.mjs";
+import { CodexExecutionIdleControlSchema } from "./codex-idle-hibernation.mjs";
+import { randomUUID } from "node:crypto";
+import type { ProviderIdleObservation } from "./provider-transcript-recovery.js";
 
 const SessionIdSchema = z.string().regex(/^sess_[A-Za-z0-9_-]{1,128}$/);
 const MatrixQuestionIdSchema = z.string().regex(/^question_codex_[a-f0-9]{24}$/);
@@ -56,6 +59,7 @@ const SteerFrameSchema = z.object({
   clientRequestId: RequestIdSchema,
 }).strict();
 const ControlFrameSchema = z.discriminatedUnion("type", [
+  CodexExecutionIdleControlSchema,
   CodexHibernateControlSchema,
   CodexBrowserBindSchema,
   CodexBrowserStartSchema,
@@ -81,6 +85,7 @@ const MAX_CONTROL_FRAME_BYTES = 128 * 1024;
 const MAX_RESPONSE_BYTES = 4 * 1024;
 
 export interface CodexControlClient {
+  isExecutionIdle?(input: Pick<ProviderIdleObservation, "sessionId" | "providerThreadId" | "requestId">): Promise<boolean>;
   prepareBrowser?(input: { sessionId: string; browser: z.infer<typeof CodexBrowserLeaseSchema>; signal: AbortSignal }): Promise<void>;
   deferInput(input: { sessionId: string; inputRequestId: string; clientRequestId: string }): Promise<void>;
   hibernate?(input: { sessionId: string; providerThreadId: string; clientRequestId: string }): Promise<void>;
@@ -123,7 +128,7 @@ export function codexProviderControlPath(homePath: string, sessionId: string): s
 export function createCodexControlClient(options: {
   homePath: string;
   timeoutMs?: number;
-}): CodexControlClient & Required<Pick<CodexControlClient, "hibernate">> {
+}): CodexControlClient & Required<Pick<CodexControlClient, "hibernate" | "isExecutionIdle">> {
   const homePath = resolve(options.homePath);
   const requestedTimeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeoutMs = Number.isFinite(requestedTimeoutMs)
@@ -194,6 +199,16 @@ export function createCodexControlClient(options: {
   }
 
   return {
+    async isExecutionIdle(input) {
+      try {
+        await send(input.sessionId, { type: "execution_idle", providerThreadId: input.providerThreadId,
+          ...(input.requestId ? { requestId: input.requestId } : {}), clientRequestId: `req_observe_${randomUUID()}` }, Math.min(timeoutMs, 2_000));
+        return true;
+      } catch (error: unknown) {
+        if (!(error instanceof Error) || !["CodexControlUnavailableError", "CodexControlTransportError", "CodexControlRejectedError"].includes(error.name)) throw error;
+        return false;
+      }
+    },
     async prepareBrowser(input) {
       const browser = CodexBrowserLeaseSchema.parse(input.browser);
       const deadline = Date.now() + 5_000;

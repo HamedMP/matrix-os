@@ -6,8 +6,10 @@ import { resolve } from "node:path";
 import { build } from "esbuild";
 import { compile } from "@tailwindcss/node";
 import { Scanner } from "@tailwindcss/oxide";
-import type { Browser, ElectronApplication, Page } from "playwright";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Browser, ConsoleMessage, ElectronApplication, Page } from "playwright";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+
+import { TERMINAL_FIXTURE_REJECTION_PREFIX } from "./fixtures/validated-terminal-socket";
 
 const root = resolve(__dirname, "../..");
 // Resolve the declared workspace dependency, matching the CI installer.
@@ -21,6 +23,36 @@ describe("real terminal renderer soft-grid resizing", () => {
   let electron: ElectronApplication | undefined;
   let userData: string | undefined;
   let origin: string;
+  const pageObservers: Array<{ page: Page; errors: string[]; console: (message: ConsoleMessage) => void; pageerror: () => void }> = [];
+
+  async function fixturePage(options: Parameters<Browser["newPage"]>[0] = { viewport: { width: 1450, height: 1050 } }): Promise<Page> {
+    const page = electron ? await electron.firstWindow() : await browser.newPage(options);
+    if (!pageObservers.some(observer => observer.page === page)) {
+      const errors: string[] = [];
+      const record = (message: string) => { if (errors.length < 10) errors.push(message); };
+      const onConsole = (message: ConsoleMessage) => {
+        if (message.type() === "error" && message.text().startsWith(TERMINAL_FIXTURE_REJECTION_PREFIX)) {
+          record(TERMINAL_FIXTURE_REJECTION_PREFIX);
+        }
+      };
+      const onPageError = () => record("Uncaught browser page error");
+      page.on("console", onConsole);
+      page.on("pageerror", onPageError);
+      pageObservers.push({ page, errors, console: onConsole, pageerror: onPageError });
+    }
+    return page;
+  }
+
+  afterEach(() => {
+    const completed = pageObservers.splice(0);
+    for (const observer of completed) {
+      observer.page.off("console", observer.console);
+      observer.page.off("pageerror", observer.pageerror);
+    }
+    // Node retains the errors even when the test closed its Page in finally.
+    expect(completed.flatMap(observer => observer.errors), "Terminal fixture/browser errors").toEqual([]);
+  });
+
   beforeAll(async () => {
     const compiled = await build({
       absWorkingDir: root, entryPoints: ["tests/e2e/fixtures/terminal-soft-resize.tsx"],
@@ -60,7 +92,7 @@ describe("real terminal renderer soft-grid resizing", () => {
         env: { ...process.env, MATRIX_TERMINAL_FIXTURE_USER_DATA: userData,
           MATRIX_TERMINAL_FIXTURE_URL: `${origin}/?surface=electron` },
       });
-      await (await electron.firstWindow()).locator(".xterm-screen").waitFor();
+      await (await fixturePage()).locator(".xterm-screen").waitFor();
     } else browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
     await mkdir(evidence, { recursive: true });
   }, 60_000);
@@ -76,7 +108,7 @@ describe("real terminal renderer soft-grid resizing", () => {
     { surface: "web", name: "Web Canvas", zoom: 0.5 },
     { surface: "electron", name: "Electron Desktop", zoom: 1 },
   ].filter((entry) => nativeElectron ? entry.surface === "electron" : entry.surface === "web"))("pastes through the actual right-click menu without Enter in $name", async ({ surface, zoom }) => {
-    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: 1450, height: 1050 } });
+    const page = await fixturePage({ viewport: { width: 1450, height: 1050 } });
     const payload = "menu paste λ 👩🏽‍💻";
     try {
       await page.goto(`${origin}/?surface=${surface}&zoom=${zoom}&sizing=viewport`);
@@ -116,7 +148,7 @@ describe("real terminal renderer soft-grid resizing", () => {
     { surface: "web", name: "Web Desktop" },
     { surface: "electron", name: "Electron Desktop" },
   ].filter((entry) => !nativeElectron || entry.surface === "electron"))("resumes bottom follow before a queued scroll layout in $name", async ({ surface }) => {
-    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: 1450, height: 1050 } });
+    const page = await fixturePage({ viewport: { width: 1450, height: 1050 } });
     try {
       await page.goto(`${origin}/?surface=${surface}`);
       await page.locator("[data-terminal-grid-stage]").waitFor();
@@ -147,7 +179,7 @@ describe("real terminal renderer soft-grid resizing", () => {
     { surface: "web", name: "Web Desktop" },
     { surface: "electron", name: "Electron Desktop" },
   ].filter((entry) => !nativeElectron || entry.surface === "electron"))("preserves a wheel after shrink before queued layout in $name", async ({ surface }) => {
-    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: 1450, height: 1050 } });
+    const page = await fixturePage({ viewport: { width: 1450, height: 1050 } });
     try {
       await page.goto(`${origin}/?surface=${surface}`);
       await page.locator("[data-terminal-grid-stage]").waitFor();
@@ -175,8 +207,7 @@ describe("real terminal renderer soft-grid resizing", () => {
   it.each([
     { surface: "web", zoom: 1 }, { surface: "web", zoom: 0.75 }, { surface: "electron", zoom: 1 },
   ].filter((entry) => !nativeElectron || entry.surface === "electron"))("wires native history polling and drag in $surface at $zoom", async ({ surface, zoom }) => {
-    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: 1450, height: 1050 } });
-    const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
+    const page = await fixturePage({ viewport: { width: 1450, height: 1050 } });
     try {
       if (electron) await page.locator("#terminal-window").waitFor();
       await page.goto(`${origin}/?surface=${surface}&zoom=${zoom}&nativeScroll=1`);
@@ -197,7 +228,6 @@ describe("real terminal renderer soft-grid resizing", () => {
       const count = await page.evaluate(() => (window as any).fixtureScrollFrames.length);
       await page.waitForTimeout(600);
       expect(await page.evaluate(() => (window as any).fixtureScrollFrames.length)).toBe(count);
-      expect(errors).toEqual([]);
     } finally {
       if (!electron) await page.close();
       else await page.goto(`${origin}/?surface=electron`);
@@ -209,7 +239,7 @@ describe("real terminal renderer soft-grid resizing", () => {
     { surface: "web", name: "Web Canvas", zoom: 0.75 },
     { surface: "electron", name: "Electron Desktop", zoom: 1 },
   ].filter((entry) => !nativeElectron || entry.surface === "electron"))("fills the writable viewport with real rows and columns in $name", async ({ surface, zoom }) => {
-    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: 1700, height: 1200 } });
+    const page = await fixturePage({ viewport: { width: 1700, height: 1200 } });
     try {
       await page.goto(`${origin}/?surface=${surface}&zoom=${zoom}&sizing=viewport`);
       await page.locator(".xterm-screen").waitFor();
@@ -252,7 +282,7 @@ describe("real terminal renderer soft-grid resizing", () => {
 
   it.each(nativeElectron ? ["electron"] : ["web-mobile", "web"])("preserves a history rail gesture before queued presentation expands the grid in %s", async surface => {
     const mobile = surface === "web-mobile";
-    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: mobile ? 430 : 1450, height: 1050 }, isMobile: mobile, hasTouch: mobile });
+    const page = await fixturePage({ viewport: { width: mobile ? 430 : 1450, height: 1050 }, isMobile: mobile, hasTouch: mobile });
     try {
       await page.goto(`${origin}/?surface=${surface}`);
       await page.locator("[data-terminal-grid-stage]").waitFor();
@@ -312,10 +342,8 @@ describe("real terminal renderer soft-grid resizing", () => {
     { surface: "electron", name: "Electron Desktop", zoom: 1 },
     { surface: "web-mobile", name: "Web Mobile", zoom: 1 },
   ].filter((entry) => !nativeElectron || entry.surface === "electron"))("keeps the final row visible in $name at zoom $zoom", async ({ surface, zoom }) => {
-    const page = electron ? await electron.firstWindow() : await browser.newPage({ viewport: { width: surface === "web-mobile" ? 430 : 1450, height: 1050 },
+    const page = await fixturePage({ viewport: { width: surface === "web-mobile" ? 430 : 1450, height: 1050 },
       isMobile: surface === "web-mobile", hasTouch: surface === "web-mobile" });
-    const errors: string[] = [];
-    page.on("pageerror", (error) => errors.push(error.message));
     try {
       await page.goto(`${origin}/?surface=${surface}&zoom=${zoom}`);
       await page.locator("[data-terminal-grid-stage]").waitFor();
@@ -491,7 +519,6 @@ describe("real terminal renderer soft-grid resizing", () => {
       await page.screenshot({
         path: resolve(evidence, `${nativeElectron ? "native-" : ""}${surface}-${zoom}-observer.png`),
       });
-      expect(errors).toEqual([]);
     } finally { if (!electron) await page.close(); }
   }, 30_000);
 });

@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   APP_IFRAME_SANDBOX,
   injectBridgeIntoAppHtml,
@@ -19,139 +19,11 @@ describe("AppViewer bridged runtime loading", () => {
     expect(componentScope).not.toContain("createCoalescedBridgeDataHandler(requestBridgeData)");
   });
 
-  describe("bridge guarantee: slug apps only ever load via bridged srcDoc", () => {
-    // Mirrors AppViewer's iframeSrc decision. Runtime (slug) apps must NEVER load
-    // the raw /apps/{slug}/ document directly, because that runs un-bridged in the
-    // null-origin sandbox and window.MatrixOS.db is undefined.
-    const iframeSrc = (slug: string | null, path: string) =>
-      !slug ? `/files/${path}` : "about:blank";
-
-    it("a slug app's src is about:blank (real HTML is served via srcDoc instead)", () => {
-      expect(iframeSrc("notes", "apps/notes/index.html")).toBe("about:blank");
-      expect(iframeSrc("task-manager", "apps/task-manager")).toBe("about:blank");
-    });
-
-    it("never points a slug app's src at the un-bridged /apps/{slug}/ document", () => {
-      for (const slug of ["notes", "weather", "2048", "whiteboard"]) {
-        expect(iframeSrc(slug, `apps/${slug}/`)).not.toContain(`/apps/${slug}/`);
-      }
-    });
-
-    it("legacy (non-slug) file paths still load via /files/{path}", () => {
-      expect(iframeSrc(null, "apps/legacy/index.html")).toBe("/files/apps/legacy/index.html");
-    });
-  });
-
   describe("edge-to-edge app content", () => {
     it("does not insert a sharing toolbar above the app iframe", async () => {
       const source = await readFile("shell/src/components/AppViewer.tsx", "utf8");
       expect(source).not.toContain("<FileResourceSharing");
       expect(source).toContain('className="min-h-0 w-full flex-1 border-0"');
-    });
-  });
-
-  describe("distributionStatus branching", () => {
-    it("installable -> openAppSession called", () => {
-      const status = "installable";
-      const shouldOpenSession = status === "installable" || status === "gated";
-      expect(shouldOpenSession).toBe(true);
-    });
-
-    it("gated -> shows ack dialog before session", () => {
-      const status = "gated";
-      const needsAck = status === "gated";
-      expect(needsAck).toBe(true);
-    });
-
-    it("blocked -> read-only card, no session call", () => {
-      const status = "blocked";
-      const shouldOpenSession = status === "installable" || status === "gated";
-      expect(shouldOpenSession).toBe(false);
-    });
-  });
-
-  describe("runtimeState branching", () => {
-    it("ready -> renders iframe", () => {
-      const state = { status: "ready" };
-      const shouldRenderIframe = state.status === "ready";
-      expect(shouldRenderIframe).toBe(true);
-    });
-
-    it("build_failed -> renders error card", () => {
-      const state = { status: "build_failed", stage: "build", exitCode: 1, stderrTail: "error" };
-      const shouldRenderError = state.status === "build_failed";
-      expect(shouldRenderError).toBe(true);
-    });
-
-    it("needs_build -> renders needs-build card", () => {
-      const state = { status: "needs_build" };
-      const shouldRenderNeedsBuild = state.status === "needs_build";
-      expect(shouldRenderNeedsBuild).toBe(true);
-    });
-  });
-
-  describe("postMessage session refresh", () => {
-    it("validates message origin, source, type, and slug", () => {
-      const mySlug = "notes";
-      const myOrigin = "http://localhost:3000";
-
-      // Valid message
-      const validMsg = {
-        type: "matrix-os:session-expired",
-        slug: "notes",
-      };
-      const validOrigin = "http://localhost:3000";
-
-      const isValid =
-        validOrigin === myOrigin &&
-        validMsg.type === "matrix-os:session-expired" &&
-        validMsg.slug === mySlug;
-      expect(isValid).toBe(true);
-    });
-
-    it("accepts the opaque origin used by sandboxed runtime iframes", () => {
-      const mySlug = "notes";
-      const eventOrigin = "null";
-      const msg = { type: "matrix-os:session-expired", slug: "notes" };
-
-      const isValid =
-        (eventOrigin === "http://localhost:3000" || eventOrigin === "null") &&
-        msg.type === "matrix-os:session-expired" &&
-        msg.slug === mySlug;
-      expect(isValid).toBe(true);
-    });
-
-    it("rejects message from different slug", () => {
-      const mySlug = "notes";
-      const msg = { type: "matrix-os:session-expired", slug: "calendar" };
-      expect(msg.slug === mySlug).toBe(false);
-    });
-
-    it("rejects message from different origin", () => {
-      const myOrigin = "http://localhost:3000";
-      const eventOrigin = "http://evil.com";
-      expect(eventOrigin === myOrigin).toBe(false);
-    });
-
-    it("debounces within 2 seconds", () => {
-      let lastRefreshAt = 0;
-      const DEBOUNCE_MS = 2000;
-
-      // First refresh (lastRefreshAt is 0, so any time >= 2000 passes)
-      const now1 = 5000;
-      const canRefresh1 = now1 - lastRefreshAt >= DEBOUNCE_MS;
-      expect(canRefresh1).toBe(true);
-      lastRefreshAt = now1;
-
-      // Second refresh within 2s (5000 + 500 = 5500, 5500 - 5000 = 500 < 2000)
-      const now2 = 5500;
-      const canRefresh2 = now2 - lastRefreshAt >= DEBOUNCE_MS;
-      expect(canRefresh2).toBe(false);
-
-      // Third refresh after 2s (5000 + 2100 = 7100, 7100 - 5000 = 2100 >= 2000)
-      const now3 = 7100;
-      const canRefresh3 = now3 - lastRefreshAt >= DEBOUNCE_MS;
-      expect(canRefresh3).toBe(true);
     });
   });
 
