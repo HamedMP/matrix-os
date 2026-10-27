@@ -228,16 +228,30 @@ describe("WorkRail", () => {
     expect(await screen.findByRole("button", { name: "Recent global" })).toBeTruthy();
   });
 
-  it("selects a Project without expanding it and keeps its disclosure independent", async () => {
+  it("keeps Project disclosure independent from selecting the Project", async () => {
     const { actions } = setup();
-    const name = await screen.findByRole("button", { name: "Alpha" });
-    fireEvent.click(name);
-    expect(actions.onSelectProject).toHaveBeenCalledWith(alpha);
-    expect(screen.queryByRole("button", { name: "Alpha chat" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Expand Alpha chats" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Expand Alpha chats" }));
     expect(screen.getByRole("button", { name: "Alpha chat" })).toBeTruthy();
-    expect(actions.onSelectProject).toHaveBeenCalledTimes(1);
+    expect(actions.onSelectProject).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Collapse Alpha chats" }));
+    expect(screen.queryByRole("button", { name: "Alpha chat" })).toBeNull();
+  });
+
+  it("focuses the sidebar on a selected Project until the owner goes back", async () => {
+    const { actions } = setup();
+    await screen.findByRole("button", { name: "Recent global" });
+    fireEvent.click(screen.getByRole("button", { name: "Alpha" }));
+    expect(actions.onSelectProject).toHaveBeenCalledWith(alpha);
+
+    expect(screen.getByRole("heading", { name: "Alpha" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Alpha chat" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Recent global" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Pinned global" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Create project" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to all chats" }));
+    expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Alpha" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Alpha chat" })).toBeNull();
   });
 
