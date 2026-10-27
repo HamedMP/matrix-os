@@ -9,6 +9,7 @@ import {
 import type {
   ProviderLifecycleAccount,
 } from "../../packages/gateway/src/ai-providers/provider-settings-coordinators.js";
+import { createOwnerOpenRouterKeySaver, readOwnerOpenRouterKey } from "../../packages/gateway/src/ai-providers/owner-openrouter-key.js";
 
 // Native executable discovery has its own tests. Keep this lifecycle fixture
 // independent of whichever CLI happens to be installed on the test host.
@@ -99,6 +100,32 @@ describe("provider CLI account lifecycle", () => {
     expect(receipts.receipts).toHaveLength(1);
     expect(receipts.receipts[0]).toMatchObject({ key: "logout_claude_1", state: "completed" });
     expect(JSON.stringify(receipts)).not.toMatch(/stdout|stderr|token|secret/i);
+  });
+
+  it("revokes the shared OpenRouter tombstone without logging out a native harness", async () => {
+    await createOwnerOpenRouterKeySaver({ homePath })("sk-or-owner");
+    const account: ProviderLifecycleAccount = {
+      ...claudeAccount,
+      id: "owner_openrouter",
+      providerId: "openrouter",
+      authMethod: "api_key",
+      accessSourceId: "owner_openrouter",
+      driverAccountCount: 4,
+    };
+    const release = vi.fn(async () => undefined);
+    const prepareOpenRouterCredentialChange = vi.fn(async () => release);
+    const lifecycle = createProviderCliAccountLifecycleCoordinator({
+      homePath,
+      enabledDriverIds: ["codex", "claude_code"],
+      run,
+      prepareOpenRouterCredentialChange,
+    });
+    expect(lifecycle.supportedActions(account)).toEqual(["logout_account", "remove_account"]);
+    await lifecycle.remove({ account, idempotencyKey: "remove_openrouter_1" });
+    expect(await readOwnerOpenRouterKey(homePath)).toMatchObject({ state: "setup_required" });
+    expect(prepareOpenRouterCredentialChange).toHaveBeenCalledOnce();
+    expect(release).toHaveBeenCalledOnce();
+    expect(run).not.toHaveBeenCalled();
   });
 
   it.each(["oauth", "api_key"] as const)("runs exact native Codex logout for %s mode", async (method) => {

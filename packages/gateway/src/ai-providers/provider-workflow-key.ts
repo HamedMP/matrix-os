@@ -8,11 +8,11 @@ import { ProviderWorkflowError } from './provider-workflows.js';
 import { commitCodexKey, CodexKeyRollbackFailedError } from './codex-key-transaction.js';
 export interface ProviderKeySaver {
   (key: string): Promise<void>;
-  connect?: (key: string, commit: () => Promise<void>) => Promise<void>;
+  connect?: (key: string, commit: (credentialGeneration?: string) => Promise<void>) => Promise<void>;
 }
 export interface ProviderKeyVerifier {
   (key: ProviderWorkflowKey): Promise<void>;
-  connect?: (key: ProviderWorkflowKey, commit: () => Promise<void>) => Promise<void>;
+  connect?: (key: ProviderWorkflowKey, commit: (credentialGeneration?: string) => Promise<void>) => Promise<void>;
 }
 /** Fixed remote probe failed before any native saver was invoked. */
 export class ProviderKeyPreflightError extends ProviderWorkflowError {
@@ -60,7 +60,7 @@ export function createProviderKeyVerifier(options: {
 }): ProviderKeyVerifier {
   if (!options.save)
     throw new Error('Key persistence dependency required');
-  const verify = async (input: ProviderWorkflowKey, commit?: () => Promise<void>): Promise<void> => {
+  const verify = async (input: ProviderWorkflowKey, commit?: (credentialGeneration?: string) => Promise<void>): Promise<void> => {
     if (input.providerId !== options.providerId)
       throw new ProviderKeyPreflightError('rejected');
     // A Claude subscription OAuth token is never an API key; refuse it locally
@@ -104,7 +104,7 @@ export function createProviderKeyVerifier(options: {
     else await save();
   };
   return Object.assign((input: ProviderWorkflowKey) => verify(input), options.save.connect
-    ? { connect: (input: ProviderWorkflowKey, commit: () => Promise<void>) => verify(input, commit) } : {});
+    ? { connect: (input: ProviderWorkflowKey, commit: (credentialGeneration?: string) => Promise<void>) => verify(input, commit) } : {});
 }
 /** Codex officially supports stdin for --with-api-key; argv/environment never contain the supplied secret. */
 export function createCodexKeySaver(options: {

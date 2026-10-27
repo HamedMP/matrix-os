@@ -9,7 +9,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
   const state = useHarnessWorkflowController(props);
   const terminalAvailable = props.terminalAvailable ?? true;
   const { source } = state;
-  const { harness, capability, client, disabled, onRefresh, onOpenTerminal, onConnectSaved, connectSavedDisabled, onDisconnect, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, operation, setOperation, method, setMethod, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, setDisconnectOpen, setUninstall, connectionPanel, pendingStart: pendingStartRef, run, start, stopPolling, restartPolling, failed, connecting, reuseCodex, inlineLogin, hasSubscription, subscriptionName, back } = state;
+  const { harness, capability, client, disabled, onRefresh, onOpenTerminal, onConnectSaved, connectSavedLabel, connectSavedDisabled, onDisconnect, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, operation, setOperation, method, setMethod, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, setDisconnectOpen, setUninstall, connectionPanel, pendingStart: pendingStartRef, run, start, stopPolling, restartPolling, failed, connecting, reuseCodex, inlineLogin, hasSubscription, subscriptionName, back } = state;
   const codexTerminal = harness.harness === "codex" && capability.connectionOptions?.some(isCodexTerminalOption);
   const codexDevice = harness.harness === "codex" && capability.connectionOptions?.some(isCodexDeviceOption);
   const reconnectOption = harness.harness === "codex" && source?.fundingKind === "owner_account"
@@ -48,9 +48,11 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
       {harness.installState === "installed" && connectionPresent ? renderConnection?.(changeAccountAction) : null}
       {renderAccountActions?.(disabled || pending || connecting || reconciling
         || (operationId !== null && operation?.id !== operationId))}
-      {onConnectSaved && !connected ? <button type="button" className="matrix-ap-button"
+      {onConnectSaved && (!connected || connectSavedLabel) ? <button type="button" className="matrix-ap-button"
         disabled={disabled || connectSavedDisabled || pending || connecting || reconciling || (harness.harness === "codex" && operationId !== null && operation?.id !== operationId)}
-        onClick={() => reconnectOption ? void start("login", reconnectOption.method === "terminal", reconnectOption) : void run(onConnectSaved)}>{harness.harness === "codex" ? "Reconnect" : "Connect saved connection"}</button> : null}
+        onClick={() => connectSavedLabel ? void run(onConnectSaved)
+          : reconnectOption ? void start("login", reconnectOption.method === "terminal", reconnectOption)
+            : void run(onConnectSaved)}>{connectSavedLabel ?? (harness.harness === "codex" ? "Reconnect" : "Connect saved connection")}</button> : null}
       {harness.installState === "installed" && !connectionPresent
         && !capability.connectionOptions && !inlineLogin && !terminalOnly && capability.apiKeyProviders.length === 0 ? (
         <p className="matrix-ap-help" role="status">

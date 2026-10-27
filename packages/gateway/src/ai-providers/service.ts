@@ -28,10 +28,14 @@ import {
   buildBundledModelCatalog,
   eligibleModelsForSource,
   OWNER_OPENAI_MODEL_IDS,
+  OPENROUTER_ANTHROPIC_MODEL_IDS,
+  OPENROUTER_CODEX_MODEL_IDS,
+  OPENROUTER_MATRIX_PI_MODEL_IDS,
 } from "./model-catalog.js";
 import type { MatrixFundedCredentialProvider } from "../funded-ai-credential-manager.js";
 import type { FundedAiReadinessReader } from "../funded-ai-readiness.js";
 import type { CodexLocalCredentialObservation } from "../agent-launcher.js";
+import { readOwnerOpenRouterKey } from "./owner-openrouter-key.js";
 
 const HEALTH_TIMEOUT_MS = 2_000;
 const CODEX_OBSERVATION_TIMEOUT_MS = 5_000;
@@ -78,6 +82,8 @@ interface AiProviderServiceOptions {
   matrixAnthropicConnection?: () => Promise<MatrixAnthropicConnection | undefined>;
   /** Fresh configured-owner peer authority only; no credentials or renderer owner IDs. */
   chatGptPlanObservation?: (signal: AbortSignal) => Promise<BotProviderConnection | undefined>;
+  /** Operational capability gate. Defaults off outside explicit composition. */
+  openRouterEnabled?: boolean;
 }
 
 function matchedCodexLocalObservation(
@@ -216,6 +222,8 @@ export class AiProviderService implements AiProviderSnapshotReader {
   readonly #codexLocalObservation?: AiProviderServiceOptions["codexLocalObservation"];
   readonly #matrixAnthropicConnection?: AiProviderServiceOptions["matrixAnthropicConnection"];
   readonly #chatGptPlanObservation?: AiProviderServiceOptions["chatGptPlanObservation"];
+  readonly #openRouterEnabled: boolean;
+  readonly #homePath: string;
 
   constructor(options: AiProviderServiceOptions) {
     if (!options.homePath) throw new Error("AI provider home path is required");
@@ -242,6 +250,8 @@ export class AiProviderService implements AiProviderSnapshotReader {
     this.#codexLocalObservation = options.codexLocalObservation;
     this.#matrixAnthropicConnection = options.matrixAnthropicConnection;
     this.#chatGptPlanObservation = options.chatGptPlanObservation;
+    this.#openRouterEnabled = options.openRouterEnabled === true;
+    this.#homePath = options.homePath;
   }
 
   async #readChatGptPlanObservation(parent?: AbortSignal): Promise<BotProviderConnection | undefined> {
@@ -303,7 +313,17 @@ export class AiProviderService implements AiProviderSnapshotReader {
       capabilities: [...KERNEL_CAPABILITIES],
       setupActions: [],
     });
-    if (managedMatrixOnly || !this.#driverInventory) return [kernel];
+    const openRouterDrivers = (drivers: AiProviderSnapshotV3["drivers"]): AiProviderSnapshotV3["drivers"] => {
+      if (!this.#openRouterEnabled) return drivers;
+      const additions: AiProviderSnapshotV3["drivers"] = [
+        { id: "matrix_pi", displayName: "Matrix AI", kind: "agent_sdk", installState: "installed", health: "ready", capabilities: ["tools", "resume", "cancellation"], setupActions: [] },
+        { id: "claude_code", displayName: "Claude Code", kind: "cli", installState: "missing", health: "stopped", capabilities: ["tools", "resume", "cancellation"], setupActions: ["install"] },
+        { id: "codex", displayName: "Codex", kind: "cli", installState: "missing", health: "stopped", capabilities: ["tools", "resume", "cancellation", "reasoning"], setupActions: ["install"] },
+      ];
+      const ids = new Set(drivers.map(driver => driver.id));
+      return [...drivers, ...additions.filter(driver => !ids.has(driver.id))];
+    };
+    if (managedMatrixOnly || !this.#driverInventory) return openRouterDrivers([kernel]);
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -322,20 +342,20 @@ export class AiProviderService implements AiProviderSnapshotReader {
         seen.add(driver.id);
         return true;
       });
-      return [kernel, ...unique];
+      return openRouterDrivers([kernel, ...unique]);
     } catch (error) {
       console.warn(
         "[ai-providers] Driver inventory unavailable:",
         error instanceof Error ? error.name : "UnknownError",
       );
-      return [kernel];
+      return openRouterDrivers([kernel]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
     }
   }
 
   async #resolveOwnerReadiness(
-    sourceId: "owner_anthropic_key" | "owner_anthropic_profile",
+    sourceId: "owner_anthropic_key" | "owner_anthropic_profile" | "owner_openrouter",
     observation: KernelCredentialObservationState,
     kind: "api_key" | "profile",
     now: string,
@@ -410,10 +430,13 @@ export class AiProviderService implements AiProviderSnapshotReader {
         Number.isFinite(options.nativeObservationDeadline) ? options.nativeObservationDeadline! : Infinity),
       deferRenewal: true,
     };
-    const { credentials, savedModel } = await this.#credentials.read();
+    const [{ credentials, savedModel }, openRouterCredential] = await Promise.all([
+      this.#credentials.read(),
+      readOwnerOpenRouterKey(this.#homePath),
+    ]);
     // These observations are independent. A slow CLI must not serialize the
     // funding and credential checks behind its bounded inventory deadline.
-    const [drivers, funded, apiKeyReadiness, profileReadiness, observedNativeCatalog] = await Promise.all([
+    const [drivers, funded, apiKeyReadiness, profileReadiness, openRouterReadiness, observedNativeCatalog] = await Promise.all([
       this.#drivers(managedMatrixOnly),
       !options.suppressFundedProbes && credentials.matrixIncluded.state === "ready" && this.#fundedReadiness
         ? this.#fundedReadiness.read()
@@ -424,6 +447,9 @@ export class AiProviderService implements AiProviderSnapshotReader {
       managedMatrixOnly ? readinessForObservation(credentials.ownerProfile.state, "profile", now) : this.#resolveOwnerReadiness(
         "owner_anthropic_profile", credentials.ownerProfile.state, "profile", now, options.refresh === true,
       ),
+      this.#openRouterEnabled
+        ? this.#resolveOwnerReadiness("owner_openrouter", openRouterCredential.state, "api_key", now, options.refresh === true, undefined, options.signal)
+        : readinessForObservation(openRouterCredential.state === "setup_required" ? "setup_required" : "disabled", "api_key", now),
       !managedMatrixOnly && this.#nativeHarnessCatalogReader ? this.#nativeHarnessCatalogReader(options.refresh === true, nativeScope) : undefined,
     ]);
     options.signal?.throwIfAborted();
@@ -452,7 +478,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       "matrix",
       now,
     );
-    const catalog = buildBundledModelCatalog();
+    const catalog = buildBundledModelCatalog({ includeOpenRouter: this.#openRouterEnabled });
     const observeFundedSource = (sourceId: string) => fundedSourceObservation(
       eligibleModelsForSource(sourceId, catalog).map(model => model.id), matrixReadiness, funded,
     );
@@ -499,13 +525,14 @@ export class AiProviderService implements AiProviderSnapshotReader {
       }, profileReadiness),
       sourceFromReadiness({
         id: "owner_openrouter",
-        displayName: "OpenRouter account",
-        fundingKind: "owner_account",
+        displayName: "OpenRouter API key",
+        fundingKind: "owner_api_key",
         vendor: "openrouter",
-        accountLabel: null,
-        eligibleModelIds: [],
+        accountLabel: "Billed by OpenRouter",
+        eligibleModelIds: eligibleModelsForSource("owner_openrouter", catalog).map(model => model.id),
+        ...(openRouterCredential.credentialGeneration ? { credentialGeneration: openRouterCredential.credentialGeneration } : {}),
         policyVersion: AI_PROVIDER_CATALOG_VERSION,
-      }, readinessForObservation("setup_required", "profile", now)),
+      }, openRouterReadiness),
       sourceFromReadiness({
         id: "owner_openai_profile",
         displayName: codexNativeKey ? "OpenAI API key" : "Codex account",
@@ -539,9 +566,9 @@ export class AiProviderService implements AiProviderSnapshotReader {
       {
         id: "owner_openrouter",
         vendor: "openrouter",
-        authMethod: null,
-        accountLabel: null,
-        ...readinessForObservation("setup_required", "profile", now),
+        authMethod: openRouterCredential.state === "setup_required" ? null : "api_key",
+        accountLabel: "OpenRouter",
+        ...openRouterReadiness,
       },
       {
         id: "owner_codex",
@@ -605,6 +632,24 @@ export class AiProviderService implements AiProviderSnapshotReader {
       defaultModelId: codexReadiness.state === "ready" ? OWNER_OPENAI_MODEL_IDS[0] : null,
       catalogVersion: AI_PROVIDER_CATALOG_VERSION,
     };
+    const openRouterSource = accessSources.find(source => source.id === "owner_openrouter")!;
+    const openRouterInstance = (id: string, driverId: string, modelIds: readonly string[]) => {
+      const driver = drivers.find(candidate => candidate.id === driverId);
+      const readiness = driver?.installState === "installed" ? openRouterReadiness : readinessForDriver(driver, now);
+      return {
+        id, driverId, vendor: "openrouter" as const, accountId: "owner_openrouter",
+        accessSourceId: openRouterSource.id, label: "Billed by OpenRouter", readiness,
+        capabilitySnapshot: driver?.capabilities ?? [], modelIds: [...modelIds],
+        defaultModelId: readiness.state === "ready" ? modelIds[0] ?? null : null,
+        catalogVersion: AI_PROVIDER_CATALOG_VERSION,
+      };
+    };
+    const openRouterInstances = this.#openRouterEnabled ? [
+      openRouterInstance("matrix_pi_owner_openrouter", "matrix_pi", OPENROUTER_MATRIX_PI_MODEL_IDS),
+      openRouterInstance("kernel_owner_openrouter", "kernel", OPENROUTER_ANTHROPIC_MODEL_IDS),
+      openRouterInstance("claude_code_owner_openrouter", "claude_code", OPENROUTER_ANTHROPIC_MODEL_IDS),
+      openRouterInstance("codex_owner_openrouter", "codex", OPENROUTER_CODEX_MODEL_IDS),
+    ] : [];
     if (nativeClaudeProfile) {
       const original = accessSources.find(source => source.id === "owner_anthropic_profile")!;
       accessSources.push({ ...original, id: "owner_claude_profile", displayName: "Claude account", accountLabel: "Claude account" });
@@ -620,6 +665,7 @@ export class AiProviderService implements AiProviderSnapshotReader {
       ...(nativeClaudeProfile ? [{ ...kernelInstances.find(instance => instance.accessSourceId === "owner_anthropic_profile")!,
         id: "claude_code_owner_profile", driverId: "claude_code", accountId: "owner_claude_profile", accessSourceId: "owner_claude_profile",
         label: "Claude account" }] : []),
+      ...openRouterInstances,
     ];
 
     const selectedInstance = instances.find(

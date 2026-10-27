@@ -534,6 +534,30 @@ it.each(['trusted', 'unsupported'] as const)('connects a verified Claude key onl
   expect(store.mutate).not.toHaveBeenCalled();
 });
 
+it.each(['claude', 'codex'] as const)('connects one shared OpenRouter key through %s without invoking native key stores', async harness => {
+  const row = { id: `harness_${harness === 'claude' ? 'claude_code' : 'codex'}`, harness, displayName: harness,
+    installState: 'installed', authState: 'unknown', loginMethods: [], selectedAccountId: null,
+    route: { kind: 'fixed', providerId: harness === 'claude' ? 'anthropic' : 'openai', modelId: 'native-model' } };
+  const snapshot = { revision: 7, access: { mode: 'writable' }, harnesses: [row], harnessCatalog: [],
+    accessSources: [{ id: 'owner_openrouter', providerId: 'openrouter', eligibleModelIds: ['anthropic/claude-sonnet-5', 'openai/gpt-5.6-luna'] }] };
+  const completeOpenRouterKeyConnection = vi.fn(async () => ({ kind: 'snapshot', snapshot }));
+  const store = { getSnapshot: vi.fn(async () => snapshot), mutate: vi.fn(), completeOpenRouterKeyConnection } as unknown as ProviderSettingsStoreWriter;
+  const nativeSave = vi.fn(async () => {});
+  const openRouterSave = Object.assign(vi.fn(async () => {}), {
+    connect: vi.fn(async (_key: string, commit: (generation: string) => Promise<void>) => commit('11111111-1111-4111-8111-111111111111')),
+  });
+  const nativeProvider = harness === 'claude' ? 'anthropic' as const : 'openai' as const;
+  const [adapter] = await createNativeProviderWorkflowAdapters({ store, terminal: nativeFixture(harness).terminal,
+    verifyKeys: { [harness]: { [nativeProvider]: nativeSave, openrouter: openRouterSave } } });
+  expect(adapter!.apiKeyProviders).toEqual([nativeProvider, 'openrouter']);
+  await adapter!.verifyKey!({ harnessInstanceId: row.id, providerId: 'openrouter', apiKey: 'sk-or-synthetic' });
+  expect(openRouterSave.connect).toHaveBeenCalledOnce();
+  expect(nativeSave).not.toHaveBeenCalled();
+  expect(completeOpenRouterKeyConnection).toHaveBeenCalledWith(expect.objectContaining({
+    harnessInstanceId: row.id, expectedRevision: 7, credentialGeneration: '11111111-1111-4111-8111-111111111111',
+  }));
+});
+
 it.each(['wrong-harness', 'wrong-billing', 'wrong-execution'] as const)('keeps the native Codex login guard before side effects: %s', async mode => {
   const f = nativeFixture();
   Object.assign(f.row, { route: { kind: 'fixed', providerId: 'openai', modelId: 'gpt-test' } });

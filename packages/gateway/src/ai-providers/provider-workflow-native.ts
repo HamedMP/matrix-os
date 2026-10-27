@@ -17,7 +17,7 @@ import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { CODEX_VERIFIED_NPM_PACKAGE, type TerminalRef, type AiProviderSnapshotV3, type ProviderWorkflowStart } from '@matrix-os/contracts';
+import { CODEX_VERIFIED_NPM_PACKAGE, type TerminalRef, type AiProviderSnapshotV3, type ProviderWorkflowStart, type ProviderWorkflowKey } from '@matrix-os/contracts';
 import type { TerminalRuntimeSocketClient } from '@matrix-os/terminal-runtime';
 import type { ProviderSettingsStoreWriter } from './provider-settings-store.js';
 import { ProviderWorkflowError, ProviderWorkflowNotStartedError, type ProviderWorkflowAdapter } from './provider-workflows.js';
@@ -52,7 +52,8 @@ export async function createNativeProviderWorkflowAdapters(options: {
     available: boolean;
     run(action: 'cancel-install', harness: 'hermes' | 'openclaw'): Promise<void>;
   };
-  verifyKeys?: Partial<Record<'codex' | 'claude' | 'opencode' | 'pi' | 'hermes' | 'openclaw', ProviderKeyVerifier>>;
+  verifyKeys?: Partial<Record<'codex' | 'claude' | 'opencode' | 'pi' | 'hermes' | 'openclaw',
+    ProviderKeyVerifier | Partial<Record<ProviderWorkflowKey["providerId"], ProviderKeyVerifier>>>>;
 }): Promise<ProviderWorkflowAdapter[]> {
   if (!options.store || !options.terminal)
     throw new Error('Native workflow dependencies required');
@@ -79,9 +80,15 @@ export async function createNativeProviderWorkflowAdapters(options: {
     await options.store.mutate({ type: 'set_harness_enabled', harnessInstanceId: id,
       enabled: true, expectedRevision: current.revision, idempotencyKey: key });
   };
-  const enableConnectedKey = async (id: string, key: string, provider: "openai" | "anthropic" | "openrouter") => {
+  const enableConnectedKey = async (id: string, key: string, provider: "openai" | "anthropic" | "openrouter", credentialGeneration?: string) => {
     const current = await options.store.getSnapshot({ refresh: true });
     const exact = current.harnesses.find(row => row.id === id);
+    if (provider === "openrouter") {
+      if (!exact || current.access.mode !== "writable" || !credentialGeneration || !options.store.completeOpenRouterKeyConnection) throw new ProviderWorkflowError("unavailable");
+      await options.store.completeOpenRouterKeyConnection({ harnessInstanceId: id, expectedRevision: current.revision,
+        idempotencyKey: key, credentialGeneration });
+      return;
+    }
     if (exact?.harness !== "claude" || provider !== "anthropic") return enableConnectedHarness(id, key);
     const source = current.accessSources.find(row => row.id === "owner_anthropic_key" && row.providerId === provider);
     if (!source || current.access.mode !== "writable" || !source.eligibleModelIds.includes(exact.route.modelId)) throw new ProviderWorkflowError("unavailable");
@@ -122,14 +129,17 @@ export async function createNativeProviderWorkflowAdapters(options: {
     const canDeviceLogin = canLogin && harness.harness === 'codex' && !!options.store.completeCodexNativeLogin
       && await options.codexSettingsConnection?.available() === true;
     const system = harness.harness === 'hermes' || harness.harness === 'openclaw';
-    const keyAdapter = harness.installState === 'installed' ? options.verifyKeys?.[harness.harness] : undefined;
+    const configuredKeyAdapters = harness.installState === 'installed' ? options.verifyKeys?.[harness.harness] : undefined;
+    const keyAdapters: Partial<Record<ProviderWorkflowKey["providerId"], ProviderKeyVerifier>> = typeof configuredKeyAdapters === "function"
+      ? { [harness.harness === "claude" ? "anthropic" : "openai"]: configuredKeyAdapters }
+      : configuredKeyAdapters ?? {};
     const loginMethods: NonNullable<ProviderWorkflowStart['method']>[] = [
       ...(canBrowserLogin ? ['browser' as const] : []),
       ...(canDeviceLogin ? ['device_code' as const] : []),
       ...(canLogin ? ['terminal' as const] : []),
     ];
     const apiKeyProviders = opencodeCapability.apiKey && settingsConnection && "apiKeyProviders" in settingsConnection
-      ? [...await settingsConnection.apiKeyProviders()] : opencodeCapability.apiKey ? ['openai' as const] : keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [];
+      ? [...await settingsConnection.apiKeyProviders()] : opencodeCapability.apiKey ? ['openai' as const] : Object.keys(keyAdapters) as ProviderWorkflowKey["providerId"][];
     const nativeClaudeCompletion = createClaudeNativeConnectCompletion(options.store, harness.id);
     const confirmNativeLogin = async (idempotencyKey: string, startRevision?: number, current = () => true, verifyNativeAccount?: NativeAccountCompletionProof) => {
       const fresh = await options.store.getSnapshot({ refresh: true, includeNativeAccountMetadata: true, includeNativeAccountUsage: false });
@@ -151,8 +161,10 @@ export async function createNativeProviderWorkflowAdapters(options: {
       loginMethods, apiKeyProviders,
       connectionOptions: nativeWorkflowConnectionOptions({ harness: harness.harness, methods: loginMethods, keyProviders: apiKeyProviders }),
       install: (!!packageName || system && hostControl.available) && harness.installState !== 'installed', uninstall: !!packageName && managed || system && hostControl.available,
-      ...(opencodeCapability.apiKey && settingsConnection ? { verifyKey: settingsConnection.verifyKey } : keyAdapter ? { async verifyKey(key) {
-        if (keyAdapter.connect) return keyAdapter.connect(key, () => enableConnectedKey(harness.id, `key-connect-${randomUUID()}`, key.providerId));
+      ...(opencodeCapability.apiKey && settingsConnection ? { verifyKey: settingsConnection.verifyKey } : Object.keys(keyAdapters).length ? { async verifyKey(key) {
+        const keyAdapter = keyAdapters[key.providerId];
+        if (!keyAdapter) throw new ProviderWorkflowNotStartedError();
+        if (keyAdapter.connect) return keyAdapter.connect(key, generation => enableConnectedKey(harness.id, `key-connect-${randomUUID()}`, key.providerId, generation));
         await keyAdapter(key);
         await enableConnectedKey(harness.id, `key-connect-${randomUUID()}`, key.providerId);
       } } : {}),

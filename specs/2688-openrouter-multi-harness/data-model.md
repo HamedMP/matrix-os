@@ -10,7 +10,7 @@ revocation.
 
 ## Provider projection
 
-- Account: `account_owner_openrouter`, provider `openrouter`, auth method
+- Account: `owner_openrouter`, provider `openrouter`, auth method
   `api_key`, owner-funded, readiness derived from the canonical file.
 - Access source: `owner_openrouter`, reciprocal account binding.
 - Instances: the four stable IDs in the spec, each binding driver, account,
