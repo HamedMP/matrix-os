@@ -1,4 +1,5 @@
 import { registerBrowserApprovalRun } from "./browser-approval-registration.js";
+import { settleSteerCallbackFailure } from "./steering-delivery.js";
 import type { BrowserApprovalControl } from "./browser-approval-control.js";
 import { submitCanonicalApproval, type ApprovalProvenance } from "./approval-submission.js";
 import type { ExecutionAdmissionFence } from "../execution-admission-fence.js";
@@ -896,23 +897,13 @@ export class CanonicalChatOrchestrator {
         "[chat/orchestrator] Provider steering callback failed:",
         error instanceof Error ? error.name : "UnknownError",
       );
-      try {
-        await this.options.repository.failSteer(owner, {
-          chatId,
-          runId,
-          clientRequestId: input.clientRequestId,
-          acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
-        });
-      } catch (finishError: unknown) {
-        console.warn(
-          "[chat/orchestrator] Steering failure could not be persisted:",
-          finishError instanceof Error ? finishError.name : "UnknownError",
-        );
-      }
-      throw new CanonicalChatOrchestrationError(
-        safeError("run_unavailable", "The Run could not be steered. Try again.", true, ["retry"]),
-        503,
-      );
+      const failure = await settleSteerCallbackFailure(error, () => this.options.repository.failSteer(owner, {
+        chatId,
+        runId,
+        clientRequestId: input.clientRequestId,
+        acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
+      }));
+      throw new CanonicalChatOrchestrationError(failure, 503);
     }
     let message;
     try {
@@ -1003,24 +994,14 @@ export class CanonicalChatOrchestrator {
         "[chat/orchestrator] Provider queued steering callback failed:",
         error instanceof Error ? error.name : "UnknownError",
       );
-      try {
-        await this.options.repository.failQueuedTurnSteer(owner, {
-          chatId,
-          runId,
-          queuedTurnId,
-          clientRequestId: input.clientRequestId,
-          acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
-        });
-      } catch (finishError: unknown) {
-        console.warn(
-          "[chat/orchestrator] Queued steering failure could not be persisted:",
-          finishError instanceof Error ? finishError.name : "UnknownError",
-        );
-      }
-      throw new CanonicalChatOrchestrationError(
-        safeError("run_unavailable", "The Run could not be steered. Try again.", true, ["retry"]),
-        503,
-      );
+      const failure = await settleSteerCallbackFailure(error, () => this.options.repository.failQueuedTurnSteer(owner, {
+        chatId,
+        runId,
+        queuedTurnId,
+        clientRequestId: input.clientRequestId,
+        acceptedAt: (this.options.now ?? (() => new Date()))().toISOString(),
+      }), true);
+      throw new CanonicalChatOrchestrationError(failure, 503);
     }
     let message;
     try {

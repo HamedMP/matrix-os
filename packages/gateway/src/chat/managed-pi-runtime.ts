@@ -2,6 +2,7 @@ import type { BotInputHistoryReader } from "../bots/historical-input.js";
 import { createBotWorkerDrain } from "../bots/worker-drain.js";
 import { BOT_ATTACHMENT_UNAVAILABLE_MESSAGE, BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
 import { prepareSteerableBotInputs, type SteerableBotInputs } from "../bots/steerable-input.js";
+import { deliverAcknowledgedSteer } from "./steering-delivery.js";
 import { BotRunSpecSchema, BotRunOutcomeSchema, type BotEvent, type BotRunSpec } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { BotBrokerActionError, type BotEventSink, type BotRunSource } from "../bots/broker-actions.js";
@@ -292,9 +293,8 @@ export function createManagedPiRuntime(deps: {
       const accepted = await run.inputs.steer(binding, input.parts, input.prompt, async payload => {
         await deps.assertSource?.(binding, run.signal!);
         run.inputs!.assertAuthorized(binding);
-        const reply = await deps.host.client.runBot({ runtimeHandle: binding.runtimeHandle, executionGeneration: binding.executionGeneration,
-          command: { version: 1, kind: "bot.steer", runId: input.runId, ...payload } });
-        return reply.ok && reply.reply.acknowledged === true;
+        return deliverAcknowledgedSteer(() => deps.host.client.runBot({ runtimeHandle: binding.runtimeHandle, executionGeneration: binding.executionGeneration,
+          command: { version: 1, kind: "bot.steer", runId: input.runId, ...payload } }));
       });
       if (!accepted) throw new Error("Matrix AI steering unavailable");
     },

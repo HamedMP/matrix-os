@@ -26,7 +26,7 @@ function upload(kind: "image" | "file"): CanonicalChatMessagePart {
     ownerReference: `temporary/desktop-chat/${kind}` };
 }
 
-async function fixture(mode: "Chat" | "Bot", acknowledged = true) {
+async function fixture(mode: "Chat" | "Bot", acknowledged: boolean | "unknown" | "disconnected" = true) {
   const home = await mkdtemp(join(tmpdir(), "attachment-steer-"));
   await mkdir(join(home, "temporary/desktop-chat"), { recursive: true });
   await writeFile(join(home, "temporary/desktop-chat/image"), Buffer.from([137,80,78,71,13,10,26,10]));
@@ -48,12 +48,14 @@ async function fixture(mode: "Chat" | "Bot", acknowledged = true) {
         abandon: async () => undefined,
       }, stopRuntime: async () => undefined,
     });
-    return { adapter, selection, delivered, complete };
+    return { adapter, selection, delivered, complete, runtime: undefined };
   }
   const snapshot = makeAiProviderSnapshot();
   const runBot = vi.fn(async (request: { command: { kind: string; runId: string } }) => {
     if (request.command.kind === "bot.run") await held;
     else await delivered(request);
+    if (request.command.kind === "bot.steer" && acknowledged === "unknown") return { ok: false, error: "runtime_unavailable" };
+    if (request.command.kind === "bot.steer" && acknowledged === "disconnected") throw new Error("Synthetic disconnected socket");
     return { ok: true, reply: request.command.kind === "bot.steer" ? { acknowledged }
       : { runId: request.command.runId, status: "completed", toolActions: 0 } };
   });
@@ -73,8 +75,26 @@ async function fixture(mode: "Chat" | "Bot", acknowledged = true) {
     forgetRun: () => undefined, cancelInference: () => undefined,
   });
   cleanup.push(async () => { complete(); await runtime.close(); });
-  return { adapter: runtime.adapter, selection, delivered, complete };
+  return { adapter: runtime.adapter, selection, delivered, complete, runtime };
 }
+
+it.each(["unknown", "disconnected"] as const)("keeps accepted Chat upload aliases readable with %s delivery", async outcome => {
+  const f = await fixture("Chat", outcome);
+  const input = { owner, chatId: "chat_unknown", runId: "run_unknown", turnId: "cturn_unknown",
+    prompt: text.text, parts: [text], selection: f.selection, clientRequestId: "req_unknown",
+    interactionMode: "default", permissionMode: "supervised", signal: new AbortController().signal };
+  const ready = Promise.withResolvers<void>();
+  const running = (async () => { for await (const event of f.adapter.start(input)) if (event.type === "state.updated") ready.resolve(); })();
+  await ready.promise;
+  try {
+    await expect(f.adapter.steer!({ ...input, parts: [text, upload("file")] })).rejects.toThrow();
+    const request = f.delivered.mock.calls[0]![0] as { command: { text: string } };
+    const relPath = request.command.text.match(/read_artifact path=(submitted-inputs\/[^;\s]+)/)![1]!;
+    expect(await f.runtime!.readSubmittedArtifact({ kind: "managed_chat", ownerId: owner.ownerId, chatId: input.chatId,
+      runId: input.runId, runtimeHandle: `runtime_${"a".repeat(32)}`, executionGeneration: "1" } as never, { relPath })).toBe("marker");
+    expect(f.delivered).toHaveBeenCalledOnce();
+  } finally { f.complete(); await running; }
+});
 
 it.each(["Chat", "Bot"] as const)("delivers %s attachment steering through the run's input transport", async mode => {
   const f = await fixture(mode);
@@ -99,8 +119,10 @@ it.each(["Chat", "Bot"] as const)("delivers %s attachment steering through the r
   } finally { f.complete(); await drain; }
 });
 
-it.each(["Chat", "Bot"] as const)("keeps queued %s uploads unclaimed when the worker refuses them", async mode => {
-  const f = await fixture(mode, false);
+it.each([
+  ["Chat", false], ["Bot", false], ["Chat", "unknown"], ["Chat", "disconnected"],
+] as const)("keeps queued %s uploads safe after steering outcome %s", async (mode, outcome) => {
+  const f = await fixture(mode, outcome);
   const pglite = await createTestPGlite();
   const repository = new ChatRepository(pglite.dialect);
   await repository.bootstrap();
@@ -145,6 +167,32 @@ it.each(["Chat", "Bot"] as const)("keeps queued %s uploads unclaimed when the wo
     .where("id", "=", queued.queuedTurn.id).executeTakeFirstOrThrow()).toEqual({ status: "queued" });
   expect((await repository.getDetailPage(owner, chatId, { limit: 50 }))?.messages.filter(message =>
     message.parts.some(part => part.type === "attachment_reference"))).toHaveLength(0);
+  if (outcome !== false) {
+    expect(await repository.kysely.selectFrom("chat_run_steers").select("status").where("queued_turn_id", "=", queued.queuedTurn.id)
+      .executeTakeFirstOrThrow()).toEqual({ status: "pending" });
+    const baseRevision = (await repository.get(owner, chatId))!.chat.revision;
+    await expect(orchestrator.steerQueuedTurn(owner, chatId, admitted.run.id, queued.queuedTurn.id, {
+      clientRequestId: "req_repeat_unknown", baseRevision, expectedTurnId: admitted.turn.id,
+    })).rejects.toMatchObject({ status: 409 });
+    await expect(repository.updateQueuedTurn(owner, { chatId, queuedTurnId: queued.queuedTurn.id,
+      clientRequestId: "req_edit_unknown", baseRevision, parts: [{ type: "text", text: "Changed correction" }],
+      updatedAt: new Date().toISOString() })).rejects.toThrow();
+    const cancel = async () => repository.cancelQueuedTurn(owner, { chatId, queuedTurnId: queued.queuedTurn.id,
+      clientRequestId: "req_cancel_unknown", baseRevision: (await repository.get(owner, chatId))!.chat.revision,
+      cancelledAt: new Date().toISOString() });
+    await expect(cancel()).rejects.toThrow(); // Delivery may still be in flight.
+    const claims = vi.spyOn(repository, "claimNextQueuedTurn");
+    f.complete();
+    await vi.waitFor(() => expect(claims).toHaveBeenCalled());
+    expect(await Promise.all(claims.mock.results.map(result => result.value))).toEqual([null]);
+    expect(await repository.kysely.selectFrom("chat_queued_turns").select("status").where("id", "=", queued.queuedTurn.id)
+      .executeTakeFirstOrThrow()).toEqual({ status: "queued" });
+    expect(f.delivered).toHaveBeenCalledOnce();
+    await expect(cancel()).resolves.toMatchObject({ cancellation: "cancelled" });
+    expect(await repository.listQueuedTurns(owner, chatId)).toEqual([]);
+    expect(await repository.kysely.selectFrom("chat_run_steers").select("status").where("queued_turn_id", "=", queued.queuedTurn.id)
+      .executeTakeFirstOrThrow()).toEqual({ status: "failed" });
+  }
 });
 
 it.each(["Chat", "Bot"] as const)("rejects a transport-successful but worker-refused %s steer", async mode => {

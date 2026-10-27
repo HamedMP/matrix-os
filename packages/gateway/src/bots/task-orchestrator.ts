@@ -1,8 +1,9 @@
-import { sql } from "kysely";
 import type { BotInputHistoryReader } from "./historical-input.js";
 import { createBotWorkerDrain } from "./worker-drain.js";
 import { BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
 import { prepareSteerableBotInputs, type SteerableBotInputs } from "./steerable-input.js";
+import { deliverAcknowledgedSteer } from "../chat/steering-delivery.js";
+import { sql } from "kysely";
 import { isolatedChatModelMatches, isManagedCustomBot, type ChatAgent } from "@matrix-os/contracts";
 import { sameCustomCoordinatorSelection } from "./custom-procedure.js";
 import { recipeCoordinatorSelection } from "./coordinator-selection.js";
@@ -581,8 +582,7 @@ export function createBotTaskOrchestrator(deps: {
       return run.inputs.steer(binding, parts, text, async payload => {
         await deps.assertSource?.(binding, run.signal);
         run.inputs!.assertAuthorized(binding);
-        const reply = await deps.client.runBot({ ...run.runtime!, command: { version: 1, kind: "bot.steer", runId, ...payload } });
-        return reply.ok && reply.reply.acknowledged === true;
+        return deliverAcknowledgedSteer(() => deps.client.runBot({ ...run.runtime!, command: { version: 1, kind: "bot.steer", runId, ...payload } }));
       });
     },
     async cancel(runId: string): Promise<void> {
