@@ -325,3 +325,43 @@ it.each(['symlink', 'hardlink'] as const)('does not remove or follow a %s encoun
   expect(await readFile(outside, 'utf8')).toBe('KEEP');
   expect((await fs.lstat(temporary)).isSymbolicLink()).toBe(kind === 'symlink');
 });
+
+it.each(['read', 'cleanup'] as const)('preserves saved history after a transient startup %s failure', async fault => {
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const parent = await mkdtemp(join(tmpdir(), 'matrix-plan-diagnostics-')); directories.push(parent);
+  const directory = join(parent, 'diagnostics'); await mkdir(directory, { mode: 0o700 });
+  const file = join(directory, 'chatgpt-plan-failures.json');
+  const saved = { observedAt: new Date().toISOString(), stage: 'peer_poll', category: 'timeout' };
+  await writeFile(file, JSON.stringify([saved]), { mode: 0o600 });
+  const unavailable = Object.assign(new Error('Read unavailable'), { code: 'EIO' });
+  if (fault === 'read') vi.spyOn(fs, 'open').mockRejectedValueOnce(unavailable);
+  else {
+    await writeFile(join(directory, '.chatgpt-plan-failures.tmp'), 'crash leftover', { mode: 0o600 });
+    vi.spyOn(fs, 'unlink').mockRejectedValueOnce(unavailable);
+  }
+  const store = createPlanDiagnosticStore({ directory }); stores.push(store);
+  await vi.waitFor(() => expect(warning).toHaveBeenCalled());
+  logPlanFailure('peer_reply', new DOMException('SECRET', 'TimeoutError'));
+  expect(await store.flush()).toBe(true);
+  expect(JSON.parse(await readFile(file, 'utf8'))).toEqual([
+    saved, expect.objectContaining({ stage: 'peer_reply', category: 'timeout' }),
+  ]);
+});
+
+it('does not replace unread saved history while startup reads keep failing', async () => {
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const parent = await mkdtemp(join(tmpdir(), 'matrix-plan-diagnostics-')); directories.push(parent);
+  const directory = join(parent, 'diagnostics'); await mkdir(directory, { mode: 0o700 });
+  const file = join(directory, 'chatgpt-plan-failures.json');
+  const saved = JSON.stringify([{ observedAt: new Date().toISOString(), stage: 'peer_poll', category: 'timeout' }]);
+  await writeFile(file, saved, { mode: 0o600 });
+  const actualOpen = fs.open;
+  vi.spyOn(fs, 'open').mockImplementation((...args) => args[0] === file
+    ? Promise.reject(Object.assign(new Error('Read unavailable'), { code: 'EIO' }))
+    : actualOpen(...args));
+  const store = createPlanDiagnosticStore({ directory }); stores.push(store);
+  await vi.waitFor(() => expect(warning).toHaveBeenCalled());
+  logPlanFailure('peer_reply', new DOMException('SECRET', 'TimeoutError'));
+  expect(await store.flush()).toBe(false);
+  expect(await readFile(file, 'utf8')).toBe(saved);
+});

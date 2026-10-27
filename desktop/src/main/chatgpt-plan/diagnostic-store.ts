@@ -18,7 +18,7 @@ export function createPlanDiagnosticStore(options: { directory: string; now?: ()
     const file = join(options.directory, 'chatgpt-plan-failures.json');
     const temporary = join(options.directory, '.chatgpt-plan-failures.tmp');
     let rows: PlanFailureRecord[] = [];
-    let dirty = false, stopped = false, closing = false, warned = false, failed = false;
+    let dirty = false, stopped = false, closing = false, warned = false, failed = false, initialized = false;
     let operation: Promise<void> | undefined;
     let closeTask: Promise<boolean> | undefined;
     const warning = () => { if (!warned) { warned = true; console.warn('[chatgpt-plan] diagnostic_write_failed'); } };
@@ -45,13 +45,13 @@ export function createPlanDiagnosticStore(options: { directory: string; now?: ()
         try { const entry = await lstat(path); if (!entry.isFile() || entry.isSymbolicLink() || entry.nlink !== 1) throw new Error('Unsafe diagnostic file'); return entry; }
         catch (error: unknown) { if (missing(error)) return null; throw error; }
     }
-    const ready = (async () => {
+    async function readSaved(): Promise<PlanFailureRecord[] | undefined> {
         await directory();
         // A single-instance app may leave this exact temporary file after a crash.
         if (await regular(temporary)) await unlink(temporary);
         const entry = await regular(file);
         if (!entry) return;
-        if (entry.size > MAX_BYTES) { dirty = true; return; }
+        if (entry.size > MAX_BYTES) return [];
         const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
         try {
             const actual = await handle.stat();
@@ -65,14 +65,23 @@ export function createPlanDiagnosticStore(options: { directory: string; now?: ()
                 // Only malformed JSON in this recorder's own regular file is
                 // recoverable here. Filesystem/ownership failures stay failures.
                 if (!(error instanceof SyntaxError)) throw error;
-                warning(); dirty = true; return;
+                warning(); return [];
             }
-            const saved = Array.isArray(value) ? value.slice(-MAX_ROWS).flatMap(value => { const row = safePlanFailureRecord(value); return row ? [row] : []; }) : [];
-            rows = [...saved, ...rows]; prune(); dirty = true;
+            return Array.isArray(value) ? value.slice(-MAX_ROWS).flatMap(value => { const row = safePlanFailureRecord(value); return row ? [row] : []; }) : [];
         } finally { await handle.close(); }
-    })().catch((error: unknown) => { failed = true; warning(); });
+    }
+    async function initialize() {
+        const saved = await readSaved();
+        if (saved) { rows = [...saved, ...rows]; prune(); dirty = true; }
+        initialized = true;
+    }
+    const ready = initialize().catch((error: unknown) => { failed = true; warning(); });
     async function persist() {
         await ready;
+        // A failed startup read must not permit replacement of unread history.
+        // Retry only in the existing serialized writer; a failure retains new
+        // rows for a later record/flush/sweep without starting a retry loop.
+        if (!initialized) await initialize();
         // Maintenance shares the writer slot, so it cannot delete an active
         // write. Recheck the exact regular, singly linked file before unlinking.
         await directory();
