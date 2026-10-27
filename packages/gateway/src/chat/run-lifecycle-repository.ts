@@ -65,7 +65,7 @@ function requireSafeRef(value: string): string {
 
 function preview(message: CanonicalChatMessage): string | null {
   const text = message.parts.find((part) => part.type === "text");
-  return text?.type === "text" ? text.text.slice(0, 280) : null;
+  return text?.type === "text" ? text.text.trim().slice(0, 280) || null : null;
 }
 
 function railTransitionForActivity(activity: CanonicalChatRunActivity): {
