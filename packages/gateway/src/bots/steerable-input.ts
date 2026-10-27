@@ -3,6 +3,7 @@ import { BOT_INPUT_MAX_ATTACHMENTS, BOT_INPUT_MAX_IMAGES, BOT_INPUT_TOTAL_MAX_BY
 import { prepareBotInputs, type PreparedBotInputs } from "./admitted-input.js";
 import { BotBrokerActionError } from "./broker-actions.js";
 import type { PiRuntimeBinding } from "./runtime-registry.js";
+import { ChatSteerDeliveryUnknownError } from "../chat/steering-delivery.js";
 
 type SteerPayload = { text: string; imageRange?: { start: number; count: number } };
 /** Additional uploads share the active run's existing broker authority and memory budget. */
@@ -70,7 +71,7 @@ export async function prepareSteerableBotInputs(input: Parameters<typeof prepare
         return accepted;
       } catch (error: unknown) {
         // Unknown delivery can still be hydrating: keep its bounded bytes until Stop/terminal cleanup.
-        if (!dispatched) release();
+        if (!dispatched || !(error instanceof ChatSteerDeliveryUnknownError)) release();
         throw error;
       } finally { pending = false; }
     },

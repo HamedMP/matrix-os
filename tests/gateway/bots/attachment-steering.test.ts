@@ -26,7 +26,8 @@ function upload(kind: "image" | "file"): CanonicalChatMessagePart {
     ownerReference: `temporary/desktop-chat/${kind}` };
 }
 
-async function fixture(mode: "Chat" | "Bot", acknowledged: boolean | "unknown" | "disconnected" = true) {
+async function fixture(mode: "Chat" | "Bot", acknowledged: boolean | "unknown" | "disconnected" = true,
+  assertSource?: () => Promise<void>) {
   const home = await mkdtemp(join(tmpdir(), "attachment-steer-"));
   await mkdir(join(home, "temporary/desktop-chat"), { recursive: true });
   await writeFile(join(home, "temporary/desktop-chat/image"), Buffer.from([137,80,78,71,13,10,26,10]));
@@ -71,12 +72,35 @@ async function fixture(mode: "Chat" | "Bot", acknowledged: boolean | "unknown" |
       startRenewal: () => ({ stop: async () => undefined }),
     },
     host: { client: { runBot } } as unknown as ScopeRuntimeHost,
+    assertSource,
     providers: { getSnapshot: async () => snapshot }, lifetime: new AbortController().signal,
     forgetRun: () => undefined, cancelInference: () => undefined,
   });
   cleanup.push(async () => { complete(); await runtime.close(); });
   return { adapter: runtime.adapter, selection, delivered, complete, runtime };
 }
+
+it("releases staged Chat uploads after known source failures before delivery", async () => {
+  let unavailable = false;
+  const f = await fixture("Chat", true, async () => { if (unavailable) throw new Error("Synthetic database unavailable"); });
+  const input = { owner, chatId: "chat_source_check", runId: "run_source_check", turnId: "cturn_source_check",
+    prompt: text.text, parts: [text], selection: f.selection, clientRequestId: "req_source_check",
+    interactionMode: "default", permissionMode: "supervised", signal: new AbortController().signal };
+  const ready = Promise.withResolvers<void>();
+  const running = (async () => { for await (const event of f.adapter.start(input)) if (event.type === "state.updated") ready.resolve(); })();
+  await ready.promise;
+  try {
+    unavailable = true;
+    for (let attempt = 0; attempt < 9; attempt++) {
+      await expect(f.adapter.steer!({ ...input, parts: [text, upload("file"), upload("image")] })).rejects.toThrow();
+    }
+    expect(f.delivered).not.toHaveBeenCalled();
+    unavailable = false;
+    await f.adapter.steer!({ ...input, parts: [text, upload("file"), upload("image")] });
+    expect(f.delivered).toHaveBeenCalledOnce();
+    expect(f.delivered.mock.calls[0]![0]).toMatchObject({ command: { imageRange: { start: 0, count: 1 } } });
+  } finally { f.complete(); await running; }
+});
 
 it.each(["unknown", "disconnected"] as const)("keeps accepted Chat upload aliases readable with %s delivery", async outcome => {
   const f = await fixture("Chat", outcome);

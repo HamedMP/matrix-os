@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CanonicalChatMessagePart } from "@matrix-os/contracts";
 import { prepareSteerableBotInputs } from "../../../packages/gateway/src/bots/steerable-input.js";
+import { ChatSteerDeliveryUnknownError } from "../../../packages/gateway/src/chat/steering-delivery.js";
 import { loadRunImages } from "../../../packages/bot-runtime/src/worker.js";
 
 let home: string;
@@ -56,7 +57,7 @@ it("releases definitely refused inputs but retains uncertain delivery without re
   const refused = vi.fn(async () => false);
   expect(await inputs.steer(binding, [part("file")], "Read", refused)).toBe(false);
   expect(inputs.fileAliases).toEqual([]);
-  const unknown = vi.fn(async () => { throw new Error("transport unavailable"); });
+  const unknown = vi.fn(async () => { throw new ChatSteerDeliveryUnknownError(); });
   await expect(inputs.steer(binding, [part("file")], "Read", unknown)).rejects.toThrow();
   expect(unknown).toHaveBeenCalledOnce();
   expect(await inputs.readArtifact(binding, { relPath: inputs.fileAliases[0]! })).toBe("STEER_FILE_MARKER");
