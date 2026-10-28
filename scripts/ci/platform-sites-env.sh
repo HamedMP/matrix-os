@@ -135,7 +135,9 @@ try {
     && parsed.port === '' && parsed.pathname === '/'
     && parsed.username === '' && parsed.password === ''
     && parsed.search === '' && parsed.hash === '';
-} catch {
+} catch (error) {
+  if (!(error instanceof TypeError)) throw error;
+  console.error('Sites endpoint URL is invalid.');
   valid = false;
 }
 if (!valid) process.exit(1);

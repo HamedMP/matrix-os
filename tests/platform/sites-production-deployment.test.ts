@@ -9,6 +9,7 @@ import { checkPublicSitesEnv } from '../../packages/platform/src/platform-startu
 type Step = { name?: string; run?: string; if?: string };
 const root = process.cwd();
 const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+const sitesEnvScript = readFileSync(join(root, 'scripts/ci/platform-sites-env.sh'), 'utf8');
 const operations = readFileSync(join(root, 'specs/551-public-app-sites/operations.md'), 'utf8');
 const deployment = YAML.parse(workflow).jobs.deploy;
 const temporaryDirectories: string[] = [];
@@ -98,6 +99,14 @@ afterEach(() => {
 });
 
 describe('production Matrix.page deployment contract', () => {
+  it('narrows endpoint parse failures without hiding unexpected validation errors', () => {
+    expect(sitesEnvScript).toContain('catch (error)');
+    expect(sitesEnvScript).toContain('error instanceof TypeError');
+    expect(sitesEnvScript).toContain("console.error('Sites endpoint URL is invalid.');");
+    expect(sitesEnvScript).toContain('throw error;');
+    expect(sitesEnvScript).not.toContain('catch {\n  valid = false;');
+  });
+
   it('fails startup when public Sites are enabled without edge proof or dedicated storage', () => {
     expect(checkPublicSitesEnv({ MATRIX_PUBLIC_SITES_ENABLED: 'false' })).toEqual([]);
     expect(checkPublicSitesEnv({ MATRIX_PUBLIC_SITES_ENABLED: 'true' }, () => {})).toEqual([
