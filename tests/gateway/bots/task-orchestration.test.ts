@@ -473,9 +473,9 @@ describe("bot turns through the matrix_bot adapter", () => {
     expect.soft(await tasks()).toEqual([expect.objectContaining({ status: "cancelled", run_id: "run_turn1" })]);
   });
 
-  it("aborts the Recipe Bot busy transport without waiting for its worker to finish", async () => {
+  it("reports Recipe Bot Stop immediately and bounds its checkpoint transport drain", async () => {
     const transportAborted = vi.fn();
-    const x = setup({ worker: input => {
+    const x = setup({ cancelGraceMs: 30, worker: input => {
       input.signal?.addEventListener("abort", transportAborted, { once: true });
       return new Promise(() => undefined);
     } });
@@ -483,8 +483,8 @@ describe("bot turns through the matrix_bot adapter", () => {
     await vi.waitFor(() => expect(x.commands.map(command => command.kind)).toEqual(["bot.run"]));
     await x.orchestrator.cancel("run_turn1");
     expect((await running).at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
-    expect(transportAborted).toHaveBeenCalledOnce();
     await expect(tasks()).resolves.toEqual([expect.objectContaining({ status: "cancelled" })]);
+    await vi.waitFor(() => expect(transportAborted).toHaveBeenCalledOnce());
   });
 
   it("renews the exact bound runtime and stops renewal before terminal release", async () => {

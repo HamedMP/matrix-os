@@ -119,13 +119,19 @@ async function ready(test: ReturnType<typeof fixture>) {
   expect(test.phaseEntered).toHaveBeenCalledOnce();
 }
 
-it.each(longRunningSources)("aborts the $name busy transport on Stop even when runtime release fails", async ({ source }) => {
+it.each(longRunningSources)("reports $name Stop immediately and bounds checkpoint transport even when release fails", async ({ source }) => {
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   const test = fixture("worker", false, source); await ready(test);
   test.release.mockRejectedValueOnce(new Error("Release unavailable"));
   await test.stop(); await vi.advanceTimersByTimeAsync(0); await test.done;
   expect(test.terminal()).toEqual(abortedEvent);
+  expect(test.cancelInference).toHaveBeenCalledOnce();
+  expect(test.transportAborted).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(9_999);
+  expect(test.transportAborted).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
   expect(test.transportAborted).toHaveBeenCalledOnce();
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
 });
 
 it.each(longRunningSources)("keeps a silent busy $name turn alive beyond thirty minutes and accepts its eventual result", async ({ source }) => {
@@ -230,11 +236,13 @@ it.each(["input", "lifetime", "close"] as const)("reports %s cancellation as abo
   const test = fixture(); await ready(test);
   if (cause === "input") test.input.abort();
   else if (cause === "lifetime") test.lifetime.abort();
-  else await test.runtime.close();
+  const closing = cause === "close" ? test.runtime.close() : Promise.resolve();
   await vi.advanceTimersByTimeAsync(0);
   expect(test.terminal()).toEqual(abortedEvent);
   await test.done;
   expect(test.cancelInference).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(10_000);
+  await closing;
   expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
 });
 
@@ -306,12 +314,13 @@ it("bounds terminal settlement while an unconfirmed runtime release stays pendin
   const released = deferred<void>();
   test.release.mockImplementationOnce(() => released.promise);
   test.input.abort(); await vi.advanceTimersByTimeAsync(0);
-  expect(test.terminal()).toBeUndefined();
+  expect(test.terminal()).toEqual(abortedEvent);
   await vi.advanceTimersByTimeAsync(10_000);
   expect(test.terminal()).toEqual(abortedEvent);
   await test.done;
   expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
-  expect(warn).toHaveBeenCalledWith("[managed-pi] cleanup still pending");
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(warn).toHaveBeenCalledWith("[managed-pi] grace release failed", "TimeoutError");
   released.resolve(); await vi.advanceTimersByTimeAsync(0);
   expect(vi.getTimerCount()).toBe(0);
 });
@@ -335,8 +344,9 @@ it("does not let remote approval revocation prevent runtime stop or terminal set
   test.closeRun.mockImplementation(() => closed.promise);
   test.input.abort(); await vi.advanceTimersByTimeAsync(0);
   expect(test.cancelInference).toHaveBeenCalledOnce();
-  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
+  expect(test.release).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(10_000);
+  expect(test.release).toHaveBeenCalledExactlyOnceWith(test.binding.runtimeHandle);
   expect(test.terminal()).toEqual(abortedEvent);
   await test.done;
   expect(warn).toHaveBeenCalledWith("[managed-pi] cleanup still pending");

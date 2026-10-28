@@ -1,4 +1,5 @@
 import type { BotInputHistoryReader } from "./historical-input.js";
+import { createBotWorkerDrain } from "./worker-drain.js";
 import { BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
 import { prepareBotInputs, type PreparedBotInputs } from "./admitted-input.js";
 import { isolatedChatModelMatches, isManagedCustomBot, type ChatAgent } from "@matrix-os/contracts";
@@ -89,7 +90,7 @@ interface ActiveRun {
   queue: CanonicalCliEventQueue<BotTurnEvent>;
   stopping?: "cancelled" | "lease_lost" | "deadline";
   finished?: boolean;
-  grace?: ReturnType<typeof setTimeout>;
+  worker?: ReturnType<typeof createBotWorkerDrain>;
   releasing?: Promise<void>;
 }
 
@@ -210,6 +211,10 @@ export function createBotTaskOrchestrator(deps: {
   async function stopRuntime(run: ActiveRun, runId: string, reason: "cancelled" | "lease_lost" | "deadline"): Promise<void> {
     if (run.stopping) return;
     run.stopping = reason;
+    if (reason === "cancelled") run.worker?.stop();
+    else if (run.worker) void run.worker.release().catch((error: unknown) => {
+      console.warn("[bots] revoked runtime release failed:", error instanceof Error ? error.name : "UnknownError");
+    });
     run.setupAbort.abort(new DOMException("Bot run stopped", "AbortError"));
     run.inputs?.dispose();
     const renewalStopped = stopRenewal(run);
@@ -238,16 +243,9 @@ export function createBotTaskOrchestrator(deps: {
       console.warn("[bots] bot cancel was not delivered:", error instanceof Error ? error.name : "UnknownError");
     }
     if (!delivered) {
-      await releaseRuntime(run, runtime.runtimeHandle);
+      await (run.worker?.release() ?? releaseRuntime(run, runtime.runtimeHandle));
       return;
     }
-    if (run.finished) return;
-    run.grace ??= setTimeout(() => {
-      if (!run.finished) void releaseRuntime(run, runtime.runtimeHandle).catch((error: unknown) => {
-        console.warn("[bots] bot runtime grace release failed:", error instanceof Error ? error.name : "UnknownError");
-      });
-    }, cancelGraceMs);
-    run.grace.unref?.();
   }
 
   async function groupWait<T>(run: ActiveRun, work: () => Promise<T>): Promise<T> {
@@ -271,7 +269,11 @@ export function createBotTaskOrchestrator(deps: {
     const interrupted = (error: unknown) => error instanceof BotSetupStepError;
     const interruptedStatus = (): BotRunStatus => run.stopping === "cancelled" ? "cancelled" : "failed";
     let bindings: Awaited<ReturnType<typeof deps.bindings.forChat>>;
-    try { bindings = await setup(() => deps.bindings.forChat({ ownerId: input.ownerId, chatId: input.chatId })); }
+    try {
+      await setup(() => Promise.all([...active.values()].filter(previous => previous !== run && previous.stopping
+        && previous.ownerId === input.ownerId && previous.chatId === input.chatId).map(previous => previous.worker?.done)));
+      bindings = await setup(() => deps.bindings.forChat({ ownerId: input.ownerId, chatId: input.chatId }));
+    }
     catch (error: unknown) {
       if (!interrupted(error)) console.warn("[bots] bot binding unavailable:", error instanceof Error ? error.name : "UnknownError");
       return { status: interruptedStatus() };
@@ -466,8 +468,12 @@ export function createBotTaskOrchestrator(deps: {
       if (run.stopping === "lease_lost") return await settle(task, "failed");
       await setup(async () => { await deps.assertSource?.(binding, input.signal); });
       if (input.signal.aborted || run.stopping) return await settle(task, run.stopping === "lease_lost" ? "failed" : "cancelled");
+      run.worker = createBotWorkerDrain({ graceMs: cancelGraceMs,
+        release: () => releaseRuntime(run, run.runtime!.runtimeHandle),
+        onError: error => console.warn("[bots] bot runtime grace release failed:", error instanceof Error ? error.name : "UnknownError"),
+      });
       const reply = await Promise.race([
-        deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.run", runId: input.runId }, signal: run.setupAbort.signal }),
+        run.worker.track(deps.client.runBot({ ...run.runtime, command: { version: 1, kind: "bot.run", runId: input.runId }, signal: run.worker.signal })),
         stopped,
       ]);
       // Stop is final even if an uncooperative worker replies with success afterward.
@@ -481,10 +487,10 @@ export function createBotTaskOrchestrator(deps: {
       return await settle(task, run.stopping === "cancelled" ? "cancelled" : "failed");
     } finally {
       run.finished = true;
-      if (run.grace) clearTimeout(run.grace);
       run.setupAbort.signal.removeEventListener("abort", onStopped);
       await stopRenewal(run);
-      await releaseRuntime(run, run.runtime.runtimeHandle);
+      if (run.stopping && run.worker) run.worker.stop();
+      else await (run.worker?.release() ?? releaseRuntime(run, run.runtime.runtimeHandle));
     }
   }
 
@@ -551,9 +557,13 @@ export function createBotTaskOrchestrator(deps: {
         run.finished = true;
         input.signal.removeEventListener("abort", onAbort);
         run.inputs?.dispose();
-        active.delete(input.runId);
-        deps.onRunFinished?.(input.runId);
         run.queue.finish();
+        const forget = () => { active.delete(input.runId); deps.onRunFinished?.(input.runId); };
+        // Keep the bounded slot until the worker's checkpoint/release finishes.
+        if (run.stopping && run.worker) void run.worker.done.then(forget).catch((error: unknown) => {
+          console.warn("[bots] run cleanup failed:", error instanceof Error ? error.name : "UnknownError");
+        });
+        else forget();
       });
       return { events: run.queue.values(), result };
     },
