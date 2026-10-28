@@ -1,8 +1,38 @@
 "use client";
 import type { KernelConversationContextProjection } from "@matrix-os/contracts";
-import { ChatProjectContextPicker } from "@matrix-os/ui";
+import { ChatProjectContextPicker, type ChatProjectListStatus, type ChatProjectOption } from "@matrix-os/ui";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
-import type { WebProjectsState } from "./web-projects";
+import type { WebProject, WebProjectsState } from "./web-projects";
+
+function repositoryLabel(project: WebProject): string | null {
+  return project.github ? `${project.github.owner}/${project.github.repo}` : null;
+}
+
+/** The Chat's project as the shared picker shows it; one missing from a loaded list is unavailable. */
+function projectContext(projectId: string | undefined, projects: WebProjectsState): KernelConversationContextProjection | null {
+  if (!projectId) return null;
+  const project = projects.projects.find((candidate) => candidate.id === projectId || candidate.slug === projectId);
+  const repository = project ? repositoryLabel(project) : null;
+  return {
+    projectId,
+    projectName: project?.name ?? projectId,
+    projectKind: project?.kind ?? "scratch",
+    ...(repository ? { repositoryLabel: repository } : {}),
+    status: project || projects.loading ? "ready" : "unavailable",
+  };
+}
+
+function listStatus(connected: boolean, projects: WebProjectsState): ChatProjectListStatus {
+  if (!connected) return "disconnected";
+  if (projects.error) return "error";
+  return projects.loading ? "loading" : "ready";
+}
+
+function projectOptions(projects: WebProjectsState): ChatProjectOption[] {
+  return projects.projects.map((project) => ({
+    id: project.id, slug: project.slug, name: project.name, kind: project.kind, repository: repositoryLabel(project),
+  }));
+}
 
 /** Electron Desktop's composer folder button: puts a new Chat in a project or moves an existing one. */
 export function WebChatProjectPicker({ projectId, projects, connected, disabled, onSelect }: {
@@ -12,14 +42,7 @@ export function WebChatProjectPicker({ projectId, projects, connected, disabled,
   disabled: boolean;
   onSelect: (projectId: string | null) => void;
 }) {
-  const project = projectId ? projects.projects.find((candidate) => candidate.id === projectId || candidate.slug === projectId) : undefined;
-  const context: KernelConversationContextProjection | null = projectId ? {
-    projectId,
-    projectName: project?.name ?? projectId,
-    projectKind: project?.kind ?? "scratch",
-    ...(project?.github ? { repositoryLabel: `${project.github.owner}/${project.github.repo}` } : {}),
-    status: project || projects.loading ? "ready" : "unavailable",
-  } : null;
+  const context = projectContext(projectId, projects);
   return (
     <ChatProjectContextPicker
       context={context}
@@ -27,14 +50,8 @@ export function WebChatProjectPicker({ projectId, projects, connected, disabled,
       triggerLabel={context ? undefined : "Choose project for chat"}
       disabled={disabled}
       menuZIndex={SHELL_Z_INDEX.popover}
-      projects={projects.projects.map((candidate) => ({
-        id: candidate.id,
-        slug: candidate.slug,
-        name: candidate.name,
-        kind: candidate.kind,
-        repository: candidate.github ? `${candidate.github.owner}/${candidate.github.repo}` : null,
-      }))}
-      listStatus={!connected ? "disconnected" : projects.error ? "error" : projects.loading ? "loading" : "ready"}
+      projects={projectOptions(projects)}
+      listStatus={listStatus(connected, projects)}
       onRetry={projects.retry}
       onSelect={(slug) => onSelect(projects.projects.find((candidate) => candidate.slug === slug)?.id ?? slug)}
       onRemove={() => onSelect(null)}

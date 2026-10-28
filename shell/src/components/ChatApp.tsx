@@ -94,6 +94,8 @@ import { DeleteChatDialog, useDeleteChatDialog } from "./chat/DeleteChatDialog";
 import {
   PlusIcon,
   PanelLeftIcon,
+  PanelLeftOpenIcon,
+  PanelLeftCloseIcon,
   SearchIcon,
   MessageSquareIcon,
   Settings2Icon,
@@ -482,6 +484,13 @@ function ChatAppContent({
     ? <WebChatComposerControls providerState={providerState} lockedInstanceId={boundProviderInstanceId} permissionModeRequest={permissionModeRequest}
       onSetupAction={(instance, action) => { void runProviderSetupAction(instance, action); }} />
     : undefined;
+  // Electron Desktop's pane toggle at the top-left of the Chat pane; the phone drawer has its own close button.
+  const sidebarToggle = mobile && sidebarOpen ? null : (
+    <Button variant="ghost" size="icon" aria-label={sidebarOpen ? "Close Chat sidebar" : "Open Chat sidebar"} aria-expanded={sidebarOpen}
+      className={`${touchIcon} shrink-0 text-muted-foreground hover:text-foreground`} onClick={() => setSidebarOpen(!sidebarOpen)}>
+      {sidebarOpen ? <PanelLeftOpenIcon className="size-4" /> : <PanelLeftCloseIcon className="size-4" />}
+    </Button>
+  );
   const projectControl = onSetChatProject && !collaborationView && !directBotId
     ? <WebChatProjectPicker projectId={chatProjectId} projects={webProjects} connected={connected} disabled={Boolean(activeRunId)} onSelect={onSetChatProject} />
     : undefined;
@@ -520,15 +529,18 @@ function ChatAppContent({
         }`}
       >
         <div className="sticky top-0 z-10 flex shrink-0 items-center justify-between bg-sidebar p-3 pb-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Close Chat sidebar"
-            className={`${touchIcon} text-muted-foreground hover:text-foreground`}
-            onClick={() => setSidebarOpen(false)}
-          >
-            <PanelLeftIcon className="size-4" />
-          </Button>
+          {/* The phone drawer closes from inside; wider layouts toggle from the Chat pane, like Electron. */}
+          {mobile ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Close Chat sidebar"
+              className={`${touchIcon} text-muted-foreground hover:text-foreground`}
+              onClick={() => setSidebarOpen(false)}
+            >
+              <PanelLeftIcon className="size-4" />
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             className="flex flex-1 justify-start gap-2 text-sm"
@@ -605,17 +617,9 @@ function ChatAppContent({
       <main ref={setBotDetailsContainer} className="matrix-bot-chat-layout @container/bot-chat relative flex flex-1 flex-col min-w-0">
         {/* Top bar */}
         {(!directBotId || collaborationView) ? <header data-slot="chat-session-header" className={`flex items-center gap-2 px-3 ${mobile ? "surface-glass min-h-14 border-b" : "min-h-12"}`}>
+          {sidebarToggle}
           {!sidebarOpen && (
             <>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label="Open Chat sidebar"
-                className={`${touchIcon} text-muted-foreground hover:text-foreground`}
-                onClick={() => setSidebarOpen(true)}
-              >
-                <PanelLeftIcon className="size-4" />
-              </Button>
               <Button
                 variant="ghost"
                 size="icon"
@@ -683,10 +687,10 @@ function ChatAppContent({
             onSessionMetadata={handleSharedMetadata} headerContainer={collaborationHeaderContainer} />
         ) : <>
         <BotChatPanel key={JSON.stringify([authorityKey, sessionId])} chatId={sessionId} client={agentClient} directBotId={directBotId} visible={visible} detailsContainer={botDetailsContainer}
-          headerLeading={!sidebarOpen ? <>
-            <Button variant="ghost" size="icon" aria-label="Open Chat sidebar" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={() => setSidebarOpen(true)}><PanelLeftIcon className="size-4" /></Button>
-            <Button variant="ghost" size="icon" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={onNewChat} title="New chat"><PlusIcon className="size-4" /></Button>
-          </> : null}
+          headerLeading={<>
+            {sidebarToggle}
+            {!sidebarOpen ? <Button variant="ghost" size="icon" className={`${touchIcon} text-muted-foreground hover:text-foreground`} onClick={onNewChat} title="New chat"><PlusIcon className="size-4" /></Button> : null}
+          </>}
           headerActions={<>
             {sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
             <Button aria-label="Open Agents & providers settings" title="Agents & providers" variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => openProviderSettings()}><Settings2Icon className="size-3.5" aria-hidden="true" /></Button>

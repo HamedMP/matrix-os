@@ -180,6 +180,17 @@ describe("Web Chat composer matches Electron Desktop", () => {
     expect(draftHeader).toHaveTextContent("");
   });
 
+  it("keeps the sidebar toggle at the top-left of the Chat pane, like Electron Desktop", () => {
+    render(<ChatApp {...base} messages={conversation} />);
+    const header = document.querySelector<HTMLElement>('[data-slot="chat-session-header"]')!;
+    const sidebar = document.querySelector<HTMLElement>("aside[data-rail-order-root]")!;
+    expect(within(sidebar).queryByRole("button", { name: "Close Chat sidebar" })).toBeNull();
+    fireEvent.click(within(header).getByRole("button", { name: "Close Chat sidebar" }));
+    expect(sidebar.className).toContain("w-0");
+    fireEvent.click(within(header).getByRole("button", { name: "Open Chat sidebar" }));
+    expect(sidebar.className).toContain("w-[260px]");
+  });
+
   it("renders Chat text antialiased like Electron Desktop", () => {
     const { container } = render(<ChatApp {...base} messages={conversation} />);
     expect(container.firstElementChild).toHaveClass("antialiased");
