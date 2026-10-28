@@ -66,8 +66,10 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
             }
         }
         try {
-            const upstream = new Request(`${origin.origin}/public/sites${url.pathname}`, { method: request.method, headers, body, redirect: 'error', signal: AbortSignal.timeout(request.method === 'POST' ? 10000 : 30000) });
+            const upstream = new Request(`${origin.origin}/public/sites${url.pathname}`, { method: request.method, headers, body, redirect: 'manual', signal: AbortSignal.timeout(request.method === 'POST' ? 10000 : 30000) });
             const response = await fetch(upstream, { signal: upstream.signal });
+            if (response.status >= 300 && response.status < 400)
+                throw new TypeError('Upstream redirect rejected');
             const result = new Response(response.body, { status: response.status, headers: response.headers });
             result.headers.delete('set-cookie');
             result.headers.set('Cache-Control', 'no-store');
