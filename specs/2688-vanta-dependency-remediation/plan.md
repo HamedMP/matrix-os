@@ -41,3 +41,6 @@ Full hosted CI exposed two assertions not covered by the initial focused runs. B
 Validation: 105 contract/provider/relay suites, 980 tests passed; affected-package native TypeScript passed. No skips or exclusions were added. Fresh full CI and Greptile review are required on the correction's published head.
 
 The completed fourth shard also found its old static MCP expectation (`^1.29.0`). Update that version contract to the security floor `^1.32.0` while retaining both reviewed Agent SDK pins; all seven SDK/cost/model-control tests pass.
+
+
+The preserved other-shard logs identified three additional Hono compatibility failures, all reproduced locally. Restore the WhatsApp API's explicit JSON/no-store 413 at middleware ingress, before authentication or linking, and retain verified-owner checks for valid bounded requests. Replace the device test's obsolete Request.formData spy with an actual malformed multipart request through the updated parser; verify generic failure, diagnostic logging, and that the device code remains unapproved. No device authorization implementation changes are required. All 331 tests in 15 WhatsApp/device suites, native TypeScript and the pattern gate pass; the complete final-head CI run remains required.

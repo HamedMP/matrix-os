@@ -978,9 +978,6 @@ describe("device routes", () => {
 
     it("logs form parse failures before returning invalid_request", async () => {
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const formDataSpy = vi
-        .spyOn(Request.prototype, "formData")
-        .mockRejectedValueOnce(new Error("form parse boom"));
       const code = await app
         .request("/api/auth/device/code", {
           method: "POST",
@@ -999,21 +996,26 @@ describe("device routes", () => {
       const res = await app.request("/auth/device/approve", {
         method: "POST",
         headers: {
-          "content-type": "application/x-www-form-urlencoded",
+          // Missing multipart boundary exercises the real parser failure path.
+          "content-type": "multipart/form-data",
           authorization: "Bearer clerk-alice",
           cookie: `device_csrf=${csrf}`,
         },
-        body: new URLSearchParams({
-          userCode: code.userCode,
-          csrf,
-        }).toString(),
+        body: "malformed multipart content",
       });
 
       expect(res.status).toBe(400);
       await expect(res.json()).resolves.toEqual({ error: "invalid_request" });
-      expect(errorSpy).toHaveBeenCalledWith("[device-flow] Form parse failed:", "form parse boom");
+      expect(errorSpy).toHaveBeenCalledWith("[device-flow] Form parse failed:", expect.stringMatching(/boundary|multipart|formdata/i));
 
-      formDataSpy.mockRestore();
+      const tokenRes = await app.request("/api/auth/device/token", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ deviceCode: code.deviceCode, clientId: "matrixos-cli" }),
+      });
+      expect(tokenRes.status).toBe(428);
+      await expect(tokenRes.json()).resolves.toEqual({ error: "authorization_pending" });
+
       errorSpy.mockRestore();
     });
   });
