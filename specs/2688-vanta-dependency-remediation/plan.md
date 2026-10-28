@@ -39,3 +39,5 @@ Full hosted CI exposed two assertions not covered by the initial focused runs. B
 - Patched Hono rejects oversized chunked bodies at the route middleware before contacting the home. The old integration assertion required a home call even on rejection. Replace that implementation-specific assertion with exact 413/no-forwarding and bounded input-read checks, plus successful exact-limit and smaller uploads. Keep the independent real relay-stream limit regressions intact; no middleware or limit is removed.
 
 Validation: 105 contract/provider/relay suites, 980 tests passed; affected-package native TypeScript passed. No skips or exclusions were added. Fresh full CI and Greptile review are required on the correction's published head.
+
+The completed fourth shard also found its old static MCP expectation (`^1.29.0`). Update that version contract to the security floor `^1.32.0` while retaining both reviewed Agent SDK pins; all seven SDK/cost/model-control tests pass.
