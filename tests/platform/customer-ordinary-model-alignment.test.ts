@@ -105,6 +105,21 @@ describe('ordinary model updates reach existing formal customers', () => {
     expect(await limits()).toEqual(money);
   });
 
+  it.each([123, true, null, {}, { models: [sonnet] },
+    [123], [true], [null], [{}], [[]], [sonnet, sonnet], ['bad value'], ['@cf/unreviewed/model'],
+    [...ordinary, 123], [...ordinary, sonnet]].map(value => ({ value })))(
+    'rejects malformed stored model policy $value without rewriting it or publishing a global revision', async ({ value }) => {
+      await customer('alice');
+      await db.executor.updateTable('ai_funded_runtime_policies')
+        .set({ allowed_model_ids: JSON.stringify(value) }).execute();
+      const priorGlobal = await global(), before = await policies(), money = await limits();
+      await expect(repo().updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: ordinary })).rejects.toThrow();
+      expect(await global()).toEqual(priorGlobal);
+      expect(await policies()).toEqual(before);
+      expect(await limits()).toEqual(money);
+    },
+  );
+
   it('rejects stale global revisions without changing any runtime policy', async () => {
     await customer('alice');
     await repo().updateGlobalPolicy({ expectedRevision: 0, enabled: true, allowedModelIds: [sonnet, flash] });
