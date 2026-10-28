@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 import { buildHermesNativeEnvironment } from '../hermes-native-environment.js';
 import { resolveHermesPython } from '../chat/hermes-python-environment.js';
 import { resolveHermesNativeRoot } from '../agent-config/hermes-native-credential-kind.js';
@@ -107,7 +107,8 @@ export function createHermesTerminalLoginRuntime(options: {
   async prepare(provider){
    if(!['openai-codex','anthropic'].includes(provider)) throw new ProviderWorkflowNotStartedError();
    const {cwd,python,env}=await qualify();
-   return {cwd,command:['env','-i',...Object.entries(env).map(([key,value])=>`${key}=${value}`),python,'-c',HERMES_TERMINAL_LOGIN_COMMAND,provider]};
+   // Terminal resolves a home-relative cwd and enforces canonical containment.
+   return {cwd:relative(home,cwd),command:['env','-i',...Object.entries(env).map(([key,value])=>`${key}=${value}`),python,'-c',HERMES_TERMINAL_LOGIN_COMMAND,provider]};
   },
   async complete(id,provider,revision,key,signal){
    signal.throwIfAborted();
