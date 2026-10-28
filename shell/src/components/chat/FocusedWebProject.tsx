@@ -28,7 +28,7 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
   sourceFilter: ChatImportSourceFilterValue;
   searchQuery: string;
 }) {
-  const { fetched, loading, error, retry, loadMore, hasMore } = usePagedProjectChats(project, gatewayUrl, unreadOnly, true);
+  const { fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly, true);
   const [olderExpanded, setOlderExpanded] = useState(true);
   const nowMs = useMinuteClock(true);
   const search = searchQuery.trim().toLowerCase();
@@ -47,7 +47,7 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
       <ProjectChatStatus rowCount={0} loading={loading} error={error} hasMore={hasMore} mobile={mobile} retry={retry}
         filtered={unreadOnly || sourceFilter !== "all" || Boolean(search)} />
       {/* Later pages may still match the search or filter. */}
-      <ProjectChatPaging projectName={project.name} hiddenCount={0} loading={loading} error={error} hasMore={hasMore}
+      <ProjectChatPaging projectName={project.name} hiddenCount={0} loading={loading} error={error} hasMore={hasMore} capped={capped}
         mobile={mobile} showMore={() => {}} loadMore={loadMore} />
     </> : null}
     {chats.length > 0 ? <WebChatLifecycleGroups conversations={chats} scopeKey={`${scopeKey ?? ""}:project:${project.id}`} renderRow={renderRow} /> : null}
@@ -56,7 +56,7 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
       <ProjectChatRows rows={older.map(chat => ({ kind: "fetched", chat } as const))} projectId={project.id} nowMs={nowMs}
         activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat} renderChat={() => null} mobile={mobile} />
       {error ? <ProjectChatStatus rowCount={older.length} loading={false} error mobile={mobile} retry={retry} hasMore={hasMore} filtered={false} /> : null}
-      <ProjectChatPaging projectName={project.name} hiddenCount={0} loading={loading} error={error} hasMore={hasMore}
+      <ProjectChatPaging projectName={project.name} hiddenCount={0} loading={loading} error={error} hasMore={hasMore} capped={capped}
         mobile={mobile} showMore={() => {}} loadMore={loadMore} />
     </ChatRailSection> : null}
   </>;

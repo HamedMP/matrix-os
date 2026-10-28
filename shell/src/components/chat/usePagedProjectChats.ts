@@ -12,6 +12,8 @@ const ProjectChatsResponseSchema = z.object({
 export type FetchedProjectChat = { id: string; title: string; titleVersion: number;
   importSource?: { harness: "claude" | "codex" } };
 type PageCursors = { id?: string | null; slug?: string | null };
+// Older Chats kept per expanded project; paging stops here so a very large project cannot grow memory without bound.
+export const MAX_PROJECT_CHAT_ROWS = 1_000;
 
 async function loadProjectChats(gatewayUrl: string, projectId: string, cursor: string | null, unreadOnly: boolean, signal: AbortSignal) {
   const query = new URLSearchParams({ projectId, limit: "100" });
@@ -58,7 +60,7 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
           if (ids.has(row.id)) return false;
           ids.add(row.id);
           return true;
-        })];
+        })].slice(0, MAX_PROJECT_CHAT_ROWS);
       });
       const next: PageCursors = {};
       for (const { key, page } of pages) next[key] = page.nextCursor ?? undefined;
@@ -87,6 +89,7 @@ export function usePagedProjectChats(project: WebProject, gatewayUrl: string, un
   };
   const retry = () => { setLoading(true); setError(false); setRetryCount(value => value + 1); };
   const loadMore = () => { setLoading(true); setError(false); setPageCursors(nextCursors); };
-  return { expanded, toggleExpanded, fetched, loading, error, retry, loadMore,
-    hasMore: Boolean(nextCursors.id || nextCursors.slug) };
+  const capped = fetched.length >= MAX_PROJECT_CHAT_ROWS;
+  return { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, capped,
+    hasMore: !capped && Boolean(nextCursors.id || nextCursors.slug) };
 }

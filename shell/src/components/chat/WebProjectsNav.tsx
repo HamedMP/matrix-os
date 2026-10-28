@@ -5,7 +5,7 @@ import { ChatRailOrderItem, ChatRailSection, OverflowingChatTitle, filterChatsBy
 import { ChevronRight, Folder, FolderOpen } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import type { RenameableConversation } from "./ChatTitleRename";
-import { usePagedProjectChats, type FetchedProjectChat } from "./usePagedProjectChats";
+import { MAX_PROJECT_CHAT_ROWS, usePagedProjectChats, type FetchedProjectChat } from "./usePagedProjectChats";
 import { projectChats, type WebProject, type WebProjectsState } from "./web-projects";
 
 // Same page size as the Electron Desktop project list.
@@ -69,7 +69,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   sourceFilter: ChatImportSourceFilterValue;
   searchQuery: string;
 }) {
-  const { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, hasMore } = usePagedProjectChats(project, gatewayUrl, unreadOnly);
+  const { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, hasMore, capped } = usePagedProjectChats(project, gatewayUrl, unreadOnly);
   const [limit, setLimit] = useState(PROJECT_CHAT_PAGE);
   const nowMs = useMinuteClock(expanded);
   const search = searchQuery.trim().toLowerCase();
@@ -100,7 +100,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
       <ProjectChatStatus rowCount={allRows.length} loading={loading} error={error} hasMore={hasMore}
         mobile={mobile} retry={retry} filtered={unreadOnly || sourceFilter !== "all" || Boolean(search)} />
       <ProjectChatPaging projectName={project.name} hiddenCount={hiddenCount} loading={loading} error={error}
-        hasMore={hasMore} mobile={mobile} showMore={() => setLimit(shownCount + PROJECT_CHAT_PAGE)} loadMore={loadMore} />
+        hasMore={hasMore} capped={capped} mobile={mobile} showMore={() => setLimit(shownCount + PROJECT_CHAT_PAGE)} loadMore={loadMore} />
     </div> : null}
   </div>;
 }
@@ -139,8 +139,8 @@ export function ProjectChatStatus({ rowCount, loading, error, hasMore, mobile, f
   </>;
 }
 
-export function ProjectChatPaging({ projectName, hiddenCount, loading, error, hasMore, mobile, showMore, loadMore }: {
-  projectName: string; hiddenCount: number; loading: boolean; error: boolean; hasMore: boolean; mobile: boolean;
+export function ProjectChatPaging({ projectName, hiddenCount, loading, error, hasMore, capped, mobile, showMore, loadMore }: {
+  projectName: string; hiddenCount: number; loading: boolean; error: boolean; hasMore: boolean; capped: boolean; mobile: boolean;
   showMore(): void; loadMore(): void;
 }) {
   return <>
@@ -148,5 +148,6 @@ export function ProjectChatPaging({ projectName, hiddenCount, loading, error, ha
       data-mobile={mobile || undefined} onClick={showMore}>Show more</button> : null}
     {!loading && !error && hiddenCount <= 0 && hasMore ? <button type="button" className="matrix-web-project-more"
       data-mobile={mobile || undefined} onClick={loadMore}>Load more chats</button> : null}
+    {hiddenCount <= 0 && capped ? <p className="matrix-web-project-note">Showing the newest {MAX_PROJECT_CHAT_ROWS.toLocaleString("en-US")} chats in this project.</p> : null}
   </>;
 }

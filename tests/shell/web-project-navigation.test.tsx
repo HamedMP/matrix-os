@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChatApp } from "../../shell/src/components/ChatApp";
 import { WebProjectsNav } from "../../shell/src/components/chat/WebProjectsNav";
 import { useWebProjects } from "../../shell/src/components/chat/web-projects";
+import { usePagedProjectChats } from "../../shell/src/components/chat/usePagedProjectChats";
 import { ChatRailOrderContext } from "@matrix-os/ui";
 import type { RenameableConversation } from "../../shell/src/components/chat/ChatTitleRename";
 
@@ -497,4 +498,26 @@ it("lays out projects like the other rail sections and older chats like ordinary
   expect(older.classList).toContain("matrix-web-chat-row");
   expect(older.closest(".matrix-web-chat-row-item")?.getAttribute("data-current")).toBe("true");
   expect(older.closest(".matrix-web-project-chats")).toBeTruthy();
+});
+
+it("stops keeping older project chats at 1,000 rows", async () => {
+  let page = 0;
+  const request = vi.fn(async (url: string) => {
+    // Every page is full and claims more, as a very large project would.
+    const batch = url.includes("projectId=france") ? `s${page}` : `i${++page}`;
+    return Response.json({ items: Array.from({ length: 100 }, (_, index) => ({ chat: { id: `chat_${batch}_${index}`, title: `Older ${batch} ${index}` } })),
+      nextCursor: "chatcur_more" });
+  });
+  vi.stubGlobal("fetch", request);
+  const { result } = renderHook(() => usePagedProjectChats({ id: "proj_france", slug: "france", name: "France" }, "https://example.test/vm/main", false, true));
+  for (let loads = 0; loads < 10; loads += 1) {
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    if (!result.current.hasMore) break;
+    act(() => result.current.loadMore());
+  }
+  await waitFor(() => expect(result.current.loading).toBe(false));
+  expect(result.current.fetched).toHaveLength(1_000);
+  expect(result.current.capped).toBe(true);
+  expect(result.current.hasMore).toBe(false);
+  expect(request).toHaveBeenCalledTimes(10);
 });

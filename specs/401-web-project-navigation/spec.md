@@ -25,7 +25,7 @@ The Web Chat rail has no full project workspace. This change restores listing an
 
 ## Read boundaries
 
-Both project endpoints use the gateway's authenticated owner principal. The client validates response shape, caps chat pages at 100 and cursors at 512 characters, times out reads after 10 seconds, and aborts in-flight requests when a project closes or the account/computer changes. This change adds no writes or new route. The client presents a generic error with retry when a project page cannot be read.
+Both project endpoints use the gateway's authenticated owner principal. The client validates response shape, caps chat pages at 100 and cursors at 512 characters, keeps at most 1,000 older chats per expanded project (Load more stops there and says so), times out reads after 10 seconds, and aborts in-flight requests when a project closes or the account/computer changes. This change adds no writes or new route. The client presents a generic error with retry when a project page cannot be read.
 
 ## Documentation
 
