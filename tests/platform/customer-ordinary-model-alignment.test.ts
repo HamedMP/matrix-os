@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MANAGED_WORKERS_AI_MODEL_IDS } from '@matrix-os/contracts';
 import { createAiFundedPolicyRepository } from '../../packages/platform/src/ai-funded-policy-repository.js';
 import { insertUserMachine, type PlatformDB } from '../../packages/platform/src/db.js';
-import { createTestPlatformDb, destroyTestPlatformDb } from './native-platform-db-test-helper.js';
+import { createTestPlatformDb, destroyTestPlatformDb } from './funded-policy-db-test-helper.js';
 
 const now = '2026-10-27T14:00:00.000Z';
 const sonnet = 'anthropic/claude-sonnet-5';
