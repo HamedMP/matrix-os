@@ -60,7 +60,7 @@ export function ChatComposerSelect({
             sideOffset={8}
             collisionPadding={16}
             data-preferred-side={menuSide}
-            className="z-50 min-w-48 rounded-xl border p-1.5 shadow-xl"
+            className="matrix-chat-composer-menu z-50 min-w-48 rounded-xl border p-1.5 shadow-xl"
             style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)", ...(menuZIndex === undefined ? {} : { zIndex: menuZIndex }) }}
           >
             <span className="block px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>

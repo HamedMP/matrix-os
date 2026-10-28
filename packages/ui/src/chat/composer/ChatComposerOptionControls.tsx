@@ -74,7 +74,7 @@ export function ChatComposerOptionControls({
                 align="end"
                 sideOffset={8}
                 collisionPadding={16}
-                className="z-50 flex min-w-56 flex-col gap-1 rounded-xl border p-2 shadow-xl"
+                className="matrix-chat-composer-menu z-50 flex min-w-56 flex-col gap-1 rounded-xl border p-2 shadow-xl"
                 style={{ borderColor: "var(--border-default)", background: "var(--bg-overlay)", ...(menuZIndex === undefined ? {} : { zIndex: menuZIndex }) }}
               >
                 <span className="px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--text-tertiary)" }}>

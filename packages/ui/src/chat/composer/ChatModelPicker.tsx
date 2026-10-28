@@ -87,7 +87,7 @@ export function ChatModelPicker({
     <Popover.Portal><Popover.Content ref={content} tabIndex={-1} onOpenAutoFocus={(event) => { escaped.current = false; event.preventDefault(); content.current?.focus(); }}
       onEscapeKeyDown={() => { escaped.current = true; }}
       onCloseAutoFocus={(event) => { if (!escaped.current) return; event.preventDefault(); trigger.current?.focus(); }} side={menuSide} align="end" sideOffset={10} collisionPadding={16}
-      className="w-[352px] max-w-[calc(100vw-32px)] overflow-x-hidden overflow-y-auto rounded-xl border shadow-xl"
+      className="matrix-chat-composer-menu w-[352px] max-w-[calc(100vw-32px)] overflow-x-hidden overflow-y-auto rounded-xl border shadow-xl"
       style={{ ...(menuZIndex === undefined ? {} : { zIndex: menuZIndex }), maxHeight: "min(520px, calc(100vh - 32px))", borderColor: "var(--border-default)", background: "var(--bg-overlay)", color: "var(--text-primary)" }}
       data-slot="provider-model-picker" data-preferred-side={menuSide}>
       <CompactChatProviderChoices loading={loading} catalog={catalog} choices={choices}

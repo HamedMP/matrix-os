@@ -304,6 +304,7 @@ export { ChatComposerSelect, type ChatComposerSelectOption } from "./chat/compos
 export { ChatComposerOptionControls, ChatComposerAttachButton, type ChatComposerOptionControl } from "./chat/composer/ChatComposerOptionControls.js";
 export { chatPermissionModeLabel } from "./chat/composer/permission-mode-label.js";
 export { ChatModelPicker } from "./chat/composer/ChatModelPicker.js";
+export { ChatProjectContextPicker, type ChatProjectListStatus, type ChatProjectOption } from "./chat/composer/ChatProjectContextPicker.js";
 export { QueuedTurnsPanel, type QueuedTurnAction } from "./chat/composer/QueuedTurnsPanel.js";
 export { ChatSpeechInputButton } from "./speech/ChatSpeechInputButton.js";
 export { ChatNewChatContent, ChatStarterCards, ChatComposerColumn } from "./chat/new-chat/ChatNewChatContent.js";

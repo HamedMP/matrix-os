@@ -212,7 +212,7 @@ export function QueuedTurnsPanel({
                       side="top"
                       sideOffset={6}
                       collisionPadding={12}
-                      className="fade-in min-w-[156px] rounded-xl border p-1.5"
+                      className="matrix-chat-composer-menu fade-in min-w-[156px] rounded-xl border p-1.5"
                       style={{
                         ...(menuZIndex === undefined ? {} : { zIndex: menuZIndex }),
                         background: "var(--bg-overlay)",

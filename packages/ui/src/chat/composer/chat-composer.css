@@ -19,6 +19,19 @@
   box-shadow: none;
 }
 
+/* Electron Desktop's type scale and smoothing. Electron already defines both on
+   its root; the Web shell keeps Tailwind's larger defaults elsewhere, so the
+   composer and its portaled menus carry them here. */
+.matrix-chat-composer,
+.matrix-chat-composer-menu {
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 /* Figma Chat geometry, scoped so legacy coding-agent composer presentation stays intact. */
 .matrix-chat-composer [data-slot="composer-context-row"]:empty { display: none; }
 .matrix-chat-composer .prompt-card { min-height: 114px; border-radius: 12px; }

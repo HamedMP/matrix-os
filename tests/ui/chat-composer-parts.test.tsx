@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalChatQueuedTurn } from "@matrix-os/contracts";
-import { ChatComposerOptionControls, ChatNewChatContent, ChatPromptInput, QueuedTurnsPanel } from "../../packages/ui/src/index.js";
+import { ChatComposerOptionControls, ChatNewChatContent, ChatProjectContextPicker, ChatPromptInput, QueuedTurnsPanel } from "../../packages/ui/src/index.js";
 
 afterEach(cleanup);
 
@@ -69,6 +69,67 @@ describe("shared Chat composer parts", () => {
   it("gives toolbar buttons 44px targets on touch screens only", () => {
     const css = readFileSync(path.resolve(import.meta.dirname, "../../packages/ui/src/chat/composer/chat-composer.css"), "utf8");
     expect(css).toMatch(/@media \(pointer: coarse\)\s*\{\s*\.matrix-chat-composer \[data-slot="prompt-input-toolbar"\] button\s*\{[^}]*min-width: 44px;[^}]*min-height: 44px;/);
+  });
+
+  it("gives the composer and its menus Electron Desktop's type scale and smoothing", () => {
+    const css = readFileSync(path.resolve(import.meta.dirname, "../../packages/ui/src/chat/composer/chat-composer.css"), "utf8");
+    const rule = css.match(/\.matrix-chat-composer,\s*\.matrix-chat-composer-menu\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(rule).toContain("--text-xs: 11px;");
+    expect(rule).toContain("--text-sm: 12px;");
+    expect(rule).toContain("--text-base: 13px;");
+    expect(rule).toContain("--text-md: 14px;");
+    expect(rule).toContain("-webkit-font-smoothing: antialiased;");
+  });
+
+  it("marks portaled composer menus so they share the composer's type scale", async () => {
+    render(<ChatComposerOptionControls menuSide="top" controls={[
+      { id: "effort", label: "Reasoning", value: "low", options: [{ value: "low", label: "Low" }, { value: "high", label: "High" }], onChange: vi.fn() },
+    ]} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Reasoning" })[0]!);
+    expect(await screen.findByRole("menu", { name: "Reasoning options" })).toHaveClass("matrix-chat-composer-menu");
+  });
+
+  it("picks a project for the Chat and removes it again", async () => {
+    const onSelect = vi.fn();
+    const onRemove = vi.fn();
+    const onOpenChange = vi.fn();
+    const projects = [
+      { id: "proj_second", slug: "second", name: "second", kind: "scratch" as const },
+      { id: "proj_first", slug: "first", name: "first", kind: "github" as const, repository: "FinnaAI/first" },
+    ];
+    const view = render(<ChatProjectContextPicker context={null} compact triggerLabel="Choose project for chat" projects={projects}
+      listStatus="ready" onOpenChange={onOpenChange} onSelect={onSelect} onRemove={onRemove} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose project for chat" }));
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+    const menu = await screen.findByRole("dialog", { name: "Project context picker" });
+    expect(menu).toHaveClass("matrix-chat-composer-menu");
+    expect(screen.getByRole("option", { name: "second, Scratch" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: "first, GitHub, FinnaAI/first" }));
+    expect(onSelect).toHaveBeenCalledWith("first");
+
+    view.rerender(<ChatProjectContextPicker context={{ projectId: "first", projectName: "first", projectKind: "github", repositoryLabel: "FinnaAI/first", status: "ready" }}
+      projects={projects} listStatus="ready" onSelect={onSelect} onRemove={onRemove} />);
+    fireEvent.click(screen.getByRole("button", { name: "Project first" }));
+    expect(await screen.findByRole("option", { name: "first, GitHub, FinnaAI/first" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Remove project context" }));
+    expect(onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it("explains an empty, failed or disconnected project list", async () => {
+    const onRetry = vi.fn();
+    const props = { context: null, compact: true, triggerLabel: "Choose project for chat", projects: [], onSelect: vi.fn(), onRemove: vi.fn() };
+    const view = render(<ChatProjectContextPicker {...props} listStatus="error" onRetry={onRetry} />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose project for chat" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry projects" }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+
+    view.rerender(<ChatProjectContextPicker {...props} listStatus="ready" />);
+    expect(screen.getByText("No projects yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create project" })).toBeNull();
+
+    view.rerender(<ChatProjectContextPicker {...props} listStatus="disconnected" />);
+    expect(screen.getByText("Project context is unavailable while disconnected.")).toBeInTheDocument();
   });
 
   it("lets the whole new-Chat screen scroll so a tall composer keeps Send reachable", () => {
