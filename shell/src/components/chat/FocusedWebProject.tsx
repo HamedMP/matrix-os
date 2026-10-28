@@ -51,7 +51,7 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
         mobile={mobile} showMore={() => {}} loadMore={loadMore} />
     </> : null}
     {chats.length > 0 ? <WebChatLifecycleGroups conversations={chats} scopeKey={`${scopeKey ?? ""}:project:${project.id}`} renderRow={renderRow} /> : null}
-    {older.length > 0 || (!empty && (error || hasMore)) ? <ChatRailSection label="Older chats" count={older.length}
+    {older.length > 0 || (!empty && (error || hasMore || capped)) ? <ChatRailSection label="Older chats" count={older.length}
       expanded={olderExpanded} onExpandedChange={setOlderExpanded}>
       <ProjectChatRows rows={older.map(chat => ({ kind: "fetched", chat } as const))} projectId={project.id} nowMs={nowMs}
         activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat} renderChat={() => null} mobile={mobile} />
