@@ -48,6 +48,9 @@ export interface ChatState {
   botEventRevision?: number;
   queuedTurns?: CanonicalChatQueuedTurn[];
   cancelQueuedTurn?: (id: string) => Promise<boolean>;
+  steerQueuedTurn?: (id: string) => Promise<boolean>;
+  /** The active run accepts queued turns as same-run steering. */
+  canSteerQueuedTurns?: boolean;
   messages: ChatMessage[];
   sessionId: string | undefined;
   busy: boolean;

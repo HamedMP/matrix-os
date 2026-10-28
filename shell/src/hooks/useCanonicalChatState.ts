@@ -538,13 +538,35 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     if (!activeChatId || current?.record.chat.id !== activeChatId) return false;
     try {
       await client.cancelQueuedTurn(activeChatId, queuedTurnId, { clientRequestId: requestId(), baseRevision: current.record.chat.revision });
-      if (!isCurrent()) return false;
+      // Reloading a Chat the owner has left would supersede the newly selected Chat's pending load.
+      if (!isCurrent() || activeChatIdRef.current !== activeChatId) return false;
       await loadDetail(activeChatId);
       return isCurrent();
     } catch (error: unknown) {
       if (!isCurrent()) return false;
       console.warn("[canonical-chat] Queue cancellation failed:", error instanceof Error ? error.name : "UnknownError");
       if (activeChatIdRef.current === activeChatId) setSafeError("Queued request could not be cancelled. Try again.");
+      return false;
+    }
+  }, [activeChatId, client, loadDetail, isCurrent]);
+
+  const steerQueuedTurn = useCallback(async (queuedTurnId: string) => {
+    if (!isCurrent()) return false;
+    const current = detailRef.current;
+    const activeRun = current?.record.activeRun;
+    const run = activeRun ? current?.runs.find((candidate) => candidate.id === activeRun.runId) : undefined;
+    if (!activeChatId || current?.record.chat.id !== activeChatId || !activeRun || run?.capabilitySnapshot.steering !== "same_run") return false;
+    try {
+      await client.steerQueuedTurn(activeChatId, activeRun.runId, queuedTurnId, {
+        clientRequestId: requestId(), baseRevision: current.record.chat.revision, expectedTurnId: activeRun.turnId,
+      });
+      if (!isCurrent() || activeChatIdRef.current !== activeChatId) return false;
+      await loadDetail(activeChatId);
+      return isCurrent();
+    } catch (error: unknown) {
+      if (!isCurrent()) return false;
+      // The queue panel shows the failure next to the row; a page-level error would repeat it.
+      console.warn("[canonical-chat] Queue steering failed:", error instanceof Error ? error.name : "UnknownError");
       return false;
     }
   }, [activeChatId, client, loadDetail, isCurrent]);
@@ -812,6 +834,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     botEventRevision,
     queuedTurns: selectedDetail?.queuedTurns ?? [],
     cancelQueuedTurn,
+    steerQueuedTurn,
+    canSteerQueuedTurns: selectedDetail?.runs.find((run) => run.id === selectedDetail.record.activeRun?.runId)?.capabilitySnapshot.steering === "same_run",
     providerSelection: selectedDetail?.record.chat.currentSelection,
     executionControls: selectedDetail ? canonicalChatExecutionControls({
       chatId: selectedDetail.record.chat.id, currentSelection: selectedDetail.record.chat.currentSelection, runs: selectedDetail.runs,

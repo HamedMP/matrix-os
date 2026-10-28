@@ -113,7 +113,7 @@ describe("shared Web Chat run cancellation", () => {
     expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
     expect(chat.abortCurrent).not.toHaveBeenCalled();
   });
-  it("keeps Stop separate from Queue next for referenced Agent requests", async () => {
+  it("swaps Stop for Queue next while a referenced Agent request is drafted, like Electron Desktop", async () => {
     const chat = chatState();
     renderChat(chat);
     const editor = screen.getByRole("textbox", { name: "Message chat" });
@@ -122,12 +122,22 @@ describe("shared Web Chat run cancellation", () => {
     fireEvent.change(editor, { target: { value: "Continue using the notes" } });
     const queue = screen.getByRole("button", { name: "Queue next" });
     expect((queue as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "Stop", exact: true }));
-    expect(chat.abortCurrent).toHaveBeenCalledOnce();
-    expect(chat.submitMessage).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Stop", exact: true })).toBeNull();
     fireEvent.click(queue);
     await waitFor(() => expect(chat.submitMessage).toHaveBeenCalledOnce());
     expect(vi.mocked(chat.submitMessage).mock.calls[0]?.[2]).toMatchObject({ resources: [source] });
+    expect(chat.abortCurrent).not.toHaveBeenCalled();
+  });
+  it("brings Stop back once the queueable draft is cleared", async () => {
+    const chat = chatState();
+    renderChat(chat);
+    const editor = screen.getByRole("textbox", { name: "Message chat" });
+    fireEvent.change(editor, { target: { value: "@mee" } });
+    fireEvent.click(await screen.findByRole("option", { name: /Meeting notes/ }));
+    expect(screen.queryByRole("button", { name: "Stop", exact: true })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Remove Meeting notes/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop", exact: true }));
+    expect(chat.abortCurrent).toHaveBeenCalledOnce();
   });
   it("shares the active-run Stop action with the Web Mobile renderer", async () => {
     const chat = chatState();

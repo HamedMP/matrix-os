@@ -11,17 +11,18 @@ import type { BrowserPermissionClient } from "@matrix-os/ui";
 import type { BrowserPermissionChoice } from "@matrix-os/contracts";
 import type { ChatAgentDraftRequest, ChatCollaborationView, StartAgentChat } from "@matrix-os/ui";
 
-import { ChatProviderLoadingIndicator, useChatReadState, CanonicalChatInputForm, SupervisedToolApprovalBar } from "@matrix-os/ui";
+import { ChatNewChatContent, useChatReadState, CanonicalChatInputForm, SupervisedToolApprovalBar } from "@matrix-os/ui";
 import type { CanonicalChatInputView, CanonicalSubmitChatInputRequest } from "@matrix-os/contracts";
 import { supervisedToolApproval, supervisedToolRetryDraft } from "@matrix-os/contracts";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
-import { ChatQueuedRequests } from "./chat/ChatQueuedRequests";
+import { WebChatQueuedTurns } from "./chat/WebChatQueuedTurns";
+import { WebChatComposerControls } from "./chat/WebChatComposerControls";
 import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
 import { useChatComposerDraft } from "./chat/useChatComposerDraft";
-import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, useBotExecution, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, AgentAvatar, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, createAgentProviderCatalogSource, useChatAgentsNavigation, useCloseAgentsOnDraftRequest, type ChatAgentClient } from "@matrix-os/ui";
+import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, useBotExecution, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, createAgentProviderCatalogSource, useChatAgentsNavigation, useCloseAgentsOnDraftRequest, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
 import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
@@ -76,7 +77,7 @@ import {
   createChannelConfiguredPrompt,
 } from "./chat-app-hermes";
 import {
-  ChatProviderSetupPanel,
+  WebProviderDriverIcon,
   useChatProviderState,
 } from "./chat-app-provider-setup";
 import {
@@ -179,6 +180,8 @@ interface ChatAppProps {
   navigationClassifications?:import("@/hooks/useChatState").ChatState["navigationClassifications"];
   queuedTurns?: CanonicalChatQueuedTurn[];
   onCancelQueuedTurn?: (id: string) => Promise<boolean>;
+  onSteerQueuedTurn?: (id: string) => Promise<boolean>;
+  canSteerQueuedTurns?: boolean;
   providerSelection?: CanonicalChatModelSelection;
   executionControls?: import("@matrix-os/contracts").CanonicalChatExecutionControls;
   boundProviderInstanceId?: string;
@@ -222,7 +225,7 @@ function ChatAppContent({
   providerSelection,
   executionControls,
   boundProviderInstanceId,
-  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn,
+  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -292,7 +295,6 @@ function ChatAppContent({
   };
   const [sourceFilter, setSourceFilter] = useState<ChatImportSourceFilterValue>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [setupOpen, setSetupOpen] = useState(false);
   const [submittingApprovalId, setSubmittingApprovalId] = useState<string | null>(null);
   const [providerSetupError, setProviderSetupError] = useState<string | null>(null);
   const collaborationViewKey = collaborationView ? JSON.stringify(collaborationView) : null;
@@ -325,8 +327,10 @@ function ChatAppContent({
     initialHermesSetupRef.current ??= readHermesSetup();
     return initialHermesSetupRef.current;
   };
+  // Bumped by approval cards to open the composer's Permission mode picker, as on Electron Desktop.
+  const [permissionModeRequest, setPermissionModeRequest] = useState(0);
   // react-doctor-disable-next-line react-hooks-js/refs -- lazy initializer performs one bounded localStorage read.
-  const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
+  const [channels] = useState(() => new Set(getInitialHermesSetup().channels));
   const providerState = useChatProviderState(providerSelection, boundProviderInstanceId, { chatId: sessionId, scopeKey: authorityKey, executionControls });
   const agentProviderCatalog = useMemo(() => createAgentProviderCatalogSource({
     catalog: providerState.catalog,
@@ -470,6 +474,13 @@ function ChatAppContent({
     }
   };
 
+  const composerToolbar = !collaborationView && !botIdentityUnknown && !directBotId
+    ? <WebChatComposerControls providerState={providerState} lockedInstanceId={boundProviderInstanceId} permissionModeRequest={permissionModeRequest}
+      onSetupAction={(instance, action) => { void runProviderSetupAction(instance, action); }} />
+    : undefined;
+  const queuePanel = <WebChatQueuedTurns key={`queue:${sessionId ?? "new"}`} turns={queuedTurns} canSteer={canSteerQueuedTurns}
+    onCancel={onCancelQueuedTurn} onSteer={onSteerQueuedTurn} />;
+
   return (
     <div className="relative flex h-full bg-background" onClickCapture={(event) => {
       const element = event.target instanceof Element ? event.target : null;
@@ -545,7 +556,7 @@ function ChatAppContent({
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);
         }} /> : null}
-        <div className="px-2 pb-2" hidden={Boolean(focusedProject)}><ChatAgentsRailSection visible={visible && sidebarOpen} activeChatId={sessionId} activeAgentId={directBotId} menuZIndex={SHELL_Z_INDEX.popover} client={agentClient} summaryClient={summaryClient} isCurrent={isCurrentAuthority} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
+        <div className="px-2 pb-2" hidden={Boolean(focusedProject)}><ChatAgentsRailSection visible={visible && sidebarOpen} activeChatId={sessionId} activeAgentId={directBotId} menuZIndex={SHELL_Z_INDEX.popover} client={agentClient} summaryClient={summaryClient} isCurrent={isCurrentAuthority} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={openProviderSettings} /></div>
         {mobile ? <div className="flex gap-2 px-3 pb-2 text-xs">
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={!unreadOnly} onClick={() => { setUnreadOnly(false); onUnreadFilterChange?.(false); }}>All</Button>
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={unreadOnly} onClick={() => { setUnreadOnly(true); onUnreadFilterChange?.(true); }}>Unread</Button>
@@ -656,69 +667,11 @@ function ChatAppContent({
           </div>
           {!collaborationView && sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
           {collaborationView ? <div ref={setCollaborationHeaderContainer} className="flex shrink-0 items-center" /> : null}
-          {!collaborationView && !botIdentityUnknown && !directBotId ? <Button
-            data-chat-model-trigger
-            aria-label="Choose model and connection"
-            aria-haspopup="dialog"
-            aria-expanded={setupOpen}
-            variant={setupOpen ? "secondary" : "ghost"}
-            size="sm"
-            className="h-8 max-w-[12rem] gap-1.5 px-2.5 text-xs"
-            onClick={() => setSetupOpen((value) => !value)}
-          >
-            <span className="truncate">{providerState.selected ? `${providerState.selected.harnessLabel}${providerState.selected.connectionLabel && providerState.selected.connectionLabel !== providerState.selected.harnessLabel ? ` · ${providerState.selected.connectionLabel}` : ""} · Model` : "Model"}</span>
-            {providerState.loading ? <ChatProviderLoadingIndicator /> : null}
-            {providerState.selectionStatus ? <span className="shrink-0">{providerState.selectionStatus}</span> : null}
-            <ChevronDownIcon className="size-3.5" aria-hidden="true" />
-          </Button> : null}
-          {!collaborationView ? <Button
-            aria-label="Open Agents & providers settings"
-            title="Agents & providers"
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0"
-            onClick={() => {
-              setSetupOpen(false);
-              openProviderSettings();
-            }}
-          >
-            <Settings2Icon className="size-3.5" aria-hidden="true" />
-          </Button> : null}
           {!connected && (
             <span className="text-[10px] text-destructive font-medium">Offline</span>
           )}
         </header> : null}
         {botIdentityUnknown ? <BotBindingStatus loading={botBinding.loading || botExecution.loading} retry={() => { botBinding.retry(); botExecution.retry(); }}/> : null}
-        {!collaborationView && !botIdentityUnknown && !directBotId && setupOpen && (
-          <ChatProviderSetupPanel
-            onDismiss={() => {
-              setSetupOpen(false);
-            }}
-            catalog={providerState.catalog}
-            loading={providerState.loading}
-            choices={providerState.choices}
-            selected={providerState.selected}
-            displaySelection={providerState.displaySelection}
-            onSelect={providerState.select}
-            onInteractionModeChange={providerState.selectInteractionMode}
-            onPermissionModeChange={providerState.selectPermissionMode}
-            onOptionChange={providerState.selectOption}
-            onSetupAction={(instance, action) => {
-              void runProviderSetupAction(instance, action);
-            }}
-            lockedInstanceId={boundProviderInstanceId}
-            showChannels={providerState.selected?.driverKind === "hermes"}
-            channels={channels}
-            onToggleChannel={(channel) => {
-              setChannels((prev) => {
-                const next = new Set(prev);
-                if (next.has(channel)) next.delete(channel);
-                else next.add(channel);
-                return next;
-              });
-            }}
-          />
-        )}
 
         {collaborationView ? (
           <ShellChatCollaboration view={collaborationView} onOpenChat={onOpenSharedChat} onOpenProject={onOpenSharedProject}
@@ -731,23 +684,20 @@ function ChatAppContent({
           </> : null}
           headerActions={<>
             {sessionId ? <ChatSharing key={sessionId} chatId={sessionId} /> : null}
-            <Button aria-label="Open Agents & providers settings" title="Agents & providers" variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => { setSetupOpen(false); openProviderSettings(); }}><Settings2Icon className="size-3.5" aria-hidden="true" /></Button>
+            <Button aria-label="Open Agents & providers settings" title="Agents & providers" variant="ghost" size="icon" className="size-8 shrink-0" onClick={() => openProviderSettings()}><Settings2Icon className="size-3.5" aria-hidden="true" /></Button>
             {!connected ? <span className="text-[10px] text-destructive font-medium">Offline</span> : null}
           </>}
           onModelChanged={() => setBotModelRevision(value => value + 1)} catalog={providerState.catalog} catalogLoading={providerState.loading} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh} refreshKey={(botEventRevision ?? 0) + botModelRevision}>
         {botDraftNavigation.recovery ? <BotDraftRecoveryPanel onReturn={botDraftNavigation.returnToOriginalDraft}/> : null}
-        <ChatQueuedRequests key={`queue:${sessionId ?? "new"}`} turns={queuedTurns} onCancel={onCancelQueuedTurn} />
         {/* Empty state or conversation */}
         {isEmpty ? (
           <><div className="mx-auto w-full max-w-[720px] px-4"><BotTranscriptFallback placement={botTranscript}/></div><EmptyState
-            composerProps={{ attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
+            composerProps={{ toolbarControls: composerToolbar, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
-            suggestions={suggestions}
             mobile={mobile}
             composerDraftRequest={activeDraftRequest}
             onComposerDraftConsumed={consumeDraftRequest}
-            modelLabel={directBotId ? null : providerState.selected?.modelLabel ?? null}
             providerReady={providerReady}
             attachmentsEnabled={!botIdentityUnknown && attachmentPolicy.enabled}
           /></>
@@ -785,7 +735,7 @@ function ChatAppContent({
                           chatId={sessionId}
                           message={msg}
                           browserPermissions={browserPermissions}
-                          onOpenPermissionMode={!directBotId && !collaborationView ? () => setSetupOpen(true) : undefined}
+                          onOpenPermissionMode={!directBotId && !collaborationView ? () => setPermissionModeRequest(value => value + 1) : undefined}
                           submitting={(() => {
                             const approval = canonicalApproval(msg);
                             return approval !== null
@@ -833,7 +783,7 @@ function ChatAppContent({
             </ChatContextMenu>
 
             {/* Suggestions + Input */}
-            <div className="mx-auto w-full max-w-[720px] px-3 md:px-0 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] pt-2">
+            <div className={`mx-auto w-full max-w-[808px] shrink-0 pt-2 ${mobile ? "px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]" : "px-6 pb-5"}`}>
               {!busy && suggestions.length > 0 && (
                 <div className="pb-3">
                   <SuggestionChips
@@ -850,6 +800,8 @@ function ChatAppContent({
                 />
               ) : null}
               <ChatInput
+                toolbarControls={composerToolbar}
+                queue={queuePanel}
                 attachmentPolicy={attachmentPolicy.error}
                 slashInstance={slashInstance}
                 slashCatalogLoading={slashCatalogLoading}
@@ -885,75 +837,52 @@ function ChatAppContent({
   );
 }
 
+// The Matrix glyph Electron Desktop shows on a new Chat, drawn from the shipped logo.
+const NEW_CHAT_LOGO_STYLE = {
+  width: Math.round((28 * 510) / 660), height: 28, background: "currentColor",
+  WebkitMask: "url('/matrix-logo.svg') no-repeat center / contain", mask: "url('/matrix-logo.svg') no-repeat center / contain",
+} as const;
+
 function EmptyState({
   composerProps,
   onSubmit,
   connected,
-  suggestions,
   mobile,
   composerDraftRequest,
   onComposerDraftConsumed,
-  modelLabel,
   providerReady,
   attachmentsEnabled,
 }: {
-  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading" | "attachmentPolicy">;
+  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "toolbarControls" | "queue" | "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading" | "attachmentPolicy">;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
-  suggestions: string[];
   mobile: boolean;
   composerDraftRequest?: ChatAgentDraftRequest | null;
   onComposerDraftConsumed?: (id: number) => void;
-  modelLabel: string | null;
   providerReady: boolean;
   attachmentsEnabled: boolean;
 }) {
   return (
-    <div data-slot="chat-empty-state-scroll" className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-4 py-4">
-      <div data-slot="chat-empty-state-stack" className="my-auto w-full max-w-[600px] shrink-0 space-y-8">
-        {/* Greeting */}
-        <ChatProviderOnboarding><div className="grid justify-items-center gap-2 text-center">
-          <AgentAvatar id="matrix_home" name="Matrix"/>
-          <h1 className="text-2xl font-medium tracking-tight text-foreground/90">
-            What should Matrix do?
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {modelLabel ? `Using ${modelLabel}` : "Choose a model to start chatting."}
-          </p>
-        </div>
-
-        </ChatProviderOnboarding>
-
-        {/* Input */}
+    <ChatNewChatContent
+      logo={<span aria-hidden="true" data-testid="chat-welcome-matrix-logo" className="block" style={NEW_CHAT_LOGO_STYLE} />}
+      layout={mobile ? "narrow" : "wide"}
+      wrapHero={(children) => <ChatProviderOnboarding>{children}</ChatProviderOnboarding>}
+      onSelect={(prompt) => composerProps.composer.setText(prompt)}
+      composer={(
         <ChatInput
           key={`composer:${composerProps.scope}`} {...composerProps}
           connected={connected && providerReady}
           busy={false}
           onSubmit={onSubmit}
           autoFocus={!mobile}
+          placeholder="How can I help you today?"
           draftRequest={composerDraftRequest}
           onDraftConsumed={onComposerDraftConsumed}
           unavailablePlaceholder={!providerReady ? "Write or dictate a draft — connect a harness to send" : undefined}
           attachmentsEnabled={attachmentsEnabled}
         />
-
-        {/* Suggestions */}
-        {suggestions.length > 0 && (
-          <div className="flex flex-wrap justify-center gap-2">
-            {suggestions.map((s, i) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => composerProps.composer.setText(s)}
-                className={`rounded-full border border-border/60 bg-card/50 px-3.5 text-xs text-foreground/70 transition-all hover:bg-accent/40 hover:text-foreground hover:border-border ${mobile ? "py-2.5" : "py-1.5"}`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+      )}
+    />
   );
 }
 

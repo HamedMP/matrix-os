@@ -50,7 +50,8 @@ it.each(["resolve", "reject"] as const)("withholds ordinary-provider Skills whil
   const submit = vi.fn();
   render(<ChatApp messages={[]} sessionId="chat_scope_unknown" busy={false} connected conversations={[]}
     onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={submit} agentClient={client} />);
-  await waitFor(() => expect(screen.getByText(/Using/)).toBeTruthy());
+  // The header names the model once the catalog has loaded.
+  await waitFor(() => expect(screen.getByText("GPT-5.6-Sol")).toBeTruthy());
   const input = screen.getByRole("textbox", { name: "Message chat" });
   fireEvent.change(input, { target: { value: "/" } });
   expect(screen.queryByRole("option", { name: /\/review/ })).toBeNull();

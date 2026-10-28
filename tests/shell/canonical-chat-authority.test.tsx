@@ -210,3 +210,29 @@ it.each(["chat_explicit", undefined])("preserves explicit selection %s through e
   await act(async () => hook.rerender({ scope: "another/runtime/review", generation: "session_3" }));
   expect(hook.result.current.sessionId).toBe("chat_same");
 });
+it.each(["steer", "cancel"] as const)("does not reload the previous Chat when a queued-turn %s settles after switching Chats", async operation => {
+  const running = detail();
+  running.record.activeRun = { runId: "run_same", turnId: "cturn_same", status: "running" };
+  running.runs = [{ id: "run_same", turnId: "cturn_same", capabilitySnapshot: { steering: "same_run" } }] as unknown as CanonicalChatDetailResponse["runs"];
+  const other = detail("Other transcript");
+  other.record.chat.id = "chat_other";
+  other.messages = other.messages.map(message => ({ ...message, chatId: "chat_other" }));
+  const otherLoad = deferred<CanonicalChatDetailResponse>();
+  vi.mocked(state.client.detail).mockImplementation(async (chatId: string) => chatId === "chat_other" ? otherLoad.promise : running);
+  const action = deferred<never>();
+  state.client.steerQueuedTurn = vi.fn(() => action.promise);
+  state.client.cancelQueuedTurn = vi.fn(() => action.promise);
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.activeRunId).toBe("run_same"));
+  let result!: Promise<boolean>;
+  act(() => {
+    result = operation === "steer" ? hook.result.current.steerQueuedTurn!("queued_same") : hook.result.current.cancelQueuedTurn!("queued_same");
+  });
+  await act(async () => hook.result.current.switchConversation("chat_other"));
+  const sameLoads = () => vi.mocked(state.client.detail).mock.calls.filter(([chatId]) => chatId === "chat_same").length;
+  const loadsBeforeSettle = sameLoads();
+  await act(async () => { action.resolve(undefined as never); expect(await result).toBe(false); });
+  expect(sameLoads()).toBe(loadsBeforeSettle);
+  await act(async () => otherLoad.resolve(other));
+  await waitFor(() => expect(hook.result.current.messages[0]?.content).toBe("Other transcript"));
+});

@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import type { CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { QueuedTurnsPanel } from "@desktop/renderer/src/features/chat/QueuedTurnsPanel";
-import { ChatQueuedRequests } from "../../shell/src/components/chat/ChatQueuedRequests";
+import { WebChatQueuedTurns } from "../../shell/src/components/chat/WebChatQueuedTurns";
 
 afterEach(cleanup);
 const answer: CanonicalChatQueuedTurn = {
@@ -19,7 +19,7 @@ it.each(["Electron Desktop", "Web"] as const)("shows a submitted answer directly
   const callbacks = { onSteer: vi.fn(), onEdit: vi.fn(), onReorder: vi.fn(), onCancel: vi.fn() };
   render(surface === "Electron Desktop"
     ? <QueuedTurnsPanel turns={[answer]} canSteer {...callbacks} />
-    : <ChatQueuedRequests turns={[answer]} onCancel={vi.fn()} />);
+    : <WebChatQueuedTurns turns={[answer]} onCancel={vi.fn()} />);
   expect(screen.getByText("Which format? Plain text.", { exact: false })).toBeTruthy();
   expect(screen.getByRole("status").textContent).toContain("Continuing automatically");
   expect(screen.queryByRole("region", { name: "Queued turns" })).toBeNull();
@@ -51,7 +51,7 @@ it.each(["Electron Desktop", "Web"] as const)("keeps cancellation available befo
   const onCancel = vi.fn(async () => true);
   render(surface === "Electron Desktop"
     ? <QueuedTurnsPanel turns={[answer]} onSteer={vi.fn()} onEdit={vi.fn()} onReorder={vi.fn()} onCancel={onCancel} />
-    : <ChatQueuedRequests turns={[answer]} onCancel={onCancel} />);
+    : <WebChatQueuedTurns turns={[answer]} onCancel={onCancel} />);
   fireEvent.click(screen.getByRole("button", { name: "Cancel pending answer" }));
   await waitFor(() => expect(onCancel).toHaveBeenCalledWith(answer.id));
 });
