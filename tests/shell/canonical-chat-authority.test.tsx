@@ -283,3 +283,18 @@ it("does not carry a new Chat's project to another computer or owner", async () 
   await act(async () => hook.rerender({ scope: "owner/runtime/review" }));
   expect(hook.result.current.chatProjectId).toBeUndefined();
 });
+it("keeps the newer project when an older move response arrives late", async () => {
+  const base = detail().record;
+  const slow = deferred<typeof base>();
+  state.client.updateProject = vi.fn()
+    .mockImplementationOnce(() => slow.promise)
+    .mockImplementationOnce(async () => ({ ...base, chat: { ...base.chat, revision: 2 }, projectId: "proj_new" }));
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.messages[0]?.content).toBe("Old transcript"));
+  let first!: Promise<boolean>;
+  act(() => { first = hook.result.current.setChatProject!("proj_old"); });
+  await act(async () => { await hook.result.current.setChatProject!("proj_new"); });
+  expect(hook.result.current.chatProjectId).toBe("proj_new");
+  await act(async () => { slow.resolve({ ...base, chat: { ...base.chat, revision: 1 }, projectId: "proj_old" }); await first; });
+  expect(hook.result.current.chatProjectId).toBe("proj_new");
+});

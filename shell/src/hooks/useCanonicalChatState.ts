@@ -783,11 +783,12 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
         ? mergeChatNavigationRecord(record, updated) : record));
       const active = detailRef.current;
       if (active?.record.chat.id === chatId) {
+        // A late response from an older move loses to the newer revision already shown.
         const { projectId: _previous, ...record } = active.record;
         const merged = mergeCanonicalChatRecord(active.record, updated);
         const next = { ...active, record: {
           ...record,
-          ...(updated.projectId ? { projectId: updated.projectId } : {}),
+          ...(merged.projectId ? { projectId: merged.projectId } : {}),
           chat: { ...active.record.chat, revision: merged.chat.revision },
         } };
         detailRef.current = next;
