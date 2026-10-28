@@ -144,8 +144,6 @@
       "node-forge@>=1.0.0 <1.4.0": "1.4.0",
       "picomatch@>=2.0.0 <2.3.2": "2.3.2",
       "path-to-regexp@>=8.0.0 <8.4.0": "8.4.0",
-      "lodash@>=4.0.0 <4.18.0": "4.18.0",
-      "lodash-es@>=4.0.0 <4.18.0": "4.18.0",
       "@xmldom/xmldom@>=0.8.0 <0.8.15": "0.8.15",
       "fast-xml-builder@>=1.0.0 <1.1.7": "1.1.7",
       "@clerk/clerk-react@>=5.0.0 <5.61.6": "5.61.6",
@@ -187,7 +185,9 @@
       "brace-expansion@>=5.0.0 <5.0.12": "5.0.12",
       "postcss-selector-parser@>=7.0.0 <7.1.6": "7.1.6",
       "@modelcontextprotocol/sdk>hono": "^4.13.11",
-      "@modelcontextprotocol/sdk>@hono/node-server": "^1.19.15"
+      "@modelcontextprotocol/sdk>@hono/node-server": "^1.19.15",
+      "lodash@>=4.0.0 <4.18.1": "4.18.1",
+      "lodash-es@>=4.0.0 <4.18.1": "4.18.1"
     }
   },
   "devDependencies": {

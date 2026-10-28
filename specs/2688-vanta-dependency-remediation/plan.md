@@ -24,7 +24,7 @@ Risk: Next.js and Vitest minor releases require runtime/build and test-runner qu
 
 Upgrade eligible HTTP, parser, authorization and schema dependencies within their existing API families. Align Tiptap packages, preserve peer contracts with parent-scoped overrides, and keep the seven-day package quarantine intact. The XML-parser fix changes mobile fingerprint inputs, so app version 0.2.9 starts a new runtime and requires fresh native builds before release.
 
-Final root-workspace scan: 0 critical, 13 high, 16 moderate, 12 low. See [remaining advisory work](remaining-advisories.md) for the still-open families and GTM-305 follow-up; no advisories are dismissed or risks accepted.
+Root-workspace scan before review: 0 critical, 13 high, 16 moderate, 12 low. The post-review registry snapshot reports 0 critical, 12 high, 18 moderate, 12 low; advisory database drift is documented separately from code remediation. See [remaining advisory work](remaining-advisories.md) for the still-open families and GTM-305 follow-up; no advisories are dismissed or risks accepted.
 
 Validation: frozen install; affected-package TypeScript; 1,064 focused tests with one pre-existing skip (failed local native/module-layout prerequisites corrected and affected suites rerun); all 3,232 mobile tests; iOS/Android bundle export; shell production build with the existing CI Clerk fixture; desktop production build; Neo and edge-router deployment dry runs; mobile native-change guard; whitespace check. No live deployment or native mobile build was performed.
 
