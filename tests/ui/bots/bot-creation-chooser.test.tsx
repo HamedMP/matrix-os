@@ -243,6 +243,18 @@ it.each([false, true])("keeps in-card catalog retry keyboard-focusable and respe
   expect(start).not.toHaveBeenCalled();
 });
 
+it("keeps custom creation available when a host refresh fails after a trusted catalog loaded", async () => {
+  const start = vi.fn();
+  const catalog = await clientFixture({ matrix: true }).catalog();
+  render(<AgentRecipesPanel onStartFromScratch={start} catalog={catalog}
+    catalogError="Models could not be refreshed. Your draft is still here."/>);
+  const entry = screen.getByRole("button", { name: "Start from scratch" });
+  expect(entry).toBeEnabled();
+  fireEvent.click(entry);
+  expect(start).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("button", { name: "Retry models" })).toBeNull();
+});
+
 
 it("returns focus to the heading when closing scratch during discovery without stealing it later", async () => {
   const { client, bots } = fixture();

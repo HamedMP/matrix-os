@@ -50,6 +50,7 @@ function agentProviderCatalog() {
 
 async function mockBotShell(page: Page, current: { kind: "question" | "connect_request" }) {
   const catalogReads = { count: 0 };
+  let failCatalogRefresh = false;
   await page.setExtraHTTPHeaders({ "x-matrix-platform-session": "platform" });
   await page.addInitScript(() => {
     window.localStorage.setItem(`matrix:getting-started:auto-opened:web:${encodeURIComponent(window.location.pathname)}`, "1");
@@ -64,6 +65,7 @@ async function mockBotShell(page: Page, current: { kind: "question" | "connect_r
   await page.route("**/billing/status**", (route) => fulfill(route, { access: { runtimeProxyAllowed: false }, trialOffer: null }));
   await page.route("**/api/chat-providers**", (route) => {
     catalogReads.count += 1;
+    if (failCatalogRefresh) return route.fulfill({ status: 503, contentType: "application/json", body: "{}" });
     return fulfill(route, agentProviderCatalog());
   });
   await page.route("**/api/chats?**", (route) => fulfill(route, { items: [record] }));
@@ -83,7 +85,7 @@ async function mockBotShell(page: Page, current: { kind: "question" | "connect_r
   await page.route("**/api/chat-agents?**", (route) => fulfill(route, { enabled: true, agents: [agent] }));
   await page.route("**/api/integrations", (route) => fulfill(route, []));
   await page.route("**/ws/**", (route) => route.abort());
-  return { catalogReads };
+  return { catalogReads, failNextCatalogRefresh: () => { failCatalogRefresh = true; } };
 }
 
 async function openChatShell(page: Page) {
@@ -136,7 +138,7 @@ for (const surface of ["web-desktop", "web-canvas"] as const) {
     test.setTimeout(240_000);
     const output = resolve(tmpdir(), "matrix-os-pr-evidence/eng-407");
     mkdirSync(output, { recursive: true });
-    const { catalogReads } = await mockBotShell(page, { kind: "question" });
+    const { catalogReads, failNextCatalogRefresh } = await mockBotShell(page, { kind: "question" });
     await page.goto("/", { waitUntil: "domcontentloaded", timeout: 120_000 });
     await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible({ timeout: 45_000 });
     await page.addStyleTag({ content: '[aria-label="Matrix connection status"] { display: none !important; }' });
@@ -146,6 +148,10 @@ for (const surface of ["web-desktop", "web-canvas"] as const) {
       await page.getByRole("option", { name: /Mode: Canvas/ }).click();
     }
     await openChatShell(page);
+    failNextCatalogRefresh();
+    const readsBeforeFailure = catalogReads.count;
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect.poll(() => catalogReads.count).toBeGreaterThan(readsBeforeFailure);
     const readsBeforeAgents = catalogReads.count;
     await page.getByRole("button", { name: "Add new agent" }).click({ force: true });
     const startFromScratch = page.getByRole("button", { name: "Start from scratch" });

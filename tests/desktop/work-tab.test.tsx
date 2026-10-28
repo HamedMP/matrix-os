@@ -263,11 +263,11 @@ function activeWorkTab() {
 }
 
 describe("WorkTab rail integration", () => {
-  it("creates a recipe bot from the warm catalog while refresh is pending and navigates to its saved Chat", async () => {
+  it("creates a recipe bot from the warm catalog after its background refresh fails", async () => {
     const api = useConnection.getState().api!;
     const originalGet = api.get;
-    let finishDiscovery!: (catalog: typeof providerCatalog) => void;
-    const discovery = new Promise<typeof providerCatalog>(resolve => { finishDiscovery = resolve; });
+    let failDiscovery!: (error: Error) => void;
+    const discovery = new Promise<never>((_resolve, reject) => { failDiscovery = reject; });
     api.get = vi.fn(async (path: string) => {
       if (path === canonicalChatProviderCatalogPath()) return providerCatalog;
       if (path === canonicalChatProviderCatalogPath(true)) return discovery;
@@ -288,6 +288,9 @@ describe("WorkTab rail integration", () => {
       expect.objectContaining({ timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs })));
     // A routine refresh must not hide the last trusted model catalogue or block creation.
     expect((model as HTMLSelectElement).disabled).toBe(false);
+    await act(async () => failDiscovery(new Error("catalog unavailable")));
+    await waitFor(() => expect(desktopProviderCatalogCache.getSnapshot().refreshError).not.toBeNull());
+    expect((model as HTMLSelectElement).disabled).toBe(false);
     fireEvent.change(model, { target: { value: "" } });
     expect((screen.getByRole("button", { name: "Create bot" }) as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
@@ -297,7 +300,6 @@ describe("WorkTab rail integration", () => {
     await waitFor(() => expect(activeWorkTab()?.chatId).toBe("chat_bot_created"));
     expect(activeWorkTab()?.chatView).toBe("conversation");
     expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(1);
-    await act(async () => finishDiscovery(providerCatalog));
   });
 
   it("keeps recipe Agent creation blocked when the first host catalog read fails", async () => {
@@ -328,6 +330,35 @@ describe("WorkTab rail integration", () => {
 
     await act(async () => failDiscovery(new Error("catalog unavailable")));
     await waitFor(() => expect(desktopProviderCatalogCache.getSnapshot().refreshError).not.toBeNull());
+    expect((model as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+    fireEvent.submit(model.closest("form")!);
+    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(0);
+  });
+
+  it("blocks recipe Agent creation as soon as provider settings suspend catalog trust", async () => {
+    const api = useConnection.getState().api!;
+    const originalGet = api.get;
+    const pendingRefresh = new Promise<never>(() => undefined);
+    api.get = vi.fn(async (path: string) => {
+      if (path === canonicalChatProviderCatalogPath()) return providerCatalog;
+      if (path === canonicalChatProviderCatalogPath(true)) return pendingRefresh;
+      if (path === "/api/chat-agents/bot-recipes") return { recipes: [{ recipeId: "competitor-watch", version: "1", name: "Competitor Watch", description: "Watch pages", output: "Change report" }] };
+      return originalGet(path);
+    }) as typeof api.get;
+    api.post = vi.fn(async () => ({ chatId: "chat_must_not_exist" })) as typeof api.post;
+
+    render(<WorkTab route="chat" active />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
+    const recipe = (await screen.findByText("Watch pages")).closest("article")!;
+    HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", ""); };
+    HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
+    fireEvent.click(within(recipe).getByRole("button", { name: "Use Competitor Watch" }));
+    const model = screen.getByRole("combobox", { name: "Bot model" });
+    await waitFor(() => expect((model as HTMLSelectElement).disabled).toBe(false));
+
+    act(() => useConnection.setState({ providerCatalogGeneration: 1 }));
+    await waitFor(() => expect(desktopProviderCatalogCache.getSnapshot().authoritySuspended).toBe(true));
     expect((model as HTMLSelectElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
     fireEvent.submit(model.closest("form")!);

@@ -183,6 +183,7 @@ export { BotRunMessageBody, BotUnassignedMessageBody } from "./chat-agents/bots/
 export { BotChatPanel } from "./chat-agents/bots/BotChatPanel.js";
 export { ChatAgentsWorkspace, useChatAgentsNavigation, useCloseAgentsOnDraftRequest } from "./chat-agents/ChatAgentsNavigation.js";
 export type { AgentProviderCatalogSource } from "./chat-agents/use-agent-provider-catalog.js";
+export { AGENT_PROVIDER_CATALOG_REFRESH_ERROR, createAgentProviderCatalogSource } from "./chat-agents/agent-provider-catalog-source.js";
 export { ChatMentionControls, useChatMentionPermission } from "./chat-agents/ChatMentionControls.js";
 export { chatResourceKey, isChatMention, hasChatMentionParts, canAddChatMention, orderChatResources, chatAgentAttribution } from "./chat-agents/mentions.js";
 

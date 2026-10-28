@@ -1,4 +1,4 @@
-import type { AgentProviderCatalogSource } from "@matrix-os/ui";
+import { createAgentProviderCatalogSource, type AgentProviderCatalogSource } from "@matrix-os/ui";
 import { useMemo } from "react";
 import { createLegacyGlobalProviderCatalog } from "../chat/canonical-composer-adapter";
 import { useChatProviderCatalog } from "../chat/chat-provider-catalog";
@@ -13,10 +13,11 @@ export function useWorkAgentProviderCatalog(
   );
   const catalogState = useChatProviderCatalog(fallbackCatalog, { active });
 
-  return useMemo(() => ({
-    catalog: catalogState.hasTrustedCatalog ? catalogState.catalog : null,
+  return useMemo(() => createAgentProviderCatalogSource({
+    catalog: catalogState.catalog,
+    hasTrustedCatalog: catalogState.hasTrustedCatalog,
     loading: catalogState.initialLoading,
-    error: catalogState.refreshError ? "Models could not be refreshed. Your draft is still here." : "",
+    refreshError: Boolean(catalogState.refreshError),
     refresh: catalogState.refresh,
   }), [
     catalogState.catalog,
