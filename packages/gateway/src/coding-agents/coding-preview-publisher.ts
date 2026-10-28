@@ -2,8 +2,9 @@ import { createHash } from "node:crypto";
 import { AgentThreadEventSchema, type AgentThreadEvent } from "@matrix-os/contracts";
 import type { CodingAgentProviderEventBatch, CodingAgentProviderEventPublisher } from "./provider-adapter.js";
 
+// Tool starts seed completion identity, so both lifecycle events remain controls.
 function isDisplay(event: AgentThreadEvent): boolean {
-  return ["assistant.text.delta", "assistant.text.completed", "tool.started", "tool.output"].includes(event.type);
+  return ["assistant.text.delta", "assistant.text.completed", "tool.output"].includes(event.type);
 }
 
 export function codingPreviewOmissionNotice(options: { threadId: string; scope: string; now: () => Date; nextEventId: () => string }): AgentThreadEvent[] {

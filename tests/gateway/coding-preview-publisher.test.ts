@@ -89,3 +89,32 @@ it("stops waiting for an uncooperative publication immediately on caller Stop", 
   await publisher.finished();
   expect(publisher.failure).toBeInstanceOf(Error);
 });
+
+it.each(["queued start", "full queue before tool batch"])("keeps queued tool identity through preview eviction: %s", async scenario => {
+  let release!: () => void;
+  const received: AgentThreadEvent[] = [];
+  const publisher = createCodingPreviewPublisher(async batch => {
+    received.push(...batch.events);
+    if (received.length === 1) await new Promise<void>(resolve => { release = resolve; });
+  }, 2);
+  const started: AgentThreadEvent = { ...base, eventId: "started", type: "tool.started",
+    toolCallId: "tool_one", displayName: "Run command", kind: "command" };
+  const completed: AgentThreadEvent = { ...base, eventId: "completed", type: "tool.completed",
+    toolCallId: "tool_one", outcome: "success" };
+  publisher.queue({ events: [preview("inflight")] });
+  await Promise.resolve();
+  try {
+    if (scenario === "queued start") {
+      publisher.queue({ events: [started, preview("queued")] });
+      publisher.queue({ events: [completed] });
+    } else {
+      publisher.queue({ events: [preview("queued_one"), preview("queued_two")] });
+      publisher.queue({ events: [started, preview("tool_preview"), completed] });
+    }
+  } finally { release(); }
+  await publisher.finished();
+  expect(received.map(event => event.eventId)).toEqual(["inflight", "started", "completed"]);
+  expect(received[1]).toMatchObject({ type: "tool.started", toolCallId: "tool_one", displayName: "Run command", kind: "command" });
+  expect(publisher.truncated).toBe(true);
+  expect(publisher.failure).toBeUndefined();
+});
