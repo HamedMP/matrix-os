@@ -48,8 +48,7 @@ import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
 import { openWorkProject, openWorkProjectDraft } from "./work-navigation";
 import { useWorkSurfaceRuntime } from "./WorkSurfaceRuntime";
 import { useWorkAgentDraftRequest } from "./use-work-agent-draft-request";
-import { createLegacyGlobalProviderCatalog } from "../chat/canonical-composer-adapter";
-import { useChatProviderCatalog } from "../chat/chat-provider-catalog";
+import { useWorkAgentProviderCatalog } from "./use-work-agent-provider-catalog";
 
 type WorkLayout = "wide" | "medium" | "narrow";
 type NarrowWorkPane = "rail" | "chat" | "inspector";
@@ -307,17 +306,7 @@ function WorkTabContent({
   const activeChatScopeRef = useRef({ client, chatId: initialChatId });
   activeChatScopeRef.current = { client, chatId: initialChatId };
   const presentationVisible = hostedChrome ? visible : active;
-  const agentFallbackCatalog = useMemo(
-    () => createLegacyGlobalProviderCatalog({ hasProject: projects.length > 0 }),
-    [projects.length],
-  );
-  const agentCatalog = useChatProviderCatalog(agentFallbackCatalog, { active: presentationVisible });
-  const agentProviderCatalog = useMemo(() => ({
-    catalog: agentCatalog.hasTrustedCatalog ? agentCatalog.catalog : null,
-    loading: agentCatalog.initialLoading,
-    error: agentCatalog.refreshError ? "Models could not be refreshed. Your draft is still here." : "",
-    refresh: agentCatalog.refresh,
-  }), [agentCatalog.catalog, agentCatalog.hasTrustedCatalog, agentCatalog.initialLoading, agentCatalog.refreshError, agentCatalog.refresh]);
+  const agentProviderCatalog = useWorkAgentProviderCatalog(projects.length > 0, presentationVisible);
   const routeKey = `${presentationVisible}:${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? ""}`;
   const hasInspector = Boolean(presentationVisible && (route === "chat" || route === "project"));
   const narrowPane = effectiveNarrowPane(responsive, routeKey, hasInspector);

@@ -4,6 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { CanonicalChatNavigationResponseSchema, FUNDED_AI_READINESS_TIMEOUTS, type CanonicalChatRecord } from "@matrix-os/contracts";
 import WorkTab from "@desktop/renderer/src/features/work/WorkTab";
+import { desktopProviderCatalogCache, stopDesktopProviderCatalogCoordinator } from "@desktop/renderer/src/features/chat/provider-catalog-coordinator";
 import { useChatComposerDrafts } from "@desktop/renderer/src/features/chat/use-chat-composer-drafts";
 import { BotHeaderBindingContext, SurfaceChromeContext, type BotHeaderBindingReport, type SurfaceChromeSpec } from "@desktop/renderer/src/features/desktop-shell/SurfaceChrome";
 import { CanonicalChatWorkspace } from "@desktop/renderer/src/features/chat/CanonicalChatWorkspace";
@@ -299,7 +300,42 @@ describe("WorkTab rail integration", () => {
     await act(async () => finishDiscovery(providerCatalog));
   });
 
+  it("keeps recipe Agent creation blocked when the first host catalog read fails", async () => {
+    const api = useConnection.getState().api!;
+    const originalGet = api.get;
+    let failDiscovery!: (error: Error) => void;
+    const discovery = new Promise<never>((_resolve, reject) => { failDiscovery = reject; });
+    api.get = vi.fn(async (path: string) => {
+      if (path === canonicalChatProviderCatalogPath()) return discovery;
+      if (path === "/api/chat-agents/bot-recipes") return { recipes: [{ recipeId: "competitor-watch", version: "1", name: "Competitor Watch", description: "Watch pages", output: "Change report" }] };
+      return originalGet(path);
+    }) as typeof api.get;
+    api.post = vi.fn(async () => ({ chatId: "chat_must_not_exist" })) as typeof api.post;
+
+    render(<WorkTab route="chat" active />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add new agent" }));
+    const recipe = (await screen.findByText("Watch pages")).closest("article")!;
+    HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", ""); };
+    HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
+    fireEvent.click(within(recipe).getByRole("button", { name: "Use Competitor Watch" }));
+    const model = screen.getByRole("combobox", { name: "Bot model" });
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith(canonicalChatProviderCatalogPath(),
+      expect.objectContaining({ timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs })));
+    expect((model as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+    fireEvent.submit(model.closest("form")!);
+    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(0);
+
+    await act(async () => failDiscovery(new Error("catalog unavailable")));
+    await waitFor(() => expect(desktopProviderCatalogCache.getSnapshot().refreshError).not.toBeNull());
+    expect((model as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
+    fireEvent.submit(model.closest("form")!);
+    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(0);
+  });
+
   beforeEach(() => {
+    stopDesktopProviderCatalogCoordinator();
     resizeObserverEntries.length = 0;
     inspectorProps.active = [];
     chatTabProps.tabIds = [];
@@ -398,6 +434,7 @@ describe("WorkTab rail integration", () => {
 
   afterEach(() => {
     cleanup();
+    stopDesktopProviderCatalogCoordinator();
     if (originalClientWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
     HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
   });

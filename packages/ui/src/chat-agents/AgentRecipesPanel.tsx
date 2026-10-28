@@ -64,7 +64,7 @@ export function AgentRecipesPanel({ onStartFromScratch, scratchDisabled = false,
   }
   const botSelection = chosenBotSelection ?? null;
   const nativeCatalogBlocked = Boolean(botRecipeStatus && botRecipeStatus !== "ready");
-  const botModelAvailable = Boolean(botSelection && (isAutomaticBotSelection(botSelection) || selectableModels.some((choice) =>
+  const botModelAvailable = Boolean(!catalogError && botSelection && (isAutomaticBotSelection(botSelection) || selectableModels.some((choice) =>
     botModelChoiceMatchesSelection(choice, botSelection))));
   const createBot = async (recipe: BotRecipeSummary, name = recipe.name, executor:BotExecutorSelection | null = null) => {
     if (!onInstantiateBot || !onOpenBotChat || botPending || !botSelection || !botModelAvailable || catalogLoading || nativeCatalogBlocked) return;
@@ -135,7 +135,7 @@ export function AgentRecipesPanel({ onStartFromScratch, scratchDisabled = false,
       <input className={chatAgentInputClass} type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search templates" aria-label="Search recipes" />
     </label>
     <div className="matrix-template-categories flex flex-wrap" role="group" aria-label="Template categories">{categories.map(value => <button type="button" key={value} aria-pressed={category === value} className="matrix-chat-agent-category rounded-full border px-3 py-1 text-xs" onClick={() => setCategory(value)}>{value}</button>)}</div>
-    {setupRecipe && !nativeCatalogBlocked ? <BotRecipeSetup onRefreshCatalog={onRefreshCatalog} onSetup={onSetup} botClient={botClient} creationRetained={!!botAttempt.current?.chatId} key={setupRecipe.recipeId} recipe={setupRecipe} selection={botSelection} models={matrixModels} catalog={catalog} pending={!!botPending} createDisabled={!botModelAvailable || catalogLoading} catalogLoading={catalogLoading} error={botError} onSelectionChange={selection => { setBotSelection(selection); setBotError(""); }} onCreate={(name,executor) => { void createBot(setupRecipe, name,executor); }} onClose={() => { setSetupRecipe(null); setBotError(""); }}/> : null}
+    {setupRecipe && !nativeCatalogBlocked ? <BotRecipeSetup onRefreshCatalog={onRefreshCatalog} onSetup={onSetup} botClient={botClient} creationRetained={!!botAttempt.current?.chatId} key={setupRecipe.recipeId} recipe={setupRecipe} selection={botSelection} models={matrixModels} catalog={catalog} pending={!!botPending} createDisabled={!botModelAvailable || catalogLoading} catalogLoading={catalogLoading} catalogUnavailable={Boolean(catalogError)} error={botError} onSelectionChange={selection => { setBotSelection(selection); setBotError(""); }} onCreate={(name,executor) => { void createBot(setupRecipe, name,executor); }} onClose={() => { setSetupRecipe(null); setBotError(""); }}/> : null}
     {botError && !setupRecipe ? <p role="alert" className="text-xs">{botError}</p> : null}
     {onStartFromScratch || showJev || matches.length || visibleBotRecipes.length ? <div className="matrix-chat-agent-recipes__grid grid gap-3">
       {onStartFromScratch ? <button type="button" aria-label={catalogError ? "Retry models" : "Start from scratch"} aria-busy={catalogLoading}
