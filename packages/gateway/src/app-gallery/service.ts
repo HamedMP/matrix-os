@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod/v4";
 import { AppGalleryCatalogSchema, type GalleryApp, type GalleryAppListing, type GalleryInstallResult } from "@matrix-os/contracts/app-gallery";
 import { AppManifestSchema } from "../app-runtime/manifest-schema.js";
+import { invalidateAppIndexCache } from "../app-runtime/app-index.js";
 import { createPrivateStage, DEFAULT_LIMITS, GalleryError, isFsError, pinDirectory, readLimited, readTemplate, type GalleryLimits } from "./filesystem.js";
 import type { PinnedDirectory } from "./pinned-directory.js";
 import { indexOwnerApps, isOwnerFileUnavailable, readOwnerManifest } from "./owner-index.js";
@@ -152,6 +153,8 @@ export function createAppGalleryService(options: AppGalleryOptions): AppGalleryS
         const finalIndex = await indexOwnerApps(apps, await resolveActiveDesignId(home));
         if (finalIndex.unavailable || finalIndex.entries.has(definition.id)) throw new GalleryError(409, "Owner app changed before publication");
         await stage.publish(manifestName, destination, "matrix.json");
+        // The manifest is live; drop this owner's cached index so the first Open finds the app.
+        invalidateAppIndexCache(join(home, "apps"));
         return { status: "installed", slug: definition.id, name: definition.name, path: `apps/${definition.id}` };
       } finally {
         const closed = await Promise.allSettled(directories.reverse().map(directory => directory.close()));
