@@ -44,6 +44,19 @@ it("keeps Agents on management while both creation entries open the same scratch
   expect(bots.instantiate).not.toHaveBeenCalled(); expect(bots.createCustom).not.toHaveBeenCalled();
 });
 
+it("opens custom Agent creation from the host catalog without waiting on duplicate discovery", async () => {
+  const { client } = fixture();
+  const catalog = await client.catalog();
+  client.catalog.mockClear();
+  client.catalog.mockImplementation(() => new Promise(() => {}));
+  render(<ChatAgentsPanel client={client} view="recipes" onClose={vi.fn()}
+    providerCatalog={{ catalog, loading: false, error: "", refresh: vi.fn() }} />);
+  await waitFor(() => expect(scratch()).toBeEnabled());
+  fireEvent.click(scratch());
+  expect(screen.getByRole("dialog", { name: "New Agent" })).toBeVisible();
+  expect(client.catalog).not.toHaveBeenCalled();
+});
+
 it.each([
   { entry: "management", revoked: false },
   { entry: "sidebar +", revoked: false },

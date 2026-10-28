@@ -262,7 +262,7 @@ function activeWorkTab() {
 }
 
 describe("WorkTab rail integration", () => {
-  it("creates a recipe bot and navigates to its saved Chat from the real WorkTab", async () => {
+  it("creates a recipe bot from the warm catalog while refresh is pending and navigates to its saved Chat", async () => {
     const api = useConnection.getState().api!;
     const originalGet = api.get;
     let finishDiscovery!: (catalog: typeof providerCatalog) => void;
@@ -284,15 +284,9 @@ describe("WorkTab rail integration", () => {
     fireEvent.click(create);
     const model = screen.getByRole("combobox", { name: "Bot model" });
     await waitFor(() => expect(api.get).toHaveBeenCalledWith(canonicalChatProviderCatalogPath(true),
-      { timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs }));
-    expect((model as HTMLSelectElement).disabled).toBe(true);
-    // Native selection/submission obey the same discovery barrier as visible controls.
-    fireEvent.change(model, { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
-    fireEvent.submit(model.closest("form")!);
-    expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(0);
-    await act(async () => finishDiscovery(providerCatalog));
-    await waitFor(() => expect((model as HTMLSelectElement).disabled).toBe(false));
+      expect.objectContaining({ timeoutMs: FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs })));
+    // A routine refresh must not hide the last trusted model catalogue or block creation.
+    expect((model as HTMLSelectElement).disabled).toBe(false);
     fireEvent.change(model, { target: { value: "" } });
     expect((screen.getByRole("button", { name: "Create bot" }) as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Create bot" }));
@@ -302,6 +296,7 @@ describe("WorkTab rail integration", () => {
     await waitFor(() => expect(activeWorkTab()?.chatId).toBe("chat_bot_created"));
     expect(activeWorkTab()?.chatView).toBe("conversation");
     expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === "/api/chat-agents/instantiate")).toHaveLength(1);
+    await act(async () => finishDiscovery(providerCatalog));
   });
 
   beforeEach(() => {

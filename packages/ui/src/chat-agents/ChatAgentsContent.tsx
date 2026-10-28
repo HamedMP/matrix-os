@@ -2,9 +2,11 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ChatAgentsPanel } from "./ChatAgentsEntry.js";
 import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import type { ChatAgentClient } from "./client.js";
+import type { AgentProviderCatalogSource } from "./use-agent-provider-catalog.js";
 
-export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrome = false, children }: {
-  hostedChrome?: boolean; client?: ChatAgentClient; scopeKey: string; onOpenBotChat?: (chatId: string) => void; children: ReactNode;
+export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrome = false, providerCatalog, children }: {
+  hostedChrome?: boolean; client?: ChatAgentClient; scopeKey: string; onOpenBotChat?: (chatId: string) => void;
+  providerCatalog?: AgentProviderCatalogSource; children: ReactNode;
 }) {
   const navigation = useChatAgentsNavigation();
   const [previousScope, setPreviousScope] = useState({ scopeKey, client });
@@ -23,7 +25,7 @@ export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrom
       className="min-h-0 min-w-0 flex-1">
       {children}
     </div>
-    {opened ? <ChatAgentsPanel client={opened.client} view={opened.view} onStartChat={opened.onStartChat} onSetup={opened.onSetup}
+    {opened ? <ChatAgentsPanel client={opened.client} view={opened.view} onStartChat={opened.onStartChat} onSetup={opened.onSetup} providerCatalog={providerCatalog}
       hostedChrome={hostedChrome} onTitleChange={onTitleChange} onOpenBotChat={onOpenBotChat} onClose={() => close?.(true)} /> : null}
   </>;
 }
