@@ -41,3 +41,9 @@ explicit restricted-admission proposal awaiting approval. The preceding scope
 paragraph records an earlier phase; current authorization permits bounded local
 implementation and isolated dependency verification, while publication and host
 operations remain held.
+
+## Copied-artifact source integrity: 28 October 2026
+
+See [source-integrity-2026-10-28.md](source-integrity-2026-10-28.md) for the
+content-check repair, real-Git regressions, independent Linux artifact evidence
+and the remaining timing, fixture, installer and live-acceptance gaps.
