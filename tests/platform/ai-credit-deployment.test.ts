@@ -6,8 +6,10 @@ import { describe, expect, it } from "vitest";
 const workflow = parse(readFileSync(".github/workflows/platform-cloud-run.yml", "utf8"));
 const steps = workflow.jobs.deploy.steps as { name: string; run?: string }[];
 const step = (name: string) => steps.find((entry) => entry.name === name)!.run!;
+const sourceSha = "0123456789abcdef0123456789abcdef01234567";
 const env = {
   PATH: process.env.PATH,
+  GITHUB_SHA: sourceSha,
   GCP_PROJECT_ID: "fixture", GCP_REGION: "europe-west3", ARTIFACT_REPOSITORY: "fixture",
   CLOUD_RUN_SERVICE: "fixture", CLOUD_RUN_SERVICE_ACCOUNT: "fixture",
   PLATFORM_PUBLIC_URL: "https://app.example.com", MATRIX_API_ORIGIN: "https://api.example.com",
