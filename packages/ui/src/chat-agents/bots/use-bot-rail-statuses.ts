@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ChatAgent } from "@matrix-os/contracts";
 import type { ChatAgentClient } from "../client.js";
 import { botSummaryReads } from "./bot-summary-reads.js";
-import { BOT_RAIL_IDLE, BOT_RAIL_LOADING, BOT_RAIL_UNAVAILABLE, BOT_RAIL_UNTRACKED, botRailStatus, type BotRailStatus } from "./bot-rail-status.js";
+import { BOT_RAIL_IDLE, BOT_RAIL_LOADING, BOT_RAIL_UNAVAILABLE, botRailStatus, type BotRailStatus } from "./bot-rail-status.js";
 
 const MAX_AGENTS = 100;
 const REFRESH_MS = 15_000;
@@ -24,7 +24,7 @@ export function useBotRailVisibility(visible: boolean): boolean {
 /** Read-only, bounded projection for every Chat rail. The client fences owner/runtime;
  * scope fences refresh completions; same-Bot evidence survives navigation while
  * shared reads coalesce with existing attention summaries. */
-export function useBotRailStatuses(client: ChatAgentClient | undefined, agents: readonly ChatAgent[], scope?: string, active = true): Record<string, BotRailStatus> {
+export function useBotRailStatuses(client: ChatAgentClient | undefined, agents: readonly ChatAgent[], scope?: string, active = true): Partial<Record<string, BotRailStatus>> {
   const visible = useBotRailVisibility(active);
   const key = JSON.stringify(agents.slice(0, MAX_AGENTS).filter(agent => agent.recipeRef)
     .map(agent => ({ id: agent.id, identity: recipeIdentity(agent) })));
@@ -72,12 +72,13 @@ export function useBotRailStatuses(client: ChatAgentClient | undefined, agents: 
     return () => { current = false; window.clearInterval(timer); window.removeEventListener("focus", focus); };
   }, [client, key, scope, visible]);
   const available = visible && client?.bots;
-  return Object.fromEntries(agents.map((agent, index) => {
-    if (index >= MAX_AGENTS) return [agent.id, BOT_RAIL_UNAVAILABLE];
+  return Object.fromEntries(agents.flatMap((agent, index) => {
     // Custom Bots have dedicated Chats but no recipe task or interaction API.
-    if (!agent.recipeRef) return [agent.id, BOT_RAIL_UNTRACKED];
+    // Omit status presentation instead of implying a request failed.
+    if (!agent.recipeRef) return [];
+    if (index >= MAX_AGENTS) return [[agent.id, BOT_RAIL_UNAVAILABLE] as const];
     const matching = available && snapshot?.client === client && snapshot.identities[agent.id] === recipeIdentity(agent);
-    return [agent.id, matching ? snapshot.statuses[agent.id] ?? BOT_RAIL_UNAVAILABLE
-      : available ? BOT_RAIL_LOADING : BOT_RAIL_UNAVAILABLE];
+    return [[agent.id, matching ? snapshot.statuses[agent.id] ?? BOT_RAIL_UNAVAILABLE
+      : available ? BOT_RAIL_LOADING : BOT_RAIL_UNAVAILABLE] as const];
   }));
 }

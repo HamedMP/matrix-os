@@ -1,12 +1,11 @@
 import { botInteractionCard, botTaskStatusCopy, type BotInteraction, type BotTaskSummary } from "@matrix-os/contracts";
 
 export type BotRailStatus = {
-  state: "loading" | "unavailable" | "untracked" | "idle" | "working" | "attention" | "completed";
+  state: "loading" | "unavailable" | "idle" | "working" | "attention" | "completed";
   label: string;
 };
 export const BOT_RAIL_LOADING: BotRailStatus = { state: "loading", label: "Loading status…" };
 export const BOT_RAIL_UNAVAILABLE: BotRailStatus = { state: "unavailable", label: "Status unavailable" };
-export const BOT_RAIL_UNTRACKED: BotRailStatus = { state: "untracked", label: "Task status not tracked" };
 export const BOT_RAIL_IDLE: BotRailStatus = { state: "idle", label: "No open tasks" };
 
 export function latestBotTask(tasks: readonly BotTaskSummary[]): BotTaskSummary | undefined {
