@@ -11,6 +11,7 @@ import { emitPeerPoll, readPeerControlBody } from './chatgpt-plan-poll-route.js'
 import { createPeerReplyIngress } from './chatgpt-plan-reply-route.js';
 
 const challengeBody = z.object({}).strict();
+const capabilitiesQuery = z.object({ includeReplyDeliveryV2: z.tuple([z.literal('true')]).optional() });
 const failureStatus = { forbidden: 403, invalid_request: 400, unavailable: 503, conflict: 409 } as const;
 
 export function createChatGptPlanPeerRoutes(options: {
@@ -81,9 +82,9 @@ export function createChatGptPlanPeerRoutes(options: {
   });
   routes.post(`${root}/capabilities`, async c => {
     const { ownerId, peers } = authorized(c);
-    const values = c.req.queries('includeReplyDeliveryV2');
-    if (values && (values.length !== 1 || values[0] !== 'true')) throw new ChatGptPlanPeerError('invalid_request');
-    return c.json(peers.capabilities(ownerId, await readPeerControlBody(c.req.raw), Boolean(values)));
+    const query = capabilitiesQuery.safeParse(c.req.queries());
+    if (!query.success) throw new ChatGptPlanPeerError('invalid_request');
+    return c.json(peers.capabilities(ownerId, await readPeerControlBody(c.req.raw), Boolean(query.data.includeReplyDeliveryV2)));
   });
   routes.post(`${root}/poll-v2`, async c => {
     const { ownerId, peers } = authorized(c);

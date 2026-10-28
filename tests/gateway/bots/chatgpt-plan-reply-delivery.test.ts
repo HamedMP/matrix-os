@@ -62,7 +62,7 @@ it('keeps final receipts bounded to 32, expires at 120s and drops them with the 
 });
 it('rejects malformed/duplicate opt-in values before peer capability negotiation', async () => {
   const f = await deliveryFixture(); cleanup.push(f.close);
-  for (const query of ['false', '2', 'true&includeReplyDeliveryV2=true']) {
+  for (const query of ['', 'false', '2', 'True', 'true&includeReplyDeliveryV2=true', 'true&includeReplyDeliveryV2=false', 'false&includeReplyDeliveryV2=true']) {
     expect((await f.app().request(`${peerRoot}/capabilities?includeReplyDeliveryV2=${query}`, postBody(f.session))).status).toBe(400);
   }
 });
