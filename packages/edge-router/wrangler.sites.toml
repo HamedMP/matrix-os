@@ -3,7 +3,7 @@ main = "src/sites.ts"
 compatibility_date = "2026-10-09"
 workers_dev = false
 preview_urls = false
-routes = [ { pattern = "matrix.page", custom_domain = true } ]
+routes = [ { pattern = "matrix.page/*", zone_name = "matrix.page" } ]
 
 [vars]
 SITES_PLATFORM_ORIGIN = "https://matrix-platform-jqxkjdhtkq-ey.a.run.app"

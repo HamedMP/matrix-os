@@ -8,10 +8,10 @@ The reviewed platform pipeline preserves and verifies Sites configuration on eve
 - A separately generated `SITES_EDGE_SECRET` of at least 32 characters, stored as secrets in both platform and Worker. Owner tokens never enter the public Worker.
 - The sites migration applied through the existing platform migration runner. It has its own scope and does not change the core migration fingerprint.
 - A reviewed HTTPS platform origin in the Worker's `SITES_PLATFORM_ORIGIN`. It must be a fixed operator-controlled URL.
-- Deploy `packages/edge-router/wrangler.sites.toml` with the existing Cloudflare account tooling. It attaches the Worker as the origin for the owner's newly purchased `matrix.page`, including Cloudflare DNS/TLS. Disable workers.dev and preview URLs so the fixed-origin sandbox cannot be bypassed.
+- Deploy `packages/edge-router/wrangler.sites.toml` with the existing Cloudflare account tooling. It attaches the Worker through the `matrix.page/*` zone route while preserving the apex's externally managed proxied DNS records. Disable workers.dev and preview URLs so the fixed-origin sandbox cannot be bypassed.
 - The already provisioned `MATRIX_SYNC_RUNTIME_TOKEN` authorizes owner publication delegation and signs scoped submission capabilities. It binds the machine ID, runtime slot and rotation epoch. Sites never accept the legacy handle-only token, and hosts without the scoped credential fail closed.
 
-Cloudflare documents this routing mode in [Worker Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/). Customer-owned domains require a later verified-hostname design.
+Cloudflare documents this routing mode in [Worker Routes](https://developers.cloudflare.com/workers/configuration/routing/routes/). Do not change this apex to a Worker Custom Domain while its reviewed A/CNAME records remain externally managed. Customer-owned domains require a later verified-hostname design.
 
 ## Durable production deployment contract
 
@@ -34,7 +34,7 @@ Set `SITES_EDGE_SECRET_VERSION` to the pinned numeric version the Worker will se
 
 The Worker redirects GET/HEAD requests for `/` to `https://matrix-os.com` with status 302 and no query forwarding. Before app hosting ships, a Cloudflare Single Redirect provides the same behavior: `(http.host eq "matrix.page" and http.request.uri.path eq "/" and http.request.method in {"GET" "HEAD"})`, static destination `https://matrix-os.com`, status 302, preserve query disabled. Keep the match root-only when attaching the Worker; never redirect every path.
 
-Cloudflare requires proxied DNS for redirects. A redirect-only apex can use a proxied A record pointing to `192.0.2.1`, as described in [Cloudflare's domain redirect guide](https://developers.cloudflare.com/fundamentals/manage-domains/redirect-domain/). Reconcile that placeholder record during the reviewed Worker Custom Domain attachment. Verify HTTPS root redirects, incoming queries are dropped, and a sample app path does not redirect to the homepage.
+Cloudflare requires proxied DNS for redirects. A redirect-only apex can use a proxied A record pointing to `192.0.2.1`, as described in [Cloudflare's domain redirect guide](https://developers.cloudflare.com/fundamentals/manage-domains/redirect-domain/). Preserve that reviewed DNS record when attaching the `matrix.page/*` Worker route. Verify HTTPS root redirects, incoming queries are dropped, and a sample app path does not redirect to the homepage.
 
 ## Live acceptance
 
