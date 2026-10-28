@@ -308,19 +308,20 @@ describe("Chat canonical provider state", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("retains trust after a routine refresh failure but suspends it after provider settings change", async () => {
+  it("retains trust after a routine failure and forces the next read while settings trust is suspended", async () => {
     let finishRoutine!: (response: Response) => void;
     let finishSettings!: (response: Response) => void;
     const routineRefresh = new Promise<Response>((resolve) => { finishRoutine = resolve; });
     const settingsRefresh = new Promise<Response>((resolve) => { finishSettings = resolve; });
     let catalogReads = 0;
-    vi.stubGlobal("fetch", vi.fn<typeof fetch>(async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => {
       catalogReads += 1;
-      if (catalogReads === 1 || catalogReads === 4 || catalogReads === 5) return Response.json(providerCatalog());
+      if (catalogReads === 1 || catalogReads === 4) return Response.json(providerCatalog());
       if (catalogReads === 2) return routineRefresh;
       if (catalogReads === 3) return settingsRefresh;
       throw new Error("Unexpected provider catalog read");
-    }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const { result } = renderHook(() => useChatProviderState());
     await waitFor(() => expect(result.current.hasTrustedCatalog).toBe(true));
 
@@ -338,11 +339,8 @@ describe("Chat canonical provider state", () => {
 
     act(() => window.dispatchEvent(new Event("focus")));
     await waitFor(() => expect(catalogReads).toBe(4));
-    expect(result.current.hasTrustedCatalog).toBe(false);
-
-    act(() => result.current.refresh());
-    await waitFor(() => expect(catalogReads).toBe(5));
     await waitFor(() => expect(result.current.hasTrustedCatalog).toBe(true));
+    expect(String(fetchMock.mock.calls[3]?.[0])).toContain("refresh=true");
   });
 
   it("refreshes the canonical catalog after provider settings change", async () => {

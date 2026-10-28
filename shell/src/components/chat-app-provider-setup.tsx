@@ -144,7 +144,11 @@ export function useChatProviderState(
       if (!cancelled && !hasCatalog) setLoading(true);
       do {
         pending = false;
-        const forceRefresh = forcePending;
+        // Once provider settings change, every follow-up read must bypass the
+        // cached catalog until one succeeds and restores trust. Otherwise a
+        // normal focus read can clear the error while leaving Agents blocked
+        // with neither an active request nor a retry action.
+        const forceRefresh = forcePending || authoritySuspended;
         forcePending = false;
         const requestAuthorityGeneration = authorityGeneration;
         try {
