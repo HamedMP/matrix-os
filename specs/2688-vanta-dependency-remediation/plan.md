@@ -29,3 +29,13 @@ Root-workspace scan before review: 0 critical, 13 high, 16 moderate, 12 low. The
 Validation: frozen install; affected-package TypeScript; 1,064 focused tests with one pre-existing skip (failed local native/module-layout prerequisites corrected and affected suites rerun); all 3,232 mobile tests; iOS/Android bundle export; shell production build with the existing CI Clerk fixture; desktop production build; Neo and edge-router deployment dry runs; mobile native-change guard; whitespace check. No live deployment or native mobile build was performed.
 
 Companion documentation deliverable: update the canonical private matrix-os-site developer releases page with native runtime/OTA compatibility rules, alongside its own compatible security dependency fixes, and open a separate documentation/dependency PR under GTM-305. Keep its validation and review separate from this public source PR.
+
+
+### Full-CI compatibility corrections
+
+Full hosted CI exposed two assertions not covered by the initial focused runs. Both reproduced locally before editing production behavior or tests.
+
+- The updated Zod string bound counts Unicode code points. Preserve the canonical chat contract's existing JavaScript UTF-16 budget explicitly in `canonicalBoundedText`; otherwise an oversized optional provider preview is admitted. New ASCII/surrogate boundary and independent byte-limit tests failed before the production fix and pass after it. The original OpenClaw lifecycle regression also passes without dropping its assertion.
+- Patched Hono rejects oversized chunked bodies at the route middleware before contacting the home. The old integration assertion required a home call even on rejection. Replace that implementation-specific assertion with exact 413/no-forwarding and bounded input-read checks, plus successful exact-limit and smaller uploads. Keep the independent real relay-stream limit regressions intact; no middleware or limit is removed.
+
+Validation: 105 contract/provider/relay suites, 980 tests passed; affected-package native TypeScript passed. No skips or exclusions were added. Fresh full CI and Greptile review are required on the correction's published head.

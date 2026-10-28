@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { CollaborationRelay, parseRelayRoute, parseRelaySocketPath, RELAY_RUNTIME_HEADER, type RelayMetadata } from "../../packages/platform/src/collaboration/relay.js";
 import { createPlatformCollaborationRoutes } from "../../packages/platform/src/collaboration/routes.js";
-import { COLLABORATION_CLIENT_REQUEST_ID_HEADER, COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER, COLLABORATION_EXPECTED_REVISION_HEADER } from "@matrix-os/contracts";
+import { COLLABORATION_CLIENT_REQUEST_ID_HEADER, COLLABORATION_EXPECTED_MEMBER_REVISION_HEADER, COLLABORATION_EXPECTED_REVISION_HEADER, COLLABORATION_HTTP_BODY_LIMIT } from "@matrix-os/contracts";
 
 const scopeId = "10000000-0000-4000-8000-000000000001";
 const home = { runtimeId: "vps-11111111-1111-4111-8111-111111111111", origin: "https://203.0.113.10:443" };
@@ -28,13 +28,14 @@ function relay(overrides: Partial<ConstructorParameters<typeof CollaborationRela
 }
 
 /** A request body delivered in chunks with no declared length, as a chunked upload arrives. */
-function chunkedBody(totalBytes: number): ReadableStream<Uint8Array> {
+function chunkedBody(totalBytes: number, onChunk?: (bytes: number) => void): ReadableStream<Uint8Array> {
   let sent = 0;
   return new ReadableStream<Uint8Array>({
     pull(controller) {
       if (sent >= totalBytes) { controller.close(); return; }
       const chunk = new Uint8Array(Math.min(16 * 1024, totalBytes - sent)).fill(120);
       sent += chunk.byteLength;
+      onChunk?.(chunk.byteLength);
       controller.enqueue(chunk);
     },
   });
@@ -288,9 +289,15 @@ describe("CollaborationRelay", () => {
     expect(await response.text()).toBe("early");
   });
 
-  it("refuses a chunked over-limit upload through the mutating relay route before the home can read it all", async () => {
-    // End to end through the route that omits Content-Length: the branch must not hand the
-    // home an unbounded stream.
+  it.each([
+    { size: 4 * 1024 * 1024, status: 413 },
+    { size: COLLABORATION_HTTP_BODY_LIMIT + 1, status: 413 },
+    { size: COLLABORATION_HTTP_BODY_LIMIT, status: 200 },
+    { size: 48 * 1024, status: 200 },
+  ])("bounds a $size-byte chunked upload through the mutating relay route", async ({ size, status }) => {
+    // Patched Hono rejects over-limit chunked uploads before invoking the relay.
+    // Exercise that real route boundary, bounded source reads, and valid forwarding.
+    // The relay's independent streaming limit is covered above without middleware.
     const { state, fetchImpl } = countingHome();
     const { instance } = relay({}, fetchImpl as never);
     const app = new Hono();
@@ -303,19 +310,28 @@ describe("CollaborationRelay", () => {
       resolveInvitationIdentifier: async () => null,
       hydrate: async () => ({}),
     }));
+    let produced = 0;
     const request = new Request("http://local/api/collaboration/direct-sessions", {
       method: "POST",
       headers: {
         "x-test-actor": "user_member", origin: "https://app.matrix-os.com", "content-type": "application/json", [RELAY_RUNTIME_HEADER]: home.runtimeId,
       },
-      body: chunkedBody(4 * 1024 * 1024),
+      body: chunkedBody(size, (bytes) => { produced += bytes; }),
       duplex: "half",
     } as RequestInit & { duplex: "half" });
     const response = await app.request(request);
-    expect(response.ok).toBe(false);
-    expect(state.calls).toBe(1);
-    expect(state.completed).toBe(false);
-    expect(state.received).toBeLessThanOrEqual(96 * 1024);
+    expect(response.status).toBe(status);
+    if (status === 413) {
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(state.received).toBe(0);
+      expect(state.completed).toBe(false);
+      // One overflowing chunk plus the stream's single queued chunk is bounded.
+      expect(produced).toBeLessThanOrEqual(COLLABORATION_HTTP_BODY_LIMIT + 2 * 16 * 1024);
+    } else {
+      expect(fetchImpl).toHaveBeenCalledOnce();
+      expect(state.completed).toBe(true);
+      expect(state.received).toBe(size);
+    }
   });
 
   it("answers an unauthenticated relay request with its own sign-in challenge and never contacts a home", async () => {
