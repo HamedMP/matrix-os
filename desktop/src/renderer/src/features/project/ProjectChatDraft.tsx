@@ -493,6 +493,7 @@ export function ProjectChatDraft({
                   attachments={(
                     <AttachmentPreviewRow
                       items={attachments.items}
+                      selectionError={attachments.selectionError}
                       disabled={busy}
                       onRemove={attachments.remove}
                       onRetry={(localId) => void attachments.retry(localId)}

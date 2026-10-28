@@ -1,4 +1,4 @@
-import { hasChatMentionParts } from "@matrix-os/ui";
+import { hasChatMentionParts, SubmittedBotAnswers, isBotAnswerContinuation } from "@matrix-os/ui";
 import type { CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
@@ -78,7 +78,9 @@ export function QueuedTurnsPanel({
   const [draggedTurnId, setDraggedTurnId] = useState<string | null>(null);
   const [dragTargetId, setDragTargetId] = useState<string | null>(null);
   if (turns.length === 0) return null;
-  const ordered = [...turns].sort((left, right) => left.position - right.position);
+  const answers = turns.filter(isBotAnswerContinuation);
+  const ordered = turns.filter(turn => !isBotAnswerContinuation(turn)).sort((left, right) => left.position - right.position);
+  if (!ordered.length) return <SubmittedBotAnswers turns={answers} onCancel={onCancel} disabled={disabled || pendingAction !== null} />;
 
   const reorder = (queuedTurnId: string, targetTurnId: string) => {
     const currentIndex = ordered.findIndex((turn) => turn.id === queuedTurnId);
@@ -88,7 +90,9 @@ export function QueuedTurnsPanel({
     const [moved] = next.splice(currentIndex, 1);
     if (!moved) return;
     next.splice(targetIndex, 0, moved);
-    onReorder(next.map((turn) => turn.id), queuedTurnId);
+    let index = 0;
+    const all = [...turns].sort((left, right) => left.position - right.position);
+    onReorder(all.map(turn => isBotAnswerContinuation(turn) ? turn.id : next[index++]!.id), queuedTurnId);
   };
 
   const keyboardReorder = (
@@ -104,6 +108,8 @@ export function QueuedTurnsPanel({
   };
 
   return (
+    <>
+    <SubmittedBotAnswers turns={answers} onCancel={onCancel} disabled={disabled || pendingAction !== null} />
     <section
       role="region"
       aria-label="Queued turns"
@@ -228,5 +234,6 @@ export function QueuedTurnsPanel({
         })}
       </ol>
     </section>
+    </>
   );
 }

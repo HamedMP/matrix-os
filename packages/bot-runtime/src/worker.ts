@@ -33,7 +33,7 @@ class BotRunInputError extends Error {
 }
 
 /** Reads each image in bounded chunks; a chunk that disagrees with the first one fails the run. */
-export async function loadRunImages(broker: BotWorkerBrokerClient, count: number): Promise<BotImageInput[]> {
+export async function loadRunImages(broker: BotWorkerBrokerClient, count: number, start = 0): Promise<BotImageInput[]> {
   const images: BotImageInput[] = [];
   for (let index = 0; index < count; index += 1) {
     let data = "";
@@ -41,7 +41,7 @@ export async function loadRunImages(broker: BotWorkerBrokerClient, count: number
     let totalChars: number | undefined;
     for (let reads = 0; ; reads += 1) {
       if (reads >= MAX_IMAGE_CHUNK_READS) throw new BotRunInputError();
-      const chunk = await broker.readImageChunk({ index, offset: data.length });
+      const chunk = await broker.readImageChunk({ index: start + index, offset: data.length });
       if ((mimeType && chunk.mimeType !== mimeType) || (totalChars !== undefined && chunk.totalChars !== totalChars)) {
         throw new BotRunInputError();
       }
@@ -87,6 +87,7 @@ interface ActiveRun {
   runId: string;
   controller: AbortController;
   control?: BotTurnControl;
+  steering?: boolean;
   done?: Promise<unknown>;
 }
 
@@ -149,7 +150,15 @@ export function createBotWorker(deps: {
       if (!active || active.runId !== command.runId) return { acknowledged: false };
       if (command.kind === "bot.steer") {
         // Refused once the turn has stopped taking input, so an acknowledged steer is never dropped.
-        return { acknowledged: active.control?.steer(command.text) ?? false };
+        const current = active;
+        if (!current.control || current.controller.signal.aborted || current.steering) return { acknowledged: false };
+        current.steering = true;
+        try {
+          const images = command.imageRange
+            ? await loadRunImages(deps.brokerFor(current.runId), command.imageRange.count, command.imageRange.start) : undefined;
+          if (active !== current || current.controller.signal.aborted) return { acknowledged: false };
+          return { acknowledged: current.control.steer(command.text, images) };
+        } finally { current.steering = false; }
       }
       active.controller.abort();
       return { acknowledged: true };

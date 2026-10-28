@@ -1,14 +1,23 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { KernelConfig, KernelEvent } from "@matrix-os/kernel";
 import {
-  createDispatcher,
+  createDispatcher as createRealDispatcher,
+  type Dispatcher,
   type SpawnFn,
 } from "../../packages/gateway/src/dispatcher.js";
 
 const temporaryHomePaths: string[] = [];
+const temporaryDispatchers: Dispatcher[] = [];
+
+function createDispatcher(options: Parameters<typeof createRealDispatcher>[0]): Dispatcher {
+  const dispatcher = createRealDispatcher(options);
+  temporaryDispatchers.push(dispatcher);
+  return dispatcher;
+}
 
 function makeHomePath(): string {
   const dir = resolve(mkdtempSync(join(tmpdir(), "dispatch-overrides-")));
@@ -26,9 +35,16 @@ function resultEvent(): KernelEvent {
 }
 
 describe("dispatcher per-message kernel overrides", () => {
-  afterEach(() => {
-    for (const homePath of temporaryHomePaths.splice(0)) {
-      rmSync(homePath, { recursive: true, force: true });
+  afterEach(async () => {
+    try {
+      for (const dispatcher of temporaryDispatchers.splice(0)) {
+        if (dispatcher.db.$client.open) dispatcher.db.$client.close();
+      }
+    } finally {
+      for (const homePath of temporaryHomePaths.splice(0)) {
+        // Yield during transient filesystem cleanup races; persistent errors still fail.
+        await rm(homePath, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 });
+      }
     }
   });
 

@@ -1,4 +1,4 @@
-import { botInteractionCard, botIntegrationAccessCopy, type BotInteraction, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse } from "@matrix-os/contracts";
+import { botSavedAnswerRecovery, botInteractionCard, botIntegrationAccessCopy, type BotInteraction, type ResolveBotInteractionRequest, type ResolveBotInteractionResponse } from "@matrix-os/contracts";
 import { useEffect, useState } from "react";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
 
@@ -16,35 +16,52 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
   const [typedAnswers, setTypedAnswers] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
   const [resolved, setResolved] = useState(false);
+  const [savedRevision, setSavedRevision] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
   useEffect(() => {
-    if (interaction.status !== "pending") return;
+    if (interaction.status !== "pending" && !interaction.recoveryAvailable && savedRevision === null) return;
     const delay = Date.parse(interaction.expiresAt) - Date.now();
     if (delay <= 0) { setNow(new Date().toISOString()); return; }
     const timer = setTimeout(() => setNow(new Date().toISOString()), Math.min(delay + 1, 2_147_483_647));
     return () => clearTimeout(timer);
-  }, [interaction.expiresAt, interaction.status]);
+  }, [interaction.expiresAt, interaction.status, interaction.recoveryAvailable, savedRevision]);
   const card = botInteractionCard(interaction, now);
+  const recovery = !resolved ? botSavedAnswerRecovery(interaction, now, savedRevision) : null;
+  const recoveryOpen = recovery !== null && !recovery.expired;
   const actionable = card.state === "actionable" && !resolved && actionsAvailable;
 
   const decide = async (request: ResolveBotInteractionRequest) => {
-    if (!actionable || pending) return;
+    if (pending || (request.kind === "resume" ? !recoveryOpen || !actionsAvailable : !actionable)) return;
     setPending(true);
     setError("");
     try {
       const response = await onResolve(request);
+      if (response?.continuationPending) {
+        setSavedRevision(response.interaction.revision);
+        onResolved?.();
+        return;
+      }
+      setSavedRevision(null);
       if (response?.connectUrl) setConnectUrl(response.connectUrl);
       setResolved(true);
       // Keep the returned consent link visible until the next status refresh.
       if (!response?.connectUrl) onResolved?.();
     } catch (failure: unknown) {
       console.warn("[chat-agents] Bot interaction failed:", failure instanceof Error ? failure.name : "UnknownError");
-      setError("Could not save your response. Refresh and try again.");
+      setError(request.kind === "resume" ? "Your answer is saved. Work could not resume. Refresh and try again." : "Could not save your response. Refresh and try again.");
     } finally {
       setPending(false);
     }
   };
+  if (recovery) return <section aria-label="Saved answer" className="matrix-chat-agent-card matrix-bot-interaction-card grid gap-3 rounded-xl border p-4">
+    <p className="text-sm">Your answer is saved. Resuming work is pending confirmation.</p>
+    {!recoveryOpen ? <p role="status">This request has expired.</p> : null}
+    {error ? <p role="alert">{error}</p> : null}
+    <button type="button" className={chatAgentButtonClass} disabled={!recoveryOpen || !actionsAvailable || pending}
+      onClick={() => void decide({ kind: "resume", baseRevision: recovery.revision })}>Resume</button>
+  </section>;
+
   const typeAnswer = (questionId: string, value: string) => {
     setTypedAnswers((current) => ({ ...current, [questionId]: value }));
     // Keep the last radio choice underneath Other so clearing Other restores it.

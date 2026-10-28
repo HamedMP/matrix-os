@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import {
+  botSavedAnswerRecovery,
   botIntegrationAccessCopy,
   botInteractionCard,
   type BotInteraction,
@@ -9,6 +10,8 @@ import {
   type ResolveBotInteractionRequest,
   type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
+
+import { Button } from "@/components/ui";
 
 import { approvalTitle, serviceLabel } from "../agent-copy";
 
@@ -69,6 +72,16 @@ export function PendingInteraction({
   const [error, setError] = useState<string | null>(null);
   const [settled, setSettled] = useState<{ connectUrl: string | null } | null>(null);
   const inFlight = useRef(false);
+  const [savedRevision, setSavedRevision] = useState<number | null>(null);
+  const [now, setNow] = useState(() => new Date().toISOString());
+  const recovery = !settled ? botSavedAnswerRecovery(interaction, now, savedRevision) : null;
+  useEffect(() => {
+    if (!interaction.recoveryAvailable && savedRevision === null) return;
+    const delay = Date.parse(interaction.expiresAt) - Date.now();
+    if (delay <= 0) { setNow(new Date().toISOString()); return; }
+    const timer = setTimeout(() => setNow(new Date().toISOString()), Math.min(delay + 1, 2_147_483_647));
+    return () => clearTimeout(timer);
+  }, [interaction.expiresAt, interaction.recoveryAvailable, savedRevision]);
 
   const card = botInteractionCard(interaction, new Date().toISOString());
   const { payload, revision: baseRevision } = interaction;
@@ -77,7 +90,7 @@ export function PendingInteraction({
   const testID = `interaction-${interaction.interactionId}`;
 
   const resolve = async (action: string, input: ResolveBotInteractionRequest) => {
-    if (inFlight.current || settled) return;
+    if (inFlight.current || settled || (input.kind === "resume" && (!recovery || recovery.expired || !actionsAvailable))) return;
     inFlight.current = true;
     setSending(action);
     setError(null);
@@ -86,13 +99,14 @@ export function PendingInteraction({
       response = await onResolve(interaction.interactionId, input);
     } catch (failure: unknown) {
       console.warn("[mobile] agent interaction failed", failure instanceof Error ? failure.name : "unknown");
-      setError(SAVE_FAILED);
+      setError(input.kind === "resume" ? "Your answer is saved. Work could not resume. Try again." : SAVE_FAILED);
       return;
     } finally {
       inFlight.current = false;
       setSending(null);
     }
-    setSettled({ connectUrl: response.connectUrl ?? null });
+    if (response.continuationPending) setSavedRevision(response.interaction.revision);
+    else { setSavedRevision(null); setSettled({ connectUrl: response.connectUrl ?? null }); }
     try {
       await onRefresh();
     } catch (failure: unknown) {
@@ -110,6 +124,15 @@ export function PendingInteraction({
       setError(CONNECT_PAGE_FAILED);
     }
   };
+
+  if (recovery) return (
+    <InteractionCard testID={testID} label="Saved answer" error={error}>
+      <InteractionNote>Your answer is saved. Resuming work is pending confirmation.</InteractionNote>
+      {recovery.expired ? <InteractionNote>This request has expired.</InteractionNote> : null}
+      <Button label="Resume" disabled={recovery.expired || !actionsAvailable || sending !== null}
+        onPress={() => void resolve("resume", { kind: "resume", baseRevision: recovery.revision })} />
+    </InteractionCard>
+  );
 
   if (settled) {
     const { connectUrl } = settled;

@@ -17,6 +17,7 @@ import { resolveManagedPiRoute } from "../../../packages/gateway/src/bots/route-
 import { managedPiWorkspace } from "../../../packages/gateway/src/chat/managed-pi-workspace.js";
 import { makeAiProviderSnapshot } from "../../fixtures/ai-provider-snapshot.js";
 import type { ScopeRuntimeHost } from "../../../packages/gateway/src/scope-runtime-host/index.js";
+import type { ResolvedChatExecutionRoot } from "../../../packages/gateway/src/chat/execution-root.js";
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
 
@@ -44,10 +45,12 @@ async function setup(permissionMode = "full_access", supervisedBrowser = false) 
     runtimeHandle: `runtime_${"c".repeat(32)}`, executionGeneration: "2", state: "running",
   }));
   const stopRuntime = vi.fn(async () => undefined);
-  const host = { available: true, client: { createRuntime, stopRuntime } } as unknown as ScopeRuntimeHost;
-  const admission = createManagedPiAdmission({ db, homePath: home, host, registry, supervisedBrowser, toolCapabilities: ["browser.action", "mcp.call"], roots: { resolve: async () => { throw new Error("Unexpected project" ); } } });
+  const renewRuntime = vi.fn(async () => undefined);
+  const host = { available: true, client: { createRuntime, renewRuntime, stopRuntime } } as unknown as ScopeRuntimeHost;
+  const roots = { resolve: vi.fn(async (): Promise<ResolvedChatExecutionRoot> => { throw new Error("Unexpected project" ); }) };
+  const admission = createManagedPiAdmission({ db, homePath: home, host, registry, supervisedBrowser, toolCapabilities: ["browser.action", "mcp.call"], roots });
   const input = { ownerId: OWNER, chatId: "chat_authority", runId: result.run.id, resolved: resolveManagedPiRoute(snapshot, selection) };
-  return { db, admission, registry, input, createRuntime, home };
+  return { db, admission, registry, input, createRuntime, renewRuntime, stopRuntime, roots, home };
 }
 
 it("requires exact private owner/chat/run identity and refuses live bot or wrong model authority", async () => {
@@ -74,6 +77,58 @@ it("admits a running supervisor result and registers only the managed run author
   expect(() => registry.bind(unprojected)).toThrow(new BotRuntimeRegistryError("invalid_binding"));
   await admission.release(binding.runtimeHandle);
   expect(registry.lookup({ runtimeHandle: binding.runtimeHandle, executionGeneration: "2" })).toBeNull();
+});
+it("renews only an unchanged live managed binding and refuses cancelled inference", async () => {
+  const { admission, input, registry, renewRuntime } = await setup();
+  const binding = await admission.admit(input);
+  await expect(admission.renew({ ...binding, rootFingerprint: "b".repeat(64) })).rejects.toEqual(new BotAdmissionError("not_found"));
+  expect(renewRuntime).not.toHaveBeenCalled();
+  await admission.renew(binding);
+  expect(renewRuntime).toHaveBeenCalledExactlyOnceWith({ runtimeHandle: binding.runtimeHandle, executionGeneration: binding.executionGeneration });
+  registry.cancelInference(binding);
+  await expect(admission.renew(binding)).rejects.toEqual(new BotAdmissionError("not_found"));
+  expect(renewRuntime).toHaveBeenCalledTimes(1);
+  await admission.release(binding.runtimeHandle);
+});
+it("stops managed renewal after bounded drain of hung project preflight without late host renewal", async () => {
+  const { admission, input, db, roots, registry, renewRuntime, stopRuntime, home } = await setup();
+  const ref = { kind: "project" as const, projectId: "project_hung" };
+  const resolved: ResolvedChatExecutionRoot = { ref, fingerprint: "a".repeat(64), primaryWorkspaceRoot: home };
+  await db.updateTable("chat_runs").set({ execution_root: ref, execution_root_fingerprint: resolved.fingerprint }).where("id", "=", input.runId).execute();
+  roots.resolve.mockResolvedValue(resolved);
+  const binding = await admission.admit(input);
+  let finish!: () => void;
+  const gate = new Promise<void>(resolve => { finish = resolve; });
+  roots.resolve.mockClear().mockImplementation(async () => { await gate; return resolved; });
+  const onFailure = vi.fn();
+  admission.startRenewal(binding, onFailure);
+  await vi.waitFor(() => expect(roots.resolve).toHaveBeenCalledOnce());
+  await admission.release(binding.runtimeHandle);
+  expect(stopRuntime).toHaveBeenCalledOnce();
+  expect(registry.lookupRun(binding)).toBeNull();
+  finish();
+  await Promise.resolve();
+  expect(renewRuntime).not.toHaveBeenCalled();
+  expect(onFailure).not.toHaveBeenCalled();
+});
+it("passes an abortable signal to managed host renewal and stops after bounded drain", async () => {
+  const { admission, input, registry, renewRuntime, stopRuntime } = await setup();
+  const binding = await admission.admit(input);
+  let observedSignal: AbortSignal | undefined;
+  let finish!: () => void;
+  const gate = new Promise<void>(resolve => { finish = resolve; });
+  renewRuntime.mockImplementation(async (request: { signal?: AbortSignal }) => { observedSignal = request.signal; await gate; });
+  const onFailure = vi.fn();
+  admission.startRenewal(binding, onFailure);
+  await vi.waitFor(() => expect(renewRuntime).toHaveBeenCalledOnce());
+  expect(observedSignal?.aborted).toBe(false);
+  await admission.release(binding.runtimeHandle);
+  expect(observedSignal?.aborted).toBe(true);
+  expect(stopRuntime).toHaveBeenCalledOnce();
+  expect(registry.lookupRun(binding)).toBeNull();
+  finish();
+  await Promise.resolve();
+  expect(onFailure).not.toHaveBeenCalled();
 });
 it("binds read-only authority and rejects workspace inode changes before any artifact effect", async () => {
   const { admission, input, registry, home, createRuntime } = await setup("supervised");

@@ -386,3 +386,33 @@ describe("shared group Pi admission", () => {
   });
 
 });
+
+
+describe("shared group Pi renewal after Runtime integration", () => {
+  it("renews the admitted shared root without using a personal bot workspace", async () => {
+    const fixture = setup(async () => context);
+    const renewRuntime = vi.fn(async () => undefined);
+    Object.assign(fixture.client, { renewRuntime });
+    await fixture.admission.admit(request);
+    const binding = fixture.registry.lookupRun({ runtimeHandle: RUNTIME, executionGeneration: "1", runId: request.runId })!;
+    await fixture.admission.renew(binding, undefined, request.group!.executionRoot);
+    expect(renewRuntime).toHaveBeenCalledTimes(1);
+    expect(fixture.roots.resolve).toHaveBeenLastCalledWith({ type: "personal", ownerId: OWNER }, request.group!.executionRoot);
+    expect(fixture.registry.lookupRun(binding)).toEqual(binding);
+    await fixture.admission.release(RUNTIME);
+  });
+
+  it.each(["authority", "root", "missing_root"] as const)("refuses renewal after %s changes before renewing the host", async (change) => {
+    const authorize = vi.fn(async () => context);
+    const fixture = setup(authorize);
+    const renewRuntime = vi.fn(async () => undefined);
+    Object.assign(fixture.client, { renewRuntime });
+    await fixture.admission.admit(request);
+    const binding = fixture.registry.lookupRun({ runtimeHandle: RUNTIME, executionGeneration: "1", runId: request.runId })!;
+    if (change === "authority") authorize.mockResolvedValue({ ...context, authEpoch: context.authEpoch + 1 });
+    if (change === "root") fixture.roots.resolve.mockResolvedValue({ ...root, fingerprint: "a".repeat(64) });
+    await expect(fixture.admission.renew(binding, undefined, change === "missing_root" ? undefined : request.group!.executionRoot)).rejects.toMatchObject({ code: expect.stringMatching(/not_found|root_changed|invalid_root/) });
+    expect(renewRuntime).not.toHaveBeenCalled();
+    await fixture.admission.release(RUNTIME);
+  });
+});

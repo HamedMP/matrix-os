@@ -21,7 +21,9 @@ describe("scope-runtime-bot-v1 profile", () => {
     ]);
     expect(added).toEqual([
       "BindReadOnlyPaths=<bot-runtime-directory>:/opt/matrix/scope-sdk/bot-runtime",
-      "RuntimeMaxSec=900",
+      "RuntimeMaxSec=infinity",
+      "BindsTo=matrix-scope-runtime.service",
+      "After=matrix-scope-runtime.service",
     ]);
     for (const property of ["DynamicUser=yes", "PrivateNetwork=yes", "ProtectHome=yes", "ProtectSystem=strict",
       "CapabilityBoundingSet=", "NoNewPrivileges=yes", "MemoryMax=1073741824", "CPUQuota=200%", "TasksMax=256"]) {
@@ -29,8 +31,8 @@ describe("scope-runtime-bot-v1 profile", () => {
     }
   });
 
-  it("pins its own digest and the current shared-chat qualification", () => {
-    expect(SCOPE_RUNTIME_BOT_PROFILE_DIGEST).toBe("884f3410867236443e79580ae16425c23909bc15fb79daec11db6c3dc81eebd4");
+  it("pins its own digest and retains the current shared-chat qualification", () => {
+    expect(SCOPE_RUNTIME_BOT_PROFILE_DIGEST).toBe("a1edb17cbb6df8cc52f3d15f137dfaa616045cade2198bcd65ae2c258d94e14b");
     expect(SCOPE_RUNTIME_PROFILE_DIGEST).toBe("78a58c7045b1083a0b1e538ae36fdc06c6a145d9aa09d36a3c75eb47ea3b1ed3");
   });
 

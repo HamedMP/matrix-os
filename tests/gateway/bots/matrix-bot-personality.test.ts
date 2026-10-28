@@ -133,6 +133,7 @@ async function fixture(options: { runtimeOwnerId?: string | null; hold?: boolean
       bridgeOrigin: "http://127.0.0.1:41000", route: { provider: faux.provider, model: faux.getModel() }, onAgent: agent => { agentPrompts.push(agent.state.systemPrompt); } }) };
   });
   const host = { available: true, client: { createRuntime: async () => ({ runtimeHandle: `runtime_${(++serial).toString(16).padStart(32, "0")}`, executionGeneration: "1" }),
+    renewRuntime: async (input: { runtimeHandle: string; executionGeneration: string }) => ({ ...input, state: "running" as const }),
     stopRuntime: vi.fn(async () => undefined), runBot } } as unknown as ScopeRuntimeHost;
   const roots = createChatExecutionRootResolver({ homePath: home, projects: { getProjectById: async () => ({ ok: false, status: 404, error: "Not found" }), resolveProjectWorkingDirectory: async () => null }, worktrees: { getWorktree: async () => ({ ok: false, status: 404, error: "Not found" }) } });
   const admission = createPrivateBotAdmission({ db, host, roots, registry });

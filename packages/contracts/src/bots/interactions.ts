@@ -79,6 +79,8 @@ export const BotInteractionSchema = z.object({
   expiresAt: IsoTimestampSchema,
   revision: BotRevisionSchema,
   payload: BotInteractionPayloadSchema.optional(),
+  /** Saved blocking question whose original continuation was never admitted. */
+  recoveryAvailable: z.literal(true).optional(),
 }).strict().refine((interaction) => interaction.payload === undefined || interaction.payload.kind === interaction.kind, {
   message: "Payload kind must match the interaction kind",
 });
@@ -86,6 +88,7 @@ export const BotInteractionSchema = z.object({
 const answerShape = CanonicalSubmitChatInputRequestSchema.shape;
 
 export const ResolveBotInteractionRequestSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("resume"), baseRevision: BotBaseRevisionSchema }).strict(),
   z.object({
     kind: z.literal("question"),
     baseRevision: BotBaseRevisionSchema,
@@ -118,6 +121,8 @@ export const ResolveBotInteractionResponseSchema = z.object({
     revision: BotRevisionSchema,
   }).strict(),
   connectUrl: BotHttpsUrlSchema.optional(),
+  /** Answer committed; no confirmed continuation admission yet. */
+  continuationPending: z.literal(true).optional(),
 }).strict();
 
 export type BotInteractionKind = z.infer<typeof BotInteractionKindSchema>;

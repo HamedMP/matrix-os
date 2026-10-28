@@ -47,16 +47,23 @@ async function fixture(permissionMode: "supervised" | "full_access" = "supervise
  let binding: ManagedPiRuntimeBinding | undefined, finish = () => {};
  const hold = new Promise<void>(resolve => { finish = resolve; });
  const runBot = vi.fn(async (input: { runId?: string; runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }) => { binding = registry.lookupRun({ ...input, runId: input.command.runId }) as ManagedPiRuntimeBinding; await hold; return { ok: true, reply: { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 } }; });
- const host = { available: true, client: { createRuntime, runBot, stopRuntime: vi.fn(async () => { finish(); }) } } as unknown as ScopeRuntimeHost;
+ const host = { available: true, client: { createRuntime, runBot, renewRuntime: vi.fn(async () => undefined), stopRuntime: vi.fn(async () => { finish(); }) } } as unknown as ScopeRuntimeHost;
  const providers = { getSnapshot: vi.fn(async () => { throw new Error("Funded fallback forbidden"); }) };
  const admission = createManagedPiAdmission({ homePath: home, db, host, registry, matrixAnthropic: service, toolCapabilities: ["integration.call", "mcp.call"], roots: { resolve: async () => { throw new Error("Unselected project forbidden"); } } });
- const runtime = createManagedPiRuntime({ admission, host, providers, matrixAnthropic: service, lifetime: new AbortController().signal, forgetRun: () => {}, cancelInference: b => registry.cancelInference(b) });
+ let heartbeat: ReturnType<typeof admission.startRenewal> | undefined;
+ const runtime = createManagedPiRuntime({ admission: { ...admission, startRenewal: (...args) => {
+  heartbeat = admission.startRenewal(...args); return heartbeat;
+ } }, host, providers, matrixAnthropic: service, lifetime: new AbortController().signal, forgetRun: () => {}, cancelInference: b => registry.cancelInference(b) });
  const repository = new ChatRepository(db as unknown as Kysely<ChatDatabase>), orchestrator = new CanonicalChatOrchestrator({ repository, catalog, adapters: new CanonicalChatProviderRegistry([runtime.adapter]) });
  cleanup.push(async () => { finish(); await orchestrator.drain(); await runtime.close(); await orchestrator.close(); });
  const owner = { type: "personal" as const, ownerId: OWNER };
  await repository.create(owner, { id: "chat_api", clientRequestId: "req_api", title: "API source" });
  const result = await orchestrator.admitTurn({ userId: OWNER, source: "jwt" }, owner, "chat_api", { clientRequestId: "req_api_turn", baseRevision: 0, selection, interactionMode: "default", permissionMode, parts: [{ type: "text", text: "Hello" }] });
  await vi.waitFor(() => expect(binding).toBeDefined());
+ // These custody tests deliberately pause a foreground workspace read. Quiesce
+ // the independently tested startup heartbeat so it cannot claim that checkpoint.
+ if (!heartbeat) throw new Error("Fixture heartbeat was not registered");
+ await heartbeat.stop();
  const inference = vi.fn<typeof fetch>(async () => new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } }));
  const fallback = vi.fn(async () => { throw new Error("Ambient credential fallback forbidden"); });
  const forward = () => forwardBotInference({ version: 1, requestId: randomUUID(), runtimeHandle: binding!.runtimeHandle, executionGeneration: binding!.executionGeneration, action: "inference.messages", method: "POST", path: "/v1/messages", headers: { "anthropic-version": "2023-06-01" }, body: JSON.stringify({ model: selection.model, stream: true, messages: [] }) }, binding!, modelId => registry.authorize({ ...binding!, modelId, action: "inference.messages" }), { homePath: home, matrixAnthropic: service, lifetime: new AbortController().signal, runSignal: registry.inferenceSignal(binding!)!, fetchImpl: inference, resolveCredentials: fallback, revalidateBinding: async b => { try { await admission.toolAuthority(b as ManagedPiRuntimeBinding); return true; } catch (error) { if (error instanceof Error) return false; throw error; } } });

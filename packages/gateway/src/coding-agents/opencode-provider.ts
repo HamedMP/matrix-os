@@ -1,3 +1,6 @@
+import { createCodingOutputBuffer } from "./coding-output-buffer.js";
+import { codingPreviewOmissionNotice, createCodingPreviewPublisher, fitCodingPreviewEvents } from "./coding-preview-publisher.js";
+import { CODING_PREPARATION_TIMEOUT_MS, explicitCodingRunTimeout, remainingCodingRunTimeout } from "./coding-run-lifetime.js";
 import { createOpenCodeServerProcess } from "./opencode-server-process.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -35,16 +38,13 @@ import type {
 } from "./provider-adapter.js";
 import { hasNativeHarnessAuth } from "./native-harness-auth.js";
 
-const DEFAULT_RUN_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_KILL_GRACE_MS = 2_000;
 const PROBE_TIMEOUT_MS = 5_000;
 const MAX_ACTIVE_PROCESSES = 100;
 const MAX_EVENTS = 480;
 const MAX_SEEN_PARTS = 512;
-const MAX_RECORDS = 4_096;
 const MAX_TEXT_CHARS = 24_000;
 const MAX_EVENT_TEXT_CHARS = 3_500;
-const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_STDOUT_BUFFER_BYTES = 1024 * 1024;
 const MAX_PROMPT_BYTES = 128 * 1024;
 const OpenCodeResumeStateSchema = z.object({
@@ -82,6 +82,7 @@ export interface OpenCodeCodingAgentProviderOptions {
   resolveCredentialLaunch: CodingHarnessCredentialResolver;
   resolveProjectPath?: (projectSlug: string) => Promise<string | null>;
   resolveWorktreePath?: (projectSlug: string, worktreeId: string) => Promise<string | null>;
+  /** Optional trusted caller timebox; omitted for ordinary owner turns. */
   runTimeoutMs?: number;
   killGraceMs?: number;
 }
@@ -288,7 +289,7 @@ function collectLine(input: {
   seenParts: Set<string>;
   homePath: string;
   executionRoot: string;
-}): { sessionId?: string; failed?: boolean; limitExceeded?: boolean } {
+}): { sessionId?: string; failed?: boolean; previewTruncated?: boolean } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(input.line);
@@ -305,16 +306,18 @@ function collectLine(input: {
     : undefined;
   if (record.type === "error") return { sessionId, failed: true };
   if (record.type === "matrix.input.requested" || record.type === "matrix.input.resolved") {
-    if (input.events.length >= MAX_EVENTS) return { sessionId, limitExceeded: true };
-    input.events.push(AgentThreadEventSchema.parse({
+    const event = AgentThreadEventSchema.parse({
       ...eventBase(input.threadId, input.now, input.nextEventId),
       ...(record.type === "matrix.input.requested" ? {
         type: "user_input.requested",
         request: { requestId: record.requestId, threadId: input.threadId, correlationId: record.correlationId,
           title: "Input needed", safeDescription: "Answer the questions to continue.", questions: record.questions },
       } : { type: "user_input.answered", requestId: record.requestId, correlationId: record.correlationId, reason: record.reason }),
-    }));
-    return { sessionId };
+    });
+    const combined = [...input.events, event];
+    const retained = fitCodingPreviewEvents(combined, MAX_EVENTS);
+    input.events.splice(0, input.events.length, ...retained);
+    return { sessionId, previewTruncated: retained.length !== combined.length };
   }
   const part = record.part;
   if (!part || typeof part !== "object") return { sessionId };
@@ -324,12 +327,12 @@ function collectLine(input: {
   if (!supportedText && !supportedTool) return { sessionId };
   const partId = safeId(value.id, `part_${input.scope}_${input.seenParts.size + 1}`);
   if (input.seenParts.has(partId)) return { sessionId };
-  if (input.seenParts.size >= MAX_SEEN_PARTS) return { sessionId, limitExceeded: true };
+  if (input.seenParts.size >= MAX_SEEN_PARTS) return { sessionId, previewTruncated: true };
   const textChunks = supportedText && typeof value.text === "string" && value.text.trim()
     ? chunkDisplayText(value.text)
     : [];
   const eventCount = supportedTool ? 3 : textChunks.length > 0 ? textChunks.length + 1 : 0;
-  if (input.events.length + eventCount > MAX_EVENTS) return { sessionId, limitExceeded: true };
+  if (input.events.length + eventCount > MAX_EVENTS) return { sessionId, previewTruncated: true };
   input.seenParts.add(partId);
   if (textChunks.length > 0) {
     const messageId = `msg_${partId}`;
@@ -385,7 +388,7 @@ export function createOpenCodeCodingAgentProvider(
   const command = resolveOpenCodeCommand(options.command, options.env);
   const spawnFn = options.spawnFn ?? defaultSpawn;
   const runCommand = options.runCommand ?? defaultRunCommand;
-  const runTimeoutMs = Math.max(1, Math.min(options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS, DEFAULT_RUN_TIMEOUT_MS));
+  const runTimeoutMs = explicitCodingRunTimeout(options.runTimeoutMs);
   const killGraceMs = Math.max(1, Math.min(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS, 10_000));
   const active = new Map<string, {
     abort: () => void;
@@ -414,12 +417,12 @@ export function createOpenCodeCodingAgentProvider(
     now: () => Date;
     nextEventId: () => string;
     publishEvents?: CodingAgentProviderEventPublisher;
-  }): Promise<{ events: AgentThreadEvent[]; outcome: "completed" | "failed" | "aborted"; sessionId?: string }> {
-    const runDeadline = Date.now() + runTimeoutMs;
+  }): Promise<{ events: AgentThreadEvent[]; outcome: "completed" | "failed" | "aborted"; sessionId?: string; previewTruncated?: boolean }> {
+    const runDeadline = runTimeoutMs === undefined ? undefined : Date.now() + runTimeoutMs;
     const credentialResolution = await resolveCredentialsWithinRun({
       resolver: options.resolveCredentialLaunch,
       signal: input.signal,
-      timeoutMs: runTimeoutMs,
+      timeoutMs: runTimeoutMs ?? CODING_PREPARATION_TIMEOUT_MS,
     });
     if (credentialResolution.kind === "aborted") return { events: [], outcome: "aborted" };
     if (credentialResolution.kind === "timed_out") return { events: [], outcome: "failed" };
@@ -438,8 +441,7 @@ export function createOpenCodeCodingAgentProvider(
     if (input.sessionId) args.push("--session", input.sessionId);
     args.push(promptArg(input.prompt));
     const env = childEnvironment(options.env, launch.env, options.homePath);
-    const configuredTimeoutMs = launch.maxRunMs ? Math.min(runTimeoutMs, launch.maxRunMs) : runTimeoutMs;
-    const timeoutMs = Math.max(1, Math.min(configuredTimeoutMs, runDeadline - Date.now()));
+    const timeoutMs = remainingCodingRunTimeout(runDeadline, launch.maxRunMs);
     return await new Promise((resolve) => {
       let child: OpenCodeProcess;
       try { child = spawnFn(command, args, { cwd: input.cwd, env }); } catch (error: unknown) {
@@ -451,6 +453,7 @@ export function createOpenCodeCodingAgentProvider(
       let terminationReason: "user_abort" | "timeout" | "failure" | "steer" | undefined;
       let steerPrompt: string | undefined;
       let failed = false;
+      let previewTruncated = false;
       let killTimer: ReturnType<typeof setTimeout> | undefined;
       let drainTimer: ReturnType<typeof setTimeout> | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -458,27 +461,18 @@ export function createOpenCodeCodingAgentProvider(
       let exitCode: number | null = null;
       let stdoutDrained = false;
       let sessionId = input.sessionId;
-      let stdout = "";
-      let stdoutBytes = 0;
+      const outputBuffer = createCodingOutputBuffer(MAX_STDOUT_BUFFER_BYTES);
       let stderrText = "";
-      let recordCount = 0;
-      let publishError: unknown;
-      let publishQueue = Promise.resolve();
+      const publisher = input.publishEvents ? createCodingPreviewPublisher(input.publishEvents, MAX_EVENTS, {
+        signal: input.signal,
+        onFailure: error => { logCodingAgentWarning("OpenCode event publish failed", error); stop("failure"); },
+      }) : undefined;
       let publishedSessionId = input.sessionId;
       const events: AgentThreadEvent[] = [];
       const seenParts = new Set<string>();
 
       function queueBatch(batch: CodingAgentProviderEventBatch): void {
-        if (!input.publishEvents) return;
-        publishQueue = publishQueue.then(async () => {
-          if (publishError) return;
-          try {
-            await input.publishEvents!(batch);
-          } catch (error: unknown) {
-            publishError = error;
-            logCodingAgentWarning("OpenCode event publish failed", error);
-          }
-        });
+        publisher?.queue(batch);
       }
 
       function queueEvents(pending: AgentThreadEvent[]): void {
@@ -490,8 +484,13 @@ export function createOpenCodeCodingAgentProvider(
         if (input.publishEvents) queueEvents(events.splice(0, events.length));
       }
       const stop = (reason: NonNullable<typeof terminationReason>) => {
-        if (settled || terminationReason) return;
+        if (terminationReason) return;
+        if (settled) {
+          if (reason === "user_abort") { terminationReason = reason; publisher?.abort(); }
+          return;
+        }
         terminationReason = reason;
+        if (reason !== "steer") publisher?.abort();
         if (timer) clearTimeout(timer);
         try { child.kill("SIGTERM"); } catch (error: unknown) { logCodingAgentWarning("OpenCode termination failed", error); }
         killTimer = setTimeout(() => {
@@ -525,25 +524,29 @@ export function createOpenCodeCodingAgentProvider(
         active.delete(oldest);
       }
       active.set(input.threadId, tracked);
-      timer = setTimeout(() => {
+      timer = timeoutMs === undefined ? undefined : setTimeout(() => {
         stop("timeout");
       }, timeoutMs);
-      timer.unref?.();
+      timer?.unref?.();
       const finish = (code: number | null) => {
         if (settled) return;
         settled = true;
         if (timer) clearTimeout(timer);
         if (killTimer) clearTimeout(killTimer);
         if (drainTimer) clearTimeout(drainTimer);
-        input.signal?.removeEventListener("abort", tracked.abort);
-        if (active.get(input.threadId) === tracked) active.delete(input.threadId);
-        const tail = stdout.trim();
-        if (tail && !terminationReason && !failed) feed(tail);
+        try {
+          const tail = terminationReason || failed ? "" : outputBuffer.finish().trim();
+          if (tail && !terminationReason && !failed) feed(tail);
+        } catch (error: unknown) {
+          failed = true;
+          logCodingAgentWarning("OpenCode final output normalization failed", error);
+        }
         const result = {
           events,
+          previewTruncated: previewTruncated || publisher?.truncated,
           outcome: terminationReason === "user_abort"
             ? "aborted"
-            : failed || publishError || terminationReason === "timeout" || terminationReason === "failure" || code !== 0
+            : failed || publisher?.failure !== undefined || terminationReason === "timeout" || terminationReason === "failure" || code !== 0
               ? "failed"
               : "completed",
           ...(sessionId ? { sessionId } : {}),
@@ -554,30 +557,31 @@ export function createOpenCodeCodingAgentProvider(
             new Error(`exit=${code} stderr=${stderrText.slice(0, 512)}`),
           );
         }
-        void publishQueue.then(async () => {
-          if (publishError) {
+        void (publisher?.finished() ?? Promise.resolve()).then(async () => {
+          input.signal?.removeEventListener("abort", tracked.abort);
+          if (active.get(input.threadId) === tracked) active.delete(input.threadId);
+          if (terminationReason === "user_abort") { resolve({ ...result, outcome: "aborted" }); return; }
+          if (publisher?.failure !== undefined) {
+            logCodingAgentWarning("OpenCode event publish failed", publisher.failure);
             resolve({ ...result, events: [], outcome: "failed" });
             return;
           }
           if (terminationReason === "steer" && steerPrompt && sessionId) {
-            const continued = await execute({
-              ...input,
-              prompt: steerPrompt,
-              sessionId,
-            });
-            resolve({ ...continued, events: [...result.events, ...continued.events] });
+            try {
+              const continued = await execute({ ...input, prompt: steerPrompt, sessionId });
+              const combined = [...result.events, ...continued.events];
+              const retained = fitCodingPreviewEvents(combined, MAX_EVENTS);
+              resolve({ ...continued, events: retained, previewTruncated: result.previewTruncated || continued.previewTruncated || retained.length !== combined.length });
+            } catch (error: unknown) {
+              logCodingAgentWarning("OpenCode continuation failed", error);
+              resolve({ ...result, events: [], outcome: "failed" });
+            }
             return;
           }
           resolve(result);
         });
       };
       const feed = (line: string) => {
-        recordCount += 1;
-        if (recordCount > MAX_RECORDS) {
-          failed = true;
-          stop("failure");
-          return;
-        }
         const result = collectLine({
           line,
           threadId: input.threadId,
@@ -601,27 +605,17 @@ export function createOpenCodeCodingAgentProvider(
         }
         failed ||= result.failed === true;
         drainEvents();
-        if (result.limitExceeded) {
-          failed = true;
-          stop("failure");
-        }
+        previewTruncated ||= result.previewTruncated === true;
       };
       child.stdout.on("data", (chunk) => {
         if (settled || terminationReason) return;
         try {
-          stdoutBytes += chunk.byteLength;
-          if (stdoutBytes > MAX_STDOUT_BYTES) { failed = true; stop("failure"); stdout = ""; return; }
-          stdout += chunk.toString("utf-8");
-          if (Buffer.byteLength(stdout, "utf-8") > MAX_STDOUT_BUFFER_BYTES) { failed = true; stop("failure"); stdout = ""; return; }
-          let index = stdout.indexOf("\n");
-          while (index >= 0 && !terminationReason && !settled) {
-            feed(stdout.slice(0, index).replace(/\r$/, ""));
-            stdout = stdout.slice(index + 1);
-            index = stdout.indexOf("\n");
-          }
+          outputBuffer.push(chunk, line => {
+            if (terminationReason || settled) return false;
+            feed(line);
+          });
         } catch (error: unknown) {
           failed = true;
-          stdout = "";
           logCodingAgentWarning("OpenCode output normalization failed", error);
           stop("failure");
         }
@@ -643,7 +637,6 @@ export function createOpenCodeCodingAgentProvider(
         drainTimer = setTimeout(() => {
           if (settled) return;
           failed = true;
-          stdout = "";
           finish(code);
         }, killGraceMs);
         drainTimer.unref?.();
@@ -739,7 +732,9 @@ export function createOpenCodeCodingAgentProvider(
       });
       const resume = run.sessionId ? JSON.stringify(OpenCodeResumeStateSchema.parse({ s: run.sessionId, c: cwd })) : undefined;
       return {
-        events: [...(publishEvents ? [] : [running]), ...run.events, ...terminalEvents(thread.id, run.outcome, now, nextEventId)],
+        events: [...(publishEvents ? [] : [running]), ...run.events,
+          ...(run.previewTruncated ? codingPreviewOmissionNotice({ threadId: thread.id, scope: thread.id, now, nextEventId }) : []),
+          ...terminalEvents(thread.id, run.outcome, now, nextEventId)],
         ...(resume ? { resumeState: { conversationId: resume } } : {}),
       };
     },
@@ -762,7 +757,7 @@ export function createOpenCodeCodingAgentProvider(
         nextEventId,
         publishEvents,
       });
-      return { events: run.events, outcome: run.outcome, resumeState };
+      return { events: [...run.events, ...(run.previewTruncated ? codingPreviewOmissionNotice({ threadId: thread.id, scope: turn.turnId, now, nextEventId }) : [])], outcome: run.outcome, resumeState };
     },
     abortThread({ thread, now, nextEventId }) {
       active.get(thread.id)?.abort();

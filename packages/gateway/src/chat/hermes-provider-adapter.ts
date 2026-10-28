@@ -5,6 +5,7 @@ import type { SharedBrowserBroker } from "../shared-browser/broker.js";
 import { openHermesSharedBrowserRun } from "./hermes-shared-browser.js";
 import { hermesToolActivity, hermesActivitySummary, hermesStatusActivity, hermesToolFailed } from "./hermes-tool-activity.js";
 import { createHermesSubagentActivity } from "./hermes-subagent-activity.js";
+import { createHermesOutputPreview } from "./hermes-output-preview.js";
 import { restrictedHermesPythonArguments } from "./jev-hermes-python.js";
 import { hermesToolHasPrivateContext, hermesToolOutput } from "./hermes-tool-output.js";
 import { ChatSteerNotDeliveredError } from "./steer-delivery-error.js";
@@ -57,13 +58,14 @@ const HermesSessionSchema = z.object({
   stored_session_id: SafeSessionIdSchema.optional(),
   session_key: SafeSessionIdSchema.optional(),
 }).passthrough();
-const HermesDeltaSchema = z.object({ text: z.string().max(96 * 1024) }).passthrough();
+const HermesDeltaSchema = z.object({ text: z.string().max(512 * 1024) }).passthrough();
 const HermesInterimSchema = z.object({
-  text: z.string().min(1).max(96 * 1024),
+  text: z.string().min(1).max(512 * 1024),
   already_streamed: z.boolean().default(false),
 }).passthrough();
 const HermesCompletionSchema = z.object({
-  text: z.string().max(96 * 1024),
+  // The stdio transport separately enforces its 512 KiB inbound frame cap.
+  text: z.string().max(512 * 1024),
   status: z.enum(["complete", "completed", "interrupted", "error"]).default("complete"),
   response_previewed: z.boolean().default(false),
 }).passthrough();
@@ -109,7 +111,6 @@ class HermesRunFailure extends Error {
 }
 
 export type HermesChatState = z.infer<typeof HermesChatStateSchema>;
-const DEFAULT_TIMEOUT_MS = 30 * 60_000;
 const MAX_OUTPUT_BYTES = 96 * 1024;
 const DELTA_FLUSH_BYTES = 256;
 const DELTA_FLUSH_INTERVAL_MS = 50;
@@ -226,6 +227,7 @@ export function createHermesChatProviderAdapter(options: {
   sharedBrowserGatewayPort?: number;
   toolOutputKey?: Buffer;
   spawnFn?: HermesGatewaySpawn;
+  /** An explicit trusted task timebox; ordinary busy turns have no total deadline. */
   timeoutMs?: number;
   readyTimeoutMs?: number;
   requestTimeoutMs?: number;
@@ -238,7 +240,7 @@ export function createHermesChatProviderAdapter(options: {
     activitySummary?(ownerId: string, scope: HermesJevScope): string | null;
   };
 }): CanonicalChatProviderAdapter<HermesChatState> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs;
   const approvals = createHermesApprovalController();
   const inputs = createHermesInputController();
   const activeSteerRuns = new Map<string, {
@@ -272,6 +274,7 @@ export function createHermesChatProviderAdapter(options: {
     let currentSegmentSuppressed = false;
     let lastSealedSegment = "";
     let emittedOutputBytes = 0;
+    const outputPreview = createHermesOutputPreview();
     let emittedDeltaEvents = 0;
     let pendingVisibleText = "";
     let pendingStreamBoundaryText = "";
@@ -352,19 +355,13 @@ export function createHermesChatProviderAdapter(options: {
       deltaFlushTimer.unref?.();
     };
 
-    const emitVisibleText = (value: string | CapturedAssistantText) => {
-      const { text, captures } = typeof value === "string" ? { text: value, captures: [] } : value;
+    const appendVisibleText = ({ text, captures }: CapturedAssistantText) => {
       if (!text) return;
-      const separator = separatorPending && emittedOutputBytes > 0 ? "\n\n" : "";
-      const addedBytes = Buffer.byteLength(separator + text, "utf8");
-      if (emittedOutputBytes + addedBytes > MAX_OUTPUT_BYTES) {
-        throw new HermesRunFailure("run", "Hermes output exceeded limit");
-      }
       pendingVisibleCaptures.push(...captures.slice(0, Math.max(0, 16 - pendingVisibleCaptures.length)).map((capture) => ({
-        ...capture, offset: pendingVisibleText.length + separator.length + capture.offset,
+        ...capture, offset: pendingVisibleText.length + capture.offset,
       })));
-      pendingVisibleText += separator + text;
-      emittedOutputBytes += addedBytes;
+      pendingVisibleText += text;
+      emittedOutputBytes += Buffer.byteLength(text, "utf8");
       separatorPending = false;
       if (emittedDeltaEvents === 0) {
         flushVisibleText();
@@ -376,11 +373,28 @@ export function createHermesChatProviderAdapter(options: {
       }
     };
 
+    const emitVisibleText = (value: string | CapturedAssistantText) => {
+      const projected = typeof value === "string" ? { text: value, captures: [] } : value;
+      if (!projected.text) return;
+      const separator = separatorPending && emittedOutputBytes > 0 ? "\n\n" : "";
+      const retained = outputPreview.append({ text: separator + projected.text,
+        captures: projected.captures.map(capture => ({ ...capture, offset: separator.length + capture.offset })) });
+      if (retained) appendVisibleText(retained);
+    };
+    const truncateOutput = () => {
+      const notice = outputPreview.truncate();
+      if (notice) appendVisibleText(notice);
+      currentSegment = "";
+      lastSealedSegment = "";
+      pendingStreamBoundaryText = "";
+    };
+
     const emitStreamText = (text: string) => {
       const projectedCapture = projectAssistantTextWithCaptures(text, pathProjection);
       const projected = pendingStreamBoundaryText + projectedCapture.text;
       if (emittedOutputBytes + Buffer.byteLength(projected, "utf8") > MAX_OUTPUT_BYTES) {
-        throw new HermesRunFailure("run", "Hermes output exceeded limit");
+        truncateOutput();
+        return;
       }
       const trailingWhitespace = projected.match(/\s+$/)?.[0] ?? "";
       const boundary = trailingWhitespace;
@@ -404,12 +418,21 @@ export function createHermesChatProviderAdapter(options: {
       catalogGate?.observe(event);
       selectedRouteGate?.observe(event);
       if (completionSettled || !liveSessionId || event.session_id !== liveSessionId) return;
+      if (outputPreview.truncated && (event.type === "message.delta" || event.type === "message.interim")) return;
       if (event.type === "message.delta") {
         const parsed = HermesDeltaSchema.parse(event.payload);
         const text = currentSegment ? parsed.text : parsed.text.replace(/^\n\n/, "");
         if (!text) return;
         if (Buffer.byteLength(currentSegment + text, "utf8") > MAX_OUTPUT_BYTES) {
-          throw new HermesRunFailure("run", "Hermes output exceeded limit");
+          if (!currentSegmentSuppressed && !deferAssistantAfterToolFailure
+            && (currentSegment || !isRawProviderFailureText(text))) {
+            const published = deferredPathStream ? publishedRawPrefixLength
+              : currentSegment.length - pendingStreamBoundaryText.length;
+            pendingStreamBoundaryText = "";
+            emitVisibleText(projectAssistantTextWithCaptures((currentSegment + text).slice(published), pathProjection));
+          }
+          truncateOutput();
+          return;
         }
         if (!currentSegment && isRawProviderFailureText(text)) currentSegmentSuppressed = true;
         // A slash path or partial credential key can become sensitive in a
@@ -470,7 +493,7 @@ export function createHermesChatProviderAdapter(options: {
           ), pathProjection));
         }
         flushVisibleText(true);
-        lastSealedSegment = interim.text;
+        lastSealedSegment = outputPreview.truncated ? "" : interim.text;
         currentSegment = "";
         pendingStreamBoundaryText = "";
         deferredPathStream = false;
@@ -676,12 +699,14 @@ export function createHermesChatProviderAdapter(options: {
           abortRun = () => reject(new Error("Hermes Run aborted"));
           if (runSignal.aborted) return abortRun();
           runSignal.addEventListener("abort", abortRun, { once: true });
-          totalTimer = setTimeout(() => {
-            const error = new HermesRunFailure("timeout", "Hermes Run timed out");
-            deadlineController.abort(error);
-            reject(error);
-          }, timeoutMs);
-          totalTimer.unref?.();
+          if (timeoutMs !== undefined) {
+            totalTimer = setTimeout(() => {
+              const error = new HermesRunFailure("timeout", "Hermes Run timed out");
+              deadlineController.abort(error);
+              reject(error);
+            }, timeoutMs);
+            totalTimer.unref?.();
+          }
         });
         // Startup performs its own cancellation + confirmed cleanup before it
         // returns. Do not let the overall deadline abandon an owned attempt.
@@ -805,15 +830,12 @@ export function createHermesChatProviderAdapter(options: {
         const completionResult = await withinRun(completion.promise);
         if (!completionResult.ok) throw completionResult.error;
         const final = completionResult.value;
-        if (Buffer.byteLength(final.text, "utf8") > MAX_OUTPUT_BYTES) {
-          throw new HermesRunFailure("run", "Hermes output exceeded limit");
-        }
         if (final.status === "error" && isRawProviderFailureText(final.text)) {
           throw new HermesRunFailure("run", "Hermes Run failed");
         }
         const previewAlreadySealed = !currentSegment
           && final.text === lastSealedSegment;
-        if (!previewAlreadySealed) {
+        if (!outputPreview.truncated && !previewAlreadySealed) {
           if (!final.text.startsWith(currentSegment)) {
             throw new HermesRunFailure("run", "Hermes final response did not match streamed output");
           }

@@ -75,3 +75,23 @@ it.each(["bounded", "oversized", "conflicting"] as const)("enforces GLM completi
   expect(result.ok).toBe(kind === "bounded");
   expect(fetchImpl).toHaveBeenCalledTimes(kind === "bounded" ? 1 : 0);
 });
+
+it.each([512 * 1024 + 1, 1024 * 1024, 1024 * 1024 + 1])("keeps the buffered Bot response byte cap at %s bytes", async bytes => {
+  const responseBody = "x".repeat(bytes);
+  const fetchImpl = vi.fn<typeof fetch>(async () => new Response(responseBody, { headers: { "content-type": "text/event-stream" } }));
+  const result = await forwardBotInference({ version: 1, action: "inference.messages",
+    requestId: "018f0ce5-7b4a-7f95-a7c8-acae0dc5c5d1", runtimeHandle: binding.runtimeHandle,
+    executionGeneration: binding.executionGeneration, method: "POST", path: "/v1/messages?beta=true", headers: {},
+    body: JSON.stringify({ model: binding.route.modelId, stream: true, max_tokens: 8192 }),
+  }, binding, () => ({ allowed: true, accessSourceId: "matrix_included", allowedModelIds: [binding.route.modelId] }), {
+    homePath: "/synthetic", lifetime: new AbortController().signal,
+    resolveCredentials: async () => ({ env: { ANTHROPIC_AUTH_TOKEN: "synthetic", ANTHROPIC_BASE_URL: "https://relay.invalid" } }), fetchImpl,
+  });
+  expect(fetchImpl).toHaveBeenCalledOnce();
+  if (bytes <= 1024 * 1024) {
+    expect(result.ok).toBe(true);
+    if (!result.ok || typeof result.body !== "string") throw new Error("Expected a buffered inference reply");
+    expect(Buffer.byteLength(result.body)).toBe(bytes);
+    expect(result.body === responseBody).toBe(true);
+  } else expect(result).toMatchObject({ ok: false, error: "response_too_large" });
+});

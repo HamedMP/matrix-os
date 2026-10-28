@@ -2,6 +2,20 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 describe("dormant scope runtime host bundle", () => {
+  it("independently reclaims the supervisor cgroup when its event loop stops sending watchdog pings", async () => {
+    const unit = await readFile("distro/customer-vps/systemd/matrix-scope-runtime.service", "utf8");
+    expect(unit).toMatch(/^Type=simple$/m);
+    expect(unit).toMatch(/^WatchdogSec=60$/m);
+    expect(unit).toMatch(/^NotifyAccess=all$/m);
+    expect(unit).toMatch(/^Restart=on-failure$/m);
+    expect(unit).toMatch(/^KillMode=control-group$/m);
+    const main = await readFile("packages/scope-runtime/src/main.ts", "utf8");
+    expect(main.indexOf("const watchdog = startScopeRuntimeWatchdog()"))
+      .toBeGreaterThan(main.indexOf("await server.start()"));
+    expect(main.indexOf("await watchdog.close()"))
+      .toBeLessThan(main.indexOf("await server.close()"));
+  });
+
   it("installs a least-privilege system supervisor that is fenced by the app marker", async () => {
     const unit = await readFile("distro/customer-vps/systemd/matrix-scope-runtime.service", "utf8");
     expect(unit).toContain("User=root");

@@ -106,7 +106,7 @@ const mockCatalog = {
     id: "matrix_pi_default", driverKind: "matrix_pi", displayName: "Pi", connectionLabel: "Matrix AI",
     availability: "available",
     defaultSelection: { instanceId: "matrix_pi_default", model: "sonnet" },
-    models: [{ id: "sonnet", displayName: "Sonnet 5", availability: "available" }],
+    models: [{ id: "sonnet", displayName: "Sonnet 5", availability: "available", supportsVision: true }],
     options: [{ id: "effort", label: "Effort", kind: "enum", placement: "composer", defaultValue: "medium",
       values: [{ value: "low", label: "Low" }, { value: "medium", label: "Medium" }] }],
     supports: { rootChat: true, interactionModes: ["default"], permissionModes: ["supervised"], attachments: [] as string[] },

@@ -1,4 +1,4 @@
-import { canonicalChatApprovals, canonicalChatInputs } from "@matrix-os/contracts";
+import { canonicalChatApprovals, canonicalChatInputs, canonicalAssistantOutputMessages, canonicalAssistantOutputRootId } from "@matrix-os/contracts";
 import type { CanonicalChatMessage, CanonicalChatRun, CanonicalChatRunActivity, CanonicalChatTurn } from "@matrix-os/contracts";
 import { chatAgentAttribution } from "@matrix-os/ui";
 import type { ConversationTurnPresentation, ConversationWorkPresentation } from "../../components/conversation/presentation";
@@ -13,8 +13,9 @@ export function canonicalChatPresentation(input: {
   activities: CanonicalChatRunActivity[];
   streamedMessageIds?: readonly string[];
 }): ConversationTurnPresentation[] {
+  input = { ...input, messages: canonicalAssistantOutputMessages(input.messages) };
   const streamedMessageIds = new Set(
-    input.streamedMessageIds?.slice(-MAX_STREAMED_MESSAGE_PROJECTIONS) ?? [],
+    input.streamedMessageIds?.slice(-MAX_STREAMED_MESSAGE_PROJECTIONS).map(canonicalAssistantOutputRootId) ?? [],
   ); // Per-detail projection, explicitly capped with the message window.
   const approvalViews = canonicalChatApprovals(input);
   const inputViews = canonicalChatInputs(input);
@@ -165,7 +166,7 @@ export function canonicalChatPresentation(input: {
                     ],
                   }
                 : {}),
-              ...(streamedMessageIds.has(finalMessage.id) ? { wasStreamed: true } : {}),
+              ...(streamedMessageIds.has(canonicalAssistantOutputRootId(finalMessage.id)) ? { wasStreamed: true } : {}),
             },
           }
         : live.streamingFinal

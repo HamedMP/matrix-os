@@ -16,13 +16,13 @@ async function run(response:Response, signal:AbortSignal=new AbortController().s
 describe('bounded unexpected Responses MIME diagnostics',()=>{
  it('records allowlisted JSON structure and provider codes without accepting JSON success or exposing content',async()=>{
   const failure=await run(Response.json({object:'response',status:'failed',error:{code:'insufficient_quota',message:secret},output:secret}));
-  expect(failure).toHaveProperty('responseDiagnostic',{mime:'json',bodyRead:'complete',bodyShape:'object',responseType:'response',responseStatus:'failed',errorCode:'insufficient_quota',sseFraming:false,sseCompleted:false,hasDetail:false,hasError:true,responseObject:true});
+  expect(failure).toHaveProperty('responseDiagnostic',{streamReason:'trailing_frame',mime:'json',bodyRead:'complete',bodyShape:'object',responseType:'response',responseStatus:'failed',errorCode:'insufficient_quota',sseFraming:false,sseCompleted:false,hasDetail:false,hasError:true,responseObject:true});
   const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});logPlanFailure('responses',failure);
   const log=JSON.stringify(warn.mock.calls);expect(log).toContain('insufficient_quota');expect(log).not.toContain(secret);expect(log).not.toContain('fixture-token');
  });
  it('never accepts a completed JSON response and suppresses arbitrary type, status and error codes',async()=>{
   const failure=await run(Response.json({type:secret,status:secret,error:{code:secret,message:secret}}));
-  expect(failure).toHaveProperty('responseDiagnostic',{mime:'json',bodyRead:'complete',bodyShape:'object',sseFraming:false,sseCompleted:false,hasDetail:false,hasError:true,responseObject:false});
+  expect(failure).toHaveProperty('responseDiagnostic',{streamReason:'trailing_frame',mime:'json',bodyRead:'complete',bodyShape:'object',sseFraming:false,sseCompleted:false,hasDetail:false,hasError:true,responseObject:false});
   const completed=await run(Response.json({object:'response',status:'completed',output:secret}));
   expect(completed).toHaveProperty('responseDiagnostic.responseStatus','completed');
  });

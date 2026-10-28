@@ -1,4 +1,4 @@
-import { canonicalChatToolActivities, canonicalReviewedAgentFailure, type CanonicalToolActivity } from "@matrix-os/contracts";
+import { canonicalChatToolActivities, canonicalReviewedAgentFailure, canonicalAssistantOutputMessages, type CanonicalToolActivity } from "@matrix-os/contracts";
 import { canonicalChatInputs, type CanonicalChatInputView, canonicalChatApprovals, canonicalChatTerminalNotices, type CanonicalChatApprovalView } from "@matrix-os/contracts";
 import type {
   CanonicalChatDetailResponse,
@@ -153,6 +153,7 @@ function retryableTurnId(
 
 export function buildTranscript(detail: CanonicalChatDetailResponse | null): TranscriptMessage[] {
   if (!detail) return [];
+  detail = { ...detail, messages: canonicalAssistantOutputMessages(detail.messages) };
   const runsById = new Map(detail.runs.map((run) => [run.id, run]));
   const ordered = [...detail.messages].sort((left, right) => left.seq - right.seq);
 

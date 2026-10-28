@@ -13,10 +13,9 @@ import {
 
 const MAX_FRAME_BYTES = 128 * 1024;
 const MAX_TIMEOUT_MS = 90_000;
-const MAX_IN_FLIGHT_REQUESTS = 64;
+const MAX_REQUESTS_PER_LANE = 32;
 const DEFAULT_OPERATION_TIMEOUT_MS = 60_000;
-/** A relayed bot turn may run until the workload's 900 second lifetime ends. */
-const BOT_RUN_TIMEOUT_MS = 935_000;
+/** Busy turns are held by the renewable runtime lease, never a total RPC timer. */
 const BOT_CONTROL_TIMEOUT_MS = 20_000;
 
 export interface ScopeRuntimeSandboxCapability {
@@ -80,6 +79,8 @@ export function createScopeRuntimeClient(options: {
   const createRequestId = options.createRequestId ?? randomUUID;
   const sockets = new Set<Socket>();
   const operations = new Set<Promise<unknown>>();
+  // Independent fixed caps preserve renewal and Stop capacity during busy turns.
+  const inFlight = { normal: 0, renew: 0, cancel: 0, stop: 0 };
   let closed = false;
   let currentCapability: ScopeRuntimeCapability = {
     available: false,
@@ -88,23 +89,30 @@ export function createScopeRuntimeClient(options: {
   /** Per-profile capabilities for every catalog profile; each fails closed on its own. */
   let profileCapabilities = new Map<string, ScopeRuntimeCapability>();
 
-  function request(input: ScopeRuntimeRequest, requestTimeoutMs = timeoutMs): Promise<ScopeRuntimeResponse> {
+  function request(input: ScopeRuntimeRequest, requestTimeoutMs = timeoutMs, callerSignal?: AbortSignal): Promise<ScopeRuntimeResponse> {
     if (closed) return Promise.reject(new ScopeRuntimeClientError("client_closed"));
-    if (operations.size >= MAX_IN_FLIGHT_REQUESTS) {
+    if (callerSignal?.aborted) return Promise.reject(new ScopeRuntimeClientError("runtime_unavailable"));
+    const validated = ScopeRuntimeRequestSchema.parse(input);
+    const lane = validated.type === "runtime.stop" ? "stop"
+      : validated.type === "runtime.bot" && validated.command.kind === "bot.cancel" ? "cancel"
+        : validated.type === "runtime.renew" ? "renew" : "normal";
+    if (inFlight[lane] >= MAX_REQUESTS_PER_LANE) {
       return Promise.reject(new ScopeRuntimeClientError("client_capacity"));
     }
-    const frame = `${JSON.stringify(ScopeRuntimeRequestSchema.parse(input))}\n`;
+    const frame = `${JSON.stringify(validated)}\n`;
     if (Buffer.byteLength(frame, "utf8") > MAX_FRAME_BYTES) {
       return Promise.reject(new ScopeRuntimeClientError("runtime_unavailable"));
     }
+    inFlight[lane]++;
     const operation = new Promise<ScopeRuntimeResponse>((resolve, reject) => {
       const socket = createConnection({ path: options.socketPath });
-      const signal = AbortSignal.timeout(requestTimeoutMs);
+      let timer: ReturnType<typeof setTimeout> | undefined;
       let response = "";
       let settled = false;
       sockets.add(socket);
       const cleanup = () => {
-        signal.removeEventListener("abort", fail);
+        if (timer) clearTimeout(timer);
+        callerSignal?.removeEventListener("abort", fail);
         sockets.delete(socket);
       };
       const fail = () => {
@@ -114,11 +122,18 @@ export function createScopeRuntimeClient(options: {
         socket.destroy();
         reject(new ScopeRuntimeClientError("runtime_unavailable"));
       };
-      signal.addEventListener("abort", fail, { once: true });
+      callerSignal?.addEventListener("abort", fail, { once: true });
+      timer = setTimeout(fail, requestTimeoutMs || timeoutMs);
+      timer.unref();
       socket.setEncoding("utf8");
-      socket.setTimeout(requestTimeoutMs, fail);
+      socket.setTimeout(requestTimeoutMs || timeoutMs, fail);
       socket.once("error", fail);
-      socket.once("connect", () => socket.end(frame));
+      socket.once("connect", () => {
+        if (requestTimeoutMs === 0) { clearTimeout(timer); timer = undefined; socket.setTimeout(0); }
+        // Keep the write side open for long turns so caller disconnect is observable.
+        if (input.type === "runtime.bot" && input.command.kind === "bot.run") socket.write(frame);
+        else socket.end(frame);
+      });
       socket.on("data", (chunk) => {
         response += chunk;
         if (Buffer.byteLength(response, "utf8") > MAX_FRAME_BYTES) fail();
@@ -146,7 +161,7 @@ export function createScopeRuntimeClient(options: {
       });
     });
     operations.add(operation);
-    void operation.finally(() => operations.delete(operation)).catch((error: unknown) => {
+    void operation.finally(() => { operations.delete(operation); inFlight[lane]--; }).catch((error: unknown) => {
       if (!(error instanceof ScopeRuntimeClientError)) {
         console.warn("[collaboration] scope runtime operation cleanup failed");
       }
@@ -290,7 +305,7 @@ export function createScopeRuntimeClient(options: {
      * until the turn ends; steer and cancel answer quickly. The reply is
      * opaque here and validated by the caller against the bot contracts.
      */
-    async runBot(input: { runtimeHandle: string; executionGeneration: string; command: ScopeRuntimeBotCommand }) {
+    async runBot(input: { runtimeHandle: string; executionGeneration: string; command: ScopeRuntimeBotCommand; signal?: AbortSignal }) {
       if (closed) throw new ScopeRuntimeClientError("client_closed");
       const response = await request({
         version: 1,
@@ -299,7 +314,7 @@ export function createScopeRuntimeClient(options: {
         runtimeHandle: input.runtimeHandle,
         executionGeneration: input.executionGeneration,
         command: input.command,
-      }, input.command.kind === "bot.run" ? BOT_RUN_TIMEOUT_MS : BOT_CONTROL_TIMEOUT_MS);
+      }, input.command.kind === "bot.run" ? 0 : BOT_CONTROL_TIMEOUT_MS, input.signal);
       if (response.type !== "runtime.bot.result") throw new ScopeRuntimeClientError("runtime_unavailable");
       if (!response.ok) {
         return { ok: false as const, error: response.error };
@@ -308,6 +323,16 @@ export function createScopeRuntimeClient(options: {
         throw new ScopeRuntimeClientError("runtime_unavailable");
       }
       return { ok: true as const, reply: response.reply };
+    },
+    /** Extends the same Pi runtime lease; never changes its root, source or capabilities. */
+    async renewRuntime(input: { runtimeHandle: string; executionGeneration: string; signal?: AbortSignal }) {
+      const response = await request({ version: 1, type: "runtime.renew", requestId: createRequestId(),
+        runtimeHandle: input.runtimeHandle, executionGeneration: input.executionGeneration }, BOT_CONTROL_TIMEOUT_MS, input.signal);
+      if (response.type !== "runtime.result" || !response.ok || response.state !== "running"
+        || response.runtimeHandle !== input.runtimeHandle || response.executionGeneration !== input.executionGeneration) {
+        throw new ScopeRuntimeClientError("runtime_unavailable");
+      }
+      return { runtimeHandle: response.runtimeHandle, executionGeneration: response.executionGeneration, state: response.state };
     },
     async stopRuntime(input: { runtimeHandle: string }) {
       if (closed) throw new ScopeRuntimeClientError("client_closed");

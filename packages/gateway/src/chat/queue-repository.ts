@@ -1,4 +1,5 @@
 import {associateAdmittedDriveChat} from "./drive-project-database.js";
+import { releaseTerminalQueuedSteer } from "./queued-steer-cleanup.js";
 import {admittedContextReferenceParts} from "./context-reference-parts.js";
 import { chatContextRequestHash } from "./agent-context.js";
 import { queuedRunContext, validateQueuedAgentDriver } from "./queued-context.js";
@@ -652,11 +653,7 @@ export class ChatQueueRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!queued) throw new ChatNotFoundError(chatId);
-      const pendingSteer = await trx.selectFrom("chat_run_steers").select("id")
-        .where("queued_turn_id", "=", queuedTurnId)
-        .where("status", "=", "pending")
-        .executeTakeFirst();
-      if (pendingSteer) throw new ChatConflictError(chatId, Number(chat.revision));
+      await releaseTerminalQueuedSteer(trx, { chatId, queuedTurnId, revision: Number(chat.revision), cancelledAt });
       if (queued.status === "cancelled") {
         return {
           queuedTurnId,

@@ -1,3 +1,6 @@
+import { createCodingOutputBuffer } from "./coding-output-buffer.js";
+import { codingPreviewOmissionNotice, createCodingPreviewPublisher } from "./coding-preview-publisher.js";
+import { CODING_PREPARATION_TIMEOUT_MS, explicitCodingRunTimeout, remainingCodingRunTimeout } from "./coding-run-lifetime.js";
 import { createPiInputControl } from "./pi-input-control.js";
 import { createPiOwnedExtension } from "./pi-owned-extension.js";
 import { createPiRunCollector, type PiCollectedRun } from "./pi-run-collector.js";
@@ -39,13 +42,12 @@ import type {
  * Only the OS-owned ask_user extension is loaded; owner extensions stay disabled.
  */
 
-const DEFAULT_RUN_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_KILL_GRACE_MS = 2_000;
 const PROBE_TIMEOUT_MS = 1_500;
 const MAX_ACTIVE_PROCESSES = 100;
 const MAX_EVENTS_PER_RUN = 480;
 const MAX_STDERR_CHARS = 8_192;
-const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
+const MAX_STDOUT_FRAME_BYTES = 8 * 1024 * 1024;
 const MAX_PI_PROMPT_BYTES = 128 * 1024;
 const SESSION_ID_PATTERN = /^[0-9a-fA-F-]{36}$/;
 
@@ -85,6 +87,7 @@ export interface PiCodingAgentProviderOptions {
   env?: Record<string, string>;
   resolveProjectPath?: (projectSlug: string) => Promise<string | null>;
   resolveWorktreePath?: (projectSlug: string, worktreeId: string) => Promise<string | null>;
+  /** Optional trusted caller timebox; omitted for ordinary owner turns. */
   runTimeoutMs?: number;
   killGraceMs?: number;
   maxEvents?: number;
@@ -110,11 +113,6 @@ const defaultSpawnFn: PiSpawnFn = (command, args, options) =>
     env: options.env,
     stdio: ["pipe", "pipe", "pipe"],
   });
-
-function boundedTimeout(value: number | undefined, fallback: number): number {
-  if (value === undefined || !Number.isFinite(value)) return fallback;
-  return Math.max(1, Math.min(Math.floor(value), DEFAULT_RUN_TIMEOUT_MS));
-}
 
 type PiCredentialResolution =
   | { kind: "resolved"; launch: CodingHarnessCredentialLaunch | undefined }
@@ -234,6 +232,7 @@ function piModelArguments(reference: string | undefined): string[] {
 
 interface PiRunResult {
   events: AgentThreadEvent[];
+  previewTruncated?: boolean;
   outcome: "completed" | "failed" | "aborted";
   sessionId: string;
 }
@@ -258,7 +257,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
   const homePath = options.homePath;
   const spawnFn = options.spawnFn ?? defaultSpawnFn;
   const runCommand = options.runCommand ?? defaultRunCommand;
-  const runTimeoutMs = boundedTimeout(options.runTimeoutMs, DEFAULT_RUN_TIMEOUT_MS);
+  const runTimeoutMs = explicitCodingRunTimeout(options.runTimeoutMs);
   const killGraceMs = Math.max(1, Math.min(options.killGraceMs ?? DEFAULT_KILL_GRACE_MS, 30_000));
   const maxEvents = Math.max(1, Math.min(options.maxEvents ?? MAX_EVENTS_PER_RUN, MAX_EVENTS_PER_RUN));
   type ActiveProcess = { abort: () => void; steer: (message: string) => void; submitInput: (id: string, answer: UserInputAnswerRequest) => AgentThreadEvent[]; deferInput: (id: string) => void };
@@ -330,7 +329,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
   }
 
   async function runPi(input: PiRunInput): Promise<PiRunResult> {
-    const runDeadline = Date.now() + runTimeoutMs;
+    const runDeadline = runTimeoutMs === undefined ? undefined : Date.now() + runTimeoutMs;
     // A steered process continues the same canonical Run. Its responses must
     // not reuse identities already committed by an earlier process.
     const messageIdentity = input.messageIdentity ?? { next: 0 };
@@ -370,7 +369,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     const credentialResolution = await resolveCredentialsWithinRun({
       resolver: options.resolveCredentialLaunch,
       signal: input.signal,
-      timeoutMs: runTimeoutMs,
+      timeoutMs: runTimeoutMs ?? CODING_PREPARATION_TIMEOUT_MS,
     });
     if (credentialResolution.kind === "aborted") {
       return { events: [], outcome: "aborted", sessionId: input.sessionId };
@@ -388,13 +387,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       baseEnvironment: options.env,
       credentials: credentialLaunch?.env,
     });
-    const effectiveRunTimeoutMs = credentialLaunch?.maxRunMs
-      ? Math.min(runTimeoutMs, credentialLaunch.maxRunMs)
-      : runTimeoutMs;
-    const remainingRunTimeoutMs = Math.max(1, Math.min(
-      effectiveRunTimeoutMs,
-      runDeadline - Date.now(),
-    ));
+    const remainingRunTimeoutMs = remainingCodingRunTimeout(runDeadline, credentialLaunch?.maxRunMs);
 
     const extension = await createPiOwnedExtension();
     args.push("--extension", extension.path);
@@ -410,24 +403,16 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       }
       let settled = false;
       let terminationReason: "user_abort" | "timeout" | "failure" | undefined;
-      let stdoutBuffer = "";
-      let stdoutBytes = 0;
+      const outputBuffer = createCodingOutputBuffer(MAX_STDOUT_FRAME_BYTES);
       let stderrText = "";
-      let publishError: unknown;
-      let publishQueue = Promise.resolve();
+      const publisher = input.publishEvents ? createCodingPreviewPublisher(input.publishEvents, 480, {
+        signal: input.signal,
+        onFailure: error => { logCodingAgentWarning("pi provider event publish failed", error); requestTermination("failure"); },
+      }) : undefined;
       const killTimer: { current?: ReturnType<typeof setTimeout> } = {};
 
       function queueEvents(events: AgentThreadEvent[]): void {
-        if (!input.publishEvents || events.length === 0) return;
-        publishQueue = publishQueue.then(async () => {
-          if (publishError) return;
-          try {
-            await input.publishEvents!({ events });
-          } catch (err: unknown) {
-            publishError = err;
-            logCodingAgentWarning("pi provider event publish failed", err);
-          }
-        });
+        if (events.length) publisher?.queue({ events });
       }
 
       function drainCollector(): void {
@@ -441,10 +426,10 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         return { ...collected, events: [] };
       }
 
-      const timeoutTimer = setTimeout(() => {
+      const timeoutTimer = remainingRunTimeoutMs === undefined ? undefined : setTimeout(() => {
         requestTermination("timeout");
       }, remainingRunTimeoutMs);
-      timeoutTimer.unref?.();
+      timeoutTimer?.unref?.();
 
       const onAbort = () => {
         requestTermination("user_abort");
@@ -465,17 +450,22 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       function settle(result: PiRunResult): void {
         if (settled) return;
         settled = true;
-        clearTimeout(timeoutTimer);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
         if (killTimer.current) clearTimeout(killTimer.current);
-        input.signal?.removeEventListener("abort", onAbort);
-        untrackProcess(input.threadId, trackedProcess);
         inputControl.dispose();
-        void publishQueue.then(async () => {
-          if (publishError) {
+        void (publisher?.finished() ?? Promise.resolve()).then(async () => {
+          input.signal?.removeEventListener("abort", onAbort);
+          untrackProcess(input.threadId, trackedProcess);
+          if (terminationReason === "user_abort") {
+            resolve({ ...result, outcome: "aborted" });
+            return;
+          }
+          if (publisher?.failure !== undefined) {
+            logCodingAgentWarning("pi provider event publish failed", publisher.failure);
             resolve({ ...result, events: [], outcome: "failed" });
             return;
           }
-          resolve(result);
+          resolve({ ...result, previewTruncated: collector.truncated || publisher?.truncated });
         });
       }
 
@@ -494,56 +484,43 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       }
 
       function requestTermination(reason: NonNullable<typeof terminationReason>): void {
-        if (terminationReason || settled) return;
+        if (terminationReason) return;
+        if (settled) {
+          if (reason === "user_abort") { terminationReason = reason; publisher?.abort(); }
+          return;
+        }
         try { write({ type: "abort" }); } catch (error: unknown) { logCodingAgentWarning("pi abort frame failed", error); }
         terminationReason = reason;
+        publisher?.abort();
         inputControl.dispose();
-        clearTimeout(timeoutTimer);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
         terminate(proc, killTimer, settleAfterForcedTermination);
       }
 
       proc.stdout.on("data", (chunk: Buffer) => {
         if (settled || terminationReason) return;
-        stdoutBytes += chunk.byteLength;
-        if (stdoutBytes > MAX_STDOUT_BYTES) {
-          logCodingAgentWarning("pi provider stdout cap exceeded", new Error("stdout byte cap exceeded"));
-          requestTermination("failure");
-          stdoutBuffer = "";
-          return;
-        }
-        stdoutBuffer += chunk.toString("utf-8");
-        if (stdoutBuffer.length > 8 * 1024 * 1024) {
-          logCodingAgentWarning("pi provider stdout cap exceeded", new Error("stdout buffer overflow"));
-          requestTermination("failure");
-          stdoutBuffer = "";
-          return;
-        }
-        let newlineIndex = stdoutBuffer.indexOf("\n");
-        while (newlineIndex >= 0) {
-          const line = stdoutBuffer.slice(0, newlineIndex).replace(/\r$/, "");
-          stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
-          let frame: unknown;
-          try { frame = JSON.parse(line); } catch (error: unknown) {
-            if (!(error instanceof SyntaxError)) throw error;
-          }
-          try {
-            if (inputControl.receive(frame)) { newlineIndex = stdoutBuffer.indexOf("\n"); continue; }
-          } catch (error: unknown) {
-            logCodingAgentWarning("pi input request failed", error);
-            requestTermination("failure");
-            return;
-          }
-          collector.feedLine(line);
-          drainCollector();
-          if (frame && typeof frame === "object" && "type" in frame) {
-            if (frame.type === "response" && "success" in frame && frame.success === false) requestTermination("failure");
-            if (frame.type === "agent_settled" && !terminationReason) {
-              const collected = finishCollector();
-              settle({ events: collected.events, outcome: collected.outcome, sessionId: collected.sessionId ?? input.sessionId });
-              terminate(proc, killTimer, () => {});
+        try {
+          outputBuffer.push(chunk, line => {
+            if (settled || terminationReason) return false;
+            let frame: unknown;
+            try { frame = JSON.parse(line); } catch (error: unknown) {
+              if (!(error instanceof SyntaxError)) throw error;
             }
-          }
-          newlineIndex = stdoutBuffer.indexOf("\n");
+            if (inputControl.receive(frame)) return;
+            collector.feedLine(line);
+            drainCollector();
+            if (frame && typeof frame === "object" && "type" in frame) {
+              if (frame.type === "response" && "success" in frame && frame.success === false) requestTermination("failure");
+              if (frame.type === "agent_settled" && !terminationReason) {
+                const collected = finishCollector();
+                settle({ events: collected.events, outcome: collected.outcome, sessionId: collected.sessionId ?? input.sessionId });
+                terminate(proc, killTimer, () => {});
+              }
+            }
+          });
+        } catch (error: unknown) {
+          logCodingAgentWarning("pi output frame rejected", error);
+          requestTermination("failure");
         }
       });
       proc.stderr.on("data", (chunk: Buffer) => {
@@ -559,10 +536,15 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       proc.once("exit", (code: number | null) => {
         if (killTimer.current) clearTimeout(killTimer.current);
         if (settled) return;
-        const tail = stdoutBuffer.trim();
-        if (tail.length > 0) {
-          collector.feedLine(tail);
-          drainCollector();
+        try {
+          const tail = terminationReason ? "" : outputBuffer.finish().trim();
+          if (tail.length > 0) {
+            collector.feedLine(tail);
+            drainCollector();
+          }
+        } catch (error: unknown) {
+          logCodingAgentWarning("pi final output frame rejected", error);
+          terminationReason = "failure";
         }
         const collected = finishCollector();
         const sessionId = collected.sessionId ?? input.sessionId;
@@ -571,7 +553,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
           return;
         }
         if (terminationReason === "timeout") {
-          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${effectiveRunTimeoutMs}ms`));
+          logCodingAgentWarning("pi provider run cut off", new Error(`run bounded at ${remainingRunTimeoutMs}ms`));
           settle({ events: collected.events, outcome: "failed", sessionId });
           return;
         }
@@ -840,6 +822,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         events: [
           ...(publishEvents ? [] : [runningEvent]),
           ...run.events,
+          ...(run.previewTruncated ? codingPreviewOmissionNotice({ threadId: thread.id, scope: thread.id, now, nextEventId }) : []),
           ...terminalEvents(thread.id, run.outcome, now, nextEventId),
         ],
         ...(finalConversationId ? { resumeState: { conversationId: finalConversationId } } : {}),
@@ -888,7 +871,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       });
       const conversationId = packResumeState(run.sessionId, cwd);
       return {
-        events: run.events,
+        events: [...run.events, ...(run.previewTruncated ? codingPreviewOmissionNotice({ threadId: thread.id, scope: turn.turnId, now, nextEventId }) : [])],
         outcome: run.outcome,
         resumeState: conversationId ? { conversationId } : resumeState,
       };

@@ -1,4 +1,4 @@
-import { createBrowserPermissionClient, type BrowserPermissionClient } from "@matrix-os/ui";
+import { createBrowserPermissionClient, recoverCanonicalChatAdmission, type CanonicalChatClientAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
 import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { postWithProviderCatalogRecovery } from "../features/chat/provider-catalog-admission";
@@ -161,7 +161,7 @@ export interface CanonicalChatClient {
     chatId: string,
     input: CanonicalCreateChatTurnRequest,
     analytics?: { chatScope: "global" | "project" },
-  ): Promise<CanonicalChatTurnAdmissionResponse>;
+  ): Promise<CanonicalChatClientAdmission>;
   queueTurn(chatId: string, input: CanonicalQueueChatTurnRequest): Promise<CanonicalChatQueueAdmissionResponse>;
   steerRun(
     chatId: string,
@@ -401,12 +401,25 @@ export function createCanonicalChatClient(
         });
       }
       try {
-        const response = CanonicalChatTurnAdmissionResponseSchema.parse(await api.post(
-          chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turns`),
-          request,
-          // Fresh funded observation has a 14s server deadline; allow bounded transport margin.
-          { timeoutMs: 30_000 },
-        ));
+        const response = await (async () => {
+          try {
+            return CanonicalChatTurnAdmissionResponseSchema.parse(await api.post(
+              chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turns`), request,
+              // Fresh funded observation has a 14s deadline; allow bounded transport margin.
+              { timeoutMs: 30_000 },
+            ));
+          } catch (error: unknown) {
+            const ambiguous = error instanceof AppError && (error.category === "offline" || error.category === "timeout"
+              || (error.category === "server" && error.httpStatus !== undefined && error.httpStatus >= 500));
+            if (ambiguous) {
+              const recovered = await recoverCanonicalChatAdmission(parsedChatId, request,
+                requestHash => api.get(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}/turn-admissions/${encodeURIComponent(request.clientRequestId)}?requestHash=${requestHash}`)),
+                () => api.get(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(parsedChatId)}?limit=200`)));
+              if (recovered) return recovered;
+            }
+            throw error;
+          }
+        })();
         if (analytics) {
           trackEvent({
             name: "desktop_chat_message_send_succeeded",

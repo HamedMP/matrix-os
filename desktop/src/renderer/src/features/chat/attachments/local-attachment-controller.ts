@@ -29,6 +29,7 @@ export type UploadedConversationAttachments = {
 
 export interface LocalAttachmentController {
   getSnapshot(): readonly LocalConversationAttachment[];
+  getSelectionError(): string | null;
   subscribe(listener: () => void): () => void;
   add(files: readonly File[]): void;
   remove(localId: string): void;
@@ -80,9 +81,11 @@ export function appendHermesAttachmentPaths(prompt: string, paths: readonly stri
 export function createLocalAttachmentController(options: {
   api: ApiClient | null;
   createId?: () => string;
+  validate?: (files: readonly File[]) => string | null;
 }): LocalAttachmentController {
   let items: InternalAttachment[] = [];
   let snapshot: readonly LocalConversationAttachment[] = [];
+  let selectionError: string | null = null;
   let disposed = false;
   let uploadInFlight = false;
   const listeners = new Set<() => void>();
@@ -95,6 +98,8 @@ export function createLocalAttachmentController(options: {
   const revoke = (item: InternalAttachment) => {
     if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
   };
+
+  const validate = () => options.validate?.(items.map(item => item.file)) ?? null;
 
   const uploadOne = async (item: InternalAttachment): Promise<boolean> => {
     if (disposed || item.file.size > MAX_ATTACHMENT_FILE_BYTES) return false;
@@ -136,6 +141,7 @@ export function createLocalAttachmentController(options: {
 
   return {
     getSnapshot: () => snapshot,
+    getSelectionError: () => selectionError,
     subscribe(listener) {
       if (listeners.size >= MAX_SUBSCRIBERS) throw new Error("attachment subscribers unavailable");
       listeners.add(listener);
@@ -143,8 +149,10 @@ export function createLocalAttachmentController(options: {
     },
     add(files) {
       if (disposed || uploadInFlight) return;
+      selectionError = null;
+      let rejectedCount = 0;
       for (const file of files) {
-        if (items.length >= MAX_ATTACHMENTS) break;
+        if (items.length >= MAX_ATTACHMENTS) { rejectedCount += 1; continue; }
         if (!validFile(file)) continue;
         const uploadId = (options.createId ?? defaultId)().replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 96);
         if (!uploadId || uploadId.includes("..")) continue;
@@ -155,9 +163,10 @@ export function createLocalAttachmentController(options: {
           file,
           ...(shouldPreview(file) ? { previewUrl: URL.createObjectURL(file) } : {}),
           status: file.size <= MAX_ATTACHMENT_FILE_BYTES ? "ready" : "failed",
-          ...(file.size > MAX_ATTACHMENT_FILE_BYTES ? { error: "Files are limited to 10 MB." } : {}),
+          ...(file.size > MAX_ATTACHMENT_FILE_BYTES ? { error: "Files are limited to 10 MiB." } : {}),
         });
       }
+      if (rejectedCount) selectionError = `You can attach up to ${MAX_ATTACHMENTS} files. ${rejectedCount} ${rejectedCount === 1 ? "file was" : "files were"} not added.`;
       emit();
     },
     remove(localId) {
@@ -165,6 +174,7 @@ export function createLocalAttachmentController(options: {
       const item = items.find((candidate) => candidate.localId === localId);
       if (!item) return;
       items = items.filter((candidate) => candidate !== item);
+      selectionError = null;
       revoke(item);
       emit();
     },
@@ -172,10 +182,14 @@ export function createLocalAttachmentController(options: {
       if (uploadInFlight) return;
       const item = items.find((candidate) => candidate.localId === localId);
       if (!item || item.status !== "failed" || item.file.size > MAX_ATTACHMENT_FILE_BYTES) return;
+      const error = validate();
+      if (error) { item.error = error; emit(); return; }
       await uploadOne(item);
     },
     async uploadAll() {
       if (uploadInFlight) return { ok: false, error: "Attachment upload is already in progress." };
+      const error = validate();
+      if (error) return { ok: false, error };
       uploadInFlight = true;
       const batch = [...items];
       try {
@@ -216,6 +230,7 @@ export function createLocalAttachmentController(options: {
     },
     clear() {
       if (uploadInFlight) return;
+      selectionError = null;
       for (const item of items) revoke(item);
       items = [];
       emit();

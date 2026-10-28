@@ -24,7 +24,9 @@ function harness({ fail = false }: { fail?: boolean } = {}) {
   });
   let resolveNext!: (response: Response) => void;
   stubLegacyChatFetch( vi.fn(async (url: string, init?: RequestInit) => {
-    if (url.includes("/api/chats/events?")) return new Response(new ReadableStream(), {
+    if (url.includes("/api/chats/events?")) return new Response(new ReadableStream({ start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"type":"chat.stream.attached"}\n\ndata: {"type":"chat.replay.end","nextCursor":1}\n\n'));
+    } }), {
       headers: { "content-type": "text/event-stream" },
     });
     if (url.includes("/api/chats?")) return Response.json({ items: [detail().record] });
@@ -40,6 +42,21 @@ beforeEach(() => { window.history.replaceState(null, "", "/"); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("selected canonical Chat run cancellation", () => {
+  it("recovers an acknowledged Stop after a failed snapshot without navigation or another Stop", async () => {
+    const h = harness();
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.activeRunId).toBe(runId));
+    vi.useFakeTimers();
+    try {
+      h.getDetail.mockRejectedValueOnce(new TypeError("offline"));
+      await act(async () => { result.current.abortCurrent(); await vi.advanceTimersByTimeAsync(0); });
+      expect(h.getDetail).toHaveBeenCalledTimes(2);
+      await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+      expect(result.current.activeRunId).toBeUndefined();
+      expect(result.current.busy).toBe(false);
+      expect(h.cancel).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
   it("exposes the active run and cancels that exact run once, then reloads eligibility", async () => {
     const h = harness();
     const { result } = renderHook(() => useCanonicalChatState());

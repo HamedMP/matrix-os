@@ -66,7 +66,7 @@ export async function fetchNativeBotChat(token: string, gatewayUrl: string, chat
   if (!direct?.agentId) return null;
   const agentId = direct.agentId;
   const [interactions, tasks, authority, library] = await Promise.allSettled([
-    fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${chat}/interactions`),
+    fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${chat}/interactions`, { includeRecovery: "true" }),
       token, schema: interactionsSchema, errorMessage: STATUS_ERROR }),
     fetchAuthenticatedJson({ url: buildGatewayRequestUrl(gatewayUrl, `${chat}/bot-tasks`),
       token, schema: BotTaskListResponseSchema, errorMessage: STATUS_ERROR }),
@@ -95,7 +95,7 @@ export function resolveNativeBotInteraction(token: string, gatewayUrl: string, c
   const id = BotInteractionIdSchema.parse(interactionId);
   const body = ResolveBotInteractionRequestSchema.parse(input);
   return fetchAuthenticatedJson({
-    url: buildGatewayRequestUrl(gatewayUrl, `${chatPath(chatId)}/interactions/${encodeURIComponent(id)}/resolve`),
+    url: buildGatewayRequestUrl(gatewayUrl, `${chatPath(chatId)}/interactions/${encodeURIComponent(id)}/resolve`, { includeRecovery: "true" }),
     token, method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     schema: ResolveBotInteractionResponseSchema, errorMessage: ACTION_ERROR,
   });
@@ -161,9 +161,9 @@ function agentUrl(gatewayUrl: string, agentId: string, suffix = ""): string | nu
   return id.success ? gatewayRequestUrl(gatewayUrl, `/api/chat-agents/${encodeURIComponent(id.data)}${suffix}`) : null;
 }
 
-function agentChatUrl(gatewayUrl: string, chatId: string, suffix: string): string | null {
+function agentChatUrl(gatewayUrl: string, chatId: string, suffix: string, query?: Record<string, string>): string | null {
   const id = CanonicalChatIdSchema.safeParse(chatId);
-  return id.success ? gatewayRequestUrl(gatewayUrl, `/api/chats/${encodeURIComponent(id.data)}${suffix}`) : null;
+  return id.success ? gatewayRequestUrl(gatewayUrl, `/api/chats/${encodeURIComponent(id.data)}${suffix}`, query) : null;
 }
 
 /** A write whose 404 and 409 answers mean something to the screen. */
@@ -245,7 +245,7 @@ export async function fetchAgentTasks(token: string, gatewayUrl: string, chatId:
 
 /** `GET /api/chats/:chatId/interactions`: what the agent in this chat is waiting on the person for. */
 export async function fetchAgentInteractions(token: string, gatewayUrl: string, chatId: string): Promise<BotInteraction[]> {
-  const url = agentChatUrl(gatewayUrl, chatId, "/interactions");
+  const url = agentChatUrl(gatewayUrl, chatId, "/interactions", { includeRecovery: "true" });
   if (!url) throw new Error(AGENT_STATUS_ERROR);
   return (await fetchAuthenticatedJson({ url, token, schema: interactionsSchema, errorMessage: AGENT_STATUS_ERROR })).interactions;
 }
