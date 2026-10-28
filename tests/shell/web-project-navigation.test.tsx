@@ -441,3 +441,43 @@ it("narrows the Web sidebar to a selected project until the owner goes back, as 
   expect(screen.getByRole("button", { name: "Loose chat" })).toBeTruthy();
   expect(screen.getByRole("navigation", { name: "Projects" })).toBeTruthy();
 });
+
+function renderFocusable(request: (url: string) => Response, extra: { mobile?: boolean } = {}) {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] }) : request(url)));
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected
+    conversations={[projectConversation(1), projectConversation(2)]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="owner/main" {...extra} /></OrganizationStateProvider>);
+}
+
+it("keeps Load more available in a focused project when nothing on the first page matches", async () => {
+  renderFocusable(url => !url.includes("projectId=proj_france") ? Response.json({ items: [], nextCursor: null })
+    : url.includes("cursor=") ? Response.json({ items: [{ chat: { id: "chat_needle", title: "Needle chat" } }], nextCursor: null })
+      : Response.json({ items: [{ chat: { id: "chat_other", title: "Other chat" } }], nextCursor: "chatcur_page2" }));
+  fireEvent.click(await within(await screen.findByRole("navigation", { name: "Projects" })).findByRole("button", { name: "France" }));
+  await screen.findByRole("button", { name: "Other chat" });
+  fireEvent.change(screen.getByRole("textbox", { name: "Search chats" }), { target: { value: "Needle" } });
+  fireEvent.click(await screen.findByRole("button", { name: "Load more chats" }));
+  expect(await screen.findByRole("button", { name: "Needle chat" })).toBeTruthy();
+});
+
+it("reloads a focused project's older chats when the Unread filter changes", async () => {
+  renderFocusable(url => !url.includes("projectId=proj_france") ? Response.json({ items: [], nextCursor: null })
+    : url.includes("unread=true") ? Response.json({ items: [{ chat: { id: "chat_unread_old", title: "Unread older chat" } }], nextCursor: null })
+      : Response.json({ items: [{ chat: { id: "chat_read_old", title: "Read older chat" } }], nextCursor: null }), { mobile: true });
+  fireEvent.click(await within(await screen.findByRole("navigation", { name: "Projects" })).findByRole("button", { name: "France" }));
+  await screen.findByRole("button", { name: "Read older chat" });
+  fireEvent.click(screen.getByRole("button", { name: "Unread" }));
+  expect(await screen.findByRole("button", { name: "Unread older chat" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Read older chat" })).toBeNull();
+});
+
+it("keeps focused project chats reorderable in their lifecycle group, as in the main list", async () => {
+  renderFocusable(() => Response.json({ items: [], nextCursor: null }));
+  fireEvent.click(await within(await screen.findByRole("navigation", { name: "Projects" })).findByRole("button", { name: "France" }));
+  await screen.findByRole("heading", { name: "France" });
+  const row = screen.getByRole("button", { name: "Chat 1" }).closest<HTMLElement>("[data-rail-order-id]");
+  expect(row?.dataset.railOrderId).toBe("chat_1");
+  expect(row?.dataset.railOrderGroup).toBeTruthy();
+});

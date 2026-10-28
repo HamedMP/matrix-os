@@ -44,8 +44,13 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
       </button>
       <h2 className="min-w-0 flex-1 truncate text-sm font-semibold" title={project.name}>{project.name}</h2>
     </div>
-    {empty ? <ProjectChatStatus rowCount={0} loading={loading} error={error} hasMore={hasMore} mobile={mobile} retry={retry}
-      filtered={unreadOnly || sourceFilter !== "all" || Boolean(search)} /> : null}
+    {empty ? <>
+      <ProjectChatStatus rowCount={0} loading={loading} error={error} hasMore={hasMore} mobile={mobile} retry={retry}
+        filtered={unreadOnly || sourceFilter !== "all" || Boolean(search)} />
+      {/* Later pages may still match the search or filter. */}
+      <ProjectChatPaging projectName={project.name} hiddenCount={0} loading={loading} error={error} hasMore={hasMore}
+        mobile={mobile} showMore={() => {}} loadMore={loadMore} />
+    </> : null}
     {chats.length > 0 ? <WebChatLifecycleGroups conversations={chats} scopeKey={`${scopeKey ?? ""}:project:${project.id}`} renderRow={renderRow} /> : null}
     {older.length > 0 || (!empty && (error || hasMore)) ? <ChatRailSection label="Older chats" count={older.length}
       expanded={olderExpanded} onExpandedChange={setOlderExpanded}>
