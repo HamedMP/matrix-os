@@ -665,6 +665,52 @@ describe("canonical Chat presentation adapter", () => {
     });
   });
 
+  it("groups consecutive tool calls between text blocks, as on Web Desktop", () => {
+    const { snapshot } = createCanonicalChatFixture("completed");
+    const run = snapshot.runs[0]!;
+    const assistant = (id: string, seq: number, text: string, createdAt: string) => ({
+      id, chatId: snapshot.chat.id, seq, role: "assistant" as const, state: "committed" as const,
+      turnId: snapshot.turns[0]!.id, runId: run.id, parts: [{ type: "text" as const, text }], createdAt,
+    });
+    const tool = (name: string, sequence: number, second: number) => ({
+      id: `activity_${name}`, chatId: snapshot.chat.id, runId: run.id, sequence, type: "tool.progress" as const,
+      toolCallId: `tool_${name}`, label: name, status: "completed" as const,
+      occurredAt: `2026-08-26T00:00:${String(second).padStart(2, "0")}.000Z`,
+    });
+    const process = assistant("msg_process", 2, "Found it, fixing now.", "2026-08-26T00:00:04.000Z");
+    const result = assistant("msg_result", 3, "Done.", "2026-08-26T00:00:09.000Z");
+
+    const [presented] = canonicalChatPresentation({
+      messages: [...snapshot.messages, process, result],
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: [tool("Read", 1, 1), tool("Search", 2, 2), tool("Grep", 3, 3),
+        tool("Edit", 4, 5), tool("Write", 5, 6), tool("Test", 6, 7), tool("Build", 7, 7), tool("Lint", 8, 8)],
+    });
+
+    expect(presented?.work.map((item) => item.kind === "activity-group"
+      ? item.activities.map((activity) => activity.label).join(",")
+      : item.id)).toEqual(["Read,Search,Grep", "msg_process", "Edit,Write,Test,Build,Lint"]);
+    expect(presented?.final).toMatchObject({ id: "msg_result" });
+  });
+
+  it("keeps the current-model status apart from the first tool group of an active Run", () => {
+    const { snapshot } = createCanonicalChatFixture("accepted");
+    const run = snapshot.runs[0]!;
+    const occurredAt = run.startedAt ?? run.createdAt;
+    const [presented] = canonicalChatPresentation({
+      messages: snapshot.messages,
+      turns: snapshot.turns,
+      runs: snapshot.runs,
+      activities: ["one", "two"].map((name, index) => ({
+        id: `activity_${name}`, chatId: snapshot.chat.id, runId: run.id, sequence: index + 1,
+        type: "tool.progress" as const, toolCallId: `tool_${name}`, label: name, status: "running" as const, occurredAt,
+      })),
+    });
+    expect(presented?.work.map((item) => item.id)).toEqual([`${run.id}:selected-model`, `${run.id}:activities:activity_one`]);
+    expect(presented?.work[1]).toMatchObject({ activities: [{ label: "one" }, { label: "two" }] });
+  });
+
   it("keeps live assistant process text inside Working until a terminal result exists", () => {
     const { snapshot } = createCanonicalChatFixture("accepted");
     const run = snapshot.runs[0]!;

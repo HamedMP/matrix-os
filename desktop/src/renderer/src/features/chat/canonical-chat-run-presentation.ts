@@ -90,6 +90,25 @@ export function replaceThinkingPlaceholders(
   return visible;
 }
 
+function isToolGroup(item: ConversationWorkPresentation): item is ConversationActivityGroupPresentation {
+  // Status rows such as "Current model" stay on their own.
+  return item.kind === "activity-group" && !item.activities.some((activity) => activity.kind === "phase");
+}
+
+/** Consecutive tool calls with no text between them form one group, as on Web Desktop. */
+export function groupAdjacentToolCalls(work: ConversationWorkPresentation[]): ConversationWorkPresentation[] {
+  const grouped: ConversationWorkPresentation[] = [];
+  for (const item of work) {
+    const previous = grouped.at(-1);
+    if (previous && isToolGroup(previous) && isToolGroup(item)) {
+      grouped[grouped.length - 1] = { ...previous, activities: [...previous.activities, ...item.activities] };
+    } else {
+      grouped.push(item);
+    }
+  }
+  return grouped;
+}
+
 export function runPresentation(
   run: CanonicalChatRun | undefined,
   activities: CanonicalChatRunActivity[],
