@@ -8,7 +8,7 @@ import { insertUserMachine, type PlatformDB } from "../../packages/platform/src/
 import {
   createTestPlatformDb,
   destroyTestPlatformDb,
-} from "./native-platform-db-test-helper.js";
+} from "./funded-policy-db-test-helper.js";
 
 const now = "2026-08-30T20:00:00.000Z";
 const models = ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"];

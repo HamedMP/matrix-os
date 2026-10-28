@@ -126,7 +126,7 @@ export interface GetStartedGateProps {
   backdropSource?: GetStartedBackdropSource;
   /** The sign-in account's name (Google, GitHub); its first name pre-fills an empty name step once. */
   suggestedName?: string | null;
-  /** The surface's Settings sign-in for a coding agent picked on step 3. */
+  /** The surface's Settings > Agents & providers host for the coding agents screen (spec 636). */
   agentLogin?: GetStartedAgentLoginHost;
 }
 
@@ -161,6 +161,7 @@ export function GetStartedGate({ port, zIndex, children, connector: Connector, w
       connect={connect}
       gallery={gallery}
       agentLogin={agentLogin ?? null}
+      suggestBotNames={port.suggestBotNames ?? null}
     />
   );
   return (

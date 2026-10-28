@@ -1,14 +1,16 @@
-import type { GetStartedAgentKind, ProviderSettingsSnapshot } from "@matrix-os/contracts";
-import { GetStartedAgentLogin, useProviderSettingsController, type GetStartedAgentLoginPort, type ProviderSettingsMutationIntent } from "@matrix-os/ui";
+import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import { useProviderSettingsController, type GetStartedAgentLoginPort, type ProviderSettingsMutationIntent } from "@matrix-os/ui";
 import "@matrix-os/ui/agents-providers.css";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import type { ApiClient } from "../../lib/api";
 import { useConnection } from "../../stores/connection";
 import { invalidateDesktopProviderCatalog } from "../chat/provider-catalog-invalidation";
 import { createDesktopProviderSettingsTransport, desktopProviderIdentityKey } from "../settings/provider-settings-desktop-adapter";
 import { createDesktopProviderWorkflowClient, openDesktopProviderWorkflowAuthorization } from "../settings/provider-workflow-transport";
 
-function ConnectedAgentLogin({ agent, api, runtimeSlot, identityKey }: { agent: GetStartedAgentKind; api: ApiClient; runtimeSlot: string; identityKey: string }) {
+type PortChildren = (port: GetStartedAgentLoginPort) => ReactNode;
+
+function ConnectedAgentLogin({ children, api, runtimeSlot, identityKey }: { children: PortChildren; api: ApiClient; runtimeSlot: string; identityKey: string }) {
   const runtimeApi = useMemo(() => api.forRuntime(runtimeSlot), [api, runtimeSlot]);
   const transport = useMemo(() => createDesktopProviderSettingsTransport(runtimeApi), [runtimeApi]);
   const isIdentityCurrent = useCallback(() => desktopProviderIdentityKey(useConnection.getState()) === identityKey, [identityKey]);
@@ -28,11 +30,11 @@ function ConnectedAgentLogin({ agent, api, runtimeSlot, identityKey }: { agent: 
       if (isIdentityCurrent()) void openDesktopProviderWorkflowAuthorization(url);
     },
   }), [snapshot, error, workflowClient, refresh, isIdentityCurrent]);
-  return <GetStartedAgentLogin agent={agent} port={port} />;
+  return <>{children(port)}</>;
 }
 
-/** Electron Desktop: the Settings > Agents & providers sign-in for one agent, on step 3. */
-export function DesktopGetStartedAgentLogin({ agent }: { agent: GetStartedAgentKind }) {
+/** Electron Desktop: one Settings > Agents & providers port for the coding agents screen. */
+export function DesktopGetStartedAgentLogin({ children }: { children: PortChildren }) {
   const status = useConnection((state) => state.status);
   const handle = useConnection((state) => state.handle);
   const userId = useConnection((state) => state.userId);
@@ -40,7 +42,7 @@ export function DesktopGetStartedAgentLogin({ agent }: { agent: GetStartedAgentK
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const authGeneration = useConnection((state) => state.authGeneration);
   const api = useConnection((state) => state.api);
-  if (status !== "signed-in" || api === null) return null;
+  if (status !== "signed-in" || api === null) return <p className="mxo-muted">You can sign in to Claude Code or Codex later in Settings &gt; Agents &amp; providers.</p>;
   const identityKey = desktopProviderIdentityKey({ status, handle, userId, platformHost, runtimeSlot, authGeneration });
-  return <ConnectedAgentLogin key={identityKey} agent={agent} api={api} runtimeSlot={runtimeSlot} identityKey={identityKey} />;
+  return <ConnectedAgentLogin key={identityKey} api={api} runtimeSlot={runtimeSlot} identityKey={identityKey}>{children}</ConnectedAgentLogin>;
 }

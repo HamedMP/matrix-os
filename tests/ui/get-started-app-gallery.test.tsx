@@ -39,7 +39,7 @@ function connected(services: string[]) {
 function setup(draft: Record<string, unknown> = {}, extra: { gallery?: GetStartedGalleryPort; services?: string[] } = {}) {
   const saves: GetStartedUpdate[] = [];
   const port: GetStartedPort = {
-    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 4, name: "Sam", goals: ["code"], tools: [], ...draft } })),
+    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 5, name: "Sam", goals: ["code"], tools: [], ...draft } })),
     save: vi.fn(async (update: GetStartedUpdate) => {
       saves.push(update);
       if (update.type === "complete") return { status: "completed", completedAt: AT, answers: update.answers };
@@ -87,13 +87,15 @@ describe("App Gallery step", () => {
   });
 });
 
-describe("Apps ready with your data", () => {
+describe("Apps that work with your tools", () => {
   it("lists App Gallery apps that the connected tools make ready, with icons and what they use", async () => {
     const gallery = galleryPort();
     setup({}, { gallery, services: ["gmail", "google_calendar"] });
-    expect(await screen.findByRole("heading", { name: "Apps ready with your data" })).toBeInTheDocument();
-    expect(screen.getByText("Because you connected Gmail and Google Calendar, these apps are ready with your data.")).toBeInTheDocument();
-    const list = screen.getByRole("list", { name: "Apps ready with your data" });
+    expect(await screen.findByRole("heading", { name: "Apps that work with your tools" })).toBeInTheDocument();
+    // ENG-391: apps install empty and fill up only after an import, so the copy never says they hold the data.
+    expect(screen.getByText("These apps work with Gmail and Google Calendar. Add one, then import your data from inside it.")).toBeInTheDocument();
+    expect(screen.queryByText(/ready with your data/)).not.toBeInTheDocument();
+    const list = screen.getByRole("list", { name: "Apps that work with your tools" });
     const rows = within(list).getAllByRole("listitem");
     expect(rows.map((row) => row.querySelector("strong")?.textContent)).toEqual(["Atlas", "Folio"]);
     expect(rows[0]!.querySelector("img")).toHaveAttribute("src", "https://example.test/icons/gallery-atlas.png");
@@ -135,6 +137,6 @@ describe("Apps ready with your data", () => {
   it("falls back to building your own when nothing connected makes an app ready", async () => {
     setup({}, { gallery: galleryPort(), services: ["github"] });
     expect(await screen.findByRole("heading", { name: "Build your own apps" })).toBeInTheDocument();
-    expect(screen.queryByRole("list", { name: "Apps ready with your data" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Apps that work with your tools" })).not.toBeInTheDocument();
   });
 });

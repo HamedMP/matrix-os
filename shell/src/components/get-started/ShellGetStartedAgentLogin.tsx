@@ -1,16 +1,15 @@
 "use client";
 
-import type { GetStartedAgentKind } from "@matrix-os/contracts";
-import { GetStartedAgentLogin, useProviderSettingsController, type GetStartedAgentLoginPort } from "@matrix-os/ui";
-import { useCallback, useMemo } from "react";
+import { useProviderSettingsController, type GetStartedAgentLoginPort } from "@matrix-os/ui";
+import { useCallback, useMemo, type ReactNode } from "react";
 import { currentAiCreditRuntimeSlot } from "@/lib/ai-credit-checkout";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
 import { getGatewayUrl } from "@/lib/gateway";
 import { createProviderSettingsTransport } from "@/lib/provider-settings-transport";
 import { createWebProviderWorkflowClient, openWebProviderWorkflowAuthorization } from "@/lib/provider-workflow-transport";
 
-/** Web Desktop and Web Canvas: the Settings > Agents & providers sign-in for one agent, on step 3. */
-export function ShellGetStartedAgentLogin({ agent }: { agent: GetStartedAgentKind }) {
+/** Web Desktop and Web Canvas: one Settings > Agents & providers port for the coding agents screen. */
+export function ShellGetStartedAgentLogin({ children }: { children: (port: GetStartedAgentLoginPort) => ReactNode }) {
   const transport = useMemo(() => createProviderSettingsTransport(), []);
   const identityKey = getGatewayUrl();
   const runtimeSlot = currentAiCreditRuntimeSlot();
@@ -35,5 +34,5 @@ export function ShellGetStartedAgentLogin({ agent }: { agent: GetStartedAgentKin
       if (!openWebProviderWorkflowAuthorization(url)) throw new Error("Browser unavailable");
     },
   }), [snapshot, error, workflowClient, refresh, isIdentityCurrent]);
-  return <GetStartedAgentLogin agent={agent} port={port} />;
+  return <>{children(port)}</>;
 }

@@ -1,7 +1,9 @@
-import type { GetStartedUpdate } from "@matrix-os/contracts";
+import type { GetStartedBotNamesRequest, GetStartedUpdate } from "@matrix-os/contracts";
 import type { GetStartedGalleryPort, GetStartedPort } from "@matrix-os/ui";
 
 const REQUEST_TIMEOUT_MS = 10_000;
+/** The wizard gives up on name suggestions after 12 s and shows built-in names. */
+const BOT_NAMES_TIMEOUT_MS = 12_000;
 
 class GetStartedRequestError extends Error {
   override readonly name = "GetStartedRequestError";
@@ -29,12 +31,18 @@ export function createShellGetStartedPort(gatewayUrl: string): GetStartedPort {
       body: JSON.stringify(update),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })),
+    suggestBotNames: async (request: GetStartedBotNamesRequest, signal) => readJson(await fetch(`${url}/bot-names`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(BOT_NAMES_TIMEOUT_MS)]),
+    })),
   };
 }
 
 const GALLERY_APP_ID = /^[a-z][a-z0-9-]{0,47}$/;
 
-/** App Gallery for the wizard's "Apps ready with your data" step, on the same gateway. */
+/** App Gallery for the wizard's "Apps that work with your tools" step, on the same gateway. */
 export function createShellGetStartedGalleryPort(gatewayUrl: string): GetStartedGalleryPort {
   return {
     list: async (signal) => readJson(await fetch(`${gatewayUrl}/api/app-gallery`, {

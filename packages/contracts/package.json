@@ -94,6 +94,7 @@
     "#get-started": "./src/get-started.ts",
     "#get-started-arrival": "./src/get-started-arrival.ts",
     "#get-started-bot": "./src/get-started-bot.ts",
+    "#get-started-bot-names": "./src/get-started-bot-names.ts",
     "#get-started-recipe-bots": "./src/get-started-recipe-bots.ts",
     "#get-started-connect": "./src/get-started-connect.ts",
     "#get-started-wizard": "./src/get-started-wizard.ts",

@@ -9,6 +9,8 @@ export interface TestPlatformDb {
 export interface TestPlatformDbOptions {
   /** Migration contracts must start from a new, unmigrated database. */
   freshSchema?: boolean;
+  /** Model concurrent transactions with a size-one pool when explicitly needed. */
+  serializeTransactions?: boolean;
 }
 
 const MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
@@ -19,10 +21,38 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message.slice(0, 300) : 'Unknown failure';
 }
 
-async function createInitializedDb(snapshot?: Blob): Promise<TestPlatformDb> {
+async function createInitializedDb(snapshot?: Blob, serializeTransactions = false): Promise<TestPlatformDb> {
   const instance = snapshot
     ? await KyselyPGlite.create({ loadDataDir: snapshot })
     : await KyselyPGlite.create();
+  // PGlite has one SQL session. Its driver otherwise hands out overlapping
+  // connections, allowing one concurrent transaction to roll back another.
+  // Retain connection ownership through COMMIT/ROLLBACK, like a size-one pool.
+  if (serializeTransactions) {
+    const createDriver = instance.dialect.createDriver;
+    instance.dialect.createDriver = () => {
+      const driver = createDriver();
+      const acquire = driver.acquireConnection.bind(driver);
+      const release = driver.releaseConnection.bind(driver);
+      let tail = Promise.resolve();
+      let unlockActive = () => {};
+      driver.acquireConnection = async () => {
+        const previous = tail;
+        let unlock!: () => void;
+        tail = new Promise<void>(resolve => { unlock = resolve; });
+        await previous;
+        try {
+          const connection = await acquire();
+          unlockActive = unlock;
+          return connection;
+        } catch (error) { unlock(); throw error; }
+      };
+      driver.releaseConnection = async connection => {
+        try { await release(connection); } finally { unlockActive(); }
+      };
+      return driver;
+    };
+  }
   let db: PlatformDB | undefined;
   try {
     db = createPlatformDb({ dialect: instance.dialect });
@@ -74,8 +104,8 @@ function getSnapshot(): Promise<Blob> {
 }
 
 export async function createTestPlatformDb(options: TestPlatformDbOptions = {}): Promise<TestPlatformDb> {
-  if (options.freshSchema) return createInitializedDb();
-  return createInitializedDb(await getSnapshot());
+  if (options.freshSchema) return createInitializedDb(undefined, options.serializeTransactions);
+  return createInitializedDb(await getSnapshot(), options.serializeTransactions);
 }
 
 export async function destroyTestPlatformDb(db: PlatformDB | undefined): Promise<void> {

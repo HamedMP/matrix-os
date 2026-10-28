@@ -112,9 +112,9 @@ function failure(
   return ScopeRuntimeBrokerResponseSchema.parse({ version: 1, requestId, ok: false, error });
 }
 
-export async function readBoundedBody(response: Response): Promise<string> {
+export async function readBoundedBody(response: Response, maxBytes = MAX_RESPONSE_BYTES): Promise<string> {
   const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) throw new RangeError("response_too_large");
+  if (Number.isFinite(declared) && declared > maxBytes) throw new RangeError("response_too_large");
   if (!response.body) return "";
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -124,7 +124,7 @@ export async function readBoundedBody(response: Response): Promise<string> {
       const next = await reader.read();
       if (next.done) break;
       size += next.value.byteLength;
-      if (size > MAX_RESPONSE_BYTES) {
+      if (size > maxBytes) {
         await reader.cancel().catch((error: unknown) => {
           console.warn("[collaboration] scope broker response cancellation failed:",
             error instanceof Error ? error.name : "UnknownError");

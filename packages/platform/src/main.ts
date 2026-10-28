@@ -5,6 +5,7 @@ import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './previe
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
+import { registerGetStartedBotNameRoutes } from './get-started-bot-names.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
@@ -741,6 +742,7 @@ export function createApp(deps: {
     internalIntegrationRoutes: deps.internalIntegrationRoutes,
     privatePreviewEligibility,
   });
+  registerGetStartedBotNameRoutes(app, { db, platformSecret, env: appEnv });
 
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);

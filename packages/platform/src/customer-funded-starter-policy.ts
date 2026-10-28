@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
-import { FundedAiGlobalPolicySchema, IsoTimestampSchema, MANAGED_WORKERS_AI_MODEL_IDS } from '@matrix-os/contracts';
+import { FundedAiGlobalPolicySchema, IsoTimestampSchema } from '@matrix-os/contracts';
 import type { PlatformDB } from './db.js';
 import { AccountDeletionAdmissionError, withAccountDeletionOwnerLock } from './account-deletion/admission.js';
 import { createAiFundedPolicyRepository } from './ai-funded-policy-repository.js';
 import { parseModels } from './ai-funded-metering-helpers.js';
+import { ordinaryCustomerModelIds } from './customer-ordinary-model-policy.js';
 
-const ORDINARY_MODELS = ['anthropic/claude-sonnet-5', ...MANAGED_WORKERS_AI_MODEL_IDS];
 const STARTER_MICROUSD = 5_000_000;
 const STARTER_SOURCE = 'matrix-ai-lifetime-starter';
 // Compatibility with the permanent starter entitlement issued before onboarding
@@ -56,7 +56,7 @@ export async function initializeCustomerFundedStarterPolicy(
     if (!global.enabled) return false;
     const policy = FundedAiGlobalPolicySchema.parse({ enabled: global.enabled, revision: global.revision,
       allowedModelIds: JSON.parse(global.allowed_model_ids) as unknown, updatedAt: global.updated_at });
-    const models = ORDINARY_MODELS.filter(model => policy.allowedModelIds.includes(model));
+    const models = ordinaryCustomerModelIds(policy.allowedModelIds);
     if (models.length === 0) return false;
     const existing = await trx.executor.selectFrom('ai_funded_runtime_policies').selectAll()
       .where('machine_id', '=', machineId).forUpdate().executeTakeFirst();

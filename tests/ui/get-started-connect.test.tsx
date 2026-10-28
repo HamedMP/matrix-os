@@ -18,7 +18,7 @@ const AT = "2026-10-25T10:12:00.000Z";
 function port(draft: Record<string, unknown>) {
   const saves: GetStartedUpdate[] = [];
   const value: GetStartedPort = {
-    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 2, ...draft } })),
+    load: vi.fn(async () => ({ status: "in_progress", updatedAt: AT, draft: { step: 3, ...draft } })),
     save: vi.fn(async (update: GetStartedUpdate) => {
       saves.push(update);
       if (update.type === "complete") return { status: "completed", completedAt: AT, answers: update.answers };
@@ -98,9 +98,9 @@ describe("Connect the tools you use", () => {
     // Customer feedback: say what a connection is for before asking for it.
     expect(within(screen.getByTestId("integration-card-gmail")).getByText("So your AI can sort and draft email")).toBeInTheDocument();
     expect(within(screen.getByTestId("integration-card-github")).getByText("So your AI can work on your repos")).toBeInTheDocument();
-    // Coding agents are not integrations, so they stay as choices above the list.
-    expect(screen.getByText("Your coding agent")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Codex" })).toBeInTheDocument();
+    // Coding agents sign in on their own screen before this one (spec 636).
+    expect(screen.queryByText("Your coding agent")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Codex" })).not.toBeInTheDocument();
     expect(connect).not.toHaveBeenCalled();
   });
 
@@ -137,7 +137,7 @@ describe("Connect the tools you use", () => {
 
   it("keeps saved tools when the connections have not loaded", async () => {
     const { Connector } = makeConnector({ connectionsLoaded: false });
-    const gatePort = port({ step: 6, name: "Sam", goals: ["code"], tools: ["linear"] });
+    const gatePort = port({ step: 7, name: "Sam", goals: ["code"], tools: ["linear"] });
     render(<GetStartedGate port={gatePort} zIndex={1} connector={Connector} />);
     fireEvent.click(await screen.findByRole("button", { name: "Enter your computer" }));
     await waitFor(() => expect(gatePort.saves.at(-1)).toMatchObject({ type: "complete", answers: { tools: ["linear"] } }));
@@ -152,7 +152,7 @@ describe("Connect the tools you use", () => {
 
   it("has no connect list on the summary any more", async () => {
     const { Connector } = makeConnector({});
-    render(<GetStartedGate port={port({ step: 6, name: "Sam", goals: ["code"], tools: [] })} zIndex={1} connector={Connector} />);
+    render(<GetStartedGate port={port({ step: 7, name: "Sam", goals: ["code"], tools: [] })} zIndex={1} connector={Connector} />);
     expect(await screen.findByRole("heading", { name: "All set, Sam." })).toBeInTheDocument();
     expect(screen.queryByTestId("integrations-grid")).not.toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Connect your tools" })).not.toBeInTheDocument();
