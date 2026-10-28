@@ -16,9 +16,9 @@ the live actions for that connection, without a second per-app grant step.
 - A visible personal app created in place by Matrix with
   `listingTrust: "first_party"` receives the current integration catalog by
   default, including read, write, and destructive actions exposed by that
-  catalog. Install and fork paths host-stamp provenance and replace any copied
-  first-party claim with `community`, so imported code cannot select this
-  default for itself.
+  catalog. Install and fork paths host-stamp provenance, so imported code
+  cannot select this default for itself. Launch trust remains separate and is
+  preserved, so supported first-party and verified-partner installs still open.
 - `system/app-capabilities.json` remains an owner-controlled explicit policy.
   When it contains an entry for an app, that entry restricts the app to the
   listed services and actions. An empty `services` object revokes integration
@@ -51,11 +51,11 @@ account selection, and safe client errors remain unchanged. Read actions use
 the read transport; non-read actions use the mutation transport. Provider
 credentials and raw errors never enter app code.
 
-Trust comes from the freshly read installed manifest plus host-stamped install
-provenance. Legacy and runtime install paths relabel copied/forked manifests as
-`community`; a provenance-stamped app is ineligible for the implicit default
-even if copied input claimed `first_party`. The same install/runtime policy that
-blocks untrusted applications remains authoritative.
+Integration-default trust comes from the freshly read installed manifest plus
+host-stamped install provenance. A provenance-stamped app is ineligible for the
+implicit integration default even if copied input claimed `first_party`.
+Distribution/launch trust remains the manifest's separate concern, preserving
+existing supported installs.
 
 ## Verification
 

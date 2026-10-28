@@ -68,7 +68,6 @@ async function stampImportedManifest(targetDir: string, slug: string): Promise<v
   }
   const stamped = {
     ...parsed,
-    listingTrust: "community",
     installed_from: { slug, installedAt: new Date().toISOString() },
   };
   const tempPath = join(targetDir, `.matrix.json.${randomBytes(8).toString("hex")}.tmp`);

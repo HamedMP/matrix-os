@@ -47,7 +47,6 @@ export function forkApp(options: ForkOptions): ForkResult {
     try {
       const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
       manifest.forked_from = { author, slug, version };
-      manifest.listingTrust = "community";
       writeFileNow(manifestPath, JSON.stringify(manifest, null, 2));
     } catch (err: unknown) {
       rmSync(targetDir, { recursive: true, force: true });
@@ -84,7 +83,6 @@ export function installApp(options: InstallOptions): ForkResult {
     try {
       const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
       manifest.installed_from = { slug, installedAt: new Date().toISOString() };
-      manifest.listingTrust = "community";
       writeFileNow(manifestPath, JSON.stringify(manifest, null, 2));
     } catch (err: unknown) {
       rmSync(targetDir, { recursive: true, force: true });

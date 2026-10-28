@@ -67,7 +67,7 @@ describe('gateway/app-fork', () => {
         slug: 'chess',
         version: '1.0.0',
       });
-      expect(manifest.listingTrust).toBe('community');
+      expect(manifest.listingTrust).toBe('first_party');
     });
 
     it('fails if target directory already exists', () => {
@@ -116,7 +116,7 @@ describe('gateway/app-fork', () => {
       const manifest = JSON.parse(readFileSync(join(homePath, 'apps', 'chess', 'matrix.json'), 'utf-8'));
       expect(manifest.forked_from).toBeUndefined();
       expect(manifest.installed_from).toBeTruthy();
-      expect(manifest.listingTrust).toBe('community');
+      expect(manifest.listingTrust).toBe('first_party');
     });
 
     it('copies all files including subdirectories', () => {

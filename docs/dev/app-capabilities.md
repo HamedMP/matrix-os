@@ -25,10 +25,11 @@ text. Listings need pagination and reads must expose truncation or unsupported f
 The gateway requires its configured computer owner principal. Shells stamp app
 identity from the launched app; the page cannot replace it. A visible personal app
 created in place by Matrix with `listingTrust: "first_party"` receives the owner's
-connected integrations by default. Imported and forked apps are host-stamped and
-relabelled `community`, so a copied manifest cannot claim this default. The live
-catalog is authoritative, so a newly connected service is available on the next
-request without another app-specific grant or a restart.
+connected integrations by default. Imported and forked apps receive host-stamped
+provenance, so a copied manifest cannot claim this integration default. Their
+separate distribution trust is preserved so supported apps still launch. The
+live catalog is authoritative, so a newly connected service is available on the
+next request without another app-specific grant or a restart.
 
 `system/app-capabilities.json` is an optional owner restriction or explicit grant,
 not something app code may edit. When an app has an entry, only its listed services
