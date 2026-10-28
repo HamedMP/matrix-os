@@ -11,6 +11,7 @@ import type {
 type State = {
   pending: NativeAppOpenChatEvent | null;
   queue(request: NativeAppOpenChatEvent): void;
+  cancel(requestId: string): void;
   complete(requestId: string, result: NativeAppChatNavigationResult): Promise<void>;
 };
 
@@ -32,6 +33,9 @@ export const useNativeAppChatNavigation = create<State>()((set, get) => ({
     }
     set({ pending: request });
   },
+  cancel(requestId) {
+    if (get().pending?.requestId === requestId) set({ pending: null });
+  },
   async complete(requestId, result) {
     if (get().pending?.requestId !== requestId) return;
     set({ pending: null });
@@ -44,18 +48,28 @@ export function NativeAppChatNavigationHost({
   active,
   client,
   onStartChat,
+  runtimeSlot,
+  authGeneration,
 }: {
   active: boolean;
   client: CanonicalChatClient | null;
   onStartChat: StartAgentChat;
+  runtimeSlot: string;
+  authGeneration: number;
 }) {
   const pending = useNativeAppChatNavigation((state) => state.pending);
+  const cancel = useNativeAppChatNavigation((state) => state.cancel);
   const complete = useNativeAppChatNavigation((state) => state.complete);
   const navigation = useChatAgentsNavigation();
   const handled = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!active || !pending || !client?.agents || !navigation || handled.current === pending.requestId) return;
+    if (!pending) return;
+    if (pending.runtimeSlot !== runtimeSlot || pending.authGeneration !== authGeneration) {
+      cancel(pending.requestId);
+      return;
+    }
+    if (!active || !client?.agents || !navigation || handled.current === pending.requestId) return;
     handled.current = pending.requestId;
     const requestId = pending.requestId;
     navigation.open({
@@ -68,7 +82,7 @@ export function NativeAppChatNavigationHost({
       },
     });
     if (!pending.recipeId) void complete(requestId, { ok: true }).catch(reportAcknowledgementFailure);
-  }, [active, client, complete, navigation, onStartChat, pending]);
+  }, [active, authGeneration, cancel, client, complete, navigation, onStartChat, pending, runtimeSlot]);
 
   return null;
 }

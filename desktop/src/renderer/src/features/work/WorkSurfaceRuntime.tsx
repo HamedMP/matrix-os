@@ -104,7 +104,8 @@ export function WorkSurfaceRuntimeProvider({ active, tabId, children }: { active
   return <WorkSurfaceRuntimeContext.Provider value={value}>
     <CanonicalChatClientProvider api={api} client={client} runtimeSlot={runtimeSlot} authGeneration={authGeneration}>
       <ChatAgentsWorkspace>
-        <NativeAppChatNavigationHost active={active} client={client} onStartChat={requestAgentDraft} />
+        <NativeAppChatNavigationHost active={active} client={client} onStartChat={requestAgentDraft}
+          runtimeSlot={runtimeSlot} authGeneration={authGeneration} />
         {children}
       </ChatAgentsWorkspace>
     </CanonicalChatClientProvider>

@@ -337,6 +337,7 @@ if (!gotLock) {
 
       nativeAppChatNavigation = createNativeAppChatNavigationBroker({
         emit: (event) => sendEvent("app:open-chat", event),
+        cancel: (event) => sendEvent("app:open-chat-cancel", event),
       });
       registerNativeAppChatCompletionIpc(ipcMain, nativeAppChatNavigation, rawEvent => {
         const event = rawEvent as IpcMainInvokeEvent;
@@ -354,7 +355,7 @@ if (!gotLock) {
           if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App launch is unavailable");
           sendEvent("app:open", { ...app, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
         },
-        openChat: async (request) => {
+        openChat: async (request, signal) => {
           const status = auth.getStatus();
           if (!status.signedIn || !mainWindow || mainWindow.isDestroyed() || !nativeAppChatNavigation) {
             throw new Error("Chat navigation is unavailable");
@@ -363,7 +364,7 @@ if (!gotLock) {
           await nativeAppChatNavigation.request(request, {
             runtimeSlot: status.runtimeSlot,
             authGeneration: status.authGeneration,
-          });
+          }, signal);
         },
         authGeneration: () => auth.getStatus().authGeneration,
         generate: (app, context) => {

@@ -19,6 +19,9 @@ export const NativeAppOpenChatEventSchema = NativeAppOpenChatRequestSchema.exten
 }).strict();
 export type NativeAppOpenChatEvent = z.infer<typeof NativeAppOpenChatEventSchema>;
 
+export const NativeAppChatCancellationSchema = z.strictObject({ requestId: RequestId });
+export type NativeAppChatCancellation = z.infer<typeof NativeAppChatCancellationSchema>;
+
 export const NativeAppChatNavigationResultSchema = z.discriminatedUnion("ok", [
   z.strictObject({ ok: z.literal(true) }),
   z.strictObject({ ok: z.literal(false), error: z.enum(["recipe_unavailable", "navigation_unavailable"]) }),

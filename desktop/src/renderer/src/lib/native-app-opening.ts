@@ -33,5 +33,16 @@ export function wireNativeAppOpening(): () => void {
     useDesktopSurfaces.getState().activateSurface(tabId);
     useNativeAppChatNavigation.getState().queue(request);
   });
-  return () => { disposeApp(); disposeChat(); };
+  const disposeChatCancellation = onEvent("app:open-chat-cancel", ({ requestId }) => {
+    useNativeAppChatNavigation.getState().cancel(requestId);
+  });
+  const disposeConnection = useConnection.subscribe((current) => {
+    const pending = useNativeAppChatNavigation.getState().pending;
+    if (!pending) return;
+    if (current.status !== "signed-in" || pending.runtimeSlot !== current.runtimeSlot
+      || pending.authGeneration !== current.authGeneration) {
+      useNativeAppChatNavigation.getState().cancel(pending.requestId);
+    }
+  });
+  return () => { disposeApp(); disposeChat(); disposeChatCancellation(); disposeConnection(); };
 }

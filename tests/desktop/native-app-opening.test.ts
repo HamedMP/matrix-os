@@ -31,6 +31,27 @@ it.each(["closed", "open", "minimized"] as const)("opens and queues native Chat 
   expect(useDesktopSurfaces.getState().surfaces[workId]?.mode).not.toBe("minimized");
   expect(useNativeAppChatNavigation.getState().pending).toMatchObject({ requestId: `request-${state}`, recipeId: "company-brain" });
 });
+it("clears a queued Chat request when its runtime authority changes before Chat is ready", () => {
+  useConnection.setState({ status: "signed-in", runtimeSlot: "primary", authGeneration: 7 });
+  wireNativeAppOpening();
+  const receive = native.onEvent.mock.calls.find(([channel]) => channel === "app:open-chat")![1] as
+    (event: EventPayload<"app:open-chat">) => void;
+  receive({ requestId: "request-runtime-switch", view: "recipes", recipeId: "company-brain", runtimeSlot: "primary", authGeneration: 7 });
+  expect(useNativeAppChatNavigation.getState().pending?.requestId).toBe("request-runtime-switch");
+  useConnection.setState({ runtimeSlot: "secondary", authGeneration: 8 });
+  expect(useNativeAppChatNavigation.getState().pending).toBeNull();
+});
+it("clears the matching queued Chat request when main cancels revoked app authority", () => {
+  useConnection.setState({ status: "signed-in", runtimeSlot: "primary", authGeneration: 7 });
+  wireNativeAppOpening();
+  const receive = native.onEvent.mock.calls.find(([channel]) => channel === "app:open-chat")![1] as
+    (event: EventPayload<"app:open-chat">) => void;
+  receive({ requestId: "request-app-navigation", view: "recipes", recipeId: "company-brain", runtimeSlot: "primary", authGeneration: 7 });
+  const cancel = native.onEvent.mock.calls.find(([channel]) => channel === "app:open-chat-cancel")![1] as
+    (event: { requestId: string }) => void;
+  cancel({ requestId: "request-app-navigation" });
+  expect(useNativeAppChatNavigation.getState().pending).toBeNull();
+});
 it("opens a normal installed-app tab only in the matching signed-in scope and removes its listener", () => {
   const cleanup = vi.fn(); native.onEvent.mockReturnValue(cleanup);
   const openTab = vi.fn(); useTabs.setState({ openTab });
@@ -44,7 +65,7 @@ it("opens a normal installed-app tab only in the matching signed-in scope and re
   receive({ ...event, runtimeSlot: "other" }); receive({ ...event, authGeneration: 6 });
   useConnection.setState({ status: "signed-out" }); receive(event);
   expect(openTab).toHaveBeenCalledTimes(1);
-  dispose(); expect(cleanup).toHaveBeenCalledTimes(2);
+  dispose(); expect(cleanup).toHaveBeenCalledTimes(3);
 });
 
 it.each([

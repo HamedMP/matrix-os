@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
 import { NativeAppBridge } from "@desktop/main/embeds/native-app-bridge";
 import { createNativeAppOpenResolver } from "@desktop/main/embeds/native-app-open";
 import { createNativeAppChatNavigationBroker } from "@desktop/main/embeds/native-app-chat-navigation";
@@ -47,6 +48,25 @@ describe("acknowledged native Chat navigation", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await timedOutExpectation;
   });
+
+  it("removes a queued renderer request when its app-document authority aborts", async () => {
+    const cancel = vi.fn();
+    const broker = createNativeAppChatNavigationBroker({ emit: vi.fn(), cancel, timeoutMs: 1_000 });
+    const controller = new AbortController();
+    const pending = broker.request(
+      { view: "recipes", recipeId: "company-brain" },
+      { runtimeSlot: "primary", authGeneration: 4 },
+      controller.signal,
+    );
+    try {
+      controller.abort();
+      expect(cancel).toHaveBeenCalledWith(expect.objectContaining({ requestId: expect.stringMatching(/^chat_/) }));
+      await expect(pending).rejects.toThrow("canceled");
+    } finally {
+      broker.cancelAll();
+      await pending.catch(() => undefined);
+    }
+  });
 });
 
 describe("native installed-app opening", () => {
@@ -68,7 +88,7 @@ describe("native installed-app opening", () => {
     });
     bridge.register(1, "gallery");
     await bridge.openChat(sender, { view: "recipes", recipeId: "company-brain" });
-    expect(openChat).toHaveBeenCalledWith({ view: "recipes", recipeId: "company-brain" });
+    expect(openChat).toHaveBeenCalledWith({ view: "recipes", recipeId: "company-brain" }, expect.any(AbortSignal));
     expect(f.resolveApp).not.toHaveBeenCalled();
 
     const handle = vi.fn(); bridge.registerIpc({ handle });
@@ -77,6 +97,28 @@ describe("native installed-app opening", () => {
     const event = { senderFrame: frame, sender: { id: 1, mainFrame: frame, getURL: () => sender.url, isDestroyed: () => false } };
     openChat.mockRejectedValueOnce(new Error("private catalog detail"));
     await expect(handler(event, { view: "recipes", recipeId: "missing" })).rejects.toThrow(/^Chat navigation is unavailable$/);
+  });
+  it.each(["navigation", "destruction"] as const)("cancels queued Chat navigation on app-document %s", async change => {
+    const lifetime = Object.assign(new EventEmitter(), { isDestroyed: () => false });
+    const cancel = vi.fn();
+    const broker = createNativeAppChatNavigationBroker({ emit: vi.fn(), cancel, timeoutMs: 1_000 });
+    const bridge = new NativeAppBridge({
+      authGeneration: () => 1, generate: vi.fn(), aiRequest: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(),
+      gatewayOrigin: () => "https://gateway.test", getSenderLifecycle: () => lifetime,
+      openChat: (chatRequest, signal) => broker.request(chatRequest, { runtimeSlot: "primary", authGeneration: 1 }, signal),
+    });
+    bridge.register(1, "gallery");
+    const pending = bridge.openChat(sender, { view: "recipes", recipeId: "company-brain" });
+    try {
+      if (change === "navigation") lifetime.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+      else lifetime.emit("destroyed");
+      expect(cancel).toHaveBeenCalledWith(expect.objectContaining({ requestId: expect.stringMatching(/^chat_/) }));
+      await expect(pending).rejects.toThrow();
+    } finally {
+      broker.cancelAll();
+      bridge.clear();
+      await pending.catch(() => undefined);
+    }
   });
   it.each([["matrix-browser", "Browser"], ["matrix-cloud-desktop", "Cloud desktop"]])("opens fixed %s aliases only from a product sender", async (appIdentity, name) => {
     const f = fixture(); f.bridge.register(1, "matrix-browser", "browser-lab");

@@ -74,7 +74,7 @@ interface NativeAppBridgeOptions {
   gatewayOrigin: () => string;
   resolveApp?: (request: NativeAppOpenRequest) => Promise<NativeAppOpenTarget>;
   openApp?: (app: NativeAppOpenTarget) => void;
-  openChat?: (request: NativeAppOpenChatRequest) => Promise<void>;
+  openChat?: (request: NativeAppOpenChatRequest, signal: AbortSignal) => Promise<void>;
   maxSenders?: number;
   getSenderLifecycle?: (senderId: number) => NativeAppDocumentLifecycle | undefined;
 }
@@ -413,7 +413,7 @@ export class NativeAppBridge {
     identity.openCount++;
     this.pendingChatOpens++;
     try {
-      await this.options.openChat(request);
+      await this.options.openChat(request, identity.controller.signal);
       if (!authorized()) throw new Error("not authorized");
     } finally {
       this.pendingChatOpens--;
