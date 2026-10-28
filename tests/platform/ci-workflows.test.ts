@@ -969,6 +969,22 @@ describe('CI workflows', () => {
     expect(workflow).toContain('--min-instances "$min_instances"');
   });
 
+  it('labels every platform revision with the exact deployed source SHA', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    const candidateDeploy = workflow.match(
+      /- name: Deploy tagged revision[\s\S]*?- name: Verify deployed provisioning contract/,
+    )?.[0] ?? '';
+    const productionDeploy = workflow.match(
+      /- name: Deploy production-role revision[\s\S]*?- name: Verify production provisioning contract/,
+    )?.[0] ?? '';
+
+    expect(candidateDeploy).toContain('--labels "matrix-source-sha=${GITHUB_SHA}"');
+    expect(productionDeploy).toContain('--labels "matrix-source-sha=${GITHUB_SHA}"');
+    expect(workflow).toContain('candidate source label is $actual_source_sha, expected $GITHUB_SHA');
+    expect(workflow).toContain('production source label is $actual_source_sha, expected $GITHUB_SHA');
+  });
+
   it('keeps production web replicas free of workers and gives the dedicated worker CPU', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/platform-cloud-run.yml'), 'utf8');

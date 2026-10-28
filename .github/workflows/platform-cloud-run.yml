@@ -1031,6 +1031,7 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --image "$IMAGE_DIGEST" \
+            --labels "matrix-source-sha=${GITHUB_SHA}" \
             --service-account "$CLOUD_RUN_SERVICE_ACCOUNT" \
             --platform managed \
             --port 8080 \
@@ -1073,6 +1074,11 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --format=json)"
+          actual_source_sha="$(printf '%s\n' "$revision_json" | jq -r '.metadata.labels["matrix-source-sha"] // empty')"
+          if [ "$actual_source_sha" != "$GITHUB_SHA" ]; then
+            echo "candidate source label is $actual_source_sha, expected $GITHUB_SHA" >&2
+            exit 1
+          fi
           required_provisioning_env=(
             CUSTOMER_VPS_IMAGE_VERSION
             MATRIX_PREBILLING_PROVISIONING_ENABLED
@@ -1307,6 +1313,7 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --image "$IMAGE_DIGEST" \
+            --labels "matrix-source-sha=${GITHUB_SHA}" \
             --tag production-candidate \
             --no-traffic \
             --min-instances "$min_instances" \
@@ -1330,6 +1337,11 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --format=json)"
+          actual_source_sha="$(printf '%s\n' "$revision_json" | jq -r '.metadata.labels["matrix-source-sha"] // empty')"
+          if [ "$actual_source_sha" != "$GITHUB_SHA" ]; then
+            echo "production source label is $actual_source_sha, expected $GITHUB_SHA" >&2
+            exit 1
+          fi
           actual_max_instances="$(printf '%s\n' "$revision_json" | jq -r '.metadata.annotations["autoscaling.knative.dev/maxScale"] // empty')"
           if [ "$actual_max_instances" != "$PLATFORM_MAX_INSTANCES" ]; then
             echo "production revision maximum instances is $actual_max_instances, expected $PLATFORM_MAX_INSTANCES" >&2
