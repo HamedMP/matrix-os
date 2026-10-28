@@ -330,11 +330,11 @@ function ChatAppContent({
   const providerState = useChatProviderState(providerSelection, boundProviderInstanceId, { chatId: sessionId, scopeKey: authorityKey, executionControls });
   const agentProviderCatalog = useMemo(() => createAgentProviderCatalogSource({
     catalog: providerState.catalog,
-    hasTrustedCatalog: providerState.catalog !== null,
+    hasTrustedCatalog: providerState.hasTrustedCatalog,
     loading: providerState.loading,
     refreshError: providerState.unavailable,
     refresh: providerState.refresh,
-  }), [providerState.catalog, providerState.loading, providerState.refresh, providerState.unavailable]);
+  }), [providerState.catalog, providerState.hasTrustedCatalog, providerState.loading, providerState.refresh, providerState.unavailable]);
   const botBinding = useDirectBotBinding(collaborationView ? undefined : sessionId, summaryClient);
   const directBotId = botBinding.agentId;
   const [botModelRevision, setBotModelRevision] = useState(0);

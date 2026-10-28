@@ -158,7 +158,13 @@ for (const surface of ["web-desktop", "web-canvas"] as const) {
     await expect(startFromScratch).toBeEnabled();
     await expect.poll(() => catalogReads.count).toBe(readsBeforeAgents);
     await startFromScratch.click();
-    await expect(page.getByRole("combobox", { name: "Model" })).toBeEnabled();
+    const model = page.getByRole("combobox", { name: "Model" });
+    await expect(model).toBeEnabled();
     await page.screenshot({ path: resolve(output, `${surface}-warm-agent-models.png`) });
+    const readsBeforeSettingsChange = catalogReads.count;
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("matrix:provider-settings-changed")));
+    await expect.poll(() => catalogReads.count).toBeGreaterThan(readsBeforeSettingsChange);
+    await expect(model).toBeDisabled();
+    await page.screenshot({ path: resolve(output, `${surface}-settings-suspended-agent-models.png`) });
   });
 }
