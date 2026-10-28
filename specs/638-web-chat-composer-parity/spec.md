@@ -26,15 +26,25 @@ Native Mobile: N/A (separate React Native composer).
 - **Mic**: the shared mic control, as on Electron. Recording state shows on the
   control (label, waveform, timer), not in the placeholder, and the mic is off
   while a run is active unless the draft can be queued.
-- **Toolbar, left**: attach (+) when the harness accepts files. The Drive context
-  control stays above the card, where Electron renders it.
+- **Toolbar, left**: attach (+) when the harness accepts files, then Electron's
+  project folder button. On a new Chat it picks the project the Chat is created in
+  (`POST /api/chats` with `projectId`); on an open Chat it moves the Chat
+  (`PATCH /api/chats/:chatId/project` with the Chat's `baseRevision`) and is off
+  while a run is active. A Chat whose project is not in the list shows it as
+  unavailable. The picked draft project is scoped to the computer and owner and
+  clears on New chat. The Drive context control stays above the card, where
+  Electron renders it.
 - **Toolbar, right**: mic, model picker, Agents & providers settings, composer
   options (effort), permission mode (access), then Send or Stop.
   Under 42rem container width, effort and access collapse into a "Chat settings"
   popover, like Electron.
-- **Header**: the model button, setup panel, and Execution options leave the Web header.
-  Interaction mode and `advanced` options are no longer shown on Web, matching
-  Electron; saved values are kept.
+- **Header**: Electron's pane title. The Chat name sits on the left at 15px medium
+  and renames on click; a new Chat shows no title. The model name, bot badge, and
+  divider line leave the header, as do the model button, setup panel, and
+  Execution options. Interaction mode and `advanced` options are no longer shown
+  on Web, matching Electron; saved values are kept.
+- **Type and rendering**: the composer and its menus use Electron's type scale
+  (11/12/13/14px) and Web Chat renders text antialiased, as Electron does.
 - **Send/Stop**: while a run is active, Stop shows unless the draft can be queued
   (Web queues Agent-mention turns only); then Send queues it. Same rule as Electron.
 - **Queue**: queued turns render attached above the card with Steer, delete, and a
@@ -47,14 +57,18 @@ Native Mobile: N/A (separate React Native composer).
 
 `ChatPromptInput` (card + toolbar + Send/Stop), `ChatComposerSelect` (compact
 picker), `ChatModelPicker` (trigger + catalog popover + settings button),
-`QueuedTurnsPanel`, and `chat-composer.css`. Electron re-exports them from its
+`ChatProjectContextPicker` (folder button; hosts supply the project list),
+`QueuedTurnsPanel`, and `chat-composer.css` (geometry, type scale, and the
+`matrix-chat-composer-menu` class for portaled menus). Electron re-exports them from its
 existing paths. Colors come from shared tokens with composer-scoped overrides
 (`--composer-*`) so the shell's shadcn `--accent` does not leak into Send.
 
 ## Out of scope
 
 Editing or reordering queued messages on Web; queueing plain-text turns on Web;
-Electron's project context picker on Web (Web has no move-Chat-to-Project API).
+creating a project from the Web picker (the empty list explains instead).
+The Chat sidebar (Search row, Shared with me, Pinned, counts, shortcuts) is a
+separate follow-up: it is navigation, not the composer.
 
 ## Documentation
 
@@ -71,10 +85,13 @@ composer toolbar (model, effort, access) and queued-message Steer/delete on Web.
 
 ## Security / failure modes
 
-Steer is an existing authenticated gateway route; the shell client validates ids
-with the contract schemas before building the URL and uses the shared request
-timeout. A failed steer logs the error name only and shows a generic message;
-the queue stays as last loaded. No new persistence or in-memory state.
+Steer and project moves use existing authenticated gateway routes; the shell
+client validates ids and bodies with the contract schemas before building the URL
+and uses the shared request timeout. A failed steer or move logs the error name
+only and shows a generic message; a failed move reloads the Chat. A move or steer
+that settles after the user switched Chats or computers is ignored. The project
+list parses `kind`/`github` as display-only fields that fall back on unknown
+values. No new persistence or in-memory state.
 
 ## Risks
 
