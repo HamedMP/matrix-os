@@ -27,6 +27,7 @@ import {
   CanonicalChatRunCancellationResponseSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalUpdateChatTitleRequestSchema,
+  CanonicalUpdateChatProjectRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalCreateChatRequestSchema,
   CanonicalCreateChatTurnRequestSchema,
@@ -42,6 +43,7 @@ import {
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
   type CanonicalUpdateChatTitleRequest,
+  type CanonicalUpdateChatProjectRequest,
 } from "@matrix-os/contracts";
 import type { ChatMessage } from "@/lib/chat";
 import { botCreationFailureReason, canonicalChatSafeFailureReason, type BotCreationFailureReason } from "@matrix-os/ui";
@@ -66,6 +68,7 @@ export interface CanonicalShellChatClient {
   detail(chatId: string, cursor?: string): Promise<CanonicalChatDetailResponse>;
   updateReadState(chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<CanonicalChatRecord>;
   updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
+  updateProject(chatId: string, input: CanonicalUpdateChatProjectRequest): Promise<CanonicalChatRecord>;
   /** Permanently deletes the Chat; retrying with the same request id is idempotent. */
   delete(chatId: string, clientRequestId: string): Promise<CanonicalShellChatDeletion>;
   admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatClientAdmission>;
@@ -270,6 +273,15 @@ export function createCanonicalShellChatClient(options: {
       const id = CanonicalChatIdSchema.parse(chatId);
       const body = CanonicalUpdateChatTitleRequestSchema.parse(input);
       return CanonicalChatRecordSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}/title`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }));
+    },
+    async updateProject(chatId, input) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const body = CanonicalUpdateChatProjectRequestSchema.parse(input);
+      return CanonicalChatRecordSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}/project`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

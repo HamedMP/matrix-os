@@ -236,3 +236,50 @@ it.each(["steer", "cancel"] as const)("does not reload the previous Chat when a 
   await act(async () => otherLoad.resolve(other));
   await waitFor(() => expect(hook.result.current.messages[0]?.content).toBe("Other transcript"));
 });
+it("creates a new Chat in the project picked from the composer, and forgets it for the next new Chat", async () => {
+  const hook = mount();
+  await act(async () => hook.result.current.newChat());
+  await act(async () => hook.result.current.setChatProject!("proj_first"));
+  expect(hook.result.current.chatProjectId).toBe("proj_first");
+  expect(state.client.updateProject).toBeUndefined();
+  const pending = deferred<ReturnType<typeof detail>["record"]>();
+  vi.mocked(state.client.create).mockImplementationOnce(() => pending.promise);
+  act(() => { void hook.result.current.submitMessage("hello", undefined, options); });
+  await waitFor(() => expect(state.client.create).toHaveBeenCalledWith(expect.objectContaining({ projectId: "proj_first" })));
+  await act(async () => hook.result.current.newChat());
+  expect(hook.result.current.chatProjectId).toBeUndefined();
+});
+it("moves the open Chat to a project with its revision and shows the saved project", async () => {
+  const moved = detail().record;
+  state.client.updateProject = vi.fn(async () => ({ ...moved, chat: { ...moved.chat, revision: 1 }, projectId: "proj_first" }));
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.messages[0]?.content).toBe("Old transcript"));
+  let saved!: boolean;
+  await act(async () => { saved = await hook.result.current.setChatProject!("proj_first"); });
+  expect(saved).toBe(true);
+  expect(state.client.updateProject).toHaveBeenCalledWith("chat_same", { baseRevision: 0, projectId: "proj_first" });
+  expect(hook.result.current.chatProjectId).toBe("proj_first");
+});
+it("ignores a project move that settles after switching Chats", async () => {
+  const move = deferred<ReturnType<typeof detail>["record"]>();
+  state.client.updateProject = vi.fn(() => move.promise);
+  const other = detail("Other transcript");
+  other.record.chat.id = "chat_other";
+  vi.mocked(state.client.detail).mockImplementation(async (chatId: string) => chatId === "chat_other" ? other : detail());
+  const hook = mount();
+  await waitFor(() => expect(hook.result.current.messages[0]?.content).toBe("Old transcript"));
+  let result!: Promise<boolean>;
+  act(() => { result = hook.result.current.setChatProject!("proj_first"); });
+  await act(async () => hook.result.current.switchConversation("chat_other"));
+  await act(async () => { move.resolve({ ...detail().record, projectId: "proj_first" }); expect(await result).toBe(false); });
+  expect(hook.result.current.chatProjectId).toBeUndefined();
+});
+it("does not carry a new Chat's project to another computer or owner", async () => {
+  const hook = renderHook(({ scope }) => useCanonicalChatState({ navigationScope: scope, navigationGeneration: "same_session" }),
+    { initialProps: { scope: "owner/runtime/main" } });
+  await act(async () => hook.result.current.newChat());
+  await act(async () => hook.result.current.setChatProject!("proj_first"));
+  expect(hook.result.current.chatProjectId).toBe("proj_first");
+  await act(async () => hook.rerender({ scope: "owner/runtime/review" }));
+  expect(hook.result.current.chatProjectId).toBeUndefined();
+});

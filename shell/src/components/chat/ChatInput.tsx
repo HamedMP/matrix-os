@@ -49,6 +49,7 @@ export function ChatInput({
   speechClient,
   speechCaptureAdapter,
   placeholder = "Reply to chat…",
+  leadingControls,
   toolbarControls,
   queue,
 }: {
@@ -78,6 +79,8 @@ export function ChatInput({
   speechClient?: BrowserSpeechClient;
   speechCaptureAdapter?: PlatformSpeechCaptureAdapter;
   placeholder?: string;
+  /** Controls after attach (+), such as the project picker, like Electron Desktop. */
+  leadingControls?: React.ReactNode;
   /** Model, effort and access pickers, rendered before Send/Stop like Electron Desktop. */
   toolbarControls?: React.ReactNode;
   /** Queued turns, attached above the prompt card. */
@@ -285,7 +288,12 @@ export function ChatInput({
               />
             </div>
           )}
-          controls={attachmentsEnabled ? <ChatComposerAttachButton disabled={!connected} onClick={() => fileInputRef.current?.click()} /> : null}
+          controls={(
+            <>
+              {attachmentsEnabled ? <ChatComposerAttachButton disabled={!connected} onClick={() => fileInputRef.current?.click()} /> : null}
+              {leadingControls}
+            </>
+          )}
           trailingControls={(
             <>
               <ChatSpeechInputButton speech={speech} disabled={busy && !mayQueue} />

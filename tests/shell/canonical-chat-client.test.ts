@@ -364,3 +364,22 @@ it("rejects unsafe ids before building the steer route", async () => {
   })).rejects.toThrow();
   expect(fetchFn).not.toHaveBeenCalled();
 });
+
+it("moves a Chat to a project with the Chat's revision guard", async () => {
+  const fetchFn = vi.fn(async () => Response.json({ ...record, projectId: "proj_first" }));
+  const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+
+  await expect(client.updateProject("chat_shell_test", { baseRevision: 3, projectId: "proj_first" }))
+    .resolves.toMatchObject({ projectId: "proj_first" });
+  const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
+  expect(url).toMatch(/^https:\/\/matrix\.test\/api\/chats\/chat_shell_test\/project(\?|$)/);
+  expect(init).toMatchObject({ method: "PATCH", signal: expect.any(AbortSignal) });
+  expect(JSON.parse(String(init.body))).toEqual({ baseRevision: 3, projectId: "proj_first" });
+});
+
+it("rejects an unsafe Chat id before building the project route", async () => {
+  const fetchFn = vi.fn(async () => Response.json({}));
+  const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+  await expect(client.updateProject("../chat", { baseRevision: 0, projectId: null })).rejects.toThrow();
+  expect(fetchFn).not.toHaveBeenCalled();
+});

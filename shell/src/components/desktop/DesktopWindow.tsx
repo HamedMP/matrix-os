@@ -237,7 +237,7 @@ export function DesktopWindow({
                 onRenameConversation={chat.renameConversation}
                 onDeleteConversation={chat.deleteConversation}
                 onSubmit={chat.submitMessage}
-              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns}
+              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns} chatProjectId={chat.chatProjectId} onSetChatProject={chat.setChatProject}
                 onSubmitApproval={chat.submitApproval}
                 browserPermissions={chat.browserPermissions}
                 onSubmitInput={chat.submitInput}

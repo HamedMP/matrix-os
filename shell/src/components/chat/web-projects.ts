@@ -8,6 +8,9 @@ const ProjectsResponseSchema = z.object({
     id: z.string().min(1),
     slug: z.string().min(1),
     name: z.string().min(1),
+    // Display-only; an unknown value drops the label instead of the whole list.
+    kind: z.enum(["scratch", "github", "folder"]).optional().catch(undefined),
+    github: z.object({ owner: z.string().min(1).max(200), repo: z.string().min(1).max(200) }).optional().catch(undefined),
   })),
 });
 export type WebProject = z.infer<typeof ProjectsResponseSchema>["projects"][number];

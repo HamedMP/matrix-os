@@ -17,6 +17,7 @@ import { supervisedToolApproval, supervisedToolRetryDraft } from "@matrix-os/con
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { WebChatQueuedTurns } from "./chat/WebChatQueuedTurns";
+import { WebChatProjectPicker } from "./chat/WebChatProjectPicker";
 import { WebChatComposerControls } from "./chat/WebChatComposerControls";
 import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
@@ -95,7 +96,6 @@ import {
   PanelLeftIcon,
   SearchIcon,
   MessageSquareIcon,
-  BotIcon,
   Settings2Icon,
   ChevronDownIcon,
 } from "@/lib/hugeicons";
@@ -182,6 +182,10 @@ interface ChatAppProps {
   onCancelQueuedTurn?: (id: string) => Promise<boolean>;
   onSteerQueuedTurn?: (id: string) => Promise<boolean>;
   canSteerQueuedTurns?: boolean;
+  /** The Chat's project, or the project a new Chat will be created in. */
+  chatProjectId?: string;
+  /** Puts a new Chat in a project or moves the active one; null removes it. */
+  onSetChatProject?: (projectId: string | null) => void;
   providerSelection?: CanonicalChatModelSelection;
   executionControls?: import("@matrix-os/contracts").CanonicalChatExecutionControls;
   boundProviderInstanceId?: string;
@@ -225,7 +229,7 @@ function ChatAppContent({
   providerSelection,
   executionControls,
   boundProviderInstanceId,
-  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false,
+  browserPermissions, agentClient, agentSummaryClient, authorityKey, gatewayUrl, composerIdentity, isCurrentAuthority, botEventRevision,navigationClassifications,navigationFresh, queuedTurns = [], onCancelQueuedTurn, onSteerQueuedTurn, canSteerQueuedTurns = false, chatProjectId, onSetChatProject,
   onSubmitApproval,
   onSubmitInput,
   composerDraftRequest,
@@ -478,11 +482,14 @@ function ChatAppContent({
     ? <WebChatComposerControls providerState={providerState} lockedInstanceId={boundProviderInstanceId} permissionModeRequest={permissionModeRequest}
       onSetupAction={(instance, action) => { void runProviderSetupAction(instance, action); }} />
     : undefined;
+  const projectControl = onSetChatProject && !collaborationView && !directBotId
+    ? <WebChatProjectPicker projectId={chatProjectId} projects={webProjects} connected={connected} disabled={Boolean(activeRunId)} onSelect={onSetChatProject} />
+    : undefined;
   const queuePanel = <WebChatQueuedTurns key={`queue:${sessionId ?? "new"}`} turns={queuedTurns} canSteer={canSteerQueuedTurns}
     onCancel={onCancelQueuedTurn} onSteer={onSteerQueuedTurn} />;
 
   return (
-    <div className="relative flex h-full bg-background" onClickCapture={(event) => {
+    <div className="relative flex h-full bg-background antialiased" onClickCapture={(event) => {
       const element = event.target instanceof Element ? event.target : null;
       const anchor = element?.closest("a");
       const code = element?.closest("code");
@@ -597,7 +604,7 @@ function ChatAppContent({
         providerCatalog={agentProviderCatalog}>
       <main ref={setBotDetailsContainer} className="matrix-bot-chat-layout @container/bot-chat relative flex flex-1 flex-col min-w-0">
         {/* Top bar */}
-        {(!directBotId || collaborationView) ? <header data-slot="chat-session-header" className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>
+        {(!directBotId || collaborationView) ? <header data-slot="chat-session-header" className={`flex items-center gap-2 px-3 ${mobile ? "surface-glass min-h-14 border-b" : "min-h-12"}`}>
           {!sidebarOpen && (
             <>
               <Button
@@ -620,14 +627,12 @@ function ChatAppContent({
               </Button>
             </>
           )}
+          {/* Electron Desktop's pane title: the Chat name on the left; the model lives in the composer. */}
           <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-center gap-2">
-              <span className="inline-flex size-6 items-center justify-center rounded-full bg-primary/10 text-primary">
-                <BotIcon className="size-3.5" aria-hidden="true" />
-              </span>
-              <div className="min-w-0 flex-1 text-center">
+            <div className="flex min-w-0 items-center">
+              <div className="min-w-0 flex-1 text-left text-[15px] font-medium text-foreground">
                 {collaborationView ? (
-                  <span className="block truncate px-1 text-sm font-semibold leading-4 text-foreground">
+                  <span className="block truncate px-1.5">
                     {activeSharedMetadata?.title ?? "Chat"}
                   </span>
                 ) : editingChat?.source === "header" && editingChat.id === sessionId && activeConversationTitle ? (
@@ -645,23 +650,23 @@ function ChatAppContent({
                       }).finally(() => setRenamePending(false));
                     }}
                   />
-                ) : (
+                ) : sessionId && activeConversationTitle ? (
                   <button
                     type="button"
-                    aria-label={activeConversationTitle ? `Rename ${activeConversationTitle}` : undefined}
+                    aria-label={`Rename ${activeConversationTitle}`}
                     title={activeConversationTitle}
-                    disabled={!sessionId || !activeConversationTitle || !onRenameConversation || renamePending}
-                    className={`max-w-full truncate rounded px-1 text-sm font-semibold leading-4 text-foreground outline-none enabled:hover:bg-accent/40 enabled:focus-visible:ring-2 enabled:focus-visible:ring-primary/40 ${mobile ? "min-h-11 py-2" : ""}`}
+                    disabled={!onRenameConversation || renamePending}
+                    className={`max-w-full truncate rounded px-1.5 py-0.5 text-left text-[15px] font-medium text-foreground outline-none enabled:hover:bg-[var(--bg-hover)] enabled:focus-visible:ring-2 enabled:focus-visible:ring-primary/40 ${mobile ? "min-h-11 py-2" : ""}`}
                     onClick={() => sessionId && activeConversationTitle && setEditingChat({ id: sessionId, source: "header" })}
                   >
-                    {activeConversationTitle ?? providerState.activeInstance?.displayName ?? "Built-in AI"}
+                    {activeConversationTitle}
                   </button>
-                )}
-                <p className="truncate text-[10px] leading-3 text-muted-foreground">
-                  {collaborationView
-                    ? activeSharedMetadata ? `Shared · ${activeSharedMetadata.role}` : "Shared session"
-                    : directBotId ? null : providerState.displayModelLabel ?? (providerState.loading ? "Loading AI access" : "AI access unavailable")}
-                </p>
+                ) : null}
+                {collaborationView ? (
+                  <p className="truncate px-1.5 text-[10px] leading-3 text-muted-foreground">
+                    {activeSharedMetadata ? `Shared · ${activeSharedMetadata.role}` : "Shared session"}
+                  </p>
+                ) : null}
               </div>
             </div>
           </div>
@@ -692,7 +697,7 @@ function ChatAppContent({
         {/* Empty state or conversation */}
         {isEmpty ? (
           <><div className="mx-auto w-full max-w-[720px] px-4"><BotTranscriptFallback placement={botTranscript}/></div><EmptyState
-            composerProps={{ toolbarControls: composerToolbar, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
+            composerProps={{ leadingControls: projectControl, toolbarControls: composerToolbar, queue: queuePanel, attachmentPolicy: attachmentPolicy.error, slashInstance, slashCatalogLoading, botControls: botComposerControls, botContext: Boolean(directBotId), composer, agentClient, onOpenBotMention: botDraftNavigation.openBotMention, scope: composerScope, driveContextEnabled: !directBotId && providerState.selected?.supportsCompanyDriveContext === true, botConsentResources: botExecution.consentResources, botRequiresFullAccess: botPresentation?.requiresFullAccess, permissionMode: directBotId ? botPresentation?.permissionMode ?? "default" : providerState.selected?.permissionMode ?? "supervised" }}
             onSubmit={submitWithHermesSetup}
             connected={connected}
             mobile={mobile}
@@ -800,6 +805,7 @@ function ChatAppContent({
                 />
               ) : null}
               <ChatInput
+                leadingControls={projectControl}
                 toolbarControls={composerToolbar}
                 queue={queuePanel}
                 attachmentPolicy={attachmentPolicy.error}
@@ -853,7 +859,7 @@ function EmptyState({
   providerReady,
   attachmentsEnabled,
 }: {
-  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "toolbarControls" | "queue" | "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading" | "attachmentPolicy">;
+  composerProps: Pick<React.ComponentProps<typeof ChatInput>, "leadingControls" | "toolbarControls" | "queue" | "composer" | "agentClient" | "scope" | "permissionMode" | "driveContextEnabled" | "botContext" | "botControls" | "botConsentResources" | "botRequiresFullAccess" | "onOpenBotMention" | "slashInstance" | "slashCatalogLoading" | "attachmentPolicy">;
   onSubmit: React.ComponentProps<typeof ChatInput>["onSubmit"];
   connected: boolean;
   mobile: boolean;

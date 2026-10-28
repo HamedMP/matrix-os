@@ -302,7 +302,8 @@ describe("Chat canonical provider state", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     resolveFirst!(Response.json(providerCatalog()));
 
-    expect(await screen.findByText("Pi")).toBeVisible();
+    // The composer toolbar names the harness once the catalog has loaded.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" })).toHaveTextContent("Pi"));
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -366,7 +367,8 @@ describe("Chat canonical provider state", () => {
       onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={onSubmit}
     />);
 
-    expect(await screen.findByText("Pi")).toBeVisible();
+    // The composer toolbar names the harness once the catalog has loaded.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Choose model and provider" })).toHaveTextContent("Pi"));
     const draft = screen.getByPlaceholderText("How can I help you today?");
     fireEvent.change(draft, { target: { value: "Keep this draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
