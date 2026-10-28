@@ -47,7 +47,6 @@ export function WebChatProjectPicker({ projectId, projects, connected, disabled,
     <ChatProjectContextPicker
       context={context}
       compact={!context}
-      triggerLabel={context ? undefined : "Choose project for chat"}
       disabled={disabled}
       menuZIndex={SHELL_Z_INDEX.popover}
       projects={projectOptions(projects)}

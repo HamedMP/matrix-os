@@ -200,7 +200,7 @@ describe("Web Chat composer matches Electron Desktop", () => {
     webProjects.projects = [{ id: "proj_second", slug: "second", name: "second", kind: "scratch" }, { id: "proj_first", slug: "first", name: "first", kind: "scratch" }];
     const onSetChatProject = vi.fn();
     const view = render(<ChatApp {...base} sessionId={undefined} messages={[]} onSetChatProject={onSetChatProject} />);
-    fireEvent.click(within(toolbar()).getByRole("button", { name: "Choose project for chat" }));
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Add to project" }));
     fireEvent.click(await screen.findByRole("option", { name: "first, Scratch" }));
     expect(onSetChatProject).toHaveBeenCalledWith("proj_first");
 
