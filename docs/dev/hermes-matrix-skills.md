@@ -101,6 +101,33 @@ The managed v0.22.0 source pin is `e06df9c2eae6901f4c88f464e0ae6e753c0428b8`. It
 
 Run the canonical npm-prefix reconciler after PM extras and bundled setup finish, as the runtime owner. It writes Matrix's external `$HERMES_HOME/matrix-npm/npmrc` rather than modifying PM package trees. Keep explicit owner npm configuration overrides and existing runtime configuration intact.
 
+The managed installer publishes a separately verified complete source artifact
+at the same `hermes-agent` pathname after upstream installation, PM extras and
+Matrix setup. For this exact pin, the artifact omits only the non-runtime
+`flatted3.4.4` Python compatibility member
+`node_modules/flatted/python/flatted.py` (SHA256
+`f784c254de76a25435ebaa61c72942072733ae4b42619b943bf37b09fa45e644`).
+The full upstream input remains under
+`$HERMES_HOME/.matrix-runtime-artifacts/full-<transaction-id>`. No installed file
+is pruned individually, no dependency symlink is introduced, and restricted
+source admission is unchanged. PM's source key, selected interpreter and
+completion record remain at their canonical paths.
+
+Publication uses the upstream checkout lock and a private transaction journal.
+The next managed install recovers an interrupted publication before upstream
+writes, within the existing dashboard stop/restore guard. It fails closed on
+unexpected source/dependency changes, incomplete products, concurrent writers,
+or insufficient copy space; it never rewrites owner configuration or PM facts.
+Backups and failed candidates are retained, with no automatic pruning. Budget
+for the complete source including Git metadata and filesystem allocation,
+transient copy/manifests, and an additional 4.5 GiB reserve. After an upstream
+`npm ci` recreates the full dependency, the managed installer must produce and
+verify a fresh artifact; do not remove the member manually. A future source or
+package change requires reviewing the producer's fixed policy alongside the
+installer/runtime pin. See
+[the publication plan](../../specs/607-hermes-v0220/artifact-publishing-plan-2026-10-28.md)
+for recovery, rollback and validation limits.
+
 For dev VPSes, also make the Hermes install path writable by the `matrix` user so `hermes`, Codex, and Claude CLIs can self-update without `EACCES`.
 
 ## Provisioning Hook

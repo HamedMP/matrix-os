@@ -59,6 +59,27 @@ if declare -F matrix_migrate_legacy_dotdir >/dev/null 2>&1; then
   matrix_migrate_legacy_dotdir ".hermes" 0700
 fi
 
+# setpriv avoids PAM account checks: sudo fails outright when the invoking or
+# target account has an expired password (Hetzner expires root's on servers
+# created without SSH keys), which left first-boot installs crash-looping.
+run_installer_as_runtime_user() {
+  if [ "$(id -u)" = "0" ] && command -v setpriv >/dev/null 2>&1; then
+    setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups "$@"
+    return
+  fi
+  sudo -H -u "$MATRIX_RUNTIME_USER" "$@"
+}
+
+# Keep the full upstream input and publish only a separately verified source
+# artifact. The canonical path and PM dependency generations stay unchanged.
+run_hermes_artifact_helper() {
+  run_installer_as_runtime_user env \
+    HOME="$MATRIX_RUNTIME_HOME" \
+    HERMES_HOME="$HERMES_HOME" \
+    /usr/bin/python3 -I -B "$MATRIX_APP_DIR/scripts/publish-hermes-runtime.py" \
+    "$HERMES_HOME/hermes-agent" "$@"
+}
+
 curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors \
   --connect-timeout 10 --max-time 180 \
   "$HERMES_INSTALLER_URL" -o "$HERMES_INSTALLER_PATH"
@@ -74,17 +95,11 @@ if command -v systemctl >/dev/null 2>&1 &&
 fi
 trap restore_hermes_dashboard EXIT
 
+log "recovering interrupted Hermes runtime publication"
+run_hermes_artifact_helper --recover
+
+
 log "installing Hermes Agent $HERMES_RELEASE for $MATRIX_RUNTIME_USER"
-# setpriv avoids PAM account checks: sudo fails outright when the invoking or
-# target account has an expired password (Hetzner expires root's on servers
-# created without SSH keys), which left first-boot installs crash-looping.
-run_installer_as_runtime_user() {
-  if [ "$(id -u)" = "0" ] && command -v setpriv >/dev/null 2>&1; then
-    setpriv --reuid "$MATRIX_RUNTIME_USER" --regid "$MATRIX_RUNTIME_USER" --init-groups "$@"
-    return
-  fi
-  sudo -H -u "$MATRIX_RUNTIME_USER" "$@"
-}
 run_installer_as_runtime_user env \
   HOME="$MATRIX_RUNTIME_HOME" \
   HERMES_HOME="$HERMES_HOME" \
@@ -161,5 +176,8 @@ if [ -x /opt/matrix/bin/matrix-register-integrations-mcp ]; then
   /opt/matrix/bin/matrix-register-integrations-mcp hermes || \
     log "integrations MCP registration will retry on gateway restart"
 fi
+
+log "publishing verified Hermes runtime artifact"
+run_hermes_artifact_helper
 
 log "Hermes and uv are installed"

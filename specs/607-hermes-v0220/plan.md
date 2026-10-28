@@ -47,3 +47,14 @@ operations remain held.
 See [source-integrity-2026-10-28.md](source-integrity-2026-10-28.md) for the
 content-check repair, real-Git regressions, independent Linux artifact evidence
 and the remaining timing, fixture, installer and live-acceptance gaps.
+
+## Managed source artifact publication: 28 October 2026
+
+See [artifact-publishing-plan-2026-10-28.md](artifact-publishing-plan-2026-10-28.md)
+for the independent complete-source producer, standard installer and Host copy
+wiring, exact omission policy, crash recovery and isolated verification scope.
+This supersedes the earlier installer-integration TODO only for the local code
+candidate; a new standard Host delivery and live owner-upgrade acceptance remain
+separate gates. Ask the runtime/integration owner to review this publication
+and retained-storage contract before rollout; local work has already been
+authorized and this recommendation does not add a local approval gate.

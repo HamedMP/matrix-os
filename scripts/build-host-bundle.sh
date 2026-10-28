@@ -159,6 +159,7 @@ cp -a "$ROOT_DIR/scripts/reset-shipped-icons.mjs" "$STAGE_DIR/app/scripts/reset-
 cp -a "$ROOT_DIR/scripts/install-hermes-matrix-skills.sh" "$STAGE_DIR/app/scripts/install-hermes-matrix-skills.sh"
 cp -a "$ROOT_DIR/scripts/configure-hermes-matrix-defaults.mjs" "$STAGE_DIR/app/scripts/configure-hermes-matrix-defaults.mjs"
 cp -a "$ROOT_DIR/scripts/reconcile-agent-npm-prefix.mjs" "$STAGE_DIR/app/scripts/reconcile-agent-npm-prefix.mjs"
+cp -a "$ROOT_DIR/scripts/publish-hermes-runtime.py" "$STAGE_DIR/app/scripts/publish-hermes-runtime.py"
 cp -a "$ROOT_DIR/scripts/sync-matrix-agent-skills.sh" "$STAGE_DIR/app/scripts/sync-matrix-agent-skills.sh"
 cp -a "$ROOT_DIR/skills" "$STAGE_DIR/app/skills"
 cp -a "$ROOT_DIR/package.json" "$ROOT_DIR/pnpm-workspace.yaml" "$ROOT_DIR/pnpm-lock.yaml" "$STAGE_DIR/app/"
