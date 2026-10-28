@@ -22,14 +22,14 @@ const transport = vi.fn(async (id, request) => {
 beforeEach(async () => { home=await mkdtemp(join(tmpdir(),"app-capability-")); await Promise.all([mkdir(join(home,"system")),mkdir(join(home,"apps"))]); owner="owner"; calls.length=0; transport.mockClear(); });
 afterEach(async () => { await rm(home,{recursive:true,force:true}); });
 async function grant() { await writeFile(join(home,"system/app-capabilities.json"),JSON.stringify({ apps: { "drive-chat": { services: { google_drive: ["list_files","read_file"] } } } })); }
-async function trustApp(app = "drive-chat", listingTrust = "first_party", manifestSlug?: string, scope = "personal", hidden = false) {
+async function trustApp(app = "drive-chat", listingTrust = "first_party", manifestSlug?: string, scope = "personal", hidden = false, provenance?: Record<string, unknown>) {
   const relativePath = app;
   const slug = manifestSlug ?? app.split("/").at(-1)!;
   const appDir = join(home, "apps", relativePath);
   await mkdir(appDir, { recursive: true });
   await writeFile(join(appDir, "matrix.json"), JSON.stringify({
     name: slug, slug, version: "1.0.0", runtime: "static", runtimeVersion: "^1.0.0",
-    scope, listingTrust, ...(hidden ? { hidden: true } : {}),
+    scope, listingTrust, ...(hidden ? { hidden: true } : {}), ...provenance,
   }));
   invalidateAppIndexCache();
 }
@@ -75,6 +75,14 @@ it("does not default community apps to owner integrations", async () => {
   expect(transport).not.toHaveBeenCalled();
 });
 it.each([
+  ["installed", { installed_from: { slug: "drive-chat", installedAt: "2026-10-27T00:00:00.000Z" } }],
+  ["forked", { forked_from: { author: "@friend", slug: "drive-chat", version: "1.0.0" } }],
+])("does not trust a first-party claim on a host-marked %s app", async (_case, provenance) => {
+  await trustApp("drive-chat", "first_party", undefined, "personal", false, provenance);
+  expect((await request({ kind: "integrations.list" })).status).toBe(403);
+  expect(transport).not.toHaveBeenCalled();
+});
+it.each([
   ["shared first-party", "shared", false],
   ["hidden personal first-party", "personal", true],
 ])("does not default %s apps to personal owner integrations", async (_case, scope, hidden) => {
@@ -85,6 +93,36 @@ it.each([
 it("uses the stable manifest slug when the trusted app folder has a different name", async () => {
   await trustApp("generated-folder", "first_party", "drive-chat");
   expect((await request({ kind: "integrations.list" }, "drive-chat")).status).toBe(200);
+});
+it("applies a folder-keyed owner restriction when Electron identifies the app by slug", async () => {
+  await trustApp("generated-folder", "first_party", "drive-chat");
+  await writeFile(join(home, "system/app-capabilities.json"), JSON.stringify({
+    apps: { "generated-folder": { services: {} } },
+  }));
+  expect(await (await request({ kind: "capabilities" }, "drive-chat")).json()).toEqual({ version: 1, integrations: false, ai: false });
+  expect((await request({ kind: "integrations.call", service: "google_drive", action: "list_files" }, "drive-chat")).status).toBe(403);
+  expect(transport).not.toHaveBeenCalled();
+});
+it("applies a slug-keyed owner restriction when Web identifies the app by folder", async () => {
+  await trustApp("generated-folder", "first_party", "drive-chat");
+  await writeFile(join(home, "system/app-capabilities.json"), JSON.stringify({
+    apps: { "drive-chat": { services: {} } },
+  }));
+  expect(await (await request({ kind: "capabilities" }, "generated-folder")).json()).toEqual({ version: 1, integrations: false, ai: false });
+  expect((await request({ kind: "integrations.call", service: "google_drive", action: "list_files" }, "generated-folder")).status).toBe(403);
+  expect(transport).not.toHaveBeenCalled();
+});
+it("intersects differing owner restrictions across folder and slug aliases", async () => {
+  await trustApp("generated-folder", "first_party", "drive-chat");
+  await writeFile(join(home, "system/app-capabilities.json"), JSON.stringify({
+    apps: {
+      "generated-folder": { services: { google_drive: ["list_files", "read_file"] } },
+      "drive-chat": { services: { google_drive: ["read_file", "share_file"] } },
+    },
+  }));
+  const description = await (await request({ kind: "integrations.describe", service: "google_drive" }, "drive-chat")).json();
+  expect(description.actions.map((action: { id: string }) => action.id)).toEqual(["read_file"]);
+  expect((await request({ kind: "integrations.call", service: "google_drive", action: "share_file", params: { fileId: "doc", email: "x@example.test" } }, "generated-folder")).status).toBe(403);
 });
 it("fails closed when multiple installed manifests claim the same trusted identity", async () => {
   await trustApp("first-folder", "first_party", "drive-chat");

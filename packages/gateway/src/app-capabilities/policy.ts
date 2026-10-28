@@ -18,8 +18,7 @@ export type AppCapabilityAccess =
   | { kind: "trusted-default" };
 const MAX_APP_MANIFEST_BYTES = 1024 * 1024;
 
-/** Read optional owner restrictions/explicit grants on every request. */
-export async function readAppCapabilityGrant(homePath: string, app: string): Promise<AppCapabilityGrant | null> {
+async function readAppCapabilityPolicy(homePath: string): Promise<z.infer<typeof AppCapabilityPolicySchema> | null> {
   const path = join(homePath, "system/app-capabilities.json");
   try {
     await lstat(path);
@@ -29,7 +28,27 @@ export async function readAppCapabilityGrant(homePath: string, app: string): Pro
   }
   const document = await readBoundedJsonFileWithIdentity(path, 65_536);
   if (!document) throw new Error("Invalid app capability policy");
-  return AppCapabilityPolicySchema.parse(document.value).apps[app] ?? null;
+  return AppCapabilityPolicySchema.parse(document.value);
+}
+
+function intersectGrants(grants: AppCapabilityGrant[]): AppCapabilityGrant {
+  const [first, ...rest] = grants;
+  if (!first) return { services: {} };
+  const services = Object.fromEntries(Object.entries(first.services).flatMap(([service, actions]) => {
+    const common = actions.filter(action => rest.every(grant => grant.services[service]?.includes(action)));
+    return common.length > 0 ? [[service, common]] : [];
+  }));
+  return { services };
+}
+
+function hasImportedProvenance(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && (Object.hasOwn(value, "installed_from") || Object.hasOwn(value, "forked_from"));
+}
+
+/** Read optional owner restrictions/explicit grants on every request. */
+export async function readAppCapabilityGrant(homePath: string, app: string): Promise<AppCapabilityGrant | null> {
+  return (await readAppCapabilityPolicy(homePath))?.apps[app] ?? null;
 }
 
 /**
@@ -38,11 +57,10 @@ export async function readAppCapabilityGrant(homePath: string, app: string): Pro
  * catalog. Imported/community apps continue to fail closed.
  */
 export async function readAppCapabilityAccess(homePath: string, app: string): Promise<AppCapabilityAccess | null> {
-  const grant = await readAppCapabilityGrant(homePath, app);
-  if (grant) return { kind: "policy", grant };
+  const policy = await readAppCapabilityPolicy(homePath);
   const manifests = await listUniqueAppManifests(join(homePath, "apps"));
   const candidates = manifests.filter(candidate => candidate.relativePath === app || candidate.slug === app);
-  const matches: AppManifest[] = [];
+  const matches: Array<{ manifest: AppManifest; relativePath: string; imported: boolean }> = [];
   for (const candidate of candidates) {
     // The index is bounded and briefly cached for discovery. Authorization
     // always re-reads the exact manifest so a trust downgrade takes effect
@@ -51,10 +69,21 @@ export async function readAppCapabilityAccess(homePath: string, app: string): Pr
     if (!document) continue;
     const parsed = AppManifestSchema.safeParse(document.value);
     if (!parsed.success || (candidate.relativePath !== app && parsed.data.slug !== app)) continue;
-    matches.push(parsed.data);
+    matches.push({
+      manifest: parsed.data,
+      relativePath: candidate.relativePath,
+      imported: hasImportedProvenance(document.value),
+    });
   }
-  if (matches.length !== 1) return null;
-  const manifest = matches[0]!;
+  if (matches.length !== 1) {
+    const exactGrant = policy?.apps[app];
+    return exactGrant ? { kind: "policy", grant: exactGrant } : null;
+  }
+  const { manifest, relativePath, imported } = matches[0]!;
+  const aliases = [...new Set([relativePath, manifest.slug])];
+  const grants = aliases.flatMap(alias => policy?.apps[alias] ? [policy.apps[alias]] : []);
+  if (grants.length > 0) return { kind: "policy", grant: intersectGrants(grants) };
+  if (imported) return null;
   if (manifest.listingTrust !== "first_party" || manifest.scope !== "personal" || manifest.hidden) return null;
   return { kind: "trusted-default" };
 }

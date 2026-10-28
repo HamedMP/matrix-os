@@ -13,13 +13,19 @@ the live actions for that connection, without a second per-app grant step.
 - The authenticated owner and the trusted host-stamped app identity remain
   mandatory. Apps never choose their own bridge identity or receive provider
   credentials.
-- A visible personal manifest with `listingTrust: "first_party"` receives the
-  current integration catalog by default, including read, write, and
-  destructive actions exposed by that catalog.
+- A visible personal app created in place by Matrix with
+  `listingTrust: "first_party"` receives the current integration catalog by
+  default, including read, write, and destructive actions exposed by that
+  catalog. Install and fork paths host-stamp provenance and replace any copied
+  first-party claim with `community`, so imported code cannot select this
+  default for itself.
 - `system/app-capabilities.json` remains an owner-controlled explicit policy.
   When it contains an entry for an app, that entry restricts the app to the
   listed services and actions. An empty `services` object revokes integration
   access for that app.
+- Folder-path and manifest-slug identities are resolved to the same installed
+  app before policy lookup. Policies found under both aliases are intersected,
+  so Web and Electron callers cannot bypass the stricter owner rule.
 - Apps without a matching trusted personal manifest remain denied unless the
   owner has explicitly granted them a policy entry. Community, hidden, shared,
   missing, duplicate, and malformed app identities fail closed.
@@ -45,17 +51,21 @@ account selection, and safe client errors remain unchanged. Read actions use
 the read transport; non-read actions use the mutation transport. Provider
 credentials and raw errors never enter app code.
 
-Manifest trust comes from the installed app index. The same install/runtime
-policy that blocks untrusted applications remains authoritative; this change
-does not promote or relabel imported apps.
+Trust comes from the freshly read installed manifest plus host-stamped install
+provenance. Legacy and runtime install paths relabel copied/forked manifests as
+`community`; a provenance-stamped app is ineligible for the implicit default
+even if copied input claimed `first_party`. The same install/runtime policy that
+blocks untrusted applications remains authoritative.
 
 ## Verification
 
 - Test first-party personal default discovery, descriptions, reads, and writes
   with no `app-capabilities.json`.
 - Test explicit policy narrowing and empty-policy revocation.
-- Test community, hidden, shared, missing, and ambiguous identities fail before
-  integration transport.
+- Test community, imported, forked, hidden, shared, missing, and ambiguous
+  identities fail before integration transport.
+- Test folder/slug alias restrictions in both directions and intersect
+  conflicting alias entries.
 - Test trust/policy revalidation before execution and exact account selection.
 - Run contract, gateway, Web Canvas/Web Desktop, Electron Desktop, Web Mobile,
   and Native Mobile bridge regressions. Live visual evidence is N/A because the
@@ -65,10 +75,12 @@ does not promote or relabel imported apps.
 
 ## Invariants
 
-- **Source of truth:** installed manifest trust, optional owner policy, and the
-  live owner-scoped integration inventory/catalog.
+- **Source of truth:** freshly read installed manifest trust, host-stamped
+  import/fork provenance, canonicalized optional owner policy, and the live
+  owner-scoped integration inventory/catalog.
 - **Concurrency:** no new writes or locks; authorization is revalidated after
   discovery and before execution.
-- **Orphans:** no new persistent records or temporary files.
+- **Orphans:** no new persistent records; install stamping uses a same-directory
+  temporary manifest that is atomically renamed, and failed installs roll back.
 - **Deferred:** account-specific restrictions remain ENG-252; typed bridge error
   transport is separate from this default-access correction.

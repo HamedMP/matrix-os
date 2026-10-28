@@ -24,17 +24,20 @@ text. Listings need pagination and reads must expose truncation or unsupported f
 
 The gateway requires its configured computer owner principal. Shells stamp app
 identity from the launched app; the page cannot replace it. A visible personal app
-installed with `listingTrust: "first_party"` receives the owner's connected
-integrations by default. The live catalog is authoritative, so a newly connected
-service is available on the next request without another app-specific grant or a
-restart.
+created in place by Matrix with `listingTrust: "first_party"` receives the owner's
+connected integrations by default. Imported and forked apps are host-stamped and
+relabelled `community`, so a copied manifest cannot claim this default. The live
+catalog is authoritative, so a newly connected service is available on the next
+request without another app-specific grant or a restart.
 
 `system/app-capabilities.json` is an optional owner restriction or explicit grant,
 not something app code may edit. When an app has an entry, only its listed services
 and actions are available; an empty `services` object revokes its integration
 access. Apps that are community, shared, hidden, unknown, or otherwise not trusted
 remain denied without an explicit owner entry. Policy and installed trust are
-checked again before integration execution.
+checked again before integration execution. Folder-path and manifest-slug aliases
+resolve to the same app policy; if both aliases have entries, Matrix applies their
+intersection.
 
 An example `system/app-capabilities.json` restricting a trusted app to Drive reads
 (or explicitly granting those reads to an app without the trusted default):
