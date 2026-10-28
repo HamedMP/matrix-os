@@ -62,7 +62,10 @@ describe("GetStartedGate", () => {
       // Plain keys still reach the page, so typing, Tab and Enter keep working.
       fireEvent.keyDown(name, { key: "a" });
       expect(shortcut).toHaveBeenCalledTimes(1);
-      fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+      // Saving the skip is async; flush the gate's effect cleanup before keys.
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+      });
       expect(await screen.findByTestId("desktop-widget")).toBeInTheDocument();
       fireEvent.keyDown(document.body, { key: "k", metaKey: true });
       expect(shortcut).toHaveBeenCalledTimes(2);
@@ -263,8 +266,11 @@ describe("GetStartedGate", () => {
     }
     renderGateWith(makePort({ status: "pending" }).port, Lease);
     await screen.findByRole("dialog");
-    expect(events).toEqual(["acquire"]);
-    fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+    await waitFor(() => expect(events).toEqual(["acquire"]));
+    // Desktop DOM can commit before passive effects release the native overlay.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+    });
     await screen.findByTestId("desktop-widget");
     expect(events).toEqual(["acquire", "release"]);
   });
