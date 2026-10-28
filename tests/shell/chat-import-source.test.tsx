@@ -3,6 +3,11 @@ import React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ChatApp } from "../../shell/src/components/ChatApp";
+// No projects on this computer, so the source-filter empty state applies to the main list alone.
+vi.mock("../../shell/src/components/chat/web-projects", async (original) => ({
+  ...await original<typeof import("../../shell/src/components/chat/web-projects")>(),
+  useWebProjects: () => ({ identity: "owner", projects: [], loading: false, error: false, retry: () => {} }),
+}));
 vi.mock("@clerk/nextjs", () => ({ useOrganization: () => ({ organization: null }), useAuth: () => ({ userId: null, sessionId: null }) }));
 vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({ ChatProviderOnboarding: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock("../../shell/src/components/chat/ChatInput", () => ({ ChatInput: () => null }));

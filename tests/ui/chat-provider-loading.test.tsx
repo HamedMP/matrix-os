@@ -22,7 +22,7 @@ vi.mock("../../shell/src/components/chat-provider-onboarding", () => ({ ChatProv
 // The Projects rail loads its own list; these suites sequence only provider requests.
 vi.mock("../../shell/src/components/chat/web-projects", async (original) => ({
   ...await original<typeof import("../../shell/src/components/chat/web-projects")>(),
-  useWebProjects: () => ({ projects: [], loading: false, error: false, retry: () => {} }),
+  useWebProjects: () => ({ identity: "owner", projects: [], loading: false, error: false, retry: () => {} }),
 }));
 vi.mock("@clerk/nextjs", async (original) => ({ ...(await original<typeof import("@clerk/nextjs")>()), useOrganization: () => ({ organization: null }), useAuth: () => ({ userId: null, sessionId: null }) }));
 beforeEach(() => {

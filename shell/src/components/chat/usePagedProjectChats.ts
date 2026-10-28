@@ -1,3 +1,4 @@
+import { chatImportSourceVersionUrl } from "@matrix-os/ui";
 import { useEffect, useState } from "react";
 import { z } from "zod/v4";
 import type { WebProject } from "./web-projects";
@@ -16,7 +17,8 @@ async function loadProjectChats(gatewayUrl: string, projectId: string, cursor: s
   const query = new URLSearchParams({ projectId, limit: "100" });
   if (cursor) query.set("cursor", cursor);
   if (unreadOnly) query.set("unread", "true");
-  const response = await fetch(`${gatewayUrl}/api/chats?${query}`, {
+  // Without the import-source version the gateway strips provenance, and source filters would drop every row.
+  const response = await fetch(chatImportSourceVersionUrl(`${gatewayUrl}/api/chats?${query}`), {
     signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
   });
   if (!response.ok) throw new Error("ProjectChatsUnavailable");

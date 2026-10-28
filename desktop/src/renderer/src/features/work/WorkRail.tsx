@@ -240,6 +240,12 @@ export function WorkRail({
   // A deleted or unavailable Project simply ends focus.
   const focusedGroup = focusedProjectId ? projectGroups.find((group) => group.id === focusedProjectId) : undefined;
   const focusedRecords = useMemo(() => focusedGroup ? focusedProjectRecords(sourceRecords, focusedGroup) : null, [focusedGroup, sourceRecords]);
+  const projectGroupFor = (reference?: string) => reference ? projectGroups.find((group) => group.id === reference || group.slug === reference) : undefined;
+  // Opening a Project from the rail or from search focuses the sidebar on it.
+  const focusProject = (project: Project) => {
+    setFocusedProjectId(projectGroupFor(project.id)?.id ?? projectGroupFor(project.slug)?.id ?? null);
+    onSelectProject(project);
+  };
   const discoveredSharedProjects = useSharedProjects();
   const sharedProjects = useMemo(
     () => partitionSharedProjects(
@@ -448,7 +454,7 @@ export function WorkRail({
           ...current,
           [group.id]: !current[group.id],
         }))}
-        onSelect={(project) => { setFocusedProjectId(group.id); onSelectProject(project); }}
+        onSelect={focusProject}
         onNewChat={onNewProjectChat}
         onDeleteProject={setDeleteProjectTarget}
         onSelectChat={onSelectChat}
@@ -551,14 +557,16 @@ export function WorkRail({
       ) : null}
       <WorkRailSearchDialog
         open={authorityReady && searchOpen}
-        records={focusedRecords ?? sourceRecords}
+        records={sourceRecords}
         projects={projects}
         status={status}
-        onSelectProject={(project) => { setSearchOpen(false); onSelectProject(project); }}
+        onSelectProject={(project) => { setSearchOpen(false); focusProject(project); }}
         onClose={() => setSearchOpen(false)}
         onOpenShared={() => setSharedWithMeOpen(true)}
         onSelect={(record) => {
           setSearchOpen(false);
+          // A Chat found outside the focused Project moves focus to its own Project, or back to all chats.
+          if (focusedGroup) setFocusedProjectId(projectGroupFor(record.projectId)?.id ?? null);
           onSelectChat(record);
         }}
       />

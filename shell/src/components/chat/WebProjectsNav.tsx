@@ -12,11 +12,13 @@ import { projectChats, type WebProject, type WebProjectsState } from "./web-proj
 const PROJECT_CHAT_PAGE = 6;
 type ProjectRow = { kind: "known"; chat: RenameableConversation } | { kind: "fetched"; chat: FetchedProjectChat };
 
-export function WebProjectsNav({ state, gatewayUrl, chats, activeChatId, activeChatTitle, onSelectChat, renderChat,
+export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, onSelectChat, renderChat,
   mobile = false, unreadOnly = false, sourceFilter = "all", searchQuery = "" }: {
   state: WebProjectsState;
   gatewayUrl: string;
   chats: readonly RenameableConversation[];
+  /** Chats already in navigation, or deleted here; their paged copies are never shown as extra rows. */
+  listedChatIds: ReadonlySet<string>;
   activeChatId?: string;
   activeChatTitle?: string;
   onSelectChat(chatId: string): void;
@@ -44,18 +46,19 @@ export function WebProjectsNav({ state, gatewayUrl, chats, activeChatId, activeC
         <p>Create a project in Matrix Desktop to get started.</p>
       </div> : null}
       {projects.map(project => <WebProjectGroup key={`${state.identity}/${project.id}/${unreadOnly}/${sourceFilter}`} project={project} gatewayUrl={gatewayUrl}
-        chats={projectChats(chats, project).filter(chat => !chat.canonicalRecord?.chat.userState?.pinned)}
+        chats={projectChats(chats, project).filter(chat => !chat.canonicalRecord?.chat.userState?.pinned)} listedChatIds={listedChatIds}
         activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat}
         renderChat={renderChat} mobile={mobile} unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery}/>)}
     </ChatRailSection>
   </nav>;
 }
 
-function WebProjectGroup({ project, gatewayUrl, chats, activeChatId, activeChatTitle, onSelectChat, renderChat,
+function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, onSelectChat, renderChat,
   mobile, unreadOnly, sourceFilter, searchQuery }: {
   project: WebProject;
   gatewayUrl: string;
   chats: readonly RenameableConversation[];
+  listedChatIds: ReadonlySet<string>;
   activeChatId?: string;
   activeChatTitle?: string;
   onSelectChat(chatId: string): void;
@@ -68,9 +71,9 @@ function WebProjectGroup({ project, gatewayUrl, chats, activeChatId, activeChatT
   const { expanded, toggleExpanded, fetched, loading, error, retry, loadMore, hasMore } = usePagedProjectChats(project, gatewayUrl, unreadOnly);
   const [limit, setLimit] = useState(PROJECT_CHAT_PAGE);
   const nowMs = useMinuteClock(expanded);
-  const knownIds = new Set(chats.map(chat => chat.id));
   const search = searchQuery.trim().toLowerCase();
-  const unknownChats = filterChatsByImportSource(fetched.filter(chat => !knownIds.has(chat.id)
+  // Paged rows only fill in older Chats; a listed (or pinned, filtered, deleted) Chat keeps its normal placement.
+  const unknownChats = filterChatsByImportSource(fetched.filter(chat => !listedChatIds.has(chat.id)
     && (!search || chat.title.toLowerCase().includes(search))), sourceFilter, chat => chat.importSource);
   const allRows: ProjectRow[] = [...chats.map(chat => ({ kind: "known", chat } as const)),
     ...unknownChats.map(chat => ({ kind: "fetched", chat } as const))];

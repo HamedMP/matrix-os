@@ -255,6 +255,27 @@ describe("WorkRail", () => {
     expect(screen.queryByRole("button", { name: "Alpha chat" })).toBeNull();
   });
 
+  it("focuses the Project opened from search, and leaves focus for a Chat found elsewhere", async () => {
+    const client = { list: vi.fn(async () => ({ items: [pinned, projectChat, recent] })) } as unknown as CanonicalChatClient;
+    const onSelectProject = vi.fn();
+    const onSelectChat = vi.fn();
+    render(<WorkRail client={client} projects={[alpha, beta]} active onNewGlobalChat={vi.fn()} onCreateProject={vi.fn()}
+      onNewProjectChat={vi.fn()} onSelectProject={onSelectProject} onSelectChat={onSelectChat} onCollapse={vi.fn()} />);
+    await screen.findByRole("button", { name: "Recent global" });
+    fireEvent.click(screen.getByRole("button", { name: "Alpha" }));
+    expect(screen.getByRole("heading", { name: "Alpha" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Beta, Project" }));
+    expect(onSelectProject).toHaveBeenLastCalledWith(beta);
+    expect(screen.getByRole("heading", { name: "Beta" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Search chats" }));
+    fireEvent.click(await screen.findByRole("option", { name: /^Recent global,/ }));
+    expect(screen.queryByRole("heading", { name: "Beta" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Recent global" })).toBeTruthy();
+  });
+
   it("keeps New chat and Search outside the scrollable list", async () => {
     setup();
     await screen.findByRole("button", { name: "Recent global" });

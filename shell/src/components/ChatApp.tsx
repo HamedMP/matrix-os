@@ -99,6 +99,7 @@ import {
 } from "@/lib/hugeicons";
 
 type ConversationMeta = RenameableConversation;
+const MAX_REMEMBERED_DELETIONS = 200;
 
 function loadShellChatImage(src: string) {
   const path = new URL(src, "https://matrix.invalid").searchParams.get("path");
@@ -307,7 +308,13 @@ function ChatAppContent({
   }, [collaborationViewKey]);
   const [editingChat, setEditingChat] = useState<{ id: string; source: "header" | "rail" } | null>(null);
   const [renamePending, setRenamePending] = useState(false);
-  const deleteChat = useDeleteChatDialog(onDeleteConversation);
+  // Remember Chats deleted here so a project's paged copy cannot bring them back.
+  const [deletedChatIds, setDeletedChatIds] = useState<readonly string[]>([]);
+  const deleteChat = useDeleteChatDialog(onDeleteConversation ? async (chatId: string) => {
+    const deleted = await onDeleteConversation(chatId);
+    if (deleted) setDeletedChatIds(current => [...current.slice(-(MAX_REMEMBERED_DELETIONS - 1)), chatId]);
+    return deleted;
+  } : undefined);
   const initialHermesSetupRef = useRef<ReturnType<typeof readHermesSetup> | null>(null);
   const getInitialHermesSetup = () => {
     // react-doctor-disable-next-line react-hooks-js/todo -- React Compiler cannot yet lower the `??=` logical-assignment operator (BuildHIR Todo); this lazy one-time ref cache is a deliberate first-render localStorage read and rewriting it would not change behavior.
@@ -400,6 +407,7 @@ function ChatAppContent({
     .filter(chat => !chat.canonicalRecord?.chat.userState?.pinned).map(chat => chat.id)));
   const listedConversations = trimmedSearch ? visibleConversations : visibleConversations.filter(item => !projectChatIds.has(item.id));
 
+  const listedChatIds = new Set([...conversations.map(conv => conv.id), ...deletedChatIds]);
   const renderConversationRow = (conv: ConversationMeta, nowMs?: number) => <RenameableConversationRow
     key={conv.id}
     nowMs={nowMs}
@@ -536,7 +544,7 @@ function ChatAppContent({
           <div className="px-2 pb-3">
             <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
               projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} state={webProjects} gatewayUrl={projectGatewayUrl}
-                chats={visibleConversations} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
+                chats={visibleConversations} listedChatIds={listedChatIds} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
                 onSelectChat={onSwitchConversation} renderChat={renderConversationRow} mobile={mobile} unreadOnly={unreadOnly}
                 sourceFilter={sourceFilter} searchQuery={searchQuery}/>
                 <OrganizationDrivesNav chats={sourceConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/></>}

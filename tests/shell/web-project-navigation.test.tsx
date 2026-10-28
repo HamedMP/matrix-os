@@ -10,7 +10,7 @@ import type { RenameableConversation } from "../../shell/src/components/chat/Cha
 
 function Nav({ gatewayUrl, scopeKey, chats = [], onSelectChat = vi.fn() }: { gatewayUrl: string; scopeKey: string; chats?: RenameableConversation[]; onSelectChat?: (chatId: string) => void }) {
   const state = useWebProjects(gatewayUrl, scopeKey);
-  return <WebProjectsNav state={state} gatewayUrl={gatewayUrl} chats={chats} onSelectChat={onSelectChat}
+  return <WebProjectsNav state={state} gatewayUrl={gatewayUrl} chats={chats} listedChatIds={new Set(chats.map(chat => chat.id))} onSelectChat={onSelectChat}
     renderChat={chat => <button key={chat.id} type="button">{chat.title}</button>} />;
 }
 import { OrganizationStateProvider } from "../../shell/src/lib/collaboration-organization-state";
@@ -291,9 +291,11 @@ it("applies the Chat source filter to older project rows", async () => {
 
 it("keeps pinned project chats in Pinned instead of moving them into Projects", async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  // The project page also returns the pinned Chat, as the gateway does.
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
     ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })
-    : url.includes("/api/chats?") ? Response.json({ items: [], nextCursor: null }) : Response.json({})));
+    : url.includes("/api/chats?projectId=proj_france") ? Response.json({ items: [{ chat: { id: "chat_1", title: "Chat 1" } }], nextCursor: null })
+      : url.includes("/api/chats?") ? Response.json({ items: [], nextCursor: null }) : Response.json({})));
   const pinned = projectConversation(1);
   pinned.canonicalRecord!.chat.userState = { pinned: true } as NonNullable<typeof pinned.canonicalRecord>["chat"]["userState"];
   render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected
@@ -301,6 +303,7 @@ it("keeps pinned project chats in Pinned instead of moving them into Projects", 
     authorityKey="owner/main" /></OrganizationStateProvider>);
   const nav = await screen.findByRole("navigation", { name: "Projects" });
   fireEvent.click(await within(nav).findByRole("button", { name: "Open France project" }));
+  expect(await within(nav).findByText("No chats in this project yet.")).toBeTruthy();
   expect(within(nav).queryByRole("button", { name: "Chat 1" })).toBeNull();
   expect(within(screen.getByRole("region", { name: "Pinned" })).getByRole("button", { name: "Chat 1" })).toBeTruthy();
 });
@@ -362,4 +365,47 @@ it("ignores a late project-chat page after the account changes", async () => {
   expect(await screen.findByRole("button", { name: "New account chat" })).toBeTruthy();
   finishOld(Response.json({ items: [{ chat: { id: "chat_old", title: "Old account chat" } }], nextCursor: null }));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Old account chat" })).toBeNull());
+});
+
+it("asks for import sources so older imported project chats survive source filters", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  // Like the gateway, drop provenance unless the client opts in with importSourceVersion=1.
+  const request = vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })
+    : url.includes("/api/chats?projectId=proj_france")
+      ? Response.json({ items: [{ chat: { id: "chat_imported", title: "Imported chat" },
+        ...(url.includes("importSourceVersion=1") ? { importSource: { harness: "codex" } } : {}) }], nextCursor: null })
+      : Response.json({ items: [], nextCursor: null }));
+  vi.stubGlobal("fetch", request);
+  render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp messages={[]} busy={false} connected
+    conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()}
+    authorityKey="owner/main" mobile /></OrganizationStateProvider>);
+  fireEvent.change(screen.getByRole("combobox", { name: "Chat source" }), { target: { value: "codex" } });
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(await within(nav).findByRole("button", { name: "Open France project" }));
+  expect(await within(nav).findByRole("button", { name: "Imported chat" })).toBeTruthy();
+});
+
+it("does not bring back a project Chat deleted while its project is open", async () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })
+    : url.includes("/api/chats?projectId=proj_france") ? Response.json({ items: [{ chat: { id: "chat_1", title: "Chat 1" } }], nextCursor: null })
+      : Response.json({ items: [], nextCursor: null })));
+  const onDeleteConversation = vi.fn(async () => true);
+  const props = { messages: [], busy: false, connected: true, onNewChat: vi.fn(), onSwitchConversation: vi.fn(), onSubmit: vi.fn(),
+    authorityKey: "owner/main", onDeleteConversation };
+  const view = render(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp {...props} conversations={[projectConversation(1)]} /></OrganizationStateProvider>);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  fireEvent.click(await within(nav).findByRole("button", { name: "Open France project" }));
+  expect(await within(nav).findByRole("button", { name: "Actions for Chat 1" })).toBeTruthy();
+  fireEvent.pointerDown(within(nav).getByRole("button", { name: "Actions for Chat 1" }), { button: 0, ctrlKey: false });
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Delete chat" }));
+  await waitFor(() => expect(onDeleteConversation).toHaveBeenCalledWith("chat_1"));
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  // The canonical state drops the record after a successful delete.
+  view.rerender(<OrganizationStateProvider value={{ status: "none", organizationId: null }}><ChatApp {...props} conversations={[]} /></OrganizationStateProvider>);
+  expect(within(nav).queryByRole("button", { name: "Chat 1" })).toBeNull();
+  expect(await within(nav).findByText("No chats in this project yet.")).toBeTruthy();
 });
