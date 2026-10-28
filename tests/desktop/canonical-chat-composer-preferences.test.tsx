@@ -36,6 +36,78 @@ describe("Canonical Chat composer preferences", () => {
 
   afterEach(cleanup);
 
+  it("restores each provider's effort and permission across A → B → A switches", async () => {
+    const codex = providerCatalog.instances[0]!;
+    const preferenceCatalog = {
+      ...providerCatalog,
+      drivers: [...providerCatalog.drivers, {
+        kind: "claude_code" as const,
+        displayName: "Claude Code",
+        adapterVersion: "1.0.0",
+        capabilityClass: "coding_agent" as const,
+      }],
+      instances: [codex, {
+        ...codex,
+        id: "claude_fixture",
+        driverKind: "claude_code" as const,
+        displayName: "Claude fixture",
+        models: [{ ...codex.models[0]!, id: "claude-test", displayName: "Claude test" }],
+      }].map((instance) => ({
+        ...instance,
+        options: [{
+          id: "effort",
+          label: "Reasoning",
+          kind: "enum" as const,
+          values: [
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High" },
+          ],
+          defaultValue: "low",
+          placement: "composer" as const,
+        }],
+        defaultSelection: {
+          instanceId: instance.id,
+          model: instance.models[0]!.id,
+          options: [{ id: "effort", value: "low" }],
+        },
+      })),
+    };
+    render(<CanonicalChatWorkspace client={client()} initialView="draft" active catalog={preferenceCatalog} />);
+    await screen.findByRole("textbox", { name: "Start a chat" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "High" }));
+    fireEvent.click(screen.getByRole("button", { name: "Permission mode" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Full Access" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "Claude fixture agent, Available" }));
+    fireEvent.click(screen.getByRole("option", { name: "Claude test via Claude fixture" }));
+    expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("Low");
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Supervised");
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Medium" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "Codex fixture agent, Access not verified" }));
+    fireEvent.click(screen.getByRole("option", { name: "GPT-5.6-Sol via Codex fixture" }));
+    expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("High");
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Full Access");
+    expect(useProviderPreferences.getState().composerSelections.codex_fixture).toEqual({
+      model: "gpt-5.6-sol", options: [{ id: "effort", value: "high" }], permissionMode: "full_access",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
+    fireEvent.click(screen.getByRole("button", { name: "Claude fixture agent, Available" }));
+    fireEvent.click(screen.getByRole("option", { name: "Claude test via Claude fixture" }));
+    expect(screen.getByRole("button", { name: "Reasoning" }).textContent).toContain("Medium");
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Supervised");
+    expect(useProviderPreferences.getState().composerSelections.claude_fixture).toEqual({
+      model: "claude-test", options: [{ id: "effort", value: "medium" }], permissionMode: "supervised",
+    });
+  });
+
   it("uses the last effort and permission choice as the default for a new Chat", async () => {
     const preferenceCatalog = {
       ...providerCatalog,
@@ -96,7 +168,17 @@ describe("Canonical Chat composer preferences", () => {
     expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Full Access");
   });
 
-  it("uses the last provider and model choice as the default for a new Chat", async () => {
+  it("honors the explicitly selected model while restoring target preferences for a new Chat", async () => {
+    resetProviderPreferences({
+      hydrated: true,
+      composerSelections: {
+        claude_fixture: {
+          model: "anthropic:claude-opus-4.6",
+          options: [],
+          permissionMode: "full_access",
+        },
+      },
+    });
     const codexInstance = providerCatalog.instances[0]!;
     const preferenceCatalog = {
       ...providerCatalog,
@@ -157,6 +239,7 @@ describe("Canonical Chat composer preferences", () => {
       .getAttribute("data-provider-instance")).toBe("claude_fixture");
     expect(screen.getByRole("button", { name: "Choose model and provider" })
       .getAttribute("data-model")).toBe("anthropic:claude-sonnet-4.6");
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Full Access");
 
     first.unmount();
     render(
@@ -175,5 +258,6 @@ describe("Canonical Chat composer preferences", () => {
       .getAttribute("data-provider-instance")).toBe("claude_fixture");
     expect(screen.getByRole("button", { name: "Choose model and provider" })
       .getAttribute("data-model")).toBe("anthropic:claude-sonnet-4.6");
+    expect(screen.getByRole("button", { name: "Permission mode" }).textContent).toContain("Full Access");
   });
 });

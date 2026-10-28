@@ -6,9 +6,10 @@ import * as Popover from "@radix-ui/react-popover";
 import { ChevronDown, Cpu, Settings2Icon } from "@renderer/lib/hugeicons";
 import { useRef, useState } from "react";
 import { CompactChatProviderChoices, deriveCanonicalProviderChoices, canonicalProviderUnavailableSelectionLabel, ChatProviderLoadingIndicator } from "@matrix-os/ui";
-import { changeCanonicalComposerInstance, createCanonicalComposerSelection, canonicalComposerSelectionIsAvailable, type CanonicalComposerSelection } from "./canonical-composer-state";
+import { applyCanonicalComposerPreference, changeCanonicalComposerInstance, createCanonicalComposerSelection, canonicalComposerSelectionIsAvailable, type CanonicalComposerSelection } from "./canonical-composer-state";
 import { ProviderDriverGlyph } from "./ProviderDriverGlyph";
 import { openProviderSettings } from "../settings/open-provider-settings";
+import { useProviderPreferences } from "../settings/provider-preferences";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 
 export function ProviderModelPicker({ catalog, selection, instanceLocked, disabled = false, loading = false,
@@ -72,10 +73,13 @@ export function ProviderModelPicker({ catalog, selection, instanceLocked, disabl
         } : undefined}
         onSelect={(choice) => {
           if (instanceLocked && choice.instanceId !== selection?.instanceId) return;
-          const base = selection ? choice.instanceId === selection.instanceId ? selection
+          const initial = selection ? choice.instanceId === selection.instanceId ? selection
             : changeCanonicalComposerInstance(catalog, selection, choice.instanceId)
             : createCanonicalComposerSelection(catalog, choice.instanceId);
-          if (!base) return;
+          if (!initial) return;
+          const base = choice.instanceId === selection?.instanceId ? initial
+            : applyCanonicalComposerPreference(catalog, initial,
+              useProviderPreferences.getState().composerSelections[choice.instanceId]);
           onChange({ ...base, model: choice.modelId,
             ...((isChatgptPlanChatRoute(choice) || isMatrixAnthropicChatRoute(choice)) ? { options: choice.selectedOptions,
               interactionMode: choice.interactionModes.includes(base.interactionMode) ? base.interactionMode : choice.interactionMode,
