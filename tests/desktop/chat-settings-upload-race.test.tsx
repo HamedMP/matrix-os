@@ -50,3 +50,31 @@ it.each(["send", "queue", "edit"] as const)("preserves the draft and attachment 
   expect(screen.queryByRole("alert")).toBeNull();
   expect(screen.getByRole("button", { name: "Send" }).hasAttribute("disabled")).toBe(false);
 });
+
+it("settles the original signed-in Queue draft after its authenticated client is refreshed before ACK", async () => {
+  useConnection.setState({ status: "signed-in", userId: "owner_queue", handle: "queue-owner" });
+  const client = createCanonicalChatWorkspaceClient();
+  const replacement = createCanonicalChatWorkspaceClient();
+  const fixture = createCanonicalChatFixture("running").snapshot;
+  const record = { chat: fixture.chat, projectId: "matrix-os", providerBinding: fixture.chat.providerBinding, activeRun: fixture.chat.activeRun };
+  for (const candidate of [client, replacement]) vi.mocked(candidate.getDetail).mockResolvedValue({ record, messages: fixture.messages, turns: fixture.turns, runs: fixture.runs, activities: fixture.activities });
+  const ack = Promise.withResolvers<Awaited<ReturnType<typeof client.queueTurn>>>();
+  vi.mocked(client.queueTurn).mockReturnValue(ack.promise);
+  const api = { baseUrl: "https://matrix.test", putBytes: vi.fn(async (url: string, file: File) => ({ ok: true, path: decodeURIComponent(url.split("path=")[1]!), size: file.size })) } as never;
+  const props = { api, projectId: "matrix-os", active: true, initialChatId: fixture.chat.id, catalog: providerCatalog };
+  const view = render(<CanonicalChatWorkspace {...props} client={client}/>);
+  const editor = await screen.findByRole("textbox", { name: "Reply to chat" });
+  await setSharedComposerText(editor, "Submitted once before client refresh");
+  fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["marker"], "refresh-marker.txt", { type: "text/plain" })] } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(client.queueTurn).toHaveBeenCalledOnce());
+  view.rerender(<CanonicalChatWorkspace {...props} client={replacement}/>);
+  await act(async () => {
+    const input = vi.mocked(client.queueTurn).mock.calls[0]![1];
+    ack.resolve({ queueDepth: 1, queuedTurn: { ...input, id: "qturn_refreshed", chatId: fixture.chat.id, position: 1,
+      createdAt: fixture.chat.updatedAt, updatedAt: fixture.chat.updatedAt } });
+  });
+  await waitFor(() => expect(screen.getByRole("textbox", { name: "Reply to chat" }).textContent).toBe(""));
+  expect(screen.queryByRole("button", { name: "Remove refresh-marker.txt" })).toBeNull();
+  expect(replacement.queueTurn).not.toHaveBeenCalled();
+});

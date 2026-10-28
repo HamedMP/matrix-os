@@ -20,6 +20,29 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
+it.each([
+  { sizes: [10 * 1024 * 1024], valid: true },
+  { sizes: [10 * 1024 * 1024, 10 * 1024 * 1024], valid: true },
+  { sizes: [10 * 1024 * 1024, 10 * 1024 * 1024, 1], valid: false },
+])("checks the Bot's complete file selection before upload: $sizes", async ({ sizes, valid }) => {
+  const { client, putBytes } = fixture("completed");
+  fireEvent.click(await screen.findByRole("button", { name: "Attach files" }));
+  const editor = screen.getByRole("textbox", { name: "Reply to chat" });
+  await setSharedComposerText(editor, "Keep capacity draft");
+  fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: sizes.map((size, index) => new File([new Uint8Array(size)], `input-${index}.bin`, { type: "application/octet-stream" })) } });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", false));
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  if (valid) {
+    await waitFor(() => expect(client.admitTurn).toHaveBeenCalledOnce());
+    expect(putBytes).toHaveBeenCalledTimes(sizes.length);
+  } else {
+    expect(await screen.findByText(/Attachments must total 20 MiB/)).toBeTruthy();
+    expect(putBytes).not.toHaveBeenCalled(); expect(client.admitTurn).not.toHaveBeenCalled();
+    expect(editor.textContent).toBe("Keep capacity draft");
+    expect(screen.getByText("input-0.bin")).toBeTruthy();
+  }
+});
+
 function fixture(status: "completed" | "running", vision = true) {
   const { snapshot, providerCatalog } = createCanonicalChatFixture(status);
   const record = { chat: snapshot.chat, projectId: "matrix-os", providerBinding: snapshot.chat.providerBinding, activeRun: snapshot.chat.activeRun };
@@ -41,10 +64,42 @@ function fixture(status: "completed" | "running", vision = true) {
     authority: vi.fn(async () => ({ agentId: agent.id, revision: 1, grants: [], connections: [], routines: [], pendingInteractions: [], memory: { items: [] } })),
   } } as unknown as ChatAgentClient;
   const putBytes = vi.fn(async (url: string, file: File) => ({ ok: true, path: decodeURIComponent(url.split("path=")[1] ?? ""), size: file.size }));
-  render(<CanonicalChatWorkspace api={{ putBytes, get: vi.fn(async () => catalog) } as never} client={client} initialChatId={snapshot.chat.id}
-    initialView="conversation" active catalog={catalog}/>);
-  return { client, putBytes };
+  const props = { api: { putBytes, get: vi.fn(async () => catalog) } as never, client, initialChatId: snapshot.chat.id,
+    initialView: "conversation" as const, active: true, catalog };
+  const view = render(<CanonicalChatWorkspace {...props}/>);
+  return { client, putBytes, props, view };
 }
+
+it.each(["completed", "running"] as const)("clears stale capacity feedback when the extra Bot attachment is removed: %s", async status => {
+  const { client, putBytes } = fixture(status);
+  await screen.findByRole("button", { name: "Attach files" });
+  const editor = screen.getByRole("textbox", { name: "Reply to chat" });
+  await setSharedComposerText(editor, "Keep my corrected capacity draft");
+  fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [
+    new File([new Uint8Array(10 * 1024 * 1024)], "first.bin"),
+    new File([new Uint8Array(10 * 1024 * 1024)], "second.bin"), new File(["x"], "extra.txt"),
+  ] } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect(await screen.findByText(/Attachments must total 20 MiB/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Remove extra.txt" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(screen.getByText("first.bin")).toBeTruthy(); expect(screen.getByText("second.bin")).toBeTruthy();
+  expect(editor.textContent).toBe("Keep my corrected capacity draft");
+  expect(putBytes).not.toHaveBeenCalled(); expect(client.admitTurn).not.toHaveBeenCalled(); expect(client.queueTurn).not.toHaveBeenCalled();
+});
+
+it("does not carry a rejected Bot upload error into a new conversation", async () => {
+  const { client, putBytes, view, props } = fixture("completed", false);
+  await screen.findByRole("button", { name: "Attach files" });
+  await setSharedComposerText(screen.getByRole("textbox", { name: "Reply to chat" }), "Keep this image draft");
+  fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["pixels"], "image.png", { type: "image/png" })] } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("does not support images");
+  view.rerender(<CanonicalChatWorkspace {...props} initialChatId={undefined} initialView="draft"/>);
+  await screen.findByRole("textbox", { name: "Start a chat" });
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(putBytes).not.toHaveBeenCalled(); expect(client.admitTurn).not.toHaveBeenCalled();
+});
 
 it.each(["completed", "running"] as const)("uploads native image and file inputs through the actual Automatic Bot %s composer", async status => {
   const { client, putBytes } = fixture(status);
@@ -73,4 +128,17 @@ it("retains a Bot draft and image when its actual saved coordinator is text-only
   expect(editor.textContent).toBe("Keep this draft");
   expect(screen.getByText("image.png")).toBeTruthy();
   expect(putBytes).not.toHaveBeenCalled(); expect(client.admitTurn).not.toHaveBeenCalled();
+});
+
+it("clears the signed-in Bot composer text and attachment after Queue acknowledges the upload", async () => {
+  useConnection.setState({ status: "signed-in", userId: "owner_queue_upload", handle: "queue-owner" });
+  const { client } = fixture("running");
+  await screen.findByRole("button", { name: "Attach files" });
+  const editor = screen.getByRole("textbox", { name: "Reply to chat" });
+  await setSharedComposerText(editor, "Queue this uploaded marker");
+  fireEvent.change(screen.getByLabelText("Choose files"), { target: { files: [new File(["marker"], "queued-marker.txt", { type: "text/plain" })] } });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(client.queueTurn).toHaveBeenCalledOnce());
+  await waitFor(() => expect(editor.textContent).toBe(""));
+  expect(screen.queryByRole("button", { name: "Remove queued-marker.txt" })).toBeNull();
 });

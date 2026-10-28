@@ -3,6 +3,7 @@ import {
   CanonicalChatIdSchema,
   AgentAttachmentSchema,
   CanonicalChatMessagePartSchema,
+  CanonicalChatAssistantTextPartSchema,
   CanonicalChatMessageSchema,
   CanonicalChatRunActivitySchema,
   CanonicalOwnerScopeSchema,
@@ -49,7 +50,7 @@ const ACTIVE_RUNS = ["accepted", "running", "waiting_for_approval", "waiting_for
 function recoveredTextParts(text: string) {
   if (Buffer.byteLength(text) > 96 * 1024) throw new RangeError("Recovered output limit exceeded");
   return (text.match(/[\s\S]{1,4000}/gu) ?? [""]).map((chunk) =>
-    CanonicalChatMessagePartSchema.parse({ type: "text", text: chunk }));
+    CanonicalChatAssistantTextPartSchema.parse({ type: "text", text: chunk }));
 }
 const SAFE_INTERNAL_REF = z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/);
 const encoded = new TextEncoder();
@@ -64,7 +65,7 @@ function requireSafeRef(value: string): string {
 
 function preview(message: CanonicalChatMessage): string | null {
   const text = message.parts.find((part) => part.type === "text");
-  return text?.type === "text" ? text.text.slice(0, 280) : null;
+  return text?.type === "text" ? text.text.trim().slice(0, 280) || null : null;
 }
 
 function railTransitionForActivity(activity: CanonicalChatRunActivity): {
@@ -537,13 +538,13 @@ export class ChatRunLifecycleRepository {
           delta = input.delta.slice(persisted.length);
           if (delta.length === 0) return current;
         }
-        const combined = CanonicalChatMessagePartSchema.safeParse({
+        const combined = CanonicalChatAssistantTextPartSchema.safeParse({
           type: "text",
           text: `${last.text}${delta}`,
         });
         const parts = input.snapshot ? recoveredTextParts(input.delta) : combined.success
           ? [...textParts.slice(0, -1), combined.data]
-          : [...textParts, CanonicalChatMessagePartSchema.parse({ type: "text", text: delta })];
+          : [...textParts, CanonicalChatAssistantTextPartSchema.parse({ type: "text", text: delta })];
         next = CanonicalChatMessageSchema.parse({
           ...current,
           parts,

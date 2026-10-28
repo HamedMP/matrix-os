@@ -1,6 +1,6 @@
 import { BrowserPermissionCard } from "@matrix-os/ui";
 import { ConversationNotice } from "./notice";
-import { BotRunMessageBody, BotUnassignedMessageBody, ChatAttachments, ChatContextReceipt, CanonicalChatInputForm, SupervisedToolApprovalCard, type ChatMessageAttachment } from "@matrix-os/ui";
+import { BotRunMessageBody, BotUnassignedMessageBody, ChatContextReceipt, CanonicalChatInputForm, SupervisedToolApprovalCard } from "@matrix-os/ui";
 import { UserMessage } from "./user-message";
 import {
   ChevronRight,
@@ -13,13 +13,11 @@ import {
 } from "./conversation";
 import { ConversationActivityGroup } from "./activity";
 import { RequestApprovalOutcome, RequestStatusIcon } from "./request-outcome";
-import { Bubble, BubbleContent } from "./bubble";
 import { Marker, MarkerContent } from "./marker";
 import { conversationTurnVisibility } from "./turn-visibility";
-import { Message, MessageContent, MessageMetadata, MessageResponse } from "./message";
+import { ResponseMessage } from "./response-message";
 import type {
   ConversationActionPresentation,
-  ConversationMessagePresentation,
   ConversationPresentationCallbacks,
   ConversationRequestPresentation,
   ConversationTurnPresentation,
@@ -84,94 +82,6 @@ function TurnReceipt({
     </ConversationItem>
   );
 }
-
-function ResponseMessage({
-  message,
-  callbacks,
-  showMetadata,
-  streaming,
-  animateOnMount,
-}: {
-  message: ConversationMessagePresentation;
-  callbacks: ConversationPresentationCallbacks;
-  showMetadata: boolean;
-  streaming: boolean;
-  animateOnMount: boolean;
-}) {
-  const previousMessageId = useRef(message.id);
-  const previousStreaming = useRef(streaming);
-  const [visibleMarkdown, setVisibleMarkdown] = useState(() => (
-    streaming || animateOnMount ? "" : message.markdown
-  ));
-  const attachments = (message.content ?? []).flatMap<ChatMessageAttachment>((segment) => segment.kind === "image"
-    ? [{ ...segment, kind: "image" as const }]
-    : segment.kind === "reference" && segment.referenceKind === "file"
-      ? [{ ...segment, kind: "file" as const }]
-      : []);
-
-  useEffect(() => {
-    if (previousMessageId.current === message.id) return;
-    previousMessageId.current = message.id;
-    setVisibleMarkdown(streaming || animateOnMount ? "" : message.markdown);
-  }, [animateOnMount, message.id, message.markdown, streaming]);
-
-  useEffect(() => {
-    const terminalized = previousStreaming.current && !streaming;
-    previousStreaming.current = streaming;
-    if (terminalized) setVisibleMarkdown(message.markdown);
-  }, [message.markdown, streaming]);
-
-  useEffect(() => {
-    if (visibleMarkdown === message.markdown) return;
-    if (!message.markdown.startsWith(visibleMarkdown)) {
-      setVisibleMarkdown(message.markdown);
-      return;
-    }
-    const frame = window.requestAnimationFrame(() => {
-      setVisibleMarkdown((current) => {
-        if (!message.markdown.startsWith(current)) return message.markdown;
-        const targetCharacters = Array.from(message.markdown);
-        const currentLength = Array.from(current).length;
-        const remaining = targetCharacters.length - currentLength;
-        const step = Math.max(1, Math.min(8, Math.ceil(remaining / 12)));
-        return targetCharacters.slice(0, currentLength + step).join("");
-      });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [message.markdown, visibleMarkdown]);
-
-  return (
-    <ConversationItem messageId={`${message.role}:${message.id}`}>
-      <Message>
-        <MessageContent className="gap-0">
-          {attachments.length > 0 ? (
-            <ChatAttachments
-              attachments={attachments}
-              align="start"
-              open={callbacks.openAttachment} openImportedAsset={callbacks.openImportedAsset}
-              loadImage={callbacks.loadImage}
-            />
-          ) : null}
-          <Bubble variant="ghost">
-            <BubbleContent className="w-full max-w-full overflow-visible">
-              <MessageResponse className="text-md leading-relaxed" copyText={callbacks.copyText} openFile={callbacks.openFile} openWebLink={callbacks.openWebLink} loadFileImage={callbacks.loadFileImage} resolveApp={callbacks.resolveApp} openApp={callbacks.openApp}
-                renderCredentialMarker={callbacks.renderCredentialMarker ? (offset, marker, number) => callbacks.renderCredentialMarker?.(message, offset, marker, number) : undefined}>{visibleMarkdown}</MessageResponse>
-            </BubbleContent>
-          </Bubble>
-          {showMetadata ? (
-            <MessageMetadata
-              content={message.copyText}
-              timestamp={message.timestamp}
-              role="Assistant"
-              copyText={callbacks.copyText}
-            />
-          ) : null}
-        </MessageContent>
-      </Message>
-    </ConversationItem>
-  );
-}
-
 
 function supervisedToolView(request: ConversationRequestPresentation): SupervisedToolApproval | null {
   if (request.requestKind !== "approval") return null;
@@ -411,7 +321,7 @@ function ConversationTurn({
     ...(callbacks.resolveApp ? { resolveApp: resolveRunApp } : {}),
     ...(callbacks.openApp ? { openApp: openRunApp } : {}),
   };
-  const { showWork, visibleWork, visibleTimeline, pendingRequestIds } = visibility;
+  const { showWork, visibleWork, visibleTimeline, pendingRequestIds, partialCopyMessageId } = visibility;
   const hasWork = turn.work.length > 0;
   const timeline = turn.timeline;
   return (
@@ -434,13 +344,15 @@ function ConversationTurn({
           <div data-turn-timeline className="flex min-w-0 flex-col gap-0.5">
             {visibleTimeline.map((entry) => entry.kind === "user-followup"
               ? <UserMessage key={entry.message.id} message={entry.message} callbacks={scopedCallbacks} />
-              : <PresentationItem key={entry.item.id} item={entry.item} callbacks={scopedCallbacks} />)}
+              : <PresentationItem key={entry.item.id} item={entry.item} callbacks={scopedCallbacks}
+                  showMetadata={entry.item.id === partialCopyMessageId} />)}
           </div>
         ) : null
       ) : visibleWork.length > 0 ? (
         <div data-work-items className="flex min-w-0 flex-col gap-0.5">
           {visibleWork.map((item) => (
-            <PresentationItem key={item.id} item={item} callbacks={scopedCallbacks} />
+            <PresentationItem key={item.id} item={item} callbacks={scopedCallbacks}
+              showMetadata={item.id === partialCopyMessageId} />
           ))}
         </div>
       ) : null}
@@ -454,7 +366,7 @@ function ConversationTurn({
           showMetadata={!turn.active}
           streaming={turn.active}
           animateOnMount={
-            !initialFinalIds.has(turn.final.id)
+            turn.active && !initialFinalIds.has(turn.final.id)
             && !(turn.final.kind === "message" && turn.final.wasStreamed)
           }
         />

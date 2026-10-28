@@ -26,6 +26,7 @@ import type { BotProviderConnectionsService } from './provider-connections.js';
 import { ManagedCustomRecoveryError, type ManagedCustomRecovery } from "./managed-custom-recovery.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
+const includeRecoverySchema = z.enum(["true", "false"]).optional();
 const includeRunIdsSchema = z.enum(["true", "false"]).optional();
 
 type ErrorCode = "invalid_request" | "not_found" | "conflict" | "expired" | "rate_limited" | "unavailable";
@@ -181,7 +182,11 @@ export function createBotRoutes(options: {
     if (!options.interactions) return errorResponse(context, "unavailable");
     const chatId = CanonicalChatIdSchema.safeParse(context.req.param("chatId"));
     if (!chatId.success) return errorResponse(context, "invalid_request");
-    const interactions = await options.interactions.listPending(principal.userId, chatId.data);
+    const includeRecovery = includeRecoverySchema.safeParse(context.req.query("includeRecovery"));
+    if (!includeRecovery.success) return errorResponse(context, "invalid_request");
+    const interactions = includeRecovery.data === "true"
+      ? await options.interactions.listPending(principal.userId, chatId.data, { includeRecovery: true })
+      : await options.interactions.listPending(principal.userId, chatId.data);
     context.header("Cache-Control", "private, no-store");
     return context.json({ interactions });
   });
@@ -192,8 +197,11 @@ export function createBotRoutes(options: {
     const chatId = CanonicalChatIdSchema.safeParse(context.req.param("chatId"));
     const interactionId = BotInteractionIdSchema.safeParse(context.req.param("interactionId"));
     if (!chatId.success || !interactionId.success) return errorResponse(context, "invalid_request");
+    const includeRecovery = includeRecoverySchema.safeParse(context.req.query("includeRecovery"));
+    if (!includeRecovery.success) return errorResponse(context, "invalid_request");
+    const request = await context.req.json();
     const { response, continuation } = await options.interactions.resolve(
-      principal.userId, chatId.data, interactionId.data, await context.req.json(),
+      principal.userId, chatId.data, interactionId.data, request,
     );
     if (continuation) {
       // The answer is recorded either way; repeating this request retries the continuation.
@@ -201,6 +209,22 @@ export function createBotRoutes(options: {
         await options.admitContinuation(principal, continuation);
       } catch (error: unknown) {
         console.warn("[bots] answer continuation failed:", error instanceof Error ? error.name : "UnknownError");
+        if (includeRecovery.data === "true" && (request?.kind === "question" || request?.kind === "resume")) {
+          // A lost ACK may follow a committed admission. This branch only reads
+          // the saved answer and exact request hash; never repeat admission here.
+          try {
+            const confirmed = await options.interactions.resolve(principal.userId, chatId.data, interactionId.data,
+              { kind: "resume", baseRevision: response.interaction.revision });
+            if (!confirmed.continuation) {
+              context.header("Cache-Control", "private, no-store");
+              return context.json(confirmed.response);
+            }
+          } catch (readError: unknown) {
+            console.warn("[bots] continuation confirmation unavailable:", readError instanceof Error ? readError.name : "UnknownError");
+          }
+          context.header("Cache-Control", "private, no-store");
+          return context.json({ ...response, continuationPending: true });
+        }
         return errorResponse(context, "unavailable");
       }
     }

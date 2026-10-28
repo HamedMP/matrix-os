@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ScopeRuntimeBotCommandSchema } from "@matrix-os/scope-runtime";
 import {
   BOT_IMAGE_CHUNK_CHARS,
   BotBrokerRequestSchema,
@@ -21,6 +22,17 @@ const run = {
 };
 
 describe("bot worker and broker envelopes", () => {
+  it("keeps worker and supervisor image steering ranges bounded and optional", () => {
+    const command = { version: 1, kind: "bot.steer", runId: "run_abc", text: "Inspect" };
+    for (const schema of [BotWorkerCommandSchema, ScopeRuntimeBotCommandSchema]) {
+      expect(schema.safeParse(command).success).toBe(true);
+      expect(schema.safeParse({ ...command, imageRange: { start: 1, count: 3 } }).success).toBe(true);
+      for (const imageRange of [{ start: 4, count: 1 }, { start: -1, count: 1 }, { start: 0, count: 0 }, { start: 2, count: 3 }, { start: 0, count: 1, path: "/private" }]) {
+        expect(schema.safeParse({ ...command, imageRange }).success).toBe(false);
+      }
+      expect(schema.safeParse({ ...command, images: [{ data: "AAAA", mimeType: "image/png" }] }).success).toBe(false);
+    }
+  });
   it("accepts gateway-resolved routes and bounded run commands", () => {
     expect(BotWorkerCommandSchema.parse(run).kind).toBe("bot.run");
     expect(BotWorkerCommandSchema.safeParse({ ...run, route: { ...run.route, maxOutputTokens: 32_000 } }).success).toBe(false);

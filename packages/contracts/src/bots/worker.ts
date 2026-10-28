@@ -14,7 +14,7 @@ export const BotModelRouteSchema = z.object({
   input: z.array(z.enum(["text", "image"])).min(1).max(2)
     .refine((input) => input.includes("text"), { message: "Routes must accept text" }),
   contextWindow: z.number().int().min(8_192).max(2_000_000),
-  /** Bounded so one buffered bridge response stays under the broker's 512 KiB cap. */
+  /** Model work budget; independent of the raw response and encoded transport byte limits. */
   maxOutputTokens: z.number().int().min(256).max(16_384),
 }).strict();
 
@@ -119,7 +119,10 @@ export const BotWorkerCommandSchema = z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("continue") }).strict(),
     ]),
   }).strict().refine((command) => canonicalEncodedByteLength(command) <= 12 * 1024 * 1024, { message: "Command is too large" }),
-  z.object({ version: z.literal(1), kind: z.literal("bot.steer"), runId: RunIdSchema, text: z.string().min(1).max(8 * 1024) }).strict(),
+  z.object({ version: z.literal(1), kind: z.literal("bot.steer"), runId: RunIdSchema, text: z.string().min(1).max(8 * 1024),
+    imageRange: z.object({ start: z.number().int().min(0).max(3), count: z.number().int().min(1).max(4) }).strict()
+      .refine(range => range.start + range.count <= 4).optional(),
+  }).strict(),
   z.object({ version: z.literal(1), kind: z.literal("bot.cancel"), runId: RunIdSchema }).strict(),
 ]);
 

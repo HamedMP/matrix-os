@@ -311,7 +311,7 @@ function ChatAppContent({
   const botComposerControls = directBotId ? <BotComposerControls key={directBotId} agentId={directBotId} client={agentClient} catalog={providerState.catalog} catalogLoading={providerState.loading} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh} refreshKey={(botEventRevision ?? 0) + botModelRevision} zIndex={SHELL_Z_INDEX.popover} onChanged={() => setBotModelRevision(value => value + 1)}/> : undefined;
   const botExecution = useBotExecution(directBotId, summaryClient, providerState.catalog, (botEventRevision ?? 0) + botModelRevision);
   const botPresentation = botExecution.presentation;
-  const attachmentPolicy = shellChatAttachmentPolicy(providerState.catalog, directBotId ? botExecution.agent?.selection : providerState.selected ? { instanceId: providerState.selected.instanceId, model: providerState.selected.modelId } : undefined, botPresentation?.kind === "recipe");
+  const attachmentPolicy = shellChatAttachmentPolicy(providerState.catalog, directBotId ? botExecution.agent?.selection : providerState.selected ? { instanceId: providerState.selected.instanceId, model: providerState.selected.modelId, options: providerState.selected.selectedOptions } : undefined, botPresentation?.kind === "recipe");
   const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error" || botExecution.loading || Boolean(botExecution.error);
   const slashInstance = !botIdentityUnknown && !directBotId ? providerState.activeInstance ?? undefined : undefined;
   const slashCatalogLoading = botBinding.loading || providerState.loading;

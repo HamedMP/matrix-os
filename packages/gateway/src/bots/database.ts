@@ -104,6 +104,7 @@ export interface BotInteractionsTable {
   bot_id: string;
   chat_id: string;
   task_id: string;
+  source_run_id: ColumnType<string | null, string | null | undefined, string | null>;
   kind: "question" | "account_choice" | "connect_request" | "approval";
   payload: Json<Record<string, unknown>>;
   responder_actor_id: string;

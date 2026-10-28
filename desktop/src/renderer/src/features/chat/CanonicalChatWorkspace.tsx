@@ -1,3 +1,5 @@
+import { createComposerAcknowledgement } from "./composer-acknowledgement";
+import { useChatSubmissionError } from "./use-chat-submission-error";
 import { BrowserPermissionReviewProvider, BrowserPermissionReminder } from "@matrix-os/ui";
 import { canonicalChatExecutionControls } from "@matrix-os/contracts";
 import { chatAttachmentComposerPolicy } from "@matrix-os/ui";
@@ -261,13 +263,11 @@ function CanonicalChatWorkspaceContent({
   } | null>(null);
   const [optimisticQueuedTurns, setOptimisticQueuedTurns] = useState<CanonicalChatQueuedTurn[] | null>(null);
   const [editingQueuedTurn, setEditingQueuedTurn] = useState<CanonicalChatQueuedTurn | null>(null);
-  const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [localComposerFocusRequestId, setLocalComposerFocusRequestId] = useState(0);
   const previousRoute = useRef({ initialChatId, initialView, projectId });
   const reportedChatId = useRef<string | null>(initialChatId ?? null);
   const submissionSequence = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const attachments = useConversationAttachments(controller.activeChatId, api ?? null);
   useChatAgentDraftRequest({ request: draftRequest, eligible: active && !initialChatId && initialView !== "conversation" && !explicitSharedRoute,
     prepare: prepareNewChatDraft, showDraft: () => setGlobalView("draft"),
     focus: () => setLocalComposerFocusRequestId((requestId) => requestId + 1), onConsumed: onDraftConsumed });
@@ -302,6 +302,8 @@ function CanonicalChatWorkspaceContent({
   const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error" || botExecution.loading || Boolean(botExecution.error);
   const botPresentation = botExecution.presentation;
   const attachmentPolicy = chatAttachmentComposerPolicy(providerCatalog, directBotId ? botExecution.agent?.selection : providerSelection, botPresentation?.kind === "recipe");
+  const attachments = useConversationAttachments(controller.activeChatId, api ?? null, attachmentPolicy.error);
+  const [submissionError, setSubmissionError] = useChatSubmissionError(draftScope, draftRevision, attachments.items.map(item => item.localId));
   const selection = botIdentityUnknown ? null : directBotId ? botPresentation ? { ...botPresentation.selection, options: botPresentation.selection.options ?? [], interactionMode: botPresentation.interactionMode, permissionMode: botPresentation.permissionMode } : null : providerSelection;
   const botRouteAvailable = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : canonicalComposerSelectionIsAvailable(providerCatalog, selection));
   const permissionResources = directBotId ? botExecution.consentResources : mentionResources;
@@ -548,15 +550,16 @@ function CanonicalChatWorkspaceContent({
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = mentionRequests.resolve(client, requestScope, permissionResources.length ? input : { ...input, draftRevision }, "send");
       const clientRequestId = attempt?.clientRequestId;
-      const acknowledgeAccepted = () => {
-        if (!isCurrentRuntimeGeneration(runtimeGeneration)
-          || composerOwner.current.client !== owner.client
-          || desktopProviderIdentityKey(useConnection.getState()) !== owner.identity) return;
-        if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
-        mentionPermission.confirm(false);
-        updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
-        for (const id of submittedAttachmentIds) attachments.remove(id);
-      };
+      const acknowledgeAccepted = createComposerAcknowledgement({
+        runtimeGeneration, identity: owner.identity, retained: draftRetentionIdentity !== undefined,
+        client: owner.client, currentClient: () => composerOwner.current.client,
+        settle: () => {
+          if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
+          mentionPermission.confirm(false);
+          updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
+          for (const id of submittedAttachmentIds) attachments.remove(id);
+        },
+      });
       const admitted = attempt?.operation === "queue"
         ? await controller.queueTurn({ ...input, clientRequestId }, acknowledgeAccepted)
         : await controller.submitTurn({ ...input, clientRequestId }, canonicalChatTitle(submission), draftProjectId, acknowledgeAccepted,
@@ -627,15 +630,16 @@ function CanonicalChatWorkspaceContent({
       const requestScope = routedComposerChatId ?? `new:${projectId ?? "global"}`;
       const attempt = permissionResources.length ? mentionRequests.resolve(client, requestScope, input, "queue") : undefined;
       const clientRequestId = attempt?.clientRequestId;
-      const acknowledgeAccepted = () => {
-        if (!isCurrentRuntimeGeneration(runtimeGeneration)
-          || composerOwner.current.client !== owner.client
-          || desktopProviderIdentityKey(useConnection.getState()) !== owner.identity) return;
-        if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
-        mentionPermission.confirm(false);
-        updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
-        for (const id of submittedAttachmentIds) attachments.remove(id);
-      };
+      const acknowledgeAccepted = createComposerAcknowledgement({
+        runtimeGeneration, identity: owner.identity, retained: draftRetentionIdentity !== undefined,
+        client: owner.client, currentClient: () => composerOwner.current.client,
+        settle: () => {
+          if (clientRequestId) mentionRequests.accepted(requestScope, clientRequestId);
+          mentionPermission.confirm(false);
+          updateDraftIfUnchanged(draftRevision, { text: "", referenceTokens: [] });
+          for (const id of submittedAttachmentIds) attachments.remove(id);
+        },
+      });
       const response = editingQueuedTurn
         ? await controller.updateQueuedTurn(editingQueuedTurn.id, updatedParts, acknowledgeAccepted)
         : attempt?.operation === "send"
@@ -797,6 +801,7 @@ function CanonicalChatWorkspaceContent({
         attachments={(
           <AttachmentPreviewRow
             items={attachments.items}
+            selectionError={attachments.selectionError}
             disabled={uploadingAttachments}
             onRemove={attachments.remove}
             onRetry={(localId) => void attachments.retry(localId)}
@@ -986,7 +991,7 @@ function CanonicalChatWorkspaceContent({
             <BotChatPanel key={controller.detail.record.chat.id} chatId={controller.detail.record.chat.id} visible={live && !inspectorExclusive}
               client={client.agents} directBotId={directBotId} detailsContainer={frameDetailsContainer ?? botDetailsContainer} headerContainer={botHeaderContainer}
               headerActions={chatSharingAction}
-              onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={controller.detail.record.chat.revision + botEventRevision}>
+              onModelChanged={() => setBotEventRevision(value => value + 1)} onSetup={openChatProviderSettings} onRefreshCatalog={liveCatalog.refresh} catalog={providerCatalog} catalogLoading={providerCatalogLoading} refreshKey={botEventRevision}>
             <ChatContextMenu chatId={controller.detail.record.chat.id}>
             <div className="contents">
             <ConversationTranscript turns={transcript} callbacks={{

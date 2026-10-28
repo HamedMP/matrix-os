@@ -4,7 +4,7 @@ import { CanonicalChatExecutionRootRefSchema } from "#canonical-chat-primitives"
 
 import {
   CanonicalChatApprovalDecisionSchema,
-  CanonicalChatMessagePartSchema,
+  CanonicalChatStoredMessagePartSchema,
   CanonicalChatModelSelectionSchema,
 } from "#canonical-chat";
 import { boundedDisplayText, boundedText, referenceId } from "#legacy-contract-primitives";
@@ -382,7 +382,7 @@ const CollaborationExportChatMessageSchema = z.object({
   state: z.enum(["pending", "committed", "failed"]),
   purpose: z.enum(["discussion", "ai_request", "assistant", "system"]),
   actorId: CollaborationActorIdSchema.optional(),
-  parts: z.array(CanonicalChatMessagePartSchema).min(1).max(64),
+  parts: z.array(CanonicalChatStoredMessagePartSchema).min(1).max(64),
   createdAt: z.iso.datetime(),
 }).strict().superRefine((message, context) => {
   message.parts.forEach((part, index) => {
@@ -520,7 +520,7 @@ export const CollaborationSharedChatMessageSchema = z.object({
   state: z.enum(["pending", "committed", "failed"]),
   purpose: z.enum(["discussion", "ai_request", "assistant", "system"]),
   actor: CollaborationParticipantSchema,
-  parts: z.array(CanonicalChatMessagePartSchema).min(1).max(64),
+  parts: z.array(CanonicalChatStoredMessagePartSchema).min(1).max(64),
   createdAt: z.iso.datetime(),
 }).strict().superRefine((message, context) => {
   message.parts.forEach((part, index) => {

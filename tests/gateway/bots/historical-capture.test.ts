@@ -53,7 +53,7 @@ it("gives current uploads priority, deduplicates ID and storage reference, caps 
 });
 it("preserves text turns for missing, symlink, unsupported and overbudget history with a safe index", async () => {
   await writeFile(join(home, "outside"), "SECRET"); await symlink(join(home, "outside"), join(home, "temporary/desktop-chat/link"));
-  await writeFile(join(home, "temporary/desktop-chat/big"), Buffer.alloc(1024 * 1024 + 1));
+  await writeFile(join(home, "temporary/desktop-chat/big"), Buffer.alloc(10 * 1024 * 1024 + 1));
   const prepared = await prepare([ref("missing"), ref("link"), ref("big"), { ...ref("gif", "image"), part: { ...ref("gif", "image").part, mimeType: "image/gif" } }]);
   expect(prepared.fileAliases).toEqual([]); expect(prepared.imageCount).toBe(0); expect(prepared.prompt("Normal text")).toContain("Normal text");
   expect(prepared.prompt("Normal text").match(/unavailable for this request/g)).toHaveLength(4); expect(prepared.prompt("Normal text")).not.toContain(home); prepared.dispose();
@@ -65,8 +65,10 @@ it("does not hydrate history images on text-only routes or files without current
 it("enforces actual byte aggregate, four images, and the funded one-MiB image limit", async () => {
   const images = Array.from({ length: 5 }, (_, i) => ref(`img${i}`, "image", 20 - i));
   for (const { part } of images) await writeFile(join(home, part.ownerReference!), Buffer.concat([png, Buffer.alloc(2 * 1024 * 1024 - png.length)]));
-  await writeFile(join(home, "temporary/desktop-chat/current"), Buffer.alloc(1024 * 1024));
-  const prepared = await prepare(images, { parts: [ref("current").part] }); expect(prepared.imageCount).toBe(3); prepared.dispose();
+  const imageOnly = await prepare(images); expect(imageOnly.imageCount).toBe(4); imageOnly.dispose();
+  await writeFile(join(home, "temporary/desktop-chat/current"), Buffer.alloc(10 * 1024 * 1024));
+  await writeFile(join(home, "temporary/desktop-chat/current2"), Buffer.alloc(4 * 1024 * 1024));
+  const prepared = await prepare(images, { parts: [ref("current").part, ref("current2").part] }); expect(prepared.imageCount).toBe(3); prepared.dispose();
   const funded = await prepare(images, { imageTotalMaximum: 1024 * 1024 }); expect(funded.imageCount).toBe(0); funded.dispose();
 });
 it("rechecks identity during capture and revokes captured data before subsequent chunk/tool reads", async () => {
@@ -192,4 +194,23 @@ it("propagates cancellation when cleanup also unlinks the captured historical up
   };
   await expect(prepare([ref("cancel")], { signal: controller.signal })).rejects.toMatchObject({ code: "stale_generation" });
   expect(closed).toHaveBeenCalledOnce();
+});
+it("keeps current aliases authoritative when eight same-labelled historical uploads cannot be mounted", async () => {
+  const current = Array.from({ length: 8 }, (_, i) => ({ ...ref(`current-${i}`).part, label: `same-label-${i}.txt` }));
+  const history = current.map((part, i) => ({ ...ref(`old-${i}`, "file", 10 + i), part: { ...ref(`old-${i}`).part, label: part.label } }));
+  for (const part of current) await writeFile(join(home, part.ownerReference!), "CURRENT");
+  const prepared = await prepare(history, { parts: current }); prepared.bind(binding);
+  try {
+    expect(prepared.fileAliases).toHaveLength(8);
+    const prompt = prepared.prompt("Read only the eight current submitted files.");
+    const lastCurrentAlias = prompt.lastIndexOf(prepared.fileAliases[7]!);
+    expect(lastCurrentAlias).toBeGreaterThan(0);
+    // Notes about unmounted history must not tell the model to discard the
+    // working current aliases above them. Same labels do not confer authority.
+    expect(prompt.slice(lastCurrentAlias)).not.toContain("supersedes prior aliases");
+    expect(prompt).toContain("Submitted files for this request");
+    expect(prompt.match(/history sequence \d+, .*unavailable for this request/g)).toHaveLength(8);
+    expect(await prepared.readArtifact(binding, { relPath: prepared.fileAliases[0]! })).toBe("CURRENT");
+    await expect(prepared.readArtifact(binding, { relPath: "submitted-inputs/stale-alias" })).rejects.toMatchObject({ code: "invalid_arguments" });
+  } finally { prepared.dispose(); }
 });

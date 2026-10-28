@@ -173,8 +173,9 @@ function trimAssistantOverflow(
   messages: AgentMessage[],
   maxBytes: number,
   eligible: (index: number) => boolean,
+  encodedSize: (messages: readonly AgentMessage[]) => number = encodedSessionBytes,
 ): AgentMessage[] {
-  let overflow = encodedSessionBytes(messages) - maxBytes;
+  let overflow = encodedSize(messages) - maxBytes;
   if (overflow <= 0) return messages;
   const candidates: Array<{ message: number; part: number; text: string }> = [];
   messages.forEach((message, messageIndex) => {
@@ -237,6 +238,20 @@ export function fitForStorage(
   if (fits()) return stored;
   if (options.allowDroppingTurns !== false) stored = dropOldestTurns(stored, maxBytes, now());
   return trimAssistantOverflow(stored, maxBytes, () => true);
+}
+
+/** Inference fitting preserves person messages, images and complete call/result pairs. */
+export function contextTextBytes(messages: readonly AgentMessage[]): number {
+  return encodedSessionBytes(withoutImages(messages));
+}
+
+export function fitInferenceContext(messages: readonly AgentMessage[], maxTextBytes: number): AgentMessage[] {
+  let fitted = [...messages];
+  for (const cap of TOOL_PAYLOAD_CAPS) {
+    if (contextTextBytes(fitted) <= maxTextBytes) return fitted;
+    fitted = fitted.map(message => capToolPayloads(message, cap));
+  }
+  return trimAssistantOverflow(fitted, maxTextBytes, () => true, contextTextBytes);
 }
 
 export function needsCompaction(messages: readonly AgentMessage[], contextWindow: number): boolean {

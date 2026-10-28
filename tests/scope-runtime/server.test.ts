@@ -104,7 +104,7 @@ describe("scope runtime supervisor server", () => {
       third.once("error", reject);
     });
     await server.close();
-    expect(third.destroyed).toBe(true);
+    await vi.waitFor(() => expect(third.destroyed).toBe(true));
     expect(controller.close).toHaveBeenCalledTimes(1);
   });
 

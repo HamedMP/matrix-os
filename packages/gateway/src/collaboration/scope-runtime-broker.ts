@@ -1,5 +1,6 @@
-import { BOT_IMAGE_INFERENCE_FRAME_MAX_BYTES } from "@matrix-os/contracts";
+import { BOT_IMAGE_INFERENCE_FRAME_MAX_BYTES, INFERENCE_RESPONSE_BODY_MAX_BYTES, INFERENCE_RESPONSE_FRAME_MAX_BYTES } from "@matrix-os/contracts";
 import { ScopeRuntimeBotInferenceRequestSchema } from "@matrix-os/scope-runtime/broker-protocol";
+import { isInferenceStream, writeInferenceStream } from './inference-stream-transport.js';
 import {
   ScopeRuntimeBrokerRequestSchema,
   ScopeRuntimeBrokerResponseSchema,
@@ -336,7 +337,7 @@ export function createScopeRuntimeBroker(options: {
         await discard(response);
         return failure(request.requestId, "provider_unavailable");
       }
-      const body = await readBoundedBody(response);
+      const body = await readBoundedBody(response, INFERENCE_RESPONSE_BODY_MAX_BYTES);
       return ScopeRuntimeBrokerResponseSchema.parse({
         version: 1,
         requestId: request.requestId,
@@ -383,7 +384,7 @@ export function createScopeRuntimeBroker(options: {
         await discard(response);
         return failure(request.requestId, "provider_unavailable");
       }
-      const body = await readBoundedBody(response);
+      const body = await readBoundedBody(response, INFERENCE_RESPONSE_BODY_MAX_BYTES);
       return ScopeRuntimeBrokerResponseSchema.parse({
         version: 1,
         requestId: request.requestId,
@@ -478,7 +479,7 @@ export function createScopeRuntimeBrokerServer(options: {
    * (bot workloads). Returns undefined to use the shared broker path; a
    * routed handler resolving undefined drops the connection.
    */
-  routeFrame?(raw: unknown): Promise<Record<string, unknown> | undefined> | undefined;
+  routeFrame?(raw: unknown, signal: AbortSignal): Promise<Record<string, unknown> | undefined> | undefined;
   /** Explicitly registered Bot routes only; generic/shared frame caps remain unchanged. */
   botImageFrames?: boolean;
   maxConnections?: number;
@@ -512,25 +513,60 @@ export function createScopeRuntimeBrokerServer(options: {
       return;
     }
     sockets.add(socket);
+    const transport = new AbortController();
     let input = "";
     let rejected = false;
+    let started = false;
+    let streamingRequest = false;
     socket.setEncoding("utf8");
     socket.setTimeout(requestTimeoutMs, () => socket.destroy());
     socket.once("error", (error: unknown) => {
       console.warn("[collaboration] scope broker socket failed:",
         error instanceof Error ? error.name : "UnknownError");
     });
-    socket.once("close", () => sockets.delete(socket));
+    socket.once("close", () => { sockets.delete(socket); transport.abort(new Error('Inference transport closed')); });
     socket.on("data", (chunk) => {
       if (rejected) return;
-      input += chunk;
+      const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+      if (started) {
+        if (text.trim()) socket.destroy();
+        return;
+      }
+      input += text;
       if (Buffer.byteLength(input, "utf8") > (options.botImageFrames ? BOT_IMAGE_INFERENCE_FRAME_MAX_BYTES : MAX_REQUEST_FRAME_BYTES)) {
         rejected = true;
         input = "";
         socket.destroy();
+        return;
+      }
+      // Streaming keeps the caller's write direction open for cancellation.
+      // Legacy/control frames still require the original request EOF boundary.
+      const newline = input.indexOf('\n');
+      if (newline >= 0) {
+        try {
+          const candidate = ScopeRuntimeBotInferenceRequestSchema.safeParse(JSON.parse(input.slice(0, newline)));
+          if (candidate.success && candidate.data.responseMode === 'stream') {
+            if (input.slice(newline + 1).trim()) { rejected = true; socket.destroy(); return; }
+            streamingRequest = true;
+            dispatch();
+          }
+        } catch (error: unknown) {
+          if (!(error instanceof SyntaxError)) {
+            console.warn('[scope-runtime] stream request validation failed:', error instanceof Error ? error.name : 'UnknownError');
+            socket.destroy();
+          }
+        }
       }
     });
     socket.once("end", () => {
+      if (streamingRequest) {
+        transport.abort(new Error('Inference consumer disconnected'));
+        socket.destroy();
+      } else dispatch();
+    });
+    function dispatch(): void {
+      if (started) return;
+      started = true;
       if (closed || rejected) {
         socket.destroy();
         return;
@@ -545,8 +581,10 @@ export function createScopeRuntimeBrokerServer(options: {
           const raw: unknown = JSON.parse(frames[0]!);
           if (Buffer.byteLength(input, "utf8") > MAX_REQUEST_FRAME_BYTES
             && (!options.botImageFrames || !ScopeRuntimeBotInferenceRequestSchema.safeParse(raw).success)) { socket.destroy(); return; }
-          const routed = options.routeFrame?.(raw);
+          input = '';
+          const routed = options.routeFrame?.(raw, transport.signal);
           let frame: string;
+          let maxResponseFrameBytes = MAX_RESPONSE_FRAME_BYTES;
           if (routed) {
             socket.setTimeout(routedRequestTimeoutMs);
             const response = await routed;
@@ -554,13 +592,27 @@ export function createScopeRuntimeBrokerServer(options: {
               socket.destroy();
               return;
             }
-            frame = `${JSON.stringify(response)}\n`;
+            if (isInferenceStream(response)) {
+              const request = ScopeRuntimeBotInferenceRequestSchema.safeParse(raw);
+              if (!request.success || request.data.responseMode !== 'stream' || request.data.requestId !== response.requestId) {
+                socket.destroy(); return;
+              }
+              await writeInferenceStream(socket, response, transport.signal);
+              return;
+            }
+            if (ScopeRuntimeBotInferenceRequestSchema.safeParse(raw).success) {
+              frame = `${JSON.stringify(ScopeRuntimeBrokerResponseSchema.parse(response))}\n`;
+              maxResponseFrameBytes = INFERENCE_RESPONSE_FRAME_MAX_BYTES;
+            } else {
+              frame = `${JSON.stringify(response)}\n`;
+            }
           } else {
             const request = ScopeRuntimeBrokerRequestSchema.parse(raw);
             const response = await options.broker.handle(request);
             frame = `${JSON.stringify(ScopeRuntimeBrokerResponseSchema.parse(response))}\n`;
+            if (request.action !== "egress.fetch") maxResponseFrameBytes = INFERENCE_RESPONSE_FRAME_MAX_BYTES;
           }
-          if (Buffer.byteLength(frame, "utf8") > MAX_RESPONSE_FRAME_BYTES) {
+          if (Buffer.byteLength(frame, "utf8") > maxResponseFrameBytes) {
             socket.destroy();
             return;
           }
@@ -579,7 +631,7 @@ export function createScopeRuntimeBrokerServer(options: {
         console.warn("[collaboration] scope broker request cleanup failed:",
           error instanceof Error ? error.name : "UnknownError");
       });
-    });
+    }
   }
 
   return {

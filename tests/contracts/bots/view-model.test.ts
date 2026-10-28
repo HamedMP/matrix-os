@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BotAuthorityView, BotInteraction, BotTaskSummary } from "@matrix-os/contracts";
-import { botInteractionCard, botTaskStatusCopy, groupBotAuthority } from "@matrix-os/contracts";
+import { botSavedAnswerRecovery, botInteractionCard, botTaskStatusCopy, groupBotAuthority } from "@matrix-os/contracts";
 
 const now = "2026-09-28T12:00:00.000Z";
 const interaction = (overrides: Partial<BotInteraction> = {}): BotInteraction => ({
@@ -26,6 +26,18 @@ describe("bot interaction view model", () => {
     expect(botInteractionCard(interaction({ kind: "account_choice", payload: undefined }), now).title).toBe("Choose an account");
     expect(botInteractionCard(interaction({ kind: "connect_request", payload: undefined }), now).title).toBe("Connect a service");
     expect(botInteractionCard(interaction({ kind: "approval", payload: undefined }), now).title).toBe("Approval requested");
+  });
+});
+
+describe("saved Bot answer recovery", () => {
+  it("keeps the saved revision and expiry semantics shared across surfaces", () => {
+    expect(botSavedAnswerRecovery(interaction({ status: "resolved", recoveryAvailable: true, revision: 2 }), now)).toEqual({ revision: 2, expired: false });
+    expect(botSavedAnswerRecovery(interaction(), now, 2)).toEqual({ revision: 2, expired: false });
+    expect(botSavedAnswerRecovery(interaction({ status: "resolved", recoveryAvailable: true, expiresAt: now }), now)?.expired).toBe(true);
+  });
+  it("never exposes recovery for a cancelled or hidden question", () => {
+    expect(botSavedAnswerRecovery(interaction({ status: "cancelled", recoveryAvailable: true }), now)).toBeNull();
+    expect(botSavedAnswerRecovery(interaction({ status: "resolved", recoveryAvailable: true, payload: undefined }), now)).toBeNull();
   });
 });
 

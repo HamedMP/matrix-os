@@ -1,7 +1,7 @@
-import { createBrowserPermissionClient, type BrowserPermissionClient } from "@matrix-os/ui";
+import { createBrowserPermissionClient, recoverCanonicalChatAdmission, type CanonicalChatClientAdmission, type BrowserPermissionClient } from "@matrix-os/ui";
 import type { CanonicalSubmitChatApprovalRequest } from "@matrix-os/contracts";
 import { markChatNavigation, chatImportSourceVersionUrl } from "@matrix-os/ui";
-import { CanonicalChatNavigationResponseSchema, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
+import { MAX_AGENT_ATTACHMENT_BYTES, CanonicalChatNavigationResponseSchema, canonicalAssistantOutputMessages, type CanonicalChatNavigationResponse } from "@matrix-os/contracts";
 import { CanonicalUpdateChatReadStateRequestSchema, type CanonicalUpdateChatReadStateRequest } from "@matrix-os/contracts";
 import { createChatAgentClient, filePreviewContentUrl, type ChatAgentClient } from "@matrix-os/ui";
 import { chatEventVersionUrl, chatFundingVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
@@ -57,7 +57,7 @@ export interface CanonicalShellChatClient {
   detail(chatId: string, cursor?: string): Promise<CanonicalChatDetailResponse>;
   updateReadState(chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<CanonicalChatRecord>;
   updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
-  admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatTurnAdmissionResponse>;
+  admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatClientAdmission>;
   queueTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatQueueAdmissionResponse>;
   cancelQueuedTurn(chatId: string, queuedTurnId: string, input: CanonicalCancelQueuedChatTurnRequest): Promise<CanonicalChatQueueCancellationResponse>;
   cancelRun(chatId: string, runId: string, clientRequestId: string): Promise<CanonicalChatRunCancellationResponse>;
@@ -83,8 +83,8 @@ export interface ShellAttachmentInput {
 
 type CanonicalAttachmentReference = Extract<CanonicalChatMessagePart, { type: "attachment_reference" }>;
 
-const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
-const MAX_DATA_URL_LENGTH = 7 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = MAX_AGENT_ATTACHMENT_BYTES;
+const MAX_DATA_URL_LENGTH = Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 133;
 const DATA_URL = /^data:([^;,]{1,120});base64,([A-Za-z0-9+/]*={0,2})$/;
 const SAFE_MIME_TYPE = /^[A-Za-z0-9][A-Za-z0-9.+/-]+$/;
 const SAFE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -256,11 +256,22 @@ export function createCanonicalShellChatClient(options: {
     async admitTurn(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
       const body = CanonicalCreateChatTurnRequestSchema.parse(input);
-      return CanonicalChatTurnAdmissionResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turns`), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      }));
+      try {
+        return CanonicalChatTurnAdmissionResponseSchema.parse(await request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turns`), {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        }));
+      } catch (error: unknown) {
+        const ambiguous = error instanceof TypeError
+          || error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")
+          || error instanceof CanonicalShellChatRequestError && error.status >= 500;
+        if (ambiguous) {
+          const recovered = await recoverCanonicalChatAdmission(id, body,
+            requestHash => request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/turn-admissions/${encodeURIComponent(body.clientRequestId)}?requestHash=${requestHash}`)),
+            () => request(chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}?limit=200`)));
+          if (recovered) return recovered;
+        }
+        throw error;
+      }
     },
     async queueTurn(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
@@ -383,6 +394,7 @@ function partText(part: CanonicalChatMessage["parts"][number]): string | null {
 }
 
 export function projectCanonicalMessages(messages: CanonicalChatMessage[]): ChatMessage[] {
+  messages = canonicalAssistantOutputMessages(messages);
   const resolvedApprovals = new Set(messages.flatMap((message) => message.parts.flatMap((part) =>
     part.type === "approval_result" && message.runId
       ? [`${message.runId}\0${part.approvalId}`]

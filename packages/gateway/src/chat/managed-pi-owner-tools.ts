@@ -28,7 +28,7 @@ interface Run {
   controller: AbortController;
   prepared: Map<string, Prepared>; // <=60 actions, erased on close.
   seen: Set<string>; // <=60 actions, erased on close.
-  pending?: { id: string; resolve(decision: CanonicalChatApprovalDecision): void };
+  pending?: { id: string; expiresAt: number; resolve(decision: CanonicalChatApprovalDecision): void };
   mcp?: McpControl;
   mcpInitialization?: Promise<McpControl>;
   revoking?: Promise<boolean>;
@@ -125,8 +125,9 @@ export function createManagedPiOwnerTools(deps: {
         if (approved) resolve(); else reject(new BotBrokerActionError("denied"));
       };
       const abort = () => finish(false, "cancel");
+      const expiresAt = Date.now() + HUMAN_WAIT_MS;
       const timer = setTimeout(abort, HUMAN_WAIT_MS); timer.unref?.();
-      run.pending = { id, resolve: decision => finish(decision === "approve", decision) };
+      run.pending = { id, expiresAt, resolve: decision => finish(decision === "approve", decision) };
       signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) { abort(); return; }
       run.emit(CanonicalProviderRunEventSchema.parse({ type: "approval.requested", approvalId: id,
@@ -251,7 +252,13 @@ export function createManagedPiOwnerTools(deps: {
       if (!run || input.owner.type !== "personal" || input.owner.ownerId !== run.binding.ownerId || input.chatId !== run.binding.chatId
         || !["approve", "decline", "cancel"].includes(input.decision)) throw new BotBrokerActionError("denied");
       await live(run.binding, run.controller.signal);
-      if (run.pending?.id === input.approvalId) { run.pending.resolve(input.decision); return; }
+      if (run.pending?.id === input.approvalId) {
+        if (Date.now() >= run.pending.expiresAt) {
+          run.pending.resolve("cancel");
+          throw new BotBrokerActionError("denied");
+        }
+        run.pending.resolve(input.decision); return;
+      }
       if (!run.mcp) throw new BotBrokerActionError("denied");
       await run.mcp.submit(input.approvalId, input.decision, { chatId: input.chatId, clientRequestId: input.clientRequestId, platformApprovalProof: input.platformApprovalProof });
     },
