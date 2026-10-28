@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { z } from "zod/v4";
 import { AppIdentitySchema } from "@matrix-os/contracts";
 import { readBoundedJsonFileWithIdentity } from "../bounded-json-file.js";
-import { listUniqueAppManifests } from "../app-runtime/app-index.js";
+import { listUniqueAppManifests, MAX_APP_MANIFEST_BYTES } from "../app-runtime/app-index.js";
 import { AppManifestSchema, type AppManifest } from "../app-runtime/manifest-schema.js";
 
 const Name = z.string().min(1).max(128).regex(/^[a-z][a-z0-9_-]*$/);
@@ -16,7 +16,6 @@ export type AppCapabilityGrant = z.infer<typeof AppCapabilityPolicySchema>["apps
 export type AppCapabilityAccess =
   | { kind: "policy"; grant: AppCapabilityGrant }
   | { kind: "trusted-default" };
-const MAX_APP_MANIFEST_BYTES = 1024 * 1024;
 
 async function readAppCapabilityPolicy(homePath: string): Promise<z.infer<typeof AppCapabilityPolicySchema> | null> {
   const path = join(homePath, "system/app-capabilities.json");

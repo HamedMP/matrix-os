@@ -1,7 +1,10 @@
-import { readdir, readFile, realpath } from "node:fs/promises";
+import { lstat, readdir, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
+import { readBoundedJsonFileWithIdentity } from "../bounded-json-file.js";
 import { ManifestError } from "./errors.js";
 import { parseManifest, SAFE_SLUG, type AppManifest } from "./manifest-schema.js";
+
+export const MAX_APP_MANIFEST_BYTES = 1024 * 1024;
 
 export const APP_INDEX_SKIP_DIRS = new Set([
   "node_modules",
@@ -56,7 +59,9 @@ async function readManifestCandidate(
   const manifestPath = join(appDir, "matrix.json");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(await readFile(manifestPath, "utf8"));
+    const document = await readBoundedJsonFileWithIdentity(manifestPath, MAX_APP_MANIFEST_BYTES);
+    if (!document) return null;
+    parsed = document.value;
   } catch (err: unknown) {
     if (isMissingManifestError(err)) {
       return null;
@@ -173,8 +178,18 @@ export async function resolveAppBySlug(
     try {
       const appDir = join(appsDir, slug);
       const manifestPath = join(appDir, "matrix.json");
-      const direct = JSON.parse(await readFile(manifestPath, "utf8"));
-      const parsed = await parseManifest(direct);
+      const document = await readBoundedJsonFileWithIdentity(manifestPath, MAX_APP_MANIFEST_BYTES);
+      if (!document) {
+        const stats = await lstat(manifestPath);
+        if (stats.isFile() && !stats.isSymbolicLink()) {
+          return {
+            ok: false,
+            error: new ManifestError("invalid_manifest", `invalid or oversized manifest for app slug "${slug}"`),
+          };
+        }
+        return { ok: false, error: new ManifestError("not_found", `app slug "${slug}" not found`) };
+      }
+      const parsed = await parseManifest(document.value);
       if (!parsed.ok) return { ok: false, error: parsed.error };
       if (parsed.manifest.slug === slug) {
         const [appsReal, appReal] = await Promise.all([realpath(appsDir), realpath(appDir)]);
@@ -196,12 +211,6 @@ export async function resolveAppBySlug(
         };
       }
     } catch (err: unknown) {
-      if (err instanceof SyntaxError) {
-        return {
-          ok: false,
-          error: new ManifestError("invalid_manifest", `invalid JSON for app slug "${slug}"`),
-        };
-      }
       if (!isExpectedFsError(err)) throw err;
     }
     return { ok: false, error: new ManifestError("not_found", `app slug "${slug}" not found`) };
