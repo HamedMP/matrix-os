@@ -7,6 +7,7 @@ type Step = { name?: string; run?: string; if?: string };
 const production = YAML.parse(readFileSync(".github/workflows/platform-cloud-run.yml", "utf8")).jobs.deploy;
 const preview = YAML.parse(readFileSync(".github/workflows/preview-platform.yml", "utf8")).jobs.preview;
 const org = "org_SyntheticPreview123";
+const sourceSha = "0123456789abcdef0123456789abcdef01234567";
 const validationName = "Validate Private Preview organization configuration";
 const run = (job: typeof production, name: string): string => {
   const script = job.steps.find((entry: Step) => entry.name === name)?.run;
@@ -42,6 +43,7 @@ function deploy(job: typeof production, value: string) {
     WHATSAPP_ENCRYPTION_KEY_VERSION: "1", IMAGE: "synthetic-image", IMAGE_DIGEST: "synthetic-image",
     GOOGLE_TAG_MANAGER_ID: "GTM-SYNTHETIC", GOOGLE_ANALYTICS_MEASUREMENT_ID: "G-SYNTHETIC123",
     GOOGLE_ANALYTICS_API_SECRET_VERSION: "2",
+    GITHUB_SHA: sourceSha,
   } });
 }
 
@@ -112,7 +114,11 @@ describe("Private Preview organization deployment contract", () => {
       const result = spawnSync("bash", ["-euc", `gcloud() { printf '%s' "$REVISION_JSON"; }\n${run(production, "Verify deployed provisioning contract")}`], {
         encoding: "utf8", timeout: 5_000, env: { PATH: process.env.PATH, ...values,
           CANDIDATE_REVISION: "synthetic-revision", MATRIX_INTERNAL_CLERK_ORG_ID: org,
-          REVISION_JSON: JSON.stringify({ spec: { containers: [{ env }] } }),
+          GITHUB_SHA: sourceSha,
+          REVISION_JSON: JSON.stringify({
+            metadata: { labels: { "matrix-source-sha": sourceSha } },
+            spec: { containers: [{ env }] },
+          }),
         },
       });
       expect(result.status, result.stderr).toBe(value === org ? 0 : 1);
