@@ -8,6 +8,8 @@ export type OpenAgents = {
   onStartChat?: StartAgentChat;
   view?: "library" | "recipes";
   title?: "Your AI team" | "New agent" | "Edit agent";
+  requestedRecipeId?: string;
+  onRequestedRecipeResult?: (result: { ok: true } | { ok: false; error: "recipe_unavailable" | "navigation_unavailable" }) => void;
 };
 type BotDetailsRequest = {client: ChatAgentClient; chatId: string; agentId: string; sequence: number};
 type Navigation = {
@@ -17,7 +19,7 @@ type Navigation = {
   opened: OpenAgents | null;
   generation: number;
   getGeneration(): number;
-  open(value: OpenAgents, trigger: HTMLButtonElement): void;
+  open(value: OpenAgents, trigger?: HTMLButtonElement): void;
   close(restoreFocus?: boolean): void;
   setTitle(client: ChatAgentClient, generation: number, title: NonNullable<OpenAgents["title"]>): void;
 };
@@ -37,10 +39,10 @@ function LocalWorkspace({ children }: { children: ReactNode }) {
   const generationRef = useRef(0);
   const getGeneration = useCallback(() => generationRef.current, []);
   const trigger = useRef<HTMLButtonElement | null>(null);
-  const open = useCallback((value: OpenAgents, element: HTMLButtonElement) => {
+  const open = useCallback((value: OpenAgents, element?: HTMLButtonElement) => {
     generationRef.current += 1; setGeneration(generationRef.current);
     setDetailsRequest(null);
-    trigger.current = element;
+    trigger.current = element ?? null;
     setOpened({ ...value, title: value.view === "recipes" ? "New agent" : "Your AI team" });
   }, []);
   const setTitle = useCallback((client: ChatAgentClient, ownerGeneration: number, title: NonNullable<OpenAgents["title"]>) => {
