@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
-const navigation = vi.hoisted(() => ({ open: vi.fn() }));
+const navigation = vi.hoisted(() => ({
+  open: vi.fn(),
+  close: vi.fn(),
+  cancelRequest: vi.fn(),
+  getOpened: vi.fn(() => null as object | null),
+}));
 vi.mock("@matrix-os/ui", async (importOriginal) => ({
   ...await importOriginal<typeof import("@matrix-os/ui")>(),
   useChatAgentsNavigation: () => navigation,
@@ -15,6 +20,10 @@ import { NativeAppChatNavigationHost, useNativeAppChatNavigation } from "../../d
 afterEach(() => {
   cleanup();
   navigation.open.mockReset();
+  navigation.close.mockReset();
+  navigation.cancelRequest.mockReset();
+  navigation.getOpened.mockReset();
+  navigation.getOpened.mockReturnValue(null);
   useNativeAppChatNavigation.setState(useNativeAppChatNavigation.getInitialState(), true);
 });
 
@@ -35,4 +44,45 @@ it("revalidates runtime authority immediately before opening a queued recipe", a
   />);
   await waitFor(() => expect(useNativeAppChatNavigation.getState().pending).toBeNull());
   expect(navigation.open).not.toHaveBeenCalled();
+});
+
+it("closes an old Agents scope before opening the queued recipe", async () => {
+  navigation.getOpened.mockReturnValueOnce({}).mockReturnValue(null);
+  useNativeAppChatNavigation.getState().queue({
+    requestId: "request-route-change",
+    view: "recipes",
+    recipeId: "company-brain",
+    runtimeSlot: "primary",
+    authGeneration: 7,
+  });
+  render(<NativeAppChatNavigationHost
+    active
+    client={{ agents: {} } as never}
+    onStartChat={vi.fn()}
+    runtimeSlot="primary"
+    authGeneration={7}
+  />);
+  await waitFor(() => expect(navigation.open).toHaveBeenCalledOnce());
+  expect(navigation.close).toHaveBeenCalledOnce();
+  expect(navigation.close.mock.invocationCallOrder[0]).toBeLessThan(navigation.open.mock.invocationCallOrder[0]!);
+});
+
+it("closes only the Agents panel owned by a request canceled during catalog loading", async () => {
+  useNativeAppChatNavigation.getState().queue({
+    requestId: "request-catalog-loading",
+    view: "recipes",
+    recipeId: "company-brain",
+    runtimeSlot: "primary",
+    authGeneration: 7,
+  });
+  render(<NativeAppChatNavigationHost
+    active
+    client={{ agents: {} } as never}
+    onStartChat={vi.fn()}
+    runtimeSlot="primary"
+    authGeneration={7}
+  />);
+  await waitFor(() => expect(navigation.open).toHaveBeenCalledOnce());
+  act(() => useNativeAppChatNavigation.getState().cancel("request-catalog-loading"));
+  await waitFor(() => expect(navigation.cancelRequest).toHaveBeenCalledWith("request-catalog-loading"));
 });

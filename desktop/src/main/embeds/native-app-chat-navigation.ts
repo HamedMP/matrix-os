@@ -63,7 +63,8 @@ export function createNativeAppChatNavigationBroker(options: {
         pending = entry;
         try {
           options.emit({ ...request, ...scope, requestId });
-        } catch {
+        } catch (failure: unknown) {
+          console.warn("[native-app-chat] delivery failed:", failure instanceof Error ? failure.name : "UnknownError");
           clear(entry);
           reject(new Error("Chat navigation could not be delivered"));
         }

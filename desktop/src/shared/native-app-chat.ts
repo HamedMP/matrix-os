@@ -47,7 +47,8 @@ export function createNativeAppOpenChatClient(
     if (!parsed.success) throw new Error("Invalid Chat navigation");
     try {
       await invoke(parsed.data);
-    } catch {
+    } catch (failure: unknown) {
+      console.warn("[native-app-chat] invocation failed:", failure instanceof Error ? failure.name : "UnknownError");
       throw new Error("Chat navigation is unavailable");
     }
   };

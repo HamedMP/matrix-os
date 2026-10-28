@@ -21,6 +21,13 @@ function fixture() {
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("acknowledged native Chat navigation", () => {
+  it("records a safe diagnostic when renderer delivery fails", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const broker = createNativeAppChatNavigationBroker({ emit: () => { throw new TypeError("private renderer detail"); } });
+    await expect(broker.request({ view: "recipes" }, { runtimeSlot: "primary", authGeneration: 4 }))
+      .rejects.toThrow("could not be delivered");
+    expect(warning).toHaveBeenCalledWith("[native-app-chat] delivery failed:", "TypeError");
+  });
   it("resolves only the matching renderer acknowledgement and bounds pending requests", async () => {
     const emit = vi.fn();
     const broker = createNativeAppChatNavigationBroker({ emit });
@@ -78,6 +85,12 @@ describe("native installed-app opening", () => {
     await expect(openChat({ view: "library" } as never)).rejects.toThrow("Invalid Chat navigation");
     await expect(openChat({ view: "recipes", recipeId: "../company-brain" })).rejects.toThrow("Invalid Chat navigation");
     expect(invoke).toHaveBeenCalledTimes(1);
+  });
+  it("records a safe app-side diagnostic while keeping invocation failures generic", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const openChat = createNativeAppOpenChatClient(vi.fn(async () => { throw new TypeError("private bridge detail"); }));
+    await expect(openChat({ view: "recipes" })).rejects.toThrow("Chat navigation is unavailable");
+    expect(warning).toHaveBeenCalledWith("[native-app-chat] invocation failed:", "TypeError");
   });
   it("acknowledges authorized Chat recipe navigation and returns generic failures", async () => {
     const openChat = vi.fn(async () => undefined);
