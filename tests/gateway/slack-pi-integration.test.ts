@@ -283,8 +283,8 @@ async function completeCompanyRuns(s: Awaited<ReturnType<typeof setup>>, service
 }
 
 describe("Slack company Pi composition", () => {
-  it("initializes an unbound company Chat as its owner, runs an employee through Pi, and publishes the exact committed output", async () => {
-    const s = await setup();
+  it.each([false, true])("initializes an unbound company Chat as its owner, runs an employee through Pi, and publishes the exact committed output (revision race: %s)", async revisionRace => {
+    const s = await setup(revisionRace);
     const { company, platform, posts, payload, signed, restart, platformDb } = await setupSlack(s);
     expect((await platform.routes.request("/webhooks/slack/events", signed())).status).toBe(200);
     expect(await s.db.selectFrom("chat_queued_turns").selectAll().execute()).toEqual([]);
@@ -306,10 +306,14 @@ describe("Slack company Pi composition", () => {
       expect.arrayContaining(runAudiences.map(binding=>({scopeId:binding.scope_id,actorId:binding.requesting_actor_id}))),
     );
     expect(s.runtimes.size).toBe(0);
-    expect(s.readinessChecks).toEqual([
+    // Admission retries revalidate readiness; they must not change the bound driver.
+    expect(s.readinessChecks.slice(0, 2)).toEqual([
       { boundDriverKind: "matrix_bot", result: "ready" },
       { boundDriverKind: "matrix_bot", result: "ready" },
     ]);
+    for (const check of s.readinessChecks.slice(2)) {
+      expect(check).toEqual({ boundDriverKind: "matrix_bot", result: "ready" });
+    }
     expect(s.createRuntime.mock.calls.map(([input]) => input.sandbox.actorId)).toEqual([actors.owner, actors.editor]);
     expect(JSON.stringify(s.stream.mock.calls[1]![1])).not.toContain("Company thread initialized.");
     const tasks = await s.fixture.db.selectFrom("bot_tasks").select("status").execute();
