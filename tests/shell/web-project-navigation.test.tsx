@@ -8,9 +8,9 @@ import { useWebProjects } from "../../shell/src/components/chat/web-projects";
 import { ChatRailOrderContext } from "@matrix-os/ui";
 import type { RenameableConversation } from "../../shell/src/components/chat/ChatTitleRename";
 
-function Nav({ gatewayUrl, scopeKey, chats = [], onSelectChat = vi.fn() }: { gatewayUrl: string; scopeKey: string; chats?: RenameableConversation[]; onSelectChat?: (chatId: string) => void }) {
+function Nav({ gatewayUrl, scopeKey, chats = [], activeChatId, onSelectChat = vi.fn() }: { gatewayUrl: string; scopeKey: string; chats?: RenameableConversation[]; activeChatId?: string; onSelectChat?: (chatId: string) => void }) {
   const state = useWebProjects(gatewayUrl, scopeKey);
-  return <WebProjectsNav state={state} gatewayUrl={gatewayUrl} chats={chats} listedChatIds={new Set(chats.map(chat => chat.id))} onSelectChat={onSelectChat}
+  return <WebProjectsNav state={state} gatewayUrl={gatewayUrl} chats={chats} listedChatIds={new Set(chats.map(chat => chat.id))} activeChatId={activeChatId} onSelectChat={onSelectChat}
     renderChat={chat => <button key={chat.id} type="button">{chat.title}</button>} />;
 }
 import { OrganizationStateProvider } from "../../shell/src/lib/collaboration-organization-state";
@@ -480,4 +480,21 @@ it("keeps focused project chats reorderable in their lifecycle group, as in the 
   const row = screen.getByRole("button", { name: "Chat 1" }).closest<HTMLElement>("[data-rail-order-id]");
   expect(row?.dataset.railOrderId).toBe("chat_1");
   expect(row?.dataset.railOrderGroup).toBeTruthy();
+});
+
+it("lays out projects like the other rail sections and older chats like ordinary chat rows", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url.includes("/api/workspace/projects")
+    ? Response.json({ projects: [{ id: "proj_france", slug: "france", name: "France" }] })
+    : url.includes("projectId=proj_france") ? Response.json({ items: [{ chat: { id: "chat_old", title: "Older chat" } }], nextCursor: null })
+      : Response.json({ items: [], nextCursor: null })));
+  render(<Nav gatewayUrl="https://example.test/vm/main" scopeKey="owner/main" chats={[projectConversation(1)]} activeChatId="chat_old" />);
+  const nav = await screen.findByRole("navigation", { name: "Projects" });
+  // No extra inset: the Projects heading lines up with Pinned, Needs you, Working and Done.
+  expect(nav.getAttribute("class")).toBeNull();
+  expect(within(nav).getByRole("button", { name: "France" }).closest(".matrix-web-project")).toBeTruthy();
+  fireEvent.click(await within(nav).findByRole("button", { name: "Expand France chats" }));
+  const older = await within(nav).findByRole("button", { name: "Older chat" });
+  expect(older.classList).toContain("matrix-web-chat-row");
+  expect(older.closest(".matrix-web-chat-row-item")?.getAttribute("data-current")).toBe("true");
+  expect(older.closest(".matrix-web-project-chats")).toBeTruthy();
 });

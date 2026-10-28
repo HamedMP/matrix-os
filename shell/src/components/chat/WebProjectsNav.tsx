@@ -2,7 +2,7 @@
 
 import { ChatRailOrderItem, ChatRailSection, OverflowingChatTitle, filterChatsByImportSource, useMinuteClock,
   type ChatImportSourceFilterValue } from "@matrix-os/ui";
-import { ChevronRight, Folder, FolderOpen, MessageSquare } from "lucide-react";
+import { ChevronRight, Folder, FolderOpen } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import type { RenameableConversation } from "./ChatTitleRename";
 import { usePagedProjectChats, type FetchedProjectChat } from "./usePagedProjectChats";
@@ -32,19 +32,17 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
 }) {
   const { projects, loading, error, retry } = state;
   const [groupExpanded, setGroupExpanded] = useState(true);
-  return <nav aria-label="Projects" className="mx-2 space-y-1 text-sm">
+  // Same rail geometry as Electron Desktop: no inset of its own, so the heading lines up with the lifecycle sections.
+  return <nav aria-label="Projects">
     <ChatRailSection label="Projects" count={projects.length} countLabel={`${projects.length} hidden ${projects.length === 1 ? "project" : "projects"}`}
       expanded={groupExpanded} onExpandedChange={setGroupExpanded}>
-      {loading ? <p role="status" className="px-2 py-2 text-xs text-muted-foreground">Loading projects…</p> : null}
-      {error ? <div className="px-2 py-2 text-xs text-muted-foreground">
+      {loading ? <p role="status" className="matrix-web-project-note">Loading projects…</p> : null}
+      {error ? <div className="matrix-web-project-note">
         <p role="alert">Projects could not be loaded.</p>
-        <button type="button" className={`mt-1 rounded px-2 text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "min-h-11" : "min-h-9"}`}
-          onClick={retry}>Retry projects</button>
+        <button type="button" className="matrix-web-project-more" data-mobile={mobile || undefined} onClick={retry}>Retry projects</button>
       </div> : null}
-      {!loading && !error && projects.length === 0 ? <div className="space-y-1 px-2 py-3 text-xs text-muted-foreground">
-        <Folder aria-hidden="true" size={16} strokeWidth={1.5} />
-        <p className="font-medium text-foreground">No projects on this computer yet.</p>
-        <p>Your project chats will appear here when a project is available.</p>
+      {!loading && !error && projects.length === 0 ? <div className="matrix-web-project-note">
+        <p className="matrix-web-project-note-title">No projects on this computer yet.</p>
         <p>Create a project in Matrix Desktop to get started.</p>
       </div> : null}
       {projects.map(project => <WebProjectGroup key={`${state.identity}/${project.id}/${unreadOnly}/${sourceFilter}`} project={project} gatewayUrl={gatewayUrl}
@@ -84,20 +82,18 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   const shownCount = Math.max(limit, allRows.findIndex(row => row.chat.id === activeChatId) + 1);
   const hiddenCount = allRows.length - shownCount;
   return <div>
-    <div className="flex min-w-0 items-center rounded-md hover:bg-accent">
-      <button type="button" aria-label={project.name} title={project.name}
-        className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "min-h-11" : "min-h-9"}`}
+    <div className="matrix-web-project" data-mobile={mobile || undefined}>
+      <button type="button" aria-label={project.name} title={project.name} className="matrix-web-project-select"
         onClick={() => onFocusProject(project)}>
-        {expanded ? <FolderOpen aria-hidden="true" size={15} strokeWidth={1.5} className="shrink-0" /> : <Folder aria-hidden="true" size={15} strokeWidth={1.5} className="shrink-0" />}
+        {expanded ? <FolderOpen aria-hidden="true" size={15} strokeWidth={1.5} /> : <Folder aria-hidden="true" size={15} strokeWidth={1.5} />}
         <OverflowingChatTitle title={project.name} />
       </button>
       <button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name} chats`} aria-expanded={expanded}
-        className={`grid shrink-0 place-items-center rounded-md text-muted-foreground focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "size-11" : "size-7"}`}
-        onClick={toggleExpanded}>
+        className="matrix-web-project-disclosure" onClick={toggleExpanded}>
         <ChevronRight aria-hidden="true" size={12} className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} />
       </button>
     </div>
-    {expanded ? <div className="ml-4 space-y-0.5 border-l border-border pl-2">
+    {expanded ? <div className="matrix-web-project-chats">
       <ProjectChatRows rows={allRows.slice(0, shownCount)} projectId={project.id} nowMs={nowMs}
         activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat}
         renderChat={renderChat} mobile={mobile} />
@@ -117,27 +113,29 @@ export function ProjectChatRows({ rows, projectId, nowMs, activeChatId, activeCh
     ? <ChatRailOrderItem key={row.chat.id} id={row.chat.id} kind="chat" group={`project:${projectId}`}>
         {renderChat(row.chat, nowMs)}
       </ChatRailOrderItem>
-    : <button key={row.chat.id} type="button" aria-current={activeChatId === row.chat.id ? "page" : undefined}
-        className={`w-full truncate rounded px-2 text-left text-xs hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "min-h-11" : "min-h-9"}`}
-        onClick={() => onSelectChat(row.chat.id)}>{activeChatId === row.chat.id && activeChatTitle || row.chat.title}</button>)}</>;
+    // Older Chats from paging look like every other Chat row; they only lack the row actions.
+    : <div key={row.chat.id} className="matrix-web-chat-row-item" data-current={activeChatId === row.chat.id}>
+        <button type="button" aria-current={activeChatId === row.chat.id ? "page" : undefined}
+          className={`matrix-web-chat-row flex w-full items-center rounded-lg text-left focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "py-3" : "py-2"}`}
+          onClick={() => onSelectChat(row.chat.id)}>
+          <span className="matrix-web-chat-title flex min-w-0 flex-1"><OverflowingChatTitle title={activeChatId === row.chat.id && activeChatTitle || row.chat.title} /></span>
+        </button>
+      </div>)}</>;
 }
 
 export function ProjectChatStatus({ rowCount, loading, error, hasMore, mobile, filtered, retry }: {
   rowCount: number; loading: boolean; error: boolean; hasMore: boolean; mobile: boolean; filtered: boolean; retry(): void;
 }) {
   return <>
-    {loading && rowCount === 0 ? <p role="status" className="px-2 py-2 text-xs text-muted-foreground">Loading chats…</p> : null}
-    {error ? <div className="px-2 py-2 text-xs text-muted-foreground">
+    {loading && rowCount === 0 ? <p role="status" className="matrix-web-project-note">Loading chats…</p> : null}
+    {error ? <div className="matrix-web-project-note">
       <p role="alert">Project chats could not be loaded.</p>
-      <button type="button" className={`mt-1 rounded px-2 text-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "min-h-11" : "min-h-9"}`}
-        onClick={retry}>Retry chats</button>
+      <button type="button" className="matrix-web-project-more" data-mobile={mobile || undefined} onClick={retry}>Retry chats</button>
     </div> : null}
-    {!loading && !error && !hasMore && rowCount === 0 ? <div className="space-y-1 px-2 py-3 text-xs text-muted-foreground">
-      <MessageSquare aria-hidden="true" size={16} strokeWidth={1.5} />
-      <p className="font-medium text-foreground">{filtered ? "No matching chats in this project." : "No chats in this project yet."}</p>
-      <p>{filtered ? "Try another filter or search." : "Conversations saved to this project will appear here."}</p>
-      {!filtered ? <p>Add one from Matrix Desktop.</p> : null}
-    </div> : null}
+    {/* One quiet line, as on Electron Desktop. */}
+    {!loading && !error && !hasMore && rowCount === 0 ? <p className="matrix-web-project-note">
+      {filtered ? "No matching chats in this project." : "No chats in this project yet."}
+    </p> : null}
   </>;
 }
 
@@ -146,11 +144,9 @@ export function ProjectChatPaging({ projectName, hiddenCount, loading, error, ha
   showMore(): void; loadMore(): void;
 }) {
   return <>
-    {hiddenCount > 0 ? <button type="button" aria-label={`Show more ${projectName} chats`}
-      className={`w-full rounded-md px-2.5 text-left text-xs text-muted-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "min-h-11" : "min-h-7"}`}
-      onClick={showMore}>Show more</button> : null}
-    {!loading && !error && hiddenCount <= 0 && hasMore ? <button type="button"
-      className={`w-full rounded-md px-2.5 text-left text-xs text-muted-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "min-h-11" : "min-h-7"}`}
-      onClick={loadMore}>Load more chats</button> : null}
+    {hiddenCount > 0 ? <button type="button" aria-label={`Show more ${projectName} chats`} className="matrix-web-project-more"
+      data-mobile={mobile || undefined} onClick={showMore}>Show more</button> : null}
+    {!loading && !error && hiddenCount <= 0 && hasMore ? <button type="button" className="matrix-web-project-more"
+      data-mobile={mobile || undefined} onClick={loadMore}>Load more chats</button> : null}
   </>;
 }

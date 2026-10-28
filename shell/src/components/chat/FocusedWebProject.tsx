@@ -36,13 +36,12 @@ export function FocusedWebProject({ project, gatewayUrl, chats, listedChatIds, s
   const older = filterChatsByImportSource(fetched.filter(chat => !listedChatIds.has(chat.id)
     && (!search || chat.title.toLowerCase().includes(search))), sourceFilter, chat => chat.importSource);
   const empty = chats.length === 0 && older.length === 0;
-  const control = `grid shrink-0 place-items-center rounded-md hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "size-11" : "size-7"}`;
   return <>
-    <div className="flex min-w-0 items-center gap-1 px-1 pb-1">
-      <button type="button" aria-label="Back to all chats" title="Back to all chats" className={control} onClick={onBack}>
+    <div className="matrix-web-project-header" data-mobile={mobile || undefined}>
+      <button type="button" aria-label="Back to all chats" title="Back to all chats" className="matrix-web-project-back" onClick={onBack}>
         <ChevronLeft aria-hidden="true" size={15} />
       </button>
-      <h2 className="min-w-0 flex-1 truncate text-sm font-semibold" title={project.name}>{project.name}</h2>
+      <h2 title={project.name}>{project.name}</h2>
     </div>
     {empty ? <>
       <ProjectChatStatus rowCount={0} loading={loading} error={error} hasMore={hasMore} mobile={mobile} retry={retry}
