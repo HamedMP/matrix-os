@@ -61,3 +61,50 @@ it.each(['pi', 'opencode'] as const)('preserves %s saved model and access contro
   expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_route', harnessInstanceId: kind,
     route: { kind: 'configurable', providerId: 'anthropic', modelId: 'other' }, accessSourceId: 'matrix_included', accountId: null }));
 });
+
+it('reuses the connected OpenRouter account without asking Codex for the key again', async () => {
+  const generation = '11111111-1111-4111-8111-111111111111';
+  const next = {
+    ...snapshot,
+    revision: 7,
+    supportedActions: ['select_access_source'],
+    harnesses: [{ ...snapshot.harnesses[0]!, accessSourceId: 'owner_openai_profile',
+      configuredAccessSourceId: 'owner_openai_profile', selectedAccountId: 'owner_codex' }],
+    accounts: [{ id: 'owner_codex', providerId: 'openai', displayName: 'OpenAI',
+      authMethod: 'terminal', authState: 'authenticated', accessSourceId: 'owner_openai_profile',
+      connectionDetails: null, usage: null },
+    { id: 'owner_openrouter', providerId: 'openrouter', displayName: 'OpenRouter',
+      authMethod: 'api_key', authState: 'authenticated', accessSourceId: 'owner_openrouter',
+      connectionDetails: null, usage: null }],
+    accessSources: [{ id: 'owner_openai_profile', kind: 'provider_account', providerId: 'openai',
+      accountId: 'owner_codex', displayName: 'OpenAI', fundingKind: 'owner_account',
+      eligibleModelIds: ['test'],
+      readiness: { state: 'ready', checkedAt: snapshot.refreshedAt, staleAfter: '2099-01-01T00:00:00Z',
+        action: 'none', safeReason: null },
+      usage: { kind: 'unavailable', authority: 'unavailable', state: 'not_applicable',
+        scope: 'access_source', reason: 'provider_does_not_report', asOf: snapshot.refreshedAt } },
+    { id: 'owner_openrouter', kind: 'provider_account', providerId: 'openrouter',
+      accountId: 'owner_openrouter', displayName: 'OpenRouter', fundingKind: 'owner_api_key',
+      credentialGeneration: generation, eligibleModelIds: ['openai/gpt-5.6-luna'],
+      readiness: { state: 'ready', checkedAt: snapshot.refreshedAt, staleAfter: '2099-01-01T00:00:00Z',
+        action: 'none', safeReason: null },
+      usage: { kind: 'unavailable', authority: 'unavailable', state: 'not_applicable',
+        scope: 'access_source', reason: 'provider_does_not_report', asOf: snapshot.refreshedAt } }],
+  } as unknown as ProviderSettingsSnapshot;
+  const api = client('running');
+  api.capabilities = vi.fn().mockResolvedValue([{ ...capability, activeOperationId: undefined,
+    apiKeyProviders: ['openai', 'openrouter'], connectionOptions: [{ id: 'openai_device_code',
+      providerId: 'openai', displayName: 'ChatGPT subscription', authKind: 'subscription',
+      method: 'device_code', billingKind: 'subscription', executionKind: 'native', availability: 'available' }] }]);
+  const mutate = vi.fn().mockResolvedValue(true);
+  const refresh = vi.fn().mockResolvedValue(undefined);
+  render(<AgentsProvidersView snapshot={next} selectedHarnessId="codex" onSelectHarness={vi.fn()}
+    onRefresh={refresh} onMutate={mutate} onOpenTerminal={vi.fn()} onOpenBrowser={vi.fn()}
+    workflowClient={api} onAddCredit={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button', { name: /^Codex/ }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Use connected OpenRouter' }));
+  await waitFor(() => expect(mutate).toHaveBeenCalledWith({ type: 'select_access_source',
+    harnessInstanceId: 'codex', accessSourceId: 'owner_openrouter' }));
+  expect(api.submitKey).not.toHaveBeenCalled();
+  expect(refresh).toHaveBeenCalledOnce();
+});

@@ -255,10 +255,29 @@ export function AgentsProvidersView({
             const { account: selectedAccount, source } = resolveHarnessConnection(harness, snapshot.accounts, snapshot.accessSources);
             const nativeSource = (harness.harness !== "claude" && harness.harness !== "codex") || isNativeAccountSource(harness.harness, source, selectedAccount);
             const nativeCodexReconnect = harness.harness === "codex" && source?.fundingKind === "owner_account";
+            const reusableOpenRouterSource = (harness.harness === "claude" || harness.harness === "codex")
+              ? snapshot.accessSources.find(candidate => candidate.id === "owner_openrouter"
+                && candidate.kind === "provider_account" && candidate.fundingKind === "owner_api_key"
+                && candidate.credentialGeneration !== undefined && candidate.readiness.state === "ready"
+                && candidate.eligibleModelIds.some(modelId => harness.harness === "claude"
+                  ? modelId.startsWith("anthropic/") : modelId.startsWith("openai/"))) : undefined;
+            const reusableOpenRouterAccount = reusableOpenRouterSource
+              ? snapshot.accounts.find(account => account.id === reusableOpenRouterSource.accountId
+                && account.providerId === "openrouter" && account.authMethod === "api_key"
+                && account.authState === "authenticated") : undefined;
+            const canReuseOpenRouter = Boolean(reusableOpenRouterSource && reusableOpenRouterAccount
+              && harness.installState === "installed" && harness.accessSourceId !== "owner_openrouter"
+              && supports("select_access_source"));
             const allowedSavedConnection = nativeSource && (!nativeCodexReconnect || guided && Boolean(workflowClient?.startConnection) && capability?.connectionOptions?.some(isCodexNativeLoginOption));
             const connectSaved = async () => {
               if (nativeCodexReconnect) { await requestConnect(harness.id); return; }
               await enablement.connectSaved(harness);
+            };
+            const useConnectedOpenRouter = async () => {
+              const result = await onMutate({ type: "select_access_source", harnessInstanceId: harness.id,
+                accessSourceId: "owner_openrouter" });
+              if (result === false) throw new Error("OpenRouter selection unavailable");
+              await refreshSettings();
             };
             const connected = nativeSource && (hasConfiguredConnection(harness, source) || hasStaleHermesConnection(harness, source));
             const savedNativeAccount = nativeSource && harness.harness === "codex" && selectedAccount?.authState === "authenticated" && !connected;
@@ -338,8 +357,10 @@ export function AgentsProvidersView({
                       disabled={operationDisabled || workflowPermission === "forbidden"}
                       canLogout={supports("logout_account")} canRemove={supports("remove_account")} canReassign={supports("reassign_account")}
                       onMutate={onMutate} onRefresh={refreshSettings} />}
-                    onConnectSaved={allowedSavedConnection && supports("set_harness_enabled") && (savedNativeAccount && nativeCodexReconnect || (harness.configuredEnabled ?? harness.enabled) === false && hasConfiguredConnection({ ...harness, configuredEnabled: true, enabled: true }, source)) ? connectSaved : undefined}
-                    connectSavedDisabled={workflowPermission === "forbidden" || !onRefreshForConnection}
+                    onConnectSaved={canReuseOpenRouter ? useConnectedOpenRouter
+                      : allowedSavedConnection && supports("set_harness_enabled") && (savedNativeAccount && nativeCodexReconnect || (harness.configuredEnabled ?? harness.enabled) === false && hasConfiguredConnection({ ...harness, configuredEnabled: true, enabled: true }, source)) ? connectSaved : undefined}
+                    connectSavedLabel={canReuseOpenRouter ? "Use connected OpenRouter" : undefined}
+                    connectSavedDisabled={workflowPermission === "forbidden" || (!canReuseOpenRouter && !onRefreshForConnection)}
                     source={source}
                     harness={harness}
                     capability={

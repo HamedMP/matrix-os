@@ -8,6 +8,7 @@ import { createClaudeAccountReaderUnderLease, assertClaudeLifecyclePrincipal, as
 import { isNativeClaudeLifecycleAccount } from "./provider-lifecycle-credential-identity.js";
 import { hasNativeAccountCredentialIdentity, sameBoundNativeAccountPrincipal, verifyNativeAccountMetadata } from "./native-account-metadata-binding.js";
 import { revokeOwnerAnthropicKey } from "./owner-anthropic-key.js";
+import { createOwnerOpenRouterKeySaver } from "./owner-openrouter-key.js";
 import type { NativeProviderProfileGuard } from "./native-provider-profile-guard.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -67,6 +68,7 @@ const INHERITED_AUTH_ENVIRONMENT = [
   "OPENAI_API_KEY",
   "CODEX_API_KEY",
   "CODEX_HOME",
+  "OPENROUTER_API_KEY",
 ] as const;
 
 const execFileAsync = promisify(execFile);
@@ -110,7 +112,9 @@ async function readReceipts(path: string) {
   }
 }
 
-function accountDriver(account: ProviderLifecycleAccount): "codex" | "claude_code" | null {
+function accountDriver(account: ProviderLifecycleAccount): "codex" | "claude_code" | "openrouter" | null {
+  if (account.id === "owner_openrouter" && account.providerId === "openrouter"
+    && account.authMethod === "api_key" && account.accessSourceId === "owner_openrouter") return "openrouter";
   if (account.driverId === "claude_code" && account.harness === "claude"
     && account.providerId === "anthropic" && (account.authMethod === "terminal" || account.authMethod === "api_key" && account.accessSourceId === "owner_anthropic_key")) {
     return "claude_code";
@@ -144,6 +148,7 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
   profileGuard?: NativeProviderProfileGuard;
   readClaudeAccountUnderLease?: ClaudeAccountReaderUnderLease;
   readCodexAccountUnderLease?: () => Promise<CodexNativeAccountMetadata | null>;
+  prepareOpenRouterCredentialChange?: () => Promise<() => Promise<void>>;
 }): ProviderAccountLifecycleCoordinator {
   if (!options.homePath) throw new Error("Provider lifecycle home path is required");
   const homePath = resolve(options.homePath);
@@ -173,6 +178,7 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
 
   function supported(account: ProviderLifecycleAccount): boolean {
     const driver = accountDriver(account);
+    if (driver === "openrouter") return account.authenticated;
     const nativeKey = account.id === "owner_codex" && account.accessSourceId === "owner_openai_profile"
       && (account.authMethod === "api_key" || account.nativeCodexAccount?.authMethod === "api_key");
     return driver !== null && enabled.has(driver)
@@ -189,7 +195,7 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
   }): Promise<void> {
     const applyNative = () => serialize(async () => {
       const driver = accountDriver(input.account);
-      if (driver === null || !enabled.has(driver)) {
+      if (driver === null || driver !== "openrouter" && !enabled.has(driver)) {
         throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
       }
       const key = SafeRefSchema.parse(input.idempotencyKey);
@@ -204,7 +210,7 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
         throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
       }
       // Reject proven no-effect invalid targets before acquiring a durable writer.
-      if (input.account.installState !== "installed" || input.account.driverAccountCount !== 1
+      if (driver !== "openrouter" && (input.account.installState !== "installed" || input.account.driverAccountCount !== 1)
         || action === "logout_account" && !input.account.authenticated) {
         throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
       }
@@ -260,7 +266,7 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
           if (input.account.authenticated) await assertClaudeLifecyclePrincipal(input.account.nativeClaudeAccount, readClaudeUnderLease);
           else await assertClaudeLifecycleSignedOut(homePath, readClaudeUnderLease);
         }
-        if (input.account.installState !== "installed" || input.account.driverAccountCount !== 1
+        if (driver !== "openrouter" && (input.account.installState !== "installed" || input.account.driverAccountCount !== 1)
           || (action === "logout_account" && !input.account.authenticated)) {
           throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
         }
@@ -286,7 +292,12 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
           }
         }
         try {
-          if (driver === "claude_code" && input.account.authMethod === "api_key") {
+          if (driver === "openrouter") {
+            await createOwnerOpenRouterKeySaver({
+              homePath,
+              prepareCredentialChange: options.prepareOpenRouterCredentialChange,
+            }).revoke();
+          } else if (driver === "claude_code" && input.account.authMethod === "api_key") {
             await revokeOwnerAnthropicKey(homePath);
           } else {
           const command = COMMANDS[driver];
@@ -322,7 +333,7 @@ export function createProviderCliAccountLifecycleCoordinator(options: {
           throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
         }
       };
-      if (options.profileGuard) await options.profileGuard.run(driver === "codex" ? "codex" : "claude", { kind: "write" }, mutateProfile);
+      if (options.profileGuard && driver !== "openrouter") await options.profileGuard.run(driver === "codex" ? "codex" : "claude", { kind: "write" }, mutateProfile);
       else await mutateProfile();
     });
     await applyNative();
@@ -351,6 +362,7 @@ export function createDefaultProviderCliAccountLifecycleCoordinator(options: {
   profileGuard?: NativeProviderProfileGuard;
   readClaudeAccountUnderLease?: ClaudeAccountReaderUnderLease;
   readCodexAccountUnderLease?: () => Promise<CodexNativeAccountMetadata | null>;
+  prepareOpenRouterCredentialChange?: () => Promise<() => Promise<void>>;
 }): ProviderAccountLifecycleCoordinator {
   const enabledHarnesses = z.enum(["codex", "claude", "opencode", "pi"]).array().max(4)
     .parse(options.enabledHarnesses);
@@ -365,5 +377,7 @@ export function createDefaultProviderCliAccountLifecycleCoordinator(options: {
     ...(options.profileGuard ? { profileGuard: options.profileGuard } : {}),
     ...(options.readCodexAccountUnderLease ? { readCodexAccountUnderLease: options.readCodexAccountUnderLease } : {}),
     ...(options.readClaudeAccountUnderLease ? { readClaudeAccountUnderLease: options.readClaudeAccountUnderLease } : {}),
+    ...(options.prepareOpenRouterCredentialChange
+      ? { prepareOpenRouterCredentialChange: options.prepareOpenRouterCredentialChange } : {}),
   });
 }

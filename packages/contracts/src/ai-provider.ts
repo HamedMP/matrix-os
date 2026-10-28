@@ -106,6 +106,8 @@ export const AiAccessSourceViewSchema = AiProviderReadinessSchema.extend({
   discoverableModelIds: z.array(ProviderModelReferenceSchema).max(64).optional(),
   policyVersion: AiPolicyVersionSchema,
   localObservation: AiProviderLocalObservationSchema.optional(),
+  /** Non-secret execution fence for owner key rotation/revocation. */
+  credentialGeneration: z.uuid().optional(),
 }).strict().superRefine((source, ctx) => {
   if (!unique(source.eligibleModelIds)) {
     ctx.addIssue({ code: "custom", path: ["eligibleModelIds"], message: "Duplicate eligible model" });

@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 const route = "/api/ai/provider-settings/workflows/v2";
 const post = (value: unknown) => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(value) });
-async function fixture(version = "0.162.1", mode = "success", metadataNow?: () => Date) {
+async function fixture(version = "0.162.1", mode = "success", metadataNow?: () => Date, openRouterEnabled = false) {
   const root = await mkdtemp(join(tmpdir(), "codex-settings-runtime-")); roots.push(root);
   const home = join(root, "home"), prefix = join(root, "runtime");
   await mkdir(join(prefix, "bin"), { recursive: true }); await mkdir(join(home, ".codex"), { recursive: true, mode: 0o700 });
@@ -103,7 +103,7 @@ if(r.method==='account/login/cancel')send({id:r.id,result:{status:'canceled'}});
     completeCodexNativeLogin: nativeCompletions,
   };
   const app = new Hono();
-  const lifecycle = await createNativeProviderWorkflowRuntime({ app, homePath: home, ownerId: "owner", getPrincipal: c => c.req.header("x-test-actor") === "other" ? { userId: "other" } : { userId: "owner" }, store: workflowStore, terminal: terminal as never, profileGuard: guard, inventory: async () => ({ drivers: [driver] }) }); closes.push(lifecycle.close);
+  const lifecycle = await createNativeProviderWorkflowRuntime({ app, homePath: home, ownerId: "owner", getPrincipal: c => c.req.header("x-test-actor") === "other" ? { userId: "other" } : { userId: "owner" }, store: workflowStore, terminal: terminal as never, profileGuard: guard, inventory: async () => ({ drivers: [driver] }), openRouterEnabled }); closes.push(lifecycle.close);
   return { app, store, home, terminal, harness, guard, rollback, proofReady, resumeCompletion, rotateGeneration, completionBoundary, nativeCompletions,
     setVersion: (value: string) => writeFile(join(home, 'version'), value) };
 }
@@ -113,6 +113,8 @@ it.each(["0.156.1", "0.162.1", "0.163.0", "0.164.0"])("runs qualified %s Setting
   const response = await f.app.request(`${route}/capabilities`);
   expect(response.status).toBe(200);
   const capabilities = await response.json();
+  expect(capabilities[0].apiKeyProviders).toEqual(["openai"]);
+  expect(capabilities[0].connectionOptions).not.toContainEqual(expect.objectContaining({ id: "openrouter_api_key" }));
   expect(capabilities[0].connectionOptions).toContainEqual(expect.objectContaining({ id: "openai_device_code", method: "device_code", availability: "available" }));
   const start = await f.app.request(`${route}/start`, post({ harnessInstanceId: f.harness.id, optionId: "openai_device_code", idempotencyKey: "settings-connect" }));
   expect(start.status).toBe(200);
@@ -122,6 +124,15 @@ it.each(["0.156.1", "0.162.1", "0.163.0", "0.164.0"])("runs qualified %s Setting
   expect(connected.harnesses.find(row => row.id === f.harness.id)).toMatchObject({ accessSourceId: "owner_openai_profile", selectedAccountId: "owner_codex", enabled: true, configuredEnabled: true });
   expect(connected.accounts.find(row => row.id === "owner_codex")).toMatchObject({ authMethod: "terminal", authState: "authenticated" });
   expect(f.terminal.createTab).not.toHaveBeenCalled();
+});
+
+it("advertises the shared OpenRouter key action only when the operational capability is enabled", async () => {
+  const f = await fixture("0.162.1", "success", undefined, true);
+  const capabilities = await (await f.app.request(`${route}/capabilities`)).json();
+  expect(capabilities[0].apiKeyProviders).toEqual(["openai", "openrouter"]);
+  expect(capabilities[0].connectionOptions).toContainEqual(expect.objectContaining({
+    id: "openrouter_api_key", authKind: "api_key", providerId: "openrouter", availability: "available",
+  }));
 });
 
 

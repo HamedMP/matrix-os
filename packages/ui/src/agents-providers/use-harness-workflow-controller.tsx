@@ -31,6 +31,7 @@ export type HarnessWorkflowPanelProps = {
   onOpenTerminal: (reference: string) => void;
   onOpenAuthorizationUrl?: (url: string) => void;
   onConnectSaved?: () => Promise<void>;
+  connectSavedLabel?: string;
   connectSavedDisabled?: boolean;
   onDisconnect?: () => Promise<boolean | void>;
   onSetupHarness?: (
@@ -58,6 +59,7 @@ export function useHarnessWorkflowController({
   onOpenTerminal,
   onOpenAuthorizationUrl,
   onConnectSaved,
+  connectSavedLabel,
   connectSavedDisabled = false,
   onDisconnect,
   onStateChange,
@@ -425,6 +427,6 @@ export function useHarnessWorkflowController({
     setOperation(null);
   };
 
-  return { canContinueInTerminal, selectedOption, setSelectedOption, harness, source, capability, client, disabled, onRefresh, onOpenTerminal, onOpenAuthorizationUrl, onConnectSaved, connectSavedDisabled, onDisconnect, onStateChange, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, connectRequest, operation, setOperation, method, setMethod, providerId, setProviderId, authorizationCode, setAuthorizationCode, codeSubmitted, setCodeSubmitted, apiKey, setApiKey, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, disconnectOpen, setDisconnectOpen, uninstall, setUninstall, copied, setCopied, connectionPanel, pendingStart, dialog, run, start, stopPolling, restartPolling, failed, seconds, connecting, reuseCodex, browserLogin, inlineLogin, hasSubscription, subscriptionName, back };
+  return { canContinueInTerminal, selectedOption, setSelectedOption, harness, source, capability, client, disabled, onRefresh, onOpenTerminal, onOpenAuthorizationUrl, onConnectSaved, connectSavedLabel, connectSavedDisabled, onDisconnect, onStateChange, operationId, onOperationId, renderConnection, renderAccountActions, advancedConfiguration, connectRequest, operation, setOperation, method, setMethod, providerId, setProviderId, authorizationCode, setAuthorizationCode, codeSubmitted, setCodeSubmitted, apiKey, setApiKey, pending, startingLogin, reconciling, refreshAfterLogin, failure, setFailure, connected, connectionPresent, disconnectOpen, setDisconnectOpen, uninstall, setUninstall, copied, setCopied, connectionPanel, pendingStart, dialog, run, start, stopPolling, restartPolling, failed, seconds, connecting, reuseCodex, browserLogin, inlineLogin, hasSubscription, subscriptionName, back };
 }
 export type HarnessWorkflowController = ReturnType<typeof useHarnessWorkflowController>;

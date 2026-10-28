@@ -217,6 +217,7 @@ export const ProviderAccessSourceSchema = z.object({
   displayName: DisplayNameSchema,
   readiness: ProviderSourceReadinessSchema,
   localObservation: AiProviderLocalObservationSchema.optional(),
+  credentialGeneration: z.uuid().optional(),
   eligibleModelIds: z.array(ProviderModelReferenceSchema).max(256),
   usage: ProviderUsageSchema,
 }).strict().superRefine((source, ctx) => {
@@ -279,6 +280,8 @@ export const ProviderHarnessInstanceSchema = z.object({
   configuredAccessSourceId: ReferenceIdSchema.nullable().optional(),
   /** Absent on historical rows; never infer an owner decision from a generated default. */
   enablementOrigin: z.enum(["generated_default", "owner_configuration"]).optional(),
+  /** Exact owner credential generation captured with this configured route. */
+  credentialGeneration: z.uuid().optional(),
   version: canonicalSafeLabel(64, 256).nullable(),
   installState: ProviderHarnessInstallStateSchema,
   authState: ProviderAuthenticationStateSchema,

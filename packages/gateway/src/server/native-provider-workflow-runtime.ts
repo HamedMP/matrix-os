@@ -1,5 +1,6 @@
 import { createHermesSettingsConnection } from "../ai-providers/hermes-settings-auth.js";
 import { createOwnerAnthropicKeySaver } from "../ai-providers/owner-anthropic-key.js";
+import { createOwnerOpenRouterKeySaver } from "../ai-providers/owner-openrouter-key.js";
 import { join } from "node:path";
 import type { Context, Hono } from "hono";
 import type { AiProviderSnapshotV3 } from "@matrix-os/contracts";
@@ -27,6 +28,8 @@ export async function createNativeProviderWorkflowRuntime(options: {
   terminal: Pick<TerminalRuntimeSocketClient, "ensureWorkspace" | "createTab" | "terminateTab" | "attach" | "listWorkspaces" | "getCommandResult">;
   profileGuard: NativeProviderProfileGuard;
   inventory: () => Promise<Pick<AiProviderSnapshotV3, "drivers">>;
+  openRouterEnabled?: boolean;
+  prepareOpenRouterCredentialChange?: () => Promise<() => Promise<void>>;
 }) {
   const { app, homePath, store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard } = options;
   const genericWriter = createGenericNativeWriter(homePath);
@@ -62,7 +65,16 @@ export async function createNativeProviderWorkflowRuntime(options: {
       piConnection: piSettingsConnection,
       openclawConnection: openclawSettingsConnection,
       inventory: async () => (await options.inventory()).drivers,
-      verifyKeys: { claude: createProviderKeyVerifier({ providerId: "anthropic", profileGuard: nativeProviderProfileGuard, profile: "claude", save: createOwnerAnthropicKeySaver({ homePath }) }), codex: createProviderKeyVerifier({ providerId: "openai", profileGuard: nativeProviderProfileGuard, profile: "codex", save: createCodexKeySaver({ homePath }) }) },
+      verifyKeys: {
+        claude: {
+          anthropic: createProviderKeyVerifier({ providerId: "anthropic", profileGuard: nativeProviderProfileGuard, profile: "claude", save: createOwnerAnthropicKeySaver({ homePath }) }),
+          ...(options.openRouterEnabled ? { openrouter: createProviderKeyVerifier({ providerId: "openrouter", save: createOwnerOpenRouterKeySaver({ homePath, prepareCredentialChange: options.prepareOpenRouterCredentialChange }) }) } : {}),
+        },
+        codex: {
+          openai: createProviderKeyVerifier({ providerId: "openai", profileGuard: nativeProviderProfileGuard, profile: "codex", save: createCodexKeySaver({ homePath }) }),
+          ...(options.openRouterEnabled ? { openrouter: createProviderKeyVerifier({ providerId: "openrouter", save: createOwnerOpenRouterKeySaver({ homePath, prepareCredentialChange: options.prepareOpenRouterCredentialChange }) }) } : {}),
+        },
+      },
     }),
   });
   return { close: () => closeNativeProviderWorkflowConnections([

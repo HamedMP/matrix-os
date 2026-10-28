@@ -68,6 +68,7 @@ import {
 } from "./provider-settings-receipts.js";
 import type { FundedAiFundingSummaryReader } from "../funded-ai-funding-summary-client.js";
 import { readProviderSettingsEnrichment, type ProviderSettingsEnrichment } from "./provider-settings-enrichment.js";
+import { assertOpenRouterKeyConnectionSelection } from "./openrouter-key-connection-completion.js";
 
 const CONFIG_PATH = "system/ai-providers/settings.json";
 const PRIVATE_DIRECTORY = ".matrix-private";
@@ -89,6 +90,7 @@ export interface ProviderSettingsStoreWriter {
   completeCodexNativeLogin?(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string; verifyNativeAccount?: NativeAccountCompletionProof }): Promise<ProviderSettingsMutationResponse>;
   completeClaudeNativeLogin?(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }): Promise<ProviderSettingsMutationResponse>;
   completeClaudeKeyConnection?(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string }): Promise<ProviderSettingsMutationResponse>;
+  completeOpenRouterKeyConnection?(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string; credentialGeneration: string }): Promise<ProviderSettingsMutationResponse>;
 }
 interface ProviderSettingsStoreOptions {
   observationScope?: () => "canonical_matrix" | undefined;
@@ -509,20 +511,26 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     config: ProviderSettingsConfiguration,
     expected: ProviderDependencyCounts,
   ): Promise<ProviderDependencyCounts> {
-    if (!this.#dependencies) throw new ProviderSettingsStoreError("dependency_unavailable", 503);
-    let actual: ProviderDependencyCounts;
-    try {
-      actual = await readLifecycleAccountDependencies({ accountId, config, reader: this.#dependencies });
-    } catch (error) {
-      console.warn("[provider-settings] Account dependency check unavailable");
-      throw new ProviderSettingsStoreError("dependency_unavailable", 503);
-    }
+    const actual = await this.#currentDependencies(accountId, config);
     if (!sameProviderDependencyCounts(actual, expected)) {
       throw new ProviderSettingsStoreError("revision_conflict", 409, {
         latestRevision: config.revision,
       });
     }
     return actual;
+  }
+
+  async #currentDependencies(
+    accountId: string,
+    config: ProviderSettingsConfiguration,
+  ): Promise<ProviderDependencyCounts> {
+    if (!this.#dependencies) throw new ProviderSettingsStoreError("dependency_unavailable", 503);
+    try {
+      return await readLifecycleAccountDependencies({ accountId, config, reader: this.#dependencies });
+    } catch (error) {
+      console.warn("[provider-settings] Account dependency check unavailable");
+      throw new ProviderSettingsStoreError("dependency_unavailable", 503);
+    }
   }
 
   async #connectionAttempt(
@@ -608,11 +616,36 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
     return this.#mutate({ ...input, type: "select_access_source", accessSourceId: "owner_anthropic_key", enableHarness: true }, false, false, undefined, true);
   }
 
+  /** Server-only: selects an exact qualified route after the shared key was verified and staged. */
+  async completeOpenRouterKeyConnection(input: { harnessInstanceId: string; expectedRevision: number; idempotencyKey: string; credentialGeneration: string }): Promise<ProviderSettingsMutationResponse> {
+    const snapshot = await this.getSnapshot({ refresh: true });
+    const harness = snapshot.harnesses.find(row => row.id === input.harnessInstanceId);
+    const source = snapshot.accessSources.find(row => row.id === "owner_openrouter");
+    const modelId = harness?.harness === "codex"
+      ? source?.eligibleModelIds.find(id => id.startsWith("openai/"))
+      : source?.eligibleModelIds.find(id => id.startsWith("anthropic/"));
+    if (!harness || !source || !modelId || source.credentialGeneration !== input.credentialGeneration) {
+      throw new ProviderSettingsStoreError("invalid_route", 400);
+    }
+    return this.#mutate({ type: "select_access_source", harnessInstanceId: input.harnessInstanceId,
+      accessSourceId: source.id, enableHarness: true, expectedRevision: input.expectedRevision,
+      idempotencyKey: input.idempotencyKey }, false, false, undefined, false,
+    input.credentialGeneration, modelId);
+  }
+
   async mutate(input: ProviderSettingsMutation): Promise<ProviderSettingsMutationResponse> {
+    if (input.type === "select_access_source" && input.accessSourceId === "owner_openrouter") {
+      const snapshot = await this.getSnapshot({ refresh: true });
+      const generation = snapshot.accessSources.find(source => source.id === input.accessSourceId)?.credentialGeneration;
+      if (!generation) throw new ProviderSettingsStoreError("invalid_route", 400);
+      return this.completeOpenRouterKeyConnection({ harnessInstanceId: input.harnessInstanceId,
+        expectedRevision: input.expectedRevision, idempotencyKey: input.idempotencyKey,
+        credentialGeneration: generation });
+    }
     return this.#mutate(input, false);
   }
 
-  async #mutate(input: ProviderSettingsMutation, claudeNativeCompletion: boolean, codexNativeCompletion = false, verifyExpectedCodexAccount?: NativeAccountCompletionProof, claudeKeyCompletion = false): Promise<ProviderSettingsMutationResponse> {
+  async #mutate(input: ProviderSettingsMutation, claudeNativeCompletion: boolean, codexNativeCompletion = false, verifyExpectedCodexAccount?: NativeAccountCompletionProof, claudeKeyCompletion = false, openRouterCredentialGeneration?: string, openRouterModelId?: string): Promise<ProviderSettingsMutationResponse> {
     const parsed = ProviderSettingsMutationSchema.safeParse(input);
     if (!parsed.success) throw new ProviderSettingsStoreError("invalid_request", 400);
     return await this.#serialize(async () => {
@@ -649,7 +682,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         if (revokesCodex) releaseRevocation = await this.#prepareNativeCodexRevocation?.();
       };
       try {
-      this.#assertSupported(claudeNativeCompletion || codexNativeCompletion || claudeKeyCompletion ? "set_harness_enabled" : mutation.type, config, canonical);
+      this.#assertSupported(claudeNativeCompletion || codexNativeCompletion || claudeKeyCompletion || openRouterCredentialGeneration ? "set_harness_enabled" : mutation.type, config, canonical);
       // Read and revalidate the current native principal inside mutation admission.
       // The earlier UI snapshot is not authority for changing a saved route.
       const nativeClaudeLifecycle = (mutation.type === "logout_account" || mutation.type === "remove_account")
@@ -665,6 +698,8 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       if (codexNativeCompletion) assertCodexNativeLoginSelection({ mutation, snapshot });
       if (claudeNativeCompletion) assertClaudeNativeLoginSelection({ mutation, snapshot });
       if (claudeKeyCompletion) assertClaudeKeyConnectionSelection({ mutation, snapshot });
+      if (openRouterCredentialGeneration && openRouterModelId) assertOpenRouterKeyConnectionSelection({ mutation, snapshot,
+        modelId: openRouterModelId, credentialGeneration: openRouterCredentialGeneration });
       for (const account of snapshot.accounts) {
         const existingProfile = config.accountProfiles.find(profile => profile.id === account.id);
         if (existingProfile) {
@@ -682,6 +717,11 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
       let attempt: ProviderConnectionAttempt | undefined;
       let runtimeMutation: ProviderSettingsRuntimeMutationInput | undefined;
       const previousConfig = structuredClone(config);
+      if (openRouterCredentialGeneration && openRouterModelId) {
+        const target = config.harnesses.find(row => "harnessInstanceId" in mutation && row.id === mutation.harnessInstanceId);
+        if (!target) throw new ProviderSettingsStoreError("invalid_route", 400);
+        target.route = { ...target.route, providerId: "openrouter", modelId: openRouterModelId };
+      }
       const handled = applyProviderConfigurationMutation({
         mutation,
         config,
@@ -690,6 +730,15 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         id: this.#id,
         now: this.#now(),
       });
+      if ("harnessInstanceId" in mutation) {
+        const target = config.harnesses.find(row => row.id === mutation.harnessInstanceId);
+        if (openRouterCredentialGeneration) {
+          if (!target) throw new ProviderSettingsStoreError("invalid_route", 400);
+          target.credentialGeneration = openRouterCredentialGeneration;
+        } else if (handled && target?.accessSourceId !== "owner_openrouter") {
+          if (target) delete target.credentialGeneration;
+        }
+      }
       if (codexNativeCompletion) {
         const generation = codexMetadata && nativeAccountPrincipalFingerprint(codexMetadata);
         const target = config.harnesses.find(row => "harnessInstanceId" in mutation && row.id === mutation.harnessInstanceId);
@@ -715,6 +764,7 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           snapshot: structuredClone(snapshot),
           ...(claudeNativeCompletion ? { claudeNativeCompletion: true } : {}),
           ...(claudeKeyCompletion ? { claudeKeyCompletion: true } : {}),
+          ...(openRouterCredentialGeneration ? { openRouterKeyCompletion: true } : {}),
           ...(codexNativeCompletion ? { codexNativeCompletion: true } : {}),
         };
         try {
@@ -747,6 +797,12 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
           const account = requireCoordinatorLifecycleAccount(
             this.#lifecycle, mutation.accountId, config, canonical, claudeMetadata, claudeSignedOut, codexMetadata,
           );
+          if (mutation.accountId === "owner_openrouter") {
+            const dependencies = await this.#currentDependencies(mutation.accountId, config);
+            if (Object.values(dependencies).some(count => count > 0)) {
+              throw new ProviderSettingsStoreError("account_in_use", 409);
+            }
+          }
           if (revokesCodex && !this.#lifecycle!.supportedActions(account).includes("logout_account")) {
             throw new ProviderSettingsStoreError("lifecycle_unavailable", 503);
           }
@@ -841,6 +897,9 @@ export class ProviderSettingsStore implements ProviderSettingsStoreWriter {
         if (claudeNativeCompletion) assertClaudeNativeLoginSelection({ mutation,
           snapshot: await this.#project(canonical, config, false, undefined, null, null, claudeMetadata) });
         if (claudeKeyCompletion) assertClaudeKeyConnectionSelection({ mutation, snapshot: await this.#project(canonical, config) });
+        if (openRouterCredentialGeneration && openRouterModelId) assertOpenRouterKeyConnectionSelection({ mutation,
+          snapshot: await this.#project(canonical, config), modelId: openRouterModelId,
+          credentialGeneration: openRouterCredentialGeneration });
         config = await this.#persist(config, mutation, payloadHash, attempt);
       } catch (error) {
         if (runtimeMutation) await this.#rollbackRuntime(runtimeMutation);
