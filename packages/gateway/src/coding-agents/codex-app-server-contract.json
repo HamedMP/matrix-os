@@ -1,6 +1,6 @@
 {
   "packageName": "@openai/codex",
-  "latestVerifiedVersion": "0.164.0",
+  "latestVerifiedVersion": "0.165.0",
   "experimental": true,
   "verifiedVersions": {
     "0.144.3": {
@@ -161,6 +161,12 @@
         "darwin-arm64": "92fe055424a3709999a05baae615be9e1e1e0b127e033cace6849b2ea785ea07",
         "linux-x64": "92fe055424a3709999a05baae615be9e1e1e0b127e033cace6849b2ea785ea07"
       }
+    },
+    "0.165.0": {
+      "schemaSha256ByTarget": {
+        "darwin-arm64": "8c2a3adebb3e0da97f9b1efaf686f8d14f9969436879ade25a4b1b208ec65cd7",
+        "linux-x64": "8c2a3adebb3e0da97f9b1efaf686f8d14f9969436879ade25a4b1b208ec65cd7"
+      }
     }
   },
   "requiredServerMethods": [
@@ -194,6 +200,6 @@
     "item/agentMessage/delta": "427d58ea4e1b0fd7afce1035cefd40df96d7dc48b82cbe293a2f69ed4e803bf9",
     "item/commandExecution/outputDelta": "aa94a86bcbf20ceca1672b7c476c3472ef5e507b831ceb26561c2785a97a5dc4",
     "thread/tokenUsage/updated": "5dbf1e2a382453af89a44bf72660aade96c8a549068d5bb55ca56951a30505d7",
-    "turn/completed": "2417c2c44801a090d921300b88a225c379a80fb559cdc96a72f6861514e1351a"
+    "turn/completed": "d775b4d4e65c194a34726c88625fd88f71e5ffc00cd5ba5a6bc64ac913a90055"
   }
 }
