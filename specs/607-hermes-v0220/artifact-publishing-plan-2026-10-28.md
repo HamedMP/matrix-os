@@ -134,3 +134,29 @@ candidate. Actual full installer/host-upgrade and native timing, strict Web
 qualification, real model/MCP/client flows, matching English GUI captures and
 current-head formal CI/Greptile remain open. No Main/Runtime/deleted Preview,
 permission/configuration/credential change, paid provider, Slack or deployment.
+
+
+### Follow-up from the exact-head Private Preview and formal CI
+
+The d9d625d Host and isolated Electron Desktop passed installed source/SDK/frontend
+checks and the real read-only client/runtime acceptance. The requested English
+Electron Desktop video records that original head; its Preview was destroyed and
+verified absent at2026-10-28T11:06:05Z. No model turn or provider connection was
+performed, and no replacement resource is created by these follow-up changes.
+
+Formal CI40675082401 then exposed two reproducible host/collaboration defects:
+
+- The staging path addition pushed rendered Preview user_data six bytes beyond
+  the required1KiB reserve. Remove one non-executable cloud-init comment while
+  retaining the staging command, ownership, mode and existing size assertion.
+- Run-binding admission locked inherited Chat before Project, opposite to
+  Company Brain/authority fences. Read the expected parent without locking Chat,
+  lock Project before Chat, and fail closed if the parent/kind changes. Real
+  PostgreSQL regressions observe actual server lock waits and cover both stable
+  membership and concurrent reparenting; no error retry or authority check is
+  removed. The cases live in the existing PostgreSQL-qualified lock-order suite.
+
+The original CI also exposed a GetStartedGate shortcut failure in a test file
+updated by newer Main. The hook is unchanged and its isolated27-case suite passes;
+the cause is not yet confirmed. Preserve the failed log and do not call the
+aggregate green before the current synthesized stack source passes formal CI.

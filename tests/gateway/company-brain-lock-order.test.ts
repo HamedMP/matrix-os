@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { resolveExecutionScope } from "../../packages/gateway/src/collaboration/execution-policy.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql, type Kysely, type KyselyPlugin } from "kysely";
 import { ChatRepository } from "../../packages/gateway/src/chat/repository.js";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
@@ -175,5 +176,46 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("Company Brain Project/Ch
     expect(lockedNewParent).toBe(false);
     expect(await fixture.db.selectFrom("chat_queued_turns").select("id").execute()).toHaveLength(0);
   });
+
+  it.each([false, true])("serializes execution-scope admission against the parent-first fence, reparent=%s", async reparent => {
+    const nextParent = "10000000-0000-4000-8000-000000000022";
+    if (reparent) {
+      const scopes = new CollaborationRepository(fixture.db, { now: () => at });
+      await scopes.createDirectScope({ scopeId: nextParent, organizationId: "org_team", ownerId: actors.owner,
+        kind: "project", resourceId: "project_reparented", authorityRuntimeId: ids.runtime });
+    }
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let parentLocked!: () => void;
+    const locked = new Promise<void>(resolve => { parentLocked = resolve; });
+    let pid: number | undefined;
+    let admission: Promise<unknown> | undefined;
+    const owner = fixture.db.transaction().execute(async trx => {
+      await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", projectScope).forUpdate().execute();
+      parentLocked();
+      await gate;
+      await trx.selectFrom("collaboration_scopes").selectAll().where("id", "=", childScope).forUpdate().execute();
+      if (reparent) await trx.updateTable("collaboration_scopes").set({ parent_scope_id: nextParent }).where("id", "=", childScope).execute();
+    });
+    try {
+      await locked;
+      admission = fixture.db.transaction().execute(async trx => {
+        pid = (await sql<{ pid: number }>`SELECT pg_backend_pid() AS pid`.execute(trx)).rows[0]!.pid;
+        return resolveExecutionScope(trx, childScope, { lock: true });
+      });
+      // Observe the actual server wait before releasing the competing lock.
+      await vi.waitFor(async () => {
+        expect(pid).toBeDefined();
+        const row = (await sql<{ wait_event_type: string }>`SELECT wait_event_type FROM pg_stat_activity WHERE pid=${pid!}`.execute(db)).rows[0];
+        expect(row?.wait_event_type).toBe("Lock");
+      }, { timeout: 2_000, interval: 20 });
+      release();
+      const results = await Promise.allSettled([owner, admission]);
+      for (const result of results) if (result.status === "rejected") throw result.reason;
+      expect(results[1]).toMatchObject({ status: "fulfilled", value: reparent ? null : {
+        ref: { kind: "project", scopeId: projectScope, projectId: "project_company_capture" },
+      } });
+    } finally { release(); await Promise.allSettled(admission ? [owner, admission] : [owner]); }
+  }, 10_000);
 
 });
