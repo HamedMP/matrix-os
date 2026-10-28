@@ -10,9 +10,9 @@ import { projectChats, type WebProject, type WebProjectsState } from "./web-proj
 
 // Same page size as the Electron Desktop project list.
 const PROJECT_CHAT_PAGE = 6;
-type ProjectRow = { kind: "known"; chat: RenameableConversation } | { kind: "fetched"; chat: FetchedProjectChat };
+export type ProjectRow = { kind: "known"; chat: RenameableConversation } | { kind: "fetched"; chat: FetchedProjectChat };
 
-export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, onSelectChat, renderChat,
+export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, onSelectChat, onFocusProject, renderChat,
   mobile = false, unreadOnly = false, sourceFilter = "all", searchQuery = "" }: {
   state: WebProjectsState;
   gatewayUrl: string;
@@ -22,6 +22,8 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
   activeChatId?: string;
   activeChatTitle?: string;
   onSelectChat(chatId: string): void;
+  /** Narrows the sidebar to one project, as on Electron Desktop. */
+  onFocusProject(project: WebProject): void;
   renderChat(chat: RenameableConversation, nowMs: number): ReactNode;
   mobile?: boolean;
   unreadOnly?: boolean;
@@ -47,13 +49,13 @@ export function WebProjectsNav({ state, gatewayUrl, chats, listedChatIds, active
       </div> : null}
       {projects.map(project => <WebProjectGroup key={`${state.identity}/${project.id}/${unreadOnly}/${sourceFilter}`} project={project} gatewayUrl={gatewayUrl}
         chats={projectChats(chats, project).filter(chat => !chat.canonicalRecord?.chat.userState?.pinned)} listedChatIds={listedChatIds}
-        activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat}
+        activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat} onFocusProject={onFocusProject}
         renderChat={renderChat} mobile={mobile} unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery}/>)}
     </ChatRailSection>
   </nav>;
 }
 
-function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, onSelectChat, renderChat,
+function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChatId, activeChatTitle, onSelectChat, onFocusProject, renderChat,
   mobile, unreadOnly, sourceFilter, searchQuery }: {
   project: WebProject;
   gatewayUrl: string;
@@ -62,6 +64,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   activeChatId?: string;
   activeChatTitle?: string;
   onSelectChat(chatId: string): void;
+  onFocusProject(project: WebProject): void;
   renderChat(chat: RenameableConversation, nowMs: number): ReactNode;
   mobile: boolean;
   unreadOnly: boolean;
@@ -81,13 +84,19 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   const shownCount = Math.max(limit, allRows.findIndex(row => row.chat.id === activeChatId) + 1);
   const hiddenCount = allRows.length - shownCount;
   return <div>
-    <button type="button" aria-label={`Open ${project.name} project`} aria-expanded={expanded}
-      className={`flex w-full min-w-0 items-center gap-2 rounded-md px-2 text-left hover:bg-accent focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "min-h-11" : "min-h-9"}`}
-      onClick={toggleExpanded}>
-      {expanded ? <FolderOpen aria-hidden="true" size={15} strokeWidth={1.5} className="shrink-0" /> : <Folder aria-hidden="true" size={15} strokeWidth={1.5} className="shrink-0" />}
-      <OverflowingChatTitle title={project.name} />
-      <ChevronRight aria-hidden="true" size={12} className={`ml-auto shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} />
-    </button>
+    <div className="flex min-w-0 items-center rounded-md hover:bg-accent">
+      <button type="button" aria-label={project.name} title={project.name}
+        className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "min-h-11" : "min-h-9"}`}
+        onClick={() => onFocusProject(project)}>
+        {expanded ? <FolderOpen aria-hidden="true" size={15} strokeWidth={1.5} className="shrink-0" /> : <Folder aria-hidden="true" size={15} strokeWidth={1.5} className="shrink-0" />}
+        <OverflowingChatTitle title={project.name} />
+      </button>
+      <button type="button" aria-label={`${expanded ? "Collapse" : "Expand"} ${project.name} chats`} aria-expanded={expanded}
+        className={`grid shrink-0 place-items-center rounded-md text-muted-foreground focus-visible:outline-2 focus-visible:outline-primary ${mobile ? "size-11" : "size-7"}`}
+        onClick={toggleExpanded}>
+        <ChevronRight aria-hidden="true" size={12} className={`transition-transform duration-200 motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} />
+      </button>
+    </div>
     {expanded ? <div className="ml-4 space-y-0.5 border-l border-border pl-2">
       <ProjectChatRows rows={allRows.slice(0, shownCount)} projectId={project.id} nowMs={nowMs}
         activeChatId={activeChatId} activeChatTitle={activeChatTitle} onSelectChat={onSelectChat}
@@ -100,7 +109,7 @@ function WebProjectGroup({ project, gatewayUrl, chats, listedChatIds, activeChat
   </div>;
 }
 
-function ProjectChatRows({ rows, projectId, nowMs, activeChatId, activeChatTitle, onSelectChat, renderChat, mobile }: {
+export function ProjectChatRows({ rows, projectId, nowMs, activeChatId, activeChatTitle, onSelectChat, renderChat, mobile }: {
   rows: readonly ProjectRow[]; projectId: string; nowMs: number; activeChatId?: string; activeChatTitle?: string;
   onSelectChat(chatId: string): void; renderChat(chat: RenameableConversation, nowMs: number): ReactNode; mobile: boolean;
 }) {
@@ -113,7 +122,7 @@ function ProjectChatRows({ rows, projectId, nowMs, activeChatId, activeChatTitle
         onClick={() => onSelectChat(row.chat.id)}>{activeChatId === row.chat.id && activeChatTitle || row.chat.title}</button>)}</>;
 }
 
-function ProjectChatStatus({ rowCount, loading, error, hasMore, mobile, filtered, retry }: {
+export function ProjectChatStatus({ rowCount, loading, error, hasMore, mobile, filtered, retry }: {
   rowCount: number; loading: boolean; error: boolean; hasMore: boolean; mobile: boolean; filtered: boolean; retry(): void;
 }) {
   return <>
@@ -132,7 +141,7 @@ function ProjectChatStatus({ rowCount, loading, error, hasMore, mobile, filtered
   </>;
 }
 
-function ProjectChatPaging({ projectName, hiddenCount, loading, error, hasMore, mobile, showMore, loadMore }: {
+export function ProjectChatPaging({ projectName, hiddenCount, loading, error, hasMore, mobile, showMore, loadMore }: {
   projectName: string; hiddenCount: number; loading: boolean; error: boolean; hasMore: boolean; mobile: boolean;
   showMore(): void; loadMore(): void;
 }) {

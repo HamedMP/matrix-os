@@ -26,13 +26,13 @@ async function loadProjectChats(gatewayUrl: string, projectId: string, cursor: s
 }
 
 /** Read both immutable-id and legacy-slug chats from the owner-scoped paged API. */
-export function usePagedProjectChats(project: WebProject, gatewayUrl: string, unreadOnly: boolean) {
+export function usePagedProjectChats(project: WebProject, gatewayUrl: string, unreadOnly: boolean, initiallyExpanded = false) {
   const initialCursors = (): PageCursors => ({ id: null, ...(project.slug === project.id ? {} : { slug: null }) });
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const [fetched, setFetched] = useState<FetchedProjectChat[]>([]);
   const [pageCursors, setPageCursors] = useState<PageCursors>(initialCursors);
   const [nextCursors, setNextCursors] = useState<PageCursors>({});
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(initiallyExpanded);
   const [error, setError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
 

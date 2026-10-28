@@ -26,6 +26,7 @@ import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
 import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
 import { WebProjectsNav } from "./chat/WebProjectsNav";
+import { FocusedWebProject } from "./chat/FocusedWebProject";
 import { projectChats, useWebProjects } from "./chat/web-projects";
 import { getGatewayUrl } from "@/lib/gateway";
 import { SharedWithMeNav } from "./chat/SharedWithMeNav";
@@ -235,6 +236,9 @@ function ChatAppContent({
   const [mountedGatewayUrl] = useState(getGatewayUrl);
   const projectGatewayUrl = gatewayUrl ?? mountedGatewayUrl;
   const webProjects = useWebProjects(projectGatewayUrl, authorityKey ?? projectGatewayUrl);
+  // As on Electron Desktop, selecting a project narrows the sidebar to it; a project that disappears ends focus.
+  const [focusedProjectId, setFocusedProjectId] = useState<string | null>(null);
+  const focusedProject = webProjects.projects.find(project => project.id === focusedProjectId);
   const agentsNavigation = useChatAgentsNavigation();
   useCloseAgentsOnDraftRequest(composerDraftRequest?.id);
   const summaryClient = agentSummaryClient ?? agentClient;
@@ -527,11 +531,11 @@ function ChatAppContent({
         {sourceFilter !== "all" && listedConversations.length === 0 && !webProjects.loading && !webProjects.error
           && webProjects.projects.length === 0 ? <p className="px-3 pb-2 text-xs text-muted-foreground">No chats match this source.</p> : null}
         <ScrollArea className="min-h-0 min-w-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block [&_[data-slot=scroll-area-viewport]>div]:!min-w-0">
-        {onOpenSharedHome ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
+        {onOpenSharedHome && !focusedProject ? <SharedWithMeNav active={collaborationView?.kind === "home"} onOpen={() => {
           onOpenSharedHome();
           if (mobile) setSidebarOpen(false);
         }} /> : null}
-        <div className="px-2 pb-2"><ChatAgentsRailSection visible={visible && sidebarOpen} activeChatId={sessionId} activeAgentId={directBotId} menuZIndex={SHELL_Z_INDEX.popover} client={agentClient} summaryClient={summaryClient} isCurrent={isCurrentAuthority} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
+        <div className="px-2 pb-2" hidden={Boolean(focusedProject)}><ChatAgentsRailSection visible={visible && sidebarOpen} activeChatId={sessionId} activeAgentId={directBotId} menuZIndex={SHELL_Z_INDEX.popover} client={agentClient} summaryClient={summaryClient} isCurrent={isCurrentAuthority} onOpenBotChat={onSwitchConversation} onStartChat={startAgentChat} onOpen={() => { if (mobile) setSidebarOpen(false); }} onSetup={() => setSetupOpen(true)} /></div>
         {mobile ? <div className="flex gap-2 px-3 pb-2 text-xs">
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={!unreadOnly} onClick={() => { setUnreadOnly(false); onUnreadFilterChange?.(false); }}>All</Button>
           <Button variant="ghost" size="sm" className="aria-pressed:bg-accent" aria-pressed={unreadOnly} onClick={() => { setUnreadOnly(true); onUnreadFilterChange?.(true); }}>Unread</Button>
@@ -542,10 +546,14 @@ function ChatAppContent({
         {/* Conversation list */}
 
           <div className="px-2 pb-3">
+            {focusedProject ? <FocusedWebProject project={focusedProject} gatewayUrl={projectGatewayUrl} chats={projectChats(visibleConversations, focusedProject)}
+              listedChatIds={listedChatIds} scopeKey={railOrder.scopeKey} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
+              onSelectChat={onSwitchConversation} renderRow={renderConversationRow} onBack={() => setFocusedProjectId(null)} mobile={mobile}
+              unreadOnly={unreadOnly} sourceFilter={sourceFilter} searchQuery={searchQuery}/> : <>
             <WebChatLifecycleGroups conversations={listedConversations} scopeKey={railOrder.scopeKey} attentionCount={botSummaries.conversations.filter(bot => bot.pendingApprovalCount > 0).length}
               projects={<><WebProjectsNav key={authorityKey ?? projectGatewayUrl} state={webProjects} gatewayUrl={projectGatewayUrl}
                 chats={visibleConversations} listedChatIds={listedChatIds} activeChatId={sessionId} activeChatTitle={activeConversationTitle}
-                onSelectChat={onSwitchConversation} renderChat={renderConversationRow} mobile={mobile} unreadOnly={unreadOnly}
+                onSelectChat={onSwitchConversation} onFocusProject={project => setFocusedProjectId(project.id)} renderChat={renderConversationRow} mobile={mobile} unreadOnly={unreadOnly}
                 sourceFilter={sourceFilter} searchQuery={searchQuery}/>
                 <OrganizationDrivesNav chats={sourceConversations} client={agentClient} onNewChat={startAgentChat} onSelectChat={onSwitchConversation} activeChatId={sessionId}/></>}
               attention={botSummaries.conversations.some(bot => bot.pendingApprovalCount > 0) ? <WebBotAttention heading={false} conversations={botSummaries.conversations} onOpen={onSwitchConversation}/> : undefined}
@@ -557,7 +565,7 @@ function ChatAppContent({
                 </span>
                 <p className="text-xs text-muted-foreground/60">No conversations yet</p>
               </div>
-            )}
+            )}</>}
           </div>
         </ScrollArea>
         <DeleteChatDialog {...deleteChat.dialog} />
