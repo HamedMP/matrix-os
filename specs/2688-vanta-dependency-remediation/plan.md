@@ -19,3 +19,13 @@ Risk: Next.js and Vitest minor releases require runtime/build and test-runner qu
 - Shell production build passed with the repository's existing CI-safe Clerk publishable-key fixture. Compilation, TypeScript, prerender and build traces completed. This is build qualification, not live authentication or deployment qualification.
 - Root-workspace dependency audit: critical 17 to 0, high 153 to 118, moderate 165 to 118, low 36 to 20. These are scanner results for the root workspace, not unique exploitable findings or closure of separate shell/mobile lockfiles.
 - `git diff --check` passed. Hosted CI, code review and deployed validation remain required. No branch controls changed.
+
+## Follow-up compatible fixes
+
+Upgrade eligible HTTP, parser, authorization and schema dependencies within their existing API families. Align Tiptap packages, preserve peer contracts with parent-scoped overrides, and keep the seven-day package quarantine intact. The XML-parser fix changes mobile fingerprint inputs, so app version 0.2.9 starts a new runtime and requires fresh native builds before release.
+
+Final root-workspace scan: 0 critical, 13 high, 16 moderate, 12 low. See [remaining advisory work](remaining-advisories.md) for the still-open families and GTM-305 follow-up; no advisories are dismissed or risks accepted.
+
+Validation: frozen install; affected-package TypeScript; 1,064 focused tests with one pre-existing skip (failed local native/module-layout prerequisites corrected and affected suites rerun); all 3,232 mobile tests; iOS/Android bundle export; shell production build with the existing CI Clerk fixture; desktop production build; Neo and edge-router deployment dry runs; mobile native-change guard; whitespace check. No live deployment or native mobile build was performed.
+
+Companion documentation deliverable: update the canonical private matrix-os-site developer releases page with native runtime/OTA compatibility rules, alongside its own compatible security dependency fixes, and open a separate documentation/dependency PR under GTM-305. Keep its validation and review separate from this public source PR.
