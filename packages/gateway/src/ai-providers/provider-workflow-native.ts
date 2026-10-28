@@ -1,3 +1,5 @@
+import { createHermesTerminalWorkflow } from "./hermes-terminal-workflow.js";
+import type { createHermesTerminalLoginRuntime } from "./hermes-terminal-login.js";
 import type { createGenericNativeWriter, GenericNativeWriterProfile } from "./generic-native-writer.js";
 import type { createHermesSettingsConnection } from "./hermes-settings-auth.js";
 import type { NativeAccountCompletionProof } from "./native-account-metadata-binding.js";
@@ -39,6 +41,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
     & Partial<Pick<TerminalRuntimeSocketClient, 'getCommandResult'>>;
   runtimePrefix?: string;
   hermesCodexReuse?: () => Promise<void>;
+  hermesTerminalLogin?: ReturnType<typeof createHermesTerminalLoginRuntime>;
   hermesConnection?: ReturnType<typeof createHermesSettingsConnection>;
   claudeBrowserLogin?: ReturnType<typeof createClaudeSettingsLogin>;
   codexSettingsConnection?: ReturnType<typeof createCodexSettingsConnection>;
@@ -117,6 +120,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
     if (harness.harness === "hermes" && harness.installState === "installed" && options.hermesConnection) opencodeCapability = await options.hermesConnection.capabilities();
     const settingsConnection = harness.harness === "hermes" ? options.hermesConnection : harness.harness === "openclaw" ? options.openclawConnection : harness.harness === "pi" ? options.piConnection : options.opencodeConnection;
     const packageName = harness.harness in packages ? packages[harness.harness as keyof typeof packages] : null;
+    const canHermesLogin = harness.harness === 'hermes' && harness.installState === 'installed' && !!options.genericWriter && typeof options.terminal.getCommandResult === 'function' && await options.hermesTerminalLogin?.available() === true;
     const canLogin = harness.installState === 'installed' && harness.loginMethods.includes('terminal') && (harness.harness === 'claude' || harness.harness === 'codex' && snapshot.access.mode === 'writable');
     const canBrowserLogin = canLogin && harness.harness === 'claude' && !!options.claudeBrowserLogin;
     const canDeviceLogin = canLogin && harness.harness === 'codex' && !!options.store.completeCodexNativeLogin
@@ -126,7 +130,7 @@ export async function createNativeProviderWorkflowAdapters(options: {
     const loginMethods: NonNullable<ProviderWorkflowStart['method']>[] = [
       ...(canBrowserLogin ? ['browser' as const] : []),
       ...(canDeviceLogin ? ['device_code' as const] : []),
-      ...(canLogin ? ['terminal' as const] : []),
+      ...(canLogin || canHermesLogin ? ['terminal' as const] : []),
     ];
     const apiKeyProviders = opencodeCapability.apiKey && settingsConnection && "apiKeyProviders" in settingsConnection
       ? [...await settingsConnection.apiKeyProviders()] : opencodeCapability.apiKey ? ['openai' as const] : keyAdapter && ['claude', 'codex'].includes(harness.harness) ? [harness.harness === 'claude' ? 'anthropic' as const : 'openai' as const] : [];
@@ -157,6 +161,10 @@ export async function createNativeProviderWorkflowAdapters(options: {
         await enableConnectedKey(harness.id, `key-connect-${randomUUID()}`, key.providerId);
       } } : {}),
       async start({ request, connectionOption, publish, registerCleanup }) {
+        if (harness.harness === 'hermes' && request.kind === 'login') {
+          if (!canHermesLogin || !options.hermesTerminalLogin || !options.genericWriter) throw new ProviderWorkflowNotStartedError();
+          return createHermesTerminalWorkflow({ harnessInstanceId: harness.id, runtime: options.hermesTerminalLogin, terminal: options.terminal, store: options.store, writer: options.genericWriter })({request,connectionOption,publish,registerCleanup});
+        }
         const codexTerminalLogin = harness.harness === 'codex' && request.kind === 'login' && request.method === 'terminal';
         // Codex admits only the qualified official native protocol or Terminal handoff.
         if (request.kind === 'login' && harness.harness !== 'claude' && !(harness.harness === 'codex' && (request.method === 'terminal' || request.method === 'device_code' && canDeviceLogin))) throw new ProviderWorkflowNotStartedError();

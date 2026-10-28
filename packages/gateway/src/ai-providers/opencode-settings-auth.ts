@@ -234,8 +234,9 @@ export function createOpenCodeSettingsConnection(options: {
 export async function enableOpenCodeConnectedRoute(store: ProviderSettingsStoreWriter, harnessInstanceId: string, idempotencyKey: string) {
   return enableNativeSettingsConnectedRoute(store, harnessInstanceId, "opencode", "openai", idempotencyKey);
 }
-export async function enableNativeSettingsConnectedRoute(store: ProviderSettingsStoreWriter, harnessInstanceId: string, kind: "opencode" | "pi" | "openclaw" | "hermes", provider: "openai" | "openai-codex" | "openai-api" | "anthropic" | "openrouter", idempotencyKey: string) {
+export async function enableNativeSettingsConnectedRoute(store: ProviderSettingsStoreWriter, harnessInstanceId: string, kind: "opencode" | "pi" | "openclaw" | "hermes", provider: "openai" | "openai-codex" | "openai-api" | "anthropic" | "openrouter", idempotencyKey: string, expectedRevision?: number) {
   const snapshot = await store.getSnapshot({ refresh: true });
+  if (expectedRevision !== undefined && snapshot.revision !== expectedRevision) throw new ProviderWorkflowError("unavailable");
   const harness = snapshot.harnesses.find(row => row.id === harnessInstanceId && row.harness === kind);
   const source = snapshot.accessSources.find(row => row.kind === "harness_profile" && row.harness === kind && row.providerId === provider && row.localObservation?.state === "present_unverified");
   const models = snapshot.modelProviders.find(row => row.id === provider)?.models.filter(model => model.enabled && source?.eligibleModelIds.includes(model.id)) ?? [];

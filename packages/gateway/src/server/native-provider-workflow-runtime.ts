@@ -1,3 +1,4 @@
+import { createHermesTerminalLoginRuntime } from "../ai-providers/hermes-terminal-login.js";
 import { createHermesSettingsConnection } from "../ai-providers/hermes-settings-auth.js";
 import { createOwnerAnthropicKeySaver } from "../ai-providers/owner-anthropic-key.js";
 import { join } from "node:path";
@@ -48,6 +49,9 @@ export async function createNativeProviderWorkflowRuntime(options: {
   const hermesSettingsConnection = guardGenericNativeKeys(genericWriter, "hermes", createHermesSettingsConnection({ homePath,
     enableConnected: (id, provider, key) => enableNativeSettingsConnectedRoute(workflowStore, id, "hermes", provider, key),
   }));
+  const hermesTerminalLogin = createHermesTerminalLoginRuntime({ homePath,
+    enableConnected: (id, provider, key, revision) => enableNativeSettingsConnectedRoute(workflowStore, id, "hermes", provider, key, revision),
+  });
   const providerWorkflowLifecycle = await registerProviderWorkflowRuntime({
     app,
     ownerId: options.ownerId,
@@ -57,6 +61,7 @@ export async function createNativeProviderWorkflowRuntime(options: {
       genericWriter,
       codexSettingsConnection: createCodexSettingsConnection({ homePath, profileGuard: nativeProviderProfileGuard }),
       hermesConnection: hermesSettingsConnection,
+      hermesTerminalLogin,
       claudeBrowserLogin: createClaudeSettingsLogin({ command: "claude", cwd: homePath, env: buildSettingsAccountEnvironment(homePath), acquire: () => nativeProviderProfileGuard.acquire("claude", { kind: "write", durable: true }) }),
       opencodeConnection: opencodeSettingsConnection,
       piConnection: piSettingsConnection,
