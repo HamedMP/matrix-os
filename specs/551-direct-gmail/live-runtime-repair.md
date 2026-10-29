@@ -37,3 +37,14 @@ The approved label lifecycle also needs a native-only `delete_unused_label` acti
 Google offers no atomic empty-only delete, so an external concurrent label change remains a provider race. The pilot targets only the new test label recorded by its own create result, after removing it from the selected thread and checking it is empty. Preserve all preexisting labels and message/read state. This adds no OAuth scope or processor/profile permission. API reference: https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.labels/delete.
 
 Test metadata mismatch/in-use/system/path attacks, withdrawal at each send boundary, native-only dispatch, one mutation attempt, empty responses, and exact 404 absence proof. Add the action to full catalog regression coverage and the public help draft.
+
+
+### Human consent deadline repair
+
+The live pilot reached the real Gmail consent card, but the external tool's
+30-second dispatch deadline cancelled the ten-minute human wait. Gmail processing
+consent now runs inside the broker's existing bounded approval preflight, before
+an external-effect checkpoint. Dispatch revalidates current processing authority
+without another prompt and refuses revoked or changed consent. Provider network
+deadlines, profile scope, budgets, and expiry remain unchanged. Conservative
+context marks may remain if a later admission fails; they contain no email body.

@@ -12,6 +12,7 @@ describe('Gmail PostgreSQL CI qualification', () => {
       'tests/gateway/google-data/provenance/model-history-reader-lifecycle.test.ts',
       'tests/platform/ai-funded-qualified-proxy-composition.test.ts',
       'tests/gateway/chat-history-continuation.test.ts',
+      'tests/gateway/google-consent-broker-preflight.test.ts',
       'tests/gateway/google-context-admission-startup.test.ts',
       'tests/gateway/google-platform-policy-composition.test.ts',
       'tests/gateway/google-managed-profile-resolution.test.ts',

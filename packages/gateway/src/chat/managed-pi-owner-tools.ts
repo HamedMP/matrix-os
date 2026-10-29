@@ -1,5 +1,6 @@
 /** Gateway-only owner tools. No recipe identity or bearer reaches the Pi worker. */
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { GoogleCollectionClientDependencies } from "../google-data/runtime/collection-client.js";
 import type { GoogleProcessingClaim } from "../google-data/runtime/envelope.js";
 import { SharedBrowserError, type SharedBrowserBroker, type SharedBrowserBinding } from "../shared-browser/broker.js";
@@ -23,7 +24,7 @@ const MAX_RESULT_BYTES = 192 * 1024;
 const HUMAN_WAIT_MS = 10 * 60_000;
 type Submit = { owner: CanonicalOwnerScope; chatId: string; runId: string; approvalId: string; decision: CanonicalChatApprovalDecision; clientRequestId: string; platformApprovalProof?: string };
 type McpControl = ReturnType<typeof createClaudeCustomMcpApprovalControl>;
-type Prepared = { args: string; account?: BotIntegrationConnection; receipt?: string };
+type Prepared = { args: string; account?: BotIntegrationConnection; receipt?: string; googleClaim?: GoogleProcessingClaim };
 interface Run {
   binding: ManagedPiRuntimeBinding;
   emit(event: CanonicalProviderRunEvent): void;
@@ -137,6 +138,28 @@ export function createManagedPiOwnerTools(deps: {
         title, safeDescription: description, risk: "high", allowedDecisions: ["approve", "decline", "cancel"] }));
     });
   }
+  async function prepareGoogleConsent(binding: ManagedPiRuntimeBinding, run: Run, selected: BotIntegrationConnection,
+    actionId: string, signal: AbortSignal, allowPrompt: boolean): Promise<GoogleProcessingClaim> {
+    if (!deps.googleCollection) throw new BotBrokerActionError("unavailable");
+    return deps.googleCollection.prepare(binding, selected.connectionId, signal, async (notice, consentSignal) => {
+      if (!allowPrompt) throw new BotBrokerActionError("not_granted");
+      const { disclosure, expiresAt } = notice;
+      const kinds = { 'gmail-metadata': 'Email details', 'gmail-content': 'Email contents',
+        'gmail-attachments': 'Attachments', 'google-derived-context': 'Saved email context' };
+      const seconds = disclosure.retention.maxAgeSeconds;
+      const unit = seconds % 86400 === 0 ? [seconds / 86400, "day"] as const
+        : seconds % 3600 === 0 ? [seconds / 3600, "hour"] as const
+          : seconds % 60 === 0 ? [seconds / 60, "minute"] as const : [seconds, "second"] as const;
+      const duration = `${unit[0]} ${unit[1]}${unit[0] === 1 ? "" : "s"}`;
+      const description = [`Account: ${selected.label}`, `Purpose: ${disclosure.purpose}`,
+        `Recipients: ${disclosure.recipients.map(recipient => `${recipient.name} (${recipient.role})`).join(", ")}`,
+        `Data: ${disclosure.dataKinds.map(kind => kinds[kind]).join(", ")}`,
+        `Retention: up to ${duration}`, `Permission expires: ${expiresAt}`,
+        'This permission is separate from connecting Gmail.'].join("\n");
+      await askOwner(run, "Allow this AI to use Gmail data?", description, consentSignal);
+      return true;
+    }, actionId);
+  }
   async function prepare(binding: ManagedPiRuntimeBinding, request: BotToolRequest, callerSignal: AbortSignal): Promise<void> {
     const { run, permissionMode, signal } = await live(binding, callerSignal);
     if (!capabilities.includes(request.capability) || !binding.capabilities.includes(request.capability)) throw new BotBrokerActionError("not_granted");
@@ -150,6 +173,11 @@ export function createManagedPiOwnerTools(deps: {
       if (action.risk !== "read" && permissionMode !== "full_access") throw new BotBrokerActionError("denied");
       prepared.account = await account(binding, request.args, signal);
       if (action.risk !== "read") await askOwner(run, "Allow this connected service action?", `Account ${prepared.account.label} (${prepared.account.connectionId})\n${JSON.stringify(request.args)}`, signal);
+      if (prepared.account.service === "gmail") {
+        // Human interaction belongs to the broker's bounded approval preflight,
+        // before its short external dispatch deadline and effect checkpoint.
+        prepared.googleClaim = structuredClone(await prepareGoogleConsent(binding, run, prepared.account, request.args.action, signal, true));
+      }
     } else if (request.capability === "mcp.call") {
       if (permissionMode !== "full_access" || !deps.approvals) throw new BotBrokerActionError("denied");
       // Approval preparation itself forwards tool arguments to the control plane.
@@ -232,24 +260,18 @@ export function createManagedPiOwnerTools(deps: {
         await live(binding, signal);
         let processingClaim: GoogleProcessingClaim | undefined;
         if (selected.service === "gmail") {
-          if (!deps.googleCollection) throw new BotBrokerActionError("unavailable");
-          processingClaim = await deps.googleCollection.prepare(binding, selected.connectionId, signal, async (notice, consentSignal) => {
-            const { disclosure, expiresAt } = notice;
-            const kinds = { 'gmail-metadata': 'Email details', 'gmail-content': 'Email contents',
-              'gmail-attachments': 'Attachments', 'google-derived-context': 'Saved email context' };
-            const seconds = disclosure.retention.maxAgeSeconds;
-            const unit = seconds % 86400 === 0 ? [seconds / 86400, "day"] as const
-              : seconds % 3600 === 0 ? [seconds / 3600, "hour"] as const
-                : seconds % 60 === 0 ? [seconds / 60, "minute"] as const : [seconds, "second"] as const;
-            const duration = `${unit[0]} ${unit[1]}${unit[0] === 1 ? "" : "s"}`;
-            const description = [`Account: ${selected.label}`, `Purpose: ${disclosure.purpose}`,
-              `Recipients: ${disclosure.recipients.map(recipient => `${recipient.name} (${recipient.role})`).join(", ")}`,
-              `Data: ${disclosure.dataKinds.map(kind => kinds[kind]).join(", ")}`,
-              `Retention: up to ${duration}`, `Permission expires: ${expiresAt}`,
-              'This permission is separate from connecting Gmail.'].join("\n");
-            await askOwner(run, "Allow this AI to use Gmail data?", description, consentSignal);
-            return true;
-          }, request.args.action);
+          if (!prepared.googleClaim) throw new BotBrokerActionError("not_granted");
+          // Revalidate the exact live policy before collection. A revoked/stale grant
+          // fails closed here; another human wait must start a fresh preflight.
+          processingClaim = await prepareGoogleConsent(binding, run, selected, request.args.action, signal, false);
+          const { collectionExpiresAt: originalExpiry, ...originalGrant } = prepared.googleClaim;
+          const { collectionExpiresAt: currentExpiry, ...currentGrant } = processingClaim;
+          if (!isDeepStrictEqual(originalGrant, currentGrant)
+            || !Number.isFinite(Date.parse(originalExpiry)) || !Number.isFinite(Date.parse(currentExpiry))) {
+            throw new BotBrokerActionError("not_granted");
+          }
+          processingClaim.collectionExpiresAt = new Date(Math.min(Date.parse(originalExpiry), Date.parse(currentExpiry))).toISOString();
+          if (Date.parse(processingClaim.collectionExpiresAt) <= Date.now()) throw new BotBrokerActionError("not_granted");
           const afterConsent = await live(binding, signal);
           await actionFor(binding, request.args, afterConsent.permissionMode, signal);
           const afterAccount = await account(binding, request.args, signal);
