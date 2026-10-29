@@ -12,6 +12,7 @@ export const BoundedGmailReadSchema = z.discriminatedUnion("kind", [
   z.strictObject({ ...Identity, kind: z.literal("threads"), pageToken: z.string().min(1).max(4096).optional() }),
   z.strictObject({ ...Identity, kind: z.literal("thread-ids"), id: Id }),
   z.strictObject({ ...Identity, kind: z.literal("message"), id: Id }),
+  z.strictObject({ ...Identity, kind: z.literal("message-text"), id: Id }),
   z.strictObject({ ...Identity, kind: z.literal("attachment"), id: Id, attachmentId: z.string().min(1).max(2048).regex(/^[A-Za-z0-9_-]+$/) }),
 ]);
 export type BoundedGmailRead = z.infer<typeof BoundedGmailReadSchema>;
@@ -56,6 +57,8 @@ export function createBoundedPipedreamGet(options: {
   const environment = z.enum(["development", "production"]).parse(options.environment);
   return async (rawInput, callerSignal, beforeSend) => {
     const input = BoundedGmailReadSchema.parse(rawInput);
+    // This two-request MIME preflight is qualified on the native transport only.
+    if (input.kind === 'message-text') throw new BoundedPipedreamReadError();
     callerSignal?.throwIfAborted();
     const signal = callerSignal ? AbortSignal.any([callerSignal, AbortSignal.timeout(10_000)])
       : AbortSignal.timeout(10_000);

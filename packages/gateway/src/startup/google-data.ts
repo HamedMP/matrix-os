@@ -16,6 +16,7 @@ import { googleInferenceIdentity, type GoogleDataInferenceAuthority, type Google
 import { createGoogleCollectionClient, GoogleCollectionClientError, type GoogleCollectionClientDependencies } from '../google-data/runtime/collection-client.js';
 import { createGoogleOwnerConsentClient } from '../google-data/runtime/owner-consent-client.js';
 import { createGoogleToolEgressGuard } from '../google-data/runtime/tool-egress.js';
+import { googleCollectionActionKinds } from '../google-data/runtime/collection-action-kinds.js';
 
 /** Owner database composition only. Missing platform transport denies classified
  * Google work. No profiles, consent or classification are invented at startup;
@@ -146,13 +147,13 @@ export async function createGoogleBrokerRuntime<DB>(options: {
     /** Server-only. Caller must provide an authenticated affirmative owner interaction;
      * a model permission default is not consent. No token or credential is returned. */
     async prepareCollection(binding: PiRuntimeBinding, accountUUID: string, signal: AbortSignal,
-      requestConsent: GoogleCollectionClientDependencies['requestConsent']) {
+      requestConsent: GoogleCollectionClientDependencies['requestConsent'], actionId = 'get_message') {
       if (closed || collections >= 32 || options.pilotAdmission && !pilotOwner(binding)) deny();
       if (collections++ === 0) collectionDrain = new Promise(resolve => { collectionsDone = resolve; });
       try {
         await admitContext(binding, signal);
         const collection = createGoogleCollectionClient({ registry: options.registry, contexts: collectionContexts, pins: collectionPins,
-          policyClient, ownerConsentClient, resolveIdentity, requestConsent });
+          policyClient, ownerConsentClient, resolveIdentity, requestConsent, requiredDataKinds: googleCollectionActionKinds(actionId) });
         return await collection.prepare(binding, accountUUID, AbortSignal.any([signal, closing.signal]));
       } finally { if (--collections === 0) { collectionsDone?.(); collectionsDone = undefined; } }
     },

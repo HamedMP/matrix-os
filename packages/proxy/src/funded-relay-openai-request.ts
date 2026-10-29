@@ -54,7 +54,12 @@ export function serializeFundedOpenAiRequest(value: unknown) {
   const reasoningEffort = parsed.reasoning_effort ?? (model.reasoningEfforts.includes("low") ? "low" : undefined);
   // A client without an output limit still receives a bounded generation.
   const maxTokens = parsed.max_completion_tokens ?? parsed.max_tokens ?? 8192;
-  const request = { ...parsed, reasoning_effort: reasoningEffort, max_tokens: maxTokens };
+  // GPT-OSS's published template uses a string membership guard on assistant
+  // content. Empty text preserves tool-only turns that OpenAI clients encode
+  // with null, without changing tools or deliberate assistant text.
+  const messages = parsed.model === '@cf/openai/gpt-oss-20b' ? parsed.messages.map(message =>
+    message.role === 'assistant' && message.content == null ? { ...message, content: '' } : message) : parsed.messages;
+  const request = { ...parsed, messages, reasoning_effort: reasoningEffort, max_tokens: maxTokens };
   const { max_tokens: _max, max_completion_tokens: _maxCompletion, ...rest } = request;
   return { request, body: JSON.stringify({ ...rest, [model.outputTokenField]: maxTokens,
     ...(parsed.stream ? { stream_options: { include_usage: true } } : {}), store: false }) };

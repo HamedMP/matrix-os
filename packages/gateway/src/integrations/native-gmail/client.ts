@@ -4,6 +4,7 @@ import { BoundedGmailReadSchema } from '../pipedream-bounded-get.js';
 import { BoundedGmailLabelsSchema } from '../pipedream-bounded-labels.js';
 import { createReadCoalescer, proxyReadKey } from '../read-coalescer.js';
 import { createNativeGmailRequest, isNativeGmailAccount, type GmailTokenSource, type NativeGmailRequest } from './request.js';
+import { assertMessageTextUnchanged, messageTextPreflightFields, messageTextShape, projectMessageText } from './message-text.js';
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
 /** Select by persisted native account identity, never service name or caller-controlled URL. */
@@ -40,6 +41,19 @@ export function createNativeGmailClient(options: { legacy: PipedreamConnectClien
     callAction: (input, beforeSend, signal) => isNativeGmailAccount(input.accountId) ? request(input, 'POST', undefined, signal, beforeSend) : legacy.callAction(input, ...control(beforeSend, signal)),
     boundedGmailGet: async (raw, signal, beforeSend) => {
       const input = BoundedGmailReadSchema.parse(raw);
+      if (input.kind === 'message-text') {
+        if (!isNativeGmailAccount(input.accountId)) throw new Error('Integration read unavailable');
+        const boundedSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000);
+        const target = new URL(`${BASE}/messages/${input.id}`);
+        target.searchParams.set('format', 'full'); target.searchParams.set('fields', messageTextPreflightFields());
+        const identity = { externalUserId: input.externalUserId, accountId: input.accountId };
+        const metadata = await request({ ...identity, url: target.href }, 'GET', 64 * 1024, boundedSignal, beforeSend);
+        messageTextShape(metadata, input.id, true);
+        target.searchParams.set('fields', 'id,threadId,internalDate,snippet,payload(mimeType,filename,headers,body,parts)');
+        const content = await request({ ...identity, url: target.href }, 'GET', 128 * 1024, boundedSignal, beforeSend);
+        assertMessageTextUnchanged(metadata, content, input.id); boundedSignal.throwIfAborted();
+        return projectMessageText(content);
+      }
       if (!isNativeGmailAccount(input.accountId)) {
         if (!legacy.boundedGmailGet) throw new Error('Integration read unavailable');
         return legacy.boundedGmailGet(input, signal, ...(beforeSend ? [beforeSend] : []));

@@ -4,6 +4,7 @@ import { GoogleDataRequestSchema, GoogleDataStampSchema, ResolvedGoogleRouteSche
 import type { GoogleDataAuthority } from '../authority.js';
 import type { GoogleDataRepository } from '../repository.js';
 import { GOOGLE_PROCESSING_HEADER, verifyGoogleProcessingEnvelope, type GoogleProcessingEnvelope } from './envelope.js';
+import { googleCollectionActionKinds } from './collection-action-kinds.js';
 
 export interface GoogleCollectionAdmissionDependencies {
   repository: Pick<GoogleDataRepository, 'snapshot'>;
@@ -77,6 +78,11 @@ export function createGoogleCollectionAdmission(deps: GoogleCollectionAdmissionD
           .filter(route => routeDigest(route) === envelope!.routeDigest);
         if (routes.length !== 1) deny();
         const route: ResolvedGoogleRoute = routes[0]!;
+        // The signed bytes identify the actual action. A caller cannot obtain
+        // attachment access by minting a claim under a narrower text profile.
+        const action = JSON.parse(body) as { service?: unknown; action?: unknown };
+        if (action?.service !== 'gmail' || typeof action.action !== 'string'
+          || googleCollectionActionKinds(action.action).some(kind => !profile.input.dataKinds.includes(kind))) deny();
         function matchesClaim(value: GoogleDataStamp, sendSignal?: AbortSignal) {
           current(sendSignal);
           if (value.ownerId !== ownerId || value.googleAccountId !== googleAccountId || value.purposeId !== envelope!.purposeId

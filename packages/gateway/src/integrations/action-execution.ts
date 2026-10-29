@@ -60,6 +60,11 @@ export async function executeIntegrationAction(opts: {
     if (!pipedream.readDriveFile) throw new DriveContentError();
     return { data: await pipedream.readDriveFile({ ...params, externalUserId, accountId: connection.pipedream_account_id }) };
   }
+  if (serviceId === "gmail" && actionId === "get_message_text") {
+    if (!pipedream.boundedGmailGet) throw new BoundedPipedreamReadError();
+    return { data: await pipedream.boundedGmailGet({ externalUserId, accountId: connection.pipedream_account_id,
+      kind: 'message-text', id: String(params?.messageId) }, ...boundedControl) };
+  }
   if (serviceId === "gmail" && actionId === "get_attachment") {
     if (!pipedream.boundedGmailGet) throw new BoundedPipedreamReadError();
     return { data: await pipedream.boundedGmailGet({ externalUserId, accountId: connection.pipedream_account_id,

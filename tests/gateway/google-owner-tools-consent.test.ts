@@ -45,6 +45,7 @@ describe('owner Gmail processing consent', () => {
     await expect(f.submit('approve', 'other')).rejects.toThrow(); expect(f.call).not.toHaveBeenCalled();
     await f.submit('approve'); const result = await work;
     expect(f.call).toHaveBeenCalledWith(binding.ownerId, expect.objectContaining({ connectionId: account, processingClaim: claim }), expect.any(AbortSignal));
+    expect(f.prepare).toHaveBeenCalledWith(binding, account, expect.any(AbortSignal), expect.any(Function), 'get_message');
     expect(JSON.stringify(result)).not.toMatch(/routeDigest|consentId|profileId|runtimeHandle/);
     await f.tools.closeRun(binding.runId);
   });
