@@ -49,7 +49,7 @@ it.each([
   let deliveryGate: Promise<void> | undefined;
   let disconnect: (() => void) | undefined;
   const openStream = vi.fn(async ({ signal, cursor }: { signal: AbortSignal; cursor?: number }) => {
-    const response = await app.request(`/api/chats/events${cursor === undefined ? "" : `?cursor=${cursor}`}`, {
+    const response = await app.request(`/api/chats/events?assistantTextVersion=1${cursor === undefined ? "" : `&cursor=${cursor}`}`, {
       signal, headers: { accept: "text/event-stream", "x-matrix-chat-protocol": "2" },
     });
     return new Response(response.body!.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({

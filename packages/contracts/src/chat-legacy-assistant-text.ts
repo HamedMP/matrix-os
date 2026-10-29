@@ -65,8 +65,7 @@ function legacyChunks(text: string): string[] | undefined {
   return chunks.reverse();
 }
 
-/** Display-only projection. Never write these parts into owner storage/outbox. */
-export function projectLegacyAssistantTextParts(parts: Parts): Parts {
+function projectTextSpans(parts: Parts, compactCompatible: boolean): Parts {
   const projected: Parts = [];
   let changed = false;
   for (let index = 0; index < parts.length;) {
@@ -80,7 +79,7 @@ export function projectLegacyAssistantTextParts(parts: Parts): Parts {
       compatible &&= text.length <= MAX_TEXT_UNITS && text.trim().length > 0
         && encoder.encode(text).byteLength <= MAX_TEXT_BYTES;
     }
-    if (compatible) projected.push(...texts.map(text => ({ type: "text" as const, text })));
+    if (compatible && !compactCompatible) projected.push(...texts.map(text => ({ type: "text" as const, text })));
     else {
       changed = true;
       const chunks = legacyChunks(texts.join(""));
@@ -88,7 +87,20 @@ export function projectLegacyAssistantTextParts(parts: Parts): Parts {
       else projected.push(unavailable());
     }
   }
-  return !changed ? parts : projected.length <= MAX_PARTS ? projected : coarseParts(parts);
+  return !changed ? parts : projected;
+}
+
+/** Preserve stable spans first; at most one extra pass minimizes every span. */
+function legacyProjection(parts: Parts): { parts: Parts; compacted: boolean } {
+  const projected = projectTextSpans(parts, false);
+  if (projected === parts || projected.length <= MAX_PARTS) return { parts: projected, compacted: false };
+  const compacted = projectTextSpans(parts, true);
+  return { parts: compacted.length <= MAX_PARTS ? compacted : coarseParts(parts), compacted: true };
+}
+
+/** Display-only projection. Never write these parts into owner storage/outbox. */
+export function projectLegacyAssistantTextParts(parts: Parts): Parts {
+  return legacyProjection(parts).parts;
 }
 
 /** Preserve every identity/cursor field, including collaboration message fields.
@@ -99,10 +111,15 @@ export function projectLegacyAssistantMessage<T extends { role: string; parts: P
 ): T {
   if (message.role !== "assistant") return message;
   const maxEncodedBytes = options.maxEncodedBytes ?? MAX_MESSAGE_BYTES;
-  const parts = projectLegacyAssistantTextParts(message.parts);
+  const projection = legacyProjection(message.parts);
+  const parts = projection.parts;
   if (parts === message.parts) return message;
   const projected = { ...message, parts };
   if (encoder.encode(JSON.stringify(projected)).byteLength <= maxEncodedBytes) return projected;
+  if (!projection.compacted) {
+    const compacted = { ...message, parts: projectTextSpans(message.parts, true) };
+    if (compacted.parts.length <= MAX_PARTS && encoder.encode(JSON.stringify(compacted)).byteLength <= maxEncodedBytes) return compacted;
+  }
   // Never drop an approval/tool/resource part to fit a legacy display notice.
   const coarse = { ...message, parts: coarseParts(message.parts, "Response unavailable in this version.") };
   if (encoder.encode(JSON.stringify(coarse)).byteLength <= maxEncodedBytes) return coarse;

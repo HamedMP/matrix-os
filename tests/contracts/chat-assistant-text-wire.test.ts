@@ -91,6 +91,40 @@ describe("exact legacy assistant text partition", () => {
   expect(projected.length).toBeLessThanOrEqual(64);
   expect(legacyValid(projected)).toBe(true);
  });
+ it("compacts compatible spans before discarding exact text at the 64-part bound", () => {
+  const marker={type:"status" as const,tone:"info" as const,label:"Keep this"};
+  // Historical rows accepted by locked Zod 4.6.7 can contain 40k UTF-16 units
+  // in one 20k-code-point part. Its legacy split needs an extra part.
+  const raw=message([...Array.from({length:60},()=>marker),...textParts("a","b"),marker,...textParts("🧪".repeat(20_000))]);
+  const before=JSON.stringify(raw);
+  expect(raw.parts).toHaveLength(64);
+  const projected=projectLegacyAssistantMessage(raw);
+  expect(projected.parts).toHaveLength(64);
+  expect(textOf(projected.parts)).toBe("ab"+"🧪".repeat(20_000));
+  expect(projected.parts.filter(part=>part.type!=="text")).toEqual(raw.parts.filter(part=>part.type!=="text"));
+  expect(legacyValid(projected.parts)).toBe(true);
+  expect(JSON.stringify(raw)).toBe(before);
+ });
+ it("compacts compatible spans before the canonical encoded-byte fallback", () => {
+  const marker={type:"status" as const,tone:"info" as const,label:"Keep this"};
+  const parts: CanonicalChatMessage["parts"]=[...Array.from({length:3},()=>({type:"summary" as const,text:"x".repeat(16_000),source:"assistant" as const})),
+   {type:"summary",text:"y",source:"assistant"},...textParts("a","b"),marker,...textParts("🧪".repeat(20_000))];
+  const base=message(parts);
+  const fill=128*1024-new TextEncoder().encode(JSON.stringify(base)).byteLength;
+  const summary=base.parts[3]!;
+  if(summary.type!=="summary") throw new Error("Expected summary");
+  summary.text+="y".repeat(fill);
+  const raw=CanonicalChatMessageSchema.parse(base);
+  const before=JSON.stringify(raw);
+  expect(new TextEncoder().encode(before).byteLength).toBe(128*1024);
+  const projected=projectLegacyAssistantMessage(raw);
+  expect(textOf(projected.parts)).toBe("ab"+"🧪".repeat(20_000));
+  expect(projected.parts.filter(part=>part.type!=="text")).toEqual(raw.parts.filter(part=>part.type!=="text"));
+  expect(new TextEncoder().encode(JSON.stringify(projected)).byteLength).toBeLessThanOrEqual(128*1024);
+  expect(legacyValid(projected.parts)).toBe(true);
+  expect(CanonicalChatMessageSchema.safeParse(projected).success).toBe(true);
+  expect(JSON.stringify(raw)).toBe(before);
+ });
  it("uses metadata notification recovery for legacy content and keeps capable content exact", () => {
   const frame={type:"chat.content" as const,event:{cursor:7,chatId:"chat_wire",revision:4,eventType:"run.message" as const,createdAt:"2026-10-29T00:00:00.000Z"},content:{record:{chat:{id:"chat_wire"}}}} as Parameters<typeof projectChatMessageFrame>[0];
   expect(projectChatMessageFrame(frame,"2")).toEqual({type:"chat.event",event:frame.event});

@@ -1,8 +1,8 @@
 import { z } from "zod/v4";
 import type { CanonicalChatMessage, CanonicalChatRunActivity } from "#canonical-chat";
 import type { CanonicalChatTransportFrame } from "#canonical-chat-content";
-import { projectLegacyAssistantMessage } from "./chat-legacy-assistant-text.js";
-export { projectLegacyAssistantMessage, projectLegacyAssistantTextParts } from "./chat-legacy-assistant-text.js";
+import { projectLegacyAssistantMessage } from "#chat-legacy-assistant-text";
+export { projectLegacyAssistantMessage, projectLegacyAssistantTextParts } from "#chat-legacy-assistant-text";
 import { canonicalSafeLabel } from "#canonical-chat-primitives";
 
 /** Expanded stored assistant text requires independent explicit client support. */
