@@ -64,7 +64,7 @@ it.each([undefined, "1", "2"])("negotiates message metadata in SSE snapshots and
     } },
     setIntervalFn: vi.fn(() => 1), clearIntervalFn: vi.fn(),
   });
-  const response = await app.request(`/api/chats/events${version ? `?messageVersion=${version}` : ""}`, {
+  const response = await app.request(`/api/chats/events?assistantTextVersion=1${version ? `&messageVersion=${version}` : ""}`, {
     headers: { accept: "text/event-stream", "x-matrix-chat-protocol": "2" },
   });
   expect(response.status).toBe(200);
@@ -124,7 +124,7 @@ it.each(["0", "1"])("negotiates chat title and activity metadata in HTTP and SSE
       return { onClose() {}, touch() {} };
     } }, setIntervalFn: vi.fn(() => 1), clearIntervalFn: vi.fn(),
   });
-  const live = await streamApp.request("/api/chats/events?messageVersion=2", { headers });
+  const live = await streamApp.request("/api/chats/events?messageVersion=2&assistantTextVersion=1", { headers });
   const reader = live.body!.getReader();
   try {
     const text = new TextDecoder().decode((await reader.read()).value);

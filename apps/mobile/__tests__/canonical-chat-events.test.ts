@@ -13,7 +13,7 @@ jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn()
 
 const mockFetch = streamingFetch as unknown as jest.Mock;
 const GATEWAY_URL = "https://example.test/vm/alice?runtime=primary";
-const STREAM_URL = "https://example.test/vm/alice/api/chats/events?runtime=primary&fundingVersion=1&commandPreviewVersion=1";
+const STREAM_URL = "https://example.test/vm/alice/api/chats/events?runtime=primary&fundingVersion=1&commandPreviewVersion=1&assistantTextVersion=1";
 const createdAt = "2026-09-06T00:00:00.000Z";
 
 const chat = {
@@ -119,6 +119,27 @@ describe("createCanonicalChatEventSource", () => {
     await settle();
     expect(events).toEqual([{
       type: "chat.changed", chatId: chat.id, cursor: 7, eventType: "run.message", content: contentFrame,
+    }]);
+    source.disconnect();
+  });
+
+  it("negotiates and delivers complete whitespace-only assistant content", async () => {
+    const stream = streamingResponse();
+    mockFetch.mockResolvedValue(stream.response);
+    const { source, events } = connectedSource();
+    await settle();
+    expect(mockFetch.mock.calls[0]![0]).toContain("assistantTextVersion=1");
+    const frame = {
+      type: "chat.content", event,
+      content: {
+        record: { chat },
+        messages: [{ ...contentFrame.content.messageDelta.message, state: "committed", parts: [{ type: "text", text: "\n\n\n" }] }],
+      },
+    };
+    stream.emit(sse(frame));
+    await settle();
+    expect(events).toEqual([{
+      type: "chat.changed", chatId: chat.id, cursor: 7, eventType: "run.message", content: frame,
     }]);
     source.disconnect();
   });
