@@ -7,6 +7,7 @@ export const MATRIX_HOSTED_BILLING_PLAN_SLUGS = [
 export const MATRIX_HOSTED_BILLING_REGION_SLUGS = [
   "region_fsn1",
   "region_nbg1",
+  "region_hel1",
   "region_ash",
   "region_hil",
 ] as const;
@@ -25,10 +26,10 @@ export interface MatrixHostedBillingPlan {
 
 export interface MatrixHostedBillingRegion {
   slug: MatrixHostedBillingRegionSlug;
-  location: "fsn1" | "nbg1" | "ash" | "hil";
-  flag: "🇩🇪" | "🇺🇸";
+  location: "fsn1" | "nbg1" | "hel1" | "ash" | "hil";
+  flag: "🇩🇪" | "🇫🇮" | "🇺🇸";
   label: string;
-  countryLabel: "Germany" | "United States";
+  countryLabel: "Germany" | "Finland" | "United States";
   networkZone: "eu-central" | "us-east" | "us-west";
 }
 
@@ -71,6 +72,14 @@ export const MATRIX_HOSTED_BILLING_REGIONS: readonly MatrixHostedBillingRegion[]
     flag: "🇩🇪",
     label: "Nuremberg, Germany",
     countryLabel: "Germany",
+    networkZone: "eu-central",
+  },
+  {
+    slug: "region_hel1",
+    location: "hel1",
+    flag: "🇫🇮",
+    label: "Helsinki, Finland",
+    countryLabel: "Finland",
     networkZone: "eu-central",
   },
   {

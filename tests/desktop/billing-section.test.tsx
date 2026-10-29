@@ -394,6 +394,7 @@ describe("desktop billing settings", () => {
   it.each([
     { selection: "suggested Asia location", explicitRegion: null, expectedRegion: "region_hil" },
     { selection: "explicit EU location over the Asia suggestion", explicitRegion: "region_fsn1", expectedRegion: "region_fsn1" },
+    { selection: "explicit Finland location over the Asia suggestion", explicitRegion: "region_hel1", expectedRegion: "region_hel1" },
   ])("checks out with the $selection", async ({ explicitRegion, expectedRegion }) => {
     mockBrowserTimeZone("Asia/Shanghai");
     const api = makeApi({

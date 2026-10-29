@@ -1,4 +1,5 @@
 import { z } from 'zod/v4';
+import { MATRIX_HOSTED_BILLING_REGION_SLUGS } from '@matrix-os/contracts';
 import { DeveloperToolsWithDefaultSchema } from '../developer-tools.js';
 import { HetznerServerTypeSchema, RuntimeSlotSchema } from '../customer-vps-schema.js';
 import { resolveReturnPath } from '../origins.js';
@@ -16,19 +17,9 @@ export const MatrixCardTrialDaysSchema = z.string()
 
 export const CLERK_USER_ID_PATTERN = /^user_[A-Za-z0-9]{1,128}$/;
 
-export const CheckoutBillingRegionSlugSchema = z.enum([
-  'region_fsn1',
-  'region_nbg1',
-  'region_ash',
-  'region_hil',
-]);
+export const CheckoutBillingRegionSlugSchema = z.enum(MATRIX_HOSTED_BILLING_REGION_SLUGS);
 
-export const HistoricalBillingRegionSlugSchema = z.enum([
-  'region_fsn1',
-  'region_nbg1',
-  'region_ash',
-  'region_hil',
-]);
+export const HistoricalBillingRegionSlugSchema = z.enum(MATRIX_HOSTED_BILLING_REGION_SLUGS);
 
 export const MarketingAttributionSchema = z.object({
   rdt_cid: z.string().min(1).max(256).optional(),

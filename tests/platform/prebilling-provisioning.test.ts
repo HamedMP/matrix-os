@@ -597,7 +597,7 @@ describe('platform prebilling provisioning foundation', () => {
       planSlug: 'matrix_builder',
       billingInterval: 'monthly',
       serverType: 'cpx32',
-      regionSlug: 'region_fsn1',
+      regionSlug: 'region_hel1',
       developerTools: ['codex', 'claude-code'],
       now: CREATED_AT,
     });
@@ -613,7 +613,7 @@ describe('platform prebilling provisioning foundation', () => {
       handle: 'alice',
       runtimeSlot: 'primary',
       serverType: 'cpx32',
-      location: 'fsn1',
+      location: 'hel1',
       developerTools: ['codex', 'claude-code'],
     }, 'intent-1', { dispatch: 'detached' });
     await expect(coordinator.getPreparationStatus({
