@@ -176,6 +176,17 @@ describe("Getting started app view", () => {
     expect(within(hero).queryByText("+20 pts")).toBeNull();
   });
 
+  it("shows the next task's logo large in the Up next panel", async () => {
+    renderApp(makePort({
+      results: () => results({ chats: fulfilled({ items: [{ id: "chat-1" }] }) }),
+      logos: { slack: "https://cdn.example.com/slack.svg" },
+    }));
+    const title = await screen.findByRole("heading", { name: "Slack" });
+    const panel = title.closest(".mxo-gsa__next") as HTMLElement;
+    await waitFor(() => expect(panel.querySelector('.mxo-gsa__next-art img[src="https://cdn.example.com/slack.svg"]')).toBeTruthy());
+    expect(within(panel).getByRole("button", { name: "Connect" }).className).toContain("mxo-gsa__primary--brand");
+  });
+
   it("keeps a sent first prompt done after its chats are deleted", async () => {
     renderApp(makePort({
       progress: { awards: [{ taskId: "first-prompt", points: 50, awardedAt: "2026-10-28T10:00:00.000Z" }], total: 50 },

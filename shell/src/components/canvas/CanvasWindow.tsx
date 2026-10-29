@@ -14,6 +14,7 @@ import { PreviewWindow } from "../preview-window/PreviewWindow";
 import { ChatApp } from "../ChatApp";
 import { ActivityMonitorApp } from "../system-activity/ActivityMonitorApp";
 import { WebGettingStartedAppWindow } from "../getting-started-app/web-getting-started-app";
+import { webGettingStartedAppVisible } from "../getting-started-app/visibility";
 import { useChatContext } from "@/stores/chat-context";
 import { TrafficLights } from "../window/TrafficLights";
 import { useThemeStyle } from "../window/useThemeStyle";
@@ -515,7 +516,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
       ) : win.path === "__activity-monitor__" ? (
         <ActivityMonitorApp />
       ) : win.path === "__getting-started__" ? (
-        <WebGettingStartedAppWindow visible={!win.minimized && !hidden} />
+        <WebGettingStartedAppWindow visible={!hidden && webGettingStartedAppVisible(win, fullscreenWindowId)} />
       ) : deferAppContent ? (
         <div
           className="h-full w-full flex items-center justify-center bg-card"

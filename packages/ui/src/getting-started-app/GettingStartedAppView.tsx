@@ -208,7 +208,7 @@ function HeroNext({ onAction }: { onAction(action: GettingStartedAppAction): voi
   const firstPrompt = tasks.find((task) => task.id === "first-prompt");
   if (firstPrompt?.status !== "complete") return <StarterTasks points={firstPrompt?.points ?? 0} onAction={onAction} />;
   const next = gettingStartedAppNextTask(tasks);
-  if (next) return <UpNext task={next} earned={state.earned.includes(next.id)} onAction={onAction} />;
+  if (next) return <UpNext task={next} logo={state.logos[next.id]} earned={state.earned.includes(next.id)} onAction={onAction} />;
   return state.doneCount === TOTAL_TASKS ? (
     <>
       <h2 className="mxo-gsa__next-title">You're all set</h2>
@@ -236,10 +236,17 @@ function Reward({ taskId }: { taskId: GettingStartedAppTaskId }) {
   );
 }
 
-function UpNext({ task, earned, onAction }: { task: GettingStartedAppTask; earned: boolean; onAction(action: GettingStartedAppAction): void }) {
+function UpNext({ task, logo, earned, onAction }: {
+  task: GettingStartedAppTask;
+  logo: string | undefined;
+  earned: boolean;
+  onAction(action: GettingStartedAppAction): void;
+}) {
   const action = gettingStartedAppAction(task.id);
   return (
     <>
+      {/* The next task's own logo, large, gives the panel its color once the starter list is done. */}
+      <span className="mxo-gsa__next-art" aria-hidden="true"><TaskArt task={task} logo={logo} /></span>
       <div className="mxo-gsa__chips">
         <span className="mxo-gsa__badge mxo-gsa__badge--md mxo-gsa__badge--brand">Up next</span>
         {earned ? (
@@ -252,7 +259,7 @@ function UpNext({ task, earned, onAction }: { task: GettingStartedAppTask; earne
       <p className="mxo-gsa__next-description">{task.description}</p>
       <span className="mxo-gsa__spacer" aria-hidden="true" />
       {action ? (
-        <button type="button" className="mxo-gsa__primary" onClick={() => onAction(action)}>
+        <button type="button" className="mxo-gsa__primary mxo-gsa__primary--brand" onClick={() => onAction(action)}>
           {gettingStartedAppActionLabel(task.id)}
         </button>
       ) : null}
