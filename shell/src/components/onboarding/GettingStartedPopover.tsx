@@ -184,15 +184,16 @@ export async function loadWebGettingStartedResults(
 ): Promise<GettingStartedResults> {
   const gatewayUrl = getGatewayUrl();
   const billingUrl = `/billing/status?runtimeSlot=${encodeURIComponent(currentRuntimeSlot())}`;
-  const [github, integrations, agents, projects, chats, billing] = await Promise.allSettled([
+  const [github, integrations, agents, projects, chats, billing, providers] = await Promise.allSettled([
     readJson(fetcher, `${gatewayUrl}/api/github/status`, signal),
     readJson(fetcher, `${gatewayUrl}/api/integrations`, signal),
     readJson(fetcher, `${gatewayUrl}/api/agents/credentials/status`, signal),
     readJson(fetcher, `${gatewayUrl}/api/workspace/projects`, signal),
     readJson(fetcher, `${gatewayUrl}/api/chats?limit=1`, signal),
     readJson(fetcher, billingUrl, signal),
+    readJson(fetcher, `${gatewayUrl}/api/ai/provider-settings`, signal),
   ]);
-  return { github, integrations, agents, projects, chats, billing };
+  return { github, integrations, agents, projects, chats, billing, providers };
 }
 
 export async function loadWebGettingStartedSnapshot(

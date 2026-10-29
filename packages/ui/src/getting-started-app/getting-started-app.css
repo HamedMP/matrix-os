@@ -1,23 +1,32 @@
 /* Spec 639: the Getting started app window, after Figma "🧭 Getting started"
-   (frames 1938:645 and 1938:1226). Colours follow the onboarding checklist
-   tokens in @matrix-os/brand; dark themes reuse the shell surface tokens. */
+   (frames 1938:645 and 1938:1226). Brand accents come from @matrix-os/brand
+   (GETTING_STARTED_APP_BRAND_VARS, set inline). Surfaces, text and borders use
+   the Electron theme variables first, then the Web shell's, so light and dark
+   themes both work, the same chain as agents-providers.css. */
+.mxo-gsa,
+.mxo-gsa-summary {
+  /* Page, cards (#f3f2f2 in both light themes) and the lighter tiles on cards. */
+  --gsa-paper: var(--bg-app, var(--background, #fafafa));
+  --gsa-card: var(--bg-surface, var(--card, #f3f2f2));
+  --gsa-surface: var(--bg-raised, var(--background, #fafafa));
+  --gsa-card-hover: color-mix(in srgb, var(--gsa-card) 88%, var(--gsa-text));
+  --gsa-border: var(--border-subtle, var(--border, #e1e0e0));
+  --gsa-text: var(--text-primary, var(--foreground, #242323));
+  --gsa-muted: var(--text-secondary, var(--muted-foreground, #635f5f));
+  --gsa-focus: var(--ring, var(--gsa-brand-green));
+  --gsa-track: color-mix(in srgb, var(--gsa-text) 12%, transparent);
+  --gsa-fill: var(--gsa-brand-green);
+  --gsa-gold-bg: color-mix(in srgb, var(--gsa-brand-gold) 14%, transparent);
+  --gsa-gold-border: color-mix(in srgb, var(--gsa-brand-gold) 38%, transparent);
+  --gsa-gold-text: color-mix(in srgb, var(--gsa-brand-gold) 70%, var(--gsa-text));
+  --gsa-done-bg: color-mix(in srgb, var(--gsa-brand-teal) 14%, transparent);
+  --gsa-done-border: color-mix(in srgb, var(--gsa-brand-teal) 36%, transparent);
+  --gsa-done-text: color-mix(in srgb, var(--gsa-brand-teal) 72%, var(--gsa-text));
+  --gsa-label-bg: color-mix(in srgb, var(--gsa-brand-green) 14%, transparent);
+  --gsa-label-border: color-mix(in srgb, var(--gsa-brand-green) 32%, transparent);
+}
+
 .mxo-gsa {
-  --gsa-paper: #fcfcfa;
-  --gsa-card: #f2f2ef;
-  --gsa-card-hover: #ebebe6;
-  --gsa-border: #ebeae6;
-  --gsa-text: #141413;
-  --gsa-muted: #6b6b63;
-  --gsa-track: #e1e1d8;
-  --gsa-fill: #6e8a4f;
-  --gsa-forest: #0e3422;
-  --gsa-forest-2: #2e7d55;
-  --gsa-gold-bg: #fcf5e8;
-  --gsa-gold-border: #f0dcb4;
-  --gsa-gold-text: #8a5a14;
-  --gsa-done-bg: #eef7f2;
-  --gsa-done-text: #2e6b46;
-  --gsa-action: #171717;
   height: 100%;
   overflow-y: auto;
   background: var(--gsa-paper);
@@ -82,7 +91,7 @@
   padding: 2px 6px;
   border: 1px solid var(--gsa-border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--gsa-surface);
   color: var(--gsa-muted);
   font-size: 10px;
   line-height: 14px;
@@ -97,13 +106,13 @@
 }
 
 .mxo-gsa__chip--label {
-  border-color: #dfe8cf;
-  background: #f3f7ec;
+  border-color: var(--gsa-label-border);
+  background: var(--gsa-label-bg);
   color: var(--gsa-text);
 }
 
 .mxo-gsa__chip--done {
-  border-color: #cfe5d8;
+  border-color: var(--gsa-done-border);
   background: var(--gsa-done-bg);
   color: var(--gsa-done-text);
 }
@@ -123,9 +132,9 @@
   padding: 18px;
   border-radius: 12px;
   background:
-    radial-gradient(120% 90% at 85% 10%, var(--gsa-forest-2) 0%, transparent 60%),
-    linear-gradient(135deg, #0b2a1c 0%, var(--gsa-forest) 60%, #174a31 100%);
-  color: #fff;
+    radial-gradient(120% 90% at 85% 10%, var(--gsa-brand-forest-light) 0%, transparent 60%),
+    linear-gradient(135deg, var(--gsa-brand-forest-deep) 0%, var(--gsa-brand-forest) 70%);
+  color: #fffefc;
 }
 
 .mxo-gsa__welcome--compact {
@@ -180,9 +189,9 @@
   align-items: center;
   gap: 8px;
   padding: 7px 10px;
-  border: 1px solid #d9d9d2;
+  border: 1px solid var(--gsa-border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--gsa-surface);
   font-size: 12px;
 }
 
@@ -191,8 +200,8 @@
   padding: 7px 12px;
   border: 0;
   border-radius: 6px;
-  background: var(--gsa-action);
-  color: #fff;
+  background: var(--gsa-text);
+  color: var(--gsa-paper);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -201,7 +210,7 @@
 .mxo-gsa__primary:focus-visible,
 .mxo-gsa__card:focus-visible,
 .mxo-gsa__support:focus-visible {
-  outline: 2px solid var(--gsa-fill);
+  outline: 2px solid var(--gsa-focus);
   outline-offset: 2px;
 }
 
@@ -272,7 +281,7 @@
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  background: #fff;
+  background: var(--gsa-surface);
   color: var(--gsa-text);
 }
 
@@ -332,21 +341,21 @@
   width: calc(100% - 24px);
   margin: 0 12px 10px;
   padding: 8px 10px;
-  border: 1px solid #ebeae6;
+  border: 1px solid var(--gsa-border);
   border-radius: 8px;
-  background: #f2f2ef;
-  color: #141413;
+  background: var(--gsa-card);
+  color: var(--gsa-text);
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
 .mxo-gsa-summary:hover {
-  background: #ebebe6;
+  background: var(--gsa-card-hover);
 }
 
 .mxo-gsa-summary:focus-visible {
-  outline: 2px solid #6e8a4f;
+  outline: 2px solid var(--gsa-focus);
   outline-offset: 2px;
 }
 
@@ -364,6 +373,6 @@
 }
 
 .mxo-gsa-summary__detail {
-  color: #6b6b63;
+  color: var(--gsa-muted);
   font-size: 10px;
 }

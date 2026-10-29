@@ -95,6 +95,27 @@ describe("Getting started app view", () => {
     await waitFor(() => expect(screen.getByLabelText("70 points")).toBeTruthy());
   });
 
+  it("shows a loading hero until status arrives, not 'all set'", async () => {
+    const port = makePort();
+    port.loadResults.mockImplementation(() => new Promise(() => undefined));
+    renderApp(port);
+    expect(await screen.findByText("Loading your tasks…")).toBeTruthy();
+    expect(screen.queryByText("You're all set")).toBeNull();
+  });
+
+  it("says the rest can't be checked yet when only unavailable tasks remain", async () => {
+    const port = makePort({ results: () => results({
+      ...slackConnected,
+      github: fulfilled({ authenticated: true }),
+      agents: fulfilled({ agents: [{ agent: "codex", status: "available" }] }),
+      chats: fulfilled({ items: [{ id: "chat_1" }] }),
+    }) });
+    renderApp(port);
+    expect(await screen.findByText("4 of 10 done")).toBeTruthy();
+    expect(screen.getByText("The rest can't be checked yet")).toBeTruthy();
+    expect(screen.queryByText("You're all set")).toBeNull();
+  });
+
   it("never marks an unavailable task done and shows no points chip on it", async () => {
     renderApp(makePort());
     const whatsapp = await screen.findByRole("button", { name: /WhatsApp/ });
@@ -191,6 +212,47 @@ describe("Getting started app awards", () => {
     renderApp(port, { autoOpenEligible: false });
     await screen.findByText("0 of 10 done");
     expect(port.claimAutoOpen).not.toHaveBeenCalled();
+  });
+
+  it("never moves the points badge backwards when award responses arrive out of order", async () => {
+    const port = makePort({ results: () => results({ ...slackConnected, github: fulfilled({ authenticated: true }) }) });
+    let releaseSlow: () => void = () => undefined;
+    port.award.mockImplementation(async (taskId: string) => {
+      if (taskId === "slack") {
+        await new Promise<void>((resolve) => { releaseSlow = resolve; });
+        return { awarded: true, points: 20, total: 20 };
+      }
+      return { awarded: true, points: 20, total: 40 };
+    });
+    renderApp(port);
+    expect(await screen.findByLabelText("40 points")).toBeTruthy();
+    await act(async () => { releaseSlow(); });
+    expect(screen.getByLabelText("40 points")).toBeTruthy();
+  });
+
+  it("keeps the completion toast when the first award request fails", async () => {
+    let connected = false;
+    const port = makePort({ results: () => results(connected ? slackConnected : {}) });
+    const realAward = port.award.getMockImplementation()!;
+    port.award.mockRejectedValueOnce(new Error("offline"));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { onToast } = renderApp(port);
+    await screen.findByText("0 of 10 done");
+    connected = true;
+    await waitFor(() => expect(port.award).toHaveBeenCalledTimes(1));
+    port.award.mockImplementation(realAward);
+    await waitFor(() => expect(onToast).toHaveBeenCalledWith("Slack connected +20 pts"));
+    expect(port.award.mock.calls.map(([, silent]) => silent)).toEqual([false, false]);
+  });
+
+  it("retries the automatic first open after a failed claim", async () => {
+    const port = makePort({ autoOpen: true });
+    port.claimAutoOpen.mockRejectedValueOnce(new Error("offline"));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const onAutoOpen = vi.fn();
+    renderApp(port, { autoOpenEligible: true, onAutoOpen });
+    await waitFor(() => expect(onAutoOpen).toHaveBeenCalledTimes(1));
+    expect(port.claimAutoOpen).toHaveBeenCalledTimes(2);
   });
 
   it("formats toast copy from the task table", () => {

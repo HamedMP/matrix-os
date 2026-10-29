@@ -25,16 +25,17 @@ export async function loadGettingStartedResults(
 ): Promise<GettingStartedResults> {
   const options = signal ? { signal } : undefined;
   const platformApi = api.forRuntime("primary");
-  const [github, integrations, agents, projects, chats, billing] = await Promise.allSettled([
+  const [github, integrations, agents, projects, chats, billing, providers] = await Promise.allSettled([
     api.get("/api/github/status", options),
     api.get("/api/integrations", options),
     api.get("/api/agents/credentials/status", options),
     api.get("/api/workspace/projects", options),
     api.get("/api/chats?limit=1", options),
     platformApi.get("/billing/status", options),
+    api.get("/api/ai/provider-settings", options),
   ]);
 
-  return { github, integrations, agents, projects, chats, billing };
+  return { github, integrations, agents, projects, chats, billing, providers };
 }
 
 export async function loadGettingStartedSnapshot(

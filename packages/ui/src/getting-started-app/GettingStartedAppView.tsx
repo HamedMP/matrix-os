@@ -17,6 +17,7 @@ import {
   gettingStartedAppActionLabel,
   type GettingStartedAppAction,
 } from "./actions.js";
+import { GETTING_STARTED_APP_BRAND_VARS } from "./brand-vars.js";
 import { useGettingStartedApp, type GettingStartedAppPoints } from "./provider.js";
 
 const TASK_ICONS: Record<GettingStartedAppTaskId, LucideIcon> = {
@@ -48,7 +49,7 @@ export function GettingStartedAppView({ onAction }: { onAction(action: GettingSt
   const progress = Math.round((doneCount / TOTAL_TASKS) * 100);
 
   return (
-    <div className="mxo-gsa" aria-busy={!loaded}>
+    <div className="mxo-gsa" style={GETTING_STARTED_APP_BRAND_VARS} aria-busy={!loaded}>
       <div className="mxo-gsa__inner">
         <header className="mxo-gsa__header">
           <h1 className="mxo-gsa__title">Getting started</h1>
@@ -61,7 +62,7 @@ export function GettingStartedAppView({ onAction }: { onAction(action: GettingSt
           </div>
         </header>
 
-        <Hero tasks={tasks} firstPrompt={firstPrompt} onAction={onAction} />
+        <Hero tasks={tasks} loaded={loaded} doneCount={doneCount} firstPrompt={firstPrompt} onAction={onAction} />
 
         {SECTIONS.map((section) => (
           <section key={section.group} className="mxo-gsa__section" aria-labelledby={`mxo-gsa-${section.group}`}>
@@ -103,13 +104,30 @@ function PointsBadge({ points }: { points: GettingStartedAppPoints }) {
 
 function Hero({
   tasks,
+  loaded,
+  doneCount,
   firstPrompt,
   onAction,
 }: {
   tasks: GettingStartedAppTask[];
+  loaded: boolean;
+  doneCount: number;
   firstPrompt: GettingStartedAppTask | undefined;
   onAction(action: GettingStartedAppAction): void;
 }) {
+  if (!loaded) {
+    return (
+      <div className="mxo-gsa__hero">
+        <div className="mxo-gsa__welcome">
+          <span className="mxo-gsa__welcome-title">Welcome to Matrix</span>
+          <span className="mxo-gsa__welcome-subtitle">Your AI computer</span>
+        </div>
+        <div className="mxo-gsa__next" role="status">
+          <p className="mxo-gsa__next-description">Loading your tasks…</p>
+        </div>
+      </div>
+    );
+  }
   const startHere = firstPrompt?.status !== "complete";
   const next = startHere ? firstPrompt : gettingStartedAppNextTask(tasks);
   const action = next ? gettingStartedAppAction(next.id) : null;
@@ -141,10 +159,15 @@ function Hero({
               </button>
             ) : null}
           </>
-        ) : (
+        ) : doneCount === TOTAL_TASKS ? (
           <>
             <h2 className="mxo-gsa__next-title">You're all set</h2>
             <p className="mxo-gsa__next-description">Everything here is done. New ideas will show up as Matrix grows.</p>
+          </>
+        ) : (
+          <>
+            <h2 className="mxo-gsa__next-title">The rest can't be checked yet</h2>
+            <p className="mxo-gsa__next-description">You can still try the remaining cards below. They'll show Done once Matrix can check them.</p>
           </>
         )}
       </div>

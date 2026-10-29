@@ -82,13 +82,33 @@ export function GettingStartedAppProvider({
   const seen = useRef(new Map<GettingStartedAppTaskId, GettingStartedAppTask["status"]>());
   const awarded = useRef(new Set<GettingStartedAppTaskId>());
   const pending = useRef(new Set<GettingStartedAppTaskId>());
-  const autoOpenClaimed = useRef(false);
+  // "done" once the server answered the claim; a failed request retries on the next refresh.
+  const autoOpen = useRef<"idle" | "pending" | "done">("idle");
+  const autoOpenEligibleRef = useRef(autoOpenEligible);
   const callbacks = useRef({ onToast, onAutoOpen });
   useEffect(() => {
     callbacks.current = { onToast, onAutoOpen };
+    autoOpenEligibleRef.current = autoOpenEligible;
   });
 
   const progressKnown = useRef(false);
+
+  // Awards only ever add points, so a late or out-of-order response never lowers the badge.
+  const showTotal = useCallback((total: number) => {
+    setPoints((current) => (current.kind === "ready" && current.total >= total ? current : { kind: "ready", total }));
+  }, []);
+
+  const claimAutoOpen = useCallback(() => {
+    if (!port || !autoOpenEligibleRef.current || autoOpen.current !== "idle") return;
+    autoOpen.current = "pending";
+    void port.claimAutoOpen().then((open) => {
+      autoOpen.current = "done";
+      if (open) callbacks.current.onAutoOpen?.();
+    }).catch((error: unknown) => {
+      autoOpen.current = "idle";
+      warn("auto-open unavailable", error);
+    });
+  }, [port]);
 
   const tasks = useMemo(() => (results ? deriveGettingStartedAppTasks(results) : []), [results]);
 
@@ -106,15 +126,17 @@ export function GettingStartedAppProvider({
       pending.current.add(taskId);
       void port.award(taskId, silent).then((response) => {
         awarded.current.add(taskId);
-        setPoints({ kind: "ready", total: response.total });
+        showTotal(response.total);
         if (response.awarded && !silent) callbacks.current.onToast?.(gettingStartedAppToastText(taskId, response.points));
       }).catch((error: unknown) => {
+        // Keep the toast decision for the retry on the next refresh.
+        if (!silent) seen.current.set(taskId, "incomplete");
         warn("award failed", error);
       }).finally(() => {
         pending.current.delete(taskId);
       });
     }
-  }, [port]);
+  }, [port, showTotal]);
 
   const refresh = useCallback(async (signal: AbortSignal) => {
     if (!port) return;
@@ -132,10 +154,11 @@ export function GettingStartedAppProvider({
       return;
     }
     setEnabled(true);
+    claimAutoOpen();
     if (progress) {
       progressKnown.current = true;
       for (const award of progress.awards) awarded.current.add(award.taskId);
-      setPoints({ kind: "ready", total: progress.total });
+      showTotal(progress.total);
     } else {
       setPoints((current) => (current.kind === "ready" ? current : { kind: "unavailable" }));
     }
@@ -147,7 +170,7 @@ export function GettingStartedAppProvider({
     } catch (error: unknown) {
       if (!isAbort(error)) warn("status unavailable", error);
     }
-  }, [awardDone, port]);
+  }, [awardDone, claimAutoOpen, port, showTotal]);
 
   useEffect(() => {
     if (!port) return;
@@ -163,15 +186,10 @@ export function GettingStartedAppProvider({
     };
   }, [port, refresh, refreshMs]);
 
+  // Eligibility can arrive after the first read (the wizard ends while the desktop is open).
   useEffect(() => {
-    if (!port || !enabled || !autoOpenEligible || autoOpenClaimed.current) return;
-    autoOpenClaimed.current = true;
-    void port.claimAutoOpen().then((open) => {
-      if (open) callbacks.current.onAutoOpen?.();
-    }).catch((error: unknown) => {
-      warn("auto-open unavailable", error);
-    });
-  }, [port, enabled, autoOpenEligible]);
+    if (enabled && autoOpenEligible) claimAutoOpen();
+  }, [enabled, autoOpenEligible, claimAutoOpen]);
 
   const value = useMemo<GettingStartedAppState>(() => ({
     enabled,

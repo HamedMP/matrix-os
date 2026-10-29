@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import type { ApiClient } from "../../lib/api";
 import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
+import { useDesktopIcons } from "../../stores/desktop-icons";
 import { useUi } from "../../stores/ui";
 import { seedNewChatDraft } from "../chat/use-chat-composer-drafts";
 import { showOnboardingTab as showTab } from "../onboarding-widget/onboarding-widget-navigation";
@@ -28,10 +29,12 @@ import { openDesktopSupport } from "../support/DesktopSupportWidget";
 import { bundledDesktopIconForPath } from "../desktop-shell/bundled-app-icons";
 import { loadGettingStartedResults } from "../onboarding/getting-started";
 
+const GETTING_STARTED_PATH = "__getting-started__";
+
 export const GETTING_STARTED_TAB = {
   kind: "getting-started" as const,
   title: "Getting started",
-  icon: bundledDesktopIconForPath("__getting-started__"),
+  icon: bundledDesktopIconForPath(GETTING_STARTED_PATH),
 };
 
 function httpStatus(error: unknown): number | undefined {
@@ -104,12 +107,20 @@ export function DesktopGettingStartedAppHost({ children }: { children: ReactNode
   const showToast = useCallback((text: string) => {
     toast(text);
   }, []);
+  // First automatic open only: also place the icon on the desktop (spec 639).
+  const autoOpen = useCallback(() => {
+    openGettingStartedTab();
+    if (!api) return;
+    void useDesktopIcons.getState().add(GETTING_STARTED_PATH, api).catch((error: unknown) => {
+      console.warn("[getting-started-app] unable to add desktop icon:", error instanceof Error ? error.name : typeof error);
+    });
+  }, [api]);
   return (
     <GettingStartedAppProvider
       port={port}
       onToast={showToast}
       autoOpenEligible={getStartedEnded}
-      onAutoOpen={openGettingStartedTab}
+      onAutoOpen={autoOpen}
       onOpen={openGettingStartedTab}
     >
       {children}
