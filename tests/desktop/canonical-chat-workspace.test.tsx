@@ -348,7 +348,8 @@ describe("CanonicalChatWorkspace", () => {
     expect(starterScroll?.className).toContain("items-start");
     expect(starterStack?.className).toContain("my-auto");
     expect(starterScroll?.style.scrollbarGutter).toBe("stable both-edges");
-    expect(newChatContent?.className).toContain("overflow-hidden");
+    // The whole screen scrolls once a tall composer outgrows it, so Send stays reachable.
+    expect(newChatContent?.className).toContain("overflow-y-auto");
     expect(composer?.getAttribute("data-layout")).toBe("narrow");
   });
 
