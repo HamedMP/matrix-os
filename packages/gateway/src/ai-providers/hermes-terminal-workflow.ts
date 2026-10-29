@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { TerminalRef } from '@matrix-os/contracts';
-import type { TerminalRuntimeSocketClient } from '@matrix-os/terminal-runtime';
+import { TerminalRuntimeRequestSchema, type TerminalRuntimeSocketClient } from '@matrix-os/terminal-runtime';
 import type { createGenericNativeWriter } from './generic-native-writer.js';
 import type { ProviderSettingsStoreWriter } from './provider-settings-store.js';
 import { observeNativeCommandCompletion } from './native-command-completion.js';
@@ -78,8 +78,13 @@ export function createHermesTerminalWorkflow(input: {
    if(stopped || cancelling) throw new ProviderWorkflowNotStartedError();
    const workspace=await input.terminal.ensureWorkspace();
    if (stopped || cancelling) throw new ProviderWorkflowError('unavailable');
+   const tabInput={name,cwd:launch.cwd,command:launch.command};
+   // A local schema rejection proves no command was sent. Keep uncertain transport
+   // failures fenced, but release admission when the complete payload cannot launch.
+   if(!TerminalRuntimeRequestSchema.safeParse({version:1,requestId:`req_${randomUUID().replaceAll('-','')}`,
+    operation:'CreateTab',input:{workspaceId:workspace.id,...tabInput}}).success) throw new ProviderWorkflowNotStartedError();
    launched=true;
-   const tab=await input.terminal.createTab(workspace.id,{name,cwd:launch.cwd,command:launch.command});
+   const tab=await input.terminal.createTab(workspace.id,tabInput);
    ref={workspaceId:tab.workspaceId,tabId:tab.id};incarnation=tab.incarnation;
    if (stopped || cancelling) throw new ProviderWorkflowError('unavailable');
    stream=input.terminal.attach({ref,expectedIncarnation:incarnation,viewerId:`workflow-${randomUUID()}`,mode:'soft',size:{cols:100,rows:30},

@@ -3,7 +3,7 @@ import { createHermesTerminalWorkflow } from '../../packages/gateway/src/ai-prov
 const option = (providerId: 'openai'|'anthropic') => ({id:`${providerId}_terminal`,providerId,method:'terminal' as const,authKind:'subscription' as const,billingKind:'subscription' as const,executionKind:'native' as const,availability:'available' as const});
 afterEach(()=>vi.useRealTimers());
 function fixture() {
- const ref={workspaceId:'tws_1',tabId:'tt_1'}; const incarnation='ti_11111111111111111111111111111111';
+ const ref={workspaceId:'tws_11111111111111111111111111111111',tabId:'tt_22222222222222222222222222222222'}; const incarnation='ti_11111111111111111111111111111111';
  let frame: (value: unknown)=>void = ()=>{};
  const release=vi.fn(async()=>{}); const complete=vi.fn(async()=>{});
  const terminal={ensureWorkspace:vi.fn(async()=>({id:ref.workspaceId})),createTab:vi.fn(async()=>({...ref,id:ref.tabId,incarnation})),listWorkspaces:vi.fn(async()=>[{tabs:[{...ref,id:ref.tabId,incarnation}]}]),terminateTab:vi.fn(async()=>{}),getCommandResult:vi.fn(async()=>({state:'running'})),attach:vi.fn(input=>{frame=input.onFrame;return {close:vi.fn(),send:vi.fn()};})};
@@ -16,7 +16,7 @@ function fixture() {
 }
 it.each([['openai','openai-codex'],['anthropic','anthropic']] as const)('binds %s login to its native provider and waits for the inner command result',async(provider,native)=>{
  vi.useFakeTimers();const f=fixture();const running=await f.run(provider);
- expect(running.terminalSessionId).toBe('tws_1:tt_1');expect(f.runtime.prepare).toHaveBeenCalledWith(native);
+ expect(running.terminalSessionId).toBe('tws_11111111111111111111111111111111:tt_22222222222222222222222222222222');expect(f.runtime.prepare).toHaveBeenCalledWith(native);
  f.frame(0);await vi.advanceTimersByTimeAsync(1);expect(f.runtime.complete).not.toHaveBeenCalled();expect(f.release).not.toHaveBeenCalled();
  f.terminal.getCommandResult.mockResolvedValue({state:'exited',exitCode:0} as never);await vi.advanceTimersByTimeAsync(1000);
  expect(f.runtime.complete).toHaveBeenCalledWith('hermes',native,7,'user-login',expect.any(AbortSignal));expect(f.publish).toHaveBeenCalledWith({state:'succeeded',safeFailure:null});expect(f.release).toHaveBeenCalledOnce();
@@ -27,7 +27,7 @@ it('rejects unbound/foreign provider options before acquiring or launching resou
 });
 it('reaps the exact incarnation before releasing cancellation admission',async()=>{
  const f=fixture();await f.run('openai');await f.cleanup();
- expect(f.terminal.terminateTab).toHaveBeenCalledWith({workspaceId:'tws_1',tabId:'tt_1'},'ti_11111111111111111111111111111111');expect(f.release).toHaveBeenCalledOnce();expect(f.runtime.complete).not.toHaveBeenCalled();
+ expect(f.terminal.terminateTab).toHaveBeenCalledWith({workspaceId:'tws_11111111111111111111111111111111',tabId:'tt_22222222222222222222222222222222'},'ti_11111111111111111111111111111111');expect(f.release).toHaveBeenCalledOnce();expect(f.runtime.complete).not.toHaveBeenCalled();
 });
 it('does not enable the route after failed login or failed native credential verification',async()=>{
  vi.useFakeTimers();const f=fixture();await f.run('anthropic');f.runtime.complete.mockRejectedValue(new Error('unavailable'));
@@ -46,7 +46,7 @@ it('expires only after the exact command is reaped and retains its fence across 
 });
 it('reconciles a lost launch reply by the unique tab name before releasing the writer',async()=>{
  const f=fixture();f.terminal.createTab.mockImplementationOnce(async(_workspace,tab)=>{
-  f.terminal.listWorkspaces.mockResolvedValue([{tabs:[{workspaceId:'tws_1',id:'tt_1',incarnation:'ti_11111111111111111111111111111111',name:tab.name}]}] as never);
+  f.terminal.listWorkspaces.mockResolvedValue([{tabs:[{workspaceId:'tws_11111111111111111111111111111111',id:'tt_22222222222222222222222222222222',incarnation:'ti_11111111111111111111111111111111',name:tab.name}]}] as never);
   throw new Error('reply lost');
  });
  await expect(f.run('anthropic')).rejects.toThrow('reply lost');expect(f.terminal.terminateTab).toHaveBeenCalledOnce();expect(f.release).toHaveBeenCalledOnce();
@@ -70,7 +70,7 @@ it('advertises and launches the provider-bound Hermes workflow through productio
  const [adapter]=await createNativeProviderWorkflowAdapters({store:f.store as never,terminal:f.terminal as never,genericWriter:{acquire:async()=>f.release} as never,hermesTerminalLogin:{...f.runtime,available:async()=>true},hostControl:{available:false,run:vi.fn()}});
  expect(adapter?.connectionOptions?.map(option=>option.id)).toEqual(['openai_terminal','anthropic_terminal']);
  const running=await adapter!.start({request:{harnessInstanceId:'hermes',kind:'login',method:'terminal',idempotencyKey:'composed'},connectionOption:option('anthropic'),publish:f.publish,registerCleanup:()=>{}});
- expect(running.terminalSessionId).toBe('tws_1:tt_1');expect(f.runtime.prepare).toHaveBeenCalledWith('anthropic');await running.cancel();
+ expect(running.terminalSessionId).toBe('tws_11111111111111111111111111111111:tt_22222222222222222222222222222222');expect(f.runtime.prepare).toHaveBeenCalledWith('anthropic');await running.cancel();
 });
 it('cancels during native preparation without subsequently opening an OAuth Terminal',async()=>{
  const f=fixture();let ready!:()=>void;const wait=new Promise<void>(resolve=>{ready=resolve;});
