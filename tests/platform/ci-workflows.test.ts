@@ -101,6 +101,7 @@ function runCiResults(ciResultsRun: string, triggerRequested: boolean): number |
 function runChangeDetectionCheckout(
   checkoutRun: string,
   failuresBeforeSuccess: number,
+  checkedOutSha = '0123456789012345678901234567890123456789',
 ): {
   attempts: string;
   checkoutCompleted: boolean;
@@ -122,8 +123,8 @@ if [[ " $* " == *" fetch "* ]]; then
     echo "fetch did not request the event commit" >&2
     exit 64
   fi
-  if [[ " $* " == *" --depth=1 "* ]]; then
-    echo "event commit fetch must retain full history" >&2
+  if [[ " $* " == *" --depth="* ]] || [[ " $* " != *" --filter=blob:none "* ]]; then
+    echo "event commit fetch must retain full history without historical blobs" >&2
     exit 65
   fi
   attempt=0
@@ -138,6 +139,9 @@ if [[ " $* " == *" fetch "* ]]; then
 fi
 if [[ " $* " == *" checkout --force --detach "* ]]; then
   touch "$FAKE_GIT_CHECKOUT_MARKER"
+fi
+if [[ " $* " == *" rev-parse HEAD "* ]]; then
+  printf '%s\\n' "$FAKE_GIT_CHECKED_OUT_SHA"
 fi
 `,
   );
@@ -154,6 +158,7 @@ fi
         CHECKOUT_MAX_ATTEMPTS: '3',
         CHECKOUT_TIMEOUT_SECONDS: '1',
         FAKE_GIT_CHECKOUT_MARKER: checkoutMarker,
+        FAKE_GIT_CHECKED_OUT_SHA: checkedOutSha,
         FAKE_GIT_FAILURES_BEFORE_SUCCESS: String(failuresBeforeSuccess),
         FAKE_GIT_FETCH_ATTEMPTS: fetchAttempts,
         GH_TOKEN: 'test-token',
@@ -375,12 +380,21 @@ describe('CI workflows', () => {
       workflow.indexOf('\n  typecheck:'),
     );
 
-    expect(changesJob).toContain('timeout-minutes: 3');
-    expect(changesJob).toContain('name: Checkout with bounded retry');
-    expect(changesJob).toContain('CHECKOUT_MAX_ATTEMPTS: "3"');
-    expect(changesJob).toContain('CHECKOUT_TIMEOUT_SECONDS: "30"');
-    expect(changesJob).toContain('CHECKOUT_BACKOFF_SECONDS: "5"');
-    expect(changesJob).toContain('timeout --foreground --kill-after=5s');
+    const changes = parse(workflow).jobs.changes;
+    const checkout = changes.steps.find(step => step.name === 'Checkout with bounded retry');
+    const attempts = Number(checkout.env.CHECKOUT_MAX_ATTEMPTS);
+    const seconds = Number(checkout.env.CHECKOUT_TIMEOUT_SECONDS);
+    const backoff = Number(checkout.env.CHECKOUT_BACKOFF_SECONDS) * attempts * (attempts - 1) / 2;
+    const classifier = readFileSync(join(root, 'scripts/ci/dedicated-changes.mjs'), 'utf8');
+    const classifierSeconds = Number(classifier.match(/timeout:\s*(\d+)/)?.[1]) / 1000;
+    expect(attempts).toBe(3);
+    expect(seconds).toBeGreaterThanOrEqual(120);
+    expect(seconds).toBeLessThanOrEqual(180);
+    expect(classifierSeconds).toBeGreaterThan(0);
+    expect(changes['timeout-minutes'] * 60).toBeGreaterThan(attempts * (seconds + 5) + backoff + classifierSeconds + 60);
+    expect(changes['timeout-minutes']).toBeLessThanOrEqual(15);
+    expect(checkout.run).toContain('timeout --kill-after=5s');
+    expect(checkout.run).not.toContain('--foreground');
     expect(changesJob).toContain('for attempt in $(seq 1 "$CHECKOUT_MAX_ATTEMPTS")');
     expect(changesJob).toContain('Checkout fetch failed after $CHECKOUT_MAX_ATTEMPTS attempts');
     expect(sourceChangeScript).toContain('git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"');
@@ -406,6 +420,16 @@ describe('CI workflows', () => {
     expect(result.checkoutCompleted).toBe(true);
     expect(result.stdout).toContain('Checkout fetch attempt 1/3');
     expect(result.stdout).toContain('Checkout fetch attempt 2/3');
+  });
+
+  it('rejects a checkout at another commit even when every fetch succeeds', () => {
+    const checkoutRun = readChangeDetectionCheckoutRun(process.cwd());
+    expect(checkoutRun).toBeTypeOf('string');
+    const result = runChangeDetectionCheckout(checkoutRun ?? 'exit 1', 0, 'f'.repeat(40));
+    expect(result.status).toBe(1);
+    expect(result.attempts).toBe('3');
+    expect(result.checkoutCompleted).toBe(true);
+    expect(result.stdout).toContain('Checkout fetch failed after 3 attempts');
   });
 
   it('fails change detection after the bounded checkout attempts are exhausted', () => {
