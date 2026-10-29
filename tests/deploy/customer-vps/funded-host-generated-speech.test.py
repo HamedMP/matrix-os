@@ -4,6 +4,7 @@ Disposable root Linux only. Uses synthetic identity/configuration, real fixed
 host paths and file locks; no network, service restart or customer operation.
 """
 import grp
+import base64
 import hashlib
 import importlib.util
 import json
@@ -22,6 +23,12 @@ ROOT = Path(__file__).resolve().parents[3]
 @unittest.skipUnless(os.geteuid() == 0 and Path('/proc').is_dir(), 'disposable root Linux only')
 class GeneratedSpeechTests(unittest.TestCase):
     def test_old_verifier_rejects_speech_then_emitted_reseal_unblocks_preflight_and_rollback(self):
+        self.check_legacy_migration()
+
+    def test_old_verifier_rejects_browser_then_emitted_reseal_preserves_browser_on_rollback(self):
+        self.check_legacy_migration(browser=True)
+
+    def check_legacy_migration(self, browser=False):
         self.assertEqual(os.environ.get('MATRIX_DISPOSABLE_ROOT_TEST'), 'true')
         self.assertTrue(Path('/.dockerenv').is_file())
         roots = ('/opt/matrix', '/var/lib/matrix-funded-host-config')
@@ -113,6 +120,22 @@ class GeneratedSpeechTests(unittest.TestCase):
         configured = subprocess.run(['python3', '-I', str(ROOT / 'distro/customer-vps/host-bin/matrix-configure-platform-speech.py')],
                                     input=json.dumps(config).encode(), capture_output=True, timeout=10)
         self.assertEqual(configured.returncode, 0, configured.stderr)
+        if browser:
+            module = importlib.util.spec_from_file_location('browser_writer', ROOT / 'distro/customer-vps/host-bin/matrix-browser-runtime.py')
+            writer_module = importlib.util.module_from_spec(module)
+            module.loader.exec_module(writer_module)
+            writer = writer_module.Runtime()
+            writer.prepare()
+            self.addCleanup(shutil.rmtree, writer.prefix)
+            authorization = 'Basic ' + base64.b64encode(('matrix-browser-lab:' + 'a' * 64).encode()).decode()
+            (writer.prefix / 'credential-pending.json').write_text(json.dumps({
+                'authorization': authorization, 'passwordData': base64.b64encode(b'synthetic-password').decode()}))
+            (writer.prefix / 'credential-pending.json').chmod(0o600)
+            writer.credentials()
+            writer.enable_environment()
+            browser_lock = Path('/run/matrix-browser-runtime.lock')
+            browser_lock.touch(mode=0o600)
+            self.addCleanup(browser_lock.unlink)
         before_reseal = env.read_bytes()
         self.assertNotEqual(proof().returncode, 0)
         shutil.rmtree('/opt/matrix/staging/update-transaction')
@@ -122,7 +145,7 @@ class GeneratedSpeechTests(unittest.TestCase):
             agent.write_bytes((ROOT / 'distro/customer-vps/host-bin/matrix-sync-agent').read_bytes())
             subprocess.run(['node', str(ROOT / 'scripts/prepare-funded-host-component.mjs'), str(agent),
                             str(Path(temporary) / 'component')], check=True, capture_output=True, timeout=10)
-            operator = Path(temporary) / 'matrix-reseal-funded-speech.py'
+            operator = Path(temporary) / ('matrix-reseal-funded-config.py' if browser else 'matrix-reseal-funded-speech.py')
             info = env.stat()
             request = {'receiptSha256': hashlib.sha256((state / 'receipt.json').read_bytes()).hexdigest(),
                        'expectedFile': {'sha256': hashlib.sha256(env.read_bytes()).hexdigest(),
@@ -138,8 +161,12 @@ class GeneratedSpeechTests(unittest.TestCase):
         self.assertEqual((state / 'receipt.json').read_text(), json.dumps(receipt))
         self.assertEqual(installed.read_text(), legacy)
         after_reseal = env.read_bytes()
-        strip = lambda data: b''.join(line for line in data.splitlines(keepends=True) if not line.startswith(b'MATRIX_PLATFORM_SPEECH_'))
-        self.assertEqual(strip(before_reseal), strip(after_reseal))
+        if not browser:
+            strip = lambda data: b''.join(line for line in data.splitlines(keepends=True) if not line.startswith(b'MATRIX_PLATFORM_SPEECH_'))
+            self.assertEqual(strip(before_reseal), strip(after_reseal))
+        else:
+            browser_lines = lambda data: [line for line in data.splitlines() if line.startswith(b'MATRIX_BROWSER_LAB')]
+            self.assertEqual(browser_lines(before_reseal), browser_lines(after_reseal))
         self.assertEqual((env.stat().st_uid, env.stat().st_gid, env.stat().st_mode & 0o777), (0, gid, 0o640))
         transaction()
         admitted = proof()

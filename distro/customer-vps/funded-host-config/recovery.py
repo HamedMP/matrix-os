@@ -1,8 +1,9 @@
-"""Protected updater recovery proof and explicit legacy speech reseal.
+"""Protected updater recovery proof and explicit managed-configuration reseal.
 
-Normal proofs are read-only. The operator entrypoint moves only speech lines
+Normal proofs are read-only. The operator moves validated Browser/speech lines
 and rebases complete rollback records; neither path imports mutable app code.
 """
+import itertools
 
 SPEECH_KEYS = {'MATRIX_PLATFORM_SPEECH_ENABLED', 'MATRIX_PLATFORM_SPEECH_ORIGIN',
                'MATRIX_PLATFORM_SPEECH_RUNTIME_TOKEN'}
@@ -49,8 +50,83 @@ def speech_image(data, values):
     return result
 
 
+def browser_values(data, optional=False):
+    """Recognize only the native Browser writer's literal two-field contract."""
+    require(len(data) <= 65536 and b'\x00' not in data and b'\r' not in data)
+    values = {}
+    keys = {'MATRIX_BROWSER_LAB', 'MATRIX_BROWSER_LAB_VIEWER_AUTH'}
+    for line in data.decode('utf-8').split('\n'):
+        match = re.match(r'\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=', line)
+        if match and match[1] in keys:
+            key = match[1]
+            require(key not in values and line.startswith(key + '='))
+            values[key] = line[len(key) + 1:]
+    if optional and (not values or values == {'MATRIX_BROWSER_LAB': 'false'}):
+        return values
+    require(set(values) == keys and values['MATRIX_BROWSER_LAB'] in ('true', 'false'))
+    auth = values['MATRIX_BROWSER_LAB_VIEWER_AUTH']
+    require(len(auth) <= 512 and re.fullmatch(r'"Basic [A-Za-z0-9+/]+={0,2}"', auth))
+    decoded = base64.b64decode(auth[7:-1], validate=True)
+    require(re.fullmatch(rb'matrix-browser-lab:[a-f0-9]{64}', decoded)
+            and base64.b64encode(decoded).decode() == auth[7:-1])
+    return values
+
+
+def browser_image(data, values, credential=False):
+    key = 'MATRIX_BROWSER_LAB_VIEWER_AUTH' if credential else 'MATRIX_BROWSER_LAB'
+    lines = [line for line in data.decode().splitlines() if not line.startswith(key + '=')]
+    # credentials() and enable_environment() have distinct newline contracts.
+    if credential:
+        return ('\n'.join(lines) + '\n' + key + '=' + values[key] + '\n').encode()
+    return ('\n'.join(lines + [key + '=' + values[key]]) + '\n').encode()
+
+
+def managed_image_matches(sealed, data):
+    """At most sixteen exact writer replays; never discard unknown/blank lines."""
+    if sealed == data:
+        return True
+    speech_before, speech_after = speech_values(sealed, optional=True), speech_values(data, optional=True)
+    browser_before = browser_values(sealed, optional=True)
+    browser_after = browser_values(data, optional=True)
+    operations = []
+    if speech_after:
+        if speech_before != speech_after:
+            speech_values(data)
+        operations.append(lambda image: speech_image(image, speech_after))
+    if 'MATRIX_BROWSER_LAB_VIEWER_AUTH' in browser_after:
+        browser_values(data)
+        operations.extend((lambda image: browser_image(image, browser_after, True),
+                           lambda image: browser_image(image, browser_after)))
+    elif browser_after != browser_before:
+        return False
+    for count in range(1, len(operations) + 1):
+        for sequence in itertools.permutations(operations, count):
+            candidate = sealed
+            for operation in sequence:
+                candidate = operation(candidate)
+            if candidate == data:
+                return True
+    return False
+
+
+def rebased_managed_record(repair, data, applied, journal):
+    original = base64.b64decode(journal['original'], validate=True)
+    require(len(original) <= repair.LIMIT and digest(original) == journal['beforeSha256'])
+    sealed = repair.rewrite(original, {key: key + '=' + value + '\n' for key, value in journal['patch'].items()})
+    require(digest(sealed) == journal['afterSha256'] == applied['afterSha256'] and managed_image_matches(sealed, data))
+    speech = speech_values(data, optional=True)
+    if speech:
+        original = speech_image(original, speech)
+    browser = browser_values(data, optional=True)
+    if 'MATRIX_BROWSER_LAB_VIEWER_AUTH' in browser:
+        original = browser_image(browser_image(original, browser, True), browser)
+    after = repair.rewrite(original, {key: key + '=' + value + '\n' for key, value in journal['patch'].items()})
+    return (dict(applied, afterSha256=digest(after)), dict(journal, original=base64.b64encode(original).decode(),
+            beforeSha256=digest(original), afterSha256=digest(after)), data, after)
+
+
 def funded_recovery_image(repair, directory, data, info, applied, journal):
-    """Verify the complete sealed baseline before allowing independent speech."""
+    """Verify the complete sealed baseline before replaying independent writers."""
     require(set(applied) == {'rolloutId', 'identity', 'afterSha256'}
             and journal.get('afterSha256') == applied['afterSha256'])
     _, values, _ = repair.parse(data)
@@ -67,9 +143,7 @@ def funded_recovery_image(repair, directory, data, info, applied, journal):
     original = base64.b64decode(journal['original'], validate=True)
     sealed = repair.rewrite(original, {key: key + '=' + value + '\n' for key, value in journal['patch'].items()})
     require(digest(sealed) == applied['afterSha256'])
-    if data != sealed:
-        speech_values(sealed, optional=True)
-        require(speech_image(sealed, speech_values(data)) == data)
+    require(managed_image_matches(sealed, data))
     return original
 
 
@@ -93,7 +167,10 @@ def rebased_speech_record(repair, data, applied, journal):
 
 
 def reseal_speech_record(repair, anchor, state, receipt, data, info, applied, journal, request, commit):
-    """Explicit root-only migration; moves only the three speech assignments."""
+    """Explicit root-only migration of validated Browser/speech assignments.
+
+    Retain the historical marker names so interrupted speech reseals can resume.
+    """
     require(isinstance(request, dict) and set(request) == {'receiptSha256', 'expectedFile', 'quiescentWindow'}
             and request['quiescentWindow'] is True and isinstance(request['receiptSha256'], str)
             and re.fullmatch(r'[a-f0-9]{64}', request['receiptSha256'])
@@ -114,13 +191,20 @@ def reseal_speech_record(repair, anchor, state, receipt, data, info, applied, jo
     except FileNotFoundError:
         pending = None
     if pending is not None:
-        require(isinstance(pending, dict) and set(pending) == {'receipt', 'beforeHostSha256', 'afterHostSha256', 'beforeApplied',
+        require(isinstance(pending, dict) and set(pending) - {'beforeHost'} == {'receipt', 'beforeHostSha256', 'afterHostSha256', 'beforeApplied',
                 'beforeJournal', 'afterApplied', 'afterJournal'} and pending['receipt'] == receipt
                 and digest(data) in (pending['beforeHostSha256'], pending['afterHostSha256'])
                 and applied in (pending['beforeApplied'], pending['afterApplied'])
                 and journal in (pending['beforeJournal'], pending['afterJournal']))
-        after_applied, after_journal, before_data, after_data = rebased_speech_record(
-            repair, data, pending['beforeApplied'], pending['beforeJournal'])
+        if 'beforeHost' in pending:
+            before = base64.b64decode(pending['beforeHost'], validate=True)
+            require(len(before) <= repair.LIMIT and digest(before) == pending['beforeHostSha256'])
+            after_applied, after_journal, before_data, after_data = rebased_managed_record(
+                repair, before, pending['beforeApplied'], pending['beforeJournal'])
+            require(data in (before_data, after_data))
+        else:  # Preserve recovery of interrupted migrations from the old helper.
+            after_applied, after_journal, before_data, after_data = rebased_speech_record(
+                repair, data, pending['beforeApplied'], pending['beforeJournal'])
         matching = pending['beforeApplied'] if journal == pending['beforeJournal'] else pending['afterApplied']
         validation_data = before_data if journal == pending['beforeJournal'] else after_data
         funded_recovery_image(repair, anchor.fds[-1], validation_data, info, matching, journal)
@@ -132,9 +216,10 @@ def reseal_speech_record(repair, anchor, state, receipt, data, info, applied, jo
         if applied['afterSha256'] == digest(data):
             print('{"action":"reseal-speech","changed":false}')
             return
-        after_applied, after_journal, before_data, after_data = rebased_speech_record(repair, data, applied, journal)
+        after_applied, after_journal, before_data, after_data = rebased_managed_record(repair, data, applied, journal)
         pending = {'receipt': receipt, 'beforeHostSha256': digest(before_data), 'afterHostSha256': digest(after_data), 'beforeApplied': applied,
-                   'beforeJournal': journal, 'afterApplied': after_applied, 'afterJournal': after_journal}
+                   'beforeJournal': journal, 'afterApplied': after_applied, 'afterJournal': after_journal,
+                   'beforeHost': base64.b64encode(before_data).decode()}
     raw = json.dumps(after_journal, separators=(',', ':')).encode()
     require(len(raw) <= 131072 and len(after_data) <= repair.LIMIT)
     if commit:
@@ -142,7 +227,9 @@ def reseal_speech_record(repair, anchor, state, receipt, data, info, applied, jo
         current_data, current_info = repair.read_file(anchor.fds[-1], 'host.env', 0, info.st_gid)
         repair.verify_expected(current_data, current_info, request['expectedFile'])
         require(json_bytes(state.read('receipt.json')) == receipt)
-        state.write(pending_name, json.dumps(pending, separators=(',', ':')).encode(), 0o600)
+        pending_bytes = json.dumps(pending, separators=(',', ':')).encode()
+        require(len(pending_bytes) <= 524288)
+        state.write(pending_name, pending_bytes, 0o600)
         # A durable intent precedes all three replacements. A crash leaves either
         # valid pair or a mismatch that the legacy verifier rejects. Re-run this
         # procedure only with fresh guards; it validates and rolls forward.
@@ -250,7 +337,7 @@ def recovery_proof(preflight=False, reseal=None, commit=False):
     state = Directory('/', ('var', 'lib', 'matrix-funded-host-config'))
     lib = Directory('/', ('usr', 'local', 'libexec'))
     units = Directory('/', ('etc', 'systemd', 'system'))
-    anchor, transaction, staging, install_lock, env_lock, maintenance = None, None, None, None, None, None
+    anchor, transaction, staging, install_lock, env_lock, maintenance, browser_lock = (None,) * 7
     try:
         if reseal is not None:
             # Even --check must not create a new lock/state file.
@@ -293,6 +380,10 @@ def recovery_proof(preflight=False, reseal=None, commit=False):
         current = json_bytes(repair.read_file(anchor.fds[-2], 'release.json', 0, release_gid, 0o644)[0])
         require(current.get('version') == receipt['version'] and current.get('gitCommit') == receipt['sourceSha'])
         data, info = repair.read_file(anchor.fds[-1], 'host.env', 0, gid)
+        if reseal is not None and 'MATRIX_BROWSER_LAB_VIEWER_AUTH' in browser_values(data, optional=True):
+            browser_lock = os.open('/run/matrix-browser-runtime.lock', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            repair.metadata(os.fstat(browser_lock), 0, 0, 0o600)
+            fcntl.flock(browser_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         applied = json_bytes(state.read('applied.json'))
         require(isinstance(applied, dict) and set(applied) == {'rolloutId', 'identity', 'afterSha256'})
         repair.validate({'action': 'rollback', 'rolloutId': applied['rolloutId'], 'identity': applied['identity'],
@@ -343,7 +434,7 @@ def recovery_proof(preflight=False, reseal=None, commit=False):
                 and json_bytes(repair.read_file(anchor.fds[-2], 'release.json', 0, release_gid, 0o644)[0]) == current)
         print(target)
     finally:
-        for fd in (transaction, staging, install_lock, env_lock, maintenance):
+        for fd in (transaction, staging, install_lock, env_lock, maintenance, browser_lock):
             if fd is not None:
                 os.close(fd)
         if anchor is not None:

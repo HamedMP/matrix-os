@@ -52,6 +52,8 @@ except Exception:
     sys.exit(1)
 `;
 await writeFile(join(dirname(agentPath), "matrix-reseal-funded-speech.py"), core + resealEntry, "utf8");
+// Keep the historical speech helper name for interrupted deployments.
+await writeFile(join(dirname(agentPath), "matrix-reseal-funded-config.py"), core + resealEntry, "utf8");
 await copyFile(join(source, "matrix-funded-host-config.service"), join(componentPath, "matrix-funded-host-config.service"));
 const invocation = `
 import sys
