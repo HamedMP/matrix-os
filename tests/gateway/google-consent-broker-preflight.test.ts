@@ -15,10 +15,15 @@ import { createManagedPiSessionsRepository } from '../../packages/gateway/src/ch
 import { createManagedPiCheckpointsRepository } from '../../packages/gateway/src/chat/managed-pi-checkpoints.js';
 import { getService } from '../../packages/gateway/src/integrations/registry.js';
 import type { GoogleProcessingClaim } from '../../packages/gateway/src/google-data/runtime/envelope.js';
+import { GOOGLE_PROCESSING_HEADER, verifyGoogleProcessingEnvelope } from '../../packages/gateway/src/google-data/runtime/envelope.js';
+import { createBotIntegrationClient, createPlatformIntegrationTransport } from '../../packages/gateway/src/bots/integration-client.js';
+import { createInternalIntegrationGuard } from '../../packages/platform/src/internal-integration-guard.js';
+import { Hono } from 'hono';
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
 
-it.each(['approve', 'cancel'] as const)('keeps Gmail human %s outside broker dispatch timeout and checkpoints', async decision => {
+it.each(['approve', 'cancel', 'paced-approve'] as const)('keeps Gmail human %s outside broker dispatch timeout and checkpoints', async scenario => {
+  const paced = scenario === 'paced-approve'; const decision = scenario === 'cancel' ? 'cancel' : 'approve';
   const { db: fixture } = await createAuthorityFixture();
   const db = fixture.sql as Kysely<OwnerBotDatabase>;
   const repository = new ChatRepository(db as never); await repository.bootstrap(); await bootstrapBotDatabase(db);
@@ -43,8 +48,25 @@ it.each(['approve', 'cancel'] as const)('keeps Gmail human %s outside broker dis
     runtimeHandle: binding.runtimeHandle, executionGeneration: '1', profileId: randomUUID(), profileRevision: 1,
     consentId: randomUUID(), consentRevision: 1, purposeId: 'mail-assistance', routeDigest: 'a'.repeat(64), policyExpiresAt: expiry, collectionExpiresAt: expiry };
   let accepted = false; const events: any[] = []; const call = vi.fn(async () => ({ data: { messages: [] } }));
+  const guard = createInternalIntegrationGuard(); const starts: number[] = [];
+  const service = getService('gmail')!; const token = 'synthetic-machine-token';
+  const app = new Hono();
+  app.use('*', async (c, next) => { c.set('internalContainerHandle' as never, 'fixture' as never); await next(); });
+  app.use('*', guard.middleware);
+  app.get('/', c => c.json([{ id: account, service: 'gmail', account_label: 'Synthetic Gmail', status: 'active' }]));
+  app.get('/agent-catalog', c => c.json([{ id: 'gmail', name: service.name, actions: service.actions }]));
+  app.post('/read-call', async c => {
+    const body = await c.req.text();
+    expect(verifyGoogleProcessingEnvelope(c.req.header(GOOGLE_PROCESSING_HEADER)!, {
+      ownerId: owner.ownerId, machineToken: token, method: 'POST', path: '/read-call', body,
+    })).toMatchObject(claim);
+    expect(JSON.parse(body)).toMatchObject({ connectionId: account, action: 'get_thread_ids', params: { threadId: 'abc123' } });
+    return c.json(await call());
+  });
+  const client = createBotIntegrationClient(createPlatformIntegrationTransport({ baseUrl: 'https://fixture.invalid', machineToken: token,
+    fetchImpl: (async (url, init) => { starts.push(performance.now()); return app.request(String(url), init); }) as typeof fetch }));
   const ownerTools = createManagedPiOwnerTools({ authority: async () => ({ permissionMode: 'full_access' }),
-    signalFor: candidate => registry.inferenceSignal(candidate), integrations: { call,
+    signalFor: candidate => registry.inferenceSignal(candidate), integrations: paced ? client : { call,
       inventory: async () => [{ service: 'gmail', label: 'Synthetic Gmail', connectionId: account }],
       describe: async () => Object.entries(getService('gmail')!.actions).map(([id, a]) => ({ id, ...a })) },
     googleCollection: { prepare: async (_binding, _account, signal, consent) => {
@@ -57,7 +79,7 @@ it.each(['approve', 'cancel'] as const)('keeps Gmail human %s outside broker dis
   await ownerTools.open(binding, event => events.push(event)); cleanups.push(() => ownerTools.closeRun(binding.runId));
   const lifetime = new AbortController();
   const checkpoints = createManagedPiCheckpointsRepository(db);
-  const actions = createBotBrokerActions({ db, registry, toolTimeoutMs: 30,
+  const actions = createBotBrokerActions({ db, registry, toolTimeoutMs: paced ? 15000 : 30,
     sessions: createBotSessionsRepository(db), checkpoints: createBotCheckpointsRepository(db),
     managedSessions: createManagedPiSessionsRepository(db), managedCheckpoints: checkpoints,
     tools: createBotToolDispatcher({ homePath: '/synthetic', managedTools: ownerTools, managedWorkspace: async () => '/synthetic' }),
@@ -78,4 +100,9 @@ it.each(['approve', 'cancel'] as const)('keeps Gmail human %s outside broker dis
   const rows = await db.selectFrom('managed_pi_tool_checkpoints').select('phase').execute();
   expect(rows).toEqual(decision === 'approve' ? [{ phase: 'observed_complete' }] : []);
   expect(events.filter(event => event.type === 'approval.requested')).toHaveLength(1);
-});
+  if (paced) {
+    expect(guard.snapshot().limited).toBe(0);
+    expect(starts.length).toBeGreaterThanOrEqual(7);
+    expect(starts.slice(1).every((at, i) => at - starts[i]! >= 500)).toBe(true);
+  }
+}, 20000);

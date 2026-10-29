@@ -48,3 +48,22 @@ an external-effect checkpoint. Dispatch revalidates current processing authority
 without another prompt and refuses revoked or changed consent. Provider network
 deadlines, profile scope, budgets, and expiry remain unchanged. Conservative
 context marks may remain if a later admission fails; they contain no email body.
+
+### Processing-request pacing
+
+The saved-consent pilot reached the platform's per-handle burst limit during
+repeated inventory, catalog and processing-authority checks, before the provider
+read. Pace requests in each existing host transport at least 600 milliseconds
+apart, with at most sixteen outstanding requests and the caller's original abort
+deadline. Keep platform limits and every authority check unchanged. Serialize
+actual starts so an event-loop stall cannot release overdue requests as a burst.
+Snapshot the reviewed target and claim before waiting; sign the exact request
+only when dispatched and refuse authority that expired while queued. Never retry
+a response or an uncertain write. Separate transport instances still share the
+authoritative server limit and may receive a refusal under concurrent load.
+
+Regression checks exercise the unchanged platform guard, bounded overload,
+cancellation and recovery, exact target/signature preservation, queued expiry,
+and the real broker/owner-tool/checkpoint flow with disposable PostgreSQL. The
+broker fixture uses synthetic consent authority and provider responses; live
+selected-thread and label qualification remains required.

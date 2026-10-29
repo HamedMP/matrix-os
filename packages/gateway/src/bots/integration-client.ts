@@ -16,6 +16,7 @@ import { REFRESH_LIMITS } from "../integrations/refresh/contracts.js";
 import { INTEGRATION_READ_SCOPE_HEADER } from "../integrations/scope-provenance.js";
 import { appIntegrationReplyBytes } from "@matrix-os/contracts";
 import { markAuthContextReady, setPlatformVerifiedPrincipal } from "../request-principal.js";
+import { createPlatformIntegrationPacer } from "./platform-integration-pacing.js";
 
 const LIST_TIMEOUT_MS = 10_000;
 const CALL_TIMEOUT_MS = 25_000;
@@ -235,29 +236,38 @@ export type BotIntegrationClient = ReturnType<typeof createBotIntegrationClient>
 /** The platform's internal integrations route, as the owner, with the machine token. */
 export function createPlatformIntegrationTransport(options: { baseUrl: string; machineToken: string; fetchImpl?: typeof fetch }): BotIntegrationTransport {
   const base = options.baseUrl.replace(/\/$/, "");
-  return (ownerId, request) => {
-    const headers = new Headers({
-      authorization: `Bearer ${options.machineToken}`,
-      ...delegatedIntegrationHeaders(ownerId, options.machineToken),
-    });
-    const body = request.body ? JSON.stringify(request.body) : undefined;
-    if (request.signal.aborted) throw new BotIntegrationError("unavailable");
-    if (request.processingClaim) {
-      if (request.method !== "POST" || !["/call", "/read-call"].includes(request.path)
-        || request.processingClaim.ownerId !== ownerId || request.body?.service !== "gmail"
-        || request.body.connectionId !== request.processingClaim.googleAccountId) throw new BotIntegrationError("unavailable");
-      headers.set(GOOGLE_PROCESSING_HEADER, signGoogleProcessingEnvelope(request.processingClaim, {
-        method: request.method, path: request.path, body: body!, machineToken: options.machineToken,
-      }));
-    }
-    if (body) headers.set("content-type", "application/json");
-    if (request.readScope) headers.set(INTEGRATION_READ_SCOPE_HEADER, "read");
-    return (options.fetchImpl ?? fetch)(`${base}${request.path === "/" ? "" : request.path}`, {
-      method: request.method,
-      headers,
-      ...(body ? { body } : {}),
-      redirect: "error",
-      signal: request.signal,
+  const paced = createPlatformIntegrationPacer();
+  return async (ownerId, input) => {
+    // Snapshot the reviewed target before waiting; sign fresh authority only
+    // when dispatched, without observing caller mutations during the wait.
+    const request = { ...input,
+      ...(input.body ? { body: structuredClone(input.body) } : {}),
+      ...(input.processingClaim ? { processingClaim: structuredClone(input.processingClaim) } : {}),
+    };
+    return paced(request.signal, async () => {
+      const headers = new Headers({
+        authorization: `Bearer ${options.machineToken}`,
+        ...delegatedIntegrationHeaders(ownerId, options.machineToken),
+      });
+      const body = request.body ? JSON.stringify(request.body) : undefined;
+      if (request.signal.aborted) throw new BotIntegrationError("unavailable");
+      if (request.processingClaim) {
+        if (request.method !== "POST" || !["/call", "/read-call"].includes(request.path)
+          || request.processingClaim.ownerId !== ownerId || request.body?.service !== "gmail"
+          || request.body.connectionId !== request.processingClaim.googleAccountId) throw new BotIntegrationError("unavailable");
+        headers.set(GOOGLE_PROCESSING_HEADER, signGoogleProcessingEnvelope(request.processingClaim, {
+          method: request.method, path: request.path, body: body!, machineToken: options.machineToken,
+        }));
+      }
+      if (body) headers.set("content-type", "application/json");
+      if (request.readScope) headers.set(INTEGRATION_READ_SCOPE_HEADER, "read");
+      return (options.fetchImpl ?? fetch)(`${base}${request.path === "/" ? "" : request.path}`, {
+        method: request.method,
+        headers,
+        ...(body ? { body } : {}),
+        redirect: "error",
+        signal: request.signal,
+      });
     });
   };
 }
