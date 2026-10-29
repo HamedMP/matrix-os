@@ -12,6 +12,7 @@ import {
   type GettingStartedResults,
   type GettingStartedStepStatus,
 } from "#getting-started";
+import { parseAvailableIntegrations } from "#integration-connections";
 
 export const GETTING_STARTED_APP_TASK_IDS = [
   "first-prompt",
@@ -162,3 +163,17 @@ export const GettingStartedAppDesktopIconResponseSchema = z.object({
 });
 
 export type GettingStartedAppDesktopIconResponse = z.infer<typeof GettingStartedAppDesktopIconResponseSchema>;
+
+/** Integrations whose logos the app shows (Settings › Integrations catalog ids). */
+export const GETTING_STARTED_APP_LOGO_SERVICES = ["slack", "whatsapp", "github"] as const;
+
+/** Logo URLs for the app's integrations from `/api/integrations/available` (same parser as the onboarding widget). */
+export function gettingStartedAppLogos(value: unknown): Readonly<Record<string, string>> {
+  const wanted = new Set<string>(GETTING_STARTED_APP_LOGO_SERVICES);
+  const logos: Record<string, string> = {};
+  for (const integration of parseAvailableIntegrations(value)) {
+    if (!wanted.has(integration.id) || !integration.logoUrl?.startsWith("https://")) continue;
+    logos[integration.id] = integration.logoUrl;
+  }
+  return logos;
+}

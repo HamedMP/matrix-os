@@ -3,6 +3,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GettingStartedAppProgress, GettingStartedResults } from "@matrix-os/contracts";
+import { useOnboardingTaskRequests } from "../../packages/ui/src/onboarding-widget/task-requests";
 import {
   GettingStartedAppProvider,
   useGettingStartedApp,
@@ -41,6 +42,7 @@ function makePort(options: {
   progress?: GettingStartedAppProgress | null;
   autoOpen?: boolean;
   desktopIconPlaced?: boolean;
+  logos?: Record<string, string>;
 } = {}) {
   let progress: GettingStartedAppProgress = options.progress ?? { awards: [], total: 0 };
   const port = {
@@ -61,6 +63,7 @@ function makePort(options: {
     claimAutoOpen: vi.fn(async () => options.autoOpen ?? false),
     desktopIconPlaced: vi.fn(async (_signal?: AbortSignal) => options.desktopIconPlaced ?? false),
     markDesktopIconPlaced: vi.fn(async (_signal?: AbortSignal) => undefined),
+    loadLogos: vi.fn(async (_signal: AbortSignal) => options.logos ?? {}),
   } satisfies GettingStartedAppPort;
   return port;
 }
@@ -83,7 +86,13 @@ describe("Getting started app view", () => {
     expect(screen.getByText("Getting started")).toBeTruthy();
     expect(screen.getByLabelText("0 points")).toBeTruthy();
     expect(screen.getByText("Start here")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Put your agent to work" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "What should I start on?" })).toBeTruthy();
+    const starters = within(screen.getByRole("list", { name: "Starter tasks" }));
+    for (const label of ["Research anything", "Plan my week", "Build a website", "Work on my code"]) {
+      expect(starters.getByRole("button", { name: new RegExp(label) })).toBeTruthy();
+    }
+    expect(starters.getByText("Needs Calendar")).toBeTruthy();
+    expect(starters.getByText("Needs GitHub")).toBeTruthy();
     for (const section of ["Build", "Connect", "Go further"]) {
       expect(screen.getByRole("heading", { name: section })).toBeTruthy();
     }
@@ -141,8 +150,9 @@ describe("Getting started app view", () => {
     const { onAction } = renderApp(makePort());
     fireEvent.click(await screen.findByRole("button", { name: /Slack/ }));
     expect(onAction).toHaveBeenLastCalledWith({ type: "settings", section: "integrations" });
-    fireEvent.click(screen.getByRole("button", { name: "Start in chat" }));
-    expect(onAction).toHaveBeenLastCalledWith({ type: "chat", prompt: "Build me a habit tracker" });
+    // No onboarding widget is mounted here, so a starter task starts in Chat instead.
+    fireEvent.click(screen.getByRole("button", { name: /Research anything/ }));
+    expect(onAction).toHaveBeenLastCalledWith({ type: "chat", prompt: "Research anything" });
     fireEvent.click(screen.getByRole("button", { name: /Stuck\? Chat with us/ }));
     expect(onAction).toHaveBeenLastCalledWith({ type: "support" });
   });
@@ -390,5 +400,57 @@ describe("Getting started desktop icon", () => {
     renderApp(port, { desktopIconReady: true, onPlaceDesktopIcon });
     await waitFor(() => expect(onPlaceDesktopIcon).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(port.markDesktopIconPlaced).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("Getting started as an extension of onboarding", () => {
+  function WidgetListener({ onTask }: { onTask(taskId: string): void }) {
+    useOnboardingTaskRequests(onTask);
+    return null;
+  }
+
+  it("hands a starter task to the onboarding widget when one is mounted", async () => {
+    const onTask = vi.fn();
+    const onAction = vi.fn();
+    render(
+      <GettingStartedAppProvider port={makePort()} refreshMs={25}>
+        <WidgetListener onTask={onTask} />
+        <GettingStartedAppView onAction={onAction} />
+      </GettingStartedAppProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Plan my week/ }));
+    expect(onTask).toHaveBeenCalledWith("plan-week");
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it("drops the Needs tag once the app is connected", async () => {
+    renderApp(makePort({ results: () => results({ github: fulfilled({ authenticated: false }), integrations: fulfilled([{ id: "c9", service: "github", status: "active" }]) }) }));
+    const starters = within(await screen.findByRole("list", { name: "Starter tasks" }));
+    expect(starters.queryByText("Needs GitHub")).toBeNull();
+    expect(starters.getByText("Needs Calendar")).toBeTruthy();
+  });
+
+  it("shows the real integration logos on the Connect cards", async () => {
+    const port = makePort({ logos: { slack: "https://logos.example/slack.svg", github: "https://logos.example/github.svg" } });
+    renderApp(port);
+    const slack = await screen.findByRole("button", { name: /Slack/ });
+    await waitFor(() => expect(slack.querySelector("img")?.getAttribute("src")).toBe("https://logos.example/slack.svg"));
+    expect(port.loadLogos).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a line icon when an integration has no logo", async () => {
+    renderApp(makePort({ logos: {} }));
+    const whatsapp = await screen.findByRole("button", { name: /WhatsApp/ });
+    expect(whatsapp.querySelector("img")).toBeNull();
+  });
+
+  it("celebrates a task that turns done while the owner is here", async () => {
+    let connected = false;
+    const port = makePort({ results: () => results(connected ? slackConnected : {}) });
+    renderApp(port);
+    await screen.findByText("0 of 10 done");
+    connected = true;
+    await waitFor(() => expect(screen.getByRole("button", { name: /Slack/ }).className).toContain("mxo-gsa__card--celebrate"));
+    expect(screen.getByText(/Slack connected, nice\./)).toBeTruthy();
   });
 });

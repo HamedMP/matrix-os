@@ -16,24 +16,17 @@ import {
 } from "@matrix-os/contracts";
 import {
   Alert02Icon,
-  Calendar03Icon,
   FolderOpenIcon,
   GithubIcon,
-  Globe02Icon,
   Search01Icon,
 } from "@hugeicons/core-free-icons";
-import type { IconSvgElement } from "@hugeicons/react";
 import { useMemo, useState } from "react";
 import { connectedServices, newlyConnectedNames } from "./helpers.js";
-import { AppLogo, ButtonRow, Chips, Icon, ResultCard, WorkLog } from "./parts.js";
+import { AppLogo, ButtonRow, Chips, Icon, OnboardingTaskButton, ResultCard, WorkLog } from "./parts.js";
+import { ONBOARDING_TASK_ICONS } from "./task-icons.js";
 import type { OnboardingAppCategory, OnboardingWidgetProps } from "./types.js";
 
-const TASK_ICONS: Record<OnboardingTaskDefinition["tone"], IconSvgElement> = {
-  research: Search01Icon,
-  plan: Calendar03Icon,
-  website: Globe02Icon,
-  code: GithubIcon,
-};
+const TASK_ICONS = ONBOARDING_TASK_ICONS;
 
 export function TasksScreen({ state, apps, appsUnavailable = false, userName, taskOrder, intro, buildSuggestion, actions }: Pick<OnboardingWidgetProps, "state" | "apps" | "appsUnavailable" | "userName" | "taskOrder" | "intro" | "buildSuggestion" | "actions">) {
   const connected = connectedServices(apps);
@@ -67,20 +60,16 @@ export function TasksScreen({ state, apps, appsUnavailable = false, userName, ta
           const needsTag = task.needs && !connectedSet.has(task.needs.service) ? task.needs.tag : null;
           return (
             <li key={task.id}>
-              <button
-                type="button"
-                className="mxo-task"
-                onClick={() => actions.dispatch({
+              <OnboardingTaskButton
+                task={task}
+                needsTag={needsTag}
+                onSelect={() => actions.dispatch({
                   type: "task.selected",
                   taskId: task.id,
                   connectedServices: connected,
                   ...(appsUnavailable ? { appsUnavailable: true } : {}),
                 })}
-              >
-                <span className={`mxo-tile mxo-tile--${task.tone}`}><Icon icon={TASK_ICONS[task.tone]} size={16} /></span>
-                <span className="mxo-task__label">{task.label}</span>
-                {needsTag ? <span className="mxo-tag">{needsTag}</span> : null}
-              </button>
+              />
             </li>
           );
         })}

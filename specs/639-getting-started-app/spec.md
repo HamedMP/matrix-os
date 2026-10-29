@@ -206,3 +206,22 @@ Evidence: live screenshots and a short recording on Web Desktop, Web Canvas and 
 - **Points become money later.** Awards are claimed by the owner's own client after reading status. That is fine for progress on a single-owner computer, but not for credit. If points gain value, verification must move server-side or to the platform first.
 - **Two task lists drifting.** Mitigated by deriving both the app and the popover summary from one contracts function and removing the popover's own list.
 - **Default desktop icon.** Adding a path to `DEFAULT_OS_VIEW_DESKTOP_APP_PATHS` must not rearrange existing owners' saved layouts; verify with an existing-layout fixture.
+
+---
+
+# Iteration 2: an extension of onboarding (stack layer 3)
+
+Team feedback on the first build (#tech, Oct 29): it should feel like an extension of the onboarding process with Matrix's vibe (Stefan), share the onboarding widget's components and bring in Sahar's chat-first design (Nima), and it reads a bit empty: use the real integration logos (Hamed).
+
+## Plan
+
+1. **One set of components with the onboarding widget.** The widget's design tokens (`--mxo-*`) apply to the Getting started app too, and its starter-task button becomes a shared `OnboardingTaskButton` used by both. The app reuses the widget's `RabbitAvatar`, `AppLogo`, tiles, tags and rise animation instead of its own look-alikes.
+2. **The hero continues onboarding.** The left panel becomes the Matrix agent: rabbit avatar, "Hey {name} 👋" and a line that reacts to progress (next step, a just-finished task, all done). The right panel shows Sahar's four starter tasks from `ONBOARDING_TASKS` (Research anything, Plan my week, Build a website, Work on my code), ordered by the owner's Get started goals, with "Needs Calendar/GitHub" tags until those apps are connected.
+3. **Starting a task hands off to the widget.** Clicking a starter task opens the onboarding widget in the corner and starts that task there, through a small typed request channel the widget host listens to (one listener per shell, no globals). When no widget is mounted, it opens Chat with the same task prompt instead. Any started chat completes "Put your agent to work" (+50).
+4. **Real logos.** Connect cards show the integration's real logo from the integrations catalog (`/api/integrations/available`, the same source as Settings › Integrations); AI provider shows the Claude and OpenAI marks; Build cards use the sculpted app icons (Create app, Notes) and the Matrix rabbit for Create an agent. Missing logos fall back to the line icon.
+5. **More spirit, still calm.** Points count up when they change; a card that turns Done pops once with a soft glow; cards rise in with the widget's stagger. All motion is skipped under `prefers-reduced-motion`.
+
+## Not in this iteration
+
+- A new Figma frame: the layout follows the widget's existing components and Sahar's onboarding pages until design publishes an updated Getting started frame.
+- Removing the Help popover's own list (open question 9).

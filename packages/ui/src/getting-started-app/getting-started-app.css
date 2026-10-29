@@ -161,29 +161,37 @@
   color: var(--gsa-success-text);
 }
 
-/* Hero: 320px welcome panel (640 of 1080) + "Start here" card; compact once started. */
+/* Hero: the Matrix agent + Sahar's starter tasks; compact ("Up next") once a task has started. */
 .mxo-gsa__hero {
   display: grid;
-  grid-template-columns: minmax(0, 640fr) minmax(0, 424fr);
+  grid-template-columns: minmax(0, 464fr) minmax(0, 600fr);
   gap: 16px;
   min-height: 320px;
 }
 
 .mxo-gsa__hero--compact {
-  grid-template-columns: minmax(0, 280fr) minmax(0, 784fr);
+  grid-template-columns: minmax(0, 400fr) minmax(0, 664fr);
   min-height: 216px;
 }
 
-.mxo-gsa__welcome {
+/* The Matrix agent (onboarding widget's rabbit avatar) on the forest panel. */
+.mxo-gsa__agent {
   position: relative;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 20px;
+  gap: 24px;
+  padding: 24px;
   border-radius: 16px;
   background: var(--gsa-brand-forest);
   color: var(--gsa-on-brand);
+}
+
+.mxo-gsa__agent .mxo-rabbit {
+  position: relative;
+  background: rgba(250, 250, 250, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(250, 250, 250, 0.18);
 }
 
 .mxo-gsa__glow {
@@ -200,6 +208,7 @@
   height: 384px;
   background: var(--gsa-brand-glow);
   opacity: 0.6;
+  animation: mxo-gsa-drift 14s ease-in-out infinite alternate;
 }
 
 .mxo-gsa__glow--bottom {
@@ -209,48 +218,43 @@
   height: 320px;
   background: var(--gsa-brand-glow-soft);
   opacity: 0.35;
+  animation: mxo-gsa-drift 18s ease-in-out infinite alternate-reverse;
 }
 
-.mxo-gsa__rabbit {
-  position: relative;
-  display: block;
-  width: 25px;
-  height: 32px;
-  background: currentColor;
-  -webkit-mask: var(--gsa-rabbit-mask) center / contain no-repeat;
-  mask: var(--gsa-rabbit-mask) center / contain no-repeat;
+@keyframes mxo-gsa-drift {
+  from { transform: translate(0, 0); }
+  to { transform: translate(-24px, 16px); }
 }
 
-.mxo-gsa__welcome-caption {
+.mxo-gsa__agent-text {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 
-.mxo-gsa__welcome-title {
+.mxo-gsa__agent-greeting {
   font-family: var(--gsa-font-display);
   font-size: 28px;
   font-weight: 600;
   line-height: 35px;
 }
 
-.mxo-gsa__welcome-subtitle {
+.mxo-gsa__agent-line {
+  max-width: 44ch;
   font-size: 14px;
   line-height: 20px;
-  opacity: 0.8;
+  opacity: 0.85;
 }
 
-.mxo-gsa__welcome--compact .mxo-gsa__welcome-title {
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 20px;
+.mxo-gsa__hero--compact .mxo-gsa__agent-greeting {
+  font-size: 20px;
+  line-height: 26px;
 }
 
-.mxo-gsa__welcome--compact .mxo-gsa__welcome-subtitle {
-  font-size: 12px;
-  line-height: 16px;
+.mxo-gsa__hero--compact .mxo-gsa__agent-line {
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .mxo-gsa__next {
@@ -300,6 +304,20 @@
 .mxo-gsa__spacer {
   flex: 1 0 0;
   min-height: 0;
+}
+
+/* Sahar's starter tasks, rendered with the onboarding widget's task button. */
+.mxo-gsa__starters {
+  align-self: stretch;
+  margin: 0;
+  border: 1px solid var(--mxo-border);
+  border-radius: 12px;
+  background: var(--mxo-surface);
+}
+
+.mxo-gsa__starters .mxo-task {
+  cursor: pointer;
+  font: inherit;
 }
 
 /* Matrix DS Button primary, md (36). */
@@ -420,6 +438,54 @@
   line-height: 18px;
 }
 
+/* Real logos, sculpted app icons and the Matrix rabbit on task cards. */
+.mxo-gsa__art-logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+}
+
+.mxo-gsa__art-sculpted {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+}
+
+.mxo-gsa__art-pair {
+  display: inline-flex;
+  align-items: center;
+}
+
+.mxo-gsa__art-pair img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+
+.mxo-gsa__art-pair img + img {
+  margin-left: -4px;
+}
+
+/* Cards rise in with the widget's stagger; a card that just turned Done pops once. */
+.mxo-gsa__grid > * {
+  animation: mxo-rise 320ms var(--mxo-ease) backwards;
+}
+
+.mxo-gsa__grid > :nth-child(2) { animation-delay: 40ms; }
+.mxo-gsa__grid > :nth-child(3) { animation-delay: 80ms; }
+.mxo-gsa__grid > :nth-child(4) { animation-delay: 120ms; }
+
+.mxo-gsa__card--celebrate {
+  animation: mxo-gsa-pop 900ms var(--mxo-ease);
+  box-shadow: 0 0 0 2px var(--gsa-success-border), 0 8px 24px -8px color-mix(in srgb, var(--gsa-brand-teal) 45%, transparent);
+}
+
+@keyframes mxo-gsa-pop {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.03); }
+  100% { transform: scale(1); }
+}
+
 /* Matrix DS Button ghost, sm (32). */
 .mxo-gsa__support {
   align-self: center;
@@ -453,7 +519,7 @@
     grid-template-columns: minmax(0, 1fr);
     min-height: 0;
   }
-  .mxo-gsa__welcome {
+  .mxo-gsa__agent {
     min-height: 160px;
   }
   .mxo-gsa__grid,
@@ -480,6 +546,11 @@
   .mxo-gsa__card,
   .mxo-gsa__primary {
     transition: none;
+  }
+  .mxo-gsa__grid > *,
+  .mxo-gsa__card--celebrate,
+  .mxo-gsa__glow {
+    animation: none;
   }
 }
 

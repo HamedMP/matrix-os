@@ -1,5 +1,5 @@
 import { rabbitMarkSvg } from "@matrix-os/brand/marks";
-import type { OnboardingWorkStep } from "@matrix-os/contracts";
+import type { OnboardingTaskDefinition, OnboardingWorkStep } from "@matrix-os/contracts";
 import {
   AlertCircleIcon,
   CheckmarkCircle02Icon,
@@ -8,8 +8,25 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import type { ReactNode } from "react";
+import { ONBOARDING_TASK_ICONS } from "./task-icons.js";
 
 const RABBIT_SVG = rabbitMarkSvg("mxo-rabbit__mark");
+
+
+/** A starter task (tone tile, label, "Needs …" tag), shared by the widget and the Getting started app. */
+export function OnboardingTaskButton({ task, needsTag, onSelect }: {
+  task: Pick<OnboardingTaskDefinition, "label" | "tone">;
+  needsTag?: string | null;
+  onSelect(): void;
+}) {
+  return (
+    <button type="button" className="mxo-task" onClick={onSelect}>
+      <span className={`mxo-tile mxo-tile--${task.tone}`}><Icon icon={ONBOARDING_TASK_ICONS[task.tone]} size={16} /></span>
+      <span className="mxo-task__label">{task.label}</span>
+      {needsTag ? <span className="mxo-tag">{needsTag}</span> : null}
+    </button>
+  );
+}
 
 export function Icon({ icon, size = 16, className }: { icon: IconSvgElement; size?: number; className?: string }) {
   return <HugeiconsIcon icon={icon} size={size} strokeWidth={1.6} className={className} aria-hidden />;

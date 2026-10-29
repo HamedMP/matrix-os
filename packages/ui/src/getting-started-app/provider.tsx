@@ -8,6 +8,7 @@ import {
   GETTING_STARTED_APP_AWARDABLE_TASK_IDS,
   deriveGettingStartedAppTasks,
   gettingStartedAppKnownTaskIds,
+  deriveGettingStartedSnapshot,
   type GettingStartedAppAwardableTaskId,
   type GettingStartedAppAwardResponse,
   type GettingStartedAppProgress,
@@ -28,6 +29,8 @@ export interface GettingStartedAppPort {
   desktopIconPlaced(signal?: AbortSignal): Promise<boolean>;
   /** Records the icon as placed; called only after the save succeeded. */
   markDesktopIconPlaced(signal?: AbortSignal): Promise<void>;
+  /** Real logos by integration id (Settings › Integrations catalog); optional, read once. */
+  loadLogos?(signal: AbortSignal): Promise<Readonly<Record<string, string>>>;
 }
 
 export type GettingStartedAppPoints = { kind: "loading" } | { kind: "unavailable" } | { kind: "ready"; total: number };
@@ -43,11 +46,18 @@ export interface GettingStartedAppState {
   tasks: GettingStartedAppTask[];
   doneCount: number;
   points: GettingStartedAppPoints;
+  /** Connected integration services (e.g. "github", "google_calendar"), for the starter tasks' "Needs …" tags. */
+  connectedServices: readonly string[];
+  /** Logo URLs by integration id, e.g. "slack"; empty until loaded or when unavailable. */
+  logos: Readonly<Record<string, string>>;
+  /** Tasks that turned Done while the owner was here, for a short celebration. */
+  celebrating: readonly GettingStartedAppTaskId[];
   /** Opens the app window; null when the surface did not provide it. */
   open: (() => void) | null;
 }
 
 export const GETTING_STARTED_APP_REFRESH_MS = 15_000;
+const CELEBRATION_MS = 1_600;
 
 /** What saving the desktop icon did; the same values as the shells' desktop icon stores. */
 export type GettingStartedAppDesktopIconResult = "added" | "already-present" | "desktop-full" | "failed";
@@ -101,6 +111,11 @@ export function GettingStartedAppProvider({
   // Tasks that already paid out stay Done, even if their status can no longer be checked.
   const [earned, setEarned] = useState<readonly GettingStartedAppTaskId[]>([]);
   const [points, setPoints] = useState<GettingStartedAppPoints>({ kind: "loading" });
+  const [logos, setLogos] = useState<Readonly<Record<string, string>>>({});
+  const [celebrating, setCelebrating] = useState<readonly GettingStartedAppTaskId[]>([]);
+  const logosRequested = useRef(false);
+  // One timer per celebrating task (at most the ten tasks), cleared on unmount.
+  const celebrationTimers = useRef(new Map<GettingStartedAppTaskId, ReturnType<typeof setTimeout>>());
   // Last status seen per task this session (at most 10 entries); a task seen
   // incomplete that turns complete gets a toast, one complete on first sight does not.
   const seen = useRef(new Map<GettingStartedAppTaskId, GettingStartedAppTask["status"]>());
@@ -185,6 +200,11 @@ export function GettingStartedAppProvider({
     return deriveGettingStartedAppTasks(results).map((task) => (earnedIds.has(task.id) ? { ...task, status: "complete" as const } : task));
   }, [earned, results]);
 
+  const connectedServices = useMemo(
+    () => (results ? deriveGettingStartedSnapshot(results).connectedServices ?? [] : []),
+    [results],
+  );
+
   const markEarned = useCallback((ids: readonly GettingStartedAppTaskId[]) => {
     setEarned((current) => {
       const known = new Set(current);
@@ -192,6 +212,36 @@ export function GettingStartedAppProvider({
       return missing.length === 0 ? current : [...current, ...missing];
     });
   }, []);
+
+  const celebrate = useCallback((taskId: GettingStartedAppTaskId) => {
+    setCelebrating((current) => (current.includes(taskId) ? current : [...current, taskId]));
+    const previous = celebrationTimers.current.get(taskId);
+    if (previous) clearTimeout(previous);
+    celebrationTimers.current.set(taskId, setTimeout(() => {
+      celebrationTimers.current.delete(taskId);
+      setCelebrating((current) => current.filter((id) => id !== taskId));
+    }, CELEBRATION_MS));
+  }, []);
+
+  useEffect(() => {
+    const timers = celebrationTimers.current;
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
+
+  const loadLogos = useCallback((signal: AbortSignal) => {
+    if (!port?.loadLogos || logosRequested.current) return;
+    logosRequested.current = true;
+    void port.loadLogos(signal).then((next) => {
+      if (!signal.aborted) setLogos(next);
+    }).catch((error: unknown) => {
+      if (isAbort(error) || signal.aborted) return;
+      logosRequested.current = false;
+      warn("logos unavailable", error);
+    });
+  }, [port]);
 
   // Award tasks that are done but not yet recorded. Only once points have
   // loaded, so the recorded set is known and nothing is claimed twice from here.
@@ -212,7 +262,10 @@ export function GettingStartedAppProvider({
         awarded.current.add(taskId);
         markEarned([taskId]);
         showTotal(response.total);
-        if (response.awarded && !silent) callbacks.current.onToast?.(gettingStartedAppToast(taskId, response.points));
+        if (response.awarded && !silent) {
+          callbacks.current.onToast?.(gettingStartedAppToast(taskId, response.points));
+          celebrate(taskId);
+        }
       }).catch((error: unknown) => {
         if (signal.aborted) return;
         // Keep the toast decision for the retry on the next refresh.
@@ -222,7 +275,7 @@ export function GettingStartedAppProvider({
         pending.current.delete(taskId);
       });
     }
-  }, [markEarned, port, showTotal]);
+  }, [celebrate, markEarned, port, showTotal]);
 
   const refresh = useCallback(async (signal: AbortSignal) => {
     if (!port) return;
@@ -242,6 +295,7 @@ export function GettingStartedAppProvider({
     reportEnabled(true);
     claimAutoOpen();
     placeDesktopIcon();
+    loadLogos(signal);
     if (progress) {
       progressKnown.current = true;
       const known = gettingStartedAppKnownTaskIds(progress.awards);
@@ -259,7 +313,7 @@ export function GettingStartedAppProvider({
     } catch (error: unknown) {
       if (!isAbort(error)) warn("status unavailable", error);
     }
-  }, [awardDone, claimAutoOpen, markEarned, placeDesktopIcon, port, reportEnabled, showTotal]);
+  }, [awardDone, claimAutoOpen, loadLogos, markEarned, placeDesktopIcon, port, reportEnabled, showTotal]);
 
   useEffect(() => {
     if (!port) return;
@@ -295,8 +349,11 @@ export function GettingStartedAppProvider({
     tasks,
     doneCount: tasks.filter((task) => task.status === "complete").length,
     points,
+    connectedServices,
+    logos,
+    celebrating,
     open: onOpen ?? null,
-  }), [enabled, availability, results, tasks, points, onOpen]);
+  }), [enabled, availability, results, tasks, connectedServices, points, logos, celebrating, onOpen]);
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

@@ -4,6 +4,7 @@ import {
   GettingStartedAppAwardResponseSchema,
   GettingStartedAppDesktopIconResponseSchema,
   GettingStartedAppProgressSchema,
+  gettingStartedAppLogos,
   type GettingStartedAppAwardableTaskId,
 } from "@matrix-os/contracts";
 import type { GettingStartedAppPort } from "@matrix-os/ui";
@@ -58,6 +59,11 @@ export function createWebGettingStartedAppPort(): GettingStartedAppPort {
       const response = await request("/api/getting-started/desktop-icon", { method: "POST", body: "{}", signal });
       if (!response.ok) throw new Error("getting_started_desktop_icon_failed");
       GettingStartedAppDesktopIconResponseSchema.parse(await response.json());
+    },
+    async loadLogos(signal: AbortSignal) {
+      const response = await request("/api/integrations/available", { signal });
+      if (!response.ok) throw new Error("getting_started_logos_unavailable");
+      return gettingStartedAppLogos(await response.json());
     },
   };
 }
