@@ -12,7 +12,8 @@ export interface BotChatBinding {
   ownerId: string;
   botId: string;
   chatId: string;
-  kind: "direct" | "group";
+  kind: "direct" | "group" | "thread";
+  projectId?: string;
   createdAt: string;
   removedAt: string | null;
 }
@@ -23,6 +24,7 @@ function fromRow(row: Selectable<BotChatBindingsTable>): BotChatBinding {
     botId: row.bot_id,
     chatId: row.chat_id,
     kind: row.kind,
+    ...(row.project_id == null ? {} : { projectId: row.project_id }),
     createdAt: isoTimestamp(row.created_at),
     removedAt: optionalIsoTimestamp(row.removed_at),
   };
