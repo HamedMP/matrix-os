@@ -50,6 +50,59 @@ afterEach(() => {
 });
 
 describe("GetStartedGate", () => {
+  it("blocks shortcuts as soon as the setup DOM is committed", async () => {
+    const shortcut = vi.fn();
+    window.addEventListener("keydown", shortcut);
+    const observed: KeyboardEvent[] = [];
+    const observer = new MutationObserver(() => {
+      const name = document.querySelector<HTMLInputElement>('input[placeholder="Your first name"]');
+      if (!name || observed.length) return;
+      for (const [target, modifiers] of [
+        [document.body, { metaKey: true }],
+        [name, { ctrlKey: true }],
+        [name, { altKey: true }],
+      ] as const) {
+        const event = new KeyboardEvent("keydown", { key: "k", bubbles: true, cancelable: true, ...modifiers });
+        observed.push(event);
+        target.dispatchEvent(event);
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    try {
+      renderGate(makePort({ status: "pending" }).port);
+      await screen.findByPlaceholderText("Your first name");
+      expect(observed).toHaveLength(3);
+      expect(observed.every((event) => !event.defaultPrevented)).toBe(true);
+      expect(shortcut).not.toHaveBeenCalled();
+    } finally {
+      observer.disconnect();
+      window.removeEventListener("keydown", shortcut);
+    }
+  });
+
+  it("restores shortcuts as soon as the setup DOM disappears", async () => {
+    renderGate(makePort({ status: "pending" }).port);
+    await screen.findByPlaceholderText("Your first name");
+    const shortcut = vi.fn();
+    window.addEventListener("keydown", shortcut);
+    let restored = false;
+    const observer = new MutationObserver(() => {
+      if (restored || !screen.queryByTestId("desktop-widget")) return;
+      restored = true;
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Skip setup" }));
+      await screen.findByTestId("desktop-widget");
+      expect(restored).toBe(true);
+      expect(shortcut).toHaveBeenCalledTimes(1);
+    } finally {
+      observer.disconnect();
+      window.removeEventListener("keydown", shortcut);
+    }
+  });
+
   it("keeps background shortcuts like the command palette away while setup is open", async () => {
     const shortcut = vi.fn();
     window.addEventListener("keydown", shortcut);

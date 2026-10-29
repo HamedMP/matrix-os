@@ -21,7 +21,7 @@ import { ChatContextReceipt } from "@matrix-os/ui";
 import { ChatRunContextSchema, type CanonicalChatQueuedTurn } from "@matrix-os/contracts";
 import { ChatInput } from "./chat/ChatInput";
 import { useChatComposerDraft } from "./chat/useChatComposerDraft";
-import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, useBotExecution, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, AgentAvatar, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, useChatAgentsNavigation, useCloseAgentsOnDraftRequest, type ChatAgentClient } from "@matrix-os/ui";
+import { BotModelRecoveryProvider, BotModelFailureNotice, useDirectBotBinding, useBotExecution, BotBindingStatus, BotDraftRecoveryPanel, useBotConversationSummaries, AgentAvatar, BotChatPanel, BotComposerControls, ChatAgentsRailSection, ChatAgentsWorkspace, ChatAgentsContent, createAgentProviderCatalogSource, useChatAgentsNavigation, useCloseAgentsOnDraftRequest, type ChatAgentClient } from "@matrix-os/ui";
 import type { ChatSubmitOptions } from "@/hooks/useChatState";
 import { ChatSharing } from "./chat/ChatSharing";
 import { OrganizationDrivesNav } from "./chat/OrganizationDrivesNav";
@@ -328,6 +328,13 @@ function ChatAppContent({
   // react-doctor-disable-next-line react-hooks-js/refs -- lazy initializer performs one bounded localStorage read.
   const [channels, setChannels] = useState(() => new Set(getInitialHermesSetup().channels));
   const providerState = useChatProviderState(providerSelection, boundProviderInstanceId, { chatId: sessionId, scopeKey: authorityKey, executionControls });
+  const agentProviderCatalog = useMemo(() => createAgentProviderCatalogSource({
+    catalog: providerState.catalog,
+    hasTrustedCatalog: providerState.hasTrustedCatalog,
+    loading: providerState.loading,
+    refreshError: providerState.unavailable,
+    refresh: providerState.refresh,
+  }), [providerState.catalog, providerState.hasTrustedCatalog, providerState.loading, providerState.refresh, providerState.unavailable]);
   const botBinding = useDirectBotBinding(collaborationView ? undefined : sessionId, summaryClient);
   const directBotId = botBinding.agentId;
   const [botModelRevision, setBotModelRevision] = useState(0);
@@ -575,7 +582,8 @@ function ChatAppContent({
       </aside></ChatRailOrderContext.Provider>
 
       {/* Main content */}
-      <BotModelRecoveryProvider agentId={directBotId} client={agentClient} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh}><ChatAgentsContent client={agentClient} scopeKey={JSON.stringify([authorityKey, sessionId ?? "draft"])} onOpenBotChat={onSwitchConversation}>
+      <BotModelRecoveryProvider agentId={directBotId} client={agentClient} onSetup={openProviderSettings} onRefreshCatalog={providerState.refresh}><ChatAgentsContent client={agentClient} scopeKey={JSON.stringify([authorityKey, sessionId ?? "draft"])} onOpenBotChat={onSwitchConversation}
+        providerCatalog={agentProviderCatalog}>
       <main ref={setBotDetailsContainer} className="matrix-bot-chat-layout @container/bot-chat relative flex flex-1 flex-col min-w-0">
         {/* Top bar */}
         {(!directBotId || collaborationView) ? <header data-slot="chat-session-header" className={`flex items-center gap-2 border-b px-3 ${mobile ? "surface-glass min-h-14" : "min-h-12 border-border/30"}`}>

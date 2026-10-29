@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from "react";
 import { productScales } from "@matrix-os/brand/tokens";
 import { getStartedSuggestedName, type GetStartedWizardEvent, type GetStartedWizardState } from "@matrix-os/contracts";
 import { useGettingStartedAutoOpenSuppression, useGettingStartedBlocker } from "../getting-started-visibility.js";
@@ -75,7 +75,9 @@ function useDesktopBackdrop(source: GetStartedBackdropSource | undefined, active
  * and no default action is prevented, so copy and paste keep working.
  */
 function useBlockBackgroundShortcuts(active: boolean): void {
-  useEffect(() => {
+  // The shortcut barrier must follow the DOM commit, before passive effects: setup may already
+  // be visible (or the desktop restored) while an ordinary effect is still waiting to run.
+  useLayoutEffect(() => {
     if (!active) return;
     const block = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) event.stopPropagation();

@@ -48,6 +48,7 @@ import { canonicalChatRequestId } from "../chat/canonical-chat-submission";
 import { openWorkProject, openWorkProjectDraft } from "./work-navigation";
 import { useWorkSurfaceRuntime } from "./WorkSurfaceRuntime";
 import { useWorkAgentDraftRequest } from "./use-work-agent-draft-request";
+import { useWorkAgentProviderCatalog } from "./use-work-agent-provider-catalog";
 
 type WorkLayout = "wide" | "medium" | "narrow";
 type NarrowWorkPane = "rail" | "chat" | "inspector";
@@ -305,6 +306,7 @@ function WorkTabContent({
   const activeChatScopeRef = useRef({ client, chatId: initialChatId });
   activeChatScopeRef.current = { client, chatId: initialChatId };
   const presentationVisible = hostedChrome ? visible : active;
+  const agentProviderCatalog = useWorkAgentProviderCatalog(projects.length > 0, presentationVisible);
   const routeKey = `${presentationVisible}:${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? ""}`;
   const hasInspector = Boolean(presentationVisible && (route === "chat" || route === "project"));
   const narrowPane = effectiveNarrowPane(responsive, routeKey, hasInspector);
@@ -926,7 +928,7 @@ function WorkTabContent({
           <BotHeaderBindingContext.Provider value={sharedScopeId ? null : reportContentBinding}>
           <BotHeaderContext.Provider value={!agentsOpen && headerAgentId ? botHeaderContainer : null}>
           <ChatAgentsContent hostedChrome client={client?.agents} scopeKey={`${route}:${projectSlug ?? ""}:${initialChatView ?? ""}:${initialChatId ?? "draft"}`}
-            onOpenBotChat={openBotChat}>
+            onOpenBotChat={openBotChat} providerCatalog={agentProviderCatalog}>
             {content}
             {draftInspector}
           </ChatAgentsContent>

@@ -57,6 +57,36 @@ it('only forwards sites routes and strips visitor credentials', async () => {
         vi.unstubAllGlobals();
     }
 });
+it('forwards only the coarse edge-health path so deployment can distinguish accepted proof', async () => {
+ const forward = vi.fn(async (request: Request) => new Response(
+  request.headers.get('x-matrix-sites-edge') === 'x'.repeat(40) ? '{"status":"ok"}' : 'Site unavailable',
+  { status: request.headers.get('x-matrix-sites-edge') === 'x'.repeat(40) ? 200 : 404 },
+ ));
+ vi.stubGlobal('fetch', forward);
+ try {
+  const response = await worker.fetch(new Request('https://matrix.page/_edge-health?private=discarded'), {
+   SITES_PLATFORM_ORIGIN: 'https://platform.example.com', SITES_EDGE_SECRET: 'x'.repeat(40),
+  });
+  expect(response.status).toBe(200);
+  expect(await response.text()).toBe('{"status":"ok"}');
+  expect(forward.mock.calls[0]![0].url).toBe('https://platform.example.com/public/sites/_edge-health');
+ } finally { vi.unstubAllGlobals(); }
+});
+it('uses edge-supported manual redirects and rejects every upstream redirect', async () => {
+ const forward = vi.fn(async () => new Response(null, {
+  status: 302,
+  headers: { location: 'https://private.example.test/redirect-target' },
+ }));
+ vi.stubGlobal('fetch', forward);
+ try {
+  const response = await worker.fetch(new Request('https://matrix.page/launch-2026'), {
+   SITES_PLATFORM_ORIGIN: 'https://platform.example.com', SITES_EDGE_SECRET: 'x'.repeat(40),
+  });
+  expect(response.status).toBe(503);
+  expect(await response.text()).toBe('Site unavailable');
+  expect((forward.mock.calls[0]![0] as Request).redirect).toBe('manual');
+ } finally { vi.unstubAllGlobals(); }
+});
 it('logs only coarse error types and keeps configuration/upstream failures generic', async () => {
  const log = vi.spyOn(console, 'warn').mockImplementation(() => {});
  const forward = vi.fn().mockRejectedValue(new TypeError('private upstream credential'));

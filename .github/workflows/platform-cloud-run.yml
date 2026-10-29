@@ -14,6 +14,7 @@ on:
       - "distro/customer-vps/**"
       - "scripts/start-platform-cloud-run.sh"
       - "scripts/ci/platform-account-deletion-env.sh"
+      - "scripts/ci/platform-sites-env.sh"
       - "scripts/ci/platform-whatsapp-env.sh"
       - "scripts/ci/platform-google-analytics-env.sh"
       - "scripts/ci/platform-slack-env.sh"
@@ -71,6 +72,9 @@ jobs:
       PLATFORM_MANUAL_INSTANCE_COUNT: '10'
       CLOUD_RUN_SERVICE_ACCOUNT: ${{ vars.CLOUD_RUN_SERVICE_ACCOUNT }}
       PLATFORM_PUBLIC_URL: ${{ vars.PLATFORM_PUBLIC_URL }}
+      MATRIX_PUBLIC_SITES_ENABLED: ${{ vars.MATRIX_PUBLIC_SITES_ENABLED || 'true' }}
+      SITES_EDGE_SECRET_VERSION: ${{ vars.SITES_EDGE_SECRET_VERSION }}
+      SITES_EDGE_SECRET_PREVIOUS_VERSION: ${{ vars.SITES_EDGE_SECRET_PREVIOUS_VERSION }}
       WHATSAPP_ENABLED: ${{ vars.WHATSAPP_ENABLED || 'false' }}
       SLACK_ENABLED: ${{ vars.SLACK_ENABLED || 'false' }}
       SLACK_TOKEN_ENCRYPTION_KEY_VERSION: ${{ vars.SLACK_TOKEN_ENCRYPTION_KEY_VERSION || '1' }}
@@ -236,6 +240,7 @@ jobs:
           scripts/ci/platform-speech-production-env.sh validate
           scripts/ci/platform-whatsapp-env.sh validate
           scripts/ci/platform-account-deletion-env.sh validate
+          scripts/ci/platform-sites-env.sh validate
           bash scripts/ci/platform-google-analytics-env.sh validate
           if ! [[ "$MATRIX_STARTER_TRIAL_DAYS" =~ ^(0*[1-9]|0*[12][0-9]|0*30)$ ]]; then
             echo "MATRIX_STARTER_TRIAL_DAYS must be an integer from 1 to 30." >&2
@@ -866,6 +871,12 @@ jobs:
             exit 1
           fi
 
+      - name: Verify public Sites secrets
+        run: scripts/ci/platform-sites-env.sh preflight-secrets
+
+      - name: Verify public Sites secret transition
+        run: scripts/ci/platform-sites-env.sh verify-transition
+
       - name: Build platform image
         run: |
           set -euo pipefail
@@ -1009,6 +1020,7 @@ jobs:
           whatsapp_secret_bindings="$(scripts/ci/platform-whatsapp-env.sh secret-bindings)"
           account_deletion_secret_bindings="$(scripts/ci/platform-account-deletion-env.sh secret-bindings)"
           slack_secret_bindings="$(scripts/ci/platform-slack-env.sh secret-bindings)"
+          sites_secret_bindings="$(scripts/ci/platform-sites-env.sh secret-bindings)"
           whatsapp_env_bindings="$(scripts/ci/platform-whatsapp-env.sh env-bindings)"
           if [ "$PLATFORM_SPEECH_ENABLED" = "true" ]; then
             speech_secret_bindings=",PLATFORM_SPEECH_OPENAI_API_KEY=platform-speech-openai-api-key:latest,PLATFORM_SPEECH_SECRET=platform-speech-secret:latest"
@@ -1019,6 +1031,7 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --image "$IMAGE_DIGEST" \
+            --labels "matrix-source-sha=${GITHUB_SHA}" \
             --service-account "$CLOUD_RUN_SERVICE_ACCOUNT" \
             --platform managed \
             --port 8080 \
@@ -1031,8 +1044,8 @@ jobs:
             --ingress all \
             --allow-unauthenticated \
             "${traffic_flags[@]}" \
-            --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_BACKGROUND_WORKERS_ENABLED=false|PLATFORM_PORT=8080|PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL}|MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN}|CUSTOMER_VPS_ENABLED=true|MATRIX_INTERNAL_CLERK_ORG_ID=${MATRIX_INTERNAL_CLERK_ORG_ID:-}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION}|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS}|MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS}|NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL}|MATRIX_BILLING_PROVIDER=stripe|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|MATRIX_STARTER_TRIAL_DAYS=${MATRIX_STARTER_TRIAL_DAYS}|MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED}|MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT}|MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE}|ACCOUNT_DELETION_CONFIGURED=${ACCOUNT_DELETION_CONFIGURED}|ACCOUNT_DELETION_ENABLED=${ACCOUNT_DELETION_ENABLED}|POSTHOG_HOST=https://eu.i.posthog.com|POSTHOG_API_HOST=https://eu.i.posthog.com|NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST}|NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST}|R2_PREFIX_ROOT=matrixos-sync|GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED}|GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED}|GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${MCP_OAUTH_CALLBACK_URL}|MCP_OAUTH_CLIENT_ID=${MCP_OAUTH_CLIENT_ID}|MATRIX_MCP_ENABLED=${MATRIX_MCP_ENABLED}|MATRIX_MCP_RESOURCE_URL=${MATRIX_MCP_RESOURCE_URL}|MATRIX_MCP_OAUTH_ISSUER=${MATRIX_MCP_OAUTH_ISSUER}|MATRIX_MCP_OAUTH_JWKS_URL=${MATRIX_MCP_OAUTH_JWKS_URL}|MATRIX_MCP_ALLOWED_ORIGINS=${MATRIX_MCP_ALLOWED_ORIGINS}|MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID=${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID}|MATRIX_COLLABORATION_ALLOWED_ORIGINS=${MATRIX_COLLABORATION_ALLOWED_ORIGINS}|REDDIT_PIXEL_ID=a2_jo0odxapssmi${ats_env_bindings}${funded_ai_env_bindings}${speech_env_bindings}${whatsapp_env_bindings}${google_env_bindings}" \
-            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ENDPOINT=r2-endpoint:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,POSTHOG_CONVERSATIONS_IDENTITY_SECRET=posthog-conversations-identity-secret:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest,MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys:latest,CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET=clerk-organization-webhook-signing-secret:latest${ats_secret_bindings}${reddit_secret_bindings}${custom_mcp_secret_bindings}${funded_ai_secret_bindings}${speech_secret_bindings}${whatsapp_secret_bindings}${slack_secret_bindings}${google_secret_bindings}${account_deletion_secret_bindings}" \
+            --set-env-vars "^|^PLATFORM_RUNTIME_MODE=cloud_run|PLATFORM_BACKGROUND_WORKERS_ENABLED=false|PLATFORM_PORT=8080|PLATFORM_PUBLIC_URL=${PLATFORM_PUBLIC_URL}|MATRIX_PUBLIC_SITES_ENABLED=${MATRIX_PUBLIC_SITES_ENABLED}|MATRIX_API_ORIGIN=${MATRIX_API_ORIGIN}|CUSTOMER_VPS_ENABLED=true|MATRIX_INTERNAL_CLERK_ORG_ID=${MATRIX_INTERNAL_CLERK_ORG_ID:-}|CUSTOMER_VPS_TLS_VERIFY=false|CUSTOMER_VPS_IMAGE_VERSION=${CUSTOMER_VPS_IMAGE_VERSION}|CUSTOMER_VPS_CLOUD_INIT_PATH=distro/customer-vps/cloud-init.yaml|MATRIX_LEGACY_CONTAINER_ROUTING_ENABLED=false|AUTH_SHELL_HOST=127.0.0.1|AUTH_SHELL_PORT=3200|MATRIX_APP_DOMAIN_HOSTS=${MATRIX_APP_DOMAIN_HOSTS}|MATRIX_CODE_DOMAIN_HOSTS=${MATRIX_CODE_DOMAIN_HOSTS}|NEXT_PUBLIC_MATRIX_APP_URL=${MATRIX_APP_URL}|MATRIX_BILLING_PROVIDER=stripe|MATRIX_CARD_TRIALS_ENABLED=${MATRIX_CARD_TRIALS_ENABLED}|MATRIX_CARD_TRIAL_DAYS=${MATRIX_CARD_TRIAL_DAYS}|MATRIX_STARTER_TRIAL_DAYS=${MATRIX_STARTER_TRIAL_DAYS}|MATRIX_PREBILLING_PROVISIONING_ENABLED=${MATRIX_PREBILLING_PROVISIONING_ENABLED}|MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT=${MATRIX_PREBILLING_PROVISIONING_ROLLOUT_PERCENT}|MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE=${MATRIX_PREBILLING_PROVISIONING_MAX_ACTIVE}|ACCOUNT_DELETION_CONFIGURED=${ACCOUNT_DELETION_CONFIGURED}|ACCOUNT_DELETION_ENABLED=${ACCOUNT_DELETION_ENABLED}|POSTHOG_HOST=https://eu.i.posthog.com|POSTHOG_API_HOST=https://eu.i.posthog.com|NEXT_PUBLIC_POSTHOG_HOST=${POSTHOG_PUBLIC_HOST}|NEXT_PUBLIC_POSTHOG_API_HOST=${POSTHOG_PUBLIC_API_HOST}|R2_PREFIX_ROOT=matrixos-sync|GOLDEN_SNAPSHOT_BUILDS_ENABLED=${GOLDEN_SNAPSHOT_BUILDS_ENABLED}|GOLDEN_SNAPSHOTS_ENABLED=${GOLDEN_SNAPSHOTS_ENABLED}|GOLDEN_SNAPSHOT_ROLLOUT_PERCENT=${GOLDEN_SNAPSHOT_ROLLOUT_PERCENT}|CUSTOM_MCP_ENABLED=${CUSTOM_MCP_ENABLED}|MCP_OAUTH_CALLBACK_URL=${MCP_OAUTH_CALLBACK_URL}|MCP_OAUTH_CLIENT_ID=${MCP_OAUTH_CLIENT_ID}|MATRIX_MCP_ENABLED=${MATRIX_MCP_ENABLED}|MATRIX_MCP_RESOURCE_URL=${MATRIX_MCP_RESOURCE_URL}|MATRIX_MCP_OAUTH_ISSUER=${MATRIX_MCP_OAUTH_ISSUER}|MATRIX_MCP_OAUTH_JWKS_URL=${MATRIX_MCP_OAUTH_JWKS_URL}|MATRIX_MCP_ALLOWED_ORIGINS=${MATRIX_MCP_ALLOWED_ORIGINS}|MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID=${MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID}|MATRIX_COLLABORATION_ALLOWED_ORIGINS=${MATRIX_COLLABORATION_ALLOWED_ORIGINS}|REDDIT_PIXEL_ID=a2_jo0odxapssmi${ats_env_bindings}${funded_ai_env_bindings}${speech_env_bindings}${whatsapp_env_bindings}${google_env_bindings}" \
+            --set-secrets "PLATFORM_DATABASE_URL=platform-database-url:latest,PLATFORM_SECRET=platform-secret:latest,GOLDEN_SNAPSHOT_OPERATOR_SECRET=golden-snapshot-operator-secret:latest,PLATFORM_JWT_SECRET=platform-jwt-secret:latest,EDGE_ROUTER_SECRET=edge-router-secret:latest,CLERK_SECRET_KEY=clerk-secret-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,STRIPE_PRICE_MATRIX_STARTER_MONTHLY=stripe-price-matrix-starter-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_STARTER_ANNUAL=stripe-price-matrix-starter-annual:latest,STRIPE_PRICE_MATRIX_BUILDER_MONTHLY=stripe-price-matrix-builder-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_BUILDER_ANNUAL=stripe-price-matrix-builder-annual:latest,STRIPE_PRICE_MATRIX_MAX_MONTHLY=stripe-price-matrix-max-monthly-2026-08-31:1,STRIPE_PRICE_MATRIX_MAX_ANNUAL=stripe-price-matrix-max-annual:latest,STRIPE_LEGACY_PRICE_CATALOG_JSON=stripe-legacy-price-catalog-json:latest,PIPEDREAM_CLIENT_ID=pipedream-client-id:latest,PIPEDREAM_CLIENT_SECRET=pipedream-client-secret:latest,PIPEDREAM_PROJECT_ID=pipedream-project-id:latest,PIPEDREAM_ENVIRONMENT=pipedream-environment:latest,R2_ACCOUNT_ID=r2-account-id:latest,R2_BUCKET=r2-bucket:latest,R2_ENDPOINT=r2-endpoint:latest,R2_ACCESS_KEY_ID=r2-access-key-id:latest,R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest,R2_BUNDLES_ACCOUNT_ID=r2-bundles-account-id:latest,R2_BUNDLES_BUCKET=r2-bundles-bucket:latest,R2_BUNDLES_ENDPOINT=r2-bundles-endpoint:latest,R2_BUNDLES_ACCESS_KEY_ID=r2-bundles-access-key-id:latest,R2_BUNDLES_SECRET_ACCESS_KEY=r2-bundles-secret-access-key:latest,HETZNER_API_TOKEN=hetzner-api-token:latest,POSTHOG_TOKEN=posthog-token:latest,POSTHOG_PROJECT_TOKEN=posthog-project-token:latest,POSTHOG_CONVERSATIONS_IDENTITY_SECRET=posthog-conversations-identity-secret:latest,NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=next-public-clerk-publishable-key:latest,NEXT_PUBLIC_POSTHOG_KEY=next-public-posthog-key:latest,NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=next-public-posthog-project-token:latest,MATRIX_COLLABORATION_TICKET_KEYS=collaboration-ticket-keys:latest,CLERK_ORGANIZATION_WEBHOOK_SIGNING_SECRET=clerk-organization-webhook-signing-secret:latest${ats_secret_bindings}${reddit_secret_bindings}${custom_mcp_secret_bindings}${funded_ai_secret_bindings}${speech_secret_bindings}${whatsapp_secret_bindings}${slack_secret_bindings}${google_secret_bindings}${account_deletion_secret_bindings}${sites_secret_bindings}" \
             --format=json); then
             exit 1
           fi
@@ -1061,6 +1074,11 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --format=json)"
+          actual_source_sha="$(printf '%s\n' "$revision_json" | jq -r '.metadata.labels["matrix-source-sha"] // empty')"
+          if [ "$actual_source_sha" != "$GITHUB_SHA" ]; then
+            echo "candidate source label is $actual_source_sha, expected $GITHUB_SHA" >&2
+            exit 1
+          fi
           required_provisioning_env=(
             CUSTOMER_VPS_IMAGE_VERSION
             MATRIX_PREBILLING_PROVISIONING_ENABLED
@@ -1131,6 +1149,9 @@ jobs:
 
       - name: Verify deployed account deletion contract
         run: scripts/ci/platform-account-deletion-env.sh verify-revision "$CANDIDATE_REVISION"
+
+      - name: Verify deployed Sites contract
+        run: scripts/ci/platform-sites-env.sh verify-revision "$CANDIDATE_REVISION"
 
       - name: Smoke candidate revision
         run: |
@@ -1262,6 +1283,23 @@ jobs:
             --request POST \
             --header "Authorization: Bearer ${platform_secret}" \
             "$CANDIDATE_URL/vps/storage-check" >/dev/null
+          if [ "$MATRIX_PUBLIC_SITES_ENABLED" = "true" ]; then
+            curl --fail --silent --show-error --max-time 45 \
+              --request POST \
+              --header "Authorization: Bearer ${platform_secret}" \
+              "$CANDIDATE_URL/vps/sites-storage-check" >/dev/null
+            sites_edge_secret="$(gcloud secrets versions access "$SITES_EDGE_SECRET_VERSION" \
+              --secret sites-edge-secret --project "$GCP_PROJECT_ID")"
+            echo "::add-mask::$sites_edge_secret"
+            sites_health_body="$(curl --fail --silent --show-error --max-time 15 \
+              --header "x-matrix-sites-edge: ${sites_edge_secret}" \
+              "$CANDIDATE_URL/public/sites/_edge-health")"
+            if ! printf '%s\n' "$sites_health_body" | \
+               jq -e '.status == "ok" and keys == ["status"]' >/dev/null; then
+              echo "Candidate Sites edge proof was not accepted." >&2
+              exit 1
+            fi
+          fi
 
       - name: Deploy production-role revision
         if: ${{ github.event_name == 'push' || inputs.promote }}
@@ -1275,6 +1313,7 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --image "$IMAGE_DIGEST" \
+            --labels "matrix-source-sha=${GITHUB_SHA}" \
             --tag production-candidate \
             --no-traffic \
             --min-instances "$min_instances" \
@@ -1298,6 +1337,11 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --format=json)"
+          actual_source_sha="$(printf '%s\n' "$revision_json" | jq -r '.metadata.labels["matrix-source-sha"] // empty')"
+          if [ "$actual_source_sha" != "$GITHUB_SHA" ]; then
+            echo "production source label is $actual_source_sha, expected $GITHUB_SHA" >&2
+            exit 1
+          fi
           actual_max_instances="$(printf '%s\n' "$revision_json" | jq -r '.metadata.annotations["autoscaling.knative.dev/maxScale"] // empty')"
           if [ "$actual_max_instances" != "$PLATFORM_MAX_INSTANCES" ]; then
             echo "production revision maximum instances is $actual_max_instances, expected $PLATFORM_MAX_INSTANCES" >&2
@@ -1359,6 +1403,10 @@ jobs:
       - name: Verify production account deletion contract
         if: ${{ github.event_name == 'push' || inputs.promote }}
         run: scripts/ci/platform-account-deletion-env.sh verify-revision "$PRODUCTION_REVISION"
+
+      - name: Verify production Sites contract
+        if: ${{ github.event_name == 'push' || inputs.promote }}
+        run: scripts/ci/platform-sites-env.sh verify-revision "$PRODUCTION_REVISION"
 
       - name: Deploy dedicated platform worker
         if: ${{ github.event_name == 'push' || inputs.promote }}
@@ -1423,6 +1471,22 @@ jobs:
           scripts/ci/platform-whatsapp-env.sh verify-revision "$worker_revision"
           scripts/ci/platform-account-deletion-env.sh verify-revision "$worker_revision" worker
           scripts/ci/platform-slack-env.sh verify-revision "$worker_revision"
+          scripts/ci/platform-sites-env.sh verify-revision "$worker_revision"
+
+      - name: Set up pnpm for Matrix.page Worker
+        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node for Matrix.page Worker
+        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install locked Matrix.page Worker dependencies
+        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
+        run: pnpm install --frozen-lockfile --filter @matrix-os/edge-router...
 
       - name: Promote revision
         if: ${{ github.event_name == 'push' || inputs.promote }}
@@ -1466,6 +1530,110 @@ jobs:
           stale_revision="$(printf '%s\n' "$service_json" | jq -r '(.status.traffic[]? | select(.revisionName != env.PRODUCTION_REVISION and (.percent // 0) > 0) | "\(.revisionName)=\(.percent)") // empty' | head -1)"
           if [ -n "$stale_revision" ]; then
             echo "Stale Cloud Run revision is still receiving traffic: $stale_revision" >&2
+            exit 1
+          fi
+
+      - name: Deploy Matrix.page Worker
+        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Matrix.page Worker deployment credentials are unavailable." >&2
+            exit 1
+          fi
+          sites_edge_secret_file="$(mktemp)"
+          wrangler_secrets="$(mktemp)"
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          worker_switched=false
+          previous_worker_version=""
+          cleanup() { rm -f "$sites_edge_secret_file" "$wrangler_secrets" "$headers" "$body"; }
+          rollback_worker() {
+            trap - ERR
+            if [ "$worker_switched" = "true" ] && [ -n "$previous_worker_version" ]; then
+              pnpm --filter @matrix-os/edge-router exec wrangler rollback "$previous_worker_version" \
+                --config wrangler.sites.toml --message "Rollback failed Matrix.page deployment ${GITHUB_SHA}" || \
+                echo "Automatic Matrix.page Worker rollback failed; operator action is required." >&2
+            fi
+          }
+          trap cleanup EXIT
+          trap rollback_worker ERR
+          chmod 600 "$sites_edge_secret_file" "$wrangler_secrets" "$headers" "$body"
+          if deployment_json="$(pnpm --filter @matrix-os/edge-router exec wrangler deployments status \
+            --config wrangler.sites.toml --json 2>/dev/null)"; then
+            previous_worker_version="$(printf '%s\n' "$deployment_json" | jq -r \
+              '.versions[]? | select((.percentage | tonumber) == 100) | .version_id' | head -1)"
+          fi
+          gcloud secrets versions access "$SITES_EDGE_SECRET_VERSION" \
+            --secret sites-edge-secret \
+            --project "$GCP_PROJECT_ID" \
+            --out-file="$sites_edge_secret_file" \
+            --quiet
+          node - "$sites_edge_secret_file" "$wrangler_secrets" <<'NODE'
+          const { readFileSync, writeFileSync } = require('node:fs');
+          const edgeSecret = readFileSync(process.argv[2], 'utf8');
+          if (edgeSecret.length < 32 || edgeSecret !== edgeSecret.trim() || /[\r\n]/.test(edgeSecret)) process.exit(1);
+          writeFileSync(process.argv[3], JSON.stringify({ SITES_EDGE_SECRET: edgeSecret }));
+          NODE
+          pnpm --filter @matrix-os/edge-router exec wrangler deploy \
+            --config wrangler.sites.toml \
+            --var "SITES_PLATFORM_ORIGIN:${PLATFORM_PUBLIC_URL}" \
+            --secrets-file "$wrangler_secrets"
+          worker_switched=true
+          root_status="$(curl --silent --show-error --max-time 15 \
+            --dump-header "$headers" --output "$body" --write-out '%{http_code}' \
+            'https://matrix.page/?discard=private')"
+          if [ "$root_status" != "302" ] || ! grep -Eqi '^location: https://matrix-os\.com/?[[:space:]]*$' "$headers"; then
+            echo "Matrix.page root did not return the reviewed query-dropping redirect." >&2
+            false
+          fi
+          health_status="$(curl --silent --show-error --max-time 30 \
+            --output "$body" --write-out '%{http_code}' 'https://matrix.page/_edge-health')"
+          if [ "$health_status" != "200" ] || ! jq -e '.status == "ok" and keys == ["status"]' "$body" >/dev/null; then
+            echo "Matrix.page did not accept the deployed edge proof." >&2
+            false
+          fi
+          worker_switched=false
+          trap - ERR
+
+      - name: Verify Matrix.page routing
+        if: ${{ (github.event_name == 'push' || inputs.promote) && env.DEPLOY_ENVIRONMENT == 'production' && env.MATRIX_PUBLIC_SITES_ENABLED == 'true' }}
+        run: |
+          set -euo pipefail
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          cleanup() { rm -f "$headers" "$body"; }
+          trap cleanup EXIT
+          root_status="$(curl --silent --show-error --max-time 15 \
+            --dump-header "$headers" --output "$body" --write-out '%{http_code}' \
+            'https://matrix.page/?discard=private')"
+          if [ "$root_status" != "302" ] || ! grep -Eqi '^location: https://matrix-os\.com/?[[:space:]]*$' "$headers"; then
+            echo "Matrix.page root did not return the reviewed query-dropping redirect." >&2
+            exit 1
+          fi
+          health_status="$(curl --silent --show-error --max-time 30 \
+            --output "$body" --write-out '%{http_code}' \
+            'https://matrix.page/_edge-health')"
+          if [ "$health_status" != "200" ] || \
+             ! jq -e '.status == "ok" and keys == ["status"]' "$body" >/dev/null; then
+            echo "Matrix.page edge proof was not accepted by the promoted platform." >&2
+            exit 1
+          fi
+          public_status="$(curl --silent --show-error --max-time 30 \
+            --output "$body" --write-out '%{http_code}' \
+            'https://matrix.page/sites-deployment-smoke')"
+          if [ "$public_status" != "404" ]; then
+            echo "Matrix.page deployment smoke expected a 404 from the configured platform, received ${public_status}." >&2
+            exit 1
+          fi
+          origin_status="$(curl --silent --show-error --max-time 15 \
+            --output "$body" --write-out '%{http_code}' \
+            "${PLATFORM_PUBLIC_URL%/}/public/sites/sites-deployment-smoke")"
+          if [ "$origin_status" != "404" ]; then
+            echo "Platform Sites edge-proof gate expected a 404 without proof, received ${origin_status}." >&2
             exit 1
           fi
 

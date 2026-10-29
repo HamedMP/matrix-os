@@ -12,13 +12,17 @@ const schemaBytes = gunzipSync(readFileSync(new URL("../fixtures/codex-0164/app-
 const previousBytes = gunzipSync(readFileSync(new URL("../fixtures/codex-0163/app-server-schema-0163.json.gz", import.meta.url)));
 const schema = JSON.parse(schemaBytes.toString("utf8"));
 const previous = JSON.parse(previousBytes.toString("utf8"));
+const historicalExecContract = { ...execContract, latestVerifiedVersion: "0.164.0" };
+const historicalAppServerContract = { ...appServerContract, latestVerifiedVersion: "0.164.0",
+  requiredServerProtocolSchemaDigests: { ...appServerContract.requiredServerProtocolSchemaDigests,
+    "turn/completed": "2417c2c44801a090d921300b88a225c379a80fb559cdc96a72f6861514e1351a" } };
 const sha256 = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 
 describe("exact published Codex 0.164.0 qualification", () => {
   it.each(["linux-x64", "darwin-arm64"])("verifies official schema bytes and reviewed notification payloads on %s", runtimeTarget => {
     expect(sha256(execBytes)).toBe("dafa872d7e86a099e56e28a329dcb9c03db90ed768c3b88cca8c91d46dc1d0e5");
     expect(sha256(schemaBytes)).toBe("92fe055424a3709999a05baae615be9e1e1e0b127e033cace6849b2ea785ea07");
-    expect(() => verifyCodexProviderContracts({ version: "0.164.0", execContract, appServerContract,
+    expect(() => verifyCodexProviderContracts({ version: "0.164.0", execContract: historicalExecContract, appServerContract: historicalAppServerContract,
       execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget })).not.toThrow();
     for (const method of [...appServerContract.requiredServerMethods, ...appServerContract.requiredServerNotifications]) {
       const definition = appServerContract.requiredServerMethods.includes(method) ? "ServerRequest" : "ServerNotification";
@@ -32,14 +36,14 @@ describe("exact published Codex 0.164.0 qualification", () => {
 
   it("keeps unknown releases and older gaps fail closed", () => {
     expect(codexContractStatus("codex-cli 0.164.0", execContract)).toEqual({ status: "verified", version: "0.164.0" });
-    expect(codexContractStatus("codex-cli 0.164.1", execContract)).toEqual({ status: "unverified_newer", version: "0.164.1" });
+    expect(codexContractStatus("codex-cli 0.164.1", execContract)).toEqual({ status: "unverified_older", version: "0.164.1" });
     expect(codexContractStatus("codex-cli 0.163.1", execContract)).toEqual({ status: "unverified_older", version: "0.163.1" });
     expect(() => verifyCodexProviderContracts({ version: "0.164.1", execContract, appServerContract,
       execSchemaBytes: execBytes, appServerSchemaBytes: schemaBytes, runtimeTarget: "linux-x64" })).toThrow("Codex 0.164.1 is not verified");
   });
 
   it("rejects a changed published schema after version qualification", () => {
-    expect(() => verifyCodexProviderContracts({ version: "0.164.0", execContract, appServerContract,
+    expect(() => verifyCodexProviderContracts({ version: "0.164.0", execContract: historicalExecContract, appServerContract: historicalAppServerContract,
       execSchemaBytes: execBytes, appServerSchemaBytes: Buffer.concat([schemaBytes, Buffer.from("\n")]),
       runtimeTarget: "darwin-arm64" })).toThrow("Codex app-server schema digest changed");
   });

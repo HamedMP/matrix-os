@@ -43,11 +43,11 @@ function modelSelectionKey(selection: CanonicalChatModelSelection): string {
     : JSON.stringify([selection.instanceId, selection.model]);
 }
 
-export function MatrixBotModelField({ botClient, id, label = "Model", selection, models, catalog, catalogLoading = false, pending, allowAutomatic = true, allowSubscription = true, requireSelection = false, preservedSelection, onSetup, onRefreshCatalog, onChange }: {
+export function MatrixBotModelField({ botClient, id, label = "Model", selection, models, catalog, catalogLoading = false, catalogUnavailable = false, pending, allowAutomatic = true, allowSubscription = true, requireSelection = false, preservedSelection, onSetup, onRefreshCatalog, onChange }: {
   botClient?: BotClient; preservedSelection?: CanonicalChatModelSelection; allowAutomatic?: boolean; allowSubscription?: boolean; requireSelection?: boolean; onSetup?: () => void; onRefreshCatalog?: () => void;
   id?: string; label?: string; selection: CanonicalChatModelSelection | null;
   models: readonly CanonicalProviderChoice[]; pending: boolean;
-  catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean;
+  catalog?: CanonicalProviderCatalog | null; catalogLoading?: boolean; catalogUnavailable?: boolean;
   onChange(selection: CanonicalChatModelSelection | null): void;
 }) {
   const discovery = useBotConnections(allowSubscription && botClient?.connections ? botClient as Required<Pick<BotClient,"connections">> : undefined);
@@ -93,8 +93,8 @@ export function MatrixBotModelField({ botClient, id, label = "Model", selection,
         setConnectionIntent(value); onChange(value === "computer" ? MATRIX_BOT_SELECTION : null);
       }}/> : null}
     <label className="grid gap-1.5 text-sm" htmlFor={id}>{label}
-      <select id={id} className={chatAgentInputClass} value={key} disabled={pending || catalogLoading || (!allowAutomatic && noModels && !legacyAvailable)} onChange={(event) => {
-        if (pending || catalogLoading) return;
+      <select id={id} className={chatAgentInputClass} value={key} disabled={pending || catalogLoading || catalogUnavailable || (!allowAutomatic && noModels && !legacyAvailable)} onChange={(event) => {
+        if (pending || catalogLoading || catalogUnavailable) return;
         if (legacy && legacyAvailable && event.target.value === legacyKey) { onChange(legacy); return; }
         if (!event.target.value) { if (allowAutomatic) onChange(MATRIX_BOT_SELECTION); return; }
         const choice = choices.find((candidate) => modelSelectionKey(matrixBotModelSelection(candidate)) === event.target.value);

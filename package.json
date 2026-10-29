@@ -84,7 +84,7 @@
       },
       "eslint-config-next@16.2.3": {
         "dependencies": {
-          "next": "16.2.6"
+          "next": "16.4.1"
         }
       },
       "electron-vite@*": {
@@ -130,7 +130,64 @@
       "@earendil-works/pi-ai": "1.0.0",
       "@earendil-works/chord": "1.0.0",
       "@earendil-works/pi-telemetry": "1.0.0",
-      "electron-vite>vite": "npm:rolldown-vite@7.3.1"
+      "electron-vite>vite": "npm:rolldown-vite@7.3.1",
+      "git-diff@>=2.0.0 <2.0.7": "2.0.7",
+      "dompurify@>=3.0.0 <3.4.17": "3.4.17",
+      "proxy-addr@>=2.0.0 <2.0.8": "2.0.8",
+      "tar@>=7.0.0 <7.5.21": "7.5.21",
+      "protobufjs@>=7.0.0 <7.6.5": "7.6.5",
+      "@clerk/shared@>=3.0.0 <3.47.5": "3.47.5",
+      "undici@>=6.0.0 <6.29.1": "6.29.1",
+      "undici@>=7.0.0 <7.30.1": "7.30.1",
+      "vitest@>=4.0.0 <4.1.12": "4.1.12",
+      "shell-quote@>=1.1.0 <1.11.0": "1.11.0",
+      "node-forge@>=1.0.0 <1.4.0": "1.4.0",
+      "picomatch@>=2.0.0 <2.3.2": "2.3.2",
+      "path-to-regexp@>=8.0.0 <8.4.0": "8.4.0",
+      "@xmldom/xmldom@>=0.8.0 <0.8.15": "0.8.15",
+      "fast-xml-builder@>=1.0.0 <1.1.7": "1.1.7",
+      "@clerk/clerk-react@>=5.0.0 <5.61.6": "5.61.6",
+      "@clerk/clerk-js@>=5.0.0 <5.125.10": "5.125.10",
+      "@clerk/backend@>=2.0.0 <2.33.3": "2.33.3",
+      "@grpc/grpc-js@>=1.0.0 <1.14.5": "1.14.5",
+      "js-cookie@>=3.0.0 <3.0.7": "3.0.7",
+      "form-data@>=2.0.0 <2.5.6": "2.5.6",
+      "form-data@>=4.0.0 <4.0.6": "4.0.6",
+      "js-yaml@>=3.0.0 <3.15.2": "3.15.2",
+      "js-yaml@>=4.0.0 <4.3.2": "4.3.2",
+      "nanoid@>=3.0.0 <3.3.18": "3.3.18",
+      "nanoid@>=5.0.0 <5.1.16": "5.1.16",
+      "browserslist@>=4.0.0 <4.28.7": "4.28.7",
+      "immutable@>=4.0.0 <4.3.9": "4.3.9",
+      "source-map-js@>=1.0.0 <1.2.2": "1.2.2",
+      "compression@>=1.0.0 <1.8.2": "1.8.2",
+      "prosemirror-view@>=1.0.0 <1.42.3": "1.42.3",
+      "@modelcontextprotocol/sdk@>=1.0.0 <1.32.0": "1.32.0",
+      "viem>ws": "8.21.0",
+      "jsdom>ws": "8.21.0",
+      "react-devtools-core>ws": "7.5.11",
+      "miniflare>ws": "8.21.0",
+      "qs@>=6.0.0 <6.16.1": "6.16.1",
+      "yaml@>=1.0.0 <1.10.3": "1.10.3",
+      "yaml@>=2.0.0 <2.8.3": "2.8.3",
+      "fast-xml-parser@>=5.0.0 <5.7.0": "5.7.0",
+      "mermaid@>=11.0.0 <11.16.1": "11.16.1",
+      "postcss@>=8.0.0 <8.5.23": "8.5.23",
+      "@humanfs/node@>=0.16.0 <0.16.8": "0.16.8",
+      "fflate@>=0.4.0 <0.4.9": "0.4.9",
+      "fflate@>=0.6.0 <0.6.11": "0.6.11",
+      "fflate@>=0.8.0 <0.8.3": "0.8.3",
+      "baseline-browser-mapping@>=2.0.0 <2.11.0": "2.11.0",
+      "ip-address@>=10.0.0 <10.7.4": "10.7.4",
+      "fast-uri@>=3.0.0 <3.1.9": "3.1.9",
+      "brace-expansion@>=1.0.0 <1.1.21": "1.1.21",
+      "brace-expansion@>=2.0.0 <2.1.7": "2.1.7",
+      "brace-expansion@>=5.0.0 <5.0.12": "5.0.12",
+      "postcss-selector-parser@>=7.0.0 <7.1.6": "7.1.6",
+      "@modelcontextprotocol/sdk>hono": "^4.13.11",
+      "@modelcontextprotocol/sdk>@hono/node-server": "^1.19.15",
+      "lodash@>=4.0.0 <4.18.1": "4.18.1",
+      "lodash-es@>=4.0.0 <4.18.1": "4.18.1"
     }
   },
   "devDependencies": {
@@ -142,19 +199,19 @@
     "@types/react-dom": "^19.2.3",
     "@typescript/native": "npm:typescript@7.0.2",
     "@vitejs/plugin-react": "^4.4.1",
-    "@vitest/coverage-v8": "^4.0.18",
+    "@vitest/coverage-v8": "4.1.12",
     "better-sqlite3": "^12.10.0",
     "chess.js": "1.4.0",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.11.9",
+    "hono": "^4.12.25",
     "lexical": "0.41.0",
     "lucide-react": "^0.563.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "tsx": "^4.21.0",
     "typescript": "5.9.3",
-    "vite": "^6.3.2",
-    "vitest": "^4.0.18"
+    "vite": "^6.4.4",
+    "vitest": "4.1.12"
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "^4.3.0",
@@ -162,6 +219,6 @@
     "@types/pg": "^8.18.0",
     "ink": "^6.2.3",
     "pg": "^8.21.0",
-    "yaml": "^2.8.2"
+    "yaml": "^2.8.3"
   }
 }

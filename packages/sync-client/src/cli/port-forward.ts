@@ -344,13 +344,15 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
       state.wsBackpressure.close();
       ws.off?.("open", onWsOpen);
       ws.off?.("message", onWsMessage);
-      ws.off?.("close", cleanup);
-      ws.off?.("error", onWsError);
+      // A CONNECTING ws emits an asynchronous error when close() aborts its
+      // handshake. Keep both listeners until its close event has fired.
       if (!tcp.destroyed) {
         tcp.destroy();
       }
       try {
-        ws.close();
+        if (ws.readyState !== DefaultWebSocket.CLOSED) {
+          ws.close();
+        }
       } catch (err: unknown) {
         if (err instanceof Error) {
           options.onEvent?.("connection_error", eventData(connectionId, "close_failed"));
@@ -459,8 +461,17 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
     };
 
     const onWsError = () => {
+      if (!active.has(state)) {
+        return;
+      }
       options.onEvent?.("connection_error", eventData(connectionId, "websocket_failed"));
       cleanup();
+    };
+
+    const onWsClose = () => {
+      ws.off?.("close", onWsClose);
+      cleanup();
+      ws.off?.("error", onWsError);
     };
 
     tcp.on("data", onTcpData);
@@ -468,7 +479,7 @@ export async function startPortForward(options: StartPortForwardOptions): Promis
     tcp.on("error", onTcpError);
     ws.on("open", onWsOpen);
     ws.on("message", onWsMessage);
-    ws.on("close", cleanup);
+    ws.on("close", onWsClose);
     ws.on("error", onWsError);
   });
 

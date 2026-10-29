@@ -3,7 +3,7 @@ import { safeHttpStatus } from "./safe-http-status.js";
 import { botCreationFailureMessage } from "./creation-error.js";
 import { agentEditorValidation } from "./agent-editor-validation.js";
 import { agentDraftMatchesSaved, recoverSavedFundedBot, savedAgentRecoveryBaseRevision } from "./saved-agent-recovery.js";
-import { useAgentProviderCatalog } from "./use-agent-provider-catalog.js";
+import { useAgentProviderCatalog, type AgentProviderCatalogSource } from "./use-agent-provider-catalog.js";
 import {configureCreatedExecutor} from "./bots/configure-created-executor.js";
 import type {BotExecutorSelection} from "./bots/BotTaskExecutorField.js";
 import { Dialog } from "../Dialog.js";
@@ -151,6 +151,7 @@ type ChatAgentsPanelProps = {
   onStartChat?: StartAgentChat; onOpenBotChat?: (chatId: string) => void;
   requestedRecipeId?: string;
   onRequestedRecipeResult?: (result: { ok: true } | { ok: false; error: "recipe_unavailable" | "navigation_unavailable" }) => void;
+  providerCatalog?: AgentProviderCatalogSource;
 };
 
 export function ChatAgentsPanel(props: ChatAgentsPanelProps) {
@@ -167,7 +168,7 @@ export function ChatAgentsPanel(props: ChatAgentsPanelProps) {
 }
 
 function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onStartChat, onOpenBotChat, hostedChrome = false, onTitleChange,
-  requestedRecipeId, onRequestedRecipeResult }: ChatAgentsPanelProps) {
+  requestedRecipeId, onRequestedRecipeResult, providerCatalog }: ChatAgentsPanelProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   const scratchTrigger = useRef<HTMLButtonElement | null>(null);
   const [creationView, setCreationView] = useState(view === "recipes");
@@ -183,7 +184,7 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
   const [library, setState] = useState<Library>({ agents: [], catalog: null, enabled: true,
     loading: true, pending: false, error: "", notice: "", editing: null, draft: null,
     recipeCatalog: null, connections: [], recipeLoading: true, recipeError: "", connectionError: "" });
-  const modelCatalog = useAgentProviderCatalog(client);
+  const modelCatalog = useAgentProviderCatalog(client, providerCatalog);
   const state = { ...library, catalog: modelCatalog.catalog, catalogLoading: modelCatalog.loading };
   const [setupPaused, setSetupPaused] = useState(false);
   const [botRecipeAttempt, setBotRecipeAttempt] = useState(0);

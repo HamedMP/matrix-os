@@ -1,6 +1,6 @@
 # Public app sites: release and validation
 
-The code does not automatically deploy infrastructure. Release platform and host bundles through their normal reviewed pipelines. Use a scoped disposable customer test runtime for live validation; preview/operator machines cannot publish.
+The reviewed platform pipeline preserves and verifies Sites configuration on every replacement deployment and deploys the fixed-domain Worker for promoted production releases. Initial bucket, credential and secret creation remains an operator action. Release platform and host bundles through their normal reviewed pipelines. Use a scoped disposable customer test runtime for live validation; preview/operator machines cannot publish.
 
 ## Prerequisites
 
@@ -8,16 +8,33 @@ The code does not automatically deploy infrastructure. Release platform and host
 - A separately generated `SITES_EDGE_SECRET` of at least 32 characters, stored as secrets in both platform and Worker. Owner tokens never enter the public Worker.
 - The sites migration applied through the existing platform migration runner. It has its own scope and does not change the core migration fingerprint.
 - A reviewed HTTPS platform origin in the Worker's `SITES_PLATFORM_ORIGIN`. It must be a fixed operator-controlled URL.
-- Deploy `packages/edge-router/wrangler.sites.toml` with the existing Cloudflare account tooling. It attaches the Worker as the origin for the owner's newly purchased `matrix.page`, including Cloudflare DNS/TLS. Disable workers.dev and preview URLs so the fixed-origin sandbox cannot be bypassed.
+- Deploy `packages/edge-router/wrangler.sites.toml` with the existing Cloudflare account tooling. It attaches the Worker through the `matrix.page/*` zone route while preserving the apex's externally managed proxied DNS records. Disable workers.dev and preview URLs so the fixed-origin sandbox cannot be bypassed.
 - The already provisioned `MATRIX_SYNC_RUNTIME_TOKEN` authorizes owner publication delegation and signs scoped submission capabilities. It binds the machine ID, runtime slot and rotation epoch. Sites never accept the legacy handle-only token, and hosts without the scoped credential fail closed.
 
-Cloudflare documents this routing mode in [Worker Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/). Customer-owned domains require a later verified-hostname design.
+Cloudflare documents this routing mode in [Worker Routes](https://developers.cloudflare.com/workers/configuration/routing/routes/). Do not change this apex to a Worker Custom Domain while its reviewed A/CNAME records remain externally managed. Customer-owned domains require a later verified-hostname design.
+
+## Durable production deployment contract
+
+The production GitHub environment sets `MATRIX_PUBLIC_SITES_ENABLED=true`. Store the platform values in Google Secret Manager with these exact names:
+
+- `sites-edge-secret`
+- `r2-sites-account-id`
+- `r2-sites-bucket`
+- `r2-sites-endpoint`
+- `r2-sites-access-key-id`
+- `r2-sites-secret-access-key`
+
+Grant the configured Cloud Run service account direct `secretAccessor` access to each Sites secret. Keep the dedicated bucket name different from the values in `r2-bucket` and `r2-bundles-bucket`. The endpoint must be the canonical HTTPS R2 endpoint for the Sites account. Supply `CLOUDFLARE_ACCOUNT_ID` and a least-privilege `CLOUDFLARE_API_TOKEN` through the production GitHub environment; do not copy either value into the workflow or repository.
+
+Set `SITES_EDGE_SECRET_VERSION` to the pinned numeric version the Worker will send and `SITES_EDGE_SECRET_PREVIOUS_VERSION` to the version sent by the currently deployed Worker. For the one-time bootstrap, both variables may identify the same version. To rotate, add one Secret Manager version, retain the deployed version as `PREVIOUS`, and select the new version as current. The pipeline rejects a rotation unless the live platform's current version is one of those two values. The candidate and promoted platform accept both proofs; only after promotion does the Worker switch to the new proof. If the new Worker fails its proof-sensitive health check, the workflow rolls it back while the platform continues to accept the prior proof.
+
+`.github/workflows/platform-cloud-run.yml` runs `scripts/ci/platform-sites-env.sh` before replacement. The preflight checks enabled pinned edge versions, direct runtime access, exact edge-secret bytes (including surrounding whitespace), dedicated bucket separation and account/endpoint agreement without printing secret values. It then binds every value by Secret Manager reference, checks the candidate's actual bindings, performs a write/head/delete probe against the private Sites bucket, proves the candidate accepts the new edge proof, promotes the dual-proof platform, deploys the Matrix.page Worker, and verifies the proof-sensitive health route plus anonymous routing. A failed check stops or rolls back the edge release instead of silently deploying a 503 configuration.
 
 ## Domain homepage
 
 The Worker redirects GET/HEAD requests for `/` to `https://matrix-os.com` with status 302 and no query forwarding. Before app hosting ships, a Cloudflare Single Redirect provides the same behavior: `(http.host eq "matrix.page" and http.request.uri.path eq "/" and http.request.method in {"GET" "HEAD"})`, static destination `https://matrix-os.com`, status 302, preserve query disabled. Keep the match root-only when attaching the Worker; never redirect every path.
 
-Cloudflare requires proxied DNS for redirects. A redirect-only apex can use a proxied A record pointing to `192.0.2.1`, as described in [Cloudflare's domain redirect guide](https://developers.cloudflare.com/fundamentals/manage-domains/redirect-domain/). Reconcile that placeholder record during the reviewed Worker Custom Domain attachment. Verify HTTPS root redirects, incoming queries are dropped, and a sample app path does not redirect to the homepage.
+Cloudflare requires proxied DNS for redirects. A redirect-only apex can use a proxied A record pointing to `192.0.2.1`, as described in [Cloudflare's domain redirect guide](https://developers.cloudflare.com/fundamentals/manage-domains/redirect-domain/). Preserve that reviewed DNS record when attaching the `matrix.page/*` Worker route. Verify HTTPS root redirects, incoming queries are dropped, and a sample app path does not redirect to the homepage.
 
 ## Live acceptance
 

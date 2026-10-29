@@ -29,7 +29,7 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     expect(canonicalState).not.toContain('type: "message"');
     expect(providerState).toMatch(/import\s*\{[^}]*\bcanonicalChatProviderCatalogPath\b[^}]*\}\s*from "@matrix-os\/ui";/);
     expect(providerState).toContain("canonicalChatProviderCatalogPath(forceRefresh)");
-    expect(providerState).toContain("const onSettingsChange = () => { void refresh(true); };");
+    expect(providerState).toMatch(/const onSettingsChange = \(\) => \{\s*authorityGeneration \+= 1;\s*authoritySuspended = true;\s*setHasTrustedCatalog\(false\);\s*void refresh\(true\);\s*\};/);
     expect(providerState).not.toContain("/api/ai/providers");
     // The setup action used to be invoked from an inline arrow in the shell component. It is now
     // handed to the shared picker, which invokes it, so assert both halves. A mixed-funding

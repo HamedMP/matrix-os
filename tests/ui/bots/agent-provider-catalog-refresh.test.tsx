@@ -41,3 +41,15 @@ it("failed refresh drops stale executable choices and reports a safe retry state
  client.catalog.mockRejectedValue(new Error("secret account and path"));act(()=>result.current.refresh());await waitFor(()=>expect(result.current.loading).toBe(false));
  expect(result.current.catalog).toBeNull();expect(result.current.error).toBe("Models could not be refreshed. Your draft is still here.");
 });
+
+it("reuses the host catalog instead of starting duplicate Agent discovery",async()=>{
+ const client=clientFixture(); const catalog=createCanonicalProviderCatalogFixture();
+ const refresh=vi.fn();
+ const {result,rerender}=renderHook(({loading})=>useAgentProviderCatalog(client,{catalog,loading,error:"",refresh}),
+  {initialProps:{loading:false}});
+ expect(result.current.catalog).toBe(catalog);expect(result.current.loading).toBe(false);
+ expect(client.catalog).not.toHaveBeenCalled();
+ act(()=>result.current.refresh());expect(refresh).toHaveBeenCalledOnce();
+ rerender({loading:true});expect(result.current.catalog).toBe(catalog);expect(result.current.loading).toBe(true);
+ expect(client.catalog).not.toHaveBeenCalled();
+});

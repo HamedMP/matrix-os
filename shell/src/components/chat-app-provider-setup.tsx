@@ -120,13 +120,16 @@ export function useChatProviderState(
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
+  const [hasTrustedCatalog, setHasTrustedCatalog] = useState(false);
   const refreshRef = useRef<() => void>(() => undefined);
   const requestRefresh = useCallback(() => refreshRef.current(), []);
 
   useEffect(() => {
     let cancelled = false;
     let refreshing = false;
-    let hasTrustedCatalog = false;
+    let hasCatalog = false;
+    let authorityGeneration = 0;
+    let authoritySuspended = false;
     let pending = false;
     let forcePending = false;
     const refresh = async (force = false) => {
@@ -138,11 +141,16 @@ export function useChatProviderState(
         return;
       }
       refreshing = true;
-      if (!cancelled && !hasTrustedCatalog) setLoading(true);
+      if (!cancelled && !hasCatalog) setLoading(true);
       do {
         pending = false;
-        const forceRefresh = forcePending;
+        // Once provider settings change, every follow-up read must bypass the
+        // cached catalog until one succeeds and restores trust. Otherwise a
+        // normal focus read can clear the error while leaving Agents blocked
+        // with neither an active request nor a retry action.
+        const forceRefresh = forcePending || authoritySuspended;
         forcePending = false;
+        const requestAuthorityGeneration = authorityGeneration;
         try {
           const response = await fetch(`${getGatewayUrl()}${canonicalChatProviderCatalogPath(forceRefresh)}`, {
             signal: AbortSignal.timeout(FUNDED_AI_READINESS_TIMEOUTS.rendererRequestMs),
@@ -150,10 +158,14 @@ export function useChatProviderState(
           if (!response.ok) throw new Error("ProviderCatalogUnavailable");
           const value = CanonicalProviderCatalogSchema.parse(await response.json());
           if (!cancelled) {
-            hasTrustedCatalog = true;
+            hasCatalog = true;
             setCatalog(value);
             setUnavailable(false);
             setLoading(false);
+            if (requestAuthorityGeneration === authorityGeneration && (!authoritySuspended || forceRefresh)) {
+              authoritySuspended = false;
+              setHasTrustedCatalog(true);
+            }
           }
         } catch (error: unknown) {
           console.warn("[chat] Canonical Provider catalog unavailable:", error instanceof Error ? error.name : "UnknownError");
@@ -167,7 +179,12 @@ export function useChatProviderState(
       if (document.visibilityState === "visible") refresh();
     };
     const onFocus = () => { void refresh(); };
-    const onSettingsChange = () => { void refresh(true); };
+    const onSettingsChange = () => {
+      authorityGeneration += 1;
+      authoritySuspended = true;
+      setHasTrustedCatalog(false);
+      void refresh(true);
+    };
     refreshRef.current = () => { void refresh(true); };
     void refresh();
     window.addEventListener("focus", onFocus);
@@ -292,6 +309,7 @@ export function useChatProviderState(
     selectPermissionMode,
     selectOption,
     loading,
+    hasTrustedCatalog,
     refresh: requestRefresh,
     unavailable,
     activeInstance,
