@@ -36,7 +36,7 @@ export const useNativeAppChatNavigation = create<State>()((set, get) => ({
       void acknowledgeNativeAppChatNavigation(previous.requestId, { ok: false, error: "navigation_unavailable" })
         .catch(reportAcknowledgementFailure);
     }
-    set({ pending: { ...request, targetTabId } });
+    set({ pending: { ...request, targetTabId }, canceledRequest: null });
   },
   cancel(requestId) {
     const pending = get().pending;
@@ -87,7 +87,7 @@ export function NativeAppChatNavigationHost({
   }, [canceledRequest, consumeCancellation, navigation, tabId]);
 
   useEffect(() => {
-    if (canceledRequest) return;
+    if (canceledRequest?.targetTabId === tabId) return;
     if (!pending) return;
     if (pending.targetTabId !== tabId) return;
     if (pending.runtimeSlot !== runtimeSlot || pending.authGeneration !== authGeneration) {

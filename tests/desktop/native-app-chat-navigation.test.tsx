@@ -89,3 +89,32 @@ it("closes only the Agents panel owned by a request canceled during catalog load
   act(() => useNativeAppChatNavigation.getState().cancel("request-catalog-loading"));
   await waitFor(() => expect(navigation.cancelRequest).toHaveBeenCalledWith("request-catalog-loading"));
 });
+
+it("does not let a removed Chat tab's stale cancellation block a new target tab", async () => {
+  useNativeAppChatNavigation.getState().queue({
+    requestId: "request-removed-tab",
+    view: "recipes",
+    recipeId: "company-brain",
+    runtimeSlot: "primary",
+    authGeneration: 7,
+  }, "removed-chat");
+  act(() => useNativeAppChatNavigation.getState().cancel("request-removed-tab"));
+
+  useNativeAppChatNavigation.getState().queue({
+    requestId: "request-new-tab",
+    view: "recipes",
+    recipeId: "company-brain",
+    runtimeSlot: "primary",
+    authGeneration: 7,
+  }, "new-chat");
+  render(<NativeAppChatNavigationHost
+    active
+    tabId="new-chat"
+    client={{ agents: {} } as never}
+    onStartChat={vi.fn()}
+    runtimeSlot="primary"
+    authGeneration={7}
+  />);
+
+  await waitFor(() => expect(navigation.open).toHaveBeenCalledOnce());
+});
