@@ -10,6 +10,7 @@ import {
   buildSupportChatProperties,
   type SupportChatProperties,
 } from "@matrix-os/contracts";
+import { subscribePostHogFlag, type FeatureFlagSource } from "@matrix-os/ui/feature-flags";
 import { getGatewayUrl } from "./gateway";
 import { getMarketingAttributionProperties } from "./marketing-attribution";
 
@@ -324,6 +325,23 @@ export function initializeShellPostHog(
   // window/launcher shortcuts underneath it.
   if (typeof window !== "undefined") window.addEventListener("keydown", closeSupportOnEscape, true);
   initialized = true;
+}
+
+/** The shell's PostHog flags; undefined in builds without a PostHog project, where the gateway decides. */
+export function getShellFeatureFlagSource(currentConfig: typeof config = config): FeatureFlagSource | undefined {
+  if (!currentConfig) return undefined;
+  return {
+    subscribe(key, listener) {
+      try {
+        initializeShellPostHog(currentConfig);
+      } catch (err: unknown) {
+        console.warn("[posthog] Failed to initialize for flags:", err instanceof Error ? err.name : typeof err);
+        listener(undefined);
+        return () => undefined;
+      }
+      return subscribePostHogFlag(posthog, key, listener);
+    },
+  };
 }
 
 function migrateLegacyPostHogConsent(): void {
