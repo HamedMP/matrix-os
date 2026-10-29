@@ -43,6 +43,7 @@ function makeHarness(overrides: Partial<HandlerContext> = {}) {
     getUpdateSnapshot: vi.fn(() => ({ status: "disabled" })),
     installUpdate: vi.fn(() => false),
     toggleWindowMaximize: vi.fn(),
+    setTitlebarOverlay: vi.fn(),
     getWhatsNew: vi.fn(async () => ({ release: null, shouldOpen: false })),
     acknowledgeWhatsNew: vi.fn(async () => undefined),
     getAppVersion: vi.fn(() => "1.4.0-canary.2"),
@@ -1269,6 +1270,17 @@ describe("registerIpcHandlers", () => {
 
     await expect(harness.invoke("window:toggle-maximize")).resolves.toEqual({ ok: true });
     expect(harness.ctx.toggleWindowMaximize).toHaveBeenCalledOnce();
+  });
+
+  it("applies validated Windows control colors to the native overlay", async () => {
+    const harness = makeHarness();
+    const colors = { color: "#fafafa", symbolColor: "#242323" };
+
+    await expect(harness.invoke("window:set-titlebar-overlay", colors)).resolves.toEqual({ ok: true });
+    expect(harness.ctx.setTitlebarOverlay).toHaveBeenCalledWith(colors);
+    await expect(harness.invoke("window:set-titlebar-overlay", { ...colors, color: "red;unsafe" }))
+      .rejects.toThrow("invalid request");
+    expect(harness.ctx.setTitlebarOverlay).toHaveBeenCalledOnce();
   });
 
   it("degrades zoom channels to the default when the event has no usable sender", async () => {
