@@ -27,7 +27,7 @@ class BrowserRecoveryTests(unittest.TestCase):
     prepare = fixture.SpeechRecoveryTests.prepare
     configure_speech = fixture.SpeechRecoveryTests.configure
 
-    def configure_browser(self):
+    def configure_browser(self, activate=True):
         writer = browser.Runtime(Path(self.root), uid=0, gid=0)
         writer.prefix.mkdir(exist_ok=True)
         authorization = 'Basic ' + base64.b64encode(('matrix-browser-lab:' + 'a' * 64).encode()).decode()
@@ -35,7 +35,16 @@ class BrowserRecoveryTests(unittest.TestCase):
             'authorization': authorization, 'passwordData': base64.b64encode(b'synthetic-vnc-password').decode()}))
         (writer.prefix / 'credential-pending.json').chmod(0o600)
         writer.credentials()
-        writer.enable_environment()
+        if activate:
+            writer.enable_environment()
+
+    def test_failed_setup_credentials_without_enablement_preserves_recovery(self):
+        self.prepare()
+        self.configure_browser(activate=False)
+        before = Path(self.env).read_bytes()
+        runtime.recovery_proof(True)
+        self.assertEqual(Path(self.env).read_bytes(), before)
+        self.assertNotIn(b'MATRIX_BROWSER_LAB=', before)
 
     def test_browser_setup_then_speech_preserves_preflight_and_rollback(self):
         self.check_recovery(speech_first=False)
@@ -150,6 +159,19 @@ class BrowserResealTests(unittest.TestCase):
         self.assertNotIn(b'MATRIX_FUNDED_AI_ENABLED=', original)
         self.refresh_guard()
         runtime.recovery_proof(reseal=self.request, commit=True)
+
+    def test_reseal_retains_credential_only_failed_setup_without_enabling_browser(self):
+        with patch.object(self, 'configure', lambda: self.configure_browser(activate=False)):
+            self.prepare()
+        before = Path(self.env).read_bytes()
+        runtime.recovery_proof(reseal=self.request, commit=True)
+        after = Path(self.env).read_bytes()
+        self.assertEqual(runtime.browser_values(before), runtime.browser_values(after))
+        self.assertNotIn(b'MATRIX_BROWSER_LAB=', after)
+        journal_path = next(Path(self.env).parent.glob('host.env.funded-*.json'))
+        original = base64.b64decode(json.loads(journal_path.read_bytes())['original'], validate=True)
+        self.assertEqual(runtime.browser_values(original), runtime.browser_values(before))
+        self.assertNotIn(b'MATRIX_BROWSER_LAB=', original)
 
     def test_resumes_each_partial_commit_without_discarding_other_changes(self):
         for failure in ('journal', 'host.env', 'applied.json', 'speech-reseal-receipt.json'):

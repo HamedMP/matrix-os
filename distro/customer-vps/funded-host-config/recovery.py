@@ -51,7 +51,7 @@ def speech_image(data, values):
 
 
 def browser_values(data, optional=False):
-    """Recognize only the native Browser writer's literal two-field contract."""
+    """Recognize native Browser credentials and optional activation literally."""
     require(len(data) <= 65536 and b'\x00' not in data and b'\r' not in data)
     values = {}
     keys = {'MATRIX_BROWSER_LAB', 'MATRIX_BROWSER_LAB_VIEWER_AUTH'}
@@ -63,7 +63,9 @@ def browser_values(data, optional=False):
             values[key] = line[len(key) + 1:]
     if optional and (not values or values == {'MATRIX_BROWSER_LAB': 'false'}):
         return values
-    require(set(values) == keys and values['MATRIX_BROWSER_LAB'] in ('true', 'false'))
+    # Setup writes credentials before native activation can add enablement.
+    require('MATRIX_BROWSER_LAB_VIEWER_AUTH' in values
+            and values.get('MATRIX_BROWSER_LAB') in (None, 'true', 'false'))
     auth = values['MATRIX_BROWSER_LAB_VIEWER_AUTH']
     require(len(auth) <= 512 and re.fullmatch(r'"Basic [A-Za-z0-9+/]+={0,2}"', auth))
     decoded = base64.b64decode(auth[7:-1], validate=True)
@@ -95,8 +97,9 @@ def managed_image_matches(sealed, data):
         operations.append(lambda image: speech_image(image, speech_after))
     if 'MATRIX_BROWSER_LAB_VIEWER_AUTH' in browser_after:
         browser_values(data)
-        operations.extend((lambda image: browser_image(image, browser_after, True),
-                           lambda image: browser_image(image, browser_after)))
+        operations.append(lambda image: browser_image(image, browser_after, True))
+        if 'MATRIX_BROWSER_LAB' in browser_after:
+            operations.append(lambda image: browser_image(image, browser_after))
     elif browser_after != browser_before:
         return False
     for count in range(1, len(operations) + 1):
@@ -119,7 +122,9 @@ def rebased_managed_record(repair, data, applied, journal):
         original = speech_image(original, speech)
     browser = browser_values(data, optional=True)
     if 'MATRIX_BROWSER_LAB_VIEWER_AUTH' in browser:
-        original = browser_image(browser_image(original, browser, True), browser)
+        original = browser_image(original, browser, True)
+        if 'MATRIX_BROWSER_LAB' in browser:
+            original = browser_image(original, browser)
     after = repair.rewrite(original, {key: key + '=' + value + '\n' for key, value in journal['patch'].items()})
     return (dict(applied, afterSha256=digest(after)), dict(journal, original=base64.b64encode(original).decode(),
             beforeSha256=digest(original), afterSha256=digest(after)), data, after)

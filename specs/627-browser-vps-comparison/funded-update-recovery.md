@@ -24,6 +24,8 @@ are separate work.
 - Preserve current Browser credentials, explicit opt-out, independent speech
   values, every unrelated byte and the original funded rollback semantics,
   including an originally absent runtime-token epoch.
+- Failed setup may leave only a validated Browser credential. Preserve that
+  state without adding enablement; replay activation only when its flag exists.
 - Ordinary recovery proofs remain read-only. Explicit root-only resealing needs
   fresh receipt and host-file hash/inode/device guards and no active updater or
   pending funded invocation. It holds existing maintenance, install and

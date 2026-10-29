@@ -28,6 +28,9 @@ class GeneratedSpeechTests(unittest.TestCase):
     def test_old_verifier_rejects_browser_then_emitted_reseal_preserves_browser_on_rollback(self):
         self.check_legacy_migration(browser=True)
 
+    def test_old_verifier_accepts_resealed_failed_browser_setup_without_enabling_it(self):
+        self.check_legacy_migration(browser='credentials')
+
     def check_legacy_migration(self, browser=False):
         self.assertEqual(os.environ.get('MATRIX_DISPOSABLE_ROOT_TEST'), 'true')
         self.assertTrue(Path('/.dockerenv').is_file())
@@ -132,7 +135,8 @@ class GeneratedSpeechTests(unittest.TestCase):
                 'authorization': authorization, 'passwordData': base64.b64encode(b'synthetic-password').decode()}))
             (writer.prefix / 'credential-pending.json').chmod(0o600)
             writer.credentials()
-            writer.enable_environment()
+            if browser is True:
+                writer.enable_environment()
             browser_lock = Path('/run/matrix-browser-runtime.lock')
             browser_lock.touch(mode=0o600)
             self.addCleanup(browser_lock.unlink)
