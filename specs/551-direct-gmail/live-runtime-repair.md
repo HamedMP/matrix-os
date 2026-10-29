@@ -54,9 +54,12 @@ context marks may remain if a later admission fails; they contain no email body.
 The saved-consent pilot reached the platform's per-handle burst limit during
 repeated inventory, catalog and processing-authority checks, before the provider
 read. Pace requests in each existing host transport at least 600 milliseconds
-apart, with at most sixteen outstanding requests and the caller's original abort
-deadline. Keep platform limits and every authority check unchanged. Serialize
-actual starts so an event-loop stall cannot release overdue requests as a burst.
+apart, with at most sixteen outstanding requests, four active fetches and the
+caller's original abort deadline. Keep platform limits and every authority check
+unchanged. Serialize actual starts so an event-loop stall cannot release overdue
+requests as a burst. Slow responses retain an active slot without holding the
+start queue while other capacity remains; background sync must not delay account
+checks until its response arrives.
 Snapshot the reviewed target and claim before waiting; sign the exact request
 only when dispatched and refuse authority that expired while queued. Never retry
 a response or an uncertain write. Separate transport instances still share the

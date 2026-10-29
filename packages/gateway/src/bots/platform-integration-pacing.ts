@@ -2,6 +2,7 @@
  * cached authority, new permissions or server-limit changes are involved. */
 const SPACING_MS = 600;
 const MAX_OUTSTANDING = 16;
+const MAX_ACTIVE = 4;
 const unavailable = () => new Error('Integration request unavailable');
 
 function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -29,11 +30,14 @@ export function createPlatformIntegrationPacer() {
   let tail: Promise<void> = Promise.resolve();
   let outstanding = 0;
   let lastStart: number | undefined;
+  // Bounded active fetches, removed on actual settlement (not caller abort).
+  const active = new Set<Promise<void>>();
   return async (signal: AbortSignal, send: () => Promise<Response>): Promise<Response> => {
     if (signal.aborted || outstanding >= MAX_OUTSTANDING) throw unavailable();
     outstanding++;
-    const work = tail.then(async () => {
+    const slot = tail.then(async () => {
       if (signal.aborted) throw unavailable();
+      while (active.size >= MAX_ACTIVE) await abortable(Promise.race(active), signal);
       // Use actual start time rather than reserved timer slots: an event-loop
       // stall must not release several overdue requests as another burst.
       while (lastStart !== undefined && performance.now() - lastStart < SPACING_MS) {
@@ -41,11 +45,16 @@ export function createPlatformIntegrationPacer() {
       }
       if (signal.aborted) throw unavailable();
       lastStart = performance.now();
-      return send();
-    }).finally(() => { outstanding--; });
-    // Cancellation rejects the caller promptly, but its queued slot settles in
-    // order. Releasing it early could let a later request pass an active one.
-    tail = work.then(() => undefined, () => undefined);
+      let settled!: () => void;
+      const done = new Promise<void>(resolve => { settled = resolve; });
+      active.add(done);
+      const response = Promise.resolve().then(send).finally(() => { active.delete(done); settled(); });
+      return { response };
+    });
+    // Only request starts are serial. A slow sync must not block unrelated
+    // inventory checks while spare active capacity remains.
+    tail = slot.then(() => undefined, () => undefined);
+    const work = slot.then(value => value.response).finally(() => { outstanding--; });
     return abortable(work, signal);
   };
 }
