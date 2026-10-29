@@ -35,7 +35,9 @@ UV_INSTALLER_URL="${HOST_BUNDLE_UV_INSTALLER_URL:-https://astral.sh/uv/install.s
 rm -rf "$DIST_DIR"
 mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/app" "$STAGE_DIR/runtime" "$STAGE_DIR/systemd" "$STAGE_DIR/user-systemd"
 
-pnpm install --frozen-lockfile
+# Runtime dependencies must resolve inside the copied app payload, even when
+# the calling environment is a developer shell with the shared store enabled.
+pnpm install --frozen-lockfile --config.enableGlobalVirtualStore=false
 pnpm rebuild node-pty
 pnpm --filter '@matrix-os/observability' build
 pnpm --filter '@matrix-os/brand' build
