@@ -23,6 +23,7 @@ export function createBotRoutineScheduler(deps: {
       before: at,
       now: at
     });
+    if (stopped) return;
     for (const r of await deps.repository.due(now())) {
       if (stopped) break;
       const claimAt = now();
@@ -38,9 +39,11 @@ export function createBotRoutineScheduler(deps: {
         console.warn("[bots] routine claim unavailable", error instanceof Error ? error.name : "UnknownError");
       }
     }
+    if (stopped) return;
     for (const fire of await deps.repository.pending(now())) {
       if (stopped) break;
       const r = await deps.repository.get(fire.ownerId, fire.routineId);
+      if (stopped) return;
       if (!r || r.status !== "active") {
         await deps.repository.finish({
           ownerId: fire.ownerId,
@@ -57,6 +60,7 @@ export function createBotRoutineScheduler(deps: {
       } catch (error: unknown) {
         console.warn("[bots] routine authorization unavailable", error instanceof Error ? error.name : "UnknownError");
       }
+      if (stopped) return;
       if (!authorized) {
         await deps.repository.finish({
           ownerId: fire.ownerId,
@@ -73,6 +77,7 @@ export function createBotRoutineScheduler(deps: {
         fireId: fire.fireId,
         now: now()
       });
+      if (stopped) return;
       if (!dispatched) continue;
       let result: RoutineRunResult;
       try {
@@ -83,6 +88,7 @@ export function createBotRoutineScheduler(deps: {
           status: "uncertain"
         };
       }
+      if (stopped) return;
       if (result.status === "accepted") continue;
       if (result.status === "capacity_before_dispatch" && dispatched.attempts < 3) {
         await deps.repository.defer({
@@ -136,8 +142,16 @@ export function createBotRoutineScheduler(deps: {
       if (timer) clearInterval(timer);
       timer = undefined;
       lifetime.abort();
-      await starting;
-      await active;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const drained = Promise.allSettled([starting, active]).then(results => {
+        for (const result of results) if (result.status === "rejected") console.warn("[bots] routine shutdown work failed", result.reason instanceof Error ? result.reason.name : "UnknownError");
+        return true;
+      });
+      try {
+        const settled = await Promise.race([drained, new Promise<boolean>(done => { timeout = setTimeout(() => done(false), 10000); })]);
+        // Admission may already have committed: retain its durable request/lease.
+        if (!settled) console.warn("[bots] routine shutdown drain timed out; durable work retained");
+      } finally { clearTimeout(timeout); }
     }
   };
 }
