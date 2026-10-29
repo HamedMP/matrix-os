@@ -39,6 +39,7 @@ export type MatrixRegion = {
   location: string;
   flag: string;
   label: string;
+  countryLabel: string;
   networkZone: "eu-central" | "us-east" | "us-west";
 };
 
@@ -68,6 +69,7 @@ export const MATRIX_BILLING_REGIONS: MatrixRegion[] = MATRIX_HOSTED_BILLING_REGI
   location: region.location,
   flag: region.flag,
   label: region.label,
+  countryLabel: region.countryLabel,
   networkZone: region.networkZone,
 }));
 
