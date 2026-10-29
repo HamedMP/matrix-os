@@ -918,6 +918,9 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/gateway/bots/deployed-v9-entry-postgres.test.ts tests/gateway/bots/routine-concurrency-postgres.test.ts tests/gateway/bots/routine-fencing-postgres.test.ts tests/gateway/bots/routine-recovery-postgres.test.ts tests/gateway/bots/thread-guard-postgres.test.ts --maxWorkers=1 --no-file-parallelism
 
+      - name: Routine acceptance capture and preflight contracts
+        run: node --test tests/gateway/bots/routine-acceptance-capture.test.mjs tests/gateway/bots/routine-acceptance-preflight.test.mjs
+
       - name: Build exact-source routine process qualification artifact
         run: |
           node scripts/testing/build-routine-validation.mjs "$RUNNER_TEMP/eng93-routine-validation"

@@ -1,3 +1,4 @@
+import { parse as parseYaml } from "yaml";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, rm, realpath } from "node:fs/promises";
@@ -70,4 +71,12 @@ test("compiler inventory includes source behind dist exports and extended config
   assert.ok(paths.includes("packages/kernel/src/index.ts"));
   assert.ok(paths.includes("tsconfig.json"));
   assert.ok(inputs.every(input => /^[a-f0-9]{64}$/.test(input.sha256)));
+});
+
+test("hosted CI executes both required node-test acceptance suites", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const workflow = parseYaml(await readFile(".github/workflows/ci.yml", "utf8"));
+  const commands = workflow.jobs["funded-postgres"].steps.filter(step => step.if !== false)
+    .flatMap(step => [...String(step.run ?? "").matchAll(/(?:^|\n)\s*node --test ([^\n#]+)/g)].map(match => match[1].trim().split(/\s+/)));
+  for (const file of ["tests/gateway/bots/routine-acceptance-preflight.test.mjs", "tests/gateway/bots/routine-acceptance-capture.test.mjs"]) assert.ok(commands.some(args => args.includes(file)), `Missing actual node:test CI command: ${file}`);
 });
