@@ -26,13 +26,20 @@ export interface CheckoutAttemptRecoveryOptions {
   prebilling?: Pick<PrebillingCheckoutCoordinator, 'createIntent' | 'startPreparation' | 'expireCheckout'>;
 }
 
+type CheckoutSessionRecoveryResult =
+  | { status: 'created'; session: Awaited<ReturnType<StripeBillingClient['createCheckoutSession']>> }
+  | { status: 'unresolved' }
+  | { status: 'prebilling_unavailable' };
+
 export async function createStoredCheckoutSession(
   options: CheckoutAttemptRecoveryOptions,
   attempt: BillingCheckoutAttemptRecord,
-): Promise<Awaited<ReturnType<StripeBillingClient['createCheckoutSession']>> | null> {
-  if (!attempt.requestPayload) return null;
+): Promise<CheckoutSessionRecoveryResult> {
+  if (!attempt.requestPayload) return { status: 'unresolved' };
   const currentTime = options.now();
-  if (!canRetryCreatingCheckoutAttempt(attempt, currentTime.toISOString())) return null;
+  // Losing replay eligibility does not prove that the original session is
+  // unpayable. Preserve the attempt/key until provider-confirmed resolution.
+  if (!canRetryCreatingCheckoutAttempt(attempt, currentTime.toISOString())) return { status: 'unresolved' };
   const parsed = StoredCheckoutRequestSchema.safeParse(JSON.parse(attempt.requestPayload) as unknown);
   if (!parsed.success) throw new Error('checkout_request_snapshot_invalid');
   const request = parsed.data;
@@ -62,7 +69,9 @@ export async function createStoredCheckoutSession(
       now: currentTime.toISOString(),
     });
   }
-  if (options.prebilling && request.runtimeSlot === 'primary' && !preparation) return null;
+  if (options.prebilling && request.runtimeSlot === 'primary' && !preparation) {
+    return { status: 'prebilling_unavailable' };
+  }
   const googleAnalytics = await rememberGoogleAttribution(
     options.db,
     attempt.id,
@@ -97,7 +106,7 @@ export async function createStoredCheckoutSession(
     successUrl: resolveBillingReturnUrl(options.env, 'success', request.returnPath),
     cancelUrl: resolveBillingReturnUrl(options.env, 'canceled', request.returnPath),
   });
-  if (!await finalizeCheckoutAttempt(options.db, attempt.id, session.id, session.url)) return null;
+  if (!await finalizeCheckoutAttempt(options.db, attempt.id, session.id, session.url)) return { status: 'unresolved' };
   if (preparation) {
     try {
       const started = await options.prebilling?.startPreparation({
@@ -110,7 +119,7 @@ export async function createStoredCheckoutSession(
       console.warn('[billing] recovered prebilling preparation unavailable:', err instanceof Error ? err.name : typeof err);
     }
   }
-  return session;
+  return { status: 'created', session };
 }
 
 interface CheckoutReconciliationOptions extends CheckoutAttemptRecoveryOptions {
@@ -139,10 +148,8 @@ export function createCheckoutReconciliationHandler(options: CheckoutReconciliat
       if (!attempt) return c.json({ status: 'none' }, 200);
       if (!limiter.check(clerkUserId)) return c.json(UNAVAILABLE, 429);
       if (attempt.status === 'creating') {
-        const recovered = attempt.requestPayload
-          ? await createStoredCheckoutSession(options, attempt)
-          : null;
-        return c.json({ status: recovered ? 'open' : 'unresolved' }, 200);
+        const recovered = await createStoredCheckoutSession(options, attempt);
+        return c.json({ status: recovered.status === 'created' ? 'open' : 'unresolved' }, 200);
       }
       if (attempt.status !== 'open' || !attempt.stripeSessionId) {
         // An ambiguous create may already have a provider session. Never route

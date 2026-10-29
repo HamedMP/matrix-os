@@ -12,7 +12,6 @@ import { randomUUID } from 'node:crypto';
 import { MATRIX_TELEMETRY_EVENTS } from '@matrix-os/observability';
 
 import {
-  abandonCreatingCheckoutAttempt,
   claimCardTrialCheckoutAttempt,
   claimCheckoutAttempt,
   getBillingCustomerByClerkUserId,
@@ -442,31 +441,29 @@ export function createBillingRoutes(options: {
           code: 'checkout_pending',
         }, 409);
       }
-      if (!attempt.attempt.requestPayload) {
-        // Pre-migration creating rows may already have a Stripe session whose
-        // response was lost. Without the original request snapshot we cannot
-        // safely replay or abandon that idempotency key, so keep it unresolved.
-        return c.json({
-          error: 'Checkout is already starting',
-          code: 'checkout_pending',
-        }, 409);
-      }
-      const session = await createStoredCheckoutSession({
+      const recovery = await createStoredCheckoutSession({
         db: options.db,
         stripe: options.stripe,
         env,
         now,
         prebilling: options.prebilling,
       }, attempt.attempt);
-      if (!session) {
-        await abandonCreatingCheckoutAttempt(options.db, attempt.attempt.id, currentTime.toISOString());
+      if (recovery.status === 'unresolved') {
+        return c.json({
+          error: 'Checkout is already starting',
+          code: 'checkout_pending',
+        }, 409);
+      }
+      if (recovery.status === 'prebilling_unavailable') {
+        // A prior create may have reached Stripe. A preparation failure is
+        // not confirmation that the original idempotency key is safe to retire.
         return c.json(BILLING_UNAVAILABLE_RESPONSE, 503);
       }
       emitTelemetry(BILLING_CHECKOUT_CREATED_EVENT, {
         distinctId: clerkUserId,
         properties: checkoutProperties,
       });
-      return c.json({ url: session.url }, 200);
+      return c.json({ url: recovery.session.url }, 200);
     } catch (err: unknown) {
       console.error('[billing] checkout creation failed:', err instanceof Error ? err.message : String(err));
       emitTelemetry(BILLING_CHECKOUT_FAILED_EVENT, {

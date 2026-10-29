@@ -19,6 +19,13 @@ After 60 seconds following confirmed completion, offer support. Check again is
 available throughout activation and retries verification. URL success/cancel
 flags never establish checkout completion or subscription access.
 
+An ambiguous create retains its original attempt and idempotency key when the
+23-hour replay deadline passes, including when processing crosses the deadline
+between claim and recovery. Replay ineligibility is an unresolved result, not
+proof that the original provider session is safe to abandon. Preparation
+unavailability also retains the attempt; only confirmed resolution permits a
+replacement checkout.
+
 Additional-computer handoffs retain their existing draft-aware flow: the saved
 draft, not the checkout return URL, identifies the new computer's runtime slot.
 An already active primary computer must never short-circuit that handoff.

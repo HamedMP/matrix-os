@@ -104,6 +104,41 @@ describe('checkout return reconciliation', () => {
     expect(await res.json()).toEqual({ status: 'unresolved' });
     expect(stripe.createCheckoutSession).not.toHaveBeenCalled();
   });
+  it('preserves an ambiguous checkout when recovery crosses the retry cutoff after claiming', async () => {
+    const clock = vi.fn(() => new Date('2026-10-23T08:00:00.000Z'));
+    const instance = new Hono().route('/billing', createBillingRoutes({
+      db, stripe, env: { STRIPE_PRICE_MATRIX_BUILDER_MONTHLY: 'price_builder' },
+      now: clock, resolveClerkUserId: async () => 'owner',
+    }));
+    const purchase = () => instance.request('/billing/checkout', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ planSlug: 'matrix_builder', interval: 'monthly',
+        regionSlug: 'region_fsn1', runtimeSlot: 'studio' }),
+    });
+    // Stripe may have created a payable session despite the lost response.
+    vi.mocked(stripe.createCheckoutSession).mockRejectedValueOnce(new Error('response timeout'));
+    expect((await purchase()).status).toBe(503);
+    const original = await getLatestCheckoutAttempt(db, 'owner');
+    expect(original).toMatchObject({ status: 'creating', resolvedAt: null });
+    expect(stripe.createCheckoutSession).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      idempotencyKey: original!.id,
+    }));
+
+    clock.mockReturnValue(new Date('2026-10-24T07:00:00.001Z'))
+      .mockReturnValueOnce(new Date('2026-10-24T06:59:59.999Z'));
+    const crossedCutoff = await purchase();
+    expect(await getLatestCheckoutAttempt(db, 'owner')).toEqual(original);
+    expect(crossedCutoff.status).toBe(409);
+    expect(await crossedCutoff.json()).toEqual({ error: 'Checkout is already starting', code: 'checkout_pending' });
+    expect(clock.mock.results.slice(-2).map(result => result.value.toISOString())).toEqual([
+      '2026-10-24T06:59:59.999Z', '2026-10-24T07:00:00.001Z',
+    ]);
+    expect((await purchase()).status).toBe(409);
+    expect(await getLatestCheckoutAttempt(db, 'owner')).toEqual(original);
+    expect(stripe.createCheckoutSession).toHaveBeenCalledTimes(1);
+    expect(await db.executor.selectFrom('billing_checkout_attempts').select('id').execute())
+      .toEqual([{ id: original!.id }]);
+  });
   it('does not retrieve another owner or slot checkout', async () => {
     await seed('studio');
     expect((await request({}, 'other')).status).toBe(200);
