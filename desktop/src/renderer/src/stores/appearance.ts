@@ -20,7 +20,10 @@ interface AppearanceState extends AppearancePreferences {
   setZoom: (factor: number) => void;
 }
 function apply(value: AppearancePreferences): void {
-  applyUnifiedTheme(value.themeId, value.mode, value.customTheme);
+  const overlay = applyUnifiedTheme(value.themeId, value.mode, value.customTheme);
+  if (navigator.platform.startsWith('Win')) {
+    void invoke('window:set-titlebar-overlay', overlay).catch(error => console.warn('[appearance] titlebar overlay failed:', error));
+  }
   const root = document.documentElement;
   root.style.setProperty('--font-ui', FONT_OPTIONS.find(f => f.id === value.fontId)!.family);
   root.style.setProperty('--font-mono', MONO_FONT_OPTIONS.find(f => f.id === value.monoFontId)!.family);

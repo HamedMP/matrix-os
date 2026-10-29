@@ -4,6 +4,7 @@ import DesktopHeaderTabs from "../desktop-shell/DesktopHeaderTabs";
 import DesktopModeControls from "../desktop-shell/DesktopModeControls";
 
 export default function NavigationHeader() {
+  const hasLeftNativeControls = navigator.platform.startsWith("Mac");
   const handleTitlebarDoubleClick = (event: React.MouseEvent<HTMLElement>) => {
     const target = event.target;
     if (target instanceof Element && target.closest("button,input,a,[role='button'],[role='tab']")) return;
@@ -17,15 +18,16 @@ export default function NavigationHeader() {
       style={{
         zIndex: DESKTOP_Z_INDEX.chrome,
         height: "var(--titlebar-height)",
-        gridTemplateColumns: "96px minmax(0, 1fr)",
-        background: "color-mix(in srgb, var(--bg-sunken) 82%, transparent)",
+        gridTemplateColumns: hasLeftNativeControls ? "96px minmax(0, 1fr)" : "minmax(0, 1fr)",
+        background: hasLeftNativeControls
+          ? "color-mix(in srgb, var(--bg-sunken) 82%, transparent)"
+          : "var(--bg-sunken)",
         borderColor: "var(--border-subtle)",
         "--desktop-menu-z": DESKTOP_Z_INDEX.popover,
         backdropFilter: "blur(34px)",
       } as React.CSSProperties}
     >
-      {/* Reserve the native traffic-light controls' drag region. */}
-      <div />
+      {hasLeftNativeControls && <div aria-hidden="true" />}
       <div className="flex h-full min-w-0 items-center gap-0 pr-2">
         <DesktopHeaderTabs />
         <DesktopModeControls />
