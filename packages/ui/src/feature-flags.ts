@@ -36,10 +36,10 @@ export function subscribePostHogFlag(client: PostHogFlagClient, key: string, lis
 }
 
 /**
- * Whether a rollout flag is on: null while PostHog loads, then false if it fails or takes longer
- * than `timeoutMs`. Once on it stays on for this mount, so a flag change never closes an open
- * surface. With no source (self-hosted, local dev, a build without PostHog) it is on, and the
- * server's own gate decides.
+ * Whether a rollout flag is on right now: null while PostHog loads, then false if it fails or
+ * takes longer than `timeoutMs`, and it follows every later change. Callers that must not close an
+ * open surface hold it open themselves. With no source (self-hosted, local dev, a build without
+ * PostHog) it is on, and the server's own gate decides.
  */
 export function useFeatureFlag(source: FeatureFlagSource | undefined, key: string, timeoutMs = FEATURE_FLAG_TIMEOUT_MS): boolean | null {
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -49,7 +49,7 @@ export function useFeatureFlag(source: FeatureFlagSource | undefined, key: strin
     const timer = setTimeout(() => setEnabled((current) => current ?? false), timeoutMs);
     const unsubscribe = source.subscribe(key, (next) => {
       clearTimeout(timer);
-      setEnabled((current) => current === true || next === true);
+      setEnabled(next === true);
     });
     return () => {
       clearTimeout(timer);

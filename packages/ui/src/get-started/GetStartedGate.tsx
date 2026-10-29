@@ -143,8 +143,12 @@ export interface GetStartedGateProps {
  */
 export function GetStartedGate({ port, zIndex, children, connector: Connector, whileActive: WhileActive, backdropSource, gallery: galleryPort, suggestedName = null, agentLogin, featureFlags }: GetStartedGateProps) {
   const getStarted = useGetStarted(port);
-  const rolledOut = useFeatureFlag(featureFlags, GET_STARTED_FEATURE_FLAG);
-  const active = getStarted.phase === "active" && rolledOut === true;
+  const flag = useFeatureFlag(featureFlags, GET_STARTED_FEATURE_FLAG);
+  // The flag is read live until the wizard opens; from then on a flag change never closes it.
+  const [opened, setOpened] = useState(false);
+  const active = getStarted.phase === "active" && (opened || flag === true);
+  if (active && !opened) setOpened(true);
+  const rolledOut = opened || flag;
   const backdrop = useDesktopBackdrop(backdropSource, active);
   const gallery = useGetStartedGallery(galleryPort, active);
   usePrefillName(getStarted.wizard, getStarted.dispatch, suggestedName);

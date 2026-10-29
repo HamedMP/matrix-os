@@ -16,27 +16,36 @@ function makePort(initial: unknown): GetStartedPort {
   };
 }
 
-/** A PostHog stand-in the test drives: `emit` delivers a flag evaluation to every subscriber. */
+/** A PostHog stand-in the test drives. The gate subscribes to one flag, so one listener slot is enough. */
 function makeFlags() {
-  const listeners = new Map<string, Set<(enabled: boolean | undefined) => void>>();
+  let current: { key: string; listener: (enabled: boolean | undefined) => void } | null = null;
   const unsubscribed = vi.fn();
   const source: FeatureFlagSource = {
     subscribe: vi.fn((key: string, listener: (enabled: boolean | undefined) => void) => {
-      const set = listeners.get(key) ?? new Set();
-      set.add(listener);
-      listeners.set(key, set);
+      const subscription = { key, listener };
+      current = subscription;
       return () => {
-        set.delete(listener);
+        if (current === subscription) current = null;
         unsubscribed(key);
       };
     }),
   };
   const emit = (key: string, enabled: boolean | undefined) => {
     act(() => {
-      for (const listener of listeners.get(key) ?? []) listener(enabled);
+      if (current?.key === key) current.listener(enabled);
     });
   };
   return { source, emit, unsubscribed };
+}
+
+/** A port whose state load resolves only when the test says so. */
+function makeDeferredPort(initial: unknown) {
+  let resolveLoad: () => void = () => undefined;
+  const port: GetStartedPort = {
+    load: vi.fn(() => new Promise<unknown>((resolve) => { resolveLoad = () => resolve(initial); })),
+    save: vi.fn(async () => ({ status: "skipped", skippedAt: AT })),
+  };
+  return { port, resolve: async () => { await act(async () => { resolveLoad(); await Promise.resolve(); }); } };
 }
 
 function renderGate(port: GetStartedPort, featureFlags?: FeatureFlagSource) {
@@ -129,6 +138,18 @@ describe("GetStartedGate rollout flag", () => {
     flags.emit(GET_STARTED_FEATURE_FLAG, false);
     expect(screen.getByPlaceholderText("Your first name")).toBeInTheDocument();
     expect(screen.queryByTestId("desktop-widget")).not.toBeInTheDocument();
+  });
+
+  it("follows the current flag until the wizard opens: on then off before the state loads keeps it closed", async () => {
+    const flags = makeFlags();
+    const deferred = makeDeferredPort({ status: "pending" });
+    renderGate(deferred.port, flags.source);
+    flags.emit(GET_STARTED_FEATURE_FLAG, true);
+    flags.emit(GET_STARTED_FEATURE_FLAG, false);
+
+    await deferred.resolve();
+    expect(await screen.findByTestId("desktop-widget")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Your first name")).not.toBeInTheDocument();
   });
 
   it("does not wait for the flag when setup is already finished", async () => {
