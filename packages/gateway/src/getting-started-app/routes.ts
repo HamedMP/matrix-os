@@ -72,7 +72,8 @@ export function createGettingStartedAppRoutes(deps: {
       if (mapped.log) console.error("[getting-started-app] Request principal misconfigured:", error.name);
       return context.json(mapped.body, mapped.status);
     }
-    console.error("[getting-started-app] Request failed:", error instanceof Error ? error.name : "UnknownError");
+    // The client gets a generic message; the server log keeps the real cause.
+    console.error("[getting-started-app] Request failed:", error);
     return context.json(UNAVAILABLE, 500);
   }
 

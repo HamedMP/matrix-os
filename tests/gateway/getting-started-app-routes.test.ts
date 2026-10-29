@@ -100,14 +100,15 @@ describe("Getting started app routes", () => {
 
   it("hides database errors behind a generic message", async () => {
     const repository = repositoryMock();
-    repository.award.mockRejectedValueOnce(new Error('relation "getting_started_awards" does not exist'));
+    const cause = new Error('relation "getting_started_awards" does not exist');
+    repository.award.mockRejectedValueOnce(cause);
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const response = await post(appFor(repository), "/awards", { taskId: "slack", silent: false });
     expect(response.status).toBe(500);
     const body = await response.json();
     expect(body).toEqual({ error: "Getting started is unavailable" });
     expect(JSON.stringify(body)).not.toContain("relation");
-    expect(error).toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith("[getting-started-app] Request failed:", cause);
     error.mockRestore();
   });
 });

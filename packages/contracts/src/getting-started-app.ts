@@ -5,7 +5,7 @@
  */
 import { z } from "zod/v4";
 import {
-  gettingStartedAgentStatus,
+  gettingStartedAiProviderStatus,
   gettingStartedChatStatus,
   gettingStartedGithubStatus,
   gettingStartedServicesStatus,
@@ -89,7 +89,7 @@ export function deriveGettingStartedAppTasks(results: GettingStartedResults): Ge
     slack: gettingStartedServicesStatus(results, ["slack"]),
     whatsapp: "unavailable",
     github: gettingStartedGithubStatus(results),
-    "ai-provider": gettingStartedAgentStatus(results),
+    "ai-provider": gettingStartedAiProviderStatus(results),
     "mobile-app": "unavailable",
     "invite-friends": "unavailable",
   };

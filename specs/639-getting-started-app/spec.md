@@ -49,7 +49,7 @@ The Get started wizard (spec 635) runs once, before the desktop. This app is wha
 | `slack` | Connect | Slack | 20 | `slack` is an active service in `/api/integrations` | Settings › Integrations, Slack |
 | `whatsapp` | Connect | WhatsApp | 20 | WhatsApp is connected (`/api/messaging/platforms` or `/api/channels/status`; to confirm) | The WhatsApp connect flow |
 | `github` | Connect | GitHub | 20 | Same rule as the popover's GitHub step (gh CLI authenticated or GitHub integration active); ENG-378's readiness when it lands | Agents & providers › GitHub |
-| `ai-provider` | Connect | AI provider | 20 | A signed-in coding agent or an own-account access source in the provider V3 snapshot | Settings › Agents & providers |
+| `ai-provider` | Connect | AI provider | 20 | A signed-in Codex or Claude, or a ready own-account or own-API-key access source in `/api/ai/provider-settings` | Settings › Agents & providers |
 | `mobile-app` | Go further | Get the mobile app | 20 | The owner has signed in on Native Mobile (signal to confirm) | Mobile download page |
 | `invite-friends` | Go further | Invite friends | 100 per friend | Needs referrals ([GTM-529](https://linear.app/matrix-os/issue/GTM-529/affiliate-links-for-users)) | Hidden until GTM-529 ships |
 

@@ -85,6 +85,24 @@ describe("deriveGettingStartedAppTasks", () => {
     expect(statusOf(tasks, "ai-provider")).toBe("complete");
   });
 
+  it("counts the owner's own ready key without Codex or Claude", () => {
+    const ownKey = (state: string, fundingKind = "owner_api_key") => fulfilled({
+      accessSources: [{ id: "anthropic-key", fundingKind, state }],
+    });
+    expect(statusOf(deriveGettingStartedAppTasks(results({ providers: ownKey("ready") })), "ai-provider")).toBe("complete");
+    expect(statusOf(deriveGettingStartedAppTasks(results({ providers: ownKey("ready", "owner_account") })), "ai-provider")).toBe("complete");
+    expect(statusOf(deriveGettingStartedAppTasks(results({ providers: ownKey("auth_required") })), "ai-provider")).toBe("incomplete");
+    expect(statusOf(deriveGettingStartedAppTasks(results({ providers: ownKey("ready", "matrix_included") })), "ai-provider")).toBe("incomplete");
+  });
+
+  it("still counts a signed-in agent when provider settings fail", () => {
+    const tasks = deriveGettingStartedAppTasks(results({
+      agents: fulfilled({ agents: [{ agent: "claude", status: "available" }] }),
+      providers: { status: "rejected", reason: new Error("down") },
+    }));
+    expect(statusOf(tasks, "ai-provider")).toBe("complete");
+  });
+
   it("agrees with the popover's GitHub step", () => {
     const input = results({
       github: rejected(),

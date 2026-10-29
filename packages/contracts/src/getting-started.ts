@@ -34,6 +34,8 @@ export interface GettingStartedResults {
   projects: PromiseSettledResult<unknown>;
   chats: PromiseSettledResult<unknown>;
   billing: PromiseSettledResult<unknown>;
+  /** Provider settings (`/api/ai/provider-settings`); optional for callers that do not read it. */
+  providers?: PromiseSettledResult<unknown>;
 }
 
 const STEP_LABELS: Record<GettingStartedStepId, string> = {
@@ -56,6 +58,13 @@ const ChatsSchema = z.object({ items: z.array(z.unknown()).max(100) }).passthrou
 const BillingStatusSchema = z.object({
   access: z.object({ runtimeProxyAllowed: z.boolean() }).passthrough(),
 }).passthrough();
+const OwnAccessSourcesSchema = z.object({
+  accessSources: z.array(z.object({
+    fundingKind: z.string().max(32),
+    state: z.string().max(32),
+  }).passthrough()).max(16),
+}).passthrough();
+const OWN_FUNDING_KINDS: ReadonlySet<string> = new Set(["owner_account", "owner_api_key"]);
 const ConnectedIntegrationSchema = z.object({
   id: z.string().min(1).max(64),
   service: z.string().min(1).max(64),
@@ -149,6 +158,15 @@ export function gettingStartedServicesStatus(
 /** Whether Codex or Claude is signed in. */
 export function gettingStartedAgentStatus(results: GettingStartedResults): GettingStartedStepStatus {
   return statusFrom(results.agents, (value) => availableAgents(value).length > 0);
+}
+
+/** An own-account AI source counts too: a ready owner account or API key, with or without a coding agent CLI. */
+export function gettingStartedAiProviderStatus(results: GettingStartedResults): GettingStartedStepStatus {
+  const agent = gettingStartedAgentStatus(results);
+  if (!results.providers) return agent;
+  const ownAccess = statusFrom(results.providers, (value) => OwnAccessSourcesSchema.parse(value).accessSources
+    .some((source) => OWN_FUNDING_KINDS.has(source.fundingKind) && source.state === "ready"));
+  return alternativeCompletionStatus(agent, ownAccess);
 }
 
 /** Whether the owner has at least one chat. */
