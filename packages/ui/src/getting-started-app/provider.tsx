@@ -19,7 +19,7 @@ import { gettingStartedAppToastText } from "./actions.js";
 
 export interface GettingStartedAppPort {
   loadResults(signal: AbortSignal): Promise<GettingStartedResults>;
-  /** Null when the feature is off on this computer. */
+  /** Null when this computer's gateway predates the app (404). */
   loadProgress(signal: AbortSignal): Promise<GettingStartedAppProgress | null>;
   award(taskId: GettingStartedAppAwardableTaskId, silent: boolean): Promise<GettingStartedAppAwardResponse>;
   claimAutoOpen(): Promise<boolean>;
@@ -28,7 +28,7 @@ export interface GettingStartedAppPort {
 export type GettingStartedAppPoints = { kind: "loading" } | { kind: "unavailable" } | { kind: "ready"; total: number };
 
 export interface GettingStartedAppState {
-  /** False until the first read, and while the feature is off. */
+  /** False until the first read, and on computers whose gateway predates the app. */
   enabled: boolean;
   loaded: boolean;
   tasks: GettingStartedAppTask[];

@@ -121,7 +121,7 @@ describe("Getting started app view", () => {
     expect(gettingStartedAppAction("invite-friends")).toBeNull();
   });
 
-  it("renders nothing when the feature is off", async () => {
+  it("renders nothing when the computer predates the app", async () => {
     const port = makePort({ progress: null });
     const { container } = renderApp(port);
     await waitFor(() => expect(port.loadProgress).toHaveBeenCalled());
