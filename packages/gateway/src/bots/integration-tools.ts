@@ -1,3 +1,4 @@
+import type {BotExecutor} from "./repositories/shared.js";
 /**
  * Integration tools for bots (spec 536, research R5, technical-design
  * "Computer and Tool Boundaries"). A bot uses an account only through a
@@ -82,20 +83,20 @@ export function createBotIntegrationTools(deps: {
   resolveProcedure?(ownerId: string, agent: import("@matrix-os/contracts").ChatAgent): Promise<import("./recipe-catalog.js").BotRecipe>;
   agents: Pick<ChatAgentStore, "get">;
   /** Live source check at the last local checkpoint before service invocation. */
-  assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal) => Promise<void>;
+  assertSource?: (binding: BotRuntimeBinding, signal?: AbortSignal, executor?: BotExecutor) => Promise<void>;
   assertSharedAttachmentSource?: (binding: BotRuntimeBinding, signal: AbortSignal) => Promise<void>;
   now?: () => Date;
 }) {
   const now = () => deps.now?.() ?? new Date();
 
-  async function qualifySource(binding: BotRuntimeBinding, signal?: AbortSignal, sharedAttachment = false) {
+  async function qualifySource(binding: BotRuntimeBinding, signal?: AbortSignal, sharedAttachment = false, executor?: BotExecutor) {
     if (!deps.assertSource && !sharedAttachment) return;
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(), SOURCE_CHECK_TIMEOUT_MS);
     const bounded = AbortSignal.any([deadline.signal, ...(signal ? [signal] : [])]);
     try {
       if (bounded.aborted) throw new BotBrokerActionError("timeout");
-      if (deps.assertSource) await untilAborted(deps.assertSource(binding, bounded), bounded);
+      if (deps.assertSource) await untilAborted(executor ? deps.assertSource(binding, bounded, executor) : deps.assertSource(binding, bounded), bounded);
       if (sharedAttachment) {
         if (!deps.assertSharedAttachmentSource) throw new BotBrokerActionError("unavailable");
         await untilAborted(deps.assertSharedAttachmentSource(binding, bounded), bounded);
@@ -338,7 +339,7 @@ export function createBotIntegrationTools(deps: {
           // Recheck source changes during the grant read while its row lock
           // prevents revocation/revision updates. This is the joint authority
           // checkpoint; commit/release precedes any network transport.
-          await qualifySource(binding, signal, attachment !== undefined);
+          await qualifySource(binding, signal, attachment !== undefined, tx.db);
           if (live.expiresAt && Date.parse(live.expiresAt) <= now().getTime()) {
             throw new BotBrokerActionError("not_granted");
           }
