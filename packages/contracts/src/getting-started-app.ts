@@ -143,7 +143,7 @@ export const GettingStartedAppAutoOpenResponseSchema = z.object({
 export type GettingStartedAppAutoOpenResponse = z.infer<typeof GettingStartedAppAutoOpenResponseSchema>;
 
 export const GettingStartedAppDesktopIconResponseSchema = z.object({
-  place: z.boolean(),
+  placed: z.boolean(),
 }).strict();
 
 export type GettingStartedAppDesktopIconResponse = z.infer<typeof GettingStartedAppDesktopIconResponseSchema>;

@@ -119,17 +119,26 @@ export class GettingStartedAppRepository {
   }
 
   /**
-   * True for exactly one caller per owner: the desktop icon is placed once, for new
-   * and existing owners alike, and never put back after the owner removes it.
+   * Whether a surface has saved the app's icon to this owner's desktop. Placement is
+   * recorded only after the save succeeds, so a failed save is retried on the next
+   * load, and an icon the owner removes afterwards is never put back.
    */
-  async claimDesktopIcon(ownerId: string): Promise<boolean> {
-    const claimed = await this.kysely
+  async desktopIconPlaced(ownerId: string): Promise<boolean> {
+    const row = await this.kysely
+      .selectFrom("getting_started_owner_state")
+      .select("desktop_icon_placed_at")
+      .where("owner_id", "=", ownerId)
+      .executeTakeFirst();
+    return row?.desktop_icon_placed_at != null;
+  }
+
+  /** Idempotent: the first confirmation's time is kept. */
+  async markDesktopIconPlaced(ownerId: string): Promise<void> {
+    await this.kysely
       .insertInto("getting_started_owner_state")
       .values({ owner_id: ownerId, desktop_icon_placed_at: sql`now()` })
       .onConflict((conflict) => conflict.column("owner_id").doUpdateSet({ desktop_icon_placed_at: sql`now()` })
         .where("getting_started_owner_state.desktop_icon_placed_at", "is", null))
-      .returning("owner_id")
-      .executeTakeFirst();
-    return claimed !== undefined;
+      .execute();
   }
 }

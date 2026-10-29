@@ -7,7 +7,8 @@ function repositoryMock() {
     progress: vi.fn(async () => ({ awards: [], total: 0 })),
     award: vi.fn(async () => ({ awarded: true, points: 20, total: 20 })),
     claimAutoOpen: vi.fn(async () => true),
-    claimDesktopIcon: vi.fn(async () => true),
+    desktopIconPlaced: vi.fn(async () => false),
+    markDesktopIconPlaced: vi.fn(async () => undefined),
   };
 }
 
@@ -79,19 +80,27 @@ describe("Getting started app routes", () => {
     await expect(response.json()).resolves.toEqual({ open: true });
   });
 
-  it("claims the one-time desktop icon placement", async () => {
+  it("reports whether the desktop icon was ever placed", async () => {
+    const repository = repositoryMock();
+    const response = await appFor(repository).request("/api/getting-started/desktop-icon");
+    expect(response.status).toBe(200);
+    expect(repository.desktopIconPlaced).toHaveBeenCalledWith("owner-1");
+    await expect(response.json()).resolves.toEqual({ placed: false });
+  });
+
+  it("marks the desktop icon placed after a surface saved it", async () => {
     const repository = repositoryMock();
     const response = await post(appFor(repository), "/desktop-icon", {});
     expect(response.status).toBe(200);
-    expect(repository.claimDesktopIcon).toHaveBeenCalledWith("owner-1");
-    await expect(response.json()).resolves.toEqual({ place: true });
+    expect(repository.markDesktopIconPlaced).toHaveBeenCalledWith("owner-1");
+    await expect(response.json()).resolves.toEqual({ placed: true });
   });
 
   it("rejects a desktop-icon body with fields", async () => {
     const repository = repositoryMock();
     const response = await post(appFor(repository), "/desktop-icon", { path: "elsewhere" });
     expect(response.status).toBe(400);
-    expect(repository.claimDesktopIcon).not.toHaveBeenCalled();
+    expect(repository.markDesktopIconPlaced).not.toHaveBeenCalled();
   });
 
   it("rejects an auto-open body with fields", async () => {

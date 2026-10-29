@@ -1,4 +1,4 @@
-/** Getting started app routes (spec 639): progress, one-time awards, the first automatic open and the one-time desktop icon. */
+/** Getting started app routes (spec 639): progress, one-time awards, the first automatic open, and whether the desktop icon was placed. */
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
@@ -20,7 +20,8 @@ export interface GettingStartedAppRouteRepository {
   progress(ownerId: string): Promise<GettingStartedAppProgress>;
   award(ownerId: string, taskId: GettingStartedAppAwardableTaskId, silent: boolean): Promise<GettingStartedAppAwardResponse>;
   claimAutoOpen(ownerId: string): Promise<boolean>;
-  claimDesktopIcon(ownerId: string): Promise<boolean>;
+  desktopIconPlaced(ownerId: string): Promise<boolean>;
+  markDesktopIconPlaced(ownerId: string): Promise<void>;
 }
 
 class MissingOwnerError extends Error {
@@ -108,12 +109,21 @@ export function createGettingStartedAppRoutes(deps: {
     }
   });
 
+  app.get("/desktop-icon", async (context) => {
+    try {
+      return context.json({ placed: await repository().desktopIconPlaced(ownerId(context)) });
+    } catch (error: unknown) {
+      return handleError(context, error);
+    }
+  });
+
   app.post("/desktop-icon", writeBodyLimit, async (context) => {
     try {
       const owner = ownerId(context);
       const parsed = AutoOpenRequestSchema.safeParse(await readJson(context));
       if (!parsed.success) return context.json(INVALID, 400);
-      return context.json({ place: await repository().claimDesktopIcon(owner) });
+      await repository().markDesktopIconPlaced(owner);
+      return context.json({ placed: true });
     } catch (error: unknown) {
       return handleError(context, error);
     }

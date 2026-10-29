@@ -67,16 +67,21 @@ describe("Getting started app repository", () => {
     expect(claims.filter(Boolean)).toHaveLength(1);
   });
 
-  it("grants the desktop icon placement once per owner, separately from the first open", async () => {
-    await expect(repository.claimDesktopIcon("alice")).resolves.toBe(true);
-    await expect(repository.claimDesktopIcon("alice")).resolves.toBe(false);
-    await expect(repository.claimAutoOpen("alice")).resolves.toBe(true);
-    await expect(repository.claimDesktopIcon("bob")).resolves.toBe(true);
+  it("records the desktop icon only once a surface confirms it was saved", async () => {
+    await expect(repository.desktopIconPlaced("alice")).resolves.toBe(false);
+    // A surface that failed to save never marks it, so the next load tries again.
+    await expect(repository.desktopIconPlaced("alice")).resolves.toBe(false);
+    await repository.markDesktopIconPlaced("alice");
+    await expect(repository.desktopIconPlaced("alice")).resolves.toBe(true);
+    await expect(repository.desktopIconPlaced("bob")).resolves.toBe(false);
   });
 
-  it("grants the desktop icon placement once when surfaces race", async () => {
-    const claims = await Promise.all([repository.claimDesktopIcon("alice"), repository.claimDesktopIcon("alice")]);
-    expect(claims.filter(Boolean)).toHaveLength(1);
+  it("keeps the first placement time and the first open separate", async () => {
+    await repository.markDesktopIconPlaced("alice");
+    await repository.markDesktopIconPlaced("alice");
+    await expect(repository.desktopIconPlaced("alice")).resolves.toBe(true);
+    await expect(repository.claimAutoOpen("alice")).resolves.toBe(true);
+    await expect(repository.claimAutoOpen("alice")).resolves.toBe(false);
   });
 
   it("can bootstrap twice without losing awards", async () => {

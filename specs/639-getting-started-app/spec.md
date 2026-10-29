@@ -116,7 +116,8 @@ CREATE TABLE getting_started_owner_state (
 | `/api/getting-started/progress` | `GET` | Gateway owner auth (same as `/api/settings/get-started`) | n/a | none (no params) |
 | `/api/getting-started/awards` | `POST` | Gateway owner auth | 1 KiB (`bodyLimit`) | strict Zod `{ taskId: enum(GETTING_STARTED_APP_TASK_IDS), silent: boolean }` |
 | `/api/getting-started/auto-open` | `POST` | Gateway owner auth | 1 KiB (`bodyLimit`) | empty strict object |
-| `/api/getting-started/desktop-icon` | `POST` | Gateway owner auth | 1 KiB (`bodyLimit`) | empty strict object |
+| `/api/getting-started/desktop-icon` | `GET` | Gateway owner auth | n/a | none (no params) |
+| `/api/getting-started/desktop-icon` | `POST` | Gateway owner auth | 1 KiB (`bodyLimit`) | empty strict object; marks the icon placed after a surface saved it |
 
 - **Input:** the task ID is an enum; points are never accepted from the client.
 - **Owner scope:** `owner_id` comes from the request principal, never the body.
