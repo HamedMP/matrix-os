@@ -23,6 +23,8 @@ export interface GettingStartedAppPort {
   loadProgress(signal: AbortSignal): Promise<GettingStartedAppProgress | null>;
   award(taskId: GettingStartedAppAwardableTaskId, silent: boolean, signal?: AbortSignal): Promise<GettingStartedAppAwardResponse>;
   claimAutoOpen(signal?: AbortSignal): Promise<boolean>;
+  /** True once per owner: put the app's icon on the desktop (spec 639). */
+  claimDesktopIcon(signal?: AbortSignal): Promise<boolean>;
 }
 
 export type GettingStartedAppPoints = { kind: "loading" } | { kind: "unavailable" } | { kind: "ready"; total: number };
@@ -57,6 +59,8 @@ export function GettingStartedAppProvider({
   onToast,
   autoOpenEligible = false,
   onAutoOpen,
+  desktopIconReady = false,
+  onPlaceDesktopIcon,
   onOpen,
   onEnabledChange,
   refreshMs = GETTING_STARTED_APP_REFRESH_MS,
@@ -71,6 +75,10 @@ export function GettingStartedAppProvider({
   /** True right after the owner finishes the Get started wizard on this computer. */
   autoOpenEligible?: boolean;
   onAutoOpen?(): void;
+  /** True once this surface's desktop icon layout has loaded, so a placement is not lost to hydration. */
+  desktopIconReady?: boolean;
+  /** Adds the app's icon to the desktop; called at most once per owner. */
+  onPlaceDesktopIcon?(): void;
   /** Opens or focuses the app window, for the Help popover summary. */
   onOpen?(): void;
   /** Called when this computer starts or stops serving the app, e.g. to show its launcher entry. */
@@ -90,11 +98,14 @@ export function GettingStartedAppProvider({
   // "done" once the server answered the claim; a failed request retries on the next refresh.
   const autoOpen = useRef<"idle" | "pending" | "done">("idle");
   const autoOpenEligibleRef = useRef(autoOpenEligible);
-  const callbacks = useRef({ onToast, onAutoOpen, onEnabledChange });
+  const desktopIcon = useRef<"idle" | "pending" | "done">("idle");
+  const desktopIconReadyRef = useRef(desktopIconReady);
+  const callbacks = useRef({ onToast, onAutoOpen, onEnabledChange, onPlaceDesktopIcon });
   const enabledRef = useRef(false);
   useEffect(() => {
-    callbacks.current = { onToast, onAutoOpen, onEnabledChange };
+    callbacks.current = { onToast, onAutoOpen, onEnabledChange, onPlaceDesktopIcon };
     autoOpenEligibleRef.current = autoOpenEligible;
+    desktopIconReadyRef.current = desktopIconReady;
   });
 
   const progressKnown = useRef(false);
@@ -127,6 +138,23 @@ export function GettingStartedAppProvider({
       if (signal.aborted) return;
       autoOpen.current = "idle";
       warn("auto-open unavailable", error);
+    });
+  }, [port]);
+
+  // Same once-only shape as the first open: the server decides, a failed request retries on the next refresh.
+  const claimDesktopIcon = useCallback(() => {
+    if (!port || !desktopIconReadyRef.current || desktopIcon.current !== "idle") return;
+    const signal = lifecycle.current?.signal;
+    if (!signal || signal.aborted) return;
+    desktopIcon.current = "pending";
+    void port.claimDesktopIcon(signal).then((place) => {
+      if (signal.aborted) return;
+      desktopIcon.current = "done";
+      if (place) callbacks.current.onPlaceDesktopIcon?.();
+    }).catch((error: unknown) => {
+      if (signal.aborted) return;
+      desktopIcon.current = "idle";
+      warn("desktop icon unavailable", error);
     });
   }, [port]);
 
@@ -192,6 +220,7 @@ export function GettingStartedAppProvider({
     }
     reportEnabled(true);
     claimAutoOpen();
+    claimDesktopIcon();
     if (progress) {
       progressKnown.current = true;
       for (const award of progress.awards) awarded.current.add(award.taskId);
@@ -208,7 +237,7 @@ export function GettingStartedAppProvider({
     } catch (error: unknown) {
       if (!isAbort(error)) warn("status unavailable", error);
     }
-  }, [awardDone, claimAutoOpen, markEarned, port, reportEnabled, showTotal]);
+  }, [awardDone, claimAutoOpen, claimDesktopIcon, markEarned, port, reportEnabled, showTotal]);
 
   useEffect(() => {
     if (!port) return;
@@ -230,6 +259,11 @@ export function GettingStartedAppProvider({
   useEffect(() => {
     if (enabled && autoOpenEligible) claimAutoOpen();
   }, [enabled, autoOpenEligible, claimAutoOpen]);
+
+  // The desktop layout can finish loading after the first read.
+  useEffect(() => {
+    if (enabled && desktopIconReady) claimDesktopIcon();
+  }, [enabled, desktopIconReady, claimDesktopIcon]);
 
   const value = useMemo<GettingStartedAppState>(() => ({
     enabled,

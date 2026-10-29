@@ -848,10 +848,9 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     () => buildWebDesktopLauncherApps(installedApps, desktopMode, { gettingStartedApp: gettingStartedAppEnabled }),
     [installedApps, desktopMode, gettingStartedAppEnabled],
   );
-  const openGettingStartedApp = useCallback(({ addToDesktop }: { addToDesktop: boolean }) => {
+  const openGettingStartedApp = useCallback(() => {
     openAppOrFocus(GETTING_STARTED_APP_PATH, GETTING_STARTED_APP_TITLE);
-    if (addToDesktop) void addDesktopIcon(GETTING_STARTED_APP_PATH);
-  }, [openAppOrFocus, addDesktopIcon]);
+  }, [openAppOrFocus]);
 
   const openLauncherDestination = useCallback((name: string, path: string) => {
     if (path === "__settings__" || path === "__plugins__") {

@@ -67,11 +67,13 @@ export function DesktopGettingStartedAppHost({ children }: { children: ReactNode
   const showToast = useCallback((completion: GettingStartedAppToast) => {
     toast.custom(() => <GettingStartedAppToastView toast={completion} />);
   }, []);
-  // First automatic open only: also place the icon on the desktop (spec 639).
-  const autoOpen = useCallback(() => {
-    openGettingStartedTab();
+  // Spec 639: the icon goes on every owner's desktop once (the server decides which surface places it).
+  const desktopIconsLoaded = useDesktopIcons((state) => state.loaded);
+  const placeDesktopIcon = useCallback(() => {
     if (!api) return;
-    void useDesktopIcons.getState().add(GETTING_STARTED_PATH, api).catch((error: unknown) => {
+    void useDesktopIcons.getState().add(GETTING_STARTED_PATH, api).then((result) => {
+      if (result === "failed" || result === "desktop-full") console.warn("[getting-started-app] desktop icon not placed:", result);
+    }).catch((error: unknown) => {
       console.warn("[getting-started-app] unable to add desktop icon:", error instanceof Error ? error.name : typeof error);
     });
   }, [api]);
@@ -80,7 +82,9 @@ export function DesktopGettingStartedAppHost({ children }: { children: ReactNode
       port={port}
       onToast={showToast}
       autoOpenEligible={getStartedEnded}
-      onAutoOpen={autoOpen}
+      onAutoOpen={openGettingStartedTab}
+      desktopIconReady={desktopIconsLoaded}
+      onPlaceDesktopIcon={placeDesktopIcon}
       onOpen={openGettingStartedTab}
     >
       {children}

@@ -18,7 +18,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { ShellNotificationCard } from "@/components/ShellNotificationCard";
 import { ShellNotificationPortal } from "@/components/ShellNotificationPortal";
 import type { GettingStartedDestination, GettingStartedSettingsSection } from "../onboarding/GettingStartedPopover";
-import { createWebGettingStartedAppPort } from "./web-getting-started-app-port";
+import { useDesktopConfigStore } from "@/stores/desktop-config";
+import { GETTING_STARTED_APP_PATH, createWebGettingStartedAppPort } from "./web-getting-started-app-port";
 
 const TOAST_MS = 4_000;
 /** Several tasks can finish between polls; each gets its own toast, newest last. */
@@ -54,11 +55,20 @@ export function WebGettingStartedAppHost({
   onOpenSettings(section: GettingStartedSettingsSection): void;
   onOpenWork(destination?: GettingStartedDestination): void;
   onOpenSupport(): void;
-  /** Opens or focuses the app window; on first open it is also placed on the desktop. */
-  onOpenApp(options: { addToDesktop: boolean }): void;
+  /** Opens or focuses the app window. */
+  onOpenApp(): void;
   onEnabledChange(enabled: boolean): void;
 }) {
   const port = useMemo(() => createWebGettingStartedAppPort(), []);
+  // Spec 639: the icon goes on every owner's desktop once, after the saved layout has loaded.
+  const desktopIconsLoaded = useDesktopConfigStore((state) => state.desktopIcons !== undefined);
+  const placeDesktopIcon = useCallback(() => {
+    void useDesktopConfigStore.getState().addDesktopIcon(GETTING_STARTED_APP_PATH).then((result) => {
+      if (result === "failed" || result === "desktop-full") console.warn("[getting-started-app] desktop icon not placed:", result);
+    }).catch((error: unknown) => {
+      console.warn("[getting-started-app] unable to add desktop icon:", error instanceof Error ? error.name : typeof error);
+    });
+  }, []);
   const getStartedEnded = useGetStartedEnded();
   const [toasts, setToasts] = useState<QueuedToast[]>([]);
   // One timer per toast, removed when it fires; at most nine awardable tasks exist, all cleared on unmount.
@@ -87,7 +97,6 @@ export function WebGettingStartedAppHost({
     toastTimers.current.set(id, setTimeout(() => dismissToast(id), TOAST_MS));
   }, [dismissToast]);
 
-  const openFromSummary = useCallback(() => onOpenApp({ addToDesktop: false }), [onOpenApp]);
 
   const onAction = useCallback((action: GettingStartedAppAction) => {
     switch (action.type) {
@@ -114,8 +123,10 @@ export function WebGettingStartedAppHost({
       port={port}
       onToast={showToast}
       autoOpenEligible={getStartedEnded}
-      onAutoOpen={() => onOpenApp({ addToDesktop: true })}
-      onOpen={openFromSummary}
+      onAutoOpen={onOpenApp}
+      onOpen={onOpenApp}
+      desktopIconReady={desktopIconsLoaded}
+      onPlaceDesktopIcon={placeDesktopIcon}
       onEnabledChange={onEnabledChange}
     >
       <ActionContext value={onAction}>{children}</ActionContext>

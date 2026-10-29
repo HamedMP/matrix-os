@@ -2,6 +2,7 @@
 import {
   GettingStartedAppAutoOpenResponseSchema,
   GettingStartedAppAwardResponseSchema,
+  GettingStartedAppDesktopIconResponseSchema,
   GettingStartedAppProgressSchema,
   type GettingStartedAppAwardableTaskId,
 } from "@matrix-os/contracts";
@@ -47,6 +48,11 @@ export function createWebGettingStartedAppPort(): GettingStartedAppPort {
       const response = await request("/api/getting-started/auto-open", { method: "POST", body: "{}", signal });
       if (!response.ok) throw new Error("getting_started_auto_open_failed");
       return GettingStartedAppAutoOpenResponseSchema.parse(await response.json()).open;
+    },
+    async claimDesktopIcon(signal?: AbortSignal) {
+      const response = await request("/api/getting-started/desktop-icon", { method: "POST", body: "{}", signal });
+      if (!response.ok) throw new Error("getting_started_desktop_icon_failed");
+      return GettingStartedAppDesktopIconResponseSchema.parse(await response.json()).place;
     },
   };
 }

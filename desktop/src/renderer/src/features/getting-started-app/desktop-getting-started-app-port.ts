@@ -2,6 +2,7 @@
 import {
   GettingStartedAppAutoOpenResponseSchema,
   GettingStartedAppAwardResponseSchema,
+  GettingStartedAppDesktopIconResponseSchema,
   GettingStartedAppProgressSchema,
 } from "@matrix-os/contracts";
 import type { GettingStartedAppPort } from "@matrix-os/ui";
@@ -39,6 +40,9 @@ export function createDesktopGettingStartedAppPort(api: Pick<ApiClient, "get" | 
     },
     async claimAutoOpen(signal) {
       return GettingStartedAppAutoOpenResponseSchema.parse(await api.post("/api/getting-started/auto-open", {}, signal ? { signal } : undefined)).open;
+    },
+    async claimDesktopIcon(signal) {
+      return GettingStartedAppDesktopIconResponseSchema.parse(await api.post("/api/getting-started/desktop-icon", {}, signal ? { signal } : undefined)).place;
     },
   };
 }
