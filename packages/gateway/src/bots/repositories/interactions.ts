@@ -8,6 +8,7 @@
  * the same transaction.
  */
 import { sql, type Selectable } from "kysely";
+import { botInteractionPayloadByteLimit } from "@matrix-os/contracts";
 import type { BotInteractionsTable } from "../database.js";
 import {
   BotStateError,
@@ -22,7 +23,6 @@ import {
 } from "./shared.js";
 
 export const MAX_PENDING_INTERACTIONS_PER_OWNER = 32;
-const MAX_PAYLOAD_BYTES = 16 * 1024;
 const MAX_LIFETIME_MS = 24 * 60 * 60_000;
 const MAX_CONNECT_LIFETIME_MS = 15 * 60_000;
 const MAX_EXPIRE_BATCH = 200;
@@ -77,7 +77,7 @@ function fromRow(row: Selectable<BotInteractionsTable>): BotInteractionRecord {
 
 function boundedJson(value: Record<string, unknown>): string {
   const encoded = JSON.stringify(value);
-  if (encoder.encode(encoded).byteLength > MAX_PAYLOAD_BYTES) throw new BotStateError("too_large");
+  if (encoder.encode(encoded).byteLength > botInteractionPayloadByteLimit(value)) throw new BotStateError("too_large");
   return encoded;
 }
 

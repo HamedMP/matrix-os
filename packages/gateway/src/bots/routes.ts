@@ -1,3 +1,4 @@
+import {createBotRoutineRoutes} from "./routine-routes.js";
 /**
  * Bots HTTP routes (spec 536, contracts/bots-http-api.md). Every route
  * authenticates the request principal; a bot never stands in for a person.
@@ -46,6 +47,7 @@ function errorResponse(context: Context, code: ErrorCode) {
 
 export function createBotRoutes(options: {
   recipes?: Pick<BotRecipeCatalog, "list">;
+  routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"list"|"control">;
   botChats?: BotChatLookup;
   tasks?: (ownerId: string, chatId: string) => Promise<BotTaskSummary[]>;
   instantiation?: Pick<BotInstantiation, "instantiate"> & Partial<Pick<BotInstantiation, "createCustom">>;
@@ -61,6 +63,7 @@ export function createBotRoutes(options: {
   getPrincipal(context: Context): RequestPrincipal;
 }): Hono {
   const routes = new Hono();
+  routes.route("/",createBotRoutineRoutes({routines:options.routines,getPrincipal:options.getPrincipal}));
   routes.route('/', createChatGptPlanPeerRoutes({ peers: options.chatgptPlanPeers, getPrincipal: options.getPrincipal }));
   routes.route('/', createBotProviderConnectionRoutes({ service: options.providerConnections, getPrincipal: options.getPrincipal }));
   const limit = bodyLimit({
