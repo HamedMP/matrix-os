@@ -1,0 +1,27 @@
+# ENG-318: Chat's Codex Terminal entry
+
+Tracking: [ENG-318](https://linear.app/matrix-os/issue/ENG-318/fixchat-refresh-cached-providers-after-confirmed-login), existing Draft [PR2691](https://github.com/HamedMP/matrix-os/pull/2691). This is a local follow-up to `7c5cce72b15a3a8bad420ea92ffcb890094e46af`; no publication or review/CI trigger is part of this work.
+
+## Requirement and observed failure
+
+The user reported that browser authorization followed by returning to Chat left Codex's model list empty, then confirmed: “从setting里登陆是可以的 马上就有了 那就做terminal这边的修复”. Their private 47.97-second Desktop recording shows official browser approval at about 30 seconds, `Successfully logged in` in the native CLI at 33 seconds, and `Runtime unavailable / Connect Codex` in the same Chat at 40 seconds. The unsent draft remains. Raw evidence contains account/authorization information and is retained outside Git; it must be redacted before publication.
+
+The earlier Settings success and one real Codex reply are historical evidence for that other entry. They do not qualify this failed Terminal sequence or the new client candidate.
+
+## Cause and repair
+
+`useProviderSetup` routed Chat's catalog or coding-provider summary action to a general Terminal tab containing `codex login --device-auth`. Its summary refresh ran when the Terminal opened, before the human authorized the browser. This route never supplied the native workflow's canonical completion receipt, owner-bound source/health eviction or renderer invalidation.
+
+Both validated `codex_connect` / `codex_reconnect` action branches now use the existing capability-negotiated `openai_terminal` native workflow. The visible login still runs in Terminal. The existing gateway verifies the exact inner command result and native account proof, records the private connection/enablement, evicts that runtime owner's Codex source/health cache, then publishes success. The client observes that exact workflow independently of Chat's component lifetime and forwards only its accepted success receipt to the existing driver-scoped catalog invalidation. The catalog is then silently read without forcing every provider. No optimistic model availability, new endpoint, credential store or authentication policy is introduced.
+
+The observer holds at most one foreground Codex login, coalesces repeated starts, backs off transient reads, and ends at the earlier server receipt deadline or ten minutes. A later click can reopen the same Terminal, including after transient discovery failure. A lost start response is recovered through the server's active operation; if it already completed, the original bounded idempotency key is replayed to retrieve its receipt. No automatic repeat mutation is scheduled. Owner, selected Computer handle, platform, runtime, authentication generation and runtime-generation changes fence late results. Failed/cancelled/expired or mismatched receipts do not invalidate Chat. An unavailable native Terminal capability fails closed rather than running the old unobserved command. Other providers and install actions retain their existing routes. Arbitrary commands manually typed into an unrelated Terminal are outside this managed Chat setup contract.
+
+## Code validation and remaining live check
+
+- The new `tests/desktop/chat-terminal-login-cache.test.tsx` first failed against the original producer: it created a raw Terminal instead of the canonical login request. Its real Chat setup hook, public workflow transport, connection store, terminal handoff and catalog cache remain real; only HTTP/native results are synthetic. It covers mounted Chat/draft retention, completion after setup unmount, both action branches, duplicate clicks, failed/cancelled/expired completions, stale identities, mismatched receipts and unsupported capability. The small test textarea proves this setup does not unmount its caller; real composer draft behavior still requires the live check below.
+- Existing gateway suites exercise exact Terminal command completion, canonical consent before source invalidation and success publication, owner isolation, cancellation and proof refusal. Synthetic tests do not constitute OAuth/device acceptance.
+- Run adjacent suites and renderer types on the final source; retain exact commands and exit receipts outside the repository. Public documentation remains a separate site-repository draft in `public-docs-draft.md` until publication is authorized.
+
+The installed Additional Computer/dev Host remains `7c5cce72` plus the separately recorded Next symlink repair. This follow-up changes only Desktop renderer routing/observation, and reuses that Host's existing workflow contract. A new client build must identify its own commit; the old R2 QA client is not evidence for this fix. Do not change or log out the existing QA session merely to prepare a build.
+
+Minimum English live sequence on the matching isolated client: keep an existing Chat and unsent draft; choose **Connect Codex**; complete the existing Terminal's official browser authorization; return to that same Chat without reload or **Refresh provider status**; verify Codex models appear, the draft remains and unrelated providers remain available. Record exact client/Host identities and an English capture excluding codes, credentials and private content. A failed/cancelled login must not grant models. Fresh OAuth, live model requests, QA window actions and deployment are not performed by local code validation.

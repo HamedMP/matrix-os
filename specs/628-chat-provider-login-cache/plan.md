@@ -1,5 +1,7 @@
 # Chat provider cache after login
 
+**Terminal follow-up (29 October):** the user's Desktop recording disproved coverage of Chat's `Connect Codex` action: the official CLI printed `Successfully logged in`, but the already-open model picker still had no Codex models. Settings sign-in was separately confirmed to update immediately. [Terminal entry repair and validation](terminal-entry-20261029.md) records the missing producer boundary, its repair and the remaining matching-client live check. The existing QA build does not contain this follow-up.
+
 **Current continuation (27 October):** [Current-main integration and live acceptance](rebase-20261027.md) supersedes source/dependency statements below. PR2545 is normally merged; native Codex no longer waits for producer merge. Old artifacts/inventory do not qualify the new local candidate. No push, CI/review request or deployment is authorized here.
 
 **Current continuation (18 October):** see [Main-only source, current verification and live checklist](main-only-continuation.md). Production checkpoint `fb0b93ce7e` rebases only these cache commits onto Main `101fbd5f`. Claude and local ChatGPT plan no longer depend on the historical bcb+6f combination; native Codex remains gated on its producer landing normally. The sections below preserve the 17 October checkpoint and are not current publication or runtime receipts.
@@ -18,7 +20,7 @@ Base: `8ac1c311554eb0700032d6e5eff0f63da09f9a53`. Related completed contracts: E
 
 No provider/model calls, credential reads, OAuth, GUI, runtime/deployment changes, CI, Slack or merge. Only synthetic mocks; local tests are not live visual acceptance. Required live surface evidence and production builds remain deferred under this task's explicit restrictions. Inspect current workflows (including #2666) before any publication; keep a local reviewable patch if publishing would trigger unapproved costs. Future Main synchronization uses rebase.
 
-Invariants: the gateway remains admission authority; session memory stores only nonsecret projection/receipt IDs; successful login is a read trigger, never optimistic availability. Identity and epoch fences must reject obsolete responses. Failed refresh retains labels and suspends only affected routes. No new periodic timers or provider capability changes.
+Invariants: the gateway remains admission authority; session memory stores only nonsecret projection/receipt IDs; successful login is a read trigger, never optimistic availability. Identity and epoch fences must reject obsolete responses. Failed refresh retains labels and suspends only affected routes. No new periodic catalog discovery or provider capability changes. The Terminal follow-up observes only its explicit foreground workflow within the existing ten-minute receipt lifetime, independently of the initiating Chat component.
 
 Review corrections: confirmed Claude workflow completion evicts only the owner's existing Claude inventory/health caches before publishing success. Account replacement cannot carry a five-second old inventory into the five-minute renderer cache. In-flight and queued explicit refresh intent survives login supersession. Cancelled login receipts update local workflow state without full Settings/catalog renewal.
 
