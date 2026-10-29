@@ -1,4 +1,4 @@
-import { lstat, mkdir, open, rename, unlink, type FileHandle } from "node:fs/promises";
+import { link, lstat, mkdir, open, rename, unlink, type FileHandle } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 
@@ -7,6 +7,8 @@ export async function writeUtf8FileAtomic(
   data: string,
   mode = 0o600,
   hooks?: {
+    /** Publish a complete file only if the destination is still absent. */
+    exclusive?: boolean;
     beforeCommit?(tempPath: string, staged: FileHandle): Promise<void>;
     beforeCleanup?(): Promise<void>;
   },
@@ -26,7 +28,10 @@ export async function writeUtf8FileAtomic(
     await staged.writeFile(data, "utf8");
     await hooks?.beforeCommit?.(tmp, staged);
     await assertStaged();
-    await rename(tmp, path);
+    if (hooks?.exclusive) {
+      await link(tmp, path);
+      await unlink(tmp);
+    } else await rename(tmp, path);
   } catch (err) {
     if (staged) await (async () => {
       await hooks?.beforeCleanup?.();

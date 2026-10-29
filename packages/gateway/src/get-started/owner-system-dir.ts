@@ -1,5 +1,5 @@
 import { constants, type Stats } from "node:fs";
-import { lstat, open, realpath, writeFile, type FileHandle } from "node:fs/promises";
+import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { writeUtf8FileAtomic } from "../shell/atomic-write.js";
 
@@ -17,7 +17,7 @@ export interface PinnedSystemDir {
   /** A regular file's text, or null when it does not exist. */
   readFile(name: string, maxBytes: number): Promise<string | null>;
   writeAtomic(name: string, text: string, mode: number): Promise<void>;
-  /** Creates the file only when none exists; false when one already does. */
+  /** Atomically creates a complete file only when none exists; false if one already does. */
   createExclusive(name: string, text: string): Promise<boolean>;
 }
 
@@ -104,7 +104,11 @@ export async function withPinnedSystemDir<T>(homePath: string, use: (dir: Pinned
       async createExclusive(name, text) {
         await assertUnchanged();
         try {
-          await writeFile(path(name), text, { flag: "wx", mode: 0o644 });
+          await writeUtf8FileAtomic(path(name), text, 0o644, {
+            exclusive: true,
+            beforeCommit: assertUnchanged,
+            beforeCleanup: process.platform === "linux" ? undefined : assertUnchanged,
+          });
           return true;
         } catch (error: unknown) {
           if (errorCode(error) === "EEXIST") return false;

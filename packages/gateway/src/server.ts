@@ -842,6 +842,7 @@ export async function createGateway(config: GatewayConfig) {
   let gatewayCollaboration: GatewayCollaborationRuntime | null = null;
   let scopeRuntimeHost: ScopeRuntimeHost | undefined;
   let botServices: BotServices | undefined;
+  let getStartedAgents: ChatAgentStore | null = null;
   let companyBotSetup: ReturnType<typeof createCompanyBotSetup>;
   let slackRuntime: Awaited<ReturnType<typeof startOwnerSlack>> | undefined;
   let messagingRepository: MessagingKyselyRepository | null = null;
@@ -1597,6 +1598,7 @@ export async function createGateway(config: GatewayConfig) {
     });
     const chatAgents = new ChatAgentStore({ homePath, db: chatRepository.kysely });
     await chatAgents.bootstrap();
+    getStartedAgents = chatAgents;
     if (gatewayCollaboration && collaborationConfig?.ownerId) {
       companyBotSetup = createCompanyBotSetup({
         homePath, ownerId: collaborationConfig.ownerId, repository: chatRepository,
@@ -1815,6 +1817,7 @@ export async function createGateway(config: GatewayConfig) {
   registerSettingsRoutes({
     app, homePath, settingsRoutes, botServices,
     getStartedEnabled: process.env.MATRIX_GET_STARTED_ENABLED === "true",
+    getStartedEnrollment: { agents: getStartedAgents, ownerId: terminalRuntimeOwnerId, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT },
     getOwnerId: (c) => getOptionalRequestPrincipal(c)?.userId ?? null,
     osViewState: osViewStateRepository ? {
       repository: osViewStateRepository,
