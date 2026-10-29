@@ -16,9 +16,14 @@ const claim = { ownerId: binding.ownerId, googleAccountId: account, runId: bindi
 function fixture(options: { missing?: boolean; prompt?: boolean; write?: boolean } = {}) {
   const controller = new AbortController(); const events: any[] = [];
   const call = vi.fn(async () => ({ data: { ok: true } }));
+  let consentActive = options.prompt === false;
+  let currentClaim = structuredClone(claim);
   const prepare = vi.fn(async (_binding: ManagedPiRuntimeBinding, _account: string, signal: AbortSignal, requestConsent: GoogleCollectionClientDependencies['requestConsent']) => {
-    if (options.prompt !== false && await requestConsent(structuredClone(notice), signal) !== true) throw new Error('not accepted');
-    return claim;
+    if (!consentActive) {
+      if (await requestConsent(structuredClone(notice), signal) !== true) throw new Error('not accepted');
+      consentActive = true;
+    }
+    return structuredClone(currentClaim);
   });
   let permissionMode = 'full_access';
   const tools = createManagedPiOwnerTools({ authority: async () => ({ permissionMode }), signalFor: () => controller.signal,
@@ -30,7 +35,7 @@ function fixture(options: { missing?: boolean; prompt?: boolean; write?: boolean
   const run = async () => { await open; return tools.dispatch(binding, request, controller.signal); };
   const submit = (decision: 'approve' | 'decline' | 'cancel', ownerId = binding.ownerId) => tools.submit({ owner: { type: 'personal', ownerId }, chatId: binding.chatId, runId: binding.runId,
     approvalId: events.filter(e => e.type === 'approval.requested').at(-1).approvalId, decision, clientRequestId: 'client_one' });
-  return { tools, controller, events, call, prepare, run, submit, supervise: () => { permissionMode = 'supervised'; } };
+  return { tools, controller, events, call, prepare, run, submit, request, replaceClaim: (patch: Partial<GoogleProcessingClaim>) => { currentClaim = { ...currentClaim, ...patch }; }, revoke: () => { consentActive = false; }, supervise: () => { permissionMode = 'supervised'; } };
 }
 describe('owner Gmail processing consent', () => {
   it('requires a separate owner decision even in a full-access read and privately passes the exact claim/account', async () => {
@@ -71,6 +76,60 @@ describe('owner Gmail processing consent', () => {
     const f = fixture({ missing: true }); await expect(f.run()).rejects.toThrow(); expect(f.call).not.toHaveBeenCalled(); await f.tools.closeRun(binding.runId);
   });
   it('uses an already-current consent without an invented extra prompt', async () => {
-    const f = fixture({ prompt: false }); await f.run(); expect(f.events).toEqual([]); expect(f.prepare).toHaveBeenCalledOnce(); expect(f.call).toHaveBeenCalledOnce(); await f.tools.closeRun(binding.runId);
+    const f = fixture({ prompt: false }); await f.run(); expect(f.events).toEqual([]); expect(f.prepare).toHaveBeenCalledTimes(2); expect(f.call).toHaveBeenCalledOnce(); await f.tools.closeRun(binding.runId);
   });
+});
+
+
+describe('Gmail consent preflight deadline', () => {
+  it('waits for the person before the short external dispatch deadline starts', async () => {
+    const f = fixture();
+    const prepared = f.tools.prepare(binding, f.request, f.controller.signal);
+    await vi.waitFor(() => expect(f.events[0]?.type).toBe('approval.requested'), { timeout: 250 });
+    await new Promise(resolve => setTimeout(resolve, 60));
+    expect(f.call).not.toHaveBeenCalled();
+    await f.submit('approve'); await prepared;
+    const result = await f.tools.dispatch(binding, f.request, AbortSignal.timeout(30));
+    expect(result.ok).toBe(true);
+    expect(f.events.filter(e => e.type === 'approval.requested')).toHaveLength(1);
+    expect(f.prepare).toHaveBeenCalledTimes(2);
+    expect(f.call).toHaveBeenCalledOnce();
+    await f.tools.closeRun(binding.runId);
+  });
+  it('refuses consent invalidated after preflight without opening another dispatch-time prompt', async () => {
+    const f = fixture();
+    const prepared = f.tools.prepare(binding, f.request, f.controller.signal);
+    await vi.waitFor(() => expect(f.events[0]?.type).toBe('approval.requested'), { timeout: 250 });
+    await f.submit('approve'); await prepared; f.revoke();
+    await expect(f.tools.dispatch(binding, f.request, AbortSignal.timeout(30))).rejects.toThrow();
+    expect(f.events.filter(e => e.type === 'approval.requested')).toHaveLength(1);
+    expect(f.call).not.toHaveBeenCalled();
+    await f.tools.closeRun(binding.runId);
+  });
+});
+
+
+it.each([
+  { consentId: '423e4567-e89b-42d3-a456-426614174000' }, { consentRevision: 2 },
+  { profileId: '523e4567-e89b-42d3-a456-426614174000' }, { profileRevision: 2 },
+  { routeDigest: 'b'.repeat(64) }, { executionGeneration: '2' },
+  { policyExpiresAt: new Date(Date.now() + 180000).toISOString() },
+])('rejects replacement authorized processing authority after preflight: %j', async patch => {
+  const f = fixture({ prompt: false });
+  await f.tools.prepare(binding, f.request, f.controller.signal); f.replaceClaim(patch);
+  await expect(f.tools.dispatch(binding, f.request, f.controller.signal)).rejects.toThrow();
+  expect(f.call).not.toHaveBeenCalled(); expect(f.events).toEqual([]);
+  await f.tools.closeRun(binding.runId);
+});
+
+it.each([-1000, 1000])('never expands the preflight collection expiry (%i)', async change => {
+  const f = fixture({ prompt: false });
+  await f.tools.prepare(binding, f.request, f.controller.signal);
+  const next = new Date(Date.parse(claim.collectionExpiresAt) + change).toISOString();
+  f.replaceClaim({ collectionExpiresAt: next });
+  await f.tools.dispatch(binding, f.request, f.controller.signal);
+  expect(f.call).toHaveBeenCalledWith(binding.ownerId,
+    expect.objectContaining({ processingClaim: expect.objectContaining({ collectionExpiresAt: change < 0 ? next : claim.collectionExpiresAt }) }),
+    expect.any(AbortSignal));
+  await f.tools.closeRun(binding.runId);
 });
