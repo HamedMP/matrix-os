@@ -127,27 +127,45 @@ function availableAgents(value: unknown): string[] {
     .map((agent) => agent.agent);
 }
 
+/** GitHub counts when the gh CLI is signed in or the GitHub integration is connected. */
+export function gettingStartedGithubStatus(results: GettingStartedResults): GettingStartedStepStatus {
+  return alternativeCompletionStatus(
+    statusFrom(results.github, (value) => GithubStatusSchema.parse(value).authenticated),
+    statusFrom(results.integrations, (value) => connectedServices(value).has("github")),
+  );
+}
+
+/** Whether every named integration service is connected. */
+export function gettingStartedServicesStatus(
+  results: GettingStartedResults,
+  services: readonly string[],
+): GettingStartedStepStatus {
+  return statusFrom(results.integrations, (value) => {
+    const connected = connectedServices(value);
+    return services.every((service) => connected.has(service));
+  });
+}
+
+/** Whether Codex or Claude is signed in. */
+export function gettingStartedAgentStatus(results: GettingStartedResults): GettingStartedStepStatus {
+  return statusFrom(results.agents, (value) => availableAgents(value).length > 0);
+}
+
+/** Whether the owner has at least one chat. */
+export function gettingStartedChatStatus(results: GettingStartedResults): GettingStartedStepStatus {
+  return statusFrom(results.chats, (value) => ChatsSchema.parse(value).items.length > 0);
+}
+
 export function deriveGettingStartedSnapshot(
   results: GettingStartedResults,
 ): GettingStartedSnapshot {
-  const githubCliStatus = statusFrom(
-    results.github,
-    (value) => GithubStatusSchema.parse(value).authenticated,
-  );
-  const githubIntegrationStatus = statusFrom(
-    results.integrations,
-    (value) => connectedServices(value).has("github"),
-  );
   const statuses: Record<GettingStartedStepId, GettingStartedStepStatus> = {
-    github: alternativeCompletionStatus(githubCliStatus, githubIntegrationStatus),
-    "email-calendar": statusFrom(results.integrations, (value) => {
-      const services = connectedServices(value);
-      return services.has("gmail") && services.has("google_calendar");
-    }),
-    agent: statusFrom(results.agents, (value) => availableAgents(value).length > 0),
+    github: gettingStartedGithubStatus(results),
+    "email-calendar": gettingStartedServicesStatus(results, ["gmail", "google_calendar"]),
+    agent: gettingStartedAgentStatus(results),
     "first-work": alternativeCompletionStatus(
       statusFrom(results.projects, (value) => ProjectsSchema.parse(value).projects.length > 0),
-      statusFrom(results.chats, (value) => ChatsSchema.parse(value).items.length > 0),
+      gettingStartedChatStatus(results),
     ),
     billing: statusFrom(
       results.billing,

@@ -54,7 +54,7 @@ The Get started wizard (spec 635) runs once, before the desktop. This app is wha
 | `invite-friends` | Go further | Invite friends | 100 per friend | Needs referrals ([GTM-529](https://linear.app/matrix-os/issue/GTM-529/affiliate-links-for-users)) | Hidden until GTM-529 ships |
 
 - A task without a reliable signal yet shows **unavailable** (no chip, button still works) and is never marked Done by guesswork. It counts toward the 10 but not toward "done".
-- Points are fixed per task on the server. 10 tasks add up to 260 points, plus 100 for each friend once referrals exist.
+- Points are fixed per task on the server. The nine tasks other than Invite friends add up to 240 points; Invite friends adds 100 per friend once referrals exist.
 - Buttons only open places that already exist. This app adds no new connect or sign-in flows.
 
 **Toast.** When a task turns Done while the owner is signed in, Matrix shows "Slack connected +20 pts" (task-specific copy) in the shared shell notification stack (`ShellNotificationPortal`), whether or not the app is open. Tasks that were already Done the first time they are seen are awarded silently.
@@ -84,7 +84,7 @@ The `__getting-started__` path must never reach `AppViewer` (repo rule for `__�
 
 ## Storage
 
-Owner Postgres, two tables in a new versioned migration set (`getting_started_schema_migrations`, same runner pattern as `bots/database-migrations.ts`):
+Owner Postgres, two tables created idempotently at gateway startup (`CREATE TABLE IF NOT EXISTS`, the same bootstrap pattern as `os-view-state/repository.ts`); a versioned migration set is only needed once a column changes:
 
 ```sql
 CREATE TABLE getting_started_awards (
@@ -104,7 +104,8 @@ CREATE TABLE getting_started_owner_state (
 
 - Award: `INSERT … ON CONFLICT (owner_id, task_id) DO NOTHING RETURNING points`. One statement, so two windows or two surfaces racing cannot double-award.
 - Total: `SELECT sum(points)` for the owner. No stored counter, so nothing can drift.
-- Auto-open: `UPDATE getting_started_owner_state SET auto_opened_at = now() WHERE owner_id = $1 AND auto_opened_at IS NULL` (upsert first). Only the surface whose update changed a row opens the app, so it opens once across Web and Electron.
+- Auto-open: `INSERT … ON CONFLICT (owner_id) DO UPDATE SET auto_opened_at = now() WHERE auto_opened_at IS NULL RETURNING owner_id`. Only the request that gets a row back opens the app, so it opens once across Web and Electron.
+- Invite friends is not awardable here: its points are per friend and depend on referrals.
 - Referral awards (later) need a per-friend key; that is a later migration, not a reason to change this table now.
 
 ## Security architecture
@@ -131,7 +132,8 @@ CREATE TABLE getting_started_owner_state (
 
 ## Integration wiring
 
-- `server.ts`: create the Getting started repository from the owner database handle the bot and chat repositories already use, run its migrations at startup with the others, mount the routes under `/api/getting-started`, and include the repository in the shutdown close path. It does not own the pool and must not end it.
+- `startup/owner-database.ts`: create `GettingStartedAppRepository` on the shared owner Kysely handle and bootstrap its tables, next to the OS-view state repository. It does not own the pool, so its `destroy()` never ends it; the owner database startup owns shutdown.
+- `server/settings-routes.ts`: mount the routes under `/api/getting-started`, covered by the gateway's owner auth like every other `/api/*` route. `server.ts` passes only the flag and the repository.
 - No kernel IPC tools and no `globalThis`. The UI reaches the gateway through each shell's existing authenticated client.
 - Feature flag `MATRIX_GETTING_STARTED_APP_ENABLED`, read like the wizard's `MATRIX_GET_STARTED_ENABLED`, gates the routes, icon, auto-open and popover change, so it can ship dark. With the flag off the routes return `404` and the shells show today's popover.
 

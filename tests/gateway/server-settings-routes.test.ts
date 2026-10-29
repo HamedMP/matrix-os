@@ -10,12 +10,23 @@ afterEach(() => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
-function setup(osViewState: Parameters<typeof registerSettingsRoutes>[0]["osViewState"]) {
+type Options = Parameters<typeof registerSettingsRoutes>[0];
+
+function setup(
+  osViewState: Options["osViewState"],
+  gettingStartedApp: Pick<Options, "gettingStartedAppEnabled" | "gettingStartedAppRepository"> = {
+    gettingStartedAppEnabled: false,
+    gettingStartedAppRepository: null,
+  },
+) {
   const homePath = mkdtempSync(join(tmpdir(), "settings-routes-"));
   homes.push(homePath);
   const app = new Hono();
   const settingsRoutes = new Hono().get("/appearance", (c) => c.json({ theme: "light" }));
-  registerSettingsRoutes({ app, homePath, settingsRoutes, getStartedEnabled: false, getOwnerId: () => "owner", botServices: null, osViewState });
+  registerSettingsRoutes({
+    app, homePath, settingsRoutes, getStartedEnabled: false, getOwnerId: () => "owner", botServices: null, osViewState,
+    ...gettingStartedApp,
+  });
   return app;
 }
 
@@ -32,5 +43,16 @@ describe("settings route registration", () => {
     const response = await setup({ repository, getOwnerId: () => "owner" }).request("/api/os-view-state");
     expect(response.status).toBe(200);
     expect(repository.getOrCreate).toHaveBeenCalledWith("owner");
+  });
+
+  it("mounts the Getting started app behind its flag", async () => {
+    expect((await setup(null).request("/api/getting-started/progress")).status).toBe(404);
+    expect((await setup(null, { gettingStartedAppEnabled: true, gettingStartedAppRepository: null })
+      .request("/api/getting-started/progress")).status).toBe(503);
+    const repository = { progress: vi.fn(async () => ({ awards: [], total: 0 })), award: vi.fn(), claimAutoOpen: vi.fn() };
+    const response = await setup(null, { gettingStartedAppEnabled: true, gettingStartedAppRepository: repository })
+      .request("/api/getting-started/progress");
+    expect(response.status).toBe(200);
+    expect(repository.progress).toHaveBeenCalledWith("owner");
   });
 });

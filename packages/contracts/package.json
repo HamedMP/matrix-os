@@ -102,6 +102,7 @@
     "#get-started-connect": "./src/get-started-connect.ts",
     "#get-started-wizard": "./src/get-started-wizard.ts",
     "#getting-started": "./src/getting-started.ts",
+    "#getting-started-app": "./src/getting-started-app.ts",
     "#integration-connections": "./src/integration-connections.ts",
     "#onboarding-widget": "./src/onboarding-widget.ts",
     "#onboarding-widget-catalog": "./src/onboarding-widget-catalog.ts",
