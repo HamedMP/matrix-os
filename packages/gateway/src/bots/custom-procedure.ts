@@ -13,10 +13,10 @@ import { MANAGED_CUSTOM_OPERATION_PREFIX } from "./custom-creation-authority.js"
 export function createBotProcedureResolver(deps: {
   db: BotExecutor; agents: Pick<ChatAgentStore, "get" | "matchesCreationHash">; recipes: BotRecipeCatalog; customRecipes: ChatAgentRecipeResolver;
 }) {
-  async function assert(ownerId: string, agent: ChatAgent, chatId?: string, revision?: number) {
+  async function assert(ownerId: string, agent: ChatAgent, chatId?: string, revision?: number,executor:BotExecutor=deps.db) {
     if (!isManagedCustomBot(agent) || agent.archived || revision !== undefined && agent.revision !== revision
       || agent.recipe?.skills.includes("matrix-jev-email-triage")) throw new BotRouteError("model_unavailable");
-    const operation = await deps.db.selectFrom("bot_operations as operation")
+    const operation = await executor.selectFrom("bot_operations as operation")
       .innerJoin("bot_chat_bindings as binding", "binding.chat_id", "operation.chat_id")
       .innerJoin("chats as chat", "chat.id", "binding.chat_id")
       .select(["operation.chat_id", "operation.payload_hash"]).where("operation.owner_id", "=", ownerId).where("operation.bot_id", "=", agent.id)
@@ -37,11 +37,11 @@ export function createBotProcedureResolver(deps: {
       await assert(ownerId, agent);
       return composeManagedCustomDefinition(agent, deps.customRecipes);
     },
-    async revalidate(binding: BotRuntimeBinding): Promise<void> {
+    async revalidate(binding: BotRuntimeBinding,executor:BotExecutor=deps.db): Promise<void> {
       if (binding.managedDefinitionRevision === undefined) return;
       const agent = await deps.agents.get({ type: "personal", ownerId: binding.ownerId }, binding.botId);
       if (!agent) throw new BotRouteError("model_unavailable");
-      await assert(binding.ownerId, agent, binding.chatId, binding.managedDefinitionRevision);
+      await assert(binding.ownerId, agent, binding.chatId, binding.managedDefinitionRevision,executor);
       const selected = agent.selection;
       // Automatic was explicitly saved by the owner. Admission chooses only a
       // qualified funded/key source; a personal subscription never participates.
