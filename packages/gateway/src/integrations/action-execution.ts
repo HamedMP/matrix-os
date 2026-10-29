@@ -60,6 +60,11 @@ export async function executeIntegrationAction(opts: {
     if (!pipedream.readDriveFile) throw new DriveContentError();
     return { data: await pipedream.readDriveFile({ ...params, externalUserId, accountId: connection.pipedream_account_id }) };
   }
+  if (serviceId === "gmail" && actionId === "delete_unused_label") {
+    if (!pipedream.deleteUnusedGmailLabel) throw new Error("Integration action unavailable");
+    return { data: await pipedream.deleteUnusedGmailLabel({ ...params, externalUserId,
+      accountId: connection.pipedream_account_id }, ...boundedControl) };
+  }
   if (serviceId === "gmail" && actionId === "get_message_text") {
     if (!pipedream.boundedGmailGet) throw new BoundedPipedreamReadError();
     return { data: await pipedream.boundedGmailGet({ externalUserId, accountId: connection.pipedream_account_id,

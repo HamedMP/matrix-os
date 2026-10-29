@@ -23,6 +23,7 @@ const actions: Record<string, Record<string, unknown>> = {
   create_draft: { subject: "Draft", body: "Draft content" }, search: { query: "in:inbox" }, list_labels: {},
   list_history: { startHistoryId: "9007199254740993" }, create_label: { name: "Reviewed" },
   modify_message: { messageId: "message", addLabelIds: ["Label_one"] },
+  delete_unused_label: { labelId: "Label_123", expectedName: "Synthetic" },
 };
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -137,7 +138,7 @@ describe.each([false, true])("Gmail send admission native=%s", native => {
   it.each(Object.entries(actions))("guards the reviewed %s catalog action without entering the SDK proxy", async (actionId, params) => {
     const f = await fixture(native); const beforeSend = vi.fn(async (signal: AbortSignal) => { expect(signal.aborted).toBe(false); });
     expect(Object.keys(GMAIL_SERVICE.actions).sort()).toEqual(Object.keys(actions).sort());
-    if (actionId === "get_message_text") {
+    if (actionId === "get_message_text" || actionId === "delete_unused_label") {
       if (!native) {
         await expect(executeIntegrationAction({ pipedream: f.client, externalUserId: identity.externalUserId,
           connection: { pipedream_account_id: f.accountId }, def: GMAIL_SERVICE, actionDef: GMAIL_SERVICE.actions[actionId],
@@ -145,15 +146,20 @@ describe.each([false, true])("Gmail send admission native=%s", native => {
         expect(beforeSend).not.toHaveBeenCalled(); expect(f.fetcher).not.toHaveBeenCalled();
         expect(mocks.get).not.toHaveBeenCalled(); expect(mocks.post).not.toHaveBeenCalled(); return;
       }
-      const payload = { mimeType: "text/plain", filename: "", body: { size: 1 } };
-      f.fetcher.mockResolvedValueOnce(Response.json({ id: "message", payload }))
-        .mockResolvedValueOnce(Response.json({ id: "message", payload: { ...payload, body: { size: 1, data: "YQ" } } }));
+      if (actionId === "delete_unused_label") {
+        f.fetcher.mockResolvedValueOnce(Response.json({ id: "Label_123", name: "Synthetic", type: "user", messagesTotal: 0, threadsTotal: 0 }))
+          .mockResolvedValueOnce(Response.json({})).mockResolvedValueOnce(new Response(null, { status: 404 }));
+      } else {
+        const payload = { mimeType: "text/plain", filename: "", body: { size: 1 } };
+        f.fetcher.mockResolvedValueOnce(Response.json({ id: "message", payload }))
+          .mockResolvedValueOnce(Response.json({ id: "message", payload: { ...payload, body: { size: 1, data: "YQ" } } }));
+      }
     }
     await executeIntegrationAction({ pipedream: f.client, externalUserId: identity.externalUserId,
       connection: { pipedream_account_id: f.accountId }, def: GMAIL_SERVICE, actionDef: GMAIL_SERVICE.actions[actionId],
       serviceId: "gmail", actionId, params, beforeSend });
     expect(Object.keys(GMAIL_SERVICE.actions).sort()).toEqual(Object.keys(actions).sort());
-    const sends = actionId === "get_message_text" ? 2 : 1;
+    const sends = actionId === "delete_unused_label" ? 3 : actionId === "get_message_text" ? 2 : 1;
     expect(beforeSend).toHaveBeenCalledTimes(sends); expect(f.fetcher).toHaveBeenCalledTimes(sends);
     expect(mocks.get).not.toHaveBeenCalled(); expect(mocks.post).not.toHaveBeenCalled();
     const [url, init] = f.fetcher.mock.calls[0]!;

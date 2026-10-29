@@ -155,6 +155,13 @@ export const GMAIL_SERVICE: ServiceDefinition = {
       paramsSchema: z.strictObject({ name: z.string().min(1).max(100).regex(/^[^\x00-\x1f\x7f]+$/).refine((s) => s.trim().length > 0) }),
       directApi: { method: "POST", url: `${BASE}/labels`, mapBody: (p) => ({ name: p.name }) },
     },
+    delete_unused_label: {
+      risk: "destructive",
+      description: "Delete a named unused user label using a native Matrix Gmail connection. Checks its exact name and empty counts first, and confirms absence afterward. Deleting a label also removes it from any messages to which it is applied; never target a preexisting label without explicit owner approval.",
+      params: { labelId: { type: "string", required: true }, expectedName: { type: "string", required: true } },
+      paramsSchema: z.strictObject({ labelId: z.string().max(128).regex(/^Label_[A-Za-z0-9_-]{1,122}$/),
+        expectedName: z.string().min(1).max(100).regex(/^[^\x00-\x1f\x7f]+$/).refine(s => s.trim().length > 0) }),
+    },
     modify_message: {
       risk: "write",
       description: "Explicitly add/remove labels on one message; remove INBOX to archive or UNREAD to mark read",

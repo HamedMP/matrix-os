@@ -1,3 +1,4 @@
+import type { createNativeUnusedLabelDelete } from './native-gmail/unused-label.js';
 import { createGuardedPipedreamGmailRequest } from "./pipedream-gmail-request.js";
 import type { BeforeGmailSend } from "./gmail-send-admission.js";
 import { createBoundedFinanceAction } from "./finance-write-request.js";
@@ -33,6 +34,8 @@ export interface PipedreamConnectClient {
   /** Available only to the bound recipe read path; ordinary integration calls stay unchanged. */
   boundedGmailGet?: ReturnType<typeof createBoundedPipedreamGet>;
   boundedGmailLabels?: ReturnType<typeof createBoundedPipedreamLabels>;
+  /** Native-only empty-label cleanup; legacy transports do not implement this. */
+  deleteUnusedGmailLabel?: ReturnType<typeof createNativeUnusedLabelDelete>;
   createConnectToken(
     externalUserId: string,
     redirects?: {
