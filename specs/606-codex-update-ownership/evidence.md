@@ -68,3 +68,15 @@ The real PM probe copies existing isolated tool bytes into a disposable task fix
 Published#2593 remains at historicalaadfe9b6. Its historical5/5 and CI38581647436 remain real but do not qualify this changed/rebased local candidate. Main#2666 removed automatic Claude review; this round still authorizes no push/CI/external review. Before future publication/landing, establish exact source freshness, review, real green CI, no unresolved findings and independent non-author approval last. Preserve the original checkpoint backup/bundle; do not silently force-push its rewritten history.
 
 ENG-306 retains its sole upgrade author. It should consume the one shared reconciler and owner-env integration; no duplicate PM implementation. ENG-268 and waiting PRs2514/2545/2622/2578 were not changed. No Main machine, customer/production service, Electron, Private repo, Slack or paid/provider call was used. Public docs and live surface/account acceptance remain separately coordinated deliverables.
+
+
+## 2026-10-29 — Greptile recovery finalization
+
+Current-head review identified that repair-only success could skip the original
+installation finalizers and global command link. Recovery now performs standard
+permission/skill finalization under the same package lock without npm installation
+or version downgrade, then restores an absent global link while retaining an
+existing custom command. The real copied-installer test first failed on the
+missing link; it now asserts the actual link, group-write mode, skill-sync effect,
+one npm attempt, retained newer version and untouched owner choice. All mutations
+in this regression occur in private temporary fixtures, not the user's runtime.

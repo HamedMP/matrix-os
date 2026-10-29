@@ -190,6 +190,11 @@ for tool in $TOOLS; do
       log "optional developer tool ${tool} npm repair failed; systemd will retry"
       continue
     fi
+    # A failed first installation may have skipped the global link. Restore
+    # only an absent link; preserve an existing owner-selected command.
+    if [ "$tool" = "codex" ] && [ ! -e /usr/local/bin/codex ] && [ ! -L /usr/local/bin/codex ]; then
+      link_tool "$tool"
+    fi
     if { [ "$tool" = "claude-code" ] || [ "$tool" = "codex" ]; } && ! grep -qxF "$tool" "$INSTALLED_FILE"; then
       printf '%s\n' "$tool" >>"$INSTALLED_FILE"
     fi

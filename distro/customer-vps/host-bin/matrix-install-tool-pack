@@ -188,6 +188,11 @@ finish_agent_install() {
   fi
 }
 
+complete_codex_repair() {
+  reconcile_agent_npm_prefix
+  finish_agent_install
+}
+
 install_claude_code_package() {
   run_npm_install install -g --prefix "$NODE_PREFIX" \
     "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
@@ -309,7 +314,7 @@ install_linux_tools() {
 pack="${1:-}"
 if [ "$pack" = "codex" ] && [ "$#" -ne 1 ]; then
   if [ "$#" -eq 2 ] && [ "$2" = "--reconcile-only" ]; then
-    with_pack_lock "$pack" reconcile_agent_npm_prefix
+    with_pack_lock "$pack" complete_codex_repair
     exit
   fi
   usage
