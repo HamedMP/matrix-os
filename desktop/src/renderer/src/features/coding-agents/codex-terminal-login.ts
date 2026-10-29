@@ -18,9 +18,20 @@ let pendingStart: { identityKey: string; harnessId: string; key: string; expires
 
 function delay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise(resolve => {
-    const finish = () => { clearTimeout(timer); signal.removeEventListener("abort", finish); resolve(); };
+    const visible = () => { if (document.visibilityState === "visible") finish(); };
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      window.removeEventListener("focus", finish);
+      document.removeEventListener("visibilitychange", visible);
+      resolve();
+    };
     const timer = setTimeout(finish, ms);
     signal.addEventListener("abort", finish, { once: true });
+    // OAuth runs in another application. Chromium can throttle the timer while
+    // Electron is occluded; foreground return must inspect the same receipt now.
+    window.addEventListener("focus", finish, { once: true });
+    document.addEventListener("visibilitychange", visible);
     if (signal.aborted) finish();
   });
 }
