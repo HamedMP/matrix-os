@@ -486,6 +486,60 @@
   100% { transform: scale(1); }
 }
 
+/* A task that pays out while the app is showing: the hero plays a reward, the total floats "+N". */
+.mxo-gsa__reward {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  animation: mxo-gsa-reward 520ms var(--mxo-ease) backwards;
+}
+
+.mxo-gsa__reward-burst {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 1px solid var(--gsa-gold-border);
+  background: var(--gsa-gold-bg);
+  color: var(--gsa-gold-text);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--gsa-gold-border) 70%, transparent);
+  animation: mxo-gsa-burst 1.2s var(--mxo-ease) 120ms backwards;
+}
+
+@keyframes mxo-gsa-reward {
+  0% { opacity: 0; transform: translateY(8px) scale(0.96); }
+  100% { opacity: 1; transform: none; }
+}
+
+@keyframes mxo-gsa-burst {
+  0% { transform: scale(0.4) rotate(-30deg); box-shadow: 0 0 0 0 color-mix(in srgb, var(--gsa-gold-border) 70%, transparent); }
+  45% { transform: scale(1.12) rotate(6deg); }
+  100% { transform: none; box-shadow: 0 0 0 14px transparent; }
+}
+
+.mxo-gsa__points {
+  position: relative;
+}
+
+.mxo-gsa__points-pop {
+  position: absolute;
+  right: 8px;
+  top: -4px;
+  font-weight: 600;
+  color: var(--gsa-gold-text);
+  pointer-events: none;
+  animation: mxo-gsa-float 1.4s var(--mxo-ease) forwards;
+}
+
+@keyframes mxo-gsa-float {
+  0% { opacity: 0; transform: translateY(6px); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-22px); }
+}
+
 /* Matrix DS Button ghost, sm (32). */
 .mxo-gsa__support {
   align-self: center;
@@ -550,8 +604,13 @@
   .mxo-gsa__grid > *,
   .mxo-gsa__starters > *,
   .mxo-gsa__card--celebrate,
+  .mxo-gsa__reward,
+  .mxo-gsa__reward-burst,
   .mxo-gsa__glow {
     animation: none;
+  }
+  .mxo-gsa__points-pop {
+    display: none;
   }
 }
 

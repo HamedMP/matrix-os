@@ -68,12 +68,16 @@ function makePort(options: {
   return port;
 }
 
-function renderApp(port: GettingStartedAppPort, props: Partial<React.ComponentProps<typeof GettingStartedAppProvider>> = {}) {
+function renderApp(
+  port: GettingStartedAppPort,
+  props: Partial<React.ComponentProps<typeof GettingStartedAppProvider>> = {},
+  viewProps: { visible?: boolean } = {},
+) {
   const onAction = vi.fn();
   const onToast = vi.fn();
   const view = render(
     <GettingStartedAppProvider port={port} refreshMs={25} onToast={onToast} {...props}>
-      <GettingStartedAppView onAction={onAction} />
+      <GettingStartedAppView onAction={onAction} {...viewProps} />
     </GettingStartedAppProvider>,
   );
   return { ...view, onAction, onToast };
@@ -146,6 +150,40 @@ describe("Getting started app view", () => {
     expect(within(screen.getByRole("button", { name: /Get the mobile app/ })).getByText("Done")).toBeTruthy();
   });
 
+  it("stops showing Done when an earned connection is disconnected, and keeps its points", async () => {
+    renderApp(makePort({
+      progress: { awards: [{ taskId: "slack", points: 20, awardedAt: "2026-10-28T10:00:00.000Z" }], total: 20 },
+    }));
+    const slack = await screen.findByRole("button", { name: /Slack/ });
+    await waitFor(() => expect(within(slack).getByText("20 pts earned")).toBeTruthy());
+    expect(within(slack).queryByText("Done")).toBeNull();
+    expect(within(slack).queryByText("+20 pts")).toBeNull();
+    expect(screen.getByText("0 of 10 done")).toBeTruthy();
+    expect(screen.getByText("20 pts")).toBeTruthy();
+  });
+
+  it("offers a disconnected task as up next without promising its points again", async () => {
+    renderApp(makePort({
+      results: () => results({ chats: fulfilled({ items: [{ id: "chat-1" }] }) }),
+      progress: { awards: [
+        { taskId: "first-prompt", points: 50, awardedAt: "2026-10-28T10:00:00.000Z" },
+        { taskId: "slack", points: 20, awardedAt: "2026-10-28T10:00:00.000Z" },
+      ], total: 70 },
+    }));
+    const title = await screen.findByRole("heading", { name: "Slack" });
+    const hero = title.parentElement!;
+    expect(within(hero).getByText("20 pts earned")).toBeTruthy();
+    expect(within(hero).queryByText("+20 pts")).toBeNull();
+  });
+
+  it("keeps a sent first prompt done after its chats are deleted", async () => {
+    renderApp(makePort({
+      progress: { awards: [{ taskId: "first-prompt", points: 50, awardedAt: "2026-10-28T10:00:00.000Z" }], total: 50 },
+    }));
+    expect(await screen.findByText("1 of 10 done")).toBeTruthy();
+    expect(screen.queryByText("What should I start on?")).toBeNull();
+  });
+
   it("maps each card to its destination", async () => {
     const { onAction } = renderApp(makePort());
     fireEvent.click(await screen.findByRole("button", { name: /Slack/ }));
@@ -184,7 +222,8 @@ describe("Getting started app awards", () => {
   it("toasts once when a task turns done while Matrix is open", async () => {
     let connected = false;
     const port = makePort({ results: () => results(connected ? slackConnected : {}) });
-    const { onToast } = renderApp(port);
+    // The app window is minimized, so the corner toast tells the owner.
+    const { onToast } = renderApp(port, {}, { visible: false });
     await screen.findByText("0 of 10 done");
     connected = true;
     await waitFor(() => expect(port.award).toHaveBeenCalledWith("slack", false, expect.any(AbortSignal)));
@@ -192,6 +231,34 @@ describe("Getting started app awards", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
     expect(onToast).toHaveBeenCalledTimes(1);
     expect(port.award.mock.calls.filter(([taskId]) => taskId === "slack")).toHaveLength(1);
+  });
+
+  it("celebrates in the app instead of a corner toast while the app is showing", async () => {
+    let chatted = false;
+    const port = makePort({ results: () => results(chatted ? { chats: fulfilled({ items: [{ id: "chat_1" }] }) } : {}) });
+    const { onToast } = renderApp(port);
+    await screen.findByRole("heading", { name: "What should I start on?" });
+    chatted = true;
+    const reward = await screen.findByRole("status", { name: "First task started, 50 points" });
+    expect(within(reward).getByText("First task started")).toBeTruthy();
+    expect(within(reward).getByText("+50 pts")).toBeTruthy();
+    expect(onToast).not.toHaveBeenCalled();
+    // The hero moves on to the next task once the reward has played.
+    expect(await screen.findByText("Up next", undefined, { timeout: 4000 })).toBeTruthy();
+  });
+
+  it("toasts again once the app stops showing", async () => {
+    let connected = false;
+    const port = makePort({ results: () => results(connected ? slackConnected : {}) });
+    const { onToast, rerender } = renderApp(port);
+    await screen.findByText("0 of 10 done");
+    rerender(
+      <GettingStartedAppProvider port={port} refreshMs={25} onToast={onToast}>
+        <GettingStartedAppView onAction={vi.fn()} visible={false} />
+      </GettingStartedAppProvider>,
+    );
+    connected = true;
+    await waitFor(() => expect(onToast).toHaveBeenCalledWith({ title: "Slack connected", points: 20 }));
   });
 
   it("does not award tasks the server already recorded", async () => {
@@ -259,7 +326,7 @@ describe("Getting started app awards", () => {
     const realAward = port.award.getMockImplementation()!;
     port.award.mockRejectedValueOnce(new Error("offline"));
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const { onToast } = renderApp(port);
+    const { onToast } = renderApp(port, {}, { visible: false });
     await screen.findByText("0 of 10 done");
     connected = true;
     await waitFor(() => expect(port.award).toHaveBeenCalledTimes(1));

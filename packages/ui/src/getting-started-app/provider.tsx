@@ -44,6 +44,8 @@ export interface GettingStartedAppState {
   availability: GettingStartedAppAvailability;
   loaded: boolean;
   tasks: GettingStartedAppTask[];
+  /** Tasks that already paid out; their points stay even if the owner later undoes them. */
+  earned: readonly GettingStartedAppTaskId[];
   doneCount: number;
   points: GettingStartedAppPoints;
   /** Connected integration services (e.g. "github", "google_calendar"), for the starter tasks' "Needs …" tags. */
@@ -52,17 +54,21 @@ export interface GettingStartedAppState {
   logos: Readonly<Record<string, string>>;
   /** Tasks that turned Done while the owner was here, for a short celebration. */
   celebrating: readonly GettingStartedAppTaskId[];
+  /** A showing app view registers here; while one is, awards play in the app instead of a corner toast. */
+  registerView: () => () => void;
   /** Opens the app window; null when the surface did not provide it. */
   open: (() => void) | null;
 }
 
 export const GETTING_STARTED_APP_REFRESH_MS = 15_000;
-const CELEBRATION_MS = 1_600;
+const CELEBRATION_MS = 2_400;
 
 /** What saving the desktop icon did; the same values as the shells' desktop icon stores. */
 export type GettingStartedAppDesktopIconResult = "added" | "already-present" | "desktop-full" | "failed";
 
 const AWARDABLE: ReadonlySet<GettingStartedAppTaskId> = new Set(GETTING_STARTED_APP_AWARDABLE_TASK_IDS);
+// One-time events: once earned they stay Done, even if their trace is gone (all chats deleted).
+const LASTING: ReadonlySet<GettingStartedAppTaskId> = new Set(["first-prompt"]);
 const Context = createContext<GettingStartedAppState | null>(null);
 
 function warn(message: string, error: unknown): void {
@@ -108,7 +114,8 @@ export function GettingStartedAppProvider({
   const [enabled, setEnabled] = useState(false);
   const [checked, setChecked] = useState(false);
   const [results, setResults] = useState<GettingStartedResults | null>(null);
-  // Tasks that already paid out stay Done, even if their status can no longer be checked.
+  // Tasks that already paid out. Connections follow their live status, so a disconnected Slack
+  // stops showing Done (its points are never taken back); tasks Matrix cannot check stay Done.
   const [earned, setEarned] = useState<readonly GettingStartedAppTaskId[]>([]);
   const [points, setPoints] = useState<GettingStartedAppPoints>({ kind: "loading" });
   const [logos, setLogos] = useState<Readonly<Record<string, string>>>({});
@@ -133,6 +140,15 @@ export function GettingStartedAppProvider({
     autoOpenEligibleRef.current = autoOpenEligible;
     desktopIconReadyRef.current = desktopIconReady;
   });
+
+  // App views on screen right now; the award reward plays in them instead of a corner toast.
+  const showingViews = useRef(0);
+  const registerView = useCallback(() => {
+    showingViews.current += 1;
+    return () => {
+      showingViews.current -= 1;
+    };
+  }, []);
 
   const progressKnown = useRef(false);
   // Aborted on unmount or computer change: late claim and award responses are ignored,
@@ -197,7 +213,7 @@ export function GettingStartedAppProvider({
   const tasks = useMemo(() => {
     if (!results) return [];
     const earnedIds = new Set(earned);
-    return deriveGettingStartedAppTasks(results).map((task) => (earnedIds.has(task.id) ? { ...task, status: "complete" as const } : task));
+    return deriveGettingStartedAppTasks(results).map((task) => (earnedIds.has(task.id) && (task.status === "unavailable" || LASTING.has(task.id)) ? { ...task, status: "complete" as const } : task));
   }, [earned, results]);
 
   const connectedServices = useMemo(
@@ -263,7 +279,8 @@ export function GettingStartedAppProvider({
         markEarned([taskId]);
         showTotal(response.total);
         if (response.awarded && !silent) {
-          callbacks.current.onToast?.(gettingStartedAppToast(taskId, response.points));
+          const appShowing = showingViews.current > 0 && globalThis.document?.visibilityState !== "hidden";
+          if (!appShowing) callbacks.current.onToast?.(gettingStartedAppToast(taskId, response.points));
           celebrate(taskId);
         }
       }).catch((error: unknown) => {
@@ -347,13 +364,15 @@ export function GettingStartedAppProvider({
     availability,
     loaded: results !== null,
     tasks,
+    earned,
     doneCount: tasks.filter((task) => task.status === "complete").length,
     points,
     connectedServices,
     logos,
     celebrating,
+    registerView,
     open: onOpen ?? null,
-  }), [enabled, availability, results, tasks, connectedServices, points, logos, celebrating, onOpen]);
+  }), [enabled, availability, results, tasks, earned, connectedServices, points, logos, celebrating, registerView, onOpen]);
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

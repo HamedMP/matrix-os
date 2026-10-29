@@ -51,13 +51,13 @@ function runAction(action: GettingStartedAppAction): void {
   }
 }
 
-/** Tab body for the `getting-started` tab kind. */
-export function DesktopGettingStartedAppWindow() {
+/** Tab body for the `getting-started` tab kind; `visible` is false while the tab is in the background. */
+export function DesktopGettingStartedAppWindow({ visible = true }: { visible?: boolean }) {
   const state = useGettingStartedApp();
   if (state && !state.enabled) {
     return <div className="flex h-full items-center justify-center p-6 text-sm text-[var(--text-secondary)]">Getting started is not available on this computer yet.</div>;
   }
-  return <GettingStartedAppView onAction={runAction} />;
+  return <GettingStartedAppView onAction={runAction} visible={visible} />;
 }
 
 export function DesktopGettingStartedAppHost({ children }: { children: ReactNode }) {

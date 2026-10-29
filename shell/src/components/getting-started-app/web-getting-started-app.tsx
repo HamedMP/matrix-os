@@ -32,15 +32,15 @@ interface QueuedToast {
 
 const ActionContext = createContext<((action: GettingStartedAppAction) => void) | null>(null);
 
-/** Window body for `__getting-started__` in Web Desktop and Web Canvas. */
-export function WebGettingStartedAppWindow() {
+/** Window body for `__getting-started__` in Web Desktop and Web Canvas; `visible` is false while minimized. */
+export function WebGettingStartedAppWindow({ visible = true }: { visible?: boolean }) {
   const onAction = useContext(ActionContext);
   const state = useGettingStartedApp();
   if (!onAction) return null;
   if (state && !state.enabled) {
     return <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">Getting started is not available on this computer yet.</div>;
   }
-  return <GettingStartedAppView onAction={onAction} />;
+  return <GettingStartedAppView onAction={onAction} visible={visible} />;
 }
 
 export function WebGettingStartedAppHost({

@@ -252,7 +252,7 @@ export function DesktopWindow({
         ) : win.path === "__activity-monitor__" ? (
           <ActivityMonitorApp />
         ) : win.path === "__getting-started__" ? (
-          <WebGettingStartedAppWindow />
+          <WebGettingStartedAppWindow visible={!win.minimized} />
         ) : (
           <AppViewer path={win.path} active={focusedWindowId === win.id && !win.minimized}
             onOpenApp={onAppOpen} visible={!isHidden && !isMinimizing} />

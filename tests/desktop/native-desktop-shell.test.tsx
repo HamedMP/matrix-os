@@ -138,6 +138,9 @@ describe("native desktop shell", () => {
     expect(browserLabel?.style.color).toBe("rgb(255, 255, 255)");
     expect(browserLabel?.style.background).toBe("");
     expect(browserLabel?.style.textShadow).toContain("rgba(0, 0, 0");
+    // Long names such as "Getting started" wrap onto two lines instead of being cut off.
+    expect(browserLabel?.className).toContain("line-clamp-2");
+    expect(browserLabel?.className).not.toContain("truncate");
     for (const name of ["Browser", "Chat", "Terminal", "Files", "Settings", "VS Code"]) {
       const button = screen.getByRole("button", { name });
       expect(button.querySelector("img")?.className).toContain("object-contain");

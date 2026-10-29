@@ -65,6 +65,9 @@ The Get started wizard (spec 635) runs once, before the desktop. This app is wha
 
 - Points belong to Getting started only. Nothing else reads them, and they cannot be spent in this version.
 - Each task pays out once per owner, ever. Disconnecting Slack later does not remove points, and reconnecting does not add them again.
+- A card's Done follows its live status: a disconnected Slack, GitHub or AI provider shows "20 pts earned" instead of Done until it is reconnected. Tasks Matrix cannot check, and the one-time first prompt, stay Done once earned.
+- When a task pays out while the app is on screen, the reward plays in the app (the hero shows it, the total floats "+N") instead of a corner toast. A minimized window or background tab gets the corner toast.
+- Desktop icon names wrap to two lines on Web Desktop and Electron Desktop, so "Getting started" is never cut off.
 - The server decides the amount from its own table; the client only names the task.
 - Points are progress, not money. Before points ever become credit or rewards, completion must be verified by the server or platform (see Risks).
 

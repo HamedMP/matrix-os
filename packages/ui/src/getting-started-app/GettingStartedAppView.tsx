@@ -26,6 +26,7 @@ import { requestOnboardingTask } from "../onboarding-widget/task-requests.js";
 import {
   gettingStartedAppAction,
   gettingStartedAppActionLabel,
+  gettingStartedAppToast,
   type GettingStartedAppAction,
 } from "./actions.js";
 import { GETTING_STARTED_APP_BRAND_VARS } from "./brand-vars.js";
@@ -50,11 +51,19 @@ const LINE_ICONS: Partial<Record<GettingStartedAppTaskId, LucideIcon>> = {
   "invite-friends": Gift,
 };
 
-export function GettingStartedAppView({ onAction }: { onAction(action: GettingStartedAppAction): void }) {
+/**
+ * `visible` is false while the window is minimized or its tab is in the background; awards
+ * then go to the shell's corner toast instead of playing here.
+ */
+export function GettingStartedAppView({ onAction, visible = true }: { onAction(action: GettingStartedAppAction): void; visible?: boolean }) {
   const state = useGettingStartedApp();
+  const registerView = state?.registerView;
+  const showing = visible && state?.enabled === true;
+  useEffect(() => (showing && registerView ? registerView() : undefined), [showing, registerView]);
   if (!state?.enabled) return null;
   const { tasks, doneCount, points, loaded, logos } = state;
   const celebrating = new Set(state.celebrating);
+  const earned = new Set(state.earned);
   const progress = Math.round((doneCount / TOTAL_TASKS) * 100);
 
   return (
@@ -67,7 +76,7 @@ export function GettingStartedAppView({ onAction }: { onAction(action: GettingSt
             <span className="mxo-gsa__bar" role="progressbar" aria-label="Getting started progress" aria-valuemin={0} aria-valuemax={TOTAL_TASKS} aria-valuenow={doneCount}>
               <span className="mxo-gsa__bar-fill" style={{ width: `${progress}%` }} />
             </span>
-            <PointsBadge points={points} />
+            <PointsBadge points={points} gainedFrom={state.celebrating.at(-1)} />
           </div>
         </header>
 
@@ -82,6 +91,7 @@ export function GettingStartedAppView({ onAction }: { onAction(action: GettingSt
                   key={task.id}
                   task={task}
                   logo={logos[task.id]}
+                  earned={earned.has(task.id)}
                   celebrating={celebrating.has(task.id)}
                   onAction={onAction}
                 />
@@ -127,14 +137,18 @@ function useCountUp(target: number): number {
   return shown;
 }
 
-function PointsBadge({ points }: { points: GettingStartedAppPoints }) {
+/** The header total; a fresh award floats its "+N" up out of the badge while the total counts up. */
+function PointsBadge({ points, gainedFrom }: { points: GettingStartedAppPoints; gainedFrom: GettingStartedAppTaskId | undefined }) {
   const total = points.kind === "ready" ? points.total : 0;
   const shown = useCountUp(total);
   const label = points.kind === "ready" ? `${points.total} points` : points.kind === "unavailable" ? "Points unavailable" : "Loading points";
   return (
-    <span className="mxo-gsa__badge mxo-gsa__badge--md mxo-gsa__badge--gold" aria-label={label}>
+    <span className="mxo-gsa__badge mxo-gsa__badge--md mxo-gsa__badge--gold mxo-gsa__points" aria-label={label}>
       <Star size={12} aria-hidden="true" />
       {points.kind === "ready" ? `${shown} pts` : "– pts"}
+      {gainedFrom ? (
+        <span key={gainedFrom} className="mxo-gsa__points-pop" aria-hidden="true">+{gettingStartedAppTask(gainedFrom).points}</span>
+      ) : null}
     </span>
   );
 }
@@ -189,10 +203,12 @@ function HeroNext({ onAction }: { onAction(action: GettingStartedAppAction): voi
   const state = useGettingStartedApp();
   const tasks = state?.tasks ?? [];
   if (!state?.loaded) return <p className="mxo-gsa__next-description" role="status">Loading your tasks…</p>;
+  const justDone = state.celebrating.at(-1);
+  if (justDone) return <Reward key={justDone} taskId={justDone} />;
   const firstPrompt = tasks.find((task) => task.id === "first-prompt");
   if (firstPrompt?.status !== "complete") return <StarterTasks points={firstPrompt?.points ?? 0} onAction={onAction} />;
   const next = gettingStartedAppNextTask(tasks);
-  if (next) return <UpNext task={next} onAction={onAction} />;
+  if (next) return <UpNext task={next} earned={state.earned.includes(next.id)} onAction={onAction} />;
   return state.doneCount === TOTAL_TASKS ? (
     <>
       <h2 className="mxo-gsa__next-title">You're all set</h2>
@@ -206,13 +222,31 @@ function HeroNext({ onAction }: { onAction(action: GettingStartedAppAction): voi
   );
 }
 
-function UpNext({ task, onAction }: { task: GettingStartedAppTask; onAction(action: GettingStartedAppAction): void }) {
+/** Plays in the hero for a moment when a task pays out while the app is showing, then gives way to Up next. */
+function Reward({ taskId }: { taskId: GettingStartedAppTaskId }) {
+  const reward = gettingStartedAppToast(taskId, gettingStartedAppTask(taskId).points);
+  return (
+    <div className="mxo-gsa__reward" role="status" aria-label={`${reward.title}, ${reward.points} points`}>
+      <span className="mxo-gsa__reward-burst" aria-hidden="true">
+        <Star size={22} />
+      </span>
+      <h2 className="mxo-gsa__next-title">{reward.title}</h2>
+      <span className="mxo-gsa__badge mxo-gsa__badge--md mxo-gsa__badge--gold">+{reward.points} pts</span>
+    </div>
+  );
+}
+
+function UpNext({ task, earned, onAction }: { task: GettingStartedAppTask; earned: boolean; onAction(action: GettingStartedAppAction): void }) {
   const action = gettingStartedAppAction(task.id);
   return (
     <>
       <div className="mxo-gsa__chips">
         <span className="mxo-gsa__badge mxo-gsa__badge--md mxo-gsa__badge--brand">Up next</span>
-        <span className="mxo-gsa__badge mxo-gsa__badge--md mxo-gsa__badge--gold">+{task.points} pts</span>
+        {earned ? (
+          <span className="mxo-gsa__badge mxo-gsa__badge--md">{task.points} pts earned</span>
+        ) : (
+          <span className="mxo-gsa__badge mxo-gsa__badge--md mxo-gsa__badge--gold">+{task.points} pts</span>
+        )}
       </div>
       <h2 className="mxo-gsa__next-title">{task.title}</h2>
       <p className="mxo-gsa__next-description">{task.description}</p>
@@ -285,9 +319,10 @@ function TaskArt({ task, logo }: { task: GettingStartedAppTask; logo: string | u
   return Icon ? <Icon size={20} strokeWidth={1.75} aria-hidden="true" /> : <span aria-hidden="true">{task.title.slice(0, 1)}</span>;
 }
 
-function TaskCard({ task, logo, celebrating, onAction }: {
+function TaskCard({ task, logo, earned, celebrating, onAction }: {
   task: GettingStartedAppTask;
   logo: string | undefined;
+  earned: boolean;
   celebrating: boolean;
   onAction(action: GettingStartedAppAction): void;
 }) {
@@ -302,7 +337,7 @@ function TaskCard({ task, logo, celebrating, onAction }: {
     >
       <span className="mxo-gsa__card-top">
         <span className="mxo-gsa__card-icon" aria-hidden="true"><TaskArt task={task} logo={logo} /></span>
-        <TaskChip task={task} available={action !== null} />
+        <TaskChip task={task} earned={earned} available={action !== null} />
       </span>
       <span className="mxo-gsa__card-title">{task.title}</span>
       <span className="mxo-gsa__card-description">{task.description}</span>
@@ -310,8 +345,11 @@ function TaskCard({ task, logo, celebrating, onAction }: {
   );
 }
 
-/** Points until done; tasks Matrix cannot check yet keep their points and never show Done. */
-function TaskChip({ task, available }: { task: GettingStartedAppTask; available: boolean }) {
+/**
+ * Points until done; tasks Matrix cannot check yet keep their points and never show Done.
+ * An earned task that is undone (e.g. Slack disconnected) keeps its points but offers no more.
+ */
+function TaskChip({ task, earned, available }: { task: GettingStartedAppTask; earned: boolean; available: boolean }) {
   if (!available) return <span className="mxo-gsa__badge mxo-gsa__badge--sm">Coming soon</span>;
   if (task.status === "complete") {
     return (
@@ -321,5 +359,6 @@ function TaskChip({ task, available }: { task: GettingStartedAppTask; available:
       </span>
     );
   }
+  if (earned) return <span className="mxo-gsa__badge mxo-gsa__badge--sm">{task.points} pts earned</span>;
   return <span className="mxo-gsa__badge mxo-gsa__badge--sm mxo-gsa__badge--gold">+{task.points} pts</span>;
 }
