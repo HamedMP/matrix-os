@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import type { BotToolRequest, CanonicalOwnerScope } from "@matrix-os/contracts";
 import { BotRoutineControlSchema } from "@matrix-os/contracts";
 import type { OwnerBotDatabase } from "./database.js";
@@ -7,6 +7,7 @@ import type { BotRoutineApprovals } from "./routine-approval.js";
 import { routineSelection } from "./routine-authorization.js";
 import { createBotRoutinesRepository } from "./repositories/routines.js";
 import { createBotTasksRepository } from "./repositories/tasks.js";
+import { createBotInteractionsRepository } from "./repositories/interactions.js";
 import { BotStateError, type BotExecutor } from "./repositories/shared.js";
 import { BotBrokerActionError } from "./broker-actions.js";
 import type { BotRuntimeBinding } from "./runtime-registry.js";
@@ -40,7 +41,7 @@ export function createBotRoutineExecution(deps: {
   const transact = deps.transact ?? createBotStateTransactions(new ChatRepository(deps.db as unknown as Kysely<ChatDatabase>));
   const now = () => (deps.now?.() ?? new Date()).toISOString();
   let canonical: Canonical | undefined, scheduler: ReturnType<typeof createBotRoutineScheduler> | undefined;
-  async function finish(input: Parameters<typeof repository.finish>[0], unstarted?: { chatId: string; runId: string; attempt: number }) {
+  async function finish(input: Parameters<typeof repository.finish>[0], unstarted?: { chatId: string; attempt: number } & ({ kind: "canonical_run"; runId: string } | { kind: "cancelled_queue"; queuedTurnId: string })) {
     return transact(input.ownerId, async tx => {
       const scoped = createBotRoutinesRepository(tx.db);
       if (unstarted) {
@@ -52,17 +53,30 @@ export function createBotRoutineExecution(deps: {
         const fire = await tx.db.selectFrom("bot_routine_fires").selectAll().where("owner_id", "=", input.ownerId).where("fire_id", "=", input.fireId).forUpdate().executeTakeFirst();
         if (!routine || routine.chat_id !== unstarted.chatId || !fire || fire.status !== "dispatched" || fire.attempts !== unstarted.attempt) return false;
         const task = await tx.db.selectFrom("bot_tasks").selectAll().where("owner_id", "=", input.ownerId).where("task_id", "=", fire.task_id).forUpdate().executeTakeFirst();
-        const run = await tx.db.selectFrom("chat_runs").select(["client_request_id", "driver_kind", "attempt"]).where("id", "=", unstarted.runId).where("chat_id", "=", unstarted.chatId).executeTakeFirst();
         if (!task || task.chat_id !== unstarted.chatId || task.bot_id !== routine.bot_id
           || !(task.status === "queued" && !task.run_id && unstarted.attempt === 1
             || task.status === "blocked" && task.blocked_reason === "capacity_unavailable" && fire.failure_code === "capacity_unavailable" && unstarted.attempt > 1)
-          || !run || run.driver_kind !== "matrix_bot" || run.attempt !== 1 || run.client_request_id !== botRoutineRequestId({ fireId: fire.fire_id, attempts: fire.attempts })) return false;
+          ) return false;
+        const requestId = botRoutineRequestId({ fireId: fire.fire_id, attempts: fire.attempts });
+        if (unstarted.kind === "canonical_run") {
+          const run = await tx.db.selectFrom("chat_runs").select(["client_request_id", "driver_kind", "attempt"]).where("id", "=", unstarted.runId).where("chat_id", "=", unstarted.chatId).executeTakeFirst();
+          if (!run || run.driver_kind !== "matrix_bot" || run.attempt !== 1 || run.client_request_id !== requestId) return false;
+        } else {
+          const queued = await tx.db.selectFrom("chat_queued_turns").select(["status", "client_request_id", "claimed_run_id", "driver_kind"]).where("id", "=", unstarted.queuedTurnId).where("chat_id", "=", unstarted.chatId).forUpdate().executeTakeFirst();
+          if (!queued || queued.status !== "cancelled" || queued.claimed_run_id || queued.driver_kind !== "matrix_bot" || queued.client_request_id !== requestId) return false;
+        }
       }
       if (!(await scoped.finish(input))) return false;
       const fire = await scoped.getFire(input.ownerId, input.fireId);
       if (!fire) return false;
       const routine = await scoped.get(input.ownerId, fire.routineId);
       if (!routine) return;
+      const interactions = createBotInteractionsRepository(tx.db);
+      for (const pending of await interactions.listPending({ ownerId: input.ownerId, chatId: routine.chatId, now: input.now }, tx.db)) {
+        if (pending.taskId !== fire.taskId || !await interactions.cancel({ ownerId: input.ownerId, interactionId: pending.interactionId, now: input.now }, tx.db)) continue;
+        const cancelled = await interactions.get({ ownerId: input.ownerId, interactionId: pending.interactionId }, tx.db);
+        if (cancelled) await tx.publish(routine.chatId, "interaction.resolved", { interactionId: cancelled.interactionId, chatId: routine.chatId, status: cancelled.status, revision: cancelled.revision });
+      }
       await tx.publish(routine.chatId, "bot.authority.changed", {
         agentId: routine.botId,
         revision: routine.revision
@@ -80,6 +94,18 @@ export function createBotRoutineExecution(deps: {
       });
       return true;
     });
+  }
+  async function reconcileCancelledQueue() {
+    const cancelled = await deps.db.selectFrom("bot_routine_fires as f")
+      .innerJoin("bot_routines as r", join => join.onRef("r.owner_id", "=", "f.owner_id").onRef("r.routine_id", "=", "f.routine_id"))
+      .innerJoin("bot_tasks as t", join => join.onRef("t.owner_id", "=", "f.owner_id").onRef("t.task_id", "=", "f.task_id"))
+      .innerJoin("chat_queued_turns as q", join => join.onRef("q.chat_id", "=", "r.chat_id").on("q.client_request_id", "=", sql<string>`'req_routine_' || f.fire_id || CASE WHEN f.attempts > 1 THEN '_a' || f.attempts::text ELSE '' END`))
+      .select(["f.owner_id", "f.fire_id", "f.attempts", "r.chat_id", "q.id"])
+      .where("f.status", "=", "dispatched").where("q.status", "=", "cancelled").where("q.claimed_run_id", "is", null).where("q.driver_kind", "=", "matrix_bot")
+      .where(sql<boolean>`((t.status='queued' AND t.run_id IS NULL AND f.attempts=1) OR (t.status='blocked' AND t.blocked_reason='capacity_unavailable' AND f.failure_code='capacity_unavailable' AND f.attempts>1))`)
+      .orderBy("q.cancelled_at").limit(32).execute();
+    for (const row of cancelled) await finish({ ownerId: row.owner_id, fireId: row.fire_id, status: "cancelled", expectedStatus: "dispatched", now: now() },
+      { kind: "cancelled_queue", chatId: row.chat_id, queuedTurnId: row.id, attempt: row.attempts });
   }
   async function assertBinding(binding: BotRuntimeBinding, executor: BotExecutor = deps.db) {
     const scoped = createBotRoutinesRepository(executor),
@@ -191,7 +217,7 @@ export function createBotRoutineExecution(deps: {
       scheduler = createBotRoutineScheduler({
         repository: {
           ...repository,
-          recover: input => repository.recover(input, finish),
+          recover: async input => { await reconcileCancelledQueue(); return repository.recover(input, finish); },
           finish
         },
         authorize: deps.approvals.authorize,
@@ -230,7 +256,7 @@ export function createBotRoutineExecution(deps: {
       if (options.beforeTaskState) {
         const run = await deps.db.selectFrom("chat_runs").select("client_request_id").where("id", "=", input.runId).where("chat_id", "=", input.chatId).executeTakeFirst();
         const identity = /^req_routine_(fire_[a-f0-9]{24})(?:_a([23]))?$/.exec(run?.client_request_id ?? "");
-        if (identity && await finish({ ownerId: input.owner.ownerId, fireId: identity[1], status: result.status === "cancelled" ? "cancelled" : "failed", ...(result.status === "cancelled" ? {} : { failureCode: "run_start_failed" }), expectedStatus: "dispatched", now: now() }, { chatId: input.chatId, runId: input.runId, attempt: Number(identity[2] ?? 1) })) {
+        if (identity && await finish({ ownerId: input.owner.ownerId, fireId: identity[1], status: result.status === "cancelled" ? "cancelled" : "failed", ...(result.status === "cancelled" ? {} : { failureCode: "run_start_failed" }), expectedStatus: "dispatched", now: now() }, { kind: "canonical_run", chatId: input.chatId, runId: input.runId, attempt: Number(identity[2] ?? 1) })) {
           const persisted = await repository.getFire(input.owner.ownerId, identity[1]);
           return { status: persisted?.status === "uncertain" ? "uncertain" : persisted?.status === "cancelled" ? "cancelled" : "failed" };
         }

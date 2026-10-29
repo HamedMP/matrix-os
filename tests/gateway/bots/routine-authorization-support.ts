@@ -150,7 +150,7 @@ export async function activated(options: {
     at
   };
 }
-export async function admitFixture(fireId: string) {
+export async function admitFixture(fireId: string, clientRequestId = "req_routine_" + fireId) {
   const repository = new ChatRepository(data.db as never),
     owner = {
       type: "personal" as const,
@@ -193,7 +193,7 @@ export async function admitFixture(fireId: string) {
     turn: {
       id: turnId,
       chatId: CHAT,
-      clientRequestId: "req_routine_" + fireId,
+      clientRequestId,
       baseMessageSeq: 0,
       inputMessageId: messageId,
       status: "accepted",
