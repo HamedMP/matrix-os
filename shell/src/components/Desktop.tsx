@@ -36,7 +36,8 @@ import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
 import { DesktopOnboardingWidget } from "./onboarding-widget/DesktopOnboardingWidget";
 import { useGettingStartedDestination } from "./onboarding/use-getting-started-destination";
-import { GETTING_STARTED_APP_PATH, GETTING_STARTED_APP_TITLE, WebGettingStartedAppHost } from "./getting-started-app/web-getting-started-app";
+import { WebGettingStartedAppHost } from "./getting-started-app/web-getting-started-app";
+import { GETTING_STARTED_APP_PATH, GETTING_STARTED_APP_TITLE } from "./getting-started-app/web-getting-started-app-port";
 import { ShellGetStartedGate } from "./get-started/ShellGetStartedGate";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
@@ -138,7 +139,12 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     })),
     [apiApps],
   );
-  const apps = useMemo(() => buildWebDesktopIconApps(installedApps), [installedApps]);
+  // Spec 639: the Getting started app is a desktop destination only while this computer serves it.
+  const [gettingStartedAppEnabled, setGettingStartedAppEnabled] = useState(false);
+  const apps = useMemo(
+    () => buildWebDesktopIconApps(installedApps, { gettingStartedApp: gettingStartedAppEnabled }),
+    [installedApps, gettingStartedAppEnabled],
+  );
 
   const [interacting, setInteracting] = useState(false);
   const [taskBoardOpen, setTaskBoardOpen] = useState(false);
@@ -838,7 +844,6 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     />
   ) : null;
 
-  const [gettingStartedAppEnabled, setGettingStartedAppEnabled] = useState(false);
   const launcherApps = useMemo(
     () => buildWebDesktopLauncherApps(installedApps, desktopMode, { gettingStartedApp: gettingStartedAppEnabled }),
     [installedApps, desktopMode, gettingStartedAppEnabled],

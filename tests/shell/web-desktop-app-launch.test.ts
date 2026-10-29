@@ -112,6 +112,9 @@ describe("Getting started app launcher entry (spec 639)", () => {
     const paths = (enabled: boolean) => buildWebDesktopLauncherApps([], "desktop", { gettingStartedApp: enabled }).map((app) => app.path);
     expect(paths(false)).not.toContain("__getting-started__");
     expect(paths(true)).toContain("__getting-started__");
+    // Saved desktop placements only render for paths in this catalog.
+    expect(buildWebDesktopIconApps([], { gettingStartedApp: true }).map((app) => app.path)).toContain("__getting-started__");
+    expect(buildWebDesktopIconApps([]).map((app) => app.path)).not.toContain("__getting-started__");
     expect(buildWebDesktopLauncherApps([], "desktop", { gettingStartedApp: true })).toContainEqual(
       expect.objectContaining({ name: "Getting started", iconUrl: expect.stringContaining("/system-app-icons/v2/getting-started.png") }),
     );

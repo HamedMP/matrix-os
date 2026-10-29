@@ -58,6 +58,7 @@ export function GettingStartedAppProvider({
   autoOpenEligible = false,
   onAutoOpen,
   onOpen,
+  onEnabledChange,
   refreshMs = GETTING_STARTED_APP_REFRESH_MS,
 }: {
   /**
@@ -72,6 +73,8 @@ export function GettingStartedAppProvider({
   onAutoOpen?(): void;
   /** Opens or focuses the app window, for the Help popover summary. */
   onOpen?(): void;
+  /** Called when this computer starts or stops serving the app, e.g. to show its launcher entry. */
+  onEnabledChange?(enabled: boolean): void;
   refreshMs?: number;
 }) {
   const [enabled, setEnabled] = useState(false);
@@ -85,9 +88,10 @@ export function GettingStartedAppProvider({
   // "done" once the server answered the claim; a failed request retries on the next refresh.
   const autoOpen = useRef<"idle" | "pending" | "done">("idle");
   const autoOpenEligibleRef = useRef(autoOpenEligible);
-  const callbacks = useRef({ onToast, onAutoOpen });
+  const callbacks = useRef({ onToast, onAutoOpen, onEnabledChange });
+  const enabledRef = useRef(false);
   useEffect(() => {
-    callbacks.current = { onToast, onAutoOpen };
+    callbacks.current = { onToast, onAutoOpen, onEnabledChange };
     autoOpenEligibleRef.current = autoOpenEligible;
   });
 
@@ -96,6 +100,13 @@ export function GettingStartedAppProvider({
   // Awards only ever add points, so a late or out-of-order response never lowers the badge.
   const showTotal = useCallback((total: number) => {
     setPoints((current) => (current.kind === "ready" && current.total >= total ? current : { kind: "ready", total }));
+  }, []);
+
+  const reportEnabled = useCallback((next: boolean) => {
+    setEnabled(next);
+    if (enabledRef.current === next) return;
+    enabledRef.current = next;
+    callbacks.current.onEnabledChange?.(next);
   }, []);
 
   const claimAutoOpen = useCallback(() => {
@@ -150,10 +161,10 @@ export function GettingStartedAppProvider({
     }
     if (signal.aborted) return;
     if (progress === null) {
-      setEnabled(false);
+      reportEnabled(false);
       return;
     }
-    setEnabled(true);
+    reportEnabled(true);
     claimAutoOpen();
     if (progress) {
       progressKnown.current = true;
@@ -170,7 +181,7 @@ export function GettingStartedAppProvider({
     } catch (error: unknown) {
       if (!isAbort(error)) warn("status unavailable", error);
     }
-  }, [awardDone, claimAutoOpen, port, showTotal]);
+  }, [awardDone, claimAutoOpen, port, reportEnabled, showTotal]);
 
   useEffect(() => {
     if (!port) return;

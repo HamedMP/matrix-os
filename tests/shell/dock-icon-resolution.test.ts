@@ -34,7 +34,7 @@ describe("dock icon resolution", () => {
       readFile("shell/src/lib/builtin-apps.ts", "utf8"),
     ]);
 
-    expect(desktopSource).toContain("buildWebDesktopIconApps(installedApps)");
+    expect(desktopSource).toContain("buildWebDesktopIconApps(installedApps, { gettingStartedApp: gettingStartedAppEnabled })");
     expect(builtInSource).toContain('new Set(["__workspace__"])');
     expect(builtInSource).not.toContain('"__workspace__",\n  "__terminal__"');
     expect(desktopSource).toContain("buildWebDesktopLauncherApps(installedApps, desktopMode, { gettingStartedApp: gettingStartedAppEnabled })");

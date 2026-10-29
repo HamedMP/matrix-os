@@ -2,70 +2,29 @@
 
 /**
  * Web Desktop and Web Canvas host for the Getting started app (spec 639):
- * the gateway port, one shared state for the desktop, the toast and the
+ * one shared state for the desktop, the toasts and the
  * window body that DesktopWindow and CanvasWindow render for `__getting-started__`.
  */
-import {
-  GettingStartedAppAutoOpenResponseSchema,
-  GettingStartedAppAwardResponseSchema,
-  GettingStartedAppProgressSchema,
-  type GettingStartedAppAwardableTaskId,
-} from "@matrix-os/contracts";
 import {
   GettingStartedAppProvider,
   GettingStartedAppView,
   useGetStartedEnded,
   useGettingStartedApp,
   type GettingStartedAppAction,
-  type GettingStartedAppPort,
 } from "@matrix-os/ui";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { getGatewayUrl } from "@/lib/gateway";
 import { ShellNotificationCard } from "@/components/ShellNotificationCard";
 import { ShellNotificationPortal } from "@/components/ShellNotificationPortal";
-import { loadWebGettingStartedResults, type GettingStartedDestination, type GettingStartedSettingsSection } from "../onboarding/GettingStartedPopover";
+import type { GettingStartedDestination, GettingStartedSettingsSection } from "../onboarding/GettingStartedPopover";
+import { createWebGettingStartedAppPort } from "./web-getting-started-app-port";
 
-export const GETTING_STARTED_APP_PATH = "__getting-started__";
-export const GETTING_STARTED_APP_TITLE = "Getting started";
-
-const REQUEST_TIMEOUT_MS = 10_000;
 const TOAST_MS = 4_000;
+/** Several tasks can finish between polls; each gets its own toast, newest last. */
+const MAX_TOASTS = 3;
 
-function withTimeout(signal?: AbortSignal): AbortSignal {
-  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-  return signal ? AbortSignal.any([signal, timeout]) : timeout;
-}
-
-async function request(path: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
-  return fetch(`${getGatewayUrl()}${path}`, {
-    cache: "no-store",
-    credentials: "include",
-    ...init,
-    headers: { accept: "application/json", ...(init.body ? { "content-type": "application/json" } : {}) },
-    signal: withTimeout(init.signal),
-  });
-}
-
-export function createWebGettingStartedAppPort(): GettingStartedAppPort {
-  return {
-    loadResults: (signal) => loadWebGettingStartedResults((input, init) => fetch(input, { ...init, signal: withTimeout(signal) }), signal),
-    async loadProgress(signal) {
-      const response = await request("/api/getting-started/progress", { signal });
-      if (response.status === 404) return null;
-      if (!response.ok) throw new Error("getting_started_progress_unavailable");
-      return GettingStartedAppProgressSchema.parse(await response.json());
-    },
-    async award(taskId: GettingStartedAppAwardableTaskId, silent: boolean) {
-      const response = await request("/api/getting-started/awards", { method: "POST", body: JSON.stringify({ taskId, silent }) });
-      if (!response.ok) throw new Error("getting_started_award_failed");
-      return GettingStartedAppAwardResponseSchema.parse(await response.json());
-    },
-    async claimAutoOpen() {
-      const response = await request("/api/getting-started/auto-open", { method: "POST", body: "{}" });
-      if (!response.ok) throw new Error("getting_started_auto_open_failed");
-      return GettingStartedAppAutoOpenResponseSchema.parse(await response.json()).open;
-    },
-  };
+interface GettingStartedToast {
+  id: number;
+  text: string;
 }
 
 const ActionContext = createContext<((action: GettingStartedAppAction) => void) | null>(null);
@@ -99,18 +58,32 @@ export function WebGettingStartedAppHost({
 }) {
   const port = useMemo(() => createWebGettingStartedAppPort(), []);
   const getStartedEnded = useGetStartedEnded();
-  const [toast, setToast] = useState<string | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [toasts, setToasts] = useState<GettingStartedToast[]>([]);
+  // One timer per toast, removed when it fires; at most nine awardable tasks exist, all cleared on unmount.
+  const toastTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  const nextToastId = useRef(0);
 
-  useEffect(() => () => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
+  useEffect(() => {
+    const timers = toastTimers.current;
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer);
+      timers.clear();
+    };
+  }, []);
+
+  const dismissToast = useCallback((id: number) => {
+    const timer = toastTimers.current.get(id);
+    if (timer) clearTimeout(timer);
+    toastTimers.current.delete(id);
+    setToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
 
   const showToast = useCallback((text: string) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast(text);
-    toastTimer.current = setTimeout(() => setToast(null), TOAST_MS);
-  }, []);
+    const id = nextToastId.current;
+    nextToastId.current = (id + 1) % Number.MAX_SAFE_INTEGER;
+    setToasts((current) => [...current, { id, text }].slice(-MAX_TOASTS));
+    toastTimers.current.set(id, setTimeout(() => dismissToast(id), TOAST_MS));
+  }, [dismissToast]);
 
   const openFromSummary = useCallback(() => onOpenApp({ addToDesktop: false }), [onOpenApp]);
 
@@ -141,24 +114,20 @@ export function WebGettingStartedAppHost({
       autoOpenEligible={getStartedEnded}
       onAutoOpen={() => onOpenApp({ addToDesktop: true })}
       onOpen={openFromSummary}
+      onEnabledChange={onEnabledChange}
     >
-      <EnabledReporter onEnabledChange={onEnabledChange} />
       <ActionContext value={onAction}>{children}</ActionContext>
-      {toast ? (
+      {toasts.length > 0 ? (
         <ShellNotificationPortal>
           <ShellNotificationCard role="status" aria-live="polite">
-            <div className="ml-auto w-fit rounded-lg bg-[#171717] px-3 py-2 text-xs text-white shadow-lg">{toast}</div>
+            <div className="ml-auto flex w-fit flex-col items-end gap-2">
+              {toasts.map((toast) => (
+                <div key={toast.id} className="rounded-lg bg-foreground px-3 py-2 text-xs text-background shadow-lg">{toast.text}</div>
+              ))}
+            </div>
           </ShellNotificationCard>
         </ShellNotificationPortal>
       ) : null}
     </GettingStartedAppProvider>
   );
-}
-
-function EnabledReporter({ onEnabledChange }: { onEnabledChange(enabled: boolean): void }) {
-  const enabled = useGettingStartedApp()?.enabled ?? false;
-  useEffect(() => {
-    onEnabledChange(enabled);
-  }, [enabled, onEnabledChange]);
-  return null;
 }

@@ -42,7 +42,7 @@ import { useNativeOsViewPersistence } from "./use-native-os-view-persistence";
 import { analyticsKindForTab, FIXED_APP_ANALYTICS_KINDS } from "./desktop-app-analytics";
 import { reconcileNativeProductSurfaces } from "./browser-product-surfaces";
 import { useGettingStartedApp } from "@matrix-os/ui";
-import { GETTING_STARTED_TAB } from "../getting-started-app/DesktopGettingStartedAppHost";
+import { GETTING_STARTED_TAB } from "../getting-started-app/desktop-getting-started-app-port";
 import { nativeBrowserProduct } from "../../../../shared/browser-products";
 
 function currentViewport(): DesktopViewport {

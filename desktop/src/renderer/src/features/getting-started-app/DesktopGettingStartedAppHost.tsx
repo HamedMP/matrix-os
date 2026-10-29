@@ -1,24 +1,17 @@
 /**
- * Electron Desktop host for the Getting started app (spec 639): the gateway
- * port over the signed-in API client, one shared state for the shell, toasts
- * through sonner, and the tab body for the `getting-started` tab kind.
+ * Electron Desktop host for the Getting started app (spec 639): one shared
+ * state for the shell, toasts through sonner, and the tab body for the
+ * `getting-started` tab kind.
  */
-import {
-  GettingStartedAppAutoOpenResponseSchema,
-  GettingStartedAppAwardResponseSchema,
-  GettingStartedAppProgressSchema,
-} from "@matrix-os/contracts";
 import {
   GettingStartedAppProvider,
   GettingStartedAppView,
   useGetStartedEnded,
   useGettingStartedApp,
   type GettingStartedAppAction,
-  type GettingStartedAppPort,
 } from "@matrix-os/ui";
 import { useCallback, useMemo, type ReactNode } from "react";
 import { toast } from "sonner";
-import type { ApiClient } from "../../lib/api";
 import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
 import { useDesktopIcons } from "../../stores/desktop-icons";
@@ -26,42 +19,7 @@ import { useUi } from "../../stores/ui";
 import { seedNewChatDraft } from "../chat/use-chat-composer-drafts";
 import { showOnboardingTab as showTab } from "../onboarding-widget/onboarding-widget-navigation";
 import { openDesktopSupport } from "../support/DesktopSupportWidget";
-import { bundledDesktopIconForPath } from "../desktop-shell/bundled-app-icons";
-import { loadGettingStartedResults } from "../onboarding/getting-started";
-
-const GETTING_STARTED_PATH = "__getting-started__";
-
-export const GETTING_STARTED_TAB = {
-  kind: "getting-started" as const,
-  title: "Getting started",
-  icon: bundledDesktopIconForPath(GETTING_STARTED_PATH),
-};
-
-function httpStatus(error: unknown): number | undefined {
-  return error && typeof error === "object" && "httpStatus" in error && typeof error.httpStatus === "number"
-    ? error.httpStatus
-    : undefined;
-}
-
-export function createDesktopGettingStartedAppPort(api: Pick<ApiClient, "get" | "post" | "forRuntime">): GettingStartedAppPort {
-  return {
-    loadResults: (signal) => loadGettingStartedResults(api, signal),
-    async loadProgress(signal) {
-      try {
-        return GettingStartedAppProgressSchema.parse(await api.get("/api/getting-started/progress", { signal }));
-      } catch (error: unknown) {
-        if (httpStatus(error) === 404) return null;
-        throw error;
-      }
-    },
-    async award(taskId, silent) {
-      return GettingStartedAppAwardResponseSchema.parse(await api.post("/api/getting-started/awards", { taskId, silent }));
-    },
-    async claimAutoOpen() {
-      return GettingStartedAppAutoOpenResponseSchema.parse(await api.post("/api/getting-started/auto-open", {})).open;
-    },
-  };
-}
+import { GETTING_STARTED_PATH, GETTING_STARTED_TAB, createDesktopGettingStartedAppPort } from "./desktop-getting-started-app-port";
 
 function openGettingStartedTab(): void {
   showTab(GETTING_STARTED_TAB);

@@ -260,3 +260,14 @@ describe("Getting started app awards", () => {
   });
 });
 
+
+describe("Getting started app availability", () => {
+  it("reports when the computer serves the app, once per change", async () => {
+    const port = makePort();
+    const onEnabledChange = vi.fn();
+    renderApp(port, { onEnabledChange });
+    await waitFor(() => expect(onEnabledChange).toHaveBeenCalledWith(true));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
+    expect(onEnabledChange).toHaveBeenCalledTimes(1);
+  });
+});
