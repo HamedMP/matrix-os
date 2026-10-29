@@ -9,6 +9,8 @@
  * route and broker boundaries.
  */
 import { sql, type Transaction } from "kysely";
+import { migrateBotRoutinesV11 } from "./routine-migration.js";
+import { migrateBotQuestionSourceV9, migrateBotQuestionThreadsV10 } from "./v9-compatibility.js";
 import { migrateManagedPiState } from "../chat/managed-pi-migration.js";
 import { migrateBotProviderConnections } from "./provider-connections-migration.js";
 import { migrateChatGptPlanDevices } from "./chatgpt-plan-device-migration.js";
@@ -355,8 +357,8 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 6, name: "bot_chatgpt_plan_devices", up: migrateChatGptPlanDevices },
   { version: 7, name: "jev_label_grant", up: migrateJevLabelGrantV7 },
   { version: 8, name: "isolated_chat_phases", up: migrateIsolatedChatPhasesV8 },
-  { version: 9, name: "question_source_run", up: async trx => {
-    await sql`ALTER TABLE bot_interactions ADD COLUMN source_run_id TEXT
-      CHECK (source_run_id IS NULL OR source_run_id ~ '^run_[A-Za-z0-9_-]{1,128}$')`.execute(trx);
-  } },
+  // Main v9 remains canonical. The bridge accepts only verified retained thread-v9 history.
+  { version: 9, name: "question_source_run", up: migrateBotQuestionSourceV9 },
+  { version: 10, name: "bot_question_threads_bridge", up: migrateBotQuestionThreadsV10 },
+  { version: 11, name: "bot_routines", up: migrateBotRoutinesV11 },
 ];
