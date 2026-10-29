@@ -133,9 +133,9 @@ CREATE TABLE getting_started_owner_state (
 ## Integration wiring
 
 - `startup/owner-database.ts`: create `GettingStartedAppRepository` on the shared owner Kysely handle and bootstrap its tables, next to the OS-view state repository. It does not own the pool, so its `destroy()` never ends it; the owner database startup owns shutdown.
-- `server/settings-routes.ts`: mount the routes under `/api/getting-started`, covered by the gateway's owner auth like every other `/api/*` route. `server.ts` passes only the flag and the repository.
+- `server/settings-routes.ts`: mount the routes under `/api/getting-started`, covered by the gateway's owner auth like every other `/api/*` route. `server.ts` passes only the repository.
 - No kernel IPC tools and no `globalThis`. The UI reaches the gateway through each shell's existing authenticated client.
-- Feature flag `MATRIX_GETTING_STARTED_APP_ENABLED`, read like the wizard's `MATRIX_GET_STARTED_ENABLED`, gates the routes, icon, auto-open and popover change, so it can ship dark. With the flag off the routes return `404` and the shells show today's popover.
+- No feature flag: the app is on wherever this gateway runs. A shell talking to an older gateway gets `404` from `/api/getting-started/progress` and hides the app, launcher entry and popover summary.
 
 ## Failure modes
 
@@ -155,7 +155,7 @@ CREATE TABLE getting_started_owner_state (
 
 ## Existing owners
 
-Proposal (needs product sign-off): every owner gets the icon once the flag is on. Owners whose computer existed before release do not get the auto-open; their already-done tasks are awarded silently on first load, so they start with an honest count and no burst of toasts.
+Proposal (needs product sign-off): every owner gets the app once their computer runs this release. Owners whose computer existed before release do not get the auto-open; their already-done tasks are awarded silently on first load, so they start with an honest count and no burst of toasts.
 
 ## Acceptance checks
 

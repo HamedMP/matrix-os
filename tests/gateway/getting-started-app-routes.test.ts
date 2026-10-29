@@ -12,11 +12,10 @@ function repositoryMock() {
 
 function appFor(
   repository: ReturnType<typeof repositoryMock> | null,
-  options: { enabled?: boolean; ownerId?: string | null } = {},
+  options: { ownerId?: string | null } = {},
 ) {
   const app = new Hono();
   app.route("/api/getting-started", createGettingStartedAppRoutes({
-    enabled: options.enabled ?? true,
     repository,
     getOwnerId: () => (options.ownerId === undefined ? "owner-1" : options.ownerId),
   }));
@@ -91,14 +90,6 @@ describe("Getting started app routes", () => {
     const response = await appFor(repository, { ownerId: null }).request("/api/getting-started/progress");
     expect(response.status).toBe(401);
     expect(repository.progress).not.toHaveBeenCalled();
-  });
-
-  it("returns 404 when the feature is off", async () => {
-    const repository = repositoryMock();
-    const app = appFor(repository, { enabled: false });
-    expect((await app.request("/api/getting-started/progress")).status).toBe(404);
-    expect((await post(app, "/awards", { taskId: "slack", silent: false })).status).toBe(404);
-    expect(repository.award).not.toHaveBeenCalled();
   });
 
   it("returns 503 when the owner database is not configured", async () => {

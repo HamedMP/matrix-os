@@ -12,8 +12,6 @@ export interface SettingsRouteOptions {
   settingsRoutes: Hono;
   /** MATRIX_GET_STARTED_ENABLED=true. The platform sets it on new computers; the surfaces' PostHog flag decides who sees the wizard. */
   getStartedEnabled: boolean;
-  /** Off unless the deployment opts in (MATRIX_GETTING_STARTED_APP_ENABLED). */
-  gettingStartedAppEnabled: boolean;
   /** Null when the owner database is not configured. */
   gettingStartedAppRepository: GettingStartedAppRouteRepository | null;
   getOwnerId(c: Context): string | null;
@@ -23,10 +21,9 @@ export interface SettingsRouteOptions {
 }
 
 export function registerSettingsRoutes({
-  app, homePath, settingsRoutes, getStartedEnabled, gettingStartedAppEnabled, gettingStartedAppRepository, getOwnerId, botServices, osViewState,
+  app, homePath, settingsRoutes, getStartedEnabled, gettingStartedAppRepository, getOwnerId, botServices, osViewState,
 }: SettingsRouteOptions): void {
   app.route("/api/getting-started", createGettingStartedAppRoutes({
-    enabled: gettingStartedAppEnabled,
     repository: gettingStartedAppRepository,
     getOwnerId,
   }));

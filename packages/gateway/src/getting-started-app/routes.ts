@@ -30,8 +30,6 @@ class MissingOwnerError extends Error {
 }
 
 export function createGettingStartedAppRoutes(deps: {
-  /** Off unless the deployment opts in (MATRIX_GETTING_STARTED_APP_ENABLED). */
-  enabled: boolean;
   /** Null when the owner database is not configured. */
   repository: GettingStartedAppRouteRepository | null;
   getOwnerId(context: Context): string | null;
@@ -43,7 +41,6 @@ export function createGettingStartedAppRoutes(deps: {
   });
 
   app.use("*", async (context, next) => {
-    if (!deps.enabled) return context.json({ error: "Not found" }, 404);
     if (!deps.repository) return context.json(UNAVAILABLE, 503);
     await next();
   });
