@@ -37,6 +37,39 @@ are separate work.
   identical `matrix-reseal-funded-config.py` operator alias. No new endpoint,
   authorization fallback, permission change or customer-data store is added.
 
+## Resource limits and cleanup
+
+| Input or record | Hard limit |
+| --- | --- |
+| Operator JSON request on stdin | 4 KiB; one extra byte detects overflow |
+| Current/original configuration and decoded pending `beforeHost` | 64 KiB each |
+| Complete rollback journal | 128 KiB |
+| Protected `speech-reseal-pending.json` | 512 KiB, including encoded snapshots |
+| Other protected component/state reads through `Directory.read` | 1 MiB each |
+| Browser authorization assignment | 512 characters, canonical Basic encoding |
+| Exact managed-writer comparisons | At most 16, including the unchanged image |
+
+All record reads require protected regular single-link files and reject
+symlinks, unsafe ownership/modes and oversized content. The pending record and
+rollback original contain configuration secrets; keep them root-only and never
+attach their contents to logs, tickets or public evidence.
+
+Atomic `.host.env.speech-reseal-*` and state-write temporary files are consumed
+by replacement on success and explicitly unlinked in `finally` on ordinary
+failure. A killed process can leave a protected temporary file; it is never
+recovery authority. After reconciling the canonical records, an operator may
+remove that orphan under the same locks, using `lstat`/no-follow checks and
+requiring the expected root-owned regular single-link metadata. Do not remove
+canonical files by wildcard or follow symlinks during cleanup.
+
+The single pending record is durable recovery intent, with no automatic TTL.
+Retain it on every failure until a fresh guarded invocation validates and rolls
+forward all replacements. Delete it and fsync its parent only after verifying
+the final configuration, applied record, journal, release and receipt and
+durably writing the final reseal receipt. Keep the canonical rollback journal
+and the single latest `speech-reseal-receipt.json` for rollback/audit; subsequent
+successful reseals replace the receipt atomically instead of accumulating files.
+
 ## Qualification and operator sequence
 
 1. Demonstrate failure using the real Browser writer against a sealed funded
