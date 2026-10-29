@@ -35,7 +35,7 @@ describe('platform integration request pacing', () => {
     expect(starts.slice(1).every((at, i) => at - starts[i]! >= 500)).toBe(true);
   });
 
-  it('removes cancelled waiting requests without dispatching or letting later requests jump the active one', async () => {
+  it('removes cancelled waiting requests without dispatching and spaces later starts independently of responses', async () => {
     let release!: (response: Response) => void;
     const firstResponse = new Promise<Response>(resolve => { release = resolve; });
     const paths: string[] = [];
@@ -49,10 +49,28 @@ describe('platform integration request pacing', () => {
     abort.abort();
     expect(await second).toBe('cancelled');
     expect(paths).toEqual(['/i/first']);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(paths).toEqual(['/i/first', '/i/third']);
     release(json());
     await vi.runAllTimersAsync();
     await Promise.all([first, third]);
     expect(paths).toEqual(['/i/first', '/i/third']);
+  });
+
+  it('lets ordinary account checks finish within their existing deadline during a slow sync', async () => {
+    let finish!: (response: Response) => void;
+    const slow = new Promise<Response>(resolve => { finish = resolve; });
+    const fetchImpl = vi.fn(async (url: string) => url.endsWith('/sync') ? slow : Response.json([]));
+    const transport = createPlatformIntegrationTransport({ baseUrl: 'https://fixture.invalid/i', machineToken: TOKEN, fetchImpl: fetchImpl as never });
+    const syncing = transport(OWNER, { ...request('/sync'), method: 'POST' });
+    await vi.advanceTimersByTimeAsync(0);
+    const { createBotIntegrationClient } = await import('../../../packages/gateway/src/bots/integration-client.js');
+    const inventory = createBotIntegrationClient(transport).inventory(OWNER);
+    let done = false; void inventory.then(() => { done = true; });
+    await vi.advanceTimersByTimeAsync(600);
+    expect(done).toBe(true);
+    expect(await inventory).toEqual([]);
+    finish(json()); await syncing;
   });
 
   it('bounds outstanding work and never replays an uncertain write response', async () => {
@@ -125,5 +143,40 @@ describe('platform integration request pacing', () => {
     await vi.runAllTimersAsync();
     expect(await expired).toBe(true);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds active fetches and does not dispatch cancelled work waiting for active capacity', async () => {
+    const releases: Array<(response: Response) => void> = [];
+    const fetchImpl = vi.fn(() => new Promise<Response>(resolve => { releases.push(resolve); }));
+    const transport = createPlatformIntegrationTransport({ baseUrl: 'https://fixture.invalid/i', machineToken: TOKEN, fetchImpl });
+    const abort = new AbortController();
+    const pending = Array.from({ length: 8 }, () => transport(OWNER, { ...request(), signal: abort.signal }).catch(() => null));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    abort.abort();
+    await Promise.all(pending);
+    const next = transport(OWNER, request());
+    await vi.advanceTimersByTimeAsync(600);
+    // These injected fetches ignore abort. Caller cancellation must not free
+    // their active capacity before actual response settlement.
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    releases.forEach(resolve => resolve(json()));
+    await vi.runAllTimersAsync();
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+    releases[4]!(json()); await next;
+  });
+
+  it('releases active capacity after an aborted fetch settles and preserves later progress', async () => {
+    const fetchImpl = vi.fn((async (_url, init) => {
+      if (fetchImpl.mock.calls.length > 1) return json();
+      return new Promise<Response>((_resolve, reject) => init!.signal!.addEventListener('abort', () => reject(new Error('aborted')), { once: true }));
+    }) as typeof fetch);
+    const transport = createPlatformIntegrationTransport({ baseUrl: 'https://fixture.invalid/i', machineToken: TOKEN, fetchImpl });
+    const abort = new AbortController();
+    const first = transport(OWNER, { ...request(), signal: abort.signal }).catch(() => null);
+    await vi.advanceTimersByTimeAsync(0); abort.abort(); await first;
+    const second = transport(OWNER, request());
+    await vi.runAllTimersAsync(); expect((await second).status).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });
