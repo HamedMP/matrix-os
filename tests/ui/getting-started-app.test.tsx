@@ -154,7 +154,7 @@ describe("Getting started app awards", () => {
   it("awards tasks that are already done silently, without a toast", async () => {
     const port = makePort({ results: () => results(slackConnected) });
     const { onToast } = renderApp(port);
-    await waitFor(() => expect(port.award).toHaveBeenCalledWith("slack", true));
+    await waitFor(() => expect(port.award).toHaveBeenCalledWith("slack", true, expect.any(AbortSignal)));
     expect(onToast).not.toHaveBeenCalled();
   });
 
@@ -164,7 +164,7 @@ describe("Getting started app awards", () => {
     const { onToast } = renderApp(port);
     await screen.findByText("0 of 10 done");
     connected = true;
-    await waitFor(() => expect(port.award).toHaveBeenCalledWith("slack", false));
+    await waitFor(() => expect(port.award).toHaveBeenCalledWith("slack", false, expect.any(AbortSignal)));
     await waitFor(() => expect(onToast).toHaveBeenCalledWith("Slack connected +20 pts"));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
     expect(onToast).toHaveBeenCalledTimes(1);
@@ -269,5 +269,40 @@ describe("Getting started app availability", () => {
     await waitFor(() => expect(onEnabledChange).toHaveBeenCalledWith(true));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
     expect(onEnabledChange).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Getting started app after a computer switch", () => {
+  it("ignores an automatic-open claim that settles after unmount", async () => {
+    const port = makePort();
+    let settle: (open: boolean) => void = () => undefined;
+    port.claimAutoOpen.mockImplementation((signal?: AbortSignal) => new Promise<boolean>((resolve) => {
+      settle = resolve;
+      expect(signal).toBeInstanceOf(AbortSignal);
+    }));
+    const onAutoOpen = vi.fn();
+    const { unmount } = renderApp(port, { autoOpenEligible: true, onAutoOpen });
+    await waitFor(() => expect(port.claimAutoOpen).toHaveBeenCalledTimes(1));
+    const signal = port.claimAutoOpen.mock.calls[0]?.[0] as AbortSignal | undefined;
+    unmount();
+    expect(signal?.aborted).toBe(true);
+    await act(async () => { settle(true); });
+    expect(onAutoOpen).not.toHaveBeenCalled();
+  });
+
+  it("drops an award toast that settles after unmount", async () => {
+    let connected = false;
+    const port = makePort({ results: () => results(connected ? slackConnected : {}) });
+    let settle: () => void = () => undefined;
+    port.award.mockImplementation(() => new Promise((resolve) => {
+      settle = () => resolve({ awarded: true, points: 20, total: 20 });
+    }));
+    const { unmount, onToast } = renderApp(port);
+    await screen.findByText("0 of 10 done");
+    connected = true;
+    await waitFor(() => expect(port.award).toHaveBeenCalled());
+    unmount();
+    await act(async () => { settle(); });
+    expect(onToast).not.toHaveBeenCalled();
   });
 });

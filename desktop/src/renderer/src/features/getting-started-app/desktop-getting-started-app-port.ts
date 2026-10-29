@@ -34,11 +34,11 @@ export function createDesktopGettingStartedAppPort(api: Pick<ApiClient, "get" | 
         throw error;
       }
     },
-    async award(taskId, silent) {
-      return GettingStartedAppAwardResponseSchema.parse(await api.post("/api/getting-started/awards", { taskId, silent }));
+    async award(taskId, silent, signal) {
+      return GettingStartedAppAwardResponseSchema.parse(await api.post("/api/getting-started/awards", { taskId, silent }, signal ? { signal } : undefined));
     },
-    async claimAutoOpen() {
-      return GettingStartedAppAutoOpenResponseSchema.parse(await api.post("/api/getting-started/auto-open", {})).open;
+    async claimAutoOpen(signal) {
+      return GettingStartedAppAutoOpenResponseSchema.parse(await api.post("/api/getting-started/auto-open", {}, signal ? { signal } : undefined)).open;
     },
   };
 }

@@ -21,8 +21,8 @@ export interface GettingStartedAppPort {
   loadResults(signal: AbortSignal): Promise<GettingStartedResults>;
   /** Null when this computer's gateway predates the app (404). */
   loadProgress(signal: AbortSignal): Promise<GettingStartedAppProgress | null>;
-  award(taskId: GettingStartedAppAwardableTaskId, silent: boolean): Promise<GettingStartedAppAwardResponse>;
-  claimAutoOpen(): Promise<boolean>;
+  award(taskId: GettingStartedAppAwardableTaskId, silent: boolean, signal?: AbortSignal): Promise<GettingStartedAppAwardResponse>;
+  claimAutoOpen(signal?: AbortSignal): Promise<boolean>;
 }
 
 export type GettingStartedAppPoints = { kind: "loading" } | { kind: "unavailable" } | { kind: "ready"; total: number };
@@ -96,6 +96,9 @@ export function GettingStartedAppProvider({
   });
 
   const progressKnown = useRef(false);
+  // Aborted on unmount or computer change: late claim and award responses are ignored,
+  // so they never open the app or toast on the computer the owner switched to.
+  const lifecycle = useRef<AbortController | null>(null);
 
   // Awards only ever add points, so a late or out-of-order response never lowers the badge.
   const showTotal = useCallback((total: number) => {
@@ -111,11 +114,15 @@ export function GettingStartedAppProvider({
 
   const claimAutoOpen = useCallback(() => {
     if (!port || !autoOpenEligibleRef.current || autoOpen.current !== "idle") return;
+    const signal = lifecycle.current?.signal;
+    if (!signal || signal.aborted) return;
     autoOpen.current = "pending";
-    void port.claimAutoOpen().then((open) => {
+    void port.claimAutoOpen(signal).then((open) => {
+      if (signal.aborted) return;
       autoOpen.current = "done";
       if (open) callbacks.current.onAutoOpen?.();
     }).catch((error: unknown) => {
+      if (signal.aborted) return;
       autoOpen.current = "idle";
       warn("auto-open unavailable", error);
     });
@@ -134,12 +141,16 @@ export function GettingStartedAppProvider({
       if (awarded.current.has(task.id) || pending.current.has(task.id)) continue;
       const taskId = task.id as GettingStartedAppAwardableTaskId;
       const silent = previous !== "incomplete";
+      const signal = lifecycle.current?.signal;
+      if (!signal || signal.aborted) return;
       pending.current.add(taskId);
-      void port.award(taskId, silent).then((response) => {
+      void port.award(taskId, silent, signal).then((response) => {
+        if (signal.aborted) return;
         awarded.current.add(taskId);
         showTotal(response.total);
         if (response.awarded && !silent) callbacks.current.onToast?.(gettingStartedAppToastText(taskId, response.points));
       }).catch((error: unknown) => {
+        if (signal.aborted) return;
         // Keep the toast decision for the retry on the next refresh.
         if (!silent) seen.current.set(taskId, "incomplete");
         warn("award failed", error);
@@ -186,6 +197,7 @@ export function GettingStartedAppProvider({
   useEffect(() => {
     if (!port) return;
     const controller = new AbortController();
+    lifecycle.current = controller;
     void refresh(controller.signal);
     const timer = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
@@ -193,6 +205,7 @@ export function GettingStartedAppProvider({
     }, refreshMs);
     return () => {
       controller.abort();
+      if (lifecycle.current === controller) lifecycle.current = null;
       clearInterval(timer);
     };
   }, [port, refresh, refreshMs]);

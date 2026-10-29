@@ -38,13 +38,13 @@ export function createWebGettingStartedAppPort(): GettingStartedAppPort {
       if (!response.ok) throw new Error("getting_started_progress_unavailable");
       return GettingStartedAppProgressSchema.parse(await response.json());
     },
-    async award(taskId: GettingStartedAppAwardableTaskId, silent: boolean) {
-      const response = await request("/api/getting-started/awards", { method: "POST", body: JSON.stringify({ taskId, silent }) });
+    async award(taskId: GettingStartedAppAwardableTaskId, silent: boolean, signal?: AbortSignal) {
+      const response = await request("/api/getting-started/awards", { method: "POST", body: JSON.stringify({ taskId, silent }), signal });
       if (!response.ok) throw new Error("getting_started_award_failed");
       return GettingStartedAppAwardResponseSchema.parse(await response.json());
     },
-    async claimAutoOpen() {
-      const response = await request("/api/getting-started/auto-open", { method: "POST", body: "{}" });
+    async claimAutoOpen(signal?: AbortSignal) {
+      const response = await request("/api/getting-started/auto-open", { method: "POST", body: "{}", signal });
       if (!response.ok) throw new Error("getting_started_auto_open_failed");
       return GettingStartedAppAutoOpenResponseSchema.parse(await response.json()).open;
     },
