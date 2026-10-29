@@ -62,3 +62,23 @@ both set PYTHONSAFEPATH=1 (supported by the pinned Python>=3.11 contract), leavi
 only the explicit qualified source path. The test fails with cwd-shadow before
 this flag and passes with qualified afterward; no real provider code or credential
 is loaded by that fixture. No process-global or owner configuration is changed.
+
+
+## 2026-10-29 — idle Terminal viewer cancels pending login
+
+An instrumented current-head Preview run failed about125 seconds after launch,
+before the ten-minute OAuth deadline. The exact inner command changed from
+running to unknown and the credential pool remained empty. The workflow acquired
+a soft output viewer without heartbeats; TerminalRuntime reclaims stale viewers
+after two minutes, the socket closes, and the workflow treated that closure as a
+reason to terminate the pending command.
+
+The correction removes this redundant output attachment. The existing bounded
+exact-incarnation command-result observer remains authoritative; exit zero still
+requires fresh native credential proof and atomic provider/model selection.
+Cancellation, deadline cleanup, ambiguous-launch fencing and runtime viewer TTLs
+are unchanged. A regression crosses the production workflow, Unix socket, runtime
+and durable store: the original source publishes failed/unavailable after the
+real stale-viewer sweep, while the corrected source completes from the exact
+inner receipt. Only Zellij and provider identity completion are isolated; these
+tests do not qualify live OAuth, model/MCP calls or a demonstration video.

@@ -13,7 +13,7 @@ export type HermesTerminalLoginRuntime = {
 /** Only the inner command receipt can settle OAuth; viewer/attachment exits cannot. */
 export function createHermesTerminalWorkflow(input: {
   harnessInstanceId: string; runtime: HermesTerminalLoginRuntime;
-  terminal: Pick<TerminalRuntimeSocketClient, 'ensureWorkspace'|'createTab'|'terminateTab'|'listWorkspaces'|'attach'> & Partial<Pick<TerminalRuntimeSocketClient, 'getCommandResult'>>;
+  terminal: Pick<TerminalRuntimeSocketClient, 'ensureWorkspace'|'createTab'|'terminateTab'|'listWorkspaces'> & Partial<Pick<TerminalRuntimeSocketClient, 'getCommandResult'>>;
   writer: ReturnType<typeof createGenericNativeWriter>; store: ProviderSettingsStoreWriter;
 }): ProviderWorkflowAdapter['start'] {
  return async ({request, connectionOption: option, publish, registerCleanup}) => {
@@ -36,8 +36,7 @@ export function createHermesTerminalWorkflow(input: {
   let launched = false; let stopped = false; let cancelling = false;
   let finishTask: Promise<void> | undefined; let timer: ReturnType<typeof setTimeout> | undefined;
   let observer: ReturnType<typeof observeNativeCommandCompletion> | undefined;
-  let stream: ReturnType<TerminalRuntimeSocketClient['attach']> | undefined;
-  const stop = () => { stopped=true; clearTimeout(timer); observer?.stop(); stream?.close(); };
+  const stop = () => { stopped=true; clearTimeout(timer); observer?.stop(); };
   const cleanup = async () => {
    cancelling=true; abort.abort(); observer?.stop();
    try {
@@ -67,10 +66,6 @@ export function createHermesTerminalWorkflow(input: {
     publish({state:'failed',safeFailure:'unavailable'});
    } finally {stop();await release();}
   };
-  const fail = () => {
-   if (stopped || cancelling || finishTask) return;
-   void cleanup().then(()=>publish({state:'failed',safeFailure:'unavailable'})).catch(error=>console.warn('[provider-workflow] Hermes login cleanup unavailable:',error instanceof Error ? error.name : 'UnknownError'));
-  };
   try {
    releaseProfile=await input.writer.acquire('hermes');
    if(stopped || cancelling) throw new ProviderWorkflowNotStartedError();
@@ -87,8 +82,9 @@ export function createHermesTerminalWorkflow(input: {
    const tab=await input.terminal.createTab(workspace.id,tabInput);
    ref={workspaceId:tab.workspaceId,tabId:tab.id};incarnation=tab.incarnation;
    if (stopped || cancelling) throw new ProviderWorkflowError('unavailable');
-   stream=input.terminal.attach({ref,expectedIncarnation:incarnation,viewerId:`workflow-${randomUUID()}`,mode:'soft',size:{cols:100,rows:30},
-    onFrame(frame){if(frame.type === 'exit') void observer?.check();},onClose:fail,onError:fail});
+   // OAuth may wait ten minutes; a passive output viewer expires much sooner.
+   // Observe the exact inner receipt without acquiring an output attachment, so
+   // viewer reclamation cannot cancel a still-running login or consume its code.
    observer=observeNativeCommandCompletion({read:()=>input.terminal.getCommandResult!(ref!,incarnation!),active:()=>!stopped && !cancelling,
     async onExited(code){finishTask ??= finish(code);await finishTask;}});
    const expire=()=>{
