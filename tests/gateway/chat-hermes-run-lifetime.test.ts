@@ -14,8 +14,8 @@ async function start() {
   const done = (async () => {
     for await (const event of adapter.start({ ...baseInput, signal: controller.signal })) events.push(event);
   })();
-  await vi.advanceTimersByTimeAsync(0);
-  expect(gateway.requests.some(request => request.method === "prompt.submit")).toBe(true);
+  // Native runtime qualification performs real filesystem I/O outside fake time.
+  await vi.waitFor(() => expect(gateway.requests.some(request => request.method === "prompt.submit")).toBe(true));
   return { gateway, controller, events, done };
 }
 
