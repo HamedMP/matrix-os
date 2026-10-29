@@ -23,8 +23,10 @@ export interface GettingStartedAppPort {
   loadProgress(signal: AbortSignal): Promise<GettingStartedAppProgress | null>;
   award(taskId: GettingStartedAppAwardableTaskId, silent: boolean, signal?: AbortSignal): Promise<GettingStartedAppAwardResponse>;
   claimAutoOpen(signal?: AbortSignal): Promise<boolean>;
-  /** True once per owner: put the app's icon on the desktop (spec 639). */
-  claimDesktopIcon(signal?: AbortSignal): Promise<boolean>;
+  /** Whether a surface already saved the app's icon to this owner's desktop (spec 639). */
+  desktopIconPlaced(signal?: AbortSignal): Promise<boolean>;
+  /** Records the icon as placed; called only after the save succeeded. */
+  markDesktopIconPlaced(signal?: AbortSignal): Promise<void>;
 }
 
 export type GettingStartedAppPoints = { kind: "loading" } | { kind: "unavailable" } | { kind: "ready"; total: number };
@@ -41,6 +43,9 @@ export interface GettingStartedAppState {
 }
 
 export const GETTING_STARTED_APP_REFRESH_MS = 15_000;
+
+/** What saving the desktop icon did; the same values as the shells' desktop icon stores. */
+export type GettingStartedAppDesktopIconResult = "added" | "already-present" | "desktop-full" | "failed";
 
 const AWARDABLE: ReadonlySet<GettingStartedAppTaskId> = new Set(GETTING_STARTED_APP_AWARDABLE_TASK_IDS);
 const Context = createContext<GettingStartedAppState | null>(null);
@@ -77,8 +82,8 @@ export function GettingStartedAppProvider({
   onAutoOpen?(): void;
   /** True once this surface's desktop icon layout has loaded, so a placement is not lost to hydration. */
   desktopIconReady?: boolean;
-  /** Adds the app's icon to the desktop; called at most once per owner. */
-  onPlaceDesktopIcon?(): void;
+  /** Saves the app's icon to the desktop; the result decides whether placement is recorded. */
+  onPlaceDesktopIcon?(): Promise<GettingStartedAppDesktopIconResult>;
   /** Opens or focuses the app window, for the Help popover summary. */
   onOpen?(): void;
   /** Called when this computer starts or stops serving the app, e.g. to show its launcher entry. */
@@ -141,16 +146,25 @@ export function GettingStartedAppProvider({
     });
   }, [port]);
 
-  // Same once-only shape as the first open: the server decides, a failed request retries on the next refresh.
-  const claimDesktopIcon = useCallback(() => {
+  // Placed once per owner: check, save, and record only after the save succeeded, so a failed
+  // save retries on the next refresh and an icon the owner removes later is never put back.
+  const placeDesktopIcon = useCallback(() => {
     if (!port || !desktopIconReadyRef.current || desktopIcon.current !== "idle") return;
     const signal = lifecycle.current?.signal;
     if (!signal || signal.aborted) return;
     desktopIcon.current = "pending";
-    void port.claimDesktopIcon(signal).then((place) => {
-      if (signal.aborted) return;
-      desktopIcon.current = "done";
-      if (place) callbacks.current.onPlaceDesktopIcon?.();
+    void (async (): Promise<"idle" | "done"> => {
+      if (await port.desktopIconPlaced(signal)) return "done";
+      const result = await (callbacks.current.onPlaceDesktopIcon?.() ?? Promise.resolve("failed" as const));
+      if (signal.aborted) return "idle";
+      if (result === "added" || result === "already-present") {
+        await port.markDesktopIconPlaced(signal);
+        return "done";
+      }
+      // A full desktop stays untouched this session; a failed save retries on the next refresh.
+      return result === "desktop-full" ? "done" : "idle";
+    })().then((next) => {
+      if (!signal.aborted) desktopIcon.current = next;
     }).catch((error: unknown) => {
       if (signal.aborted) return;
       desktopIcon.current = "idle";
@@ -220,7 +234,7 @@ export function GettingStartedAppProvider({
     }
     reportEnabled(true);
     claimAutoOpen();
-    claimDesktopIcon();
+    placeDesktopIcon();
     if (progress) {
       progressKnown.current = true;
       for (const award of progress.awards) awarded.current.add(award.taskId);
@@ -237,7 +251,7 @@ export function GettingStartedAppProvider({
     } catch (error: unknown) {
       if (!isAbort(error)) warn("status unavailable", error);
     }
-  }, [awardDone, claimAutoOpen, claimDesktopIcon, markEarned, port, reportEnabled, showTotal]);
+  }, [awardDone, claimAutoOpen, markEarned, placeDesktopIcon, port, reportEnabled, showTotal]);
 
   useEffect(() => {
     if (!port) return;
@@ -262,8 +276,8 @@ export function GettingStartedAppProvider({
 
   // The desktop layout can finish loading after the first read.
   useEffect(() => {
-    if (enabled && desktopIconReady) claimDesktopIcon();
-  }, [enabled, desktopIconReady, claimDesktopIcon]);
+    if (enabled && desktopIconReady) placeDesktopIcon();
+  }, [enabled, desktopIconReady, placeDesktopIcon]);
 
   const value = useMemo<GettingStartedAppState>(() => ({
     enabled,

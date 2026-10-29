@@ -15,6 +15,7 @@ export {
   GETTING_STARTED_APP_REFRESH_MS,
   GettingStartedAppProvider,
   useGettingStartedApp,
+  type GettingStartedAppDesktopIconResult,
   type GettingStartedAppPoints,
   type GettingStartedAppPort,
   type GettingStartedAppState,

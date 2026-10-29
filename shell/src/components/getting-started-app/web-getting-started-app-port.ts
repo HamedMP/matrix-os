@@ -49,10 +49,15 @@ export function createWebGettingStartedAppPort(): GettingStartedAppPort {
       if (!response.ok) throw new Error("getting_started_auto_open_failed");
       return GettingStartedAppAutoOpenResponseSchema.parse(await response.json()).open;
     },
-    async claimDesktopIcon(signal?: AbortSignal) {
+    async desktopIconPlaced(signal?: AbortSignal) {
+      const response = await request("/api/getting-started/desktop-icon", { signal });
+      if (!response.ok) throw new Error("getting_started_desktop_icon_unavailable");
+      return GettingStartedAppDesktopIconResponseSchema.parse(await response.json()).placed;
+    },
+    async markDesktopIconPlaced(signal?: AbortSignal) {
       const response = await request("/api/getting-started/desktop-icon", { method: "POST", body: "{}", signal });
       if (!response.ok) throw new Error("getting_started_desktop_icon_failed");
-      return GettingStartedAppDesktopIconResponseSchema.parse(await response.json()).place;
+      GettingStartedAppDesktopIconResponseSchema.parse(await response.json());
     },
   };
 }

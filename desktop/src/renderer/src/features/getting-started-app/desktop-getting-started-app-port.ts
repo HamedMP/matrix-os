@@ -41,8 +41,11 @@ export function createDesktopGettingStartedAppPort(api: Pick<ApiClient, "get" | 
     async claimAutoOpen(signal) {
       return GettingStartedAppAutoOpenResponseSchema.parse(await api.post("/api/getting-started/auto-open", {}, signal ? { signal } : undefined)).open;
     },
-    async claimDesktopIcon(signal) {
-      return GettingStartedAppDesktopIconResponseSchema.parse(await api.post("/api/getting-started/desktop-icon", {}, signal ? { signal } : undefined)).place;
+    async desktopIconPlaced(signal) {
+      return GettingStartedAppDesktopIconResponseSchema.parse(await api.get("/api/getting-started/desktop-icon", signal ? { signal } : undefined)).placed;
+    },
+    async markDesktopIconPlaced(signal) {
+      GettingStartedAppDesktopIconResponseSchema.parse(await api.post("/api/getting-started/desktop-icon", {}, signal ? { signal } : undefined));
     },
   };
 }

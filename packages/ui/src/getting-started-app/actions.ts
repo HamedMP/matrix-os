@@ -18,7 +18,7 @@ const ACTIONS: Record<GettingStartedAppTaskId, GettingStartedAppAction | null> =
   "build-memory": { type: "chat", prompt: "Here is what matters to me: " },
   slack: { type: "settings", section: "integrations" },
   whatsapp: { type: "settings", section: "integrations" },
-  github: { type: "settings", section: "agents-providers" },
+  github: { type: "settings", section: "integrations" },
   "ai-provider": { type: "settings", section: "agents-providers" },
   "mobile-app": { type: "external", url: GETTING_STARTED_APP_MOBILE_URL },
   // Needs referrals (GTM-529).

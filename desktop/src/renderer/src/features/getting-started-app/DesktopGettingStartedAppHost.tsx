@@ -69,13 +69,11 @@ export function DesktopGettingStartedAppHost({ children }: { children: ReactNode
   }, []);
   // Spec 639: the icon goes on every owner's desktop once (the server decides which surface places it).
   const desktopIconsLoaded = useDesktopIcons((state) => state.loaded);
-  const placeDesktopIcon = useCallback(() => {
-    if (!api) return;
-    void useDesktopIcons.getState().add(GETTING_STARTED_PATH, api).then((result) => {
-      if (result === "failed" || result === "desktop-full") console.warn("[getting-started-app] desktop icon not placed:", result);
-    }).catch((error: unknown) => {
-      console.warn("[getting-started-app] unable to add desktop icon:", error instanceof Error ? error.name : typeof error);
-    });
+  const placeDesktopIcon = useCallback(async () => {
+    if (!api) return "failed" as const;
+    const result = await useDesktopIcons.getState().add(GETTING_STARTED_PATH, api);
+    if (result === "failed" || result === "desktop-full") console.warn("[getting-started-app] desktop icon not placed:", result);
+    return result;
   }, [api]);
   return (
     <GettingStartedAppProvider

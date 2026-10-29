@@ -62,12 +62,10 @@ export function WebGettingStartedAppHost({
   const port = useMemo(() => createWebGettingStartedAppPort(), []);
   // Spec 639: the icon goes on every owner's desktop once, after the saved layout has loaded.
   const desktopIconsLoaded = useDesktopConfigStore((state) => state.desktopIcons !== undefined);
-  const placeDesktopIcon = useCallback(() => {
-    void useDesktopConfigStore.getState().addDesktopIcon(GETTING_STARTED_APP_PATH).then((result) => {
-      if (result === "failed" || result === "desktop-full") console.warn("[getting-started-app] desktop icon not placed:", result);
-    }).catch((error: unknown) => {
-      console.warn("[getting-started-app] unable to add desktop icon:", error instanceof Error ? error.name : typeof error);
-    });
+  const placeDesktopIcon = useCallback(async () => {
+    const result = await useDesktopConfigStore.getState().addDesktopIcon(GETTING_STARTED_APP_PATH);
+    if (result === "failed" || result === "desktop-full") console.warn("[getting-started-app] desktop icon not placed:", result);
+    return result;
   }, []);
   const getStartedEnded = useGetStartedEnded();
   const [toasts, setToasts] = useState<QueuedToast[]>([]);

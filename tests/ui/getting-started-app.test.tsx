@@ -39,7 +39,7 @@ function makePort(options: {
   results?: () => GettingStartedResults;
   progress?: GettingStartedAppProgress | null;
   autoOpen?: boolean;
-  desktopIcon?: boolean;
+  desktopIconPlaced?: boolean;
 } = {}) {
   let progress: GettingStartedAppProgress = options.progress ?? { awards: [], total: 0 };
   const port = {
@@ -58,7 +58,8 @@ function makePort(options: {
       return { awarded: !already, points: recorded?.points ?? 0, total: progress.total };
     }),
     claimAutoOpen: vi.fn(async () => options.autoOpen ?? false),
-    claimDesktopIcon: vi.fn(async (_signal?: AbortSignal) => options.desktopIcon ?? false),
+    desktopIconPlaced: vi.fn(async (_signal?: AbortSignal) => options.desktopIconPlaced ?? false),
+    markDesktopIconPlaced: vi.fn(async (_signal?: AbortSignal) => undefined),
   } satisfies GettingStartedAppPort;
   return port;
 }
@@ -319,38 +320,45 @@ describe("Getting started app after a computer switch", () => {
 });
 
 describe("Getting started desktop icon", () => {
-  it("places the icon once the desktop is ready and the server grants it", async () => {
-    const port = makePort({ desktopIcon: true });
-    const onPlaceDesktopIcon = vi.fn();
+  it("places the icon once the desktop is ready, then records it", async () => {
+    const port = makePort();
+    const onPlaceDesktopIcon = vi.fn(async () => "added" as const);
     const { rerender } = renderApp(port, { desktopIconReady: false, onPlaceDesktopIcon });
     await screen.findByText("0 of 10 done");
-    expect(port.claimDesktopIcon).not.toHaveBeenCalled();
+    expect(port.desktopIconPlaced).not.toHaveBeenCalled();
     rerender(
       <GettingStartedAppProvider port={port} refreshMs={25} desktopIconReady onPlaceDesktopIcon={onPlaceDesktopIcon}>
         <GettingStartedAppView onAction={vi.fn()} />
       </GettingStartedAppProvider>,
     );
-    await waitFor(() => expect(onPlaceDesktopIcon).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(port.markDesktopIconPlaced).toHaveBeenCalledTimes(1));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
-    expect(port.claimDesktopIcon).toHaveBeenCalledTimes(1);
+    expect(onPlaceDesktopIcon).toHaveBeenCalledTimes(1);
   });
 
-  it("does not place the icon when the server already placed it once", async () => {
-    const port = makePort({ desktopIcon: false });
-    const onPlaceDesktopIcon = vi.fn();
+  it("counts an icon that is already on the desktop as placed", async () => {
+    const port = makePort();
+    renderApp(port, { desktopIconReady: true, onPlaceDesktopIcon: vi.fn(async () => "already-present" as const) });
+    await waitFor(() => expect(port.markDesktopIconPlaced).toHaveBeenCalledTimes(1));
+  });
+
+  it("never puts the icon back once it was placed (the owner may have removed it)", async () => {
+    const port = makePort({ desktopIconPlaced: true });
+    const onPlaceDesktopIcon = vi.fn(async () => "added" as const);
     renderApp(port, { desktopIconReady: true, onPlaceDesktopIcon });
-    await waitFor(() => expect(port.claimDesktopIcon).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(port.desktopIconPlaced).toHaveBeenCalled());
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
     expect(onPlaceDesktopIcon).not.toHaveBeenCalled();
+    expect(port.markDesktopIconPlaced).not.toHaveBeenCalled();
   });
 
-  it("retries the placement claim after a failure", async () => {
-    const port = makePort({ desktopIcon: true });
-    port.claimDesktopIcon.mockRejectedValueOnce(new Error("offline"));
-    vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const onPlaceDesktopIcon = vi.fn();
+  it("does not record a failed save, and tries again on the next refresh", async () => {
+    const port = makePort();
+    const onPlaceDesktopIcon = vi.fn<() => Promise<"added" | "failed">>()
+      .mockResolvedValueOnce("failed")
+      .mockResolvedValue("added");
     renderApp(port, { desktopIconReady: true, onPlaceDesktopIcon });
-    await waitFor(() => expect(onPlaceDesktopIcon).toHaveBeenCalledTimes(1));
-    expect(port.claimDesktopIcon).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(onPlaceDesktopIcon).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(port.markDesktopIconPlaced).toHaveBeenCalledTimes(1));
   });
 });
