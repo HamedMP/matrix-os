@@ -86,11 +86,13 @@ describe("deriveGettingStartedAppTasks", () => {
   });
 
   it("counts the owner's own ready key without Codex or Claude", () => {
+    // Shape of GET /api/ai/provider-settings (ProviderAccessSourceSchema): readiness is nested.
     const ownKey = (state: string, fundingKind = "owner_api_key") => fulfilled({
-      accessSources: [{ id: "anthropic-key", fundingKind, state }],
+      accessSources: [{ id: "anthropic-key", kind: "provider_account", fundingKind, readiness: { state, checkedAt: null, staleAfter: null } }],
     });
     expect(statusOf(deriveGettingStartedAppTasks(results({ providers: ownKey("ready") })), "ai-provider")).toBe("complete");
     expect(statusOf(deriveGettingStartedAppTasks(results({ providers: ownKey("ready", "owner_account") })), "ai-provider")).toBe("complete");
+    expect(statusOf(deriveGettingStartedAppTasks(results({ providers: ownKey("ready", "owner_subscription") })), "ai-provider")).toBe("complete");
     expect(statusOf(deriveGettingStartedAppTasks(results({ providers: ownKey("auth_required") })), "ai-provider")).toBe("incomplete");
     expect(statusOf(deriveGettingStartedAppTasks(results({ providers: ownKey("ready", "matrix_included") })), "ai-provider")).toBe("incomplete");
   });

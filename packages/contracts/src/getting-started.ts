@@ -58,13 +58,14 @@ const ChatsSchema = z.object({ items: z.array(z.unknown()).max(100) }).passthrou
 const BillingStatusSchema = z.object({
   access: z.object({ runtimeProxyAllowed: z.boolean() }).passthrough(),
 }).passthrough();
+/** The fields of GET /api/ai/provider-settings (`ProviderAccessSourceSchema`) the AI task reads. */
 const OwnAccessSourcesSchema = z.object({
   accessSources: z.array(z.object({
     fundingKind: z.string().max(32),
-    state: z.string().max(32),
-  }).passthrough()).max(16),
+    readiness: z.object({ state: z.string().max(32) }).passthrough(),
+  }).passthrough()).max(64),
 }).passthrough();
-const OWN_FUNDING_KINDS: ReadonlySet<string> = new Set(["owner_account", "owner_api_key"]);
+const OWN_FUNDING_KINDS: ReadonlySet<string> = new Set(["owner_account", "owner_api_key", "owner_subscription"]);
 const ConnectedIntegrationSchema = z.object({
   id: z.string().min(1).max(64),
   service: z.string().min(1).max(64),
@@ -165,7 +166,7 @@ export function gettingStartedAiProviderStatus(results: GettingStartedResults): 
   const agent = gettingStartedAgentStatus(results);
   if (!results.providers) return agent;
   const ownAccess = statusFrom(results.providers, (value) => OwnAccessSourcesSchema.parse(value).accessSources
-    .some((source) => OWN_FUNDING_KINDS.has(source.fundingKind) && source.state === "ready"));
+    .some((source) => OWN_FUNDING_KINDS.has(source.fundingKind) && source.readiness.state === "ready"));
   return alternativeCompletionStatus(agent, ownAccess);
 }
 
