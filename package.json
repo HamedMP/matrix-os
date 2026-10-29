@@ -121,6 +121,44 @@
           "vscode-languageserver-protocol": "3.17.5",
           "vscode-languageserver-types": "3.17.5"
         }
+      },
+      "expo-image@*": {
+        "dependencies": {
+          "@types/react": "19.2.14"
+        }
+      },
+      "posthog-react-native@*": {
+        "dependencies": {
+          "@types/react": "19.2.14"
+        },
+        "peerDependencies": {
+          "react-native": "*"
+        }
+      },
+      "react-native-svg@*": {
+        "dependencies": {
+          "@types/react": "19.2.14"
+        }
+      },
+      "react-native-gesture-handler@*": {
+        "dependencies": {
+          "@types/react": "19.2.14"
+        }
+      },
+      "expo-router@*": {
+        "dependencies": {
+          "@types/react": "19.2.14"
+        }
+      },
+      "react-native-drawer-layout@*": {
+        "dependencies": {
+          "@types/react": "19.2.14"
+        }
+      },
+      "@react-navigation/elements@*": {
+        "dependencies": {
+          "@types/react": "19.2.14"
+        }
       }
     },
     "patchedDependencies": {
@@ -187,7 +225,10 @@
       "@modelcontextprotocol/sdk>hono": "^4.13.11",
       "@modelcontextprotocol/sdk>@hono/node-server": "^1.19.15",
       "lodash@>=4.0.0 <4.18.1": "4.18.1",
-      "lodash-es@>=4.0.0 <4.18.1": "4.18.1"
+      "lodash-es@>=4.0.0 <4.18.1": "4.18.1",
+      "metro@0.84.4": "0.84.5",
+      "@excalidraw/mermaid-to-excalidraw@2.2.2>nanoid": "5.1.16",
+      "miniflare@4.20260526.0>sharp": "0.35.5"
     }
   },
   "devDependencies": {
