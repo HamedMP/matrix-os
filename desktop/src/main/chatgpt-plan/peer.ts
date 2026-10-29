@@ -82,6 +82,7 @@ export function createPlanNativePeer(deps: PeerDependencies) {
             throw new PlanFailure(`peer_${path}`, 'stale_source', undefined, undefined, { phase: 'before_headers' });
         const url = new URL(`/api/chatgpt-plan/device/${path}`, binding.origin);
         if (path === 'capabilities' && deps.deliveryVersion === 2) url.searchParams.set('includeReplyDeliveryV2', 'true');
+        if (path === 'capabilities' && deps.inferStream) url.searchParams.set('includeInferenceStream', 'true');
         if (binding.runtimeSlot !== 'primary')
             url.searchParams.set('runtime', binding.runtimeSlot);
         if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname)))

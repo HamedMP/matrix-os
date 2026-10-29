@@ -28,6 +28,7 @@ describe('ChatGPT subscription peer streaming', () => {
       version: 1, challenge: challenge.challenge, publicKey, snapshot,
       signature: sign(null, Buffer.from(chatGptPlanPeerProof({ ...challenge, snapshot })), keys.privateKey).toString('base64url'),
     });
+    peer.capabilities('owner', session, false, true);
     const selected = await peer.resolve({ instanceId: 'matrix_chatgpt_plan', model: 'gpt-server', options: [
       { id: 'accountId', value: 'account_own' }, { id: 'grantRevision', value: '3' },
     ] }, 'owner', 'interactive');

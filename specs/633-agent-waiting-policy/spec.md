@@ -74,6 +74,12 @@ Success is a commit barrier: hold the sole valid `response.completed` and option
 
 Implement and verify in five boundaries: contracts; native parser/peer/service; gateway peer and inference; Unix/HTTP/worker transport; provenance-matched Electron acceptance. Include bounded synthetic replies whose aggregate exceeds 1 MiB, UTF-8 splits, late errors, missing/duplicate terminal, slow consumers, Stop/revocation/close, unsupported old peers, and unchanged egress/control budgets. Developer docs and the separate public-site documentation PR remain deliverables.
 
+### Released native protocol compatibility (2026-10-29)
+
+Native compatibility: a worker's streaming request does not prove that the paired native client supports streaming. The gateway must default each new native session to the strict legacy request/reply wire. Only an authenticated, exact-session `POST /api/chatgpt-plan/device/capabilities?includeInferenceStream=true` opts that session into native streaming. Return the optional `inferenceStream: true` field only for that explicit query, independently of poll/reply receipt versions. New native composition advertises this capability only when it has an inference-stream implementation; an older gateway may omit the response field and retain its prior request behavior.
+
+For a native session without this capability, select the existing bounded whole-body inference path before dispatch and adapt the completed reply into UTF-8 chunks for the worker. Keep its 1 MiB reply cap, 120-second deadline, owner/account/grant/model validation, concurrency cap and cancellation. Never retry an admitted inference by changing protocols. Capability state belongs to the native session and resets on reconnect/rebind. Frozen released-client strict schemas, legacy reply completion and cancellation, new-client negotiation, opt-out response shape, malformed/unauthorized opt-in and session reset require cross-version regression coverage.
+
 ### Active stream deadline correction (2026-10-22)
 
 The stream follow-up still retained absolute per-inference clocks inside a busy turn. A live Native subscription reproduction continued producing output but failed after approximately 121 seconds. An agent turn without an aggregate deadline does not solve this nested failure.

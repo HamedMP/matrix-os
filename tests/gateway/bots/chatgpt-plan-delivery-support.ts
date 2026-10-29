@@ -11,7 +11,7 @@ const publicKey = keys.publicKey.export({ type: 'spki', format: 'der' }).toStrin
 export const peerRoot = '/api/chatgpt-plan/device';
 export const postBody = (body: unknown, bearer = true): RequestInit => ({ method: 'POST',
   headers: { 'content-type': 'application/json', ...(bearer ? { authorization: 'Bearer fixture' } : {}) }, body: JSON.stringify(body) });
-export async function deliveryFixture(now?: () => number) {
+export async function deliveryFixture(now?: () => number, options: { streaming?: boolean } = {}) {
   const database = await createBotStateDatabase();
   const peers = createChatGptPlanPeers({ db: database.db, ownerId: 'owner', computerId: 'computer', now });
   const snapshot = { deviceId: createHash('sha256').update(Buffer.from(publicKey, 'base64url')).digest('hex'),
@@ -23,6 +23,7 @@ export async function deliveryFixture(now?: () => number) {
       signature: sign(null, Buffer.from(chatGptPlanPeerProof({ ...challenge, snapshot })), keys.privateKey).toString('base64url') });
   }
   const session = await connect();
+  if (options.streaming !== false) peers.capabilities('owner', session, false, true);
   const app = (owner = 'owner', source = 'jwt', verified = true) => {
     const router = new Hono();
     router.use('*', async (c, next) => { if (verified) markVerifiedRuntimeBearer(c); await next(); });
