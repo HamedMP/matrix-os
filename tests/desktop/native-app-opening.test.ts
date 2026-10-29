@@ -29,7 +29,11 @@ it.each(["closed", "open", "minimized"] as const)("opens and queues native Chat 
   expect(useTabs.getState().activeTabId).toBe(workId);
   expect(useDesktopSurfaces.getState().surfaces[workId]?.mode).not.toBe("closed");
   expect(useDesktopSurfaces.getState().surfaces[workId]?.mode).not.toBe("minimized");
-  expect(useNativeAppChatNavigation.getState().pending).toMatchObject({ requestId: `request-${state}`, recipeId: "company-brain" });
+  expect(useNativeAppChatNavigation.getState().pending).toMatchObject({
+    requestId: `request-${state}`,
+    recipeId: "company-brain",
+    targetTabId: workId,
+  });
 });
 it("clears a queued Chat request when its runtime authority changes before Chat is ready", () => {
   useConnection.setState({ status: "signed-in", runtimeSlot: "primary", authGeneration: 7 });

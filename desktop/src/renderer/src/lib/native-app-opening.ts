@@ -31,7 +31,7 @@ export function wireNativeAppOpening(): () => void {
     }
     const tabId = openChatIndex();
     useDesktopSurfaces.getState().activateSurface(tabId);
-    useNativeAppChatNavigation.getState().queue(request);
+    useNativeAppChatNavigation.getState().queue(request, tabId);
   });
   const disposeChatCancellation = onEvent("app:open-chat-cancel", ({ requestId }) => {
     useNativeAppChatNavigation.getState().cancel(requestId);

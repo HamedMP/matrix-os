@@ -8,10 +8,12 @@ import type {
   NativeAppOpenChatEvent,
 } from "../../../../shared/native-app-chat";
 
+type TargetedNativeAppOpenChatEvent = NativeAppOpenChatEvent & { targetTabId: string };
+
 type State = {
-  pending: NativeAppOpenChatEvent | null;
-  canceledRequestId: string | null;
-  queue(request: NativeAppOpenChatEvent): void;
+  pending: TargetedNativeAppOpenChatEvent | null;
+  canceledRequest: { requestId: string; targetTabId: string } | null;
+  queue(request: NativeAppOpenChatEvent, targetTabId: string): void;
   cancel(requestId: string): void;
   consumeCancellation(requestId: string): void;
   complete(requestId: string, result: NativeAppChatNavigationResult): Promise<void>;
@@ -27,20 +29,23 @@ export async function acknowledgeNativeAppChatNavigation(requestId: string, resu
 
 export const useNativeAppChatNavigation = create<State>()((set, get) => ({
   pending: null,
-  canceledRequestId: null,
-  queue(request) {
+  canceledRequest: null,
+  queue(request, targetTabId) {
     const previous = get().pending;
     if (previous && previous.requestId !== request.requestId) {
       void acknowledgeNativeAppChatNavigation(previous.requestId, { ok: false, error: "navigation_unavailable" })
         .catch(reportAcknowledgementFailure);
     }
-    set({ pending: request });
+    set({ pending: { ...request, targetTabId } });
   },
   cancel(requestId) {
-    if (get().pending?.requestId === requestId) set({ pending: null, canceledRequestId: requestId });
+    const pending = get().pending;
+    if (pending?.requestId === requestId) {
+      set({ pending: null, canceledRequest: { requestId, targetTabId: pending.targetTabId } });
+    }
   },
   consumeCancellation(requestId) {
-    if (get().canceledRequestId === requestId) set({ canceledRequestId: null });
+    if (get().canceledRequest?.requestId === requestId) set({ canceledRequest: null });
   },
   async complete(requestId, result) {
     if (get().pending?.requestId !== requestId) return;
@@ -49,22 +54,24 @@ export const useNativeAppChatNavigation = create<State>()((set, get) => ({
   },
 }));
 
-/** Consumes one authenticated native request only after the Chat owner/client is ready. */
+/** Consumes one authenticated native request only in its selected, ready Chat surface. */
 export function NativeAppChatNavigationHost({
   active,
+  tabId,
   client,
   onStartChat,
   runtimeSlot,
   authGeneration,
 }: {
   active: boolean;
+  tabId?: string;
   client: CanonicalChatClient | null;
   onStartChat: StartAgentChat;
   runtimeSlot: string;
   authGeneration: number;
 }) {
   const pending = useNativeAppChatNavigation((state) => state.pending);
-  const canceledRequestId = useNativeAppChatNavigation((state) => state.canceledRequestId);
+  const canceledRequest = useNativeAppChatNavigation((state) => state.canceledRequest);
   const cancel = useNativeAppChatNavigation((state) => state.cancel);
   const consumeCancellation = useNativeAppChatNavigation((state) => state.consumeCancellation);
   const complete = useNativeAppChatNavigation((state) => state.complete);
@@ -73,15 +80,16 @@ export function NativeAppChatNavigationHost({
   const startChat = useEffectEvent(onStartChat);
 
   useEffect(() => {
-    if (!canceledRequestId || !navigation) return;
-    navigation.cancelRequest(canceledRequestId);
-    if (handled.current === canceledRequestId) handled.current = null;
-    consumeCancellation(canceledRequestId);
-  }, [canceledRequestId, consumeCancellation, navigation]);
+    if (!canceledRequest || canceledRequest.targetTabId !== tabId || !navigation) return;
+    navigation.cancelRequest(canceledRequest.requestId);
+    if (handled.current === canceledRequest.requestId) handled.current = null;
+    consumeCancellation(canceledRequest.requestId);
+  }, [canceledRequest, consumeCancellation, navigation, tabId]);
 
   useEffect(() => {
-    if (canceledRequestId) return;
+    if (canceledRequest) return;
     if (!pending) return;
+    if (pending.targetTabId !== tabId) return;
     if (pending.runtimeSlot !== runtimeSlot || pending.authGeneration !== authGeneration) {
       cancel(pending.requestId);
       return;
@@ -93,7 +101,7 @@ export function NativeAppChatNavigationHost({
     queueMicrotask(() => {
       if (!current) return;
       const queued = useNativeAppChatNavigation.getState().pending;
-      if (queued?.requestId !== requestId || queued.runtimeSlot !== runtimeSlot
+      if (queued?.requestId !== requestId || queued.targetTabId !== tabId || queued.runtimeSlot !== runtimeSlot
         || queued.authGeneration !== authGeneration || navigation.getOpened()) return;
       handled.current = requestId;
       navigation.open({
@@ -109,7 +117,7 @@ export function NativeAppChatNavigationHost({
       if (!queued.recipeId) void complete(requestId, { ok: true }).catch(reportAcknowledgementFailure);
     });
     return () => { current = false; };
-  }, [active, authGeneration, cancel, canceledRequestId, client, complete, navigation, pending, runtimeSlot]);
+  }, [active, authGeneration, cancel, canceledRequest, client, complete, navigation, pending, runtimeSlot, tabId]);
 
   return null;
 }

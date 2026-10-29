@@ -34,9 +34,10 @@ it("revalidates runtime authority immediately before opening a queued recipe", a
     recipeId: "company-brain",
     runtimeSlot: "primary",
     authGeneration: 7,
-  });
+  }, "target-chat");
   render(<NativeAppChatNavigationHost
     active
+    tabId="target-chat"
     client={{ agents: {} } as never}
     onStartChat={vi.fn()}
     runtimeSlot="secondary"
@@ -54,9 +55,10 @@ it("closes an old Agents scope before opening the queued recipe", async () => {
     recipeId: "company-brain",
     runtimeSlot: "primary",
     authGeneration: 7,
-  });
+  }, "target-chat");
   render(<NativeAppChatNavigationHost
     active
+    tabId="target-chat"
     client={{ agents: {} } as never}
     onStartChat={vi.fn()}
     runtimeSlot="primary"
@@ -74,9 +76,10 @@ it("closes only the Agents panel owned by a request canceled during catalog load
     recipeId: "company-brain",
     runtimeSlot: "primary",
     authGeneration: 7,
-  });
+  }, "target-chat");
   render(<NativeAppChatNavigationHost
     active
+    tabId="target-chat"
     client={{ agents: {} } as never}
     onStartChat={vi.fn()}
     runtimeSlot="primary"
