@@ -8,7 +8,8 @@ export function retainedThreadEntryFailure(error: unknown) {
   }
   if (error instanceof CanonicalChatOrchestrationError) {
     return { accepted: false as const, errorType: "CanonicalChatOrchestrationError" as const,
-      code: error.safeError.code, status: error.status };
+      code: error.safeError.code, status: error.status, retryable: error.safeError.retryable,
+      ...(error.safeError.recoveryActions ? { recoveryActions: error.safeError.recoveryActions } : {}) };
   }
   throw error;
 }

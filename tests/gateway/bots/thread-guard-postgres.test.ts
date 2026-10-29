@@ -90,7 +90,7 @@ describe.skipIf(!v9PgEnabled)("canonical thread guard on pooled PostgreSQL", () 
       .then(() => ({ accepted: true as const }), retainedThreadEntryFailure);
     await orchestrator!.drain();
     expect({ outcome, starts: b.starts(), catalogs: b.catalogs(), runs: await fixture!.db.selectFrom("chat_runs").selectAll().orderBy("id").execute(),
-      snapshot: await fixture!.snapshot() }).toEqual({ outcome: { accepted: false, errorType: "BotEntryError", code: "unavailable" },
+      snapshot: await fixture!.snapshot() }).toEqual({ outcome: { accepted: false, errorType: "CanonicalChatOrchestrationError", code: "resource_unavailable", status: 503, retryable: false, recoveryActions: [] },
       starts: 0, catalogs: 0, runs: runsBefore, snapshot: before });
   });
 

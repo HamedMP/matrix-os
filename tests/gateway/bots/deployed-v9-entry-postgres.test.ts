@@ -86,7 +86,7 @@ describe.skipIf(!v9PgEnabled)("retained v9 thread entry boundaries", () => {
       runs: await fixture!.db.selectFrom("chat_runs").select("id").where("chat_id", "=", V9_THREAD).execute(),
       snapshot: await fixture!.snapshot(),
     };
-    expect(evidence).toEqual({ outcome: { accepted: false, errorType: "BotEntryError", code: "unavailable" },
+    expect(evidence).toEqual({ outcome: { accepted: false, errorType: "CanonicalChatOrchestrationError", code: "resource_unavailable", status: 503, retryable: false, recoveryActions: [] },
       providerStarts: 0, runs: [], snapshot: before,
     });
   });
