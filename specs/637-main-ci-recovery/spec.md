@@ -42,3 +42,49 @@ Wrong: register the modal keyboard barrier in a passive `useEffect`, leaving com
 ## Data, authority and rollback
 
 No endpoints, credentials, database writes, or durable data changes. Keyboard ownership is component-local and cleaned up at layout teardown. Contract manifests and retained official fixture bytes are the compatibility source of truth. No acceptable persistent orphan states are introduced. Revert the fix commits to roll back. Public documentation does not change: this restores existing shortcut behavior and adds no user capability or setup step.
+
+## Post-merge checkout recovery — 29 October 2026
+
+### 1. Scope / trigger
+
+PR #2960 merged as `76c16f3428cd336efd0d69d81343c5c8c3af8690`. Its [main CI](https://github.com/HamedMP/matrix-os/actions/runs/40733797588/attempts/1) failed before testing in `Detect CI-relevant changes`: three full-history fetch attempts each ended at precisely 30 seconds with `early EOF`. The timeout interrupts Git before it can finish its pack, and a fresh attempt cannot reuse an incomplete pack. The same failure had occurred on the PR before a successful rerun. Treating repeated checkout timeouts only as transient does not repair the undersized transfer path.
+
+The predecessor #2961 failed the original onboarding assertion; this is a separate historical failure. Codex Provider Contracts and Docker Tests passed on the merged source. `CI Results`, `CI Source Qualification`, and the host-release same-SHA gate reflect the checkout failure. Keep release gates closed until source qualification succeeds.
+
+### 2. Signatures
+
+The `changes` job's inline `Checkout with bounded retry` shell is the bootstrap entrypoint: checkout-owned helpers cannot run until it succeeds. It accepts `SOURCE_SHA`, falling back to `GITHUB_SHA`, and uses the existing repository/server/token context. Subsequent classification remains `node scripts/ci/dedicated-changes.mjs`; main coverage remains `git merge-base --is-ancestor` and `git diff --name-only --no-renames` through existing helpers.
+
+### 3. Contracts
+
+Retain the complete commit and tree graph for successful-coverage frontier selection; omit unrelated blobs from the initial transfer and materialize only the `scripts/ci` bootstrap subtree. Fetch and lazy materialization must both stay inside the bounded, authenticated attempt. Never persist the token in local Git configuration. Checkout must detach at the exact requested SHA, never a moving branch tip. Each complete attempt has a 120-second deadline and five-second kill grace, with three attempts and five/ten-second backoff. The job budget is 12 minutes, including the existing 180-second classifier bound and setup/API/artifact margin. Timeout must signal the complete child process group so a fetch cannot survive into the next attempt.
+
+### 4. Validation and error matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Valid source and available remote | Exact SHA materialized; complete ancestor/path classification remains possible. |
+| Timeout or failed transport | Retry within the bound, then fail the job; no alternate source or success output. |
+| Checkout fails before helpers exist | Skip helper-based receipt cleanup; retain the original checkout failure. |
+| Receipt creation or upload fails after checkout | Run cleanup despite the later failure to remove a partial receipt. |
+| Coverage frontier predates several failed runs | Compare cumulative paths against that successful ancestor; never use shallow-history absence as proof of safety. |
+
+### 5. Good / base / bad cases
+
+Good: the classifier reads all accumulated changed paths while historical large blobs and unrelated current artifacts stay unmaterialized. Base: main and PR classification retain the same source decisions. Bad: a stalled transport exhausts the attempts and fails closed. No tests, coverage decisions, or same-SHA release gates are disabled to obtain green checks.
+
+### 6. Required tests
+
+Execute the actual workflow shell against a real filter-enabled Git remote. Assert exact HEAD, complete history, older-frontier ancestry, cumulative changed paths, required bootstrap files and omitted unrelated blobs. Exercise bounded failure/retry and cleanup conditions. Exercise the actual PR classifier without rename similarity detection: `--no-renames` preserves changed add/delete paths without lazily downloading historical blobs. Prove a timed-out child process cannot survive the retry. Run existing main coverage and PR classifier contracts. Report a same-source rerun separately from validation of the repaired workflow on a new PR head.
+
+### 7. Wrong versus correct
+
+Wrong: repeatedly fetch every historical blob into an empty repository under a 30-second deadline, or switch main to shallow history and lose the successful-coverage frontier. Correct: keep the complete graph, reduce blob transfer/materialization, give each whole attempt a realistic finite budget, and preserve failure propagation.
+
+This is internal CI transport repair. It introduces no customer capability or documentation flow, and no deployment or merge is authorized by this follow-up. The public site requires no content change.
+
+### Repair verification
+
+The six checkout regressions pass after failing controls on the previous workflow, the rename-detecting PR classifier, and the foreground-only timeout. Independent review passed 364 assertions across nine focused suites and found no remaining in-scope defects. Typecheck and pattern scan passed (zero violations, five existing warnings). Repository-wide shell lint independently reproduces the same 50 errors and 95 warnings on the previous PR head and is outside this CI transport diff.
+
+A fresh actual GitHub checkout of main `76c16f3428cd336efd0d69d81343c5c8c3af8690` using the repaired shell completed on its first attempt in 3.229 seconds. It retained 2,750 commits, was nonshallow, stored 8.90 MiB of Git packs, and did not materialize the root package or unrelated current files. This is one local observation, not a hosted-run performance guarantee. The actual main classifier then selected successful ancestor `35952691dcd32bb91f8708c38bff128a0c41bb32`, with `bootstrap=false` and source/docs/parity coverage enabled. New-head hosted CI is a separate acceptance track.

@@ -78,7 +78,7 @@ jobs:
     if: always() && (needs.redirect.result == 'success' || needs.redirect.result == 'skipped')
     name: Detect CI-relevant changes
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 12
     outputs:
       routed: ${{ needs.redirect.outputs.routed }}
       source_sha: ${{ steps.refresh.outputs.sourceSha || github.sha }}
@@ -149,11 +149,12 @@ jobs:
               {sha:context.sha,ref:context.ref,workflowRef:process.env.CI_WORKFLOW_REF,workflowSha:process.env.CI_WORKFLOW_SHA,controllerSha:process.env.CONTROLLER_SHA},context.payload.inputs);
             core.setOutput('snapshot',JSON.stringify(source));core.setOutput('sourceSha',source.sourceSha);
       - name: Checkout with bounded retry
+        id: checkout
         if: needs.redirect.outputs.routed != 'true'
         env:
           CHECKOUT_BACKOFF_SECONDS: "5"
           CHECKOUT_MAX_ATTEMPTS: "3"
-          CHECKOUT_TIMEOUT_SECONDS: "30"
+          CHECKOUT_TIMEOUT_SECONDS: "120"
           GH_TOKEN: ${{ github.token }}
           SOURCE_SHA: ${{ steps.refresh.outputs.sourceSha || github.sha }}
         run: |
@@ -164,15 +165,25 @@ jobs:
           git init .
           git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
           git config --local gc.auto 0
+          # Coverage needs complete commit/tree history, but never historical blobs.
+          # Materialize only the helpers used by this classification job.
+          git config --local remote.origin.promisor true
+          git config --local remote.origin.partialclonefilter blob:none
+          git sparse-checkout set --no-cone '/scripts/ci/'
           auth_header="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
 
           for attempt in $(seq 1 "$CHECKOUT_MAX_ATTEMPTS"); do
             echo "Checkout fetch attempt $attempt/$CHECKOUT_MAX_ATTEMPTS"
-            if timeout --foreground --kill-after=5s "${CHECKOUT_TIMEOUT_SECONDS}s" \
-              git -c http.extraheader="AUTHORIZATION: basic $auth_header" \
-                fetch --no-tags --prune --no-recurse-submodules \
-                origin "$SOURCE_SHA" \
-              && git checkout --force --detach "$SOURCE_SHA"; then
+            # One deadline bounds both the fetch and lazy blob hydration at checkout.
+            # Pass auth to both commands without persisting it in repository config.
+            if timeout --kill-after=5s "${CHECKOUT_TIMEOUT_SECONDS}s" \
+              bash -c '
+                set -euo pipefail
+                git -c http.extraheader="AUTHORIZATION: basic $1" \
+                  fetch --filter=blob:none --no-tags --prune --no-recurse-submodules origin "$2"
+                git -c http.extraheader="AUTHORIZATION: basic $1" checkout --force --detach "$2"
+                test "$(git rev-parse HEAD)" = "$2"
+              ' checkout "$auth_header" "$SOURCE_SHA"; then
               echo "Checkout fetch succeeded on attempt $attempt/$CHECKOUT_MAX_ATTEMPTS"
               exit 0
             fi
@@ -261,7 +272,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Clean temporary main coverage decision
-        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: always() && steps.checkout.outcome == 'success' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: node scripts/ci/main-ci-decision.mjs --cleanup
 
   isolated-ci-backend:
