@@ -212,7 +212,12 @@ describe("Gmail connector foundation", () => {
     expect(raw).not.toMatch(/[+/=]/);
   });
 
-  it("does not expose delete, trash, or bulk actions", () => {
-    expect(Object.keys(getService("gmail")!.actions).join(" ")).not.toMatch(/delete|trash|batch|bulk/);
+  it("exposes only checked unused-label deletion, never message deletion, trash, or bulk actions", () => {
+    const actions = getService("gmail")!.actions;
+    expect(Object.keys(actions).filter(name => name !== "delete_unused_label").join(" ")).not.toMatch(/delete|trash|batch|bulk/);
+    expect(actions.delete_unused_label.risk).toBe("destructive");
+    expect(actions.delete_unused_label.directApi).toBeUndefined();
+    expect(actions.delete_unused_label.paramsSchema!.safeParse({ labelId: "Label_test", expectedName: "Test" }).success).toBe(true);
+    expect(actions.delete_unused_label.paramsSchema!.safeParse({ labelId: "TRASH", expectedName: "Trash" }).success).toBe(false);
   });
 });
