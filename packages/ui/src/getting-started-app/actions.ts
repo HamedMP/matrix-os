@@ -40,6 +40,17 @@ export function gettingStartedAppActionLabel(id: GettingStartedAppTaskId): strin
   return "Open";
 }
 
-export function gettingStartedAppToastText(id: GettingStartedAppTaskId, points: number): string {
-  return `${gettingStartedAppTask(id).doneMessage} +${points} pts`;
+/** A completion toast: "Slack connected" with "+20 pts" (Figma 1938:1226). */
+export interface GettingStartedAppToast {
+  title: string;
+  points: number;
+}
+
+export function gettingStartedAppToast(id: GettingStartedAppTaskId, points: number): GettingStartedAppToast {
+  return { title: gettingStartedAppTask(id).doneMessage, points };
+}
+
+/** Plain-text form, for screen readers and text-only surfaces. */
+export function gettingStartedAppToastText(toast: GettingStartedAppToast): string {
+  return `${toast.title} +${toast.points} pts`;
 }

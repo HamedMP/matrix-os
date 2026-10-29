@@ -3,12 +3,12 @@ import React from "react";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const providerProps = vi.hoisted(() => ({ current: null as null | { onToast?(text: string): void } }));
+const providerProps = vi.hoisted(() => ({ current: null as null | { onToast?(toast: { title: string; points: number }): void } }));
 vi.mock("@matrix-os/ui", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@matrix-os/ui")>();
   return {
     ...actual,
-    GettingStartedAppProvider: (props: { onToast?(text: string): void; children?: React.ReactNode }) => {
+    GettingStartedAppProvider: (props: { onToast?(toast: { title: string; points: number }): void; children?: React.ReactNode }) => {
       providerProps.current = props;
       return <>{props.children}</>;
     },
@@ -36,23 +36,23 @@ describe("Web Getting started toasts", () => {
     vi.useFakeTimers();
     renderHost();
     act(() => {
-      providerProps.current?.onToast?.("Slack connected +20 pts");
-      providerProps.current?.onToast?.("GitHub connected +20 pts");
+      providerProps.current?.onToast?.({ title: "Slack connected", points: 20 });
+      providerProps.current?.onToast?.({ title: "GitHub connected", points: 20 });
     });
-    expect(screen.getByText("Slack connected +20 pts")).toBeTruthy();
-    expect(screen.getByText("GitHub connected +20 pts")).toBeTruthy();
+    expect(screen.getByLabelText("Slack connected +20 pts")).toBeTruthy();
+    expect(screen.getByLabelText("GitHub connected +20 pts")).toBeTruthy();
     act(() => { vi.advanceTimersByTime(4_100); });
-    expect(screen.queryByText("Slack connected +20 pts")).toBeNull();
-    expect(screen.queryByText("GitHub connected +20 pts")).toBeNull();
+    expect(screen.queryByLabelText("Slack connected +20 pts")).toBeNull();
+    expect(screen.queryByLabelText("GitHub connected +20 pts")).toBeNull();
   });
 
   it("keeps at most three toasts, newest last", () => {
     vi.useFakeTimers();
     renderHost();
     act(() => {
-      for (const name of ["One", "Two", "Three", "Four"]) providerProps.current?.onToast?.(`${name} +20 pts`);
+      for (const name of ["One", "Two", "Three", "Four"]) providerProps.current?.onToast?.({ title: name, points: 20 });
     });
-    expect(screen.queryByText("One +20 pts")).toBeNull();
-    expect(screen.getAllByText(/\+20 pts/).map((node) => node.textContent)).toEqual(["Two +20 pts", "Three +20 pts", "Four +20 pts"]);
+    expect(screen.queryByLabelText("One +20 pts")).toBeNull();
+    expect(screen.getAllByLabelText(/\+20 pts/).map((node) => node.getAttribute("aria-label"))).toEqual(["Two +20 pts", "Three +20 pts", "Four +20 pts"]);
   });
 });

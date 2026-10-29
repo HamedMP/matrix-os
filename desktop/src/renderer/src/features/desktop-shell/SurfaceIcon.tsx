@@ -1,6 +1,6 @@
 import {
   Blocks,
-  Compass,
+  Rocket,
   FileCode2,
   FilePenLine,
   Code2,
@@ -36,7 +36,7 @@ const SURFACE_ICON: Record<TabKind, LucideIcon> = {
   apps: LayoutGrid,
   app: LayoutGrid,
   settings: Settings,
-  "getting-started": Compass,
+  "getting-started": Rocket,
   shared: UsersIcon,
 };
 

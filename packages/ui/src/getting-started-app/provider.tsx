@@ -15,7 +15,7 @@ import {
   type GettingStartedResults,
 } from "@matrix-os/contracts";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { gettingStartedAppToastText } from "./actions.js";
+import { gettingStartedAppToast, type GettingStartedAppToast } from "./actions.js";
 
 export interface GettingStartedAppPort {
   loadResults(signal: AbortSignal): Promise<GettingStartedResults>;
@@ -67,7 +67,7 @@ export function GettingStartedAppProvider({
    */
   port: GettingStartedAppPort | null;
   children?: ReactNode;
-  onToast?(text: string): void;
+  onToast?(toast: GettingStartedAppToast): void;
   /** True right after the owner finishes the Get started wizard on this computer. */
   autoOpenEligible?: boolean;
   onAutoOpen?(): void;
@@ -79,6 +79,8 @@ export function GettingStartedAppProvider({
 }) {
   const [enabled, setEnabled] = useState(false);
   const [results, setResults] = useState<GettingStartedResults | null>(null);
+  // Tasks that already paid out stay Done, even if their status can no longer be checked.
+  const [earned, setEarned] = useState<readonly GettingStartedAppTaskId[]>([]);
   const [points, setPoints] = useState<GettingStartedAppPoints>({ kind: "loading" });
   // Last status seen per task this session (at most 10 entries); a task seen
   // incomplete that turns complete gets a toast, one complete on first sight does not.
@@ -128,7 +130,19 @@ export function GettingStartedAppProvider({
     });
   }, [port]);
 
-  const tasks = useMemo(() => (results ? deriveGettingStartedAppTasks(results) : []), [results]);
+  const tasks = useMemo(() => {
+    if (!results) return [];
+    const earnedIds = new Set(earned);
+    return deriveGettingStartedAppTasks(results).map((task) => (earnedIds.has(task.id) ? { ...task, status: "complete" as const } : task));
+  }, [earned, results]);
+
+  const markEarned = useCallback((ids: readonly GettingStartedAppTaskId[]) => {
+    setEarned((current) => {
+      const known = new Set(current);
+      const missing = ids.filter((id) => !known.has(id));
+      return missing.length === 0 ? current : [...current, ...missing];
+    });
+  }, []);
 
   // Award tasks that are done but not yet recorded. Only once points have
   // loaded, so the recorded set is known and nothing is claimed twice from here.
@@ -147,8 +161,9 @@ export function GettingStartedAppProvider({
       void port.award(taskId, silent, signal).then((response) => {
         if (signal.aborted) return;
         awarded.current.add(taskId);
+        markEarned([taskId]);
         showTotal(response.total);
-        if (response.awarded && !silent) callbacks.current.onToast?.(gettingStartedAppToastText(taskId, response.points));
+        if (response.awarded && !silent) callbacks.current.onToast?.(gettingStartedAppToast(taskId, response.points));
       }).catch((error: unknown) => {
         if (signal.aborted) return;
         // Keep the toast decision for the retry on the next refresh.
@@ -158,7 +173,7 @@ export function GettingStartedAppProvider({
         pending.current.delete(taskId);
       });
     }
-  }, [port, showTotal]);
+  }, [markEarned, port, showTotal]);
 
   const refresh = useCallback(async (signal: AbortSignal) => {
     if (!port) return;
@@ -180,6 +195,7 @@ export function GettingStartedAppProvider({
     if (progress) {
       progressKnown.current = true;
       for (const award of progress.awards) awarded.current.add(award.taskId);
+      markEarned(progress.awards.map((award) => award.taskId));
       showTotal(progress.total);
     } else {
       setPoints((current) => (current.kind === "ready" ? current : { kind: "unavailable" }));
@@ -192,7 +208,7 @@ export function GettingStartedAppProvider({
     } catch (error: unknown) {
       if (!isAbort(error)) warn("status unavailable", error);
     }
-  }, [awardDone, claimAutoOpen, port, reportEnabled, showTotal]);
+  }, [awardDone, claimAutoOpen, markEarned, port, reportEnabled, showTotal]);
 
   useEffect(() => {
     if (!port) return;

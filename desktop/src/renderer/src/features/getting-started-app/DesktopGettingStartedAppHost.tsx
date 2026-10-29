@@ -8,7 +8,9 @@ import {
   GettingStartedAppView,
   useGetStartedEnded,
   useGettingStartedApp,
+  GettingStartedAppToastView,
   type GettingStartedAppAction,
+  type GettingStartedAppToast,
 } from "@matrix-os/ui";
 import { useCallback, useMemo, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -62,8 +64,8 @@ export function DesktopGettingStartedAppHost({ children }: { children: ReactNode
   const api = useConnection((state) => state.api);
   const port = useMemo(() => (api ? createDesktopGettingStartedAppPort(api) : null), [api]);
   const getStartedEnded = useGetStartedEnded();
-  const showToast = useCallback((text: string) => {
-    toast(text);
+  const showToast = useCallback((completion: GettingStartedAppToast) => {
+    toast.custom(() => <GettingStartedAppToastView toast={completion} />);
   }, []);
   // First automatic open only: also place the icon on the desktop (spec 639).
   const autoOpen = useCallback(() => {

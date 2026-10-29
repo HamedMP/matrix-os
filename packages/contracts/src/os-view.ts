@@ -67,7 +67,7 @@ export const OS_VIEW_FIXED_APP_APPEARANCES = {
     foreground: "white",
   },
   whiteboard: { icon: "brush", iconSource: "app", background: "#D46A92", foreground: "white" },
-  "getting-started": { icon: "compass", iconSource: "fixed", background: "#0E3422", foreground: "#E2B55A" },
+  "getting-started": { icon: "rocket", iconSource: "fixed", background: "#0E3422", foreground: "#E2B55A" },
 } as const;
 
 export const OS_VIEW_CREATE_APP_APPEARANCE = {

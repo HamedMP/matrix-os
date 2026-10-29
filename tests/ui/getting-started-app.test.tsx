@@ -7,6 +7,7 @@ import {
   GettingStartedAppProvider,
   GettingStartedAppView,
   gettingStartedAppAction,
+  gettingStartedAppToast,
   gettingStartedAppToastText,
   type GettingStartedAppPort,
 } from "../../packages/ui/src/getting-started-app/index";
@@ -116,12 +117,20 @@ describe("Getting started app view", () => {
     expect(screen.queryByText("You're all set")).toBeNull();
   });
 
-  it("never marks an unavailable task done and shows no points chip on it", async () => {
-    renderApp(makePort());
+  it("keeps points on a task Matrix cannot check yet, and never marks it done", async () => {
+    renderApp(makePort({ results: () => results({ integrations: fulfilled([{ id: "c3", service: "whatsapp", status: "active" }]) }) }));
     const whatsapp = await screen.findByRole("button", { name: /WhatsApp/ });
     expect(within(whatsapp).queryByText("Done")).toBeNull();
-    expect(within(whatsapp).queryByText("+20 pts")).toBeNull();
+    expect(within(whatsapp).getByText("+20 pts")).toBeTruthy();
     expect(within(screen.getByRole("button", { name: /Slack/ })).getByText("+20 pts")).toBeTruthy();
+  });
+
+  it("shows earned tasks as done even when their status can't be checked", async () => {
+    renderApp(makePort({
+      progress: { awards: [{ taskId: "mobile-app", points: 20, awardedAt: "2026-10-28T10:00:00.000Z" }], total: 20 },
+    }));
+    expect(await screen.findByText("1 of 10 done")).toBeTruthy();
+    expect(within(screen.getByRole("button", { name: /Get the mobile app/ })).getByText("Done")).toBeTruthy();
   });
 
   it("maps each card to its destination", async () => {
@@ -165,7 +174,7 @@ describe("Getting started app awards", () => {
     await screen.findByText("0 of 10 done");
     connected = true;
     await waitFor(() => expect(port.award).toHaveBeenCalledWith("slack", false, expect.any(AbortSignal)));
-    await waitFor(() => expect(onToast).toHaveBeenCalledWith("Slack connected +20 pts"));
+    await waitFor(() => expect(onToast).toHaveBeenCalledWith({ title: "Slack connected", points: 20 }));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
     expect(onToast).toHaveBeenCalledTimes(1);
     expect(port.award.mock.calls.filter(([taskId]) => taskId === "slack")).toHaveLength(1);
@@ -241,7 +250,7 @@ describe("Getting started app awards", () => {
     connected = true;
     await waitFor(() => expect(port.award).toHaveBeenCalledTimes(1));
     port.award.mockImplementation(realAward);
-    await waitFor(() => expect(onToast).toHaveBeenCalledWith("Slack connected +20 pts"));
+    await waitFor(() => expect(onToast).toHaveBeenCalledWith({ title: "Slack connected", points: 20 }));
     expect(port.award.mock.calls.map(([, silent]) => silent)).toEqual([false, false]);
   });
 
@@ -256,7 +265,7 @@ describe("Getting started app awards", () => {
   });
 
   it("formats toast copy from the task table", () => {
-    expect(gettingStartedAppToastText("github", 20)).toBe("GitHub connected +20 pts");
+    expect(gettingStartedAppToastText(gettingStartedAppToast("github", 20))).toBe("GitHub connected +20 pts");
   });
 });
 

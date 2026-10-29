@@ -3,6 +3,8 @@ import { constrainFloatingWindow } from "@matrix-os/ui";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import {
+  GETTING_STARTED_DEFAULT_WINDOW_HEIGHT,
+  GETTING_STARTED_DEFAULT_WINDOW_WIDTH,
   TERMINAL_DEFAULT_WINDOW_HEIGHT,
   TERMINAL_DEFAULT_WINDOW_WIDTH,
   TERMINAL_MIN_WINDOW_HEIGHT,
@@ -250,7 +252,9 @@ function computeDefaultWindowSize(path: string): { width: number; height: number
   }
   const preferred = isTerminalWindowPath(path)
     ? { width: TERMINAL_DEFAULT_WINDOW_WIDTH, height: TERMINAL_DEFAULT_WINDOW_HEIGHT }
-    : getEffectiveMinimumWindowSize(path);
+    : path === "__getting-started__"
+      ? { width: GETTING_STARTED_DEFAULT_WINDOW_WIDTH, height: GETTING_STARTED_DEFAULT_WINDOW_HEIGHT }
+      : getEffectiveMinimumWindowSize(path);
   const width = Math.round(Math.min(1200, Math.max(preferred.width, vw * 0.6)));
   const height = Math.round(Math.min(900, Math.max(preferred.height, vh * 0.7)));
   if (mode === "canvas") return { width, height };

@@ -22,6 +22,9 @@ export const TERMINAL_DEFAULT_WINDOW_HEIGHT = 680;
 // Terminal collapses its sidebar below 500px; launch size is not a resize limit.
 export const TERMINAL_MIN_WINDOW_WIDTH = 440;
 export const TERMINAL_MIN_WINDOW_HEIGHT = 300;
+/** Spec 639: wide enough for the Figma layout (1080 content + 32px gutters). */
+export const GETTING_STARTED_DEFAULT_WINDOW_WIDTH = 1144;
+export const GETTING_STARTED_DEFAULT_WINDOW_HEIGHT = 880;
 
 const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["apps/browser/index.html", "__browser__"],

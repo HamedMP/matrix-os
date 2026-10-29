@@ -5,7 +5,7 @@ import {
   Blocks,
   BrushIcon,
   Code2,
-  Compass,
+  Rocket,
   FilePenLine,
   FolderTree,
   Globe2,
@@ -55,7 +55,7 @@ const BUILT_IN_ICON_COMPONENTS: Readonly<Record<OsViewFixedAppIcon, LucideIcon>>
   brush: BrushIcon,
   "layout-grid": LayoutGrid,
   monitor: Monitor,
-  compass: Compass,
+  rocket: Rocket,
 };
 
 /**

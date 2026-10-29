@@ -10,7 +10,9 @@ import {
   GettingStartedAppView,
   useGetStartedEnded,
   useGettingStartedApp,
+  GettingStartedAppToastView,
   type GettingStartedAppAction,
+  type GettingStartedAppToast,
 } from "@matrix-os/ui";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ShellNotificationCard } from "@/components/ShellNotificationCard";
@@ -22,9 +24,9 @@ const TOAST_MS = 4_000;
 /** Several tasks can finish between polls; each gets its own toast, newest last. */
 const MAX_TOASTS = 3;
 
-interface GettingStartedToast {
+interface QueuedToast {
   id: number;
-  text: string;
+  toast: GettingStartedAppToast;
 }
 
 const ActionContext = createContext<((action: GettingStartedAppAction) => void) | null>(null);
@@ -58,7 +60,7 @@ export function WebGettingStartedAppHost({
 }) {
   const port = useMemo(() => createWebGettingStartedAppPort(), []);
   const getStartedEnded = useGetStartedEnded();
-  const [toasts, setToasts] = useState<GettingStartedToast[]>([]);
+  const [toasts, setToasts] = useState<QueuedToast[]>([]);
   // One timer per toast, removed when it fires; at most nine awardable tasks exist, all cleared on unmount.
   const toastTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
   const nextToastId = useRef(0);
@@ -78,10 +80,10 @@ export function WebGettingStartedAppHost({
     setToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
 
-  const showToast = useCallback((text: string) => {
+  const showToast = useCallback((toast: GettingStartedAppToast) => {
     const id = nextToastId.current;
     nextToastId.current = (id + 1) % Number.MAX_SAFE_INTEGER;
-    setToasts((current) => [...current, { id, text }].slice(-MAX_TOASTS));
+    setToasts((current) => [...current, { id, toast }].slice(-MAX_TOASTS));
     toastTimers.current.set(id, setTimeout(() => dismissToast(id), TOAST_MS));
   }, [dismissToast]);
 
@@ -121,8 +123,8 @@ export function WebGettingStartedAppHost({
         <ShellNotificationPortal>
           <ShellNotificationCard role="status" aria-live="polite">
             <div className="ml-auto flex w-fit flex-col items-end gap-2">
-              {toasts.map((toast) => (
-                <div key={toast.id} className="rounded-lg bg-foreground px-3 py-2 text-xs text-background shadow-lg">{toast.text}</div>
+              {toasts.map((queued) => (
+                <GettingStartedAppToastView key={queued.id} toast={queued.toast} />
               ))}
             </div>
           </ShellNotificationCard>
