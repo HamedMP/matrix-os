@@ -48,6 +48,7 @@ describe.skipIf(!pgEnabled)("old routine binding fencing on pooled PostgreSQL (r
     await fixture.repo.finish({ ownerId: OWNER, fireId: fire.fireId, status, now: PG_AT });
     await fixture.chats.finishRun(owner, { chatId: PG_CHAT, runId: first.id, outcome: "failed", completedAt: PG_AT });
     const before = (await fixture.chats.exportChat(owner, PG_CHAT))!;
+    const beforeTasks = await fixture.db.selectFrom("bot_tasks").select("task_id").orderBy("task_id").execute();
     let providerLookups = 0;
     const canonical = new CanonicalChatOrchestrator({ repository: fixture.chats,
       catalog: { getCatalog: async () => { providerLookups++; throw new Error("Scheduled Retry crossed provider boundary"); } },
@@ -64,7 +65,7 @@ describe.skipIf(!pgEnabled)("old routine binding fencing on pooled PostgreSQL (r
       run: { ...first, id: "run_pg_existing_retry", attempt: 2, status: "accepted" } });
     await expect(fixture.execution().prepareRun({ owner, chatId: PG_CHAT, runId: retry.run.id }))
       .rejects.toMatchObject({ code: "not_granted" });
-    expect(await fixture.db.selectFrom("bot_tasks").select("task_id").execute()).toEqual([{ task_id: fire.taskId }]);
+    expect(await fixture.db.selectFrom("bot_tasks").select("task_id").orderBy("task_id").execute()).toEqual(beforeTasks);
     expect((await fixture.repo.getFire(OWNER, fire.fireId))?.status).toBe(status);
   });
   it.each([11, 13])("hands a proven unstarted admission a fresh lease after %s minutes without renewing running work", async minutes => {
