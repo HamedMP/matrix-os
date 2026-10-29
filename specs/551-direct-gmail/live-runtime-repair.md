@@ -1,0 +1,31 @@
+# Live Gmail runtime repair
+
+Tracking: [ENG-355](https://linear.app/matrix-os/issue/ENG-355/prepare-gmail-oauth-verification-and-casa-evidence).
+
+## Goal and boundaries
+
+Repair tool-result continuation and reach normal authenticated owner consent for an attachment-free Gmail text read. Preserve the existing processor/model, recipient evidence, budget, expiry, account selection, and human consent requirements. This repair does not settle unknown provider usage, waive charges, create credentials, or change admission ceilings.
+
+## Implementation
+
+1. For the existing managed GPT-OSS route only, serialize absent/null assistant text as an empty string. Preserve tool IDs, arguments, results, deliberate text, and other models. The published model template tests membership in assistant content and does not accept null at that guard: https://huggingface.co/openai/gpt-oss-20b/blob/main/chat_template.jinja. This explains a reproducible compatibility hazard; the original upstream rejection still needs live confirmation.
+2. Derive collection kinds from a closed action map in trusted host composition and independently on the receiving platform. Unknown actions fail closed. Full-message and attachment reads continue to require attachment permission.
+3. Add `get_message_text`, a bounded native read. First request the selected immutable message's MIME tree without body data. Refuse filenames, attachment IDs, non-text leaves, malformed/deep/oversize trees, or data unexpectedly returned during preflight. Only an attachment-free MIME tree permits a second, independently authorized content request. Require the same message ID and MIME structure before releasing its result. Refuse this action through legacy transports until separately qualified.
+4. Preserve the financial reservation and audit evidence. Existing operator execution recovery is independent of settlement and requires exact terminal-run and maximum-liability evidence. Do not invoke it before the failing request path is repaired and its existing contract is qualified.
+
+## Authorization and wiring
+
+| Boundary | Authority | Checks |
+| --- | --- | --- |
+| Owner tool to collection client | live owner/run binding | registered action, canonical account, actual owner interaction |
+| Host to platform collection receiver | existing machine signature and signed owner | exact request bytes/path, one-use nonce, action kinds covered by reviewed profile and consent |
+| Native Gmail text preflight and content | existing owner/account OAuth, existing before-send lease | fixed Google origin/path, no redirects, bounded response, deadline, revalidation for each send |
+| Funded continuation | existing qualified relay | unchanged route and spending admission; no direct provider credential access |
+
+## Verification
+
+Write failing regression tests first. Cover tool-only null/omitted text, unchanged messages and other models; attachment-free MIME and multipart trees; attachment/unknown/deep/oversize/dishonest metadata; withdrawal between requests; message/MIME mismatch; closed action map and receiver refusal before nonce consumption or dispatch. Run focused gateway/integration/proxy tests remotely and type-check affected packages. Verify the actual pilot consent/read/label/withdrawal flow before claiming live completion. Recording follows successful live tests.
+
+## Delivery and documentation
+
+Ship the source through the existing Gmail stack PR, with exact source/test evidence and scoped pilot deployment. Preserve unrelated worktrees and public-safe evidence. Update the canonical Gmail help in a separate site-repository PR for the attachment-free read behavior; it must not claim that an attachment-bearing message can be summarized through this path. Keep remaining runtime/device/processor evidence gates explicit.

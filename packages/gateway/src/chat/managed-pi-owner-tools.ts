@@ -57,7 +57,7 @@ export function createManagedPiOwnerTools(deps: {
   githubDeveloper?: boolean;
   authorizeExternalEgress?(binding: ManagedPiRuntimeBinding, signal: AbortSignal): Promise<void>;
   googleCollection?: { prepare(binding: ManagedPiRuntimeBinding, accountId: string, signal: AbortSignal,
-    requestConsent: GoogleCollectionClientDependencies['requestConsent']): Promise<GoogleProcessingClaim> };
+    requestConsent: GoogleCollectionClientDependencies['requestConsent'], actionId: string): Promise<GoogleProcessingClaim> };
 }) {
   const runs = new Map<string, Run>(); // capacity64, close on terminal/cancel; run deadline bounds lifetime.
   const capabilities: BotToolCapability[] = [
@@ -278,7 +278,7 @@ export function createManagedPiOwnerTools(deps: {
               'This permission is separate from connecting Gmail.'].join("\n");
             await askOwner(run, "Allow this AI to use Gmail data?", description, consentSignal);
             return true;
-          });
+          }, request.args.action);
           const afterConsent = await live(binding, signal);
           await actionFor(binding, request.args, afterConsent.permissionMode, signal);
           const afterAccount = await account(binding, request.args, signal);

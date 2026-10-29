@@ -7,6 +7,9 @@ import { GOOGLE_PROCESSING_HEADER, signGoogleProcessingEnvelope, type GoogleProc
 import { createGoogleRequestLedger } from '../../packages/gateway/src/google-data/runtime/request-ledger.js';
 import { createAuthorityFixture } from './google-data/fixture-db.js';
 import { accountId, consentInput, now, profileInput, route } from './google-data/fixtures.js';
+import { createNativeGmailClient } from '../../packages/gateway/src/integrations/native-gmail/client.js';
+import { executeIntegrationAction } from '../../packages/gateway/src/integrations/action-execution.js';
+import { GMAIL_SERVICE } from '../../packages/gateway/src/integrations/gmail.js';
 
 const machineToken = 'synthetic-machine-token-not-a-real-secret';
 const body = JSON.stringify({ service: 'gmail', action: 'list_messages', connectionId: accountId, params: { query: 'synthetic-private-query' } });
@@ -17,9 +20,10 @@ afterEach(async () => { await ledger?.close(); await db.destroy(); vi.restoreAll
 
 async function fixture(options: { consentKinds?: string[]; models?: string[] } = {}) {
   let clock = new Date(now), active = true;
-  const input = profileInput(); input.allowedModels = options.models ?? ['model-a'];
+  const input = profileInput(); input.dataKinds = ['gmail-metadata', 'gmail-content', 'google-derived-context'];
+  input.allowedModels = options.models ?? ['model-a'];
   const profile = await db.repository.reviewProfile(input, 0);
-  const consent = await db.repository.recordConsent(consentInput(profile.id, options.consentKinds ? { dataKinds: options.consentKinds } : {}), 0);
+  const consent = await db.repository.recordConsent(consentInput(profile.id, { dataKinds: options.consentKinds ?? input.dataKinds }), 0);
   const authority = createGoogleDataAuthority(db.repository, { now: () => clock });
   const stamp = await authority.assertAuthorized({ ownerId: 'owner-one', googleAccountId: accountId,
     purposeId: input.purposeId, profileId: profile.id, dataKinds: options.consentKinds ?? input.dataKinds, resolvedRoute: route() });
@@ -69,6 +73,33 @@ async function fixture(options: { consentKinds?: string[]; models?: string[] } =
 }
 
 describe('machine-authenticated Gmail collection admission', () => {
+  it.each([false, true])('joins the signed action, receiver lease and native two-request read (withdraw between sends=%s)', async withdraw => {
+    const f = await fixture(); const payload = { mimeType: 'text/plain', filename: '', body: { size: 5 } };
+    const fetcher = vi.fn().mockImplementationOnce(async () => {
+      if (withdraw) await db.repository.revokeAccount('owner-one', accountId);
+      return Response.json({ id: 'abc', payload });
+    }).mockResolvedValueOnce(Response.json({ id: 'abc', payload: { ...payload, body: { size: 5, data: 'SGVsbG8' } } }));
+    const native = createNativeGmailClient({ legacy: {} as never, oauth: { token: async () => 'synthetic' }, fetcher });
+    const action = 'get_message_text', params = { messageId: 'abc' };
+    const changedBody = JSON.stringify({ service: 'gmail', action, connectionId: accountId, params });
+    const token = signGoogleProcessingEnvelope(f.claim, { machineToken, method: 'POST', path: '/call', body: changedBody, now: now.getTime() });
+    f.beforeCollection(async () => {
+      await executeIntegrationAction({ pipedream: native, externalUserId: 'owner-one',
+        connection: { pipedream_account_id: 'gmail_11111111-1111-4111-8111-111111111111' },
+        def: GMAIL_SERVICE, actionDef: GMAIL_SERVICE.actions[action], serviceId: 'gmail', actionId: action, params,
+        beforeSend: f.sendCheck, signal: new AbortController().signal });
+    });
+    const server = f.app();
+    expect((await f.send(server, { token, body: changedBody })).status).toBe(withdraw ? 403 : 200);
+    expect(fetcher).toHaveBeenCalledTimes(withdraw ? 1 : 2);
+    expect(f.collected).toHaveBeenCalledTimes(withdraw ? 0 : 1);
+  });
+  it.each(['get_message', 'get_attachment', 'unreviewed_action'])('refuses signed %s without the required action scope before consuming or collecting', async action => {
+    const f = await fixture(); const changedBody = JSON.stringify({ service: 'gmail', action, connectionId: accountId, params: {} });
+    const token = signGoogleProcessingEnvelope(f.claim, { machineToken, method: 'POST', path: '/call', body: changedBody, now: now.getTime() });
+    expect((await f.send(f.app(), { token, body: changedBody })).status).toBe(403);
+    expect(f.consume).not.toHaveBeenCalled(); expect(f.collected).not.toHaveBeenCalled();
+  });
   it.each(['abort', 'expiry', 'account', 'consent', 'renewal', 'profile'])('rechecks %s after admission immediately before collection', async changed => {
     const f = await fixture(); const controller = new AbortController();
     f.beforeCollection(async () => {
