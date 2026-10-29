@@ -431,7 +431,12 @@ export async function createNativeProviderWorkflowAdapters(options: {
         }
         if (codexTerminalLogin) {
           commandCompletion = observeNativeCommandCompletion({
-            read: () => options.terminal.getCommandResult!(ref!, incarnation!),
+            read: () => {
+              // Result reads do not renew the separate viewer lease. Keep this
+              // exact attachment alive while the human completes browser OAuth.
+              stream?.send({ type: 'ping', terminalRef: ref! });
+              return options.terminal.getCommandResult!(ref!, incarnation!);
+            },
             active: () => !stopped && !cancelling && !completionAbort.signal.aborted,
             onExited: async code => { finishTask ??= finish(code); await finishTask; },
           });
