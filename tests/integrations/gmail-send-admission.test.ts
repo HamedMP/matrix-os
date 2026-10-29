@@ -18,7 +18,7 @@ const config = { clientId: "synthetic", clientSecret: "synthetic", projectId: "f
 const response = () => Response.json({ id: "message", historyId: "1", size: 1, data: "YQ" });
 const actions: Record<string, Record<string, unknown>> = {
   get_profile: {}, list_threads: {}, get_thread_ids: { threadId: "thread" }, list_messages: {},
-  get_message: { messageId: "message" }, get_attachment: { messageId: "message", attachmentId: "attachment" },
+  get_message: { messageId: "message" }, get_message_text: { messageId: "message" }, get_attachment: { messageId: "message", attachmentId: "attachment" },
   send_email: { to: "test@example.test", subject: "Subject", body: "a".repeat(60_000) },
   create_draft: { subject: "Draft", body: "Draft content" }, search: { query: "in:inbox" }, list_labels: {},
   list_history: { startHistoryId: "9007199254740993" }, create_label: { name: "Reviewed" },
@@ -136,11 +136,25 @@ describe.each([false, true])("Gmail send admission native=%s", native => {
   });
   it.each(Object.entries(actions))("guards the reviewed %s catalog action without entering the SDK proxy", async (actionId, params) => {
     const f = await fixture(native); const beforeSend = vi.fn(async (signal: AbortSignal) => { expect(signal.aborted).toBe(false); });
+    expect(Object.keys(GMAIL_SERVICE.actions).sort()).toEqual(Object.keys(actions).sort());
+    if (actionId === "get_message_text") {
+      if (!native) {
+        await expect(executeIntegrationAction({ pipedream: f.client, externalUserId: identity.externalUserId,
+          connection: { pipedream_account_id: f.accountId }, def: GMAIL_SERVICE, actionDef: GMAIL_SERVICE.actions[actionId],
+          serviceId: "gmail", actionId, params, beforeSend })).rejects.toThrow();
+        expect(beforeSend).not.toHaveBeenCalled(); expect(f.fetcher).not.toHaveBeenCalled();
+        expect(mocks.get).not.toHaveBeenCalled(); expect(mocks.post).not.toHaveBeenCalled(); return;
+      }
+      const payload = { mimeType: "text/plain", filename: "", body: { size: 1 } };
+      f.fetcher.mockResolvedValueOnce(Response.json({ id: "message", payload }))
+        .mockResolvedValueOnce(Response.json({ id: "message", payload: { ...payload, body: { size: 1, data: "YQ" } } }));
+    }
     await executeIntegrationAction({ pipedream: f.client, externalUserId: identity.externalUserId,
       connection: { pipedream_account_id: f.accountId }, def: GMAIL_SERVICE, actionDef: GMAIL_SERVICE.actions[actionId],
       serviceId: "gmail", actionId, params, beforeSend });
     expect(Object.keys(GMAIL_SERVICE.actions).sort()).toEqual(Object.keys(actions).sort());
-    expect(beforeSend).toHaveBeenCalledOnce(); expect(f.fetcher).toHaveBeenCalledOnce();
+    const sends = actionId === "get_message_text" ? 2 : 1;
+    expect(beforeSend).toHaveBeenCalledTimes(sends); expect(f.fetcher).toHaveBeenCalledTimes(sends);
     expect(mocks.get).not.toHaveBeenCalled(); expect(mocks.post).not.toHaveBeenCalled();
     const [url, init] = f.fetcher.mock.calls[0]!;
     expect(init?.redirect).toBe("error"); expect(init?.signal).toBeInstanceOf(AbortSignal);

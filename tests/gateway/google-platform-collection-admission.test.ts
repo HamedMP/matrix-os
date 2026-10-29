@@ -28,7 +28,8 @@ async function fixture() {
   let clock = new Date(); const now = () => clock; const future = () => new Date(clock.getTime() + 3600000).toISOString();
   repository = createGoogleDataRepository(db.sql, { now }); ledger = createGoogleRequestLedger(db.sql, { now }); await ledger.migrate();
   const input = profileInput(); input.ownerId = ownerId; input.evidence.expiresAt = future();
-  const profile = await repository.reviewProfile(input, 0); await repository.recordConsent(consentInput(profile.id, { ownerId, expiresAt: future() }), 0);
+  input.dataKinds.push('google-derived-context');
+  const profile = await repository.reviewProfile(input, 0); await repository.recordConsent(consentInput(profile.id, { ownerId, expiresAt: future(), dataKinds: input.dataKinds }), 0);
   const authority = createGoogleDataAuthority(repository, { now });
   const stamp = await authority.assertAuthorized({ ownerId, googleAccountId: accountId, purposeId: input.purposeId,
     profileId: profile.id, dataKinds: input.dataKinds, resolvedRoute: route() });
