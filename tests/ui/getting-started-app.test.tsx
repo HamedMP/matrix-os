@@ -438,6 +438,18 @@ describe("Getting started as an extension of onboarding", () => {
     expect(port.loadLogos).toHaveBeenCalledTimes(1);
   });
 
+  it("falls back from a logo that fails to load", async () => {
+    renderApp(makePort({ logos: { github: "https://logos.example/broken.svg" } }));
+    const github = await screen.findByRole("button", { name: /Let agents work in your repos/ });
+    const img = await waitFor(() => {
+      const found = github.querySelector("img");
+      if (!found) throw new Error("logo not rendered yet");
+      return found;
+    });
+    fireEvent.error(img);
+    await waitFor(() => expect(github.querySelector("img")).toBeNull());
+  });
+
   it("keeps a line icon when an integration has no logo", async () => {
     renderApp(makePort({ logos: {} }));
     const whatsapp = await screen.findByRole("button", { name: /WhatsApp/ });

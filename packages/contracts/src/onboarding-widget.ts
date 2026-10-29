@@ -223,6 +223,9 @@ export function reduceOnboardingWidget(state: OnboardingWidgetState, event: Onbo
   const screen = state.screen;
   switch (event.type) {
     case "task.selected": {
+      // A starting or running task keeps its screen; a new pick (e.g. from the Getting started
+      // app, spec 639) waits until it finishes instead of hiding its progress and result.
+      if (runActive(state)) return state;
       const task = onboardingTask(event.taskId);
       if (!task) return state;
       const base = { ...state, ai: null, echo: task.label, notice: null };

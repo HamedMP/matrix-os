@@ -265,7 +265,8 @@ function StarterTasks({ points, onAction }: { points: number; onAction(action: G
 }
 
 function TaskArt({ task, logo }: { task: GettingStartedAppTask; logo: string | undefined }) {
-  const [failed, setFailed] = useState(false);
+  // Remember which URL failed, so a new logo URL gets its own chance to load.
+  const [failedLogo, setFailedLogo] = useState<string | null>(null);
   if (task.id === "create-agent") return <RabbitAvatar size={28} />;
   if (task.id === "ai-provider") {
     return (
@@ -277,8 +278,8 @@ function TaskArt({ task, logo }: { task: GettingStartedAppTask; logo: string | u
   }
   const sculpted = SCULPTED_ICONS[task.id];
   if (sculpted) return <img className="mxo-gsa__art-sculpted" src={codingAgentArtworkSrc(sculpted)} alt="" width={30} height={30} />;
-  if (logo && !failed) {
-    return <img className="mxo-gsa__art-logo" src={logo} alt="" width={22} height={22} referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
+  if (logo && logo !== failedLogo) {
+    return <img className="mxo-gsa__art-logo" src={logo} alt="" width={22} height={22} referrerPolicy="no-referrer" onError={() => setFailedLogo(logo)} />;
   }
   const Icon = LINE_ICONS[task.id];
   return Icon ? <Icon size={20} strokeWidth={1.75} aria-hidden="true" /> : <span aria-hidden="true">{task.title.slice(0, 1)}</span>;

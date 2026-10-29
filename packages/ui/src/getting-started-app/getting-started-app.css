@@ -548,6 +548,7 @@
     transition: none;
   }
   .mxo-gsa__grid > *,
+  .mxo-gsa__starters > *,
   .mxo-gsa__card--celebrate,
   .mxo-gsa__glow {
     animation: none;
