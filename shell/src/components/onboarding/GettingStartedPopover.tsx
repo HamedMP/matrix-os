@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded,
+  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded, GettingStartedAppSummary,
   openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, gettingStartedRowAction, gettingStartedRowView, type GettingStartedRequest, type GettingStartedRowAction, type GettingStartedRowView,
 } from "@matrix-os/ui";
 import { onboardingChecklist } from "@matrix-os/brand";
@@ -11,6 +11,7 @@ import {
   getStartedAppGalleryLabel,
   gettingStartedRows,
   type GetStartedRecipeBotId,
+  type GettingStartedResults,
   type GettingStartedRow,
   type GettingStartedSnapshot,
   type GettingStartedStepId,
@@ -176,10 +177,11 @@ async function readJson(
   return response.json();
 }
 
-export async function loadWebGettingStartedSnapshot(
+/** The status reads behind Getting started; the popover and the Getting started app derive from the same results. */
+export async function loadWebGettingStartedResults(
   fetcher: GettingStartedFetcher = fetch,
   signal?: AbortSignal,
-): Promise<GettingStartedSnapshot> {
+): Promise<GettingStartedResults> {
   const gatewayUrl = getGatewayUrl();
   const billingUrl = `/billing/status?runtimeSlot=${encodeURIComponent(currentRuntimeSlot())}`;
   const [github, integrations, agents, projects, chats, billing] = await Promise.allSettled([
@@ -190,7 +192,14 @@ export async function loadWebGettingStartedSnapshot(
     readJson(fetcher, `${gatewayUrl}/api/chats?limit=1`, signal),
     readJson(fetcher, billingUrl, signal),
   ]);
-  return deriveGettingStartedSnapshot({ github, integrations, agents, projects, chats, billing });
+  return { github, integrations, agents, projects, chats, billing };
+}
+
+export async function loadWebGettingStartedSnapshot(
+  fetcher: GettingStartedFetcher = fetch,
+  signal?: AbortSignal,
+): Promise<GettingStartedSnapshot> {
+  return deriveGettingStartedSnapshot(await loadWebGettingStartedResults(fetcher, signal));
 }
 
 /** One checklist row: label (or its try action), optional help line, and its icon or "Try". */
@@ -508,6 +517,7 @@ function GettingStartedPopoverContent({
               />
             </div>
           </div>
+          <GettingStartedAppSummary />
           <div className="pb-1">
             <a
               href={downloadSuggestion.href}

@@ -13,6 +13,7 @@ import GetStartedHost from "./features/get-started/GetStartedHost";
 import OnboardingWidgetHost from "./features/onboarding-widget/OnboardingWidgetHost";
 import DesktopSupportWidget from "./features/support/DesktopSupportWidget";
 import { DesktopDefaultOrganization } from "./features/collaboration/DesktopDefaultOrganization";
+import { DesktopGettingStartedAppHost } from "./features/getting-started-app/DesktopGettingStartedAppHost";
 import { useAppearance } from "./stores/appearance";
 import { useConnection, wireConnectionEvents } from "./stores/connection";
 import { wireNativeAppOpening } from "./lib/native-app-opening";
@@ -47,7 +48,9 @@ export default function App() {
           <>
             {/* Outside the runtime gate: organizations come from the platform, not the computer. */}
             <DesktopDefaultOrganization />
-            <RuntimeCompatibilityGate key={scope}><MissionControl /></RuntimeCompatibilityGate>
+            <RuntimeCompatibilityGate key={scope}>
+              <DesktopGettingStartedAppHost><MissionControl /></DesktopGettingStartedAppHost>
+            </RuntimeCompatibilityGate>
           </>
         )}
       </div>

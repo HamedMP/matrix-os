@@ -37,7 +37,7 @@ describe("dock icon resolution", () => {
     expect(desktopSource).toContain("buildWebDesktopIconApps(installedApps)");
     expect(builtInSource).toContain('new Set(["__workspace__"])');
     expect(builtInSource).not.toContain('"__workspace__",\n  "__terminal__"');
-    expect(desktopSource).toContain("buildWebDesktopLauncherApps(installedApps, desktopMode)");
+    expect(desktopSource).toContain("buildWebDesktopLauncherApps(installedApps, desktopMode, { gettingStartedApp: gettingStartedAppEnabled })");
   });
 
   it("writes regenerated icons into the React Query catalog", async () => {

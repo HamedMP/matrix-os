@@ -22,6 +22,7 @@ export type TabKind =
   | "apps"
   | "app"
   | "settings"
+  | "getting-started"
   | "shared";
 
 export type WorkRoute = "chat" | "projects" | "project";

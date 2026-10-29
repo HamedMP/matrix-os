@@ -14,6 +14,7 @@ import WorkTab from "../work/WorkTab";
 import BrowserTab from "../browser/BrowserTab";
 import DesktopEditorWorkspace from "../editor/DesktopEditorWorkspace";
 import NotesWorkspace from "../notes/NotesWorkspace";
+import { DesktopGettingStartedAppWindow } from "../getting-started-app/DesktopGettingStartedAppHost";
 import DesktopChatCollaboration from "../chat/DesktopChatCollaboration";
 import { DesktopSharedTerminal } from "../terminal/DesktopSharedTerminal";
 
@@ -93,6 +94,8 @@ export function TabPane({
       return <EmbedHost kind="code-editor" active={active} layoutRevision={layoutRevision} visualScale={visualScale} />;
     case "notes":
       return <NotesWorkspace active={active} />;
+    case "getting-started":
+      return <DesktopGettingStartedAppWindow />;
     case "apps":
       return <AppLauncher />;
     case "projects":

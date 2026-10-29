@@ -285,6 +285,7 @@ export * from "./chat-navigation/metrics.js";
 export * from "./onboarding-widget/index.js";
 export * from "./get-started/index.js";
 export { FEATURE_FLAG_TIMEOUT_MS, subscribePostHogFlag, useFeatureFlag, type FeatureFlagListener, type FeatureFlagSource, type PostHogFlagClient } from "./feature-flags.js";
+export * from "./getting-started-app/index.js";
 
 export { DesktopTopBarActions, DesktopHelpMenu, DesktopViewMenu, DesktopInboxMenu, DesktopActivityInbox } from "./desktop-top-bar.js";
 export { BrowserSurface, createHostedBrowserSession, createBrowserSetupTransport } from "./browser/index.js";

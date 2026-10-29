@@ -1,12 +1,13 @@
 import { bundledDesktopIconForPath } from "../desktop-shell/bundled-app-icons";
 import { LayoutGrid, Monitor, Plus, Search } from "@renderer/lib/hugeicons";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useGettingStartedApp } from "@matrix-os/ui";
 import { Button, EmptyState } from "../../design/primitives";
 import { appIconUrl, useAppsQuery, type MatrixApp } from "../apps/apps.api";
 import { useConnection } from "../../stores/connection";
 import { useTabs } from "../../stores/tabs";
 import { trackDesktopEvent } from "../../lib/desktop-analytics";
-import { FIXED_DESKTOP_APPS, type DesktopAppConfig } from "../desktop-shell/desktop-apps";
+import { FIXED_DESKTOP_APPS, desktopAppsFor, type DesktopAppConfig } from "../desktop-shell/desktop-apps";
 import {
   OS_VIEW_DESTINATION_PATHS,
   OS_VIEW_CREATE_APP_APPEARANCE,
@@ -145,6 +146,7 @@ export default function AppLauncher({
     return () => document.removeEventListener("keydown", dismiss, true);
   }, [contextMenu, launcherActive, onCloseLauncher, presentation]);
 
+  const gettingStartedAppEnabled = useGettingStartedApp()?.enabled ?? false;
   const entries = useMemo<LauncherEntry[]>(() => {
     if (presentation !== "launchpad") {
       return apps.map((app) => ({ type: "installed", key: `installed:${app.slug}`, name: app.name, app }));
@@ -159,7 +161,7 @@ export default function AppLauncher({
         name: OS_VIEW_LABELS[destinationMode],
         mode: destinationMode,
       }] : []),
-      ...FIXED_DESKTOP_APPS.map((app) => {
+      ...desktopAppsFor({ gettingStartedApp: gettingStartedAppEnabled }).map((app) => {
         const installed = apps.find((candidate) => candidate.name.toLowerCase() === app.name.toLowerCase());
         const appearance = osViewFixedAppAppearanceForPath(app.path);
         return {
@@ -175,7 +177,7 @@ export default function AppLauncher({
         .filter((app) => !fixedNames.has(app.name.toLowerCase()))
         .map((app) => ({ type: "installed" as const, key: `installed:${app.slug}`, name: app.name, app })),
     ];
-  }, [apps, osViewMode, platformHost, presentation, runtimeSlot]);
+  }, [apps, gettingStartedAppEnabled, osViewMode, platformHost, presentation, runtimeSlot]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

@@ -1,6 +1,6 @@
 import { getStartedAppGalleryLabel, gettingStartedRows, type GettingStartedRow, type GettingStartedStepStatus, type OnboardingWidgetEvent } from "@matrix-os/contracts";
 import {
-  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded,
+  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded, GettingStartedAppSummary,
   openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, useGetStartedConnectFailures, gettingStartedRowAction, gettingStartedRowView,
   type GettingStartedRequest, type GettingStartedRowView,
 } from "@matrix-os/ui";
@@ -385,6 +385,7 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
               />
             </div>
           </div>
+          <GettingStartedAppSummary />
           <div className="pb-1">
             {/* A link, not a step: building an app has no completion check. */}
             <button
