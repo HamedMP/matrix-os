@@ -74,6 +74,53 @@ function fixture(outcome = {
     scheduler
   };
 }
+it.each(["startup", "authorization", "dispatch"] as const)("bounds shutdown while %s remains pending and starts no late work", async stage => {
+  vi.useFakeTimers();
+  const { scheduler, store, run, authorize } = fixture();
+  let release!: () => void, enter!: () => void;
+  const entered = new Promise<void>(done => { enter = done; });
+  const gate = new Promise<unknown>(done => { release = () => done(stage === "startup" ? 0 : stage === "authorization" ? true : { ...f, status: "dispatched", attempts: 1 }); });
+  const pending = () => { enter(); return gate; };
+  if (stage === "startup") store.recover.mockImplementation(pending);
+  else if (stage === "authorization") authorize.mockImplementation(pending);
+  else store.dispatch.mockImplementation(pending);
+  const work = stage === "startup" ? scheduler.start() : scheduler.tick();
+  let stopped = false;
+  let stop: Promise<void> | undefined;
+  try {
+    await entered;
+    stop = scheduler.stop().then(() => { stopped = true; });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(stopped).toBe(true);
+    release(); await work; await stop;
+    expect(run).not.toHaveBeenCalled();
+    expect(store.finish).not.toHaveBeenCalled(); expect(store.defer).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { release(); await work; await stop; vi.useRealTimers(); }
+});
+
+it.each(["accepted", "rejected"] as const)("retains pending admission fences after a bounded stop and late %s result", async outcome => {
+  vi.useFakeTimers();
+  const { scheduler, store, run } = fixture();
+  let release!: () => void, enter!: () => void;
+  const entered = new Promise<void>(done => { enter = done; });
+  run.mockImplementation(() => new Promise((done, reject) => {
+    enter(); release = () => outcome === "accepted" ? done({ status: "accepted" }) : reject(new Error("Synthetic late admission failure"));
+  }));
+  const work = scheduler.tick();
+  let stopped = false;
+  let stop: Promise<void> | undefined;
+  try {
+    await entered; stop = scheduler.stop().then(() => { stopped = true; });
+    await vi.advanceTimersByTimeAsync(10000); expect(stopped).toBe(true);
+    expect(run.mock.calls[0][2].aborted).toBe(true);
+    expect(store.finish).not.toHaveBeenCalled(); expect(store.defer).not.toHaveBeenCalled();
+    release(); await work; await stop; await scheduler.tick();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(store.finish).not.toHaveBeenCalled(); expect(store.defer).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { release?.(); await work; await stop; vi.useRealTimers(); }
+});
 describe("routine clock and failure policy", () => {
   it("skips missed interval backlog and computes a single next future occurrence", () => {
     expect(nextBotRoutineFire(r.proposal.schedule, NOW)).toBe("2026-10-18T12:01:00.000Z");
