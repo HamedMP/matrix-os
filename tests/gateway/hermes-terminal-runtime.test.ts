@@ -1,3 +1,4 @@
+import { TerminalRuntimeRequestSchema } from '../../packages/terminal-runtime/src/socket-protocol.js';
 import { expect, it, vi } from 'vitest';
 import { resolve } from 'node:path';
 import { ZellijCliRuntimeAdapter } from '../../packages/terminal-runtime/src/zellij-adapter.js';
@@ -11,6 +12,7 @@ import { createHermesTerminalLoginRuntime } from '../../packages/gateway/src/ai-
 it('opens the prepared Hermes login through the real Terminal cwd contract without permitting absolute paths',async()=>{
  const runtime=createHermesTerminalLoginRuntime({homePath:'/owner',enableConnected:vi.fn()});
  const launch=await runtime.prepare('openai-codex');
+ expect(TerminalRuntimeRequestSchema.safeParse({version:1,requestId:'req_0123456789abcdef0123456789abcdef',operation:'CreateTab',input:{workspaceId:'tws_0123456789abcdef0123456789abcdef',name:'Hermes login',...launch}}).success).toBe(true);
  const run=vi.fn(async(args:string[])=>{
   if(args.includes('list-tabs'))return '[]';
   if(args.includes('new-tab'))return '7';

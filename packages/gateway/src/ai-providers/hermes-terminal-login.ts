@@ -52,24 +52,34 @@ except BaseException:
 /** Finish native selection from that provider's own advertised inventory only. */
 export const HERMES_TERMINAL_CONFIGURE = `
 import sys
-from hermes_cli.auth import PROVIDER_REGISTRY, _update_config_for_provider
-from hermes_cli.config import load_config_readonly
+import hermes_cli.auth as auth
+from hermes_cli.config import clear_model_endpoint_credentials
 from hermes_cli.models import get_default_model_for_provider
 from hermes_cli.model_switch_providers import list_authenticated_providers
 provider = sys.argv[1]
 assert provider in ('openai-codex', 'anthropic')
-endpoint = PROVIDER_REGISTRY[provider].inference_base_url
+endpoint = auth.PROVIDER_REGISTRY[provider].inference_base_url
 assert endpoint.rstrip('/') == {'anthropic':'https://api.anthropic.com','openai-codex':'https://chatgpt.com/backend-api/codex'}[provider]
 rows = [row for row in list_authenticated_providers(current_provider=provider, probe_custom_providers=False, non_blocking_catalogs=True) if row.get('slug') == provider]
 assert len(rows) == 1 and rows[0].get('is_user_defined') is False
 models = rows[0].get('models')
 assert isinstance(models, list) and 0 < len(models) <= 512 and all(isinstance(model,str) and 0 < len(model) <= 160 for model in models)
-config = load_config_readonly(); current = config.get('model', {})
-current = current if isinstance(current, dict) else {}
+path = auth.get_config_path()
+auth.require_readable_config_before_write(path)
+config = auth.read_raw_config(); assert isinstance(config, dict)
+config = dict(config); current = config.get('model', {})
+current = dict(current) if isinstance(current, dict) else {}
 preferred = get_default_model_for_provider(provider)
 model = current.get('default') if current.get('provider') == provider else None
 if model not in models: model = preferred if preferred in models else models[0]
-_update_config_for_provider(provider, endpoint, default_model=model)
+# The upstream login helper preserves slashless defaults; write the whole route once.
+current.update(provider=provider, base_url=endpoint, default=model)
+clear_model_endpoint_credentials(current)
+with auth._auth_store_lock():
+    store = auth._load_auth_store(); store['active_provider'] = provider
+    auth._save_auth_store(store)
+    config['model'] = current
+    auth.atomic_config_replace(path, config)
 `;
 export const HERMES_TERMINAL_LOGIN_COMMAND = `
 import sys, os, contextlib

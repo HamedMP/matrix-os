@@ -23,3 +23,22 @@ Live acceptance uses user-completed OAuth on a disposable Preview and the isolat
 Local qualification: 56 files / 743 tests pass; all official project type-check targets pass; Desktop builds successfully. Current-source native-root resolution and both official OAuth handlers were checked on the Linux x64 Preview. Account-backed model/MCP and visual acceptance remain pending. The Terminal command is 3,538 characters, below its 4,096-character argument bound.
 
 Live validation found and reproduced an integration defect on PR2964/6e34fa1: the login producer supplied an absolute cwd while the production Terminal consumer accepts only home-relative cwd. The corrective producer now returns the relative native checkout path; the consumer's canonical containment and absolute-path rejection remain unchanged. A regression crosses the real launch producer and Zellij adapter, RED on the old producer and GREEN on the correction. Expanded qualification:58 files /770 tests pass and all eight official type-check targets pass. The failed Preview keeps its ambiguous-launch fence; replace that disposable runtime rather than deleting the safety marker. User OAuth, real native model/MCP, local Desktop parity and video still require live qualification of the corrective bundle.
+
+
+## 2026-10-29 — provider/model switch P1 correction
+
+The exact pinned upstream login helper preserves nonempty slashless model IDs,
+so passing a new default does not replace an existing GPT/Claude selection. The
+new characterization fixture retains the real upstream helper and credential-
+cleanup functions; only storage I/O is memory-only. Both cross-provider cases
+failed against the original script and now pass. The launch script writes the
+advertised model, provider and endpoint together through Hermes's own atomic
+config writer, preserving other config keys and the existing active-auth-store
+selection contract. Invalid/missing model inventory performs no write. No OAuth,
+credential migration or network call is performed by these tests.
+
+Provider switching, same-provider selection, endpoint credential cleanup and the
+single config-write boundary are covered. The production Terminal request schema
+also receives the prepared command, preventing a command-size regression; the
+current Python command is3988characters within4096. Current broad regression,
+new-head review/CI and fresh matching Preview remain subsequent gates.
