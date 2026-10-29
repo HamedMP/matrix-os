@@ -4,12 +4,16 @@ import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { TerminalRuntime } from '../../packages/terminal-runtime/src/runtime.js';
 import { TerminalWorkspaceStore } from '../../packages/terminal-runtime/src/workspace-store.js';
+import { TerminalRuntimeSocketServer } from '../../packages/terminal-runtime/src/socket-server.js';
+import { TerminalRuntimeSocketClient, type TerminalRuntimeSocketStream } from '../../packages/terminal-runtime/src/socket-client.js';
 import { createNativeProviderWorkflowAdapters } from '../../packages/gateway/src/ai-providers/provider-workflow-native.js';
 const cleanups: Array<() => Promise<void>> = [];
-afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
+afterEach(async () => { try { for (const close of cleanups.splice(0).reverse()) await close(); } finally { vi.useRealTimers(); } });
+const nativeImmediate = globalThis.setImmediate;
+const flushSocket = () => new Promise<void>(resolve => nativeImmediate(resolve));
 
-async function fixture(initial: { state?: 'running' | 'exited' | 'unknown'; exitCode?: number; rejectedIdentity?: boolean } = {}) {
-  const home = await mkdtemp(join(tmpdir(), 'native-command-result-'));
+async function fixture(initial: { state?: 'running' | 'exited' | 'unknown'; exitCode?: number; rejectedIdentity?: boolean; socket?: boolean } = {}) {
+  const home = await mkdtemp(initial.socket ? '/tmp/native-command-lease-' : join(tmpdir(), 'native-command-result-'));
   let attachmentInput: { onData(data: Uint8Array): void; onExit(code: number | null): void } | undefined;
   const result = { state: initial.state ?? 'exited', exitCode: initial.exitCode ?? 0 };
   const zellij = {
@@ -21,10 +25,12 @@ async function fixture(initial: { state?: 'running' | 'exited' | 'unknown'; exit
       attachmentInput = input; return { write: async () => {}, resize: async () => {}, close: async () => {} };
     }),
     closeTab: vi.fn(async () => {}), deleteSession: vi.fn(async () => {}),
+    resizeSession: vi.fn(async () => {}),
   };
   const runtime = new TerminalRuntime({ store: new TerminalWorkspaceStore({ homePath: home }), zellij });
+  let server: TerminalRuntimeSocketServer | undefined;
   const cleanup: Array<() => Promise<void>> = [];
-  cleanups.push(async () => { for (const release of cleanup) await release(); await runtime.shutdown(); await rm(home, { recursive: true, force: true }); });
+  cleanups.push(async () => { for (const release of cleanup) await release(); await server?.close(); await runtime.shutdown(); await rm(home, { recursive: true, force: true }); });
   const workspace = await runtime.ensureWorkspace();
   const tab = await runtime.createTab(workspace.id, { name: 'synthetic-login', cwd: '', command: ['/fake/codex', 'login', '--device-auth'] });
   const ref = { workspaceId: workspace.id, tabId: tab.id };
@@ -36,7 +42,7 @@ async function fixture(initial: { state?: 'running' | 'exited' | 'unknown'; exit
   let attached: Promise<Awaited<ReturnType<TerminalRuntime['attach']>>> | undefined;
   type AttachInput = Parameters<import('../../packages/terminal-runtime/src/socket-client.js').TerminalRuntimeSocketClient['attach']>[0];
   let transportInput: AttachInput;
-  const terminal = {
+  const mockedTerminal = {
     listWorkspaces: () => runtime.listWorkspaces(), ensureWorkspace: () => runtime.ensureWorkspace(), createTab: vi.fn(),
     getCommandResult: vi.fn((target, incarnation) => runtime.getCommandResult(target, incarnation)),
     terminateTab: vi.fn((target, incarnation) => runtime.terminateTab(target, incarnation)),
@@ -48,16 +54,94 @@ async function fixture(initial: { state?: 'running' | 'exited' | 'unknown'; exit
       return { close: () => { void attached?.then(viewer => viewer.detach()); }, send: vi.fn() };
     },
   };
+  let lastRead: Promise<unknown> | undefined;
+  let socketStream: TerminalRuntimeSocketStream | undefined;
+  const socketFrames = vi.fn();
+  let socketReady: Promise<void> | undefined;
+  let terminal: typeof mockedTerminal | TerminalRuntimeSocketClient = mockedTerminal;
+  if (initial.socket) {
+    const socketPath = join(home, 't.sock');
+    server = new TerminalRuntimeSocketServer({ socketPath, runtime });
+    await server.start();
+    const client = new TerminalRuntimeSocketClient({ socketPath });
+    const read = client.getCommandResult.bind(client);
+    vi.spyOn(client, 'getCommandResult').mockImplementation((...args) => { lastRead = read(...args); return lastRead as ReturnType<typeof read>; });
+    const attach = client.attach.bind(client);
+    socketReady = new Promise<void>(resolve => {
+      vi.spyOn(client, 'attach').mockImplementation(input => {
+        socketStream = attach({ ...input, onFrame(frame) {
+          socketFrames(frame);
+          input.onFrame(frame);
+          if (frame.type === 'replay-end') resolve();
+        } });
+        vi.spyOn(socketStream, 'send');
+        return socketStream;
+      });
+    });
+    terminal = client;
+  }
   const [adapter] = await createNativeProviderWorkflowAdapters({ store, terminal, hostControl: { available: false, run: vi.fn() } } as never);
   const publish = vi.fn();
   const running = await adapter!.start({ request: { harnessInstanceId: row.id, kind: 'login', method: 'terminal', idempotencyKey: 'synthetic-receipt' }, publish,
     registerCleanup: release => { cleanup[0] = release; } });
   cleanup[0] = running.cancel;
   await attached;
-  return { result, complete, store, terminal, publish, runtime, ref, tab, snapshot, cleanup,
+  await socketReady;
+  return { result, complete, store, terminal, publish, runtime, ref, tab, snapshot, cleanup, socketFrames,
+    socketStream, readDone: () => lastRead,
     transportClose: () => transportInput.onClose?.(),
     output: (text: string) => attachmentInput!.onData(new TextEncoder().encode(text)), attachmentExit: (code: number) => attachmentInput!.onExit(code) };
 }
+
+it('keeps a quiet Codex login alive past the real runtime viewer TTL, then completes and releases its heartbeat', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+  const f = await fixture({ state: 'running', socket: true });
+  const startTime = Date.now();
+  // Keep the real runtime, its default two-minute viewer TTL, socket framing,
+  // ping validation and viewer.touch path. Only the native CLI/process is fake.
+  for (let second = 0; second < 180; second += 1) {
+    await vi.advanceTimersByTimeAsync(1000);
+    await f.readDone();
+    await flushSocket();
+  }
+  expect(Date.now() - startTime).toBe(180_000);
+  // Admission also runs the production stale-viewer sweep synchronously.
+  const otherViewer = await f.runtime.attach(f.ref, { viewerId: 'independent-reader', expectedIncarnation: f.tab.incarnation,
+    send() {}, onExit() {} });
+  f.cleanup.push(() => otherViewer.detach());
+  for (let turn = 0; turn < 8; turn += 1) await flushSocket();
+  expect(f.publish).not.toHaveBeenCalledWith(expect.objectContaining({ state: 'failed' }));
+  expect(await f.runtime.getCommandState(f.ref, f.tab.incarnation)).toBe('running');
+  expect(f.socketFrames).toHaveBeenCalledWith(expect.objectContaining({ type: 'pong', terminalRef: f.ref }));
+  expect(f.complete).not.toHaveBeenCalled();
+  f.result.state = 'exited';
+  await vi.advanceTimersByTimeAsync(1000);
+  await f.readDone();
+  for (let turn = 0; turn < 8; turn += 1) await flushSocket();
+  expect(f.complete).toHaveBeenCalledOnce();
+  expect(f.publish).toHaveBeenCalledWith({ state: 'succeeded', safeFailure: null });
+  const sent = vi.mocked(f.socketStream!.send).mock.calls.length;
+  await vi.advanceTimersByTimeAsync(180_000);
+  await flushSocket();
+  expect(f.socketStream!.send).toHaveBeenCalledTimes(sent);
+}, 15_000);
+
+it('releases the real socket heartbeat on cancellation without accepting a later exit0', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+  const f = await fixture({ state: 'running', socket: true });
+  await vi.advanceTimersByTimeAsync(1000);
+  await f.readDone();
+  await flushSocket();
+  expect(f.socketStream!.send).toHaveBeenCalledWith({ type: 'ping', terminalRef: f.ref });
+  await f.cleanup[0]!();
+  const sent = vi.mocked(f.socketStream!.send).mock.calls.length;
+  f.result.state = 'exited';
+  await vi.advanceTimersByTimeAsync(180_000);
+  await flushSocket();
+  expect(f.socketStream!.send).toHaveBeenCalledTimes(sent);
+  expect(f.complete).not.toHaveBeenCalled();
+  expect(f.publish).not.toHaveBeenCalledWith(expect.objectContaining({ state: 'succeeded' }));
+});
 
 it('completes an exact successful inner login while the actual runtime attachment stays open', async () => {
   const f = await fixture();

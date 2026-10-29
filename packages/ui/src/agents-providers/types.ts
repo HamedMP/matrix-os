@@ -57,10 +57,12 @@ export interface AgentsProvidersViewProps {
   error?: string | null;
   onSelectHarness: (harnessInstanceId: string) => void;
   onRefresh: () => void;
-  onRefreshForConnection?: () => Promise<ProviderSettingsSnapshot | null>;
+  onRefreshForConnection?: (loginReceipt?: import("@matrix-os/contracts").ProviderWorkflow) => Promise<ProviderSettingsSnapshot | null>;
   onMutate: (intent: ProviderSettingsMutationIntent) => Promise<boolean> | void;
   workflowClient?: ProviderWorkflowClient;
   localChatgptClient?: import("./local-chatgpt-plan-client.js").LocalChatgptPlanClient;
+  /** Hosts with receipt-driven catalog invalidation only need a cached Settings projection. */
+  onLocalChatgptChanged?: () => void;
   matrixAnthropicClient?: import("./matrix-anthropic-connection-client.js").MatrixAnthropicConnectionClient;
   onOpenAuthorizationUrl?: (url: string) => void;
   onLoadUsageHistory?: (cursor: string | null, signal: AbortSignal) => Promise<import("@matrix-os/contracts").AiCreditHistoryResponse>;

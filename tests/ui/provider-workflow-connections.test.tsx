@@ -70,7 +70,7 @@ it("offers qualified Terminal methods on the primary connection path", async () 
  expect(screen.getByRole("button", {name: "Continue in Terminal"})).toBeInTheDocument();
 });
 
-it("removes Terminal continuation after cancelling a qualified login", async () => {
+it("removes cancelled Terminal continuation without renewing unrelated provider state", async () => {
  const option = {...options[0], id: "claude:anthropic:terminal", providerId: "anthropic" as const, method: "terminal" as const};
  const operation = {id: "cancel-terminal", harnessInstanceId: "claude", kind: "login" as const, state: "running" as const, expiresAt: new Date(Date.now() + 60000).toISOString(), terminalSessionId: "tws_1:tt_1", deviceCode: null, authorizationUrl: null, safeFailure: null, connectionOption: option};
  const client = {capabilities: vi.fn(), start: vi.fn(), get: vi.fn().mockResolvedValue(operation), cancel: vi.fn().mockResolvedValue({...operation, state: "cancelled"}), submitKey: vi.fn(), logs: vi.fn(), startConnection: vi.fn().mockResolvedValue(operation)} as unknown as ProviderWorkflowClient;
@@ -80,8 +80,8 @@ it("removes Terminal continuation after cancelling a qualified login", async () 
  await waitFor(() => expect(open).toHaveBeenCalledWith("tws_1:tt_1"));
  expect(screen.getByRole("button", {name: "Continue in Terminal"})).toBeEnabled();
  fireEvent.click(screen.getByRole("button", {name: "Cancel"}));
- await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
- expect(screen.queryByRole("button", {name: "Continue in Terminal"})).not.toBeInTheDocument();
+ await waitFor(() => expect(screen.queryByRole("button", {name: "Continue in Terminal"})).not.toBeInTheDocument());
+ expect(refresh).not.toHaveBeenCalled();
  expect(screen.queryByRole("button", {name: "Cancel"})).not.toBeInTheDocument();
  expect(screen.getByRole("button", {name: /Claude account · Log in in Terminal/})).toBeEnabled();
  expect(client.cancel).toHaveBeenCalledWith("cancel-terminal", expect.any(AbortSignal));

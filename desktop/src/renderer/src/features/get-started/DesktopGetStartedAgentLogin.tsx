@@ -1,4 +1,4 @@
-import type { ProviderSettingsSnapshot } from "@matrix-os/contracts";
+import type { ProviderSettingsSnapshot, ProviderWorkflow } from "@matrix-os/contracts";
 import { useProviderSettingsController, type GetStartedAgentLoginPort, type ProviderSettingsMutationIntent } from "@matrix-os/ui";
 import "@matrix-os/ui/agents-providers.css";
 import { useCallback, useMemo, type ReactNode } from "react";
@@ -15,21 +15,25 @@ function ConnectedAgentLogin({ children, api, runtimeSlot, identityKey }: { chil
   const transport = useMemo(() => createDesktopProviderSettingsTransport(runtimeApi), [runtimeApi]);
   const isIdentityCurrent = useCallback(() => desktopProviderIdentityKey(useConnection.getState()) === identityKey, [identityKey]);
   // Chat and the onboarding widget read the same catalog, so a new sign-in reaches them too.
-  const onCatalogChanged = useCallback((intent?: ProviderSettingsMutationIntent, previous?: ProviderSettingsSnapshot) => {
-    if (isIdentityCurrent()) invalidateDesktopProviderCatalog(identityKey, intent, previous);
+  const onCatalogChanged = useCallback((intent?: ProviderSettingsMutationIntent, previous?: ProviderSettingsSnapshot, receipt?: ProviderWorkflow) => {
+    if (isIdentityCurrent()) invalidateDesktopProviderCatalog(identityKey, intent, previous, receipt);
   }, [identityKey, isIdentityCurrent]);
   const controller = useProviderSettingsController({ identityKey, transport, onCatalogChanged });
   const workflowClient = useMemo(() => createDesktopProviderWorkflowClient(runtimeApi, isIdentityCurrent), [runtimeApi, isIdentityCurrent]);
-  const { snapshot, error, refresh } = controller;
+  const { snapshot, error, refresh, refreshForConnection } = controller;
   const port = useMemo<GetStartedAgentLoginPort>(() => ({
     snapshot,
     failed: snapshot === null && error !== null,
     workflowClient,
     refresh: () => refresh(),
+    refreshAfterLogin: async receipt => {
+      if (!isIdentityCurrent()) return;
+      if (!await refreshForConnection(receipt) && isIdentityCurrent()) throw new Error("Connection status is unavailable.");
+    },
     openAuthorizationUrl: (url) => {
       if (isIdentityCurrent()) void openDesktopProviderWorkflowAuthorization(url);
     },
-  }), [snapshot, error, workflowClient, refresh, isIdentityCurrent]);
+  }), [snapshot, error, workflowClient, refresh, refreshForConnection, isIdentityCurrent]);
   return <>{children(port)}</>;
 }
 
