@@ -29,3 +29,11 @@ Write failing regression tests first. Cover tool-only null/omitted text, unchang
 ## Delivery and documentation
 
 Ship the source through the existing Gmail stack PR, with exact source/test evidence and scoped pilot deployment. Preserve unrelated worktrees and public-safe evidence. Update the canonical Gmail help in a separate site-repository PR for the attachment-free read behavior; it must not claim that an attachment-bearing message can be summarized through this path. Keep remaining runtime/device/processor evidence gates explicit.
+
+## Temporary-label cleanup
+
+The approved label lifecycle also needs a native-only `delete_unused_label` action. It is destructive and keeps the normal explicit owner action approval. Require an exact custom label ID and expected name, preflight its user-label type and empty message/thread counts, make one fixed-target DELETE attempt with no body or query, then require an independently admitted 404 readback. Each send shares one end-to-end deadline. Refuse system labels, mismatches, in-use labels, legacy fallback, and uncertain deletion results. Never retry a mutation after an unknown result; reconcile with reads.
+
+Google offers no atomic empty-only delete, so an external concurrent label change remains a provider race. The pilot targets only the new test label recorded by its own create result, after removing it from the selected thread and checking it is empty. Preserve all preexisting labels and message/read state. This adds no OAuth scope or processor/profile permission. API reference: https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.labels/delete.
+
+Test metadata mismatch/in-use/system/path attacks, withdrawal at each send boundary, native-only dispatch, one mutation attempt, empty responses, and exact 404 absence proof. Add the action to full catalog regression coverage and the public help draft.

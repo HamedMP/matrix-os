@@ -22,26 +22,28 @@ export interface NativeGmailRequest {
   params?: Record<string, string>; body?: Record<string, unknown>; headers?: Record<string, string>;
 }
 const identity = z.string().min(1).max(160).regex(/^[A-Za-z0-9_.:@-]+$/);
-const readPath = /^\/gmail\/v1\/users\/me\/(?:profile|labels|history|messages|threads|messages\/[A-Za-z0-9_-]{1,128}|threads\/[A-Za-z0-9_-]{1,128}|messages\/[A-Za-z0-9_-]{1,128}\/attachments\/[A-Za-z0-9_-]{1,2048})$/;
+const readPath = /^\/gmail\/v1\/users\/me\/(?:profile|labels|labels\/Label_[A-Za-z0-9_-]{1,122}|history|messages|threads|messages\/[A-Za-z0-9_-]{1,128}|threads\/[A-Za-z0-9_-]{1,128}|messages\/[A-Za-z0-9_-]{1,128}\/attachments\/[A-Za-z0-9_-]{1,2048})$/;
 const writePath = /^\/gmail\/v1\/users\/me\/(?:labels|drafts|messages\/send|messages\/[A-Za-z0-9_-]{1,128}\/modify)$/;
+const deleteLabelPath = /^\/gmail\/v1\/users\/me\/labels\/Label_[A-Za-z0-9_-]{1,122}$/;
 const queryKeys = new Set(['q', 'maxResults', 'pageToken', 'labelIds', 'startHistoryId', 'format', 'fields']);
 const Attachment = z.object({ size: z.number().int().min(0).max(1024 * 1024), data: z.string().max(1398104).regex(/^[A-Za-z0-9_-]*={0,2}$/) });
 
 export function gmailTarget(input: NativeGmailRequest, method: string): URL {
   if (!NATIVE_GMAIL_ACCOUNT.test(input.accountId)) throw new NativeGmailRequestError();
-  return gmailApiTarget(input, method);
+  return gmailApiTarget(input, method, true);
 }
 /** Shared fixed Gmail API boundary; each transport independently validates its account identity. */
-export function gmailApiTarget(input: Omit<NativeGmailRequest, 'accountId'>, method: string): URL {
+export function gmailApiTarget(input: Omit<NativeGmailRequest, 'accountId'>, method: string, nativeLabelCleanup = false): URL {
   if (!identity.safeParse(input.externalUserId).success || input.url.length > 8192
     || /\/(?:\.|%2e)/i.test(input.url) || input.headers && Object.keys(input.headers).length) {
     throw new NativeGmailRequestError();
   }
   const target = new URL(input.url);
   if (target.origin !== 'https://gmail.googleapis.com' || target.username || target.password || target.hash
-    || !(method === 'GET' ? readPath : method === 'POST' ? writePath : /$a/).test(target.pathname)) {
+    || !(method === 'GET' ? readPath : method === 'POST' ? writePath : method === 'DELETE' && nativeLabelCleanup ? deleteLabelPath : /$a/).test(target.pathname)) {
     throw new NativeGmailRequestError();
   }
+  if (method === 'DELETE' && (input.body !== undefined || Object.keys(input.params ?? {}).length || target.search)) throw new NativeGmailRequestError();
   for (const [key, value] of Object.entries(input.params ?? {})) target.searchParams.set(key, value);
   for (const [key, value] of target.searchParams) {
     if (!queryKeys.has(key) || value.length > 4096 || /[\x00-\x1f\x7f]/.test(value)) throw new NativeGmailRequestError();
@@ -77,6 +79,12 @@ export function createNativeGmailRequest(options: { oauth: GmailTokenSource; fet
       signal.throwIfAborted();
       const response = await (options.fetcher ?? fetch)(target.href, { method, body, redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) } });
+      if (method === 'DELETE' && response.status === 204) {
+        signal.throwIfAborted();
+        const length = response.headers.get('content-length');
+        if (response.body || length !== null && length !== '0') { cancel(response.body); throw new NativeGmailRequestError(); }
+        return {};
+      }
       return readGmailResponse(response, target, maxBytes, signal);
     }, 10_000, callerSignal);
   };
