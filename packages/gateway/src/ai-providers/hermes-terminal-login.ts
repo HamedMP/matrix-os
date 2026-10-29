@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { relative, resolve } from 'node:path';
+import { relative, resolve, sep } from 'node:path';
 import { buildHermesNativeEnvironment } from '../hermes-native-environment.js';
 import { resolveHermesPython } from '../chat/hermes-python-environment.js';
 import { resolveHermesNativeRoot } from '../agent-config/hermes-native-credential-kind.js';
@@ -103,7 +103,7 @@ export function createHermesTerminalLoginRuntime(options: {
  let capability: {at:number;value:boolean}|undefined; let probing: Promise<boolean>|undefined;
  const qualify=async()=>{
   const cwd=await resolveHermesNativeRoot(home);const python=await resolveHermesPython(cwd);
-  const env=buildHermesNativeEnvironment(home,cwd);
+  const env={...buildHermesNativeEnvironment(home,cwd),PYTHONSAFEPATH:'1'};
   const {stdout}=await promisify(execFile)(python,['-c',HERMES_TERMINAL_AUTH_PROBE],{cwd,env,timeout:5000,maxBuffer:1024,killSignal:'SIGKILL'});
   if(stdout.trim() !== 'supported') throw new ProviderWorkflowNotStartedError();
   return {cwd,python,env};
@@ -117,8 +117,11 @@ export function createHermesTerminalLoginRuntime(options: {
   async prepare(provider){
    if(!['openai-codex','anthropic'].includes(provider)) throw new ProviderWorkflowNotStartedError();
    const {cwd,python,env}=await qualify();
-   // Terminal resolves a home-relative cwd and enforces canonical containment.
-   return {cwd:relative(home,cwd),command:['env','-i',...Object.entries(env).map(([key,value])=>`${key}=${value}`),python,'-c',HERMES_TERMINAL_LOGIN_COMMAND,provider]};
+   // Keep Terminal inside owner home even for a trusted external checkout.
+   // Python and PYTHONPATH retain the separately qualified absolute source.
+   const local=relative(home,cwd);
+   const terminalCwd=local === '..' || local.startsWith(`..${sep}`) ? '' : local;
+   return {cwd:terminalCwd,command:['env','-i',...Object.entries(env).map(([key,value])=>`${key}=${value}`),python,'-c',HERMES_TERMINAL_LOGIN_COMMAND,provider]};
   },
   async complete(id,provider,revision,key,signal){
    signal.throwIfAborted();

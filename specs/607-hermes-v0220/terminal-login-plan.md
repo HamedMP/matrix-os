@@ -42,3 +42,23 @@ single config-write boundary are covered. The production Terminal request schema
 also receives the prepared command, preventing a command-size regression; the
 current Python command is3988characters within4096. Current broad regression,
 new-head review/CI and fresh matching Preview remain subsequent gates.
+
+
+## 2026-10-29 — external-checkout launch P1
+
+Greptile confirmed that a trusted external checkout produced a rejected ../ cwd
+and the ambiguous-launch fence then blocked later settings writes. The real
+producer/Zellij consumer regression fails before this fix. Trusted external
+installations now launch from owner home (the Terminal protocol's empty cwd),
+while retaining the qualified absolute Python path and PYTHONPATH source. Managed
+in-home roots retain their previous relative cwd. Direct traversal/absolute cwd
+remains rejected by the unchanged Terminal consumer. No fence or permission rule
+is relaxed; a valid launch replaces the deterministic rejected launch.
+
+
+A real-Python import test additionally found that owner-home cwd can shadow
+PYTHONPATH with a same-name local package. Login qualification and execution now
+both set PYTHONSAFEPATH=1 (supported by the pinned Python>=3.11 contract), leaving
+only the explicit qualified source path. The test fails with cwd-shadow before
+this flag and passes with qualified afterward; no real provider code or credential
+is loaded by that fixture. No process-global or owner configuration is changed.
