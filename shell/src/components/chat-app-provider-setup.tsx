@@ -13,11 +13,9 @@ import {
   MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID,
   type CanonicalChatModelSelection,
   type CanonicalProviderCatalog,
-  type CanonicalProviderInstanceDescriptor,
-  type CanonicalProviderSetupAction,
+  type CanonicalProviderDriverKind,
 } from "@matrix-os/contracts";
 import {
-  CompactChatProviderChoices,
   HarnessIcon,
   deriveCanonicalProviderChoices,
   type CanonicalProviderChoice,
@@ -28,19 +26,11 @@ import {
 } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
 import { PROVIDER_SETTINGS_CHANGED_EVENT } from "@/lib/canonical-provider-setup";
-import { CalendarIcon, GithubIcon, MailIcon, MessageSquareIcon } from "@/lib/hugeicons";
 
 // Stable markup identity preserves a pressed SVG across catalog refreshes.
 const MATRIX_RABBIT_HTML = { __html: rabbitMarkSvg("matrix-chat-rabbit-mark") };
 
 const PROVIDER_SELECTION_STORAGE_KEY = "matrix:canonical-chat-provider-selection";
-const CHANNEL_OPTIONS = [
-  { id: "shell", label: "Shell", icon: MessageSquareIcon },
-  { id: "email", label: "Email", icon: MailIcon },
-  { id: "calendar", label: "Calendar", icon: CalendarIcon },
-  { id: "github", label: "GitHub", icon: GithubIcon },
-];
-
 function choiceKey(choice: Pick<CanonicalProviderChoice, "instanceId" | "modelId">): string {
   return `${choice.instanceId}:${choice.modelId}`;
 }
@@ -319,153 +309,17 @@ export function useChatProviderState(
   };
 }
 
-function modeLabel(value: string): string {
-  return value.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
-}
-
-export function ChatProviderSetupPanel({
-  catalog,
-  choices,
-  selected,
-  displaySelection,
-  onSelect,
-  onInteractionModeChange,
-  onPermissionModeChange,
-  onOptionChange,
-  onSetupAction,
-  lockedInstanceId,
-  showChannels,
-  channels,
-  onToggleChannel,
-  onDismiss,
-  loading = false,
-}: {
-  catalog: CanonicalProviderCatalog | null;
-  choices: CanonicalProviderChoice[];
-  selected: CanonicalProviderChoice | null;
-  displaySelection?: Pick<CanonicalProviderChoice, "instanceId" | "modelId"> | null;
-  onSelect: (choice: CanonicalProviderChoice) => void;
-  onInteractionModeChange: (mode: string) => void;
-  onPermissionModeChange: (mode: string) => void;
-  onOptionChange: (id: string, value: string | boolean) => void;
-  onSetupAction: (
-    instance: CanonicalProviderInstanceDescriptor,
-    action: CanonicalProviderSetupAction,
-  ) => void;
-  lockedInstanceId?: string;
-  showChannels: boolean;
-  channels: Set<string>;
-  onToggleChannel: (channel: string) => void;
-  onDismiss: () => void;
-  loading?: boolean;
-}) {
-  const panelRef = useRef<HTMLElement>(null);
-  useEffect(() => { panelRef.current?.focus(); }, []);
-  useEffect(() => {
-    const dismiss = (event: PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Element && !panelRef.current?.contains(target)
-        && !target.closest('[data-chat-model-trigger]')) onDismiss();
-    };
-    document.addEventListener("pointerdown", dismiss);
-    return () => document.removeEventListener("pointerdown", dismiss);
-  }, [onDismiss]);
-  return (
-    <section ref={panelRef} tabIndex={-1} role="dialog" aria-label="Choose model and connection"
-      onKeyDown={(event) => { if (event.key === "Escape") {
-        event.stopPropagation();
-        panelRef.current?.parentElement?.querySelector<HTMLButtonElement>('[data-chat-model-trigger]')?.focus();
-        onDismiss();
-      } }}
-      className="absolute right-3 top-14 z-30 w-[352px] max-w-[calc(100%-24px)] overflow-y-auto rounded-xl border border-border bg-background shadow-xl"
-      style={{ maxHeight: "min(520px, calc(100% - 72px))" }}>
-      <div className="grid min-w-0 gap-3">
-        <div>
-          <CompactChatProviderChoices loading={loading} catalog={catalog ?? undefined} choices={choices} selected={displaySelection ?? selected} lockedInstanceId={lockedInstanceId}
-            renderDriverIcon={(kind) => kind === "kernel" || kind === "matrix_bot" || kind === "matrix_pi" ? <span aria-hidden="true" className="inline-flex size-5 [&_svg]:size-full"
-              dangerouslySetInnerHTML={MATRIX_RABBIT_HTML} /> : (
-              <span className="inline-flex size-5 shrink-0 items-center justify-center [&_.matrix-ap-agent-logo]:!size-5 [&_.matrix-ap-agent-logo]:!rounded [&_img]:!size-3 [&_svg]:size-4">
-                <HarnessIcon harness={kind === "claude_code" ? "claude" : kind} />
-              </span>
-            )}
-            onSetupAction={onSetupAction}
-            onSelect={(choice) => {
-              onSelect(choice);
-              panelRef.current?.parentElement?.querySelector<HTMLButtonElement>('[data-chat-model-trigger]')?.focus();
-              onDismiss();
-            }} />
-          {!loading && !catalog && choices.length === 0 ? <p className="m-3 rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-muted-foreground">
-            Connect a harness in Settings to start chatting.
-          </p> : null}
-          {selected ? (
-            <details className="mt-2 border-t border-border px-3 pb-3 pt-2">
-              <summary className="cursor-pointer py-2 text-sm font-medium">Execution options</summary>
-              <div className="grid gap-2 sm:grid-cols-2">
-              <label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Interaction mode
-                <select
-                  aria-label="Interaction mode"
-                  value={selected.interactionMode}
-                  onChange={(event) => onInteractionModeChange(event.target.value)}
-                  className="min-h-10 rounded-md border border-border/50 bg-background px-2 text-xs font-normal normal-case tracking-normal text-foreground"
-                >
-                  {selected.interactionModes.map((mode) => <option key={mode} value={mode}>{modeLabel(mode)}</option>)}
-                </select>
-              </label>
-              <label className="grid gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                Permission mode
-                <select
-                  aria-label="Permission mode"
-                  value={selected.permissionMode}
-                  onChange={(event) => onPermissionModeChange(event.target.value)}
-                  className="min-h-10 rounded-md border border-border/50 bg-background px-2 text-xs font-normal normal-case tracking-normal text-foreground"
-                >
-                  {selected.permissionModes.map((mode) => <option key={mode} value={mode}>{modeLabel(mode)}</option>)}
-                </select>
-              </label>
-              {selected.options.map((option) => option.kind === "enum" ? (
-                <label key={option.id} className="grid gap-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                  {option.label}
-                  <select
-                    aria-label={option.label}
-                    value={String(selected.selectedOptions.find((value) => value.id === option.id)?.value ?? "")}
-                    onChange={(event) => onOptionChange(option.id, event.target.value)}
-                    className="min-h-10 rounded-md border border-border/50 bg-background px-2 text-xs font-normal normal-case tracking-normal text-foreground"
-                  >
-                    {(option.values ?? []).map((value) => <option key={value.value} value={value.value}>{value.label}</option>)}
-                  </select>
-                </label>
-              ) : (
-                <label key={option.id} className="flex min-h-10 items-center gap-2 self-end rounded-md border border-border/50 bg-background px-2 text-xs font-medium text-foreground">
-                  <input
-                    type="checkbox"
-                    aria-label={option.label}
-                    checked={selected.selectedOptions.find((value) => value.id === option.id)?.value === true}
-                    onChange={(event) => onOptionChange(option.id, event.target.checked)}
-                  />
-                  {option.label}
-                </label>
-              ))}
-            </div>
-            </details>
-          ) : null}
-        </div>
-        {showChannels ? <div className="px-3 pb-3">
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Channels</p>
-          <div className="grid grid-cols-2 gap-1.5">
-            {CHANNEL_OPTIONS.map((option) => {
-              const Icon = option.icon;
-              const isSelected = channels.has(option.id);
-              return (
-                <button key={option.id} type="button" onClick={() => onToggleChannel(option.id)} className={`flex min-h-11 items-center gap-2 rounded-md border px-2.5 text-xs transition ${isSelected ? "border-primary/35 bg-primary/10 text-foreground" : "border-border/50 bg-background/55 text-muted-foreground hover:text-foreground"}`}>
-                  <Icon className="size-3.5" aria-hidden="true" />
-                  <span>{option.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div> : null}
-      </div>
-    </section>
+/**
+ * Web Chat's glyph for a harness: the Matrix rabbit for Matrix-run routes, otherwise the harness
+ * logo. `small` fits model rows, matching Electron Desktop's 13px row glyphs.
+ */
+export function WebProviderDriverIcon({ kind, small = false }: { kind: CanonicalProviderDriverKind; small?: boolean }) {
+  return kind === "kernel" || kind === "matrix_bot" || kind === "matrix_pi" ? <span aria-hidden="true" className={`inline-flex ${small ? "size-3.5" : "size-5"} [&_svg]:size-full`}
+    dangerouslySetInnerHTML={MATRIX_RABBIT_HTML} /> : (
+    <span className={small
+      ? "inline-flex size-3.5 shrink-0 items-center justify-center [&_.matrix-ap-agent-logo]:!size-3.5 [&_.matrix-ap-agent-logo]:!rounded-sm [&_img]:!size-2.5 [&_svg]:size-3"
+      : "inline-flex size-5 shrink-0 items-center justify-center [&_.matrix-ap-agent-logo]:!size-5 [&_.matrix-ap-agent-logo]:!rounded [&_img]:!size-3 [&_svg]:size-4"}>
+      <HarnessIcon harness={kind === "claude_code" ? "claude" : kind} />
+    </span>
   );
 }

@@ -48,6 +48,13 @@ export interface ChatState {
   botEventRevision?: number;
   queuedTurns?: CanonicalChatQueuedTurn[];
   cancelQueuedTurn?: (id: string) => Promise<boolean>;
+  steerQueuedTurn?: (id: string) => Promise<boolean>;
+  /** The active run accepts queued turns as same-run steering. */
+  canSteerQueuedTurns?: boolean;
+  /** The open Chat's project, or the project a new Chat will be created in. */
+  chatProjectId?: string;
+  /** Picks the project for a new Chat or moves the open Chat; resolves false when it was not saved. */
+  setChatProject?: (projectId: string | null) => Promise<boolean>;
   messages: ChatMessage[];
   sessionId: string | undefined;
   busy: boolean;

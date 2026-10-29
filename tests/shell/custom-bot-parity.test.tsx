@@ -7,7 +7,7 @@ import { createCanonicalProviderCatalogFixture } from "../contracts/fixtures/can
 import { saved, clientFixture } from "../desktop/chat-agents-fixture.js";
 const state = vi.hoisted(()=>({ catalog: null as unknown }));
 vi.mock("../../shell/src/components/chat-app-provider-setup.js", ()=>({
- useChatProviderState: ()=>({ catalog:state.catalog, loading:false, selected:null, refresh:vi.fn() }), ChatProviderSetupPanel:()=>null,
+ useChatProviderState: ()=>({ catalog:state.catalog, loading:false, selected:null, refresh:vi.fn() }), WebProviderDriverIcon:()=>null,
 }));
 vi.mock("@clerk/nextjs", async original=>({...(await original<typeof import("@clerk/nextjs")>()),useOrganization:()=>({organization:null}),useAuth:()=>({userId:null,sessionId:null})}));
 afterEach(cleanup);

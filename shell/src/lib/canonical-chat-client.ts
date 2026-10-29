@@ -9,6 +9,8 @@ import {
   CanonicalChatQueueAdmissionResponseSchema, CanonicalChatQueueCancellationResponseSchema,
   CanonicalQueueChatTurnRequestSchema, CanonicalCancelQueuedChatTurnRequestSchema, CanonicalChatQueuedTurnIdSchema,
   type CanonicalChatQueueAdmissionResponse, type CanonicalChatQueueCancellationResponse, type CanonicalCancelQueuedChatTurnRequest,
+  CanonicalSteerQueuedChatTurnRequestSchema, CanonicalChatRunSteeringResponseSchema,
+  type CanonicalSteerQueuedChatTurnRequest, type CanonicalChatRunSteeringResponse,
   CanonicalChatApiCursorSchema,
   CanonicalChatDetailResponseSchema,
   CanonicalSubmitChatInputRequestSchema,
@@ -25,6 +27,7 @@ import {
   CanonicalChatRunCancellationResponseSchema,
   CanonicalChatTurnAdmissionResponseSchema,
   CanonicalUpdateChatTitleRequestSchema,
+  CanonicalUpdateChatProjectRequestSchema,
   CanonicalSubmitChatApprovalRequestSchema,
   CanonicalCreateChatRequestSchema,
   CanonicalCreateChatTurnRequestSchema,
@@ -40,6 +43,7 @@ import {
   type CanonicalCreateChatRequest,
   type CanonicalCreateChatTurnRequest,
   type CanonicalUpdateChatTitleRequest,
+  type CanonicalUpdateChatProjectRequest,
 } from "@matrix-os/contracts";
 import type { ChatMessage } from "@/lib/chat";
 import { botCreationFailureReason, canonicalChatSafeFailureReason, type BotCreationFailureReason } from "@matrix-os/ui";
@@ -64,11 +68,14 @@ export interface CanonicalShellChatClient {
   detail(chatId: string, cursor?: string): Promise<CanonicalChatDetailResponse>;
   updateReadState(chatId: string, input: CanonicalUpdateChatReadStateRequest): Promise<CanonicalChatRecord>;
   updateTitle(chatId: string, input: CanonicalUpdateChatTitleRequest): Promise<CanonicalChatRecord>;
+  updateProject(chatId: string, input: CanonicalUpdateChatProjectRequest): Promise<CanonicalChatRecord>;
   /** Permanently deletes the Chat; retrying with the same request id is idempotent. */
   delete(chatId: string, clientRequestId: string): Promise<CanonicalShellChatDeletion>;
   admitTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatClientAdmission>;
   queueTurn(chatId: string, input: CanonicalCreateChatTurnRequest): Promise<CanonicalChatQueueAdmissionResponse>;
   cancelQueuedTurn(chatId: string, queuedTurnId: string, input: CanonicalCancelQueuedChatTurnRequest): Promise<CanonicalChatQueueCancellationResponse>;
+  /** Moves a queued turn into the active run when it reports same-run steering. */
+  steerQueuedTurn(chatId: string, runId: string, queuedTurnId: string, input: CanonicalSteerQueuedChatTurnRequest): Promise<CanonicalChatRunSteeringResponse>;
   cancelRun(chatId: string, runId: string, clientRequestId: string): Promise<CanonicalChatRunCancellationResponse>;
   uploadAttachment(file: ShellAttachmentInput, retryKey?: string): Promise<CanonicalAttachmentReference>;
   deleteAttachment(ownerReference: string): Promise<void>;
@@ -271,6 +278,15 @@ export function createCanonicalShellChatClient(options: {
         body: JSON.stringify(body),
       }));
     },
+    async updateProject(chatId, input) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const body = CanonicalUpdateChatProjectRequestSchema.parse(input);
+      return CanonicalChatRecordSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}/project`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }));
+    },
     async admitTurn(chatId, input) {
       const id = CanonicalChatIdSchema.parse(chatId);
       const body = CanonicalCreateChatTurnRequestSchema.parse(input);
@@ -305,6 +321,16 @@ export function createCanonicalShellChatClient(options: {
       return CanonicalChatQueueCancellationResponseSchema.parse(await request(`/api/chats/${encodeURIComponent(id)}/queued-turns/${encodeURIComponent(queueId)}`, {
         method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       }));
+    },
+    async steerQueuedTurn(chatId, runId, queuedTurnId, input) {
+      const id = CanonicalChatIdSchema.parse(chatId);
+      const parsedRunId = CanonicalChatRunIdSchema.parse(runId);
+      const queueId = CanonicalChatQueuedTurnIdSchema.parse(queuedTurnId);
+      const body = CanonicalSteerQueuedChatTurnRequestSchema.parse(input);
+      return CanonicalChatRunSteeringResponseSchema.parse(await request(
+        chatMessageVersionUrl(`/api/chats/${encodeURIComponent(id)}/runs/${encodeURIComponent(parsedRunId)}/queued-turns/${encodeURIComponent(queueId)}/steer`),
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+      ));
     },
     async cancelRun(chatId, runId, clientRequestId) {
       const id = CanonicalChatIdSchema.parse(chatId);

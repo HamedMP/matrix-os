@@ -12,7 +12,7 @@ function Composer({ request, onSubmit = vi.fn() }: { request: ChatAgentDraftRequ
     onSubmit={onSubmit} attachmentsEnabled={false} draftRequest={request} onDraftConsumed={vi.fn()} />;
 }
 
-const value = () => (screen.getByPlaceholderText("Ask anything...") as HTMLTextAreaElement).value;
+const value = () => (screen.getByPlaceholderText("Reply to chat…") as HTMLTextAreaElement).value;
 
 afterEach(cleanup);
 
@@ -21,12 +21,12 @@ describe("chat input draft requests", () => {
     let acknowledged: (() => void) | undefined;
     const onSubmit = vi.fn(async (_text, _files, options) => { acknowledged = options?.onAccepted; return false; });
     render(<Composer request={null} onSubmit={onSubmit} />);
-    fireEvent.change(screen.getByPlaceholderText("Ask anything..."), { target: { value: "original draft" } });
+    fireEvent.change(screen.getByPlaceholderText("Reply to chat…"), { target: { value: "original draft" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(value()).toBe("original draft");
     expect(acknowledged).toBeTypeOf("function");
-    if (edited) fireEvent.change(screen.getByPlaceholderText("Ask anything..."), { target: { value: "new unsent draft" } });
+    if (edited) fireEvent.change(screen.getByPlaceholderText("Reply to chat…"), { target: { value: "new unsent draft" } });
     act(() => { acknowledged!(); acknowledged!(); });
     expect(value()).toBe(edited ? "new unsent draft" : "");
   });
@@ -39,7 +39,7 @@ describe("chat input draft requests", () => {
 
   it("keeps what the owner typed and adds the suggestion below it", () => {
     const view = render(<Composer request={null} />);
-    fireEvent.change(screen.getByPlaceholderText("Ask anything..."), { target: { value: "my unsent idea" } });
+    fireEvent.change(screen.getByPlaceholderText("Reply to chat…"), { target: { value: "my unsent idea" } });
     view.rerender(<Composer request={{ id: 2, text: "Find emails that need a reply.", merge: true }} />);
     expect(value()).toBe("my unsent idea\n\nFind emails that need a reply.");
     view.rerender(<Composer request={{ id: 3, text: "Replace it." }} />);
@@ -48,7 +48,7 @@ describe("chat input draft requests", () => {
 
   it("keeps what the owner typed when Try is clicked twice", () => {
     const view = render(<Composer request={null} />);
-    fireEvent.change(screen.getByPlaceholderText("Ask anything..."), { target: { value: "my unsent idea" } });
+    fireEvent.change(screen.getByPlaceholderText("Reply to chat…"), { target: { value: "my unsent idea" } });
     view.rerender(<Composer request={{ id: 2, text: "Find emails that need a reply.", merge: true }} />);
     view.rerender(<Composer request={{ id: 3, text: "List my GitHub repos.", merge: true }} />);
     expect(value()).toBe("my unsent idea\n\nList my GitHub repos.");

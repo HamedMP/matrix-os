@@ -8,6 +8,7 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     const canonicalState = readFileSync(join(process.cwd(), "shell/src/hooks/useCanonicalChatState.ts"), "utf8");
     const turnAdmission = readFileSync(join(process.cwd(), "shell/src/hooks/canonical-chat-turn-admission.ts"), "utf8");
     const providerState = readFileSync(join(process.cwd(), "shell/src/components/chat-app-provider-setup.tsx"), "utf8");
+    const composerControls = readFileSync(join(process.cwd(), "shell/src/components/chat/WebChatComposerControls.tsx"), "utf8");
     const desktop = readFileSync(join(process.cwd(), "shell/src/components/Desktop.tsx"), "utf8");
     const mobile = readFileSync(join(process.cwd(), "shell/src/components/mobile/MobileShell.tsx"), "utf8");
     const sharedChat = readFileSync(join(process.cwd(), "shell/src/components/chat/ShellChatCollaboration.tsx"), "utf8");
@@ -32,10 +33,10 @@ describe("Canvas and web desktop canonical Chat wiring", () => {
     expect(providerState).toMatch(/const onSettingsChange = \(\) => \{\s*authorityGeneration \+= 1;\s*authoritySuspended = true;\s*setHasTrustedCatalog\(false\);\s*void refresh\(true\);\s*\};/);
     expect(providerState).not.toContain("/api/ai/providers");
     // The setup action used to be invoked from an inline arrow in the shell component. It is now
-    // handed to the shared picker, which invokes it, so assert both halves. A mixed-funding
+    // handed to the shared composer model picker, which invokes it, so assert both halves. A mixed-funding
     // category can be available while the selected source needs recovery: its own setup actions
     // must receive that source, rather than the category's available representative instance.
-    expect(providerState).toContain("onSetupAction={onSetupAction}");
+    expect(composerControls).toContain("onSetupAction={onSetupAction}");
     expect(providerChoices).toContain("recoveryInstance.setupActions.map");
     expect(providerChoices).toContain("onSetupAction(recoveryInstance, action)");
     expect(providerChoices).not.toContain("onSetupAction(activeInstance, action)");

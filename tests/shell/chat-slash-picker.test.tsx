@@ -91,7 +91,8 @@ it("positions the slash popup above the textarea card without adding a composer 
  const popup=screen.getByRole("listbox");const input=screen.getByLabelText("Message chat");
  expect(popup.classList.contains("absolute")).toBe(true);
  expect(popup.classList.contains("bottom-full")).toBe(true);
- expect(popup.parentElement).toBe(input.parentElement);
+ // Anchored to the wrapper around the shared prompt card, so it overlays instead of joining the flow.
+ expect(popup.parentElement?.contains(input)).toBe(true);
  expect(popup.parentElement?.classList.contains("relative")).toBe(true);
 });
 

@@ -73,16 +73,16 @@ describe("hosted empty Chat connections", () => {
       ? new Response("unavailable", { status: 503 }) : Response.json(catalog)));
     renderChat();
     const retry = await screen.findByRole("button", { name: "Check connection" });
-    const scroll = retry.closest<HTMLElement>('[data-slot="chat-empty-state-scroll"]');
+    const scroll = retry.closest<HTMLElement>('[data-slot="chat-starter-scroll"]');
     expect(scroll).toHaveClass("min-h-0", "overflow-y-auto");
-    expect(scroll?.querySelector('[data-slot="chat-empty-state-stack"]')).toHaveClass("my-auto", "shrink-0");
+    expect(scroll?.querySelector('[data-slot="chat-starter-stack"]')).toHaveClass("my-auto");
     expect(screen.getByPlaceholderText("Write or dictate a draft — connect a harness to send")).toBeEnabled();
     expect(screen.queryByRole("region", { name: "Chat provider connection" })).not.toBeInTheDocument();
   });
   it("keeps any disabled connected provider in normal Chat", async () => {
     const snapshot = disconnectedSnapshot(); snapshot.harnesses[0]!.authState = "authenticated";
     vi.stubGlobal("fetch", vi.fn(async (url) => Response.json(String(url).includes("provider-settings") ? snapshot : catalog)));
-    renderChat(); expect(await screen.findByText("What should Matrix do?")).toBeVisible();
+    renderChat(); expect(await screen.findByRole("heading", { name: "What should we build today?" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Connect Claude Code" })).not.toBeInTheDocument();
   });
   it("refreshes the canonical catalog after manual connection completion", async () => {
@@ -118,7 +118,7 @@ describe("hosted empty Chat connections", () => {
     let failed = true;
     vi.stubGlobal("fetch", vi.fn(async (url) => String(url).includes("provider-settings") ? failed ? new Response("unavailable", { status: 503 }) : Response.json(disconnectedSnapshot()) : Response.json(catalog)));
     const fetch = globalThis.fetch as ReturnType<typeof vi.fn>;
-    renderChat(); expect(await screen.findByText("What should Matrix do?")).toBeVisible();
+    renderChat(); expect(await screen.findByRole("heading", { name: "What should we build today?" })).toBeVisible();
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining("provider-settings"), expect.any(Object)));
     expect(screen.queryByText("Connection status unavailable")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Connect Claude Code" })).not.toBeInTheDocument();

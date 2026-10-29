@@ -92,7 +92,7 @@ it("keeps a queued request visible when cancellation fails", async () => {
     parts: [{ type: "text", text: "Use the meeting notes" }], selection: { instanceId: "codex_fixture", model: "gpt-5.6-sol" },
     interactionMode: "default", permissionMode: "full_access", createdAt: "2026-09-10T00:00:00.000Z", updatedAt: "2026-09-10T00:00:00.000Z",
   }]} onCancelQueuedTurn={cancel} />);
-  fireEvent.click(screen.getByRole("button", { name: "Cancel queued request" }));
+  fireEvent.click(screen.getByRole("button", { name: "Cancel Use the meeting notes" }));
   await screen.findByText("Queued request could not be cancelled. Try again.");
   expect(screen.getByText("Use the meeting notes")).toBeTruthy();
 });
