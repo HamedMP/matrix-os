@@ -97,8 +97,9 @@ CREATE TABLE getting_started_awards (
 );
 
 CREATE TABLE getting_started_owner_state (
-  owner_id        TEXT PRIMARY KEY CHECK (char_length(owner_id) BETWEEN 1 AND 128),
-  auto_opened_at  TIMESTAMPTZ
+  owner_id               TEXT PRIMARY KEY CHECK (char_length(owner_id) BETWEEN 1 AND 128),
+  auto_opened_at         TIMESTAMPTZ,
+  desktop_icon_placed_at TIMESTAMPTZ  -- added with ADD COLUMN IF NOT EXISTS
 );
 ```
 
@@ -115,6 +116,7 @@ CREATE TABLE getting_started_owner_state (
 | `/api/getting-started/progress` | `GET` | Gateway owner auth (same as `/api/settings/get-started`) | n/a | none (no params) |
 | `/api/getting-started/awards` | `POST` | Gateway owner auth | 1 KiB (`bodyLimit`) | strict Zod `{ taskId: enum(GETTING_STARTED_APP_TASK_IDS), silent: boolean }` |
 | `/api/getting-started/auto-open` | `POST` | Gateway owner auth | 1 KiB (`bodyLimit`) | empty strict object |
+| `/api/getting-started/desktop-icon` | `POST` | Gateway owner auth | 1 KiB (`bodyLimit`) | empty strict object |
 
 - **Input:** the task ID is an enum; points are never accepted from the client.
 - **Owner scope:** `owner_id` comes from the request principal, never the body.

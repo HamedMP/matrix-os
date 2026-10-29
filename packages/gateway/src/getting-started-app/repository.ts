@@ -23,6 +23,7 @@ interface GettingStartedAwardsTable {
 interface GettingStartedOwnerStateTable {
   owner_id: string;
   auto_opened_at: ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
+  desktop_icon_placed_at: ColumnType<Date | string | null, Date | string | null | undefined, Date | string | null>;
 }
 
 interface GettingStartedAppDatabase {
@@ -64,6 +65,10 @@ export class GettingStartedAppRepository {
         owner_id TEXT PRIMARY KEY CHECK (char_length(owner_id) BETWEEN 1 AND 128),
         auto_opened_at TIMESTAMPTZ
       )
+    `.execute(this.kysely);
+    // Added after the first release of this table; idempotent for existing owners.
+    await sql`
+      ALTER TABLE getting_started_owner_state ADD COLUMN IF NOT EXISTS desktop_icon_placed_at TIMESTAMPTZ
     `.execute(this.kysely);
   }
 
@@ -108,6 +113,21 @@ export class GettingStartedAppRepository {
       .values({ owner_id: ownerId, auto_opened_at: sql`now()` })
       .onConflict((conflict) => conflict.column("owner_id").doUpdateSet({ auto_opened_at: sql`now()` })
         .where("getting_started_owner_state.auto_opened_at", "is", null))
+      .returning("owner_id")
+      .executeTakeFirst();
+    return claimed !== undefined;
+  }
+
+  /**
+   * True for exactly one caller per owner: the desktop icon is placed once, for new
+   * and existing owners alike, and never put back after the owner removes it.
+   */
+  async claimDesktopIcon(ownerId: string): Promise<boolean> {
+    const claimed = await this.kysely
+      .insertInto("getting_started_owner_state")
+      .values({ owner_id: ownerId, desktop_icon_placed_at: sql`now()` })
+      .onConflict((conflict) => conflict.column("owner_id").doUpdateSet({ desktop_icon_placed_at: sql`now()` })
+        .where("getting_started_owner_state.desktop_icon_placed_at", "is", null))
       .returning("owner_id")
       .executeTakeFirst();
     return claimed !== undefined;

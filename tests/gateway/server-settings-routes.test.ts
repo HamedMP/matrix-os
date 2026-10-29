@@ -44,7 +44,7 @@ describe("settings route registration", () => {
 
   it("mounts the Getting started app, unavailable without a database", async () => {
     expect((await setup(null).request("/api/getting-started/progress")).status).toBe(503);
-    const repository = { progress: vi.fn(async () => ({ awards: [], total: 0 })), award: vi.fn(), claimAutoOpen: vi.fn() };
+    const repository = { progress: vi.fn(async () => ({ awards: [], total: 0 })), award: vi.fn(), claimAutoOpen: vi.fn(), claimDesktopIcon: vi.fn() };
     const response = await setup(null, { gettingStartedAppRepository: repository })
       .request("/api/getting-started/progress");
     expect(response.status).toBe(200);

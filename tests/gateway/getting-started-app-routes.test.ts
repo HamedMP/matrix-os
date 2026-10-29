@@ -7,6 +7,7 @@ function repositoryMock() {
     progress: vi.fn(async () => ({ awards: [], total: 0 })),
     award: vi.fn(async () => ({ awarded: true, points: 20, total: 20 })),
     claimAutoOpen: vi.fn(async () => true),
+    claimDesktopIcon: vi.fn(async () => true),
   };
 }
 
@@ -76,6 +77,21 @@ describe("Getting started app routes", () => {
     expect(response.status).toBe(200);
     expect(repository.claimAutoOpen).toHaveBeenCalledWith("owner-1");
     await expect(response.json()).resolves.toEqual({ open: true });
+  });
+
+  it("claims the one-time desktop icon placement", async () => {
+    const repository = repositoryMock();
+    const response = await post(appFor(repository), "/desktop-icon", {});
+    expect(response.status).toBe(200);
+    expect(repository.claimDesktopIcon).toHaveBeenCalledWith("owner-1");
+    await expect(response.json()).resolves.toEqual({ place: true });
+  });
+
+  it("rejects a desktop-icon body with fields", async () => {
+    const repository = repositoryMock();
+    const response = await post(appFor(repository), "/desktop-icon", { path: "elsewhere" });
+    expect(response.status).toBe(400);
+    expect(repository.claimDesktopIcon).not.toHaveBeenCalled();
   });
 
   it("rejects an auto-open body with fields", async () => {

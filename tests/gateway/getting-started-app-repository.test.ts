@@ -67,6 +67,18 @@ describe("Getting started app repository", () => {
     expect(claims.filter(Boolean)).toHaveLength(1);
   });
 
+  it("grants the desktop icon placement once per owner, separately from the first open", async () => {
+    await expect(repository.claimDesktopIcon("alice")).resolves.toBe(true);
+    await expect(repository.claimDesktopIcon("alice")).resolves.toBe(false);
+    await expect(repository.claimAutoOpen("alice")).resolves.toBe(true);
+    await expect(repository.claimDesktopIcon("bob")).resolves.toBe(true);
+  });
+
+  it("grants the desktop icon placement once when surfaces race", async () => {
+    const claims = await Promise.all([repository.claimDesktopIcon("alice"), repository.claimDesktopIcon("alice")]);
+    expect(claims.filter(Boolean)).toHaveLength(1);
+  });
+
   it("can bootstrap twice without losing awards", async () => {
     await repository.award("alice", "slack", false);
     await repository.bootstrap();
