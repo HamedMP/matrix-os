@@ -76,3 +76,9 @@ test('API authentication failure is reported without logging its response body',
     return {ok:false, status:401};
   }), /^Error: Mirror API check failed: HTTP 401$/);
 });
+test('a destination hook refuses the push and the mirror remains unchanged', () => fixture(async ({source, destination, first, commit}) => {
+  await commit('second');
+  await writeFile(join(destination, 'hooks', 'pre-receive'), '#!/bin/sh\nprintf "%s\\n" "fixture: destination policy refuses this update" >&2\nexit 1\n', { mode: 0o700 });
+  await assert.rejects(syncMain({source, destination, assertSafe:safe}), /^Error: Git operation failed: push$/);
+  assert.equal(git(destination, 'rev-parse', 'main'), first);
+}));
