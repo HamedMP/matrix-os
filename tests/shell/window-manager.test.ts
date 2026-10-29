@@ -92,6 +92,30 @@ describe("Window Manager Store", () => {
       expect(w2.y).toBe(w1.y);
     });
 
+    it("opens Getting started inside a laptop-sized Web Canvas viewport", () => {
+      useDesktopMode.setState({ mode: "canvas" });
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 800 });
+
+      useWindowManager.getState().openWindow("Getting started", "__getting-started__", 80);
+
+      const [win] = useWindowManager.getState().windows;
+      expect(win.width).toBeLessThanOrEqual(1280 - 64);
+      expect(win.height).toBeLessThanOrEqual(800 - 120);
+    });
+
+    it("opens Getting started at its full size on a large Web Canvas viewport", () => {
+      useDesktopMode.setState({ mode: "canvas" });
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 1920 });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: 1200 });
+
+      useWindowManager.getState().openWindow("Getting started", "__getting-started__", 80);
+
+      const [win] = useWindowManager.getState().windows;
+      expect(win.width).toBe(1144);
+      expect(win.height).toBe(880);
+    });
+
     it("fits a fresh terminal inside a narrow desktop work area", () => {
       useDesktopMode.setState({ mode: "desktop" });
       Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });

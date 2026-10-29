@@ -5,6 +5,8 @@ import { subscribeWithSelector } from "zustand/middleware";
 import {
   GETTING_STARTED_DEFAULT_WINDOW_HEIGHT,
   GETTING_STARTED_DEFAULT_WINDOW_WIDTH,
+  GETTING_STARTED_VIEWPORT_GUTTER_X,
+  GETTING_STARTED_VIEWPORT_GUTTER_Y,
   TERMINAL_DEFAULT_WINDOW_HEIGHT,
   TERMINAL_DEFAULT_WINDOW_WIDTH,
   TERMINAL_MIN_WINDOW_HEIGHT,
@@ -250,11 +252,23 @@ function computeDefaultWindowSize(path: string): { width: number; height: number
   if (remoteBrowserSurfaceForPath(path)) {
     return remoteBrowserWindowSize(desktopWorkArea({ width: vw, height: vh }, mode === "desktop"));
   }
+  if (path === "__getting-started__") {
+    // Its design size, but never past the visible screen: Canvas does not zoom out to fit
+    // a new window, so a larger one would hide its title bar.
+    const fitted = {
+      width: Math.min(GETTING_STARTED_DEFAULT_WINDOW_WIDTH, Math.max(1, vw - GETTING_STARTED_VIEWPORT_GUTTER_X)),
+      height: Math.min(GETTING_STARTED_DEFAULT_WINDOW_HEIGHT, Math.max(1, vh - GETTING_STARTED_VIEWPORT_GUTTER_Y)),
+    };
+    if (mode === "canvas") return fitted;
+    const workArea = desktopWorkArea({ width: vw, height: vh }, mode === "desktop");
+    return {
+      width: Math.min(fitted.width, Math.max(1, vw - DESKTOP_WINDOW_MARGIN * 2)),
+      height: Math.min(fitted.height, Math.max(1, workArea.height - DESKTOP_WINDOW_MARGIN * 2)),
+    };
+  }
   const preferred = isTerminalWindowPath(path)
     ? { width: TERMINAL_DEFAULT_WINDOW_WIDTH, height: TERMINAL_DEFAULT_WINDOW_HEIGHT }
-    : path === "__getting-started__"
-      ? { width: GETTING_STARTED_DEFAULT_WINDOW_WIDTH, height: GETTING_STARTED_DEFAULT_WINDOW_HEIGHT }
-      : getEffectiveMinimumWindowSize(path);
+    : getEffectiveMinimumWindowSize(path);
   const width = Math.round(Math.min(1200, Math.max(preferred.width, vw * 0.6)));
   const height = Math.round(Math.min(900, Math.max(preferred.height, vh * 0.7)));
   if (mode === "canvas") return { width, height };

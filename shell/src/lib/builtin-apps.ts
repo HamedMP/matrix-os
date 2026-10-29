@@ -25,6 +25,9 @@ export const TERMINAL_MIN_WINDOW_HEIGHT = 300;
 /** Spec 639: wide enough for the Figma layout (1080 content + 32px gutters). */
 export const GETTING_STARTED_DEFAULT_WINDOW_WIDTH = 1144;
 export const GETTING_STARTED_DEFAULT_WINDOW_HEIGHT = 880;
+/** Room kept around a new Getting started window so its title bar and edges stay on screen. */
+export const GETTING_STARTED_VIEWPORT_GUTTER_X = 64;
+export const GETTING_STARTED_VIEWPORT_GUTTER_Y = 120;
 
 const BUILT_IN_APP_ALIASES = new Map<string, string>([
   ["apps/browser/index.html", "__browser__"],
