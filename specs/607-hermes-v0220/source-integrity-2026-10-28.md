@@ -60,3 +60,21 @@ Production curation/installer integration and actual upgrade/rebuild/recovery
 qualification are still pending. No installed user directory was pruned,
 relocated or symlinked to bypass admission. Real-account/model/MCP host/client
 acceptance, visual evidence and current-head formal CI/review remain separate.
+
+
+## 2026-10-29 — legacy-upgrade P1 correction
+
+Review found that the publisher rejected a retained legacy venv's normal Python
+symlinks while source admission correctly treated that environment as a separate
+dependency boundary. A real stdlib venv upgrade now preserves interpreter aliases
+only directly under canonical venv/bin, resolving to the same owned executable
+with non-writable group/other mode and a bounded regular pyvenv.cfg. Other escaping
+source links, unrelated external executables and non-executable targets still fail.
+No import-admission rule changed; original/full input and PM facts remain intact.
+
+The new real-Git/venv case failed on the original code with Source link escapes
+artifact. Final filesystem suite: 26 passed; installer/artifact/source-integrity/
+Python-resolution regression: 7 files, 48 passed. Independent read-only re-review
+found no remaining P1 or guard weakening. The separate concurrent PM-GC/process-
+death P2 remains explicitly outside this correction; no claim of complete live
+owner upgrade or new head CI/review acceptance is made by these local checks.

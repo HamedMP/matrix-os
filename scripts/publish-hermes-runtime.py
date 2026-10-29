@@ -145,6 +145,18 @@ def _validate(root,policy,full):
         info=(root/relative).lstat()
         if not stat.S_ISREG(info.st_mode) or not info.st_size: raise ArtifactError("Compiled frontend is missing")
 
+def _legacy_python_link(root,path,relative):
+    # The retained legacy venv is already a separate dependency boundary. Only
+    # standard interpreter links may point out of it; source/import links may not.
+    environment=root/"venv"
+    if path.parent!=environment/"bin": return False
+    if environment.resolve()!=environment or (environment/"bin").resolve()!=environment/"bin": return False
+    _regular_bytes(environment/"pyvenv.cfg")
+    target=path.resolve(strict=True)
+    if target!=(environment/"bin/python").resolve(strict=True): return False
+    info=target.stat()
+    return stat.S_ISREG(info.st_mode) and info.st_uid in (0,os.geteuid()) and not info.st_mode&0o022 and os.access(target,os.X_OK)
+
 def _snapshot(root):
     entries={};size=0
     for parent,dirs,files in os.walk(root,followlinks=False):
@@ -154,7 +166,8 @@ def _snapshot(root):
             if CACHE.search(relative): continue
             info=path.lstat();mode=stat.S_IMODE(info.st_mode)
             if stat.S_ISLNK(info.st_mode):
-                if not path.resolve().is_relative_to(root): raise ArtifactError("Source link escapes artifact")
+                if not path.resolve().is_relative_to(root) and not _legacy_python_link(root,path,relative):
+                    raise ArtifactError("Source link escapes artifact")
                 value={"kind":"link","mode":mode,"target":os.readlink(path)}
             elif stat.S_ISDIR(info.st_mode): value={"kind":"directory","mode":mode}
             elif stat.S_ISREG(info.st_mode):

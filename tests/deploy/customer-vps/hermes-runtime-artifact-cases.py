@@ -24,6 +24,37 @@ class Cases(unittest.TestCase):
         return subprocess.check_output(["/usr/bin/git","-c","core.fsmonitor=false","-c","core.hooksPath=/dev/null","-C",str(self.source),*args],stderr=subprocess.DEVNULL,text=True,env={"PATH":"/usr/bin:/bin","GIT_CONFIG_NOSYSTEM":"1","GIT_CONFIG_GLOBAL":"/dev/null","GIT_TERMINAL_PROMPT":"0"})
     def retained(self):
         self.assertEqual(self.owner.read_text(),"owner-fixture: preserve\n");self.assertEqual(self.facts.read_bytes(),self.facts_before)
+    def legacy_environment(self):
+        import venv
+        ignore=self.source/".gitignore";ignore.write_text(ignore.read_text()+"venv/\n")
+        self.git("add",".gitignore");self.git("-c","user.name=fixture","-c","user.email=fixture@example.invalid","commit","-m","retain legacy environment")
+        self.policy=m.Policy(self.git("rev-parse","HEAD").strip(),self.policy.member_hash,self.policy.member_size,self.policy.integrity)
+        venv.EnvBuilder(with_pip=False,symlinks=True).create(self.source/"venv")
+        interpreter=self.source/"venv/bin/python"
+        self.assertTrue(interpreter.is_symlink());self.assertFalse(interpreter.resolve().is_relative_to(self.source))
+        return interpreter
+    def test_upgrade_preserves_real_legacy_interpreter_links_and_original_environment(self):
+        interpreter=self.legacy_environment();target=os.readlink(interpreter)
+        result=m.publish(self.source,self.policy)
+        self.assertEqual(os.readlink(interpreter),target)
+        self.assertEqual(os.readlink(pathlib.Path(result["backup"])/"venv/bin/python"),target)
+        self.assertTrue((interpreter.parent.parent/"pyvenv.cfg").is_file())
+        self.assertTrue(m.publish(self.source,self.policy)["alreadyCurrent"]);self.retained()
+    def test_legacy_environment_does_not_admit_other_escaping_import_links(self):
+        self.legacy_environment();outside=self.base/"untrusted.py";outside.write_text("preserve external code")
+        (self.source/"venv/escape.py").symlink_to(outside)
+        with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
+        self.assertTrue(self.member.exists());self.assertEqual(outside.read_text(),"preserve external code");self.retained()
+    def test_legacy_environment_does_not_admit_other_external_executables(self):
+        self.legacy_environment();outside=self.base/"other-executable";outside.write_text("#!/bin/sh\nexit 0\n");outside.chmod(0o700)
+        (self.source/"venv/bin/other").symlink_to(outside)
+        with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
+        self.assertTrue(self.member.exists());self.retained()
+    def test_non_executable_legacy_python_target_is_rejected(self):
+        interpreter=self.legacy_environment();outside=self.base/"not-python";outside.write_text("not executable")
+        interpreter.unlink();interpreter.symlink_to(outside)
+        with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
+        self.assertTrue(self.member.exists());self.retained()
     def test_publishes_whole_artifact_and_keeps_complete_original(self):
         result=m.publish(self.source,self.policy)
         self.assertFalse(self.member.exists());self.assertEqual((pathlib.Path(result["backup"])/"node_modules/flatted/python/flatted.py").read_bytes(),PAYLOAD)
