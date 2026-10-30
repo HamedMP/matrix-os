@@ -50,7 +50,7 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
       const candidate = await verifyPreviewPairCandidate(input.candidate, { pairId: input.pairId, generation: 1,
         pr: input.pr, sourceSha: input.sourceSha }, deps.source, config, now());
       const pair = await admitPreviewPair(db, config, { pairId: input.pairId, pr: input.pr,
-        requesterId, sourceSha: input.sourceSha, candidate }, deps.prepare, now());
+        requesterId, sourceSha: input.sourceSha, candidate, controllerRunId: input.controllerRunId }, deps.prepare, now());
       // The workflow may only cancel its own generated request; reuse never grants a new run ownership.
       return { ...previewPairSummary(pair), ownedRequest: pair.pair_id === input.pairId };
     },
@@ -65,7 +65,7 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
       if (!await previewPairOperation(signal => deps.verifyFixtures(signal))) throw new PreviewPairAccessError(503);
       const candidate = await verifyPreviewPairCandidate(input.candidate, { pairId, generation: input.generation + 1,
         pr: pair.pr, sourceSha: input.candidate.sourceSha }, deps.source, config, now());
-      return previewPairSummary(await requestPreviewPairUpdate(db, pairId, input.generation, input.revision, candidate, now()));
+      return previewPairSummary(await requestPreviewPairUpdate(db, pairId, input.generation, input.revision, candidate, now(), input.controllerRunId));
     },
     async report(pairId: string, reader: PreviewPairReader) {
       return readPreviewPairReport(db, pairId, reader, maintainer, now());
