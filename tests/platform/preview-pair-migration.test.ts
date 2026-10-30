@@ -20,6 +20,6 @@ describe("pair lifecycle schema is part of real Platform startup", () => {
   it("tracks the new schema independently of the core migration generation", async () => {
     const result = await sql<{ generation: number; fingerprint: string }>`SELECT generation, fingerprint
       FROM platform_schema_revisions WHERE scope = 'preview-pairs'`.execute(db.executor);
-    expect(result.rows).toEqual([{ generation: 1, fingerprint: "collaboration-preview-pair-v1" }]);
+    expect(result.rows).toEqual([{ generation: 2, fingerprint: "collaboration-preview-pair-controller-v2" }]);
   });
 });
