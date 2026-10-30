@@ -1146,7 +1146,11 @@ describe('CI workflows', () => {
     expect(diagnosticsAfterFailure).toBeLessThan(failureExit);
 
     const pollTimeout = buildStep.indexOf('Timed out waiting for Cloud Build');
-    expect(buildStep.indexOf('print_cloud_build_diagnostics', pollTimeout)).toBeGreaterThan(pollTimeout);
+    const diagnosticsAfterTimeout = buildStep.indexOf('print_cloud_build_diagnostics', pollTimeout);
+    const timeoutExit = buildStep.indexOf('exit 1', pollTimeout);
+    expect(pollTimeout).toBeGreaterThan(0);
+    expect(diagnosticsAfterTimeout).toBeGreaterThan(pollTimeout);
+    expect(diagnosticsAfterTimeout).toBeLessThan(timeoutExit);
   });
 
   it('publishes main dev host bundles without deploying the fleet', () => {
