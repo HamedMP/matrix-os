@@ -96,7 +96,7 @@ function ReadyBrowserSurface(props: BrowserSurfaceProps & { recheckSetup?: () =>
       </div>}
       {minimized && state.viewerUrl && <div className="matrix-browser-recovery"><strong>Chrome is minimized</strong>
         <button disabled={!interactive} onClick={() => { void action("restore-chrome"); }}>Restore Chrome</button></div>}
-      {connected && !automation && !state.status?.humanControlAvailable && <div className="matrix-browser-recovery"><strong>This view is read only</strong><button onClick={reconnect}>Take control</button></div>}
+      {connected && available && !automation && !state.status?.humanControlAvailable && <div className="matrix-browser-recovery"><strong>This view is read only</strong><button onClick={reconnect}>Take control</button></div>}
       {settings && <section ref={settingsPanel} className="matrix-browser-settings" aria-label="Browser settings">
         <div><strong>Display</strong><button ref={settingsClose} className="matrix-browser-icon-button" aria-label="Close browser settings" onClick={() => { setSettings(false); settingsTrigger.current?.focus(); }}><X size={18} aria-hidden="true"/></button></div>
         <p>The desktop fits this window so Chrome’s tabs, extensions and dialogs remain within reach.</p>
