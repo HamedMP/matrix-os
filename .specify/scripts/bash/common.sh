@@ -132,17 +132,28 @@ find_feature_dir_by_prefix() {
 # Exit 3 means no explicit selection; malformed selections must never fall back.
 resolve_specified_feature_dir() {
     python3 - "$1" <<'PY'
-import json, os, sys
+import json, os, re, sys
 from pathlib import Path
 
 root = Path(sys.argv[1]).resolve()
 metadata = root / ".specify" / "feature.json"
 value = os.environ.get("SPECIFY_FEATURE_DIRECTORY")
 try:
+    if not value and os.environ.get("SPECIFY_FEATURE"):
+        selector = os.environ["SPECIFY_FEATURE"]
+        match = re.fullmatch(r"([0-9]{3,})-[a-zA-Z0-9_-]+", selector)
+        if not match:
+            raise ValueError("selector")
+        matches = [path for path in (root / "specs").glob(match[1] + "-*") if path.is_dir()]
+        if len(matches) != 1:
+            raise ValueError("selector")
+        value = str(matches[0])
     if not value:
+        if metadata.is_symlink():
+            raise ValueError("metadata")
         if not metadata.exists():
             sys.exit(3)
-        if metadata.is_symlink() or metadata.stat().st_size > 65536:
+        if metadata.stat().st_size > 65536:
             raise ValueError("metadata")
         value = json.loads(metadata.read_text())["feature_directory"]
     if not isinstance(value, str) or not value or len(value) > 4096:
