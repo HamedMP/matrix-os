@@ -1,5 +1,6 @@
 import "posthog-js/dist/conversations";
 import posthog from "posthog-js/dist/module.no-external";
+import { markDesktopFeatureFlagsReady } from "./desktop-feature-flags";
 import {
   buildSupportChatProperties,
   SupportIdentityResponseSchema,
@@ -417,6 +418,7 @@ export default function DesktopSupportWidget() {
         } as PostHogInitOptions);
         initialized = true;
         activeApiHost = apiHost;
+        markDesktopFeatureFlagsReady();
       } catch (error: unknown) {
         console.warn("[desktop-support] PostHog initialization failed:", errorKind(error));
         return;

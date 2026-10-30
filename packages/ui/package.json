@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./collaboration-direct-client": "./src/collaboration/direct-client.ts",
     "./default-organization": "./src/collaboration/default-organization.ts",
+    "./feature-flags": "./src/feature-flags.ts",
     "./speech": "./src/speech/index.ts",
     "./styles.css": "./src/styles.css",
     "./chat-composer.css": "./src/chat/composer/chat-composer.css",
