@@ -56,6 +56,8 @@
   "tests/platform/preview-pair-funded-origin-postgres.test.ts",
   "tests/platform/preview-pair-funding-postgres.test.ts",
   "tests/platform/preview-pair-host-observation-postgres.test.ts",
+  "tests/platform/preview-pair-intent-cloud-postgres.test.ts",
+  "tests/platform/preview-pair-intent-recovery-postgres.test.ts",
   "tests/platform/preview-pair-intents-postgres.test.ts",
   "tests/platform/preview-pair-lifecycle.test.ts",
   "tests/platform/preview-pair-postgres.test.ts",

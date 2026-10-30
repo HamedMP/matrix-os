@@ -4,6 +4,7 @@ import { PreviewPairActorSchema, PreviewPairIdSchema, PreviewPairPrSchema, Previ
 import { PreviewPairActionSchema, PreviewPairListSchema, PreviewPairReconcileSchema, PreviewPairStartSchema,
   PreviewPairPrepareRequestSchema, PreviewPairRequestStopSchema } from "./api-contracts.js";
 import { preparePreviewPairCloudIntent, stopPreviewPairCloudIntent } from "./cloud-intents.js";
+import { createPreviewPairIntentRecovery, type PreviewPairIntentRetirement } from "./intent-recovery.js";
 import { PreviewPairConflictError, readPreviewPair, recordPreviewPairCurrency } from "./repository.js";
 import { admitPreviewPair } from "./admission.js";
 import { verifyPreviewPairCandidate, type PreviewPairProvenanceSource } from "./provenance.js";
@@ -24,6 +25,7 @@ export interface PreviewPairServiceDeps extends PreviewPairReconcilerDeps {
   /** Authenticated reviewed-controller receipt, never an echo of HTTP input. */
   resolveController(input: { runId: number; pairId: string; pr: number; generation: number; sourceSha: string }, signal: AbortSignal): Promise<unknown>;
   isMaintainer: PreviewPairMaintainerCheck;
+  retireCloudIntent?: PreviewPairIntentRetirement;
 }
 export function previewPairSummary(pair: Selectable<PreviewPairsTable>) {
   return { pairId: pair.pair_id, generation: pair.generation, revision: pair.revision, pr: pair.pr,
@@ -34,6 +36,8 @@ export function previewPairSummary(pair: Selectable<PreviewPairsTable>) {
 export function createPreviewPairService(deps: PreviewPairServiceDeps) {
   const { db, config } = deps, now = deps.now ?? Date.now;
   const reconciler = createPreviewPairReconciler(deps);
+  const recoverRequests = createPreviewPairIntentRecovery({ db, admissionEnabled: config.admissionEnabled, profileFingerprint: config.sourceProfileFingerprint,
+    now, inspectRequest: deps.inspectRequest, retire: deps.retireCloudIntent });
   const maintainer = (actor: string) => previewPairOperation(() => deps.isMaintainer(actor));
   async function controller(input: z.infer<typeof Controller> | Omit<z.infer<typeof Controller>, "requesterId" | "controllerSha">) {
     const raw = await previewPairOperation(signal => deps.resolveController(input, signal));
@@ -42,6 +46,28 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
       || proof.data.pairId !== input.pairId || proof.data.pr !== input.pr || proof.data.generation !== input.generation
       || proof.data.sourceSha !== input.sourceSha || !await maintainer(proof.data.requesterId)) throw new PreviewPairAccessError(403);
     return proof.data.requesterId;
+  }
+  async function reconcilePairs(limit: number) {
+    if (!limit) return { checked: 0, failed: 0 };
+    const started = performance.now();
+    const rows = await db.executor.selectFrom("preview_pairs").select(["pair_id", "generation", "revision"])
+      .where("state", "!=", "stopped").where(eb => eb.or([
+        eb.and([eb("state", "!=", "cleanup_pending"), eb("expires_at", "<=", new Date(now()).toISOString())]),
+        eb.and([eb.or([eb("next_attempt_at", "is", null), eb("next_attempt_at", "<=", new Date(now()).toISOString())]),
+          eb.or([eb("claim_expires_at", "is", null), eb("claim_expires_at", "<=", new Date(now()).toISOString())])]),
+      ]))
+      .orderBy(sql`CASE WHEN state <> 'cleanup_pending' AND expires_at <= ${new Date(now()).toISOString()} THEN 0
+        WHEN state = 'cleanup_pending' THEN 1 WHEN state = 'updating' THEN 2 WHEN state = 'queued' THEN 4 ELSE 3 END`)
+      .orderBy("created_at").orderBy("pair_id").limit(limit).execute();
+    let checked = 0, failed = 0;
+    for (const pair of rows) {
+      // Reserve the rest of the minute for one worst-case bounded external stage.
+      if (checked && performance.now() - started > 5_000) break;
+      checked += 1;
+      try { await reconciler.run(pair.pair_id, pair.generation, pair.revision); }
+      catch (error: unknown) { failed += 1; console.warn("[preview-pair] reconcile deferred", error instanceof Error ? error.name : "UnknownError"); }
+  }
+  return { checked, failed };
   }
   return {
     async prepareRequest(raw: unknown) {
@@ -118,24 +144,19 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
       return { items, cursor: rows.length > query.limit ? page.at(-1)!.pair_id : null };
     },
     async reconcile(raw: unknown) {
-      const { limit } = PreviewPairReconcileSchema.parse(raw), started = performance.now();
-      const rows = await db.executor.selectFrom("preview_pairs").select(["pair_id", "generation", "revision"])
-        .where("state", "!=", "stopped").where(eb => eb.or([
-          eb.and([eb("state", "!=", "cleanup_pending"), eb("expires_at", "<=", new Date(now()).toISOString())]),
-          eb.and([eb.or([eb("next_attempt_at", "is", null), eb("next_attempt_at", "<=", new Date(now()).toISOString())]),
-            eb.or([eb("claim_expires_at", "is", null), eb("claim_expires_at", "<=", new Date(now()).toISOString())])]),
-        ]))
-        .orderBy(sql`CASE WHEN state <> 'cleanup_pending' AND expires_at <= ${new Date(now()).toISOString()} THEN 0
-          WHEN state = 'cleanup_pending' THEN 1 WHEN state = 'updating' THEN 2 WHEN state = 'queued' THEN 4 ELSE 3 END`)
-        .orderBy("created_at").orderBy("pair_id").limit(limit).execute();
+      const { limit } = PreviewPairReconcileSchema.parse(raw), requestBudget = Math.max(1, Math.floor(limit / 2));
+      // Independent claims share one managed pass. Await both even if one query
+      // fails, so shutdown cannot destroy the database under the other task.
+      const results = await Promise.allSettled([recoverRequests(requestBudget), reconcilePairs(limit - requestBudget)]);
       let checked = 0, failed = 0;
-      for (const pair of rows) {
-        // Reserve the rest of the minute for one worst-case bounded external stage.
-        if (checked && performance.now() - started > 5_000) break;
-        checked += 1;
-        try { await reconciler.run(pair.pair_id, pair.generation, pair.revision); }
-        catch (error: unknown) { failed += 1; console.warn("[preview-pair] reconcile deferred", error instanceof Error ? error.name : "UnknownError"); }
+      for (const result of results) {
+        if (result.status === "fulfilled") { checked += result.value.checked; failed += result.value.failed; }
+        else {
+          failed++;
+          console.warn("[preview-pair] reconciliation pass deferred", result.reason instanceof Error ? result.reason.name : "UnknownError");
+        }
       }
+      if (limit === 1 && results[0]!.status === "fulfilled" && results[0]!.value.checked === 0) return reconcilePairs(1);
       return { checked, failed };
     },
   };
