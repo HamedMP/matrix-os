@@ -190,6 +190,33 @@ describe("Getting started app view", () => {
     expect(onAction).toHaveBeenLastCalledWith({ type: "chat" });
   });
 
+  it("does not claim Matrix is unlocked when status checks fail", async () => {
+    const down: PromiseRejectedResult = { status: "rejected", reason: new Error("down") };
+    renderApp(makePort({ results: () => results({ integrations: down, agents: down, github: down, chats: fulfilled({ items: [{ id: "chat_1" }] }) }) }));
+    expect(await screen.findByRole("heading", { name: "Some checks didn't load" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Matrix unlocked" })).toBeNull();
+  });
+
+  it("waits for the last award to land before the unlocked banner", async () => {
+    const port = makePort({ results: () => results({
+      integrations: fulfilled(["slack", "gmail", "google_calendar"].map((service, i) => ({ id: `c${i}`, service, status: "active" }))),
+      github: fulfilled({ authenticated: true }),
+      agents: fulfilled({ agents: [{ agent: "codex", status: "available" }] }),
+      chats: fulfilled({ items: [{ id: "chat_1" }] }),
+    }) });
+    const releases: Array<() => void> = [];
+    const award = port.award.getMockImplementation()!;
+    port.award.mockImplementation((taskId, silent) => new Promise((resolve) => {
+      releases.push(() => resolve(award(taskId, silent)));
+    }));
+    renderApp(port);
+    expect(await screen.findByText("6 of 12 done")).toBeTruthy();
+    await waitFor(() => expect(releases.length).toBe(6));
+    expect(screen.queryByRole("region", { name: "Matrix unlocked" })).toBeNull();
+    await act(async () => { for (const release of releases) release(); });
+    expect(await screen.findByRole("region", { name: "Matrix unlocked" })).toBeTruthy();
+  });
+
   it("does not celebrate while a checkable task is still open", async () => {
     renderApp(makePort({ results: () => results({ ...slackConnected, chats: fulfilled({ items: [{ id: "chat_1" }] }) }) }));
     expect(await screen.findByText("Up next")).toBeTruthy();

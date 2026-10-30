@@ -65,6 +65,24 @@ export const GETTING_STARTED_APP_AWARDABLE_TASK_IDS = GETTING_STARTED_APP_TASK_I
 
 export type GettingStartedAppAwardableTaskId = (typeof GETTING_STARTED_APP_AWARDABLE_TASK_IDS)[number];
 
+/**
+ * Tasks whose status Matrix can read (the rest stay "unavailable" until a signal exists).
+ * The finish line needs every one of these Done, so a failed status read never looks finished.
+ */
+export const GETTING_STARTED_APP_CHECKABLE_TASK_IDS: readonly GettingStartedAppTaskId[] = Object.freeze([
+  "first-prompt",
+  "gmail",
+  "google-calendar",
+  "slack",
+  "github",
+  "ai-provider",
+]);
+
+/** Every task Matrix can check is Done. */
+export function gettingStartedAppAllChecked(tasks: readonly GettingStartedAppTask[]): boolean {
+  return GETTING_STARTED_APP_CHECKABLE_TASK_IDS.every((id) => tasks.find((task) => task.id === id)?.status === "complete");
+}
+
 const TASKS_BY_ID = new Map(GETTING_STARTED_APP_TASKS.map((task) => [task.id, task]));
 
 export function gettingStartedAppTaskPoints(id: GettingStartedAppTaskId): number {

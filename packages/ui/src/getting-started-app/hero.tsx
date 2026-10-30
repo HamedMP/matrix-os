@@ -8,6 +8,7 @@ import {
   GETTING_STARTED_APP_TASK_IDS,
   ONBOARDING_TASKS,
   getStartedTaskOrder,
+  gettingStartedAppAllChecked,
   gettingStartedAppNextTask,
   gettingStartedAppTask,
   orderByIds,
@@ -45,12 +46,14 @@ function agentLine(
   const justDone = celebrating.at(-1);
   if (justDone) {
     const done = gettingStartedAppTask(justDone).doneMessage;
-    return next ? `${done}, nice. ${next.title} next?` : `${done}, nice. That's the last one, Matrix is fully unlocked.`;
+    if (next) return `${done}, nice. ${next.title} next?`;
+    return gettingStartedAppAllChecked(tasks) ? `${done}, nice. That's the last one, Matrix is fully unlocked.` : `${done}, nice.`;
   }
   if (tasks.find((task) => task.id === "first-prompt")?.status !== "complete") {
     return "I'm Matrix. I work in your apps, even while you're away. Pick something and I'll start right away.";
   }
-  return next ? `${doneCount} of ${TOTAL_TASKS} done. ${next.title} next?` : "Matrix is fully unlocked.";
+  if (next) return `${doneCount} of ${TOTAL_TASKS} done. ${next.title} next?`;
+  return gettingStartedAppAllChecked(tasks) ? "Matrix is fully unlocked." : "Some of my checks didn't load. I'll try again shortly.";
 }
 
 /**
@@ -75,11 +78,13 @@ function mirrorAgentLine({ activity }: OnboardingWidgetStatus): string {
   }
 }
 
-/** Nothing Matrix can check is left; cards it cannot check yet never block the finish line. */
+/**
+ * Every task Matrix can check is Done (a failed status read is not), and no reward is still
+ * landing. Cards Matrix cannot check yet never block the finish line.
+ */
 function isUnlocked(state: ReturnType<typeof useGettingStartedApp>): boolean {
-  if (!state?.loaded || state.celebrating.length > 0) return false;
-  const tasks = state.tasks;
-  return tasks.find((task) => task.id === "first-prompt")?.status === "complete" && gettingStartedAppNextTask(tasks) === null;
+  if (!state?.loaded || state.celebrating.length > 0 || state.awarding) return false;
+  return gettingStartedAppAllChecked(state.tasks);
 }
 
 export function Hero({ onAction }: { onAction(action: GettingStartedAppAction): void }) {
@@ -125,7 +130,16 @@ function HeroNext({ mirror, onAction }: { mirror: OnboardingWidgetStatus | null;
   if (mirror) return <WidgetMirror status={mirror} points={firstPrompt?.status === "complete" ? null : firstPrompt?.points ?? null} />;
   if (firstPrompt?.status !== "complete") return <StarterTasks points={firstPrompt?.points ?? 0} onAction={onAction} />;
   const next = gettingStartedAppNextTask(tasks);
-  return next ? <UpNext task={next} logo={state.logos[next.id]} earned={state.earned.includes(next.id)} onAction={onAction} /> : null;
+  if (next) return <UpNext task={next} logo={state.logos[next.id]} earned={state.earned.includes(next.id)} onAction={onAction} />;
+  // Nothing open, but not every check is Done: a status read failed, or a last award is landing.
+  return (
+    <>
+      <h2 className="mxo-gsa__next-title">{state.awarding ? "Adding up your points" : "Some checks didn't load"}</h2>
+      <p className="mxo-gsa__next-description" role="status">
+        {state.awarding ? "One moment while Matrix records your last task." : "Matrix couldn't read some of your connections just now. It tries again shortly."}
+      </p>
+    </>
+  );
 }
 
 const MIRROR_COPY: Record<OnboardingWidgetStatus["activity"]["kind"], { title(task: string): string; description: string }> = {

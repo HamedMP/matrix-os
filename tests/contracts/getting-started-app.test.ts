@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   GETTING_STARTED_APP_AWARDABLE_TASK_IDS,
+  GETTING_STARTED_APP_CHECKABLE_TASK_IDS,
   GETTING_STARTED_APP_TASKS,
   GETTING_STARTED_APP_TASK_IDS,
   GettingStartedAppAwardRequestSchema,
@@ -162,6 +163,19 @@ describe("deriveGettingStartedAppTasks", () => {
     }));
     expect(statusOf(tasks, "gmail")).toBe("complete");
     expect(statusOf(tasks, "google-calendar")).toBe("complete");
+  });
+
+  it("lists exactly the tasks Matrix can check, and only those can turn Done from status", () => {
+    expect(GETTING_STARTED_APP_CHECKABLE_TASK_IDS).toEqual(["first-prompt", "gmail", "google-calendar", "slack", "github", "ai-provider"]);
+    const everything = deriveGettingStartedAppTasks(results({
+      integrations: fulfilled(["gmail", "google_calendar", "slack", "whatsapp", "github"].map((service, i) => ({ id: `c${i}`, service, status: "active" }))),
+      github: fulfilled({ authenticated: true }),
+      agents: fulfilled({ agents: [{ agent: "codex", status: "available" }] }),
+      chats: fulfilled({ items: [{ id: "chat_1" }] }),
+    }));
+    for (const task of everything) {
+      expect(task.status).toBe(GETTING_STARTED_APP_CHECKABLE_TASK_IDS.includes(task.id) ? "complete" : "unavailable");
+    }
   });
 
   it("picks the first incomplete task in grid order as up next", () => {

@@ -54,6 +54,8 @@ export interface GettingStartedAppState {
   logos: Readonly<Record<string, string>>;
   /** Tasks that turned Done while the owner was here, for a short celebration. */
   celebrating: readonly GettingStartedAppTaskId[];
+  /** True while an award request is in flight, so the finish line waits for the last reward. */
+  awarding: boolean;
   /** A showing app view registers here; while one is, awards play in the app instead of a corner toast. */
   registerView: () => () => void;
   /** Opens the app window; null when the surface did not provide it. */
@@ -120,6 +122,7 @@ export function GettingStartedAppProvider({
   const [points, setPoints] = useState<GettingStartedAppPoints>({ kind: "loading" });
   const [logos, setLogos] = useState<Readonly<Record<string, string>>>({});
   const [celebrating, setCelebrating] = useState<readonly GettingStartedAppTaskId[]>([]);
+  const [awardsInFlight, setAwardsInFlight] = useState(0);
   const logosRequested = useRef(false);
   // One timer per celebrating task (at most the ten tasks), cleared on unmount.
   const celebrationTimers = useRef(new Map<GettingStartedAppTaskId, ReturnType<typeof setTimeout>>());
@@ -273,6 +276,7 @@ export function GettingStartedAppProvider({
       const signal = lifecycle.current?.signal;
       if (!signal || signal.aborted) return;
       pending.current.add(taskId);
+      setAwardsInFlight((count) => count + 1);
       void port.award(taskId, silent, signal).then((response) => {
         if (signal.aborted) return;
         awarded.current.add(taskId);
@@ -290,6 +294,7 @@ export function GettingStartedAppProvider({
         warn("award failed", error);
       }).finally(() => {
         pending.current.delete(taskId);
+        setAwardsInFlight((count) => Math.max(0, count - 1));
       });
     }
   }, [celebrate, markEarned, port, showTotal]);
@@ -370,9 +375,10 @@ export function GettingStartedAppProvider({
     connectedServices,
     logos,
     celebrating,
+    awarding: awardsInFlight > 0,
     registerView,
     open: onOpen ?? null,
-  }), [enabled, availability, results, tasks, earned, connectedServices, points, logos, celebrating, registerView, onOpen]);
+  }), [enabled, availability, results, tasks, earned, connectedServices, points, logos, celebrating, awardsInFlight, registerView, onOpen]);
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
