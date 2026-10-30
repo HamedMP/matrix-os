@@ -10,6 +10,10 @@ export interface LocalChatgptPlanStatus {
   revocation: "none" | "confirmed" | "unconfirmed";
 }
 
+export type LocalChatgptGrantUpdate =
+  | { enabled: boolean; background: false; accountId?: string; baseRevision?: number }
+  | { enabled: true; background: boolean; accountId: string; baseRevision: number };
+
 export interface LocalChatgptPlanClient {
   status(signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
   connect(input: { purpose: "personal_local" }, signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
@@ -17,5 +21,5 @@ export interface LocalChatgptPlanClient {
   cancel(signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
   disconnect(signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
   refreshModels(signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
-  setGrant(input: { enabled: boolean; background: false }, signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
+  setGrant(input: LocalChatgptGrantUpdate, signal: AbortSignal): Promise<LocalChatgptPlanStatus>;
 }

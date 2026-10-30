@@ -35,7 +35,14 @@ export const CHATGPT_PLAN_INVOKE = {
     },
     'chatgpt-plan:set-grant': {
         request: ChatgptPlanSessionSchema.extend({
-            enabled: z.boolean(), background: z.literal(false)
+            enabled: z.boolean(), background: z.boolean(),
+            accountId: z.uuid().optional(),
+            baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1).optional()
+        }).superRefine((input, ctx) => {
+            // Legacy interactive/revoke calls remain valid. Background access
+            // requires fresh, explicit intent for the displayed account/grant.
+            if (input.background && (!input.enabled || !input.accountId || input.baseRevision === undefined))
+                ctx.addIssue({ code: 'custom', message: 'Invalid authorization intent' });
         }), response: ChatgptPlanStatusSchema
     },
 } as const;
