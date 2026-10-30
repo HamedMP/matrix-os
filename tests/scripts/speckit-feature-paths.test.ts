@@ -45,6 +45,18 @@ function run(root: string, script = "setup-plan.sh", extraEnv: Record<string, st
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe("Spec Kit resolves the selected feature across independent stack branches", () => {
+  it("runs on the documented Node toolchain when Python is absent", () => {
+    const root = repository();
+    pointer(root, feature(root));
+    const bin = join(root, "toolchain");
+    mkdirSync(bin);
+    for (const name of ["bash", "git", "node", "dirname", "basename", "mkdir", "cp"]) {
+      const binary = execFileSync("which", [name], { encoding: "utf8", timeout: 10_000 }).trim();
+      symlinkSync(binary, join(bin, name));
+    }
+    const result = run(root, "setup-plan.sh", { PATH: bin });
+    expect(result.status, result.stderr).toBe(0);
+  });
   it("uses the persisted feature pointer on a codex implementation branch", () => {
     const root = repository();
     const relative = feature(root);
