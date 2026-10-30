@@ -34,8 +34,10 @@ export function createPreviewPairProvisioning(options:{db:PlatformDB;controlSecr
   await canonical();
   if(!await options.verifyAuthority(input.candidate,signal))throw new PreviewPairConflictError();
   const context=await options.context(input.candidate),config=context.deps.config;
+  // Collaboration boots against the candidate API. The trusted, capped Preview
+  // bank is configured only after real host registration, never in cloud-init.
   if(context.deps.db!==options.db||new URL(config.platformRegisterUrl).origin!==input.candidate.apiOrigin
-    ||new URL(config.fundedAiRelayUrl).origin!==input.candidate.apiOrigin||config.platformSecret.length<32
+    ||config.fundedAiEnabled!==false||config.platformSecret.length<32
     ||config.platformSecret===options.controlSecret||!config.r2PrefixRoot.includes("preview")||config.goldenSnapshots.enabled)throw new PreviewPairConflictError();
   await canonical();await options.mirror(input,claim,signal);await canonical();
   if(!context.deps.hetzner.withSignal)throw new PreviewPairConflictError();
