@@ -17,6 +17,7 @@ import { createPreviewPairReaderAuthenticator } from "./auth.js";
 import { createPreviewPairGitHub } from "./github.js";
 import { createPreviewPairCloudAuthority } from "./cloud.js";
 import { createPreviewPairCloudCleanup } from "./cleanup-cloud.js";
+import { createPreviewPairIntentCloudCleanup } from "./intent-cloud.js";
 import { createPreviewPairSourceAuthority } from "./source-authority.js";
 import { startCustomerVpsReconciliationWorker, type CustomerVpsReconciliationWorker } from "../customer-vps-reconciliation-worker.js";
 export interface ConfiguredPreviewPairRuntimeOptions {
@@ -67,6 +68,8 @@ export async function createConfiguredPreviewPairRuntime(options: ConfiguredPrev
       funding: options.funding, fetchImpl, now, authority: { ...authority,
         verifyFixtures: async signal => { signal.throwIfAborted(); await assertPreviewPairTargetPrepared(options.db, target); return authority.verifyFixtures(signal); },
         authority: async (candidate, signal) => { signal.throwIfAborted(); await assertPreviewPairTargetPrepared(options.db, target); return authority.authority(candidate, signal); } },
+      retireCloudIntent: createPreviewPairIntentCloudCleanup({ db: options.db, profileFingerprint: config.sourceProfileFingerprint,
+        project: profile.project, region: profile.region, service: profile.service, accessToken: google.accessToken, fetchImpl, now }),
       retireCloud: createPreviewPairCloudCleanup({ db: options.db, profileFingerprint: config.sourceProfileFingerprint, project: profile.project, region: profile.region,
         service: profile.service, accessToken: google.accessToken, fetchImpl, now }) });
     return { routes: { enabled: true, operatorSecret: profile.operatorSecret, service, authenticateReader }, stop, drain, close,
