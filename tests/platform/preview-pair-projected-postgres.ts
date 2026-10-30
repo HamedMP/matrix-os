@@ -15,7 +15,8 @@ import { bootstrapPlatformRuntimeEndpointDatabase, type RuntimeEndpointPlatformD
  * this does not exercise paid provisioning, Clerk login or the customer sharing journey. */
 export async function createProjectedPreviewPair(addresses: readonly [string, string] = ["203.0.113.10", "203.0.113.11"]) {
   const previewSecret = "isolated-preview-" + "p".repeat(40);
-  const source = await createSeededPreviewPair();
+  const controlSecret = "isolated-control-" + "c".repeat(40);
+  const source = await createSeededPreviewPair({ platformSecret: controlSecret });
   let target: Awaited<ReturnType<typeof createIsolatedPreviewPairDatabase>> | undefined;
   try {
     target = await createIsolatedPreviewPairDatabase();
@@ -28,7 +29,7 @@ export async function createProjectedPreviewPair(addresses: readonly [string, st
       hetzner: source.hetzner, systemStore: createMockCustomerVpsSystemStore(), now: () => new Date(PAIR_NOW) });
     for (const [i, member] of members.entries()) {
       const job = await source.db.executor.selectFrom("provisioning_jobs").selectAll().where("job_id", "=", member.job_id).executeTakeFirstOrThrow();
-      const token = openProvisioningPayload(job.encrypted_payload!, "platform-secret").registrationToken;
+      const token = openProvisioningPayload(job.encrypted_payload!, controlSecret).registrationToken;
       await service.register(token, { machineId: member.machine_id, hetznerServerId: 1000 + i, publicIPv4: addresses[i],
         imageVersion: source.candidate.hostBundleVersion, bundleSha256: source.candidate.hostBundleSha256, healthy: true });
     }
@@ -39,7 +40,7 @@ export async function createProjectedPreviewPair(addresses: readonly [string, st
     await bootstrapPlatformRuntimeEndpointDatabase(collaborationDb);
     const owner = members.find(member => member.role === "owner")!;
     let cleanupClaim: typeof claim | undefined;
-    return { source, target: destination, members, owner, previewSecret,
+    return { source, target: destination, members, owner, previewSecret, controlSecret,
       collaborationDb,
       async retire() {
         if (!cleanupClaim) {

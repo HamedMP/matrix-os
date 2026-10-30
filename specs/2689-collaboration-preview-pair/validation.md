@@ -462,3 +462,25 @@ retains desired bundle metadata. An early new-reader contract mistake and a fixt
 expectation of a non-manifest tokenEpoch field were corrected; neither counts as
 regression proof. No real login, model prompt, live surface evidence or completed
 pair readiness is claimed. Funding and production maintenance composition remain open.
+
+### Bounded AI activation checkpoint
+
+Real control and isolated databases, the actual funded proof route and gateway
+configuration route now exercise separate collaboration and financial authorities.
+The initial candidate financial-origin request returned400 under the existing
+guard; that was a design mistake, not evidence of a product regression. The guard
+remains intact. The control ledger alone holds the capped Preview allowance.
+
+The source-only reader failed before correction when it looked in the candidate
+ledger. The unimplemented activation step failed all3 intended assertions. It now
+configures once, verifies loaded configuration on a later pass and recovers a lost
+applied response without a second POST, restart or credit grant. Reused control or
+allowance keys are rejected before host traffic. Source policy/balance/quota/epoch/
+expiry failures cannot qualify readiness; Speech is not a Chat prerequisite.
+
+**10/10 assertions pass across host-observation/funding/origin files**, followed by
+**3/3 activation assertions**, zero skipped/errors. Focused Platform native
+TypeScript passes for both checkpoints. HTTP, provider and OS apply/restart are
+explicit fixture boundaries; no real model call, paid machine, process restart,
+Clerk login or completed pair qualification is claimed. Concrete host transport,
+bootstrap/workflow and desktop composition still remain open.
