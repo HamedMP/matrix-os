@@ -20,7 +20,8 @@
     "./slack-bridge": "./src/slack-bridge.ts",
     "./bokio-integration": "./src/bokio-integration.ts",
     "./data-imports": "./src/data-imports.ts",
-    "./command-preview-policy": "./src/command-preview-policy.mjs"
+    "./command-preview-policy": "./src/command-preview-policy.mjs",
+    "./preview-pair": "./src/preview-pair.ts"
   },
   "imports": {
     "#inference-response-limits": "./src/inference-response-limits.ts",
@@ -128,7 +129,8 @@
     "#canonical-chat-execution-controls": "./src/canonical-chat-execution-controls.ts",
     "#browser-chat-approval": "./src/browser-chat-approval.ts",
     "#browser-permission-presentation": "./src/browser-permission-presentation.ts",
-    "#command-preview": "./src/command-preview.ts"
+    "#command-preview": "./src/command-preview.ts",
+    "#preview-pair": "./src/preview-pair.ts"
   },
   "main": "src/index.ts",
   "types": "src/index.ts",

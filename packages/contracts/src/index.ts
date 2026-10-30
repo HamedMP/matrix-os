@@ -1,3 +1,4 @@
+export * from "#preview-pair";
 import { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
 export * from "#browser-chat-approval";
 export { MatrixComputerRuntimeSlotSchema } from "#contract-primitives";
