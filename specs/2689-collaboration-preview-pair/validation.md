@@ -493,3 +493,10 @@ The unimplemented transport failed its intended positive assertion first. The
 combined observation, activation, funding and origin suite passes **14/14 across4
 files**, zero skipped/errors. Invalid paths/methods/body sizes cannot trigger a
 second probe. Actual provider/HTTP remain fixtures; no remote public-IP traffic.
+
+All8 native TypeScript projects pass on this maintenance source. Changed-file
+pattern scan reports0 violations and0 warnings. The complete required cohort
+validates all71 files, including retirement and the four new maintenance suites.
+Hosted CI is still pending; the external Codex0.166 qualification blocker already
+has its own [ENG-420](https://linear.app/matrix-os/issue/ENG-420/fixci-restore-main-contract-and-build-checks).
+No duplicate issue or compatibility bypass is added.

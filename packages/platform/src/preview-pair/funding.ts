@@ -7,7 +7,7 @@ import { readCanonicalPreviewPairMember } from "./runtime-binding.js";
 
 /** Current spendable test credit, never initial allocation size or an auto-refill.
  * Funding stays on the trusted control ledger; candidate code gets no bank key.
- * Host verification is a required internal port; production must bind both actual
+ * Host verification is a required internal port; production must bind the actual
  * loaded AI configuration, not a UI-selected model or a caller assertion. */
 export function createPreviewPairFundingReader(options: {
   db: PlatformDB; now: () => number;
