@@ -17,11 +17,11 @@ regression protection. Required live prerequisites must never silently skip.
 
 **Goal**: Strict producer/consumer contracts and test fixtures before story code.
 
-- [ ] T005 Add failing malformed/expired/duplicate-role/origin/source manifest cases in `tests/platform/preview-pair-contracts.test.ts`, then implement and export strict bounded contracts in `packages/contracts/src/preview-pair.ts` and its package export map.
-- [ ] T006 [P] Add failing disabled/invalid/overlapping fixture and isolation configuration cases in `tests/platform/preview-pair-config.test.ts`, then implement default-off configuration in `packages/platform/src/preview-pair/config.ts`.
-- [ ] T007 Define pair/generation/fixture/member table types and transactional migration in `packages/platform/src/preview-pair/types.ts` and `migration.ts`; wire only declarative types/migration registration into the existing database composition.
-- [ ] T008 Add real producer/consumer provenance tests in `tests/platform/preview-pair-provenance.test.ts` and implement trusted PR/run/artifact validation in `packages/platform/src/preview-pair/provenance.ts`.
-- [ ] T009 Prepare reusable actual PlatformDB fixtures and independent-connection Postgres qualification in `tests/platform/preview-pair-test-support.ts`; ensure required lane configuration fails on missing prerequisites.
+- [x] T005 Add failing malformed/expired/duplicate-role/origin/source manifest cases in `tests/platform/preview-pair-contracts.test.ts`, then implement and export strict bounded contracts in `packages/contracts/src/preview-pair.ts` and its package export map.
+- [x] T006 [P] Add failing disabled/invalid/overlapping fixture and isolation configuration cases in `tests/platform/preview-pair-config.test.ts`, then implement default-off configuration in `packages/platform/src/preview-pair/config.ts`.
+- [x] T007 Define pair/generation/fixture/member table types and transactional migration in `packages/platform/src/preview-pair/types.ts` and `migration.ts`; wire only declarative types/migration registration into the existing database composition.
+- [x] T008 Add real producer/consumer provenance tests in `tests/platform/preview-pair-provenance.test.ts` and implement trusted PR/run/artifact validation in `packages/platform/src/preview-pair/provenance.ts`.
+- [x] T009 Prepare reusable actual PlatformDB fixtures and independent-connection Postgres qualification in `tests/platform/preview-pair-postgres-support.ts` and `preview-pair-postgres.test.ts`; ensure required lane configuration fails on missing prerequisites.
 
 **Checkpoint**: Configuration fails closed; manifest/provenance contracts reject
 untrusted input; database types/migrations and required test connection are ready.
@@ -117,7 +117,8 @@ Use official `gh stack init/add/rebase/submit`; never hand-retarget or flatten.
 | --- | --- | --- | --- |
 | 0 | Published specification | `2689-collaboration-preview-pair` / #3022 | main |
 | 1 | Plan/tasks and tested Spec Kit prerequisite | `codex/eng-418-preview-pair-foundation` | #3022 |
-| 2 | Shared contracts, pair database/admission/lifecycle (T005–T015, T030–T032) | `codex/eng-418-preview-pair-platform` | Layer1 |
+| 2a | Shared contracts, activation config, schema, provenance and real Postgres fixture (T005–T009) | `codex/eng-418-preview-pair-platform` | Layer1 |
+| 2b | Pair admission, routes, readiness and lifecycle (T010–T015, T030–T032) | `codex/eng-418-preview-pair-lifecycle` | Layer2a |
 | 3 | Trusted adapters/controller, exact-source packaging and reaper (T016–T017, T033–T034) | `codex/eng-418-preview-pair-workflow` | Layer2 |
 | 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3 |
 | 5 if needed | Evidence runner, acceptance and internal docs (T026–T029, T036–T042) | `codex/eng-418-preview-pair-qualification` | Layer4 |
