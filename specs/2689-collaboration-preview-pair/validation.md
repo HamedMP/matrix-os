@@ -566,3 +566,38 @@ The committed composition checkpoint adds one transient-set warning: revision
 schema parsing caps its environment array at128 and the set is discarded per read.
 No warning is suppressed. The earlier0-warning count is not full final-source
 qualification; hosted CI and the final full-stack checks remain required.
+
+
+### Runtime-only candidate bootstrap checkpoint
+
+A real Platform startup gap was reproduced: the candidate API has no paid provider
+credentials and requires `CUSTOMER_VPS_ENABLED=false`, but ordinary Cloud Run
+configuration rejected that combination. After admitting only the completely
+validated runtime-only profile, a separate actual-entrypoint HTTP test still
+returned401 on `/vps/register` because no registration service was composed.
+The focused registration/status service now delegates the existing bootstrap
+token, machine, provider-ID and installed-bundle checks without constructing a
+paid provider client. All paid lifecycle methods deny before database writes.
+Ordinary customer mode retains its previous requirements and startup path.
+
+The runtime profile rejects live identity keys, operator/provider credentials,
+enabled funding/provisioning flags, reused host/JWT/edge secrets, wrong pair
+generation and browser/API origins that could fall back to the primary app.
+The real process test uses the production `main.ts`, normal startup and HTTP
+listener, real projected non-superuser Postgres and a real admitted registration
+token. It uses production NODE_ENV with local runtime mode and the owned loopback
+DB; runtime-only mode disables Docker. The separate Cloud Run configuration
+assertion uses a managed-host fixture, without deploying Cloud Run. Only provider IDs/public addresses and Clerk keys are synthetic; no Clerk
+login, cloud deployment, paid provisioning or collaboration product success is
+claimed. Required local shared-package builds must exist or the process test fails.
+
+Startup/profile/runtime tests passed33/33, zero skips and zero unhandled errors;
+Platform native typecheck passed. A prior33-assertion run had an unhandled57P01
+during FORCE database teardown and exited1; it is explicitly not a passing run.
+The owned fixture now closes its pools, waits up to5 seconds for its server-side
+backends to drain, and drops without FORCE. A missed deadline fails qualification.
+The strict SQL inventory contains74 files, including actual candidate startup.
+The wider affected-fixture run passed49/49 across5 files, zero skips or
+unhandled errors, including projection and composed retirement. The committed
+pattern result follows in the PR after execution. T015/T016/T033 remain open: production controller
+composition, automation, Electron and live acceptance are not delivered yet.

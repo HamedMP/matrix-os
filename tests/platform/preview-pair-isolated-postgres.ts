@@ -1,5 +1,7 @@
 import {randomBytes,randomUUID} from "node:crypto";
 import {Pool} from "pg";
+import {sql} from "kysely";
+import {setTimeout as delay} from "node:timers/promises";
 import {createPreviewPairPostgresFixture} from "./preview-pair-postgres-support.js";
 /** Separate database and non-superuser role; all names are owned test-only resources. */
 export async function createIsolatedPreviewPairDatabase(){
@@ -13,7 +15,18 @@ export async function createIsolatedPreviewPairDatabase(){
  async function cleanup(){
   let failure:unknown;
   try{await fixture?.destroy();}catch(error:unknown){failure=error;}
-  try{if(databaseCreated)await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);}catch(error:unknown){failure??=error;}
+  try{if(databaseCreated){
+   // pg.Pool.end() can settle before the server observes socket termination.
+   // Confirm the owned backends drained instead of FORCE-killing closing clients.
+   const deadline=Date.now()+5_000;
+   for(;;){
+    const active=await admin.query<{count:number}>("SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname = $1",[database]);
+    if(active.rows[0].count===0)break;
+    if(Date.now()>=deadline)throw new Error("Owned test database connections did not drain");
+    await delay(25);
+   }
+   await admin.query(`DROP DATABASE IF EXISTS "${database}"`);
+  }}catch(error:unknown){failure??=error;}
   try{if(roleCreated)await admin.query(`DROP ROLE IF EXISTS "${role}"`);}catch(error:unknown){failure??=error;}
   await admin.end();if(failure)throw failure;
  }
@@ -31,6 +44,8 @@ export async function createIsolatedPreviewPairDatabase(){
    try{await probe.query("CREATE OR REPLACE FUNCTION pg_catalog.inet_server_addr() RETURNS inet LANGUAGE sql AS $$ SELECT '10.99.0.1'::inet $$");}
    finally{await probe.end();}
   }
-  return {db:fixture.db,destroy,simulateAlternateAddress};
+  const schema=await sql<{schema:string}>`SELECT current_schema() AS schema`.execute(fixture.db.executor);
+  url.searchParams.set("options", `-c search_path=${schema.rows[0].schema}`);
+  return {db:fixture.db,databaseUrl:url.toString(),destroy,simulateAlternateAddress};
  }catch(error:unknown){await destroy();throw error;}
 }

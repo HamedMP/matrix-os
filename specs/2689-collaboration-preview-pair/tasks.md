@@ -126,9 +126,11 @@ Use official `gh stack init/add/rebase/submit`; never hand-retarget or flatten.
 | 3d | Verified host/browser/API binding and pinned update policy (part of T015) | `codex/eng-418-preview-pair-host` | Layer3c |
 | 3e | Exact projected collaboration access retirement and transaction-scoped late writer fences (part of T015/T033) | `codex/eng-418-preview-pair-operations` | Layer3d |
 | 3f | Actual host observation and bounded scoped AI allowance (part of T015) | `codex/eng-418-preview-pair-maintenance` | Layer3e |
-| 3g | Complete retirement/tag cleanup and production maintenance/bootstrap composition (complete T015, T033) | `codex/eng-418-preview-pair-composition` | Layer3f |
-| 3h | Protected request/build/publish/reaper workflow and controller CLI (complete T016) | `codex/eng-418-preview-pair-automation` | Layer3g |
-| 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3h |
+| 3g | Composed retirement and exact cloud cleanup (part of T015/T033) / #3042 | `codex/eng-418-preview-pair-composition` | Layer3f |
+| 3h | Candidate runtime-only registration and startup isolation (part of T015) | `codex/eng-418-preview-pair-bootstrap` | Layer3g |
+| 3i | Trusted controller startup, maintenance and activation composition (complete T015/T033) | `codex/eng-418-preview-pair-wiring` | Layer3h |
+| 3j | Protected request/build/publish/reaper workflow and controller CLI (complete T016) | `codex/eng-418-preview-pair-automation` | Layer3i |
+| 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3j |
 | 5 if needed | Evidence runner, acceptance and internal docs (T026–T029, T036–T042) | `codex/eng-418-preview-pair-qualification` | Layer4 |
 
 Target <1000 additions/<20 files where practical; split a layer before exceeding
