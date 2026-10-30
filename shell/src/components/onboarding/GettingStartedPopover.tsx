@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded, GettingStartedAppSummary,
+  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded, GettingStartedAppHelpMenu, useGettingStartedHelpMode,
   openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, gettingStartedRowAction, gettingStartedRowView, type GettingStartedRequest, type GettingStartedRowAction, type GettingStartedRowView,
 } from "@matrix-os/ui";
 import { onboardingChecklist } from "@matrix-os/brand";
@@ -19,71 +19,19 @@ import {
 } from "@matrix-os/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Popover as PopoverPrimitive } from "radix-ui";
-import { Bot, CheckIcon, ClipboardCheck, CreditCard, DownloadIcon, Folder, Github, KeyRound, MailIcon, Plug, Sparkles } from "@/lib/hugeicons";
+import { Bot, CheckIcon, ClipboardCheck, CreditCard, Folder, Github, KeyRound, MailIcon, Plug, Sparkles } from "@/lib/hugeicons";
 import { getGatewayUrl } from "@/lib/gateway";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
+import { DesktopDownloadLink, useDesktopDownloadSuggestion } from "./desktop-download";
+import type { DesktopDownloadSuggestion } from "./desktop-download-url";
 import { useGettingStartedConnections } from "./use-getting-started-connections";
+
+export { DESKTOP_APP_DOWNLOAD_URL, resolveDesktopDownloadSuggestion } from "./desktop-download-url";
 
 const STATUS_TIMEOUT_MS = 10_000;
 const BRAND_COLORS = onboardingChecklist.colors;
 
-export const DESKTOP_APP_DOWNLOAD_URL = "https://matrix-os.com/desktop";
-const DESKTOP_RELEASE_REDIRECT_URL = "https://matrix-os.com/api/desktop-release";
 export const GETTING_STARTED_REFRESH_MS = 15_000;
-
-type DesktopNavigatorIdentity = {
-  platform?: string;
-  userAgent?: string;
-};
-
-type DesktopDownloadSuggestion = {
-  href: string;
-  label: string;
-  guidance?: string;
-};
-
-function directDesktopDownload(platform: "macArm64" | "macX64" | "windowsX64" | "linuxX64"): string {
-  return `${DESKTOP_RELEASE_REDIRECT_URL}?platform=${platform}`;
-}
-
-export function resolveDesktopDownloadSuggestion(
-  identity: DesktopNavigatorIdentity,
-  architecture?: string,
-): DesktopDownloadSuggestion {
-  const platform = `${identity.platform ?? ""} ${identity.userAgent ?? ""}`.toLowerCase();
-  const normalizedArchitecture = architecture?.toLowerCase();
-  const isArm = normalizedArchitecture?.includes("arm") || normalizedArchitecture?.includes("aarch");
-  const fallback = { href: DESKTOP_APP_DOWNLOAD_URL, label: "Choose desktop download" };
-
-  if (/\b(android|iphone|ipad|ipod|mobile)\b/.test(platform)) {
-    return fallback;
-  }
-
-  if (platform.includes("win")) {
-    if (isArm) return fallback;
-    return {
-      href: directDesktopDownload("windowsX64"),
-      label: "Download for Windows",
-      guidance: "SmartScreen: select More info, verify Finna Labs Inc., then select Run anyway. Run as administrator does not bypass it.",
-    };
-  }
-
-  if (platform.includes("mac")) {
-    if (normalizedArchitecture?.includes("arm")) {
-      return { href: directDesktopDownload("macArm64"), label: "Download for macOS (Apple silicon)" };
-    }
-    if (normalizedArchitecture === "x86" || normalizedArchitecture === "x86_64" || normalizedArchitecture === "amd64") {
-      return { href: directDesktopDownload("macX64"), label: "Download for macOS (Intel)" };
-    }
-    return { href: DESKTOP_APP_DOWNLOAD_URL, label: "Choose macOS download" };
-  }
-
-  if (platform.includes("linux") && !isArm && !platform.includes("arm") && !platform.includes("aarch")) {
-    return { href: directDesktopDownload("linuxX64"), label: "Download for Linux" };
-  }
-
-  return fallback;
-}
 
 /** Each row's icon, chosen in JSX so the React Compiler sees a fixed component. */
 function RowIconGlyph({ row }: { row: GettingStartedRow }) {
@@ -285,17 +233,28 @@ function activateBotRow(
   );
 }
 
+/**
+ * Spec 639: where this computer serves the Getting started app, Help keeps one row that opens it
+ * (plus the desktop download); the checklist popover remains for computers that predate the app.
+ */
 export function GettingStartedPopover(props: GettingStartedPopoverProps) {
   const { scope } = useGettingStartedVisibility();
-  return <GettingStartedPopoverContent key={scope} {...props} />;
+  const helpMode = useGettingStartedHelpMode();
+  const downloadSuggestion = useDesktopDownloadSuggestion();
+  if (props.helpMenu && helpMode === "app") {
+    return <GettingStartedAppHelpMenu {...props.helpMenu}
+      extra={(closeHelp) => <DesktopDownloadLink suggestion={downloadSuggestion} onClick={closeHelp} />} />;
+  }
+  return <GettingStartedPopoverContent key={scope} {...props} downloadSuggestion={downloadSuggestion} />;
 }
 
 function GettingStartedPopoverContent({
   onOpenSettings,
   onOpenFirstWork,
   helpMenu,
+  downloadSuggestion,
   triggerClassName = "flex size-7 shrink-0 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground shadow-sm transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-}: GettingStartedPopoverProps) {
+}: GettingStartedPopoverProps & { downloadSuggestion: DesktopDownloadSuggestion }) {
   const {
     visible: open, requestedOpen, blocked, isBlocked, autoOpenSuppressed, isAutoOpenSuppressed, setRequestedOpen: setOpen,
   } = useGettingStartedVisibility();
@@ -316,37 +275,7 @@ function GettingStartedPopoverContent({
   // After Get started, the checklist reopens on every load until done, but only once per load.
   const getStartedEnded = useGetStartedEnded();
   const autoOpenedThisLoad = useRef(false);
-  const [downloadSuggestion, setDownloadSuggestion] = useState<DesktopDownloadSuggestion>({
-    href: DESKTOP_APP_DOWNLOAD_URL,
-    label: "Choose desktop download",
-  });
   const [autoOpenKey] = useState(() => webGettingStartedAutoOpenKey(currentComputerScope()));
-
-  useEffect(() => {
-    setDownloadSuggestion(resolveDesktopDownloadSuggestion(navigator));
-
-    const userAgentData = (navigator as Navigator & {
-      userAgentData?: {
-        getHighEntropyValues?: (hints: string[]) => Promise<{ architecture?: string }>;
-      };
-    }).userAgentData;
-    if (!userAgentData?.getHighEntropyValues) return;
-
-    let cancelled = false;
-    void userAgentData.getHighEntropyValues(["architecture"]).then(({ architecture }) => {
-      if (!cancelled) {
-        setDownloadSuggestion(resolveDesktopDownloadSuggestion(navigator, architecture));
-      }
-    }).catch((error: unknown) => {
-      console.warn(
-        "[getting-started] unable to detect device architecture:",
-        error instanceof Error ? error.name : typeof error,
-      );
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // react-doctor-disable-next-line react-doctor/no-fetch-in-effect -- checklist state is sourced from independent authenticated APIs and refreshed when the popover opens.
   useEffect(() => {
@@ -518,29 +447,8 @@ function GettingStartedPopoverContent({
               />
             </div>
           </div>
-          <GettingStartedAppSummary />
           <div className="pb-1">
-            <a
-              href={downloadSuggestion.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={downloadSuggestion.label}
-              className="flex w-full items-center gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-muted/70 focus-visible:bg-muted/70"
-              style={{ color: BRAND_COLORS.text, fontSize: 11 }}
-            >
-              <DownloadIcon className="size-4 shrink-0" aria-hidden="true" />
-              <span className="min-w-0 flex-1">
-                <span className="block">{downloadSuggestion.label}</span>
-                {downloadSuggestion.guidance ? (
-                  <span
-                    className="mt-1 block leading-snug"
-                    style={{ color: BRAND_COLORS.subtleText, fontSize: 10 }}
-                  >
-                    {downloadSuggestion.guidance}
-                  </span>
-                ) : null}
-              </span>
-            </a>
+            <DesktopDownloadLink suggestion={downloadSuggestion} />
             {/* A link, not a step: building an app has no completion check. */}
             <button
               type="button"

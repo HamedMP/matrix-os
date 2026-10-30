@@ -1,6 +1,6 @@
 import { getStartedAppGalleryLabel, gettingStartedRows, type GettingStartedRow, type GettingStartedStepStatus, type OnboardingWidgetEvent } from "@matrix-os/contracts";
 import {
-  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded, GettingStartedAppSummary,
+  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded, GettingStartedAppHelpMenu, useGettingStartedHelpMode,
   openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, useGetStartedConnectFailures, gettingStartedRowAction, gettingStartedRowView,
   type GettingStartedRequest, type GettingStartedRowView,
 } from "@matrix-os/ui";
@@ -119,8 +119,14 @@ function StepIndicator({ step }: { step: { status: GettingStartedStepStatus } })
   );
 }
 
+/**
+ * Spec 639: where this computer serves the Getting started app, Help keeps one row that opens it;
+ * the checklist popover remains for computers that predate the app.
+ */
 export default function GettingStartedPopover(props: { helpMenu?: { onSupport(): void; discordIcon: ReactNode } } = {}) {
   const { scope } = useGettingStartedVisibility();
+  const helpMode = useGettingStartedHelpMode();
+  if (props.helpMenu && helpMode === "app") return <GettingStartedAppHelpMenu overlay={menuOverlay} {...props.helpMenu} />;
   return <GettingStartedPopoverContent key={scope} {...props} />;
 }
 
@@ -385,7 +391,6 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
               />
             </div>
           </div>
-          <GettingStartedAppSummary />
           <div className="pb-1">
             {/* A link, not a step: building an app has no completion check. */}
             <button

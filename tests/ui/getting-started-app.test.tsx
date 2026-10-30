@@ -3,11 +3,17 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GettingStartedAppProgress, GettingStartedResults } from "@matrix-os/contracts";
-import { useOnboardingTaskRequests } from "../../packages/ui/src/onboarding-widget/task-requests";
 import {
+  useOnboardingTaskRequests,
+  usePublishOnboardingWidgetStatus,
+  type OnboardingWidgetStatus,
+} from "../../packages/ui/src/onboarding-widget/task-requests";
+import {
+  GettingStartedAppHelpMenu,
   GettingStartedAppProvider,
   useGettingStartedApp,
   GettingStartedAppView,
+  useGettingStartedApp,
   gettingStartedAppAction,
   gettingStartedAppToast,
   gettingStartedAppToastText,
@@ -68,6 +74,16 @@ function makePort(options: {
   return port;
 }
 
+function WidgetStub({ status, onTask = () => undefined, onShow = () => undefined }: {
+  status: OnboardingWidgetStatus;
+  onTask?(taskId: string): void;
+  onShow?(): void;
+}) {
+  useOnboardingTaskRequests(onTask, onShow);
+  usePublishOnboardingWidgetStatus(status);
+  return null;
+}
+
 function renderApp(
   port: GettingStartedAppPort,
   props: Partial<React.ComponentProps<typeof GettingStartedAppProvider>> = {},
@@ -102,6 +118,37 @@ describe("Getting started app view", () => {
     }
     expect(screen.getByRole("button", { name: /Slack/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Stuck\? Chat with us/ })).toBeTruthy();
+  });
+
+  it("mirrors the widget while it is open in the corner instead of listing the starter tasks again", async () => {
+    render(<WidgetStub status={{ open: true, activity: { kind: "choosing" } }} />);
+    renderApp(makePort());
+    expect(await screen.findByRole("heading", { name: "Pick your first task in the corner" })).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "Starter tasks" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show Matrix panel" })).toBeNull();
+  });
+
+  it("lists the starter tasks itself once the widget is minimized", async () => {
+    render(<WidgetStub status={{ open: false, activity: { kind: "choosing" } }} />);
+    renderApp(makePort());
+    expect(await screen.findByRole("list", { name: "Starter tasks" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Pick your first task in the corner" })).toBeNull();
+  });
+
+  it("follows a task the widget is running, and brings a minimized widget back", async () => {
+    const onShow = vi.fn();
+    render(<WidgetStub status={{ open: false, activity: { kind: "running", title: "Plan my week" } }} onShow={onShow} />);
+    renderApp(makePort({ results: () => results({ chats: fulfilled({ items: [{ id: "chat_1" }] }) }) }));
+    expect(await screen.findByRole("heading", { name: "Matrix is working on Plan my week" })).toBeTruthy();
+    expect(screen.queryByText("Up next")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Show Matrix panel" }));
+    expect(onShow).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes back to Up next once the widget's task is done", async () => {
+    render(<WidgetStub status={{ open: true, activity: { kind: "done", title: "Plan my week" } }} />);
+    renderApp(makePort({ results: () => results({ chats: fulfilled({ items: [{ id: "chat_1" }] }) }) }));
+    expect(await screen.findByText("Up next")).toBeTruthy();
   });
 
   it("marks done tasks and moves the hero to the next task", async () => {
@@ -507,7 +554,7 @@ describe("Getting started desktop icon", () => {
 
 describe("Getting started as an extension of onboarding", () => {
   function WidgetListener({ onTask }: { onTask(taskId: string): void }) {
-    useOnboardingTaskRequests(onTask);
+    useOnboardingTaskRequests(onTask, () => undefined);
     return null;
   }
 
@@ -568,3 +615,41 @@ describe("Getting started as an extension of onboarding", () => {
     expect(screen.getByText(/Slack connected, nice\./)).toBeTruthy();
   });
 });
+
+function Availability() {
+  return <span data-testid="availability">{useGettingStartedApp()?.availability ?? "none"}</span>;
+}
+
+describe("Getting started in Help", () => {
+  it("says whether this computer serves the app: checking, then enabled or unavailable", async () => {
+    const port = makePort();
+    let resolve: (progress: GettingStartedAppProgress) => void = () => undefined;
+    port.loadProgress.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    render(<GettingStartedAppProvider port={port} refreshMs={25} onToast={vi.fn()}><Availability /></GettingStartedAppProvider>);
+    expect(screen.getByTestId("availability").textContent).toBe("checking");
+    await act(async () => resolve({ awards: [], total: 0 }));
+    await waitFor(() => expect(screen.getByTestId("availability").textContent).toBe("enabled"));
+    cleanup();
+    render(<GettingStartedAppProvider port={makePort({ progress: null })} refreshMs={25} onToast={vi.fn()}><Availability /></GettingStartedAppProvider>);
+    await waitFor(() => expect(screen.getByTestId("availability").textContent).toBe("unavailable"));
+  });
+
+  it("keeps one Getting started row in Help that opens the app, plus the surface's extra rows", async () => {
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    const onOpen = vi.fn();
+    const port = makePort({ progress: { awards: [{ taskId: "first-prompt", points: 50, awardedAt: "2026-10-29T10:00:00.000Z" }], total: 50 } });
+    render(
+      <GettingStartedAppProvider port={port} refreshMs={25} onToast={vi.fn()} onOpen={onOpen}>
+        <GettingStartedAppHelpMenu onSupport={vi.fn()} discordIcon={<span />} extra={() => <a href="https://example.com/desktop">Get the desktop app</a>} />
+      </GettingStartedAppProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    const row = await screen.findByRole("button", { name: "Getting started — 1 of 12 done, 50 points" });
+    expect(screen.getByRole("link", { name: "Get the desktop app" })).toBeTruthy();
+    expect(screen.queryByText("Research anything")).toBeNull();
+    fireEvent.click(row);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull());
+  });
+});
+

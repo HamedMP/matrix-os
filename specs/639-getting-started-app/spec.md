@@ -238,3 +238,19 @@ Team feedback (Oct 30): email and calendar were missing, and finishing should fe
 
 1. **Gmail and Google Calendar cards.** Two Connect cards, first in that group (+20 each), Done when `gmail` / `google_calendar` is an active integration, with their catalog logos. They also cover the starter task "Plan my week", which needs Calendar. That makes 12 tasks and 280 awardable points.
 2. **Matrix unlocked.** Once nothing Matrix can check is left (first prompt done and no incomplete task), the hero becomes a "Matrix is fully unlocked" banner: a gold medal with the rabbit, a slow ray burst, a short confetti fall, points collected, tasks done, and **Put Matrix to work** (opens Chat). Cards Matrix cannot check yet never block it; a note says they turn Done later. When the last task finishes in view, its reward plays first. Motion is skipped under `prefers-reduced-motion`.
+
+## Iteration 4: one job per piece, no repeated lists
+
+Team feedback (Oct 30): the app, the corner widget and the Help checklist repeated the same starter tasks.
+
+| Piece | Job |
+| -- | -- |
+| Onboarding widget (corner) | Runs the starter tasks. The only place they run while it is open. |
+| Getting started app | Progress, points, what is left, and the Matrix unlocked finish line. |
+| Help › Getting started | One row, "Getting started · X of 12 · pts", that opens the app. |
+
+1. **The widget publishes its state** on the shell's typed task channel (`task-requests.ts`): open (in the corner) or minimized, and its activity (choosing, setting up a task, running, done, failed) with the task's title. One value, newest widget wins, cleared on unmount; readers are capped.
+2. **The app hero mirrors the widget** while it is open and waiting for the first pick, or while it is setting up or running a task: "Pick your first task in the corner", "Matrix is working on Plan my week", with **Show Matrix panel** when the widget is minimized. When the widget is minimized with nothing running, missing, or done, the hero shows its own content: the four starter tasks (which still hand off to the widget, or Chat without one), then Up next, then Matrix unlocked.
+3. **Help keeps one row** where the computer serves the app (and while that is being checked, so the old checklist never flashes): it opens the app and shows progress and points. Web keeps its desktop download link under it. Computers whose gateway predates the app keep the old checklist popover as a fallback, so nothing is lost there. The checklist's bot and "Try" rows therefore only remain on those older computers (open question 9).
+4. The widget's open/minimized state is stored per browser, so the mirror follows the device the owner is on.
+
