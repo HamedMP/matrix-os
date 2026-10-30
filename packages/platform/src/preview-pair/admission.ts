@@ -6,7 +6,7 @@ import type { EnabledPreviewPairConfig } from "./config.js";
 import { PreviewPairCandidateSchema } from "./provenance.js";
 import { PreviewPairConflictError, readPreviewPair, prepareLeasedPairMembers, recordPreviewPairCurrency, type PreparePairMember } from "./repository.js";
 
-const Request = z.strictObject({ pairId: PreviewPairIdSchema, pr: PreviewPairPrSchema,
+const Request = z.strictObject({ controllerRunId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(), pairId: PreviewPairIdSchema, pr: PreviewPairPrSchema,
   requesterId: PreviewPairActorSchema, sourceSha: PreviewPairShaSchema, candidate: PreviewPairCandidateSchema });
 export type PreviewPairAdmissionRequest = z.infer<typeof Request>;
 export type { PreparePairMember } from "./repository.js";
@@ -83,7 +83,7 @@ export async function admitPreviewPair(db: PlatformDB, config: EnabledPreviewPai
     state: available ? "preparing" : "queued", fixture_id: available?.fixture_id ?? null,
     created_at: createdAt, expires_at: new Date(now + config.maxLifetimeMs).toISOString() }).execute();
   await trx.executor.insertInto("preview_pair_generations").values({ pair_id: input.pairId, generation: 1,
-    source_sha: input.sourceSha, candidate: JSON.stringify(input.candidate), created_at: createdAt }).execute();
+    source_sha: input.sourceSha, candidate: JSON.stringify(input.candidate), controller_run_id: input.controllerRunId ? String(input.controllerRunId) : null, created_at: createdAt }).execute();
   if (available) {
     await trx.executor.updateTable("preview_pair_fixtures").set({ active_pair_id: input.pairId,
       revision: sql`revision + 1` }).where("fixture_id", "=", available.fixture_id)

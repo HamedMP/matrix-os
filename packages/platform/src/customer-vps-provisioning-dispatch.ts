@@ -57,7 +57,8 @@ import type { CustomerVpsContext } from './customer-vps-context.js';
 import type { HetznerClient } from './customer-vps-hetzner.js';
 
 /** Claims durable provisioning jobs and creates their provider servers. */
-export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsContext) {
+export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsContext,
+  pair?: { authorizePair: (machineId: string, jobId: string) => Promise<boolean> }) {
   const { deps, scheduleProvisioningDispatch, now, queueProviderDeletion, enqueueProviderDeletionTx } = context;
 
   async function waitForProvisioningCreateAction(actionId: number): Promise<'success' | 'error' | 'pending'> {
@@ -87,7 +88,9 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
     const pendingMachine = pendingJob ? await getUserMachine(deps.db, pendingJob.machineId) : undefined;
     // Pair jobs require an isolated, independently verified authority adapter.
     // The ordinary worker must never boot one with customer configuration.
-    if (pendingMachine && PAIR_PREVIEW_HANDLE_PATTERN.test(pendingMachine.handle)) return 'skipped';
+    if (pendingMachine && PAIR_PREVIEW_HANDLE_PATTERN.test(pendingMachine.handle)) {
+      if (!pair || !await pair.authorizePair(pendingMachine.machineId, jobId)) return 'skipped';
+    } else if (pair) return 'skipped';
     if (
       pendingJob?.status === 'running'
       && pendingJob.attempts >= MAX_PROVISIONING_JOB_ATTEMPTS
@@ -156,6 +159,12 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
     const createAdmittedServer = async (input: Parameters<HetznerClient['createServer']>[0]) => {
       let created: Awaited<ReturnType<HetznerClient['createServer']>> | undefined;
       try {
+        if (pair) {
+          await withAccountDeletionAdmission(deps.db, row.clerkUserId, async () => undefined);
+          if (!await pair.authorizePair(row.machineId, job.jobId)) throw new Error('Pair provisioning unavailable');
+          created = await deps.hetzner.createServer(input);
+          return created;
+        }
         return await withAccountDeletionAdmission(deps.db, row.clerkUserId, async () => {
           created = await deps.hetzner.createServer(input);
           return created;
