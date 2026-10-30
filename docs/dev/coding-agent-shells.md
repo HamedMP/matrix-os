@@ -4,6 +4,14 @@ This guide documents the Matrix OS coding-agent architecture across Electron Des
 
 ## Ownership Boundaries
 
+Older native Codex Chats may have a retained native conversation but no saved
+account binding. A new owner follow-up can reauthorize this missing metadata
+under fresh current account consent, confirm the exact old background process
+is stopped (or hibernate it only through its idle handshake), then resume the
+same native conversation with only the new prompt. It preserves history and
+scratch files. Existing mismatched bindings, uncertain/busy runners and missing
+native identity stay blocked. See [ENG-398's recovery contract](../../specs/398-codex-legacy-continuation/plan.md).
+
 - Shared contracts live in `packages/contracts/src/index.ts` and are the only supported cross-surface shape for runtime summaries, providers, threads, events, approvals, terminal summaries, review snapshots, file reads, and preview summaries.
 - Gateway owns coding-agent read models, provider adapters, thread state, event replay, approval decisions, input answers, terminal binding, review/file adapters, preview summaries, and safe error mapping.
 - Desktop main process owns bearer-authenticated gateway calls. Renderer code receives only Zod-validated, bounded data over typed IPC and must not receive bearer tokens or provider credentials.

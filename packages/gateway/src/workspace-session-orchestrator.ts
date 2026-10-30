@@ -24,7 +24,7 @@ type ProjectManager = Pick<ReturnType<typeof createProjectManager>, "getProject"
 type AgentSessionManager = Pick<
   ReturnType<typeof createAgentSessionManager>,
   "startSession" | "listSessions" | "getSession" | "sendInput" | "killSession"
-> & Partial<Pick<ReturnType<typeof createAgentSessionManager>, "withSessionStart">>;
+> & Partial<Pick<ReturnType<typeof createAgentSessionManager>, "withSessionStart" | "confirmStoppedSession">>;
 type AgentSandbox = Pick<ReturnType<typeof createAgentSandbox>, "preflight" | "cleanup">;
 type SessionRuntimeBridge = Pick<ReturnType<typeof createSessionRuntimeBridge>, "registerSession">;
 type SessionAttachMode = "observe" | "owner";
@@ -479,6 +479,8 @@ export function createWorkspaceSessionOrchestrator(options: {
   }
   return {
     withSessionStart,
+    confirmStoppedSession: (...args: Parameters<NonNullable<AgentSessionManager["confirmStoppedSession"]>>) =>
+      options.agentSessionManager.confirmStoppedSession?.(...args) ?? Promise.resolve(undefined),
     async startSession(input: StartWorkspaceSessionInput): Promise<StartResult> {
       const sessionId = input.request.sessionId ?? idGenerator();
       if (!/^sess_[A-Za-z0-9_-]{1,128}$/.test(sessionId)) return failure(400, "invalid_session_id", "Session identifier is invalid");

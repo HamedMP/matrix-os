@@ -54,9 +54,12 @@ const CodingAgentProviderRunResultSchema = z.object({
 export type CodingAgentProviderResumeState = z.infer<typeof CodingAgentProviderResumeStateSchema>;
 export type CodingAgentProviderRunResult = z.infer<typeof CodingAgentProviderRunResultSchema>;
 export type CodingAgentProviderEventBatch = z.infer<typeof CodingAgentProviderEventBatchSchema>;
+/** The canonical backing store acknowledges an active-turn write with true.
+ * Legacy publishers may return void; authorization adoption requires true.
+ */
 export type CodingAgentProviderEventPublisher = (
   batch: CodingAgentProviderEventBatch,
-) => Promise<void>;
+) => Promise<void | boolean>;
 
 export interface CodingAgentProviderAdapter {
   providerId: string;

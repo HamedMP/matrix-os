@@ -26,11 +26,12 @@ import type { CodingAgentProviderAdapter } from "./thread-store.js";
 import type { CodexEventBridge } from "./codex-event-bridge.js";
 import type { CodexControlClient } from "./codex-control-client.js";
 import { recoverCodexWorkspace } from "./codex-workspace-recovery.js";
+import { recoverLegacyCodexContinuation } from "./codex-legacy-continuation.js";
 import { proveCodexResumeStopped } from "./provider-transcript-recovery.js";
 import type { BackgroundAgentRuntime } from "../background-agent-runtime.js";
 
 type WorkspaceRuntime = Pick<WorkspaceSessionOrchestrator, "startSession" | "stopSession"> &
-  Partial<Pick<WorkspaceSessionOrchestrator, "sendInput" | "getSession" | "withSessionStart">>;
+  Partial<Pick<WorkspaceSessionOrchestrator, "sendInput" | "getSession" | "withSessionStart" | "confirmStoppedSession">>;
 type SetupAgent = Extract<SupportedAgent, "claude" | "codex">;
 
 const SETUP_AGENTS: Record<SetupAgent, { installPackage: string; connectCommand: string }> = {
@@ -367,6 +368,8 @@ export function createWorkspaceCodingAgentProvider(
         throw new Error("Workspace provider conversation mismatch");
       }
       signal.throwIfAborted();
+      const recovered = await recoverLegacyCodexContinuation(options, context, sessionId, workspaceTurnPrompt(turn.message, turn.attachments));
+      if (recovered) return recovered;
       if (agent === "codex") await options.codexAdmission?.validate(principal.userId, resumeState.nativeAccountBinding, sessionId);
       if (agent === "codex" && options.codexControl) {
         if (!options.codexEvents) {
