@@ -108,8 +108,12 @@ Source: `runtime-registry.ts:BotRuntimeBinding`,
 Native background consent is separate: `desktop/src/shared/chatgpt-plan-ipc.ts`
 defines trusted-main-frame `chatgpt-plan:set-grant`. Main derives the owner and
 Computer from its current signed-in session; positive background intent requires
-the current account ID and base revision. Only saved grants produce signed peer
-capabilities. New connections and explicit reconnects default to background off.
+the current account ID and base revision. Only saved positive grants produce
+signed background authority; an unconfirmed downgrade may advertise reduced
+authority. Unconfirmed native downgrades survive Computer/owner/session changes
+within the app process and surface as optional `grantSaveUnconfirmed` status so
+a fresh Settings client can explicitly retry. They are not claimed durable
+until a successful full-record write. New connections and explicit reconnects default to background off.
 Do not expose this IPC or credentials as an agent/CLI scheduling tool.
 
 ## Controls, cancellation and recovery

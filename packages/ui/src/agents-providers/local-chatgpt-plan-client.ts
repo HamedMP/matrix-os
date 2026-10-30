@@ -5,6 +5,7 @@ export interface LocalChatgptPlanStatus {
   account?: { id: string; label: string };
   models: Array<{ id: string; displayName: string }>;
   grant: { revision: number; enabled: boolean; background: boolean };
+  grantSaveUnconfirmed?: boolean;
   bridgeConnected: boolean;
   bridgeFailure?: "device_conflict";
   revocation: "none" | "confirmed" | "unconfirmed";
