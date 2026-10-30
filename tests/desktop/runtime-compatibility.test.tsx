@@ -11,7 +11,12 @@ import type { ApiClient } from "@renderer/lib/api";
 const source = { commit: "b".repeat(40), ancestors: ["a".repeat(40)] };
 const info = { version: "v2026.09.09-1", build: { sha: source.commit }, runtimeCompatibility: { schemaVersion: 1, minDesktopProtocol: 1, maxDesktopProtocol: 1 } };
 const future = { ...info, build: { sha: "c".repeat(40) } };
-function client(get: ReturnType<typeof vi.fn>): ApiClient { return { get, forRuntime() { return this; } } as unknown as ApiClient; }
+function client(get: ReturnType<typeof vi.fn>): ApiClient { return {
+  get: (path: string, options: unknown) => path === "/api/system/update"
+    ? Promise.resolve({ channel: "canary", latest: { version: "v9" }, updateAvailable: true })
+    : get(path, options),
+  forRuntime() { return this; },
+} as unknown as ApiClient; }
 beforeEach(() => {
   vi.stubGlobal("operator", { invoke: vi.fn(async (channel) => channel === "app:get-version"
     ? { version: "0.1.0", source } : { ok: true }) });
