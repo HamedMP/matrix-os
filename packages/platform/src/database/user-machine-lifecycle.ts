@@ -1,4 +1,5 @@
 import { sql } from 'kysely';
+import { ordinaryProviderDeletionPredicate } from '../customer-vps-ordinary-machines.js';
 import type {
   NewProviderDeletionQueueRecord,
   NewUserMachine,
@@ -278,14 +279,16 @@ export async function listPendingProviderDeletions(
   db: PlatformDB,
   nowIso: string,
   limit: number,
+  options: { ordinaryOnly?: boolean } = {},
 ): Promise<ProviderDeletionQueueRecord[]> {
   await db.ready;
-  const rows = await db.executor
+  let query = db.executor
     .selectFrom('provider_deletion_queue')
     .selectAll()
     .where('completed_at', 'is', null)
-    .where('next_attempt_at', '<=', nowIso)
-    .orderBy('next_attempt_at')
+    .where('next_attempt_at', '<=', nowIso);
+  if (options.ordinaryOnly) query = query.where(ordinaryProviderDeletionPredicate);
+  const rows = await query.orderBy('next_attempt_at')
     .limit(limit)
     .execute();
   return rows.map(mapProviderDeletion);
