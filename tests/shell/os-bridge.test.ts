@@ -31,6 +31,20 @@ describe("OS Bridge", () => {
   });
 
   describe("handleBridgeMessage", () => {
+    it("replies only to a verified app repair request", async () => {
+      const repair = vi.fn(async () => ({ chatId: "chat_repair" }));
+      const postMessage = vi.fn();
+      const source = {} as MessageEventSource;
+      const event = { source, origin: "null", data: { type: "os:repair", app: "notes", payload: { operation: "save", message: "Write failed" } },
+        ports: [{ postMessage, close: vi.fn() }] } as unknown as MessageEvent;
+      const handler: BridgeHandler = { sendToKernel: vi.fn(), fetchData: vi.fn(), repair };
+      handleBridgeMessage(event, handler, { expectedSource: source, expectedOrigins: new Set(["null"]), expectedApp: "notes" });
+      await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith({ ok: true, value: { chatId: "chat_repair" } }));
+      expect(repair).toHaveBeenCalledWith({ operation: "save", message: "Write failed" });
+      handleBridgeMessage({ ...event, data: { ...event.data, app: "other" } } as MessageEvent, handler, { expectedSource: source, expectedApp: "notes" });
+      handleBridgeMessage({ ...event, origin: "https://evil.test" } as MessageEvent, handler, { expectedSource: source, expectedOrigins: new Set(["null"]) });
+      expect(repair).toHaveBeenCalledTimes(1);
+    });
     it("routes os:generate to kernel with app context prefix", () => {
       const handler: BridgeHandler = {
         sendToKernel: vi.fn(),

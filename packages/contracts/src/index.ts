@@ -9,6 +9,8 @@ import { TerminalScrollLineSchema, TerminalScrollStateSchema } from "#terminal-s
 export * from "#terminal-scroll";
 export * from "#private-preview";
 export { APP_GENERATE_CHANNEL, AppGenerateContextSchema, AppGenerateEventSchema, createAppGenerateClient } from "#app-ai";
+export { APP_REPAIR_CHANNEL, AppRepairDiagnosticSchema, AppRepairContextSchema, formatAppRepairMessage, readBoundedRepairJson, submitAppRepairChat } from "#app-repair";
+export type { AppRepairDiagnostic, AppRepairContext, AppRepairRequest } from "#app-repair";
 export { APP_AI_TIMEOUT_MS, APP_AI_CHANNEL, AppAiInputSchema, AppAiRequestSchema, AppAiResultSchema, createAppAiClient } from "#app-ai";
 export type { AppAiInput, AppAiRequest, AppAiResult, AppAiRouteSelection, AppAiRoute, AppAiRoutes } from "#app-ai";
 export { APP_AI_ROUTES_CHANNEL, AppAiRouteSelectionSchema, AppAiRouteSchema, AppAiRoutesSchema, AppAiRoutesRequestSchema } from "#app-ai";

@@ -16,6 +16,8 @@ Save/archive failures retain records and drafts, with stable draft IDs on retry.
 
 From this directory use `pnpm install --frozen-lockfile` then `pnpm build`. Host packaging builds the kit once with `node scripts/build-app-gallery-template.mjs`; installers copy compiled output without running caller-provided commands. Behavioral tests live in `tests/default-apps/connected-starter.test.ts` and `tests/default-apps/connected-starter-records.test.ts`. The kit does not provide automatic schedules or organization sharing.
 
+With matching host releases, the shared error notice offers Fix with Matrix, retry, and details. `MatrixOS.repair({ operation, message })` confirms Chat admission before reporting success. The host supplies app and computer identity; the kit supplies only a short persistence diagnostic and keeps the draft available for retry.
+
 ## October 7 candidate review verification
 
 The subject-specific design candidate preserves the existing data and account labels. Compact filters remain open while typing or clearing queries. Revenue points and labels share one scrollable plot coordinate system, including narrow viewports. Both regressions were reproduced before their fixes; 41 focused tests pass across five files, TypeScript passes, and the production Vite build passes. Rendered viewport and Native Mobile evidence remain pending.

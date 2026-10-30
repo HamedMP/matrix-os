@@ -1,4 +1,4 @@
-import { AppAiInputSchema, AppCapabilityInputSchema, AppIdentitySchema, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, appRuntimeSlugFromIdentity, appCapabilityReplyBytes } from "@matrix-os/contracts";
+import { AppAiInputSchema, AppCapabilityInputSchema, AppIdentitySchema, AppRepairDiagnosticSchema, MAX_APP_CAPABILITY_BYTES, MAX_APP_BRIDGE_REPLY_BYTES, MAX_APP_RESPONSE_CHUNKS, MAX_APP_DATABASE_REPLY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, appRuntimeSlugFromIdentity, appCapabilityReplyBytes, type AppRepairDiagnostic } from "@matrix-os/contracts";
 import { appRuntimeNavigation } from "./app-runtime-navigation";
 
 const MAX_BYTES = MAX_APP_DATABASE_REQUEST_BYTES + MAX_APP_CAPABILITY_BYTES;
@@ -27,6 +27,8 @@ function requestFor(app: string, kind: unknown, input: unknown): { path: string;
 /** A broker is scoped to one launch; navigation/unmount destroys every pending request. */
 export function createMobileAppCapabilityBroker(options: {
   app: string; runtimeUrl: string; runtimeSlug?: string; launchId: string; request: MobileAppBridgeRequest; reply: (script: string) => void;
+  repair?: (app: string, diagnostic: AppRepairDiagnostic, signal?: AbortSignal) => Promise<{ chatId: string }>;
+  onCrash?: (diagnostic: AppRepairDiagnostic) => void;
 }) {
   AppIdentitySchema.parse(options.app);
   const routeApp = new URL(options.runtimeUrl).pathname.match(/\/apps\/([a-z0-9][a-z0-9_-]{0,63})(?:\/|$)/)?.[1];
@@ -64,6 +66,11 @@ export function createMobileAppCapabilityBroker(options: {
       return;
     }
     if (frame.documentId !== documentId || !documentId) return;
+    if (frame.type === "matrix:app-crash") {
+      const diagnostic = AppRepairDiagnosticSchema.safeParse(frame.input);
+      if (diagnostic.success) options.onCrash?.(diagnostic.data);
+      return;
+    }
     const requestGeneration = generation;
     if (frame.type !== "matrix:app-request" || frame.launchId !== options.launchId || !Number.isSafeInteger(frame.id) || Number(frame.id) <= 0) return;
     const id = Number(frame.id);
@@ -78,6 +85,12 @@ export function createMobileAppCapabilityBroker(options: {
     pending.set(id, controller);
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
+      if (frame.kind === "repair") {
+        if (!options.repair) throw new Error("Repair chat unavailable");
+        const result = await options.repair(options.app, AppRepairDiagnosticSchema.parse(frame.input), controller.signal);
+        send({ ok: true, body: result });
+        return;
+      }
       const { path, init } = requestFor(options.app, frame.kind, frame.input);
       if (path === "/api/bridge/query" && (typeof init.body !== "string" || bytes(init.body) > MAX_APP_DATABASE_REQUEST_BYTES)) throw new Error("Invalid app request");
       const aborted = new Promise<never>((_resolve, reject) => {
@@ -134,7 +147,12 @@ export function buildMobileAppBridgeScript(app: string, launchId: string): strin
     window.__matrixAppReply=function(reply){if(!reply||reply.launchId!==launch)return;var item=pending[reply.id];if(!item)return;clearTimeout(item.timer);delete pending[reply.id];count--;if(reply.ok)item.resolve(reply.body);else item.reject(new Error("App request unavailable"));};
     window.addEventListener("pagehide",function(){Object.keys(pending).forEach(function(id){var item=pending[id];clearTimeout(item.timer);item.reject(new Error("App request unavailable"));});pending={};count=0;subscriptions=[];});
     window.ReactNativeWebView.postMessage(JSON.stringify({type:"matrix:app-ready",launchId:launch,documentId:documentId}));
+    var crashReported=false;
+    function reportCrash(reason){if(crashReported)return;crashReported=true;var message=reason&&typeof reason.message==="string"?reason.message:"Unhandled app error";window.ReactNativeWebView.postMessage(JSON.stringify({type:"matrix:app-crash",launchId:launch,documentId:documentId,input:{operation:"runtime",message:message.slice(0,2000)}}));}
+    window.addEventListener("error",function(event){if(event.error)reportCrash(event.error);});
+    window.addEventListener("unhandledrejection",function(event){reportCrash(event.reason);});
     window.MatrixOS={app:{name:${JSON.stringify(app)}},
+      repair:function(diagnostic){return call("repair",diagnostic);},
       capabilities:function(){return call("capability",{kind:"capabilities"});},
       integrations:function(){return call("capability",{kind:"integrations.list"}).then(function(d){return d.services||[];});},
       describeService:function(service){return call("capability",{kind:"integrations.describe",service:service});},

@@ -1,4 +1,4 @@
-import { APP_GENERATE_CHANNEL, createAppGenerateClient, APP_AI_CHANNEL, APP_AI_ROUTES_CHANNEL, createAppAiClient } from "@matrix-os/contracts";
+import { APP_GENERATE_CHANNEL, createAppGenerateClient, APP_AI_CHANNEL, APP_AI_ROUTES_CHANNEL, createAppAiClient, APP_REPAIR_CHANNEL, AppRepairDiagnosticSchema } from "@matrix-os/contracts";
 // The only bridge between renderer and trusted core. Exposes exactly the
 // typed contract — payloads are validated here AND in main (defense in depth,
 // FR-081). The credential never crosses this boundary.
@@ -62,6 +62,7 @@ if (process.argv.includes(NATIVE_APP_BRIDGE_ARG)) {
     ...createNativeAppCapabilityClient((input) => ipcRenderer.invoke(APP_CAPABILITY_CHANNEL, input)),
     openApp: createNativeAppOpenClient((request) => ipcRenderer.invoke(NATIVE_APP_OPEN_CHANNEL, request)),
     generate: createAppGenerateClient((context) => ipcRenderer.invoke(APP_GENERATE_CHANNEL, context)),
+    repair: (diagnostic: unknown) => ipcRenderer.invoke(APP_REPAIR_CHANNEL, AppRepairDiagnosticSchema.parse(diagnostic)),
     ai: createAppAiClient((input) => ipcRenderer.invoke(APP_AI_CHANNEL, input), () => ipcRenderer.invoke(APP_AI_ROUTES_CHANNEL, {})),
     // Advertise only capabilities this view can use. Other apps retain the
     // pre-#1624 surface so feature detection does not select an unusable API.
