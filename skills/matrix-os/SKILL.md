@@ -126,6 +126,6 @@ Read repository instructions, README files, lockfiles, task scripts, and environ
 
 ## Recovery and handoff
 
-Use `matrix doctor`, `matrix status`, `matrix instance info --json`, and `matrix shell list` to diagnose failures. Reattach work with `matrix shell connect --project <project> --tab <tab-id>`. Do not retry a failed tab-create loop indefinitely; list the workspace and reconnect an existing tab or create another tab.
+Use `matrix doctor`, `matrix status`, `matrix instance info --json`, `matrix instance logs --service gateway --since 1h`, and `matrix shell list` to diagnose failures. Reattach work with `matrix shell connect --project <project> --tab <tab-id>`. Do not retry a failed tab-create loop indefinitely; list the workspace and reconnect an existing tab or create another tab.
 
 Report identity and readiness source, destination or checkout path, branch and initial dirty state, changed files, validation results, every terminal reference, every reconnect command, and whether anything was pushed.
