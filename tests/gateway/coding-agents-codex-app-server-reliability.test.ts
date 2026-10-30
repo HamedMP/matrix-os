@@ -637,6 +637,70 @@ describe("Codex app-server runner reliability", () => {
     }
   });
 
+  it("preserves Codex 0.166 item output and artifacts with timestamps and generation metadata", async () => {
+    const runtime = await startFakeRuntime("items_0166", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/started', params: { threadId: 'native-thread', turnId: 'native-turn', item: { id: 'generated-image', type: 'imageGeneration', status: 'inProgress', result: '', startedAtMs: 1793318400000, completedAtMs: null, generationId: null } } }));",
+      "  console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread', turnId: 'native-turn', item: { id: 'generated-image', type: 'imageGeneration', status: 'completed', result: 'data:image/png;base64,iVBORw0KGgo=', startedAtMs: 1793318400000, completedAtMs: 1793318401000, generationId: 'generation-0166-private' } } }));",
+      "  console.log(JSON.stringify({ method: 'item/completed', params: { threadId: 'native-thread', turnId: 'native-turn', item: { id: 'final-answer', type: 'agentMessage', text: 'The image is ready.', phase: 'final_answer', startedAtMs: null, completedAtMs: null } } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { threadId: 'native-thread', turn: { id: 'native-turn', status: 'completed', items: [] } } }));",
+      "  process.exit(0);",
+      "}",
+    ], { stubControlServer: true });
+
+    try {
+      await expect(waitForExit(runtime.child)).resolves.toBe(0);
+      const { events, outcomes } = await replayTranscriptResult(runtime.eventPath);
+      expect(outcomes).toEqual(["completed"]);
+      expect(events).toContainEqual(expect.objectContaining({ type: "assistant.text.delta", delta: "The image is ready." }));
+      const tool = events.find((event) => event.type === "tool.started");
+      expect(tool).toMatchObject({ displayName: "Generating image", kind: "image_generation" });
+      expect(events).toContainEqual(expect.objectContaining({
+        type: "tool.completed", toolCallId: tool?.type === "tool.started" ? tool.toolCallId : undefined, outcome: "success",
+      }));
+      const attachment = events.find((event) => event.type === "assistant.attachment");
+      expect(attachment).toMatchObject({
+        attachment: { kind: "image", mimeType: "image/png", sizeBytes: 8,
+          path: expect.stringMatching(/^data\/chat-artifacts\/codex\/sha256\/[a-f0-9]{64}\.png$/) },
+      });
+      if (attachment?.type !== "assistant.attachment" || !attachment.attachment.path) {
+        throw new Error("Generated image attachment was not published");
+      }
+      expect(await readFile(join(runtime.homePath, attachment.attachment.path))).toEqual(Buffer.from("iVBORw0KGgo=", "base64"));
+      expect(await readFile(runtime.eventPath, "utf8")).not.toContain("generation-0166-private");
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
+  it("keeps Codex 0.166 policy capacity failures generic despite authentication-looking text", async () => {
+    const runtime = await startFakeRuntime("policy_0166", [
+      initialize,
+      startThread,
+      "else if (message.method === 'turn/start') {",
+      "  console.log(JSON.stringify({ id: message.id, result: { turn: { id: 'native-turn' } } }));",
+      "  const error = { codexErrorInfo: 'policyCapacityUnavailable', message: 'Not logged in' };",
+      "  console.log(JSON.stringify({ method: 'error', params: { threadId: 'native-thread', turnId: 'native-turn', willRetry: false, error } }));",
+      "  console.log(JSON.stringify({ method: 'turn/completed', params: { threadId: 'native-thread', turn: { id: 'native-turn', status: 'failed', items: [], error } } }));",
+      "  process.exit(0);",
+      "}",
+    ], { stubControlServer: true });
+
+    try {
+      await expect(waitForExit(runtime.child)).resolves.toBe(1);
+      const transcript = await readFile(runtime.eventPath, "utf8");
+      const failures = transcript.trim().split("\n").map((line) => JSON.parse(line)).filter((record) => record.type === "turn.failed");
+      expect(failures).toEqual([{ type: "turn.failed" }]);
+      expect((await replayTranscriptResult(runtime.eventPath)).outcomes).toEqual(["failed"]);
+      expect(transcript).not.toMatch(/authentication_required|Not logged in|policyCapacityUnavailable/);
+    } finally {
+      await cleanup(runtime);
+    }
+  });
+
   it("flushes a final frame without a newline before provider exit", async () => {
     const runtime = await startFakeRuntime("final_frame", [
       initialize,
