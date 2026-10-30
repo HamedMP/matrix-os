@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GettingStartedAppProgress, GettingStartedResults } from "@matrix-os/contracts";
@@ -8,9 +10,8 @@ import {
   usePublishOnboardingWidgetStatus,
   type OnboardingWidgetStatus,
 } from "../../packages/ui/src/onboarding-widget/task-requests";
-import { GettingStartedVisibilityProvider } from "../../packages/ui/src/getting-started-visibility";
 import {
-  GettingStartedAppHelpMenu,
+  GettingStartedAppOpenButton,
   GettingStartedAppProvider,
   useGettingStartedApp,
   GettingStartedAppView,
@@ -686,48 +687,34 @@ describe("Getting started as an extension of onboarding", () => {
   });
 });
 
-function Availability() {
-  return <span data-testid="availability">{useGettingStartedApp()?.availability ?? "none"}</span>;
-}
-
-describe("Getting started in Help", () => {
-  it("says whether this computer serves the app: checking, then enabled or unavailable", async () => {
-    const port = makePort();
-    let resolve: (progress: GettingStartedAppProgress) => void = () => undefined;
-    port.loadProgress.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
-    render(<GettingStartedAppProvider port={port} refreshMs={25} onToast={vi.fn()}><Availability /></GettingStartedAppProvider>);
-    expect(screen.getByTestId("availability").textContent).toBe("checking");
-    await act(async () => resolve({ awards: [], total: 0 }));
-    await waitFor(() => expect(screen.getByTestId("availability").textContent).toBe("enabled"));
-    cleanup();
-    render(<GettingStartedAppProvider port={makePort({ progress: null })} refreshMs={25} onToast={vi.fn()}><Availability /></GettingStartedAppProvider>);
-    await waitFor(() => expect(screen.getByTestId("availability").textContent).toBe("unavailable"));
-  });
-
-  it("keeps the Getting started toggle in Help, with only the app summary and the surface's extras", async () => {
-    vi.stubGlobal("PointerEvent", MouseEvent);
+describe("Getting started open button in the Help checklist", () => {
+  it("opens the app full size, only where the computer serves it", async () => {
     const onOpen = vi.fn();
-    const port = makePort({ progress: { awards: [{ taskId: "first-prompt", points: 50, awardedAt: "2026-10-29T10:00:00.000Z" }], total: 50 } });
+    const onOpened = vi.fn();
     render(
-      <GettingStartedVisibilityProvider scope="test">
-        <GettingStartedAppProvider port={port} refreshMs={25} onToast={vi.fn()} onOpen={onOpen}>
-          <GettingStartedAppHelpMenu onSupport={vi.fn()} discordIcon={<span />} zIndex={10}
-            extra={() => <a href="https://example.com/desktop">Get the desktop app</a>} />
-        </GettingStartedAppProvider>
-      </GettingStartedVisibilityProvider>,
+      <GettingStartedAppProvider port={makePort()} refreshMs={25} onToast={vi.fn()} onOpen={onOpen}>
+        <GettingStartedAppOpenButton onOpened={onOpened} />
+      </GettingStartedAppProvider>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Help" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Getting started — 1 of 12 done, 50 points" }));
-    const popover = await screen.findByRole("dialog", { name: "Getting started" });
-    expect(within(popover).getByTestId("getting-started-counter").textContent).toBe("1 of 12");
-    expect(within(popover).getByRole("link", { name: "Get the desktop app" })).toBeTruthy();
-    expect(within(popover).queryByText("Research anything")).toBeNull();
-    // A toggle: clicking outside or pressing Escape leaves it open.
-    fireEvent.keyDown(popover, { key: "Escape" });
-    expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
-    fireEvent.click(within(popover).getByRole("button", { name: /Open Getting started/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Getting started" }));
     expect(onOpen).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull());
+    expect(onOpened).toHaveBeenCalledTimes(1);
+    cleanup();
+    render(
+      <GettingStartedAppProvider port={makePort({ progress: null })} refreshMs={25} onToast={vi.fn()} onOpen={onOpen}>
+        <GettingStartedAppOpenButton />
+      </GettingStartedAppProvider>,
+    );
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+    expect(screen.queryByRole("button", { name: "Open Getting started" })).toBeNull();
+  });
+});
+
+describe("Getting started app styles", () => {
+  it("takes its colors from @matrix-os/brand, with raw hex only as var() fallbacks", () => {
+    const css = readFileSync(resolve(__dirname, "../../packages/ui/src/getting-started-app/getting-started-app.css"), "utf8");
+    const withoutFallbacks = css.replace(/\/\*[\s\S]*?\*\//g, "").replace(/var\(--[\w-]+,[^()]*(\([^()]*\))?[^()]*\)/g, "");
+    expect(withoutFallbacks.match(/#[0-9a-f]{3,8}\b/gi) ?? []).toEqual([]);
   });
 });
 

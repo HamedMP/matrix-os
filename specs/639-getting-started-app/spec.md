@@ -61,7 +61,7 @@ The Get started wizard (spec 635) runs once, before the desktop. This app is wha
 
 **Toast.** When a task turns Done while the owner is signed in, Matrix shows "Slack connected +20 pts" (task-specific copy) in the shared shell notification stack (`ShellNotificationPortal`), whether or not the app is open. Tasks that were already Done the first time they are seen are awarded silently.
 
-**Help popover.** The popover gains a summary row under its progress bar: **Open Getting started**, "X of 12 done" and the points total. Its own list stays for now, because since spec 635 it also carries the wizard's bots and "Try" prompts; removing it is a product decision (open question 9). Billing is not one of the 12 tasks (see open questions).
+**Help popover.** The popover keeps its full checklist (done steps checked off) and gains an expand button in its header, like the onboarding widget's, that opens the Getting started app full size. Its own list stays, because since spec 635 it also carries the wizard's bots and "Try" prompts; removing it is a product decision (open question 9). Billing is not one of the 12 tasks (see open questions).
 
 ## Points
 
@@ -177,7 +177,7 @@ Proposal (needs product sign-off): every owner gets the app once their computer 
 | 5 | Chat exists | Open app | Hero shows "Up next" with the first incomplete task; video shows "Watch the intro again" | all three / UI test + live capture |
 | 6 | Integrations endpoint failing | Open app | Connect cards show unavailable, nothing marked Done, other cards normal | UI test with fault injection |
 | 7 | Any | Click the icon on desktop, launcher and dock | App opens in a window and keeps its position after reload | all three / e2e |
-| 8 | Any | Open Help | Popover shows "X of 12 done", points and Open Getting started; no separate step list | all three / UI test |
+| 8 | Any | Open Help › Getting started | Popover shows the full checklist; its header expand button opens the app and closes the popover | all three / UI test |
 | 9 | Malformed award request | POST unknown task or with `points` | `400` generic, no row written | gateway route test |
 
 Evidence: live screenshots and a short recording on Web Desktop, Web Canvas and Electron Desktop, in the PR and #tech.
@@ -247,11 +247,11 @@ Team feedback (Oct 30): the app, the corner widget and the Help checklist repeat
 | -- | -- |
 | Onboarding widget (corner) | Runs the starter tasks. The only place they run while it is open. |
 | Getting started app | Progress, points, what is left, and the Matrix unlocked finish line. |
-| Help › Getting started | The same small toggle popover in the title bar, now holding only the app summary. |
+| Help › Getting started | The checklist popover as before, with an expand button that opens the app. |
 
 1. **The widget publishes its state** on the shell's typed task channel (`task-requests.ts`): open (in the corner) or minimized, and its activity (choosing, setting up a task, running, done, failed) with the task's title. One value, newest widget wins, cleared on unmount; readers are capped.
 2. **The app hero mirrors the widget** while it is open and waiting for the first pick, or while it is setting up or running a task: "Pick your first task in the corner", "Matrix is working on Plan my week", with **Show Matrix panel** when the widget is minimized. When the widget is minimized with nothing running, missing, or done, the hero shows its own content: the four starter tasks (which still hand off to the widget, or Chat without one), then Up next, then Matrix unlocked.
-3. **Help keeps its Getting started toggle** where the computer serves the app: the row in Help (progress bar, "X of 12") opens the same small popover anchored to the title bar as before, which stays open until the row is clicked again. It now holds only the summary: "X of 12" with the progress bar, **Open Getting started** with the points, and on Web the desktop download. It never opens by itself (the app opens itself after the wizard). While the computer is still being checked the row is disabled, so the old checklist never flashes. Computers whose gateway predates the app keep the checklist popover as a fallback; its bot and "Try" rows therefore only remain there (open question 9).
+3. **Help stays as it was:** Help › Getting started opens the checklist popover with every step, done ones checked off. The **Open Getting started** row is replaced by an expand button in the popover header (like the widget's), which opens the app full size and closes the popover. Trimming the list is still open question 9.
 4. The widget's open/minimized state is stored per browser, so the mirror follows the device the owner is on.
 5. **Connect cards sign in where they are.** Gmail, Google Calendar, Slack and GitHub start the app's own sign-in from the card (the onboarding widget's flow) instead of opening Settings › Connect Apps, where an app is easy to lose. The card shows "Connecting…", or "Didn't connect, try again" when the sign-in fails, is blocked or times out; a finished sign-in re-reads progress at once. WhatsApp, a messaging channel, still opens Settings, and so does every card on a computer without an app connection service.
 

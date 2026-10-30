@@ -14,9 +14,8 @@ import { Check, LifeBuoy, Star } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { gettingStartedAppAction, gettingStartedAppSignIn, type GettingStartedAppAction } from "./actions.js";
 import { GETTING_STARTED_APP_BRAND_VARS } from "./brand-vars.js";
-import { Hero } from "./hero.js";
+import { Hero, TaskArt } from "./hero.js";
 import { useGettingStartedApp, type GettingStartedAppPoints } from "./provider.js";
-import { TaskArt } from "./task-art.js";
 
 const SECTIONS: ReadonlyArray<{ group: Exclude<GettingStartedAppTaskGroup, "hero">; title: string }> = [
   { group: "build", title: "Build" },

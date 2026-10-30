@@ -14,7 +14,7 @@ import { PreviewWindow } from "../preview-window/PreviewWindow";
 import { ChatApp } from "../ChatApp";
 import { ActivityMonitorApp } from "../system-activity/ActivityMonitorApp";
 import { WebGettingStartedAppWindow } from "../getting-started-app/web-getting-started-app";
-import { webGettingStartedAppVisible } from "../getting-started-app/visibility";
+import { webGettingStartedAppVisible } from "../getting-started-app/web-getting-started-app-port";
 import { useChatContext } from "@/stores/chat-context";
 import { TrafficLights } from "../window/TrafficLights";
 import { useThemeStyle } from "../window/useThemeStyle";

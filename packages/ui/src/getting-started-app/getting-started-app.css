@@ -5,7 +5,7 @@
    shell's, so light and dark themes both work (same chain as
    agents-providers.css). */
 .mxo-gsa,
-.mxo-gsa-summary,
+.mxo-gsa-open,
 .mxo-gsa-toast {
   /* Page, cards (#f3f2f2 in both light themes) and the lighter tiles on cards. */
   --gsa-paper: var(--bg-app, var(--background, #fafafa));
@@ -33,7 +33,7 @@
   -webkit-font-smoothing: antialiased;
 }
 
-:is(.dark, [data-theme="dark"]) :is(.mxo-gsa, .mxo-gsa-summary) {
+:is(.dark, [data-theme="dark"]) :is(.mxo-gsa, .mxo-gsa-open) {
   --gsa-gold-bg: var(--gsa-tint-gold-bg-dark);
   --gsa-gold-border: var(--gsa-tint-gold-border-dark);
   --gsa-gold-text: var(--gsa-tint-gold-text-dark);
@@ -322,7 +322,7 @@
 
 .mxo-gsa__primary.mxo-gsa__primary--brand {
   background: linear-gradient(135deg, var(--gsa-brand-fill), var(--gsa-brand-forest));
-  color: #fff;
+  color: var(--gsa-on-brand);
   box-shadow: 0 6px 16px -6px color-mix(in srgb, var(--gsa-brand-forest) 70%, transparent);
 }
 
@@ -720,7 +720,7 @@
     radial-gradient(70% 120% at 18% 50%, color-mix(in srgb, var(--gsa-brand-gold) 30%, transparent), transparent 70%),
     linear-gradient(135deg, var(--gsa-brand-forest), var(--gsa-brand-forest-deep));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gsa-brand-gold) 40%, transparent);
-  color: #fafafa;
+  color: var(--gsa-on-brand);
   animation: mxo-gsa-unlock 640ms var(--mxo-ease) backwards;
 }
 
@@ -769,7 +769,7 @@
     color-mix(in srgb, var(--gsa-brand-gold) 34%, transparent) 0deg 9deg,
     transparent 9deg 24deg
   );
-  mask-image: radial-gradient(circle, #000 30%, transparent 70%);
+  mask-image: radial-gradient(circle, black 30%, transparent 70%);
   animation: mxo-gsa-spin 24s linear infinite;
 }
 
@@ -780,7 +780,7 @@
   width: 128px;
   height: 128px;
   border-radius: 9999px;
-  background: conic-gradient(from 200deg, #f6d27a, var(--gsa-brand-gold), #b7791f, #f6d27a, var(--gsa-brand-gold), #f6d27a);
+  background: conic-gradient(from 200deg, var(--gsa-brand-gold-light), var(--gsa-brand-gold), var(--gsa-brand-gold-deep), var(--gsa-brand-gold-light), var(--gsa-brand-gold), var(--gsa-brand-gold-light));
   box-shadow:
     0 0 0 6px color-mix(in srgb, var(--gsa-brand-gold) 22%, transparent),
     0 24px 48px -16px rgba(0, 0, 0, 0.55),
@@ -802,7 +802,7 @@
   width: 36px;
   height: 36px;
   border-radius: 9999px;
-  background: #fafafa;
+  background: var(--gsa-on-brand);
   color: var(--gsa-brand-gold);
   box-shadow: 0 6px 16px -4px rgba(0, 0, 0, 0.4);
   animation: mxo-gsa-pop 520ms var(--mxo-ease) 560ms backwards;
@@ -826,7 +826,7 @@
   line-height: 36px;
   font-weight: 650;
   letter-spacing: -0.02em;
-  background: linear-gradient(90deg, #fafafa, #f6d27a);
+  background: linear-gradient(90deg, var(--gsa-on-brand), var(--gsa-brand-gold-light));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -860,13 +860,13 @@
 }
 
 .mxo-gsa__unlocked-stat svg {
-  color: #f6d27a;
+  color: var(--gsa-brand-gold-light);
 }
 
 .mxo-gsa__primary.mxo-gsa__primary--gold {
   margin-top: 4px;
-  background: linear-gradient(135deg, #f6d27a, var(--gsa-brand-gold));
-  color: #2a1d05;
+  background: linear-gradient(135deg, var(--gsa-brand-gold-light), var(--gsa-brand-gold));
+  color: var(--gsa-brand-gold-ink);
   font-weight: 650;
   box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--gsa-brand-gold) 80%, transparent);
 }
@@ -944,51 +944,29 @@
   }
 }
 
-/* Help › Getting started popover: the app summary row. */
-.mxo-gsa-summary {
-  display: flex;
+/* Help checklist header: opens the app full size, like the onboarding widget's expand button. */
+.mxo-gsa-open {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  width: calc(100% - 24px);
-  margin: 0 12px 10px;
-  padding: 8px 10px;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   border: 0;
-  border-radius: 8px;
-  background: var(--gsa-card);
-  color: var(--gsa-text);
-  font: inherit;
-  font-family: var(--gsa-font-ui);
-  text-align: left;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--gsa-muted);
   cursor: pointer;
 }
 
-.mxo-gsa-summary:hover {
-  background: var(--gsa-card-hover);
+.mxo-gsa-open:hover {
+  background: var(--gsa-card);
+  color: var(--gsa-text);
 }
 
-.mxo-gsa-summary:focus-visible {
+.mxo-gsa-open:focus-visible {
   outline: 2px solid var(--gsa-focus);
   outline-offset: 2px;
-}
-
-.mxo-gsa-summary__text {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.mxo-gsa-summary__title {
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 16px;
-}
-
-.mxo-gsa-summary__detail {
-  color: var(--gsa-muted);
-  font-size: 11px;
-  line-height: 14px;
 }
 
 /* Completion toast (Figma 1938:1226): dark pill, check, title, gold points. */

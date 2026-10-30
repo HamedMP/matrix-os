@@ -11,7 +11,7 @@ export {
 } from "./actions.js";
 export { GettingStartedAppToastView } from "./toast.js";
 export { GettingStartedAppView } from "./GettingStartedAppView.js";
-export { GettingStartedAppHelpMenu, useGettingStartedHelpMode } from "./summary.js";
+export { GettingStartedAppOpenButton } from "./summary.js";
 export {
   GETTING_STARTED_APP_REFRESH_MS,
   GettingStartedAppProvider,

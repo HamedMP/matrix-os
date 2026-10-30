@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/card";
 import { ActivityMonitorApp } from "@/components/system-activity/ActivityMonitorApp";
 import { WebGettingStartedAppWindow } from "@/components/getting-started-app/web-getting-started-app";
-import { webGettingStartedAppVisible } from "@/components/getting-started-app/visibility";
+import { webGettingStartedAppVisible } from "@/components/getting-started-app/web-getting-started-app-port";
 import { AppViewer } from "@/components/AppViewer";
 import { ChatApp } from "@/components/ChatApp";
 import { FileBrowser } from "@/components/file-browser/FileBrowser";

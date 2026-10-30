@@ -35,6 +35,7 @@ vi.mock("@matrix-os/ui", async (importOriginal) => {
 });
 
 import { WebGettingStartedAppHost, WebGettingStartedAppWindow } from "../../shell/src/components/getting-started-app/web-getting-started-app";
+import { webGettingStartedAppVisible } from "../../shell/src/components/getting-started-app/web-getting-started-app-port";
 
 afterEach(() => {
   cleanup();
@@ -93,5 +94,20 @@ describe("Web Getting started toasts", () => {
     });
     expect(screen.queryByLabelText("One +20 pts")).toBeNull();
     expect(screen.getAllByLabelText(/\+20 pts/).map((node) => node.getAttribute("aria-label"))).toEqual(["Two +20 pts", "Three +20 pts", "Four +20 pts"]);
+  });
+});
+
+describe("Getting started app visibility on Web Desktop and Web Canvas", () => {
+  it("counts an open window as showing", () => {
+    expect(webGettingStartedAppVisible({ id: "gs", minimized: false }, null)).toBe(true);
+    expect(webGettingStartedAppVisible({ id: "gs", minimized: false }, "gs")).toBe(true);
+  });
+
+  it("does not count a minimized window", () => {
+    expect(webGettingStartedAppVisible({ id: "gs", minimized: true }, null)).toBe(false);
+  });
+
+  it("does not count a window covered by another fullscreen window", () => {
+    expect(webGettingStartedAppVisible({ id: "gs", minimized: false }, "terminal")).toBe(false);
   });
 });
