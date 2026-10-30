@@ -908,6 +908,11 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/gateway/browser-approval-repository.test.ts --maxWorkers=1 --no-file-parallelism
 
+      - name: Routine migration and deployed-history PostgreSQL contracts
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          pnpm exec vitest run tests/gateway/bots/deployed-v9-schema-postgres.test.ts tests/gateway/bots/routine-migration-postgres.test.ts tests/gateway/bots/v9-dual-history-postgres.test.ts tests/gateway/bots/v9-dual-history-upgrade.test.ts --maxWorkers=1 --no-file-parallelism
+
       - name: Qualify remaining real PostgreSQL suites
         run: node scripts/ci/remaining-postgres.mjs
 
