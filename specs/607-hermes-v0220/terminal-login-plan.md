@@ -82,3 +82,30 @@ and durable store: the original source publishes failed/unavailable after the
 real stale-viewer sweep, while the corrected source completes from the exact
 inner receipt. Only Zellij and provider identity completion are isolated; these
 tests do not qualify live OAuth, model/MCP calls or a demonstration video.
+
+## 2026-10-30 — native interpreter handoff loses login completion
+
+Live Electron acceptance on Preview `pv-2964-1fd6829f` at source `86dc4a77`
+saved a verified Hermes-owned ChatGPT grant and exited zero, but left Hermes's
+provider at `auto` and Settings disconnected. Read-only inspection found a
+self-managed Git install whose PM interpreter differs from the initially
+qualified interpreter. Upstream bootstrap replaces the process with the PM
+interpreter. Because our wrapper had already changed `sys.argv[0]` to `hermes`,
+the pinned relaunch function ran the bare CLI launcher and discarded our
+remaining verification/configuration statements.
+
+Import bootstrap while the original `-c` identity is intact, before setting CLI
+arguments. Upstream then preserves the whole continuation across its interpreter
+handoff. Do not disable PM, change interpreter selection rules, copy credentials,
+or weaken source/admission checks. The regression uses the exact pinned
+`relaunch_command`, an actual `execv`, and isolated OAuth/configuration adapters:
+both providers previously logged in and exited zero without configuration, and
+now retain the configuration step. Terminal payload remains within 4096 characters.
+
+The same acceptance exposed selection/loading marks overlapping long connection
+titles. Shared cards now use separate grid columns for artwork, wrapping text,
+and the mark. Real-component browser geometry checks cover three card widths and
+both states; existing theme contrast checks remain required. This CSS change
+requires a newly built Electron client and matching Web Preview. Previous
+client captures, CI/review results and successful credential storage do not
+qualify the corrected source or the complete connected model/MCP journey.

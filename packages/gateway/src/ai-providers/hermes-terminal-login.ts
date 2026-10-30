@@ -85,6 +85,8 @@ export const HERMES_TERMINAL_LOGIN_COMMAND = `
 import sys, os, contextlib
 provider = sys.argv[1]
 assert provider in ('openai-codex','anthropic')
+# Keep the -c continuation during native re-exec.
+import hermes_bootstrap
 sys.argv = ['hermes','auth','add',provider,'--type','oauth','--no-browser']
 from hermes_cli.main import main
 main()
