@@ -23,11 +23,12 @@ function fixture() {
     appDomainHosts: [new URL(m.browserOrigin).hostname], browserRevision: "pair-revision", apiRevision: "pair-revision",
     observedAt: new Date(PAIR_NOW).toISOString() };
   const promotedChannels: string[] = [];
+  const controller = { controllerSha: config.reviewedControllerSha, executionSha: build.head_sha, workflowPath: build.path, treeSha: "f".repeat(40) };
   const source = { pullRequest: vi.fn(async () => pull), hostRelease: vi.fn(async () => ({ release, promotedChannels })),
     artifact: vi.fn(async () => artifact), build: vi.fn(async () => build),
     buildSource: vi.fn(async () => receipt),
-    controllerProof: vi.fn(async () => ({ controllerSha: config.reviewedControllerSha, executionSha: build.head_sha, workflowPath: build.path, treeSha: "f".repeat(40) })), authority: vi.fn(async () => authority) };
-  return { input, expected, config, source, pull, release, artifact, build, receipt, authority, promotedChannels };
+    controllerProof: vi.fn(async () => controller), authority: vi.fn(async () => authority) };
+  return { input, expected, config, source, pull, release, artifact, build, receipt, authority, promotedChannels, controller };
 }
 
 describe("pair candidate source is checked against independent canonical records", () => {
@@ -38,11 +39,23 @@ describe("pair candidate source is checked against independent canonical records
     expect(f.source.buildSource).toHaveBeenCalledWith(123, 456);
   });
 
+  it("allows isolated execution with a different SHA from the reviewed controller", async () => {
+    const f = fixture();
+    f.build.head_sha = "2".repeat(40);
+    f.receipt.workflowSha = f.build.head_sha;
+    f.controller.executionSha = f.build.head_sha;
+    expect(f.controller.executionSha).not.toBe(f.controller.controllerSha);
+    await expect(verifyPreviewPairCandidate(f.input, f.expected, f.source, f.config, PAIR_NOW)).resolves.toMatchObject(f.input);
+  });
+
   it.each(["closed", "fork", "moved head", "promoted release", "wrong host source", "wrong artifact digest",
-    "failed build", "wrong receipt source", "wrong workflow", "API classified as browser", "production credentials", "stale authority"])(
+    "failed build", "wrong receipt source", "wrong workflow", "API classified as browser", "production credentials", "stale authority", "wrong controller SHA", "wrong execution SHA", "wrong receipt workflow SHA"])(
     "rejects %s before preparing any machines", async fault => {
       const f = fixture();
       switch (fault) {
+        case "wrong controller SHA": f.controller.controllerSha = "1".repeat(40); break;
+        case "wrong execution SHA": f.controller.executionSha = "1".repeat(40); break;
+        case "wrong receipt workflow SHA": f.receipt.workflowSha = "1".repeat(40); break;
         case "closed": f.pull.state = "closed"; break;
         case "fork": f.pull.head.repo.full_name = "outside/fork"; break;
         case "moved head": f.pull.head.sha = "f".repeat(40); break;
