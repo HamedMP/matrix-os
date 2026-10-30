@@ -113,6 +113,15 @@ The shared admission transaction lock serializes adoption against cancellation;
 adoption rolls back with failed pair/job writes. Only exact retirement can move a
 cancelled request to `stopped`; expiry by itself is not proof of cloud absence.
 
+The publication journal stores its nonce, immutable image digest, finite state
+(`unissued`, `issuing`, `accepted`, `rejected`) and optional exact operation receipt.
+The conditional transition to issuing commits before the one cloud mutation;
+unknown outcomes never authorize another effect. A late acknowledgement can
+invalidate obsolete cleanup claims without reopening a cancelled request. Legacy
+records with no digest remain retireable and cannot authorize new admission.
+Private receipts are omitted from request reports. Bounded claims/backoff permit
+recovery; retired identities remain tombstones rather than reusable request IDs.
+
 - Live pairs expire no later than72h; stopping revokes new access immediately and
   queues exact cleanup. Pair lifetimes do not extend the shorter funded allowance.
 - Keep small retired metadata/evidence references under existing artifact/audit

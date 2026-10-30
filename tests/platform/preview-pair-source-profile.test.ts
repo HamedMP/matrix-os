@@ -43,7 +43,17 @@ describe("approved source profile is configuration, never candidate input", () =
     expect(previewPairSourceFingerprint({ ...profile, bindings: { ...profile.bindings,
       PLATFORM_DATABASE_URL: { ...profile.bindings.PLATFORM_DATABASE_URL, version: "99" } } }, config)).not.toBe(digest);
   });
-  it.each(["alias", "foreign ref", "duplicate ref", "customer prefix", "candidate", "operator reuse", "foreign project", "raw key", "unsupported origin family"])("rejects %s before resource creation", fault => {
+  it("pins an optional dedicated image repository without invalidating cleanup-only profiles", () => {
+    const env = environment(), config = loadPreviewPairConfig(env) as EnabledPreviewPairConfig;
+    const old = loadPreviewPairSourceProfile(env, config)!;
+    const selected = { ...env, MATRIX_PREVIEW_PAIR_SOURCE_PROFILE: JSON.stringify({
+      ...JSON.parse(env.MATRIX_PREVIEW_PAIR_SOURCE_PROFILE), imageRepository: "matrix-preview-pairs" }) };
+    const profile = loadPreviewPairSourceProfile(selected, config)!;
+    expect(profile).toMatchObject({ imageRepository: "matrix-preview-pairs" });
+    expect(previewPairSourceFingerprint(profile, config)).not.toBe(previewPairSourceFingerprint(old, config));
+    expect(loadPreviewPairSourceProfile(env, config)).toEqual(old);
+  });
+  it.each(["alias", "foreign ref", "duplicate ref", "customer prefix", "candidate", "operator reuse", "foreign project", "raw key", "unsupported origin family", "production image repository", "image URL"])("rejects %s before resource creation", fault => {
     const env = environment(), profile = JSON.parse(env.MATRIX_PREVIEW_PAIR_SOURCE_PROFILE);
     if (fault === "alias") profile.bindings.PLATFORM_DATABASE_URL.version = "latest";
     if (fault === "foreign ref") profile.bindings.PLATFORM_DATABASE_URL.ref = "matrix-production-db";
@@ -54,6 +64,8 @@ describe("approved source profile is configuration, never candidate input", () =
     if (fault === "foreign project") profile.project = "foreign-project";
     if (fault === "unsupported origin family") profile.service = "matrix-pair-preview";
     if (fault === "raw key") profile.bindings.PLATFORM_SECRET.value = "p".repeat(40);
+    if (fault === "production image repository") profile.imageRepository = "matrix-main";
+    if (fault === "image URL") profile.imageRepository = "https://untrusted.test/preview";
     env.MATRIX_PREVIEW_PAIR_SOURCE_PROFILE = JSON.stringify(profile);
     expect(() => loadPreviewPairSourceProfile(env, loadPreviewPairConfig(env))).toThrow("unavailable");
   });

@@ -81,4 +81,18 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("pre-admission recovery u
     expect(s.retireCloudIntent).toHaveBeenCalledOnce();
     expect(s.inspectRequest).not.toHaveBeenCalled();
   });
+  it("retires an unadopted update after its parent stops without releasing the parent's fixture lease", async () => {
+    const s = await setup();
+    await preparePreviewPairCloudIntent(f.db, { ...f.config, sourceProfileFingerprint: "f".repeat(64) }, {
+      pairId: f.pair.pair_id, generation: 2, pr: f.pair.pr, requesterId: "user_requester", controllerRunId: 42,
+      sourceSha: f.pair.source_sha, profileFingerprint: "f".repeat(64) }, PAIR_NOW);
+    await s.service.action(f.pair.pair_id, { type: "stop", generation: 1, revision: f.pair.revision });
+    s.retireCloudIntent.mockResolvedValue(true);
+    await s.service.reconcile({ limit: 1 });
+    const row = await f.db.executor.selectFrom("preview_pair_cloud_intents").selectAll()
+      .where("pair_id", "=", f.pair.pair_id).where("generation", "=", 2).executeTakeFirstOrThrow();
+    expect(row.state).toBe("stopped");
+    expect((await f.db.executor.selectFrom("preview_pair_fixtures").select("active_pair_id").executeTakeFirstOrThrow()).active_pair_id).toBe(f.pair.pair_id);
+    expect(f.hetzner.createServer).not.toHaveBeenCalled();
+  });
 });

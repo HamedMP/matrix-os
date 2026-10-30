@@ -6,6 +6,7 @@ import type { PlatformDB } from "../db.js";
 import type { PreviewPairCloudIntentsTable } from "./types.js";
 import { PreviewPairConflictError } from "./repository.js";
 import { previewPairOperation } from "./operation.js";
+import { publicationParentAllows } from "./publication-journal.js";
 
 export interface PreviewPairIntentClaim { pairId: string; generation: number; revision: number; claimId: string }
 export type PreviewPairIntentRow = Selectable<PreviewPairCloudIntentsTable>;
@@ -61,7 +62,8 @@ export function createPreviewPairIntentRecovery(options: { db: PlatformDB; admis
       try {
         if (!options.profileFingerprint || row.profile_fingerprint !== options.profileFingerprint) throw new PreviewPairConflictError();
         stage = "controller_unavailable";
-        let pending = !options.admissionEnabled || row.state === "cleanup_pending" || Date.parse(row.expires_at) <= now();
+        let pending = !options.admissionEnabled || row.state === "cleanup_pending" || Date.parse(row.expires_at) <= now()
+          || !await publicationParentAllows(db, { pairId: row.pair_id, generation: row.generation, pr: row.pr }, now());
         if (!pending) {
           const request = Request.parse(await previewPairOperation(signal => options.inspectRequest({ pairId: row.pair_id,
             generation: row.generation, pr: row.pr }, signal)));
