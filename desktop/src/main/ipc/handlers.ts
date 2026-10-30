@@ -33,6 +33,7 @@ export interface HandlerContext {
   getUpdateSnapshot: () => DesktopUpdateSnapshot;
   installUpdate: () => Promise<boolean> | boolean;
   toggleWindowMaximize: () => void;
+  setTitlebarOverlay: (colors: InvokeRequest<"window:set-titlebar-overlay">) => void;
   getWhatsNew: () => Promise<{
     release: DesktopReleaseNotes | null;
     shouldOpen: boolean;
@@ -297,6 +298,10 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
   });
   handle("window:toggle-maximize", () => {
     ctx.toggleWindowMaximize();
+    return { ok: true };
+  });
+  handle("window:set-titlebar-overlay", (colors) => {
+    ctx.setTitlebarOverlay(colors);
     return { ok: true };
   });
   handle("state:get", async ({ key }) => ({
