@@ -10,7 +10,7 @@ import { claimPreviewPair, requestPreviewPairStop, withPreviewPairClaim, type Pr
 import { cleanupPreviewPair, type PreviewPairCleanupAdapters } from "./cleanup.js";
 import { advancePreviewPairUpdate } from "./update.js";
 import { refreshPreviewPairReadiness, type PreviewPairReadinessAdapters } from "./readiness.js";
-import { previewPairOperation } from "./operation.js";
+import { previewPairOperation, PreviewPairOperationTimeout } from "./operation.js";
 
 export interface PreviewPairActivationContext {
   pairId: string; generation: number; candidate: PreviewPairCandidate;
@@ -85,7 +85,13 @@ export function createPreviewPairReconciler(deps: PreviewPairReconcilerDeps) {
           members: snapshot.members.map(member => ({ role: member.role, machineId: member.machine_id,
             jobId: member.job_id, actorId: member.actor_id, handle: member.handle })) };
         await withPreviewPairClaim(db, claim, now(), async () => undefined);
-        const activated = await previewPairOperation(signal => deps.activate(context, claim, signal));
+        let activated = false;
+        try { activated = await previewPairOperation(signal => deps.activate(context, claim, signal)); }
+        catch (error: unknown) {
+          if (!(error instanceof PreviewPairOperationTimeout)) throw error;
+          // Provider work is durable and resumes under a fresh claim. Its deadline
+          // bounds this pass; it does not prove that server creation failed.
+        }
         if (!activated) { await release(claim, 15_000); return (await readPreviewPair(db, pairId))!; }
       }
       await refreshPreviewPairReadiness(db, claim, deps.config, deps.readiness, now);
