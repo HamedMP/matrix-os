@@ -1,3 +1,5 @@
+import { insertUserMachine } from "../../packages/platform/src/db.js";
+import { CustomerHandleSchema } from "../../packages/platform/src/customer-vps-schema.js";
 import { sql } from "kysely";
 import { admitCollaborationRuntimeWrite } from "../../packages/platform/src/collaboration/runtime-write-admission.js";
 import { Agent } from "undici";
@@ -107,6 +109,33 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("preview pair access reti
     await f.retire();
     expect(await s.repo.getDirectoryRoute(scopeId)).toBeNull();
     expect(await s.repo.listForActor("user_reader")).toHaveLength(1);
+  });
+  it("production composition preserves valid cp-prefixed customer handles", async () => {
+    const dispatcher = new Agent();
+    const runtime = await bootstrapPlatformCollaboration({ db: f.target.db, platformSecret: "fixture-preview-secret",
+      platformJwtSecret: "fixture-preview-jwt", customerVpsProxyDispatcher: dispatcher, startTimers: false,
+      env: { MATRIX_COLLABORATION_ALLOWED_ORIGINS: "https://app.matrix-os.com", MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "fixture",
+        MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify({ fixture: Buffer.alloc(32, 1).toString("base64url") }) } });
+    try {
+      if (!("repository" in runtime) || !runtime.direct) throw new Error("Real collaboration composition is required");
+      for (const handle of ["cp-alice", "cp-design-team"]) {
+        CustomerHandleSchema.parse(handle);
+        const machineId = randomUUID(), runtimeId = `vps:${machineId}`, logical = runtimeId.replace(":", "-");
+        const actorId = "user_customer_" + handle, scopeId = randomUUID();
+        await insertUserMachine(f.target.db, { machineId, clerkUserId: actorId, handle, runtimeSlot: "primary",
+          provisioningClass: "customer", status: "running", provisionedAt: now().toISOString() });
+        await runtime.repository.applyDirectoryEvent({ eventId: randomUUID(), scopeId, runtimeId, ownerId: actorId,
+          kind: "project", authorityGeneration: 1, metadataRevision: 1, organizationId: "org_fixture_customer",
+          recipients: [{ actorId: "user_reader", status: "accepted" }] });
+        await runtime.direct.endpoints.register({ authenticated: { runtimeId, ownerId: actorId, relayHandle: handle },
+          registration: { protocolVersion: 2, runtimeId: logical, ownerId: actorId, relayHandle: handle,
+            authorityGeneration: 1, publicKeys: [{ keyId: "home", algorithm: "ed25519", publicKey: "B".repeat(43) }] } });
+        await runtime.direct.endpoints.issueControlTicket(logical, "control-" + handle, new Date(Date.now() + 20_000));
+        await runtime.repository.createConnectionTicket({ token: "connection-" + handle, actorId: "user_reader", scopeId,
+          purpose: "events", expiresAt: new Date(Date.now() + 20_000).toISOString() });
+        expect(await runtime.repository.getDirectoryRoute(scopeId)).toMatchObject({ runtimeId, ownerId: actorId });
+      }
+    } finally { try { await runtime.shutdown(); } finally { await dispatcher.close(); } }
   });
   it("rolls back retirement instead of cascading into a mismatched runtime's child", async () => {
     const s = await seed();

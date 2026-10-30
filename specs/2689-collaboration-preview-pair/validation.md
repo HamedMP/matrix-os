@@ -417,3 +417,13 @@ its actual generation2 controller marker. Existing default, constraint, snapshot
 isolation, cache and channel restart assertions remain. These changes update test
 expectations only, not runtime startup behavior. CI on the restacked published
 heads must still be checked rather than inferred from the local runs.
+
+### Retirement review: preserve ordinary customer names
+
+Greptile found that the broad cp-prefix check classified legal customer handles
+such as cp-alice as managed pairs. The actual production-composition regression
+failed before correction. Recognition now uses the complete reserved pair pattern;
+legal cp-prefixed customer handles retain directory, endpoint and both ticket
+paths. All5 real two-database retirement cases pass, zero skipped; focused Platform
+native TypeScript passes. Existing pair tombstone and in-flight writer fences
+remain exercised. This is a source fix, not a live customer mutation.
