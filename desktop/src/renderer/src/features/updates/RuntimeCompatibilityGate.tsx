@@ -10,7 +10,7 @@ import { useUi } from "../../stores/ui";
 /** Advisory only: never move the titlebar, hide apps, or unmount drafts. */
 export default function RuntimeCompatibilityGate({ children }: { children: ReactNode }) {
   const api = useConnection((state) => state.api);
-  const { status, noticeKey } = useRuntimeCompatibility(api);
+  const { status, protocol, noticeKey, checkId } = useRuntimeCompatibility(api);
   const runtimeSlot = useConnection((state) => state.runtimeSlot);
   const [operationHidden, setOperationHidden] = useState(false);
   // Dismiss the current release pair, not every future mismatch on this computer.
@@ -19,8 +19,9 @@ export default function RuntimeCompatibilityGate({ children }: { children: React
   const [nativeEmbedsSuspended, setNativeEmbedsSuspended] = useState(false);
   const notice = status === "checking" || status === "aligned" || status === "unavailable" ? null : noticeKey;
   const requestedOpen = notice !== null && (dismissed.api !== api || !dismissed.keys.includes(notice));
-  const repair = useCompatibilityRepair(api, runtimeSlot, requestedOpen);
-  const open = requestedOpen || (repair.busy && !operationHidden);
+  const repair = useCompatibilityRepair(api, runtimeSlot, requestedOpen, notice, checkId);
+  const protocolUpgradeRequired = protocol === "desktop-update-required" || protocol === "runtime-update-required";
+  const open = (requestedOpen && (protocolUpgradeRequired || Boolean(repair.plan?.targets.length))) || (repair.busy && !operationHidden);
   const dismiss = (key: string) => setDismissed((previous) => {
     const keys = previous.api === api ? previous.keys : [];
     return { api, keys: keys.includes(key) ? keys : [...keys, key].slice(-16) };

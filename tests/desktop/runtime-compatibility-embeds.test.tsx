@@ -21,7 +21,9 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 it.each([false, true])("restores only the active embed after modal dismissal (nested overlay: %s)", async (nested) => {
   const live: Record<string, boolean> = {};
   const get = vi.fn().mockResolvedValue(compatible);
-  const api = { get, forRuntime() { return this; } } as unknown as ApiClient;
+  const api = { get: (path: string, options: unknown) => path === "/api/system/update"
+    ? Promise.resolve({ channel: "canary", latest: { version: "v9" }, updateAvailable: true })
+    : get(path, options), forRuntime() { return this; } } as unknown as ApiClient;
   useConnection.setState({ api });
   const invoke = vi.fn(async (channel: string, payload: { embedId?: string; active?: boolean; kind?: string }) => {
     if (channel === "app:get-version") return { version: "0.1.0", source };
@@ -53,7 +55,9 @@ it("keeps a pending embed detached until the compatibility modal closes", async 
   let finishOpen!: (value: { embedId: string; state: string }) => void;
   let live = false;
   const get = vi.fn().mockResolvedValue(compatible);
-  useConnection.setState({ api: { get, forRuntime() { return this; } } as unknown as ApiClient });
+  useConnection.setState({ api: { get: (path: string, options: unknown) => path === "/api/system/update"
+    ? Promise.resolve({ channel: "canary", latest: { version: "v9" }, updateAvailable: true })
+    : get(path, options), forRuntime() { return this; } } as unknown as ApiClient });
   const invoke = vi.fn(async (channel: string, payload: { active?: boolean }) => {
     if (channel === "app:get-version") return { version: "0.1.0", source };
     if (channel === "embed:open") return new Promise((resolve) => { finishOpen = resolve; });

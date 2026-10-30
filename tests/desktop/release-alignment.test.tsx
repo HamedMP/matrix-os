@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RuntimeCompatibilityGate from "@renderer/features/updates/RuntimeCompatibilityGate";
 import { useConnection } from "@renderer/stores/connection";
@@ -22,7 +22,7 @@ beforeEach(() => {
       version: "0.1.0-canary.20260910044841",
       source: { commit: desktopCommit, ancestors: [cloudCommit] },
     };
-    if (channel === "update:check") return { status: "up-to-date", channel: "canary" };
+    if (channel === "update:check") return { status: "up-to-date" };
     return { ok: true };
   }) });
   useUi.setState({ rendererOverlayCount: 0 });
@@ -30,6 +30,46 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("released Desktop and cloud content alignment", () => {
+  it("keeps the workspace visible when both channels are current despite different source commits", async () => {
+    const get = vi.fn(async (path: string) => path === "/api/system/update"
+      ? { channel: "dev", latest: { version: info.version }, updateAvailable: false }
+      : info);
+    useConnection.setState({ api: { get, forRuntime() { return this; } } as unknown as ApiClient });
+    render(<RuntimeCompatibilityGate><div>Workspace</div></RuntimeCompatibilityGate>);
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/api/system/update", expect.anything()));
+    expect(screen.queryByRole("dialog", { name: "Update Matrix OS" })).toBeNull();
+    expect(screen.getByText("Workspace")).toBeTruthy();
+    expect(useUi.getState().rendererOverlayCount).toBe(0);
+  });
+  it("prompts when an update appears later for the same release pair", async () => {
+    let updateAvailable = false;
+    const get = vi.fn(async (path: string) => path === "/api/system/update"
+      ? { channel: "dev", latest: { version: updateAvailable ? "v2026.09.10-1205" : info.version }, updateAvailable }
+      : info);
+    useConnection.setState({ api: { get, forRuntime() { return this; } } as unknown as ApiClient });
+    render(<RuntimeCompatibilityGate><div>Workspace</div></RuntimeCompatibilityGate>);
+    await waitFor(() => expect(get.mock.calls.filter(([path]) => path === "/api/system/update")).toHaveLength(1));
+    expect(screen.queryByRole("dialog", { name: "Update Matrix OS" })).toBeNull();
+    updateAvailable = true;
+    act(() => window.dispatchEvent(new Event("matrix:runtime-reconnected")));
+    expect(await screen.findByRole("dialog", { name: "Update Matrix OS" })).toBeTruthy();
+  });
+  it("does not reuse an actionable plan for a newer release pair with no available update", async () => {
+    let currentInfo = info;
+    let updateAvailable = true;
+    const get = vi.fn(async (path: string) => path === "/api/system/update"
+      ? { channel: "dev", latest: { version: updateAvailable ? "v2026.09.10-1205" : info.version }, updateAvailable }
+      : currentInfo);
+    useConnection.setState({ api: { get, forRuntime() { return this; } } as unknown as ApiClient });
+    render(<RuntimeCompatibilityGate><div>Workspace</div></RuntimeCompatibilityGate>);
+    await screen.findByRole("dialog", { name: "Update Matrix OS" });
+    fireEvent.click(screen.getByRole("button", { name: "Later" }));
+    currentInfo = { ...info, build: { sha: "d".repeat(40) } };
+    updateAvailable = false;
+    act(() => window.dispatchEvent(new Event("matrix:runtime-reconnected")));
+    await waitFor(() => expect(get.mock.calls.filter(([path]) => path === "/api/system/update")).toHaveLength(2));
+    expect(screen.queryByRole("dialog", { name: "Update Matrix OS" })).toBeNull();
+  });
   it("opens the real gate for a VPS response whose build sha is unknown", async () => {
     vi.stubGlobal("operator", { invoke: vi.fn(async (channel: string) => {
       if (channel === "app:get-version") return { version: "0.1.0",

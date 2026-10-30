@@ -13,8 +13,8 @@ function pause(signal: AbortSignal): Promise<void> {
   });
 }
 
-export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: string, open: boolean) {
-  const [plan, setPlan] = useState<RepairPlan | null>(null);
+export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: string, open: boolean, noticeKey: string | null = null, checkId = 0) {
+  const [planState, setPlan] = useState<{ noticeKey: string | null; api: ApiClient | null; runtimeSlot: string; value: RepairPlan } | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
@@ -51,7 +51,7 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
     try {
       const latest = await loadRepairPlan({ ...scope, readLocal });
       if (!current()) return;
-      setPlan(latest);
+      setPlan({ noticeKey, api, runtimeSlot, value: latest });
       setLoading(false);
       if (install && latest.targets.length) {
         await repairVersions(latest, { ...scope,
@@ -64,7 +64,7 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
         if (current()) {
           const refreshed = await loadRepairPlan({ ...scope, readLocal });
           if (current()) {
-            setPlan(refreshed);
+            setPlan({ noticeKey, api, runtimeSlot, value: refreshed });
             setComplete(!refreshed.compatibilityUpdateRequired && !refreshed.targets.length);
             setProgress(refreshed.reason);
           }
@@ -80,8 +80,11 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
       if (active.current === controller) flight.current = false;
       if (current()) { setLoading(false); setBusy(false); }
     }
-  }, [bound, readLocal]);
-  useEffect(() => { if (open) void perform(false); }, [open, perform]);
+  }, [api, bound, noticeKey, readLocal, runtimeSlot]);
+  useEffect(() => { if (open) void perform(false); }, [checkId, open, perform]);
+  const plan = planState?.noticeKey === noticeKey
+    && planState.api === api && planState.runtimeSlot === runtimeSlot
+    ? planState.value : null;
   return { plan, loading, busy, progress, error, complete,
     check: () => perform(false), update: () => perform(true) };
 }
