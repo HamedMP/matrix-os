@@ -118,3 +118,22 @@ All15 admission/update assertions pass after the lifecycle review correction; Pl
   service until those bindings pass independent isolation checks.
 
 Final HTTP/readers/readiness/reports/queue/provenance run: **64/64 passed across7 files**, zero skipped. Combined with the separate30-case run, all94 assertions in these two inventories passed. Required Postgres CI inventory now includes the six new database suites.
+
+### API review corrections
+
+Greptile identified waiting-pair starvation and loss of wrong-running-version
+diagnosis. Four real Postgres assertions failed first: a full waiting batch blocked
+an active pair, a waiting reservation had no backoff, hard expiry was hidden by a
+future schedule, and a wrong running version lost its computer-specific source
+stage. The fix prioritizes expired/cleanup/active work, applies a15s backoff to busy
+queues and fresh readiness, and checks runningVersion at the source boundary.
+Live claims are not repeatedly selected; expiry still invalidates an active claim.
+
+The first verification run then exhausted the task-owned384MiB temporary database
+filesystem. That is an environment failure, not a passing result or code regression.
+Only the verified ENG-418 fixture was replaced; no other container/database changed.
+The unchanged verification run is recorded separately below when complete.
+
+Final API review verification: **30/30 passed across4 files**, zero skipped, on
+fresh local Postgres; Platform TypeScript passes. All four new fault assertions
+are included in that run. No assertion or timeout was relaxed.

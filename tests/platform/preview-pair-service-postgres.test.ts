@@ -65,6 +65,20 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("pair API service keeps c
     expect(await service.report(fixture.pair.pair_id, actor)).toMatchObject({ pairId: fixture.pair.pair_id });
     await expect(service.list({ limit: 16 }, actor)).rejects.toMatchObject({ status: 403 });
   });
+  it("reconciles an active pair even with a full batch of older waiting pairs", async () => {
+    for(let i=0;i<16;i++) await fixture.db.executor.insertInto("preview_pairs").values({
+      pair_id:`22222222-2222-4222-8222-${String(i).padStart(12,"0")}`,repository:"HamedMP/matrix-os",pr:4000+i,
+      requester_id:"user_requester",source_sha:fixture.pair.source_sha,state:"queued",
+      created_at:new Date(PAIR_NOW-60_000).toISOString(),expires_at:fixture.pair.expires_at,
+    }).execute();
+    const {service,activate}=setup(); await service.reconcile({limit:16});
+    expect(activate).toHaveBeenCalledOnce();
+  });
+  it("hard expiry bypasses a future scheduling backoff",async () => {
+    await fixture.db.executor.updateTable("preview_pairs").set({expires_at:new Date(PAIR_NOW).toISOString(),created_at:new Date(PAIR_NOW-60_000).toISOString(),next_attempt_at:new Date(PAIR_NOW+300_000).toISOString()}).execute();
+    const {service}=setup(); expect(await service.reconcile({limit:16})).toMatchObject({checked:1});
+    expect((await fixture.db.executor.selectFrom("preview_pairs").select("state").executeTakeFirstOrThrow()).state).toBe("cleanup_pending");
+  });
   it("stale operator actions cannot mutate the selected generation", async () => {
     const { service } = setup();
     await expect(service.action(fixture.pair.pair_id, { type: "stop", generation: 2, revision: 1 })).rejects.toThrow("unavailable");

@@ -31,6 +31,8 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("queued pairs acquire two
   it("retains the whole queued reservation while the existing fixture is occupied", async () => {
     const pair = await promoteQueuedPreviewPair(fixture.db, fixture.config, nextId, 1, fixture.prepare, PAIR_NOW);
     expect(pair.state).toBe("queued");
+    expect(Date.parse(pair.next_attempt_at!)).toBeGreaterThan(PAIR_NOW);
+    expect(pair.revision).toBe(2);
     expect(await fixture.db.executor.selectFrom("user_machines").selectAll().execute()).toHaveLength(2);
   });
   it("promotes both members together without extending the original hard expiry", async () => {

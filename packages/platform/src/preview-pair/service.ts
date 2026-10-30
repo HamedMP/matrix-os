@@ -94,8 +94,13 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
     async reconcile(raw: unknown) {
       const { limit } = PreviewPairReconcileSchema.parse(raw), started = performance.now();
       const rows = await db.executor.selectFrom("preview_pairs").select(["pair_id", "generation", "revision"])
-        .where("state", "!=", "stopped").where(eb => eb.or([eb("next_attempt_at", "is", null), eb("next_attempt_at", "<=", new Date(now()).toISOString())]))
-        .orderBy(sql`CASE WHEN state = 'cleanup_pending' THEN 0 WHEN state = 'updating' THEN 1 WHEN state = 'queued' THEN 2 ELSE 3 END`)
+        .where("state", "!=", "stopped").where(eb => eb.or([
+          eb.and([eb("state", "!=", "cleanup_pending"), eb("expires_at", "<=", new Date(now()).toISOString())]),
+          eb.and([eb.or([eb("next_attempt_at", "is", null), eb("next_attempt_at", "<=", new Date(now()).toISOString())]),
+            eb.or([eb("claim_expires_at", "is", null), eb("claim_expires_at", "<=", new Date(now()).toISOString())])]),
+        ]))
+        .orderBy(sql`CASE WHEN state <> 'cleanup_pending' AND expires_at <= ${new Date(now()).toISOString()} THEN 0
+          WHEN state = 'cleanup_pending' THEN 1 WHEN state = 'updating' THEN 2 WHEN state = 'queued' THEN 4 ELSE 3 END`)
         .orderBy("created_at").orderBy("pair_id").limit(limit).execute();
       let checked = 0, failed = 0;
       for (const pair of rows) {

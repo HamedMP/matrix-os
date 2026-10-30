@@ -18,6 +18,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("canonical pair readiness
         ...fixture.manifest.members[member.role], machineId: member.machineId, actorId: member.actorId,
         healthy: fault !== "offline", bundleSha256: fixture.candidate.hostBundleSha256,
         observedAt: new Date(PAIR_NOW).toISOString(),
+        runningVersion: fault === "wrong running version" ? "different-version" : fixture.candidate.hostBundleVersion,
         runningSha: fault === "wrong source" ? "f".repeat(40) : fixture.candidate.sourceSha,
         lastControlAt: new Date(PAIR_NOW - (fault === "stale control" ? 120_000 : 5_000)).toISOString(),
         runtimeSlot: fault === "primary fallback" ? "primary" : member.handle,
@@ -41,14 +42,14 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("canonical pair readiness
     // Readiness never publishes a product project or creates collaboration grants.
     expect(fixture.hetzner.createServer).not.toHaveBeenCalled();
   });
-  it.each(["isolation", "membership", "offline", "wrong source", "stale control", "primary fallback", "funding"])(
+  it.each(["isolation", "membership", "offline", "wrong source", "wrong running version", "stale control", "primary fallback", "funding"])(
     "fails closed for %s without marking the pair ready", async fault => {
       const { claim, adapters } = await setup(fault);
       await expect(refreshPreviewPairReadiness(fixture.db, claim, fixture.config, adapters, () => PAIR_NOW)).rejects.toThrow("unavailable");
       const failed = await fixture.db.executor.selectFrom("preview_pairs").selectAll().executeTakeFirstOrThrow();
       expect(failed.state).not.toBe("ready");
       const expectedStage = { isolation: /^authority$/, membership: /^membership$/, offline: /^(owner|member)_runtime$/,
-        "wrong source": /^(owner|member)_source$/, "stale control": /^(owner|member)_control$/,
+        "wrong source": /^(owner|member)_source$/, "wrong running version": /^(owner|member)_source$/, "stale control": /^(owner|member)_control$/,
         "primary fallback": /^(owner|member)_runtime$/, funding: /^(owner|member)_funding$/ }[fault]!;
       expect(failed.failure_code).toMatch(expectedStage);
     });
