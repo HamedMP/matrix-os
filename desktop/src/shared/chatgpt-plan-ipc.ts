@@ -12,7 +12,7 @@ export const ChatgptPlanStatusSchema = z.object({
         id: z.uuid(), label: z.string().min(1).max(256)
     }).strict().optional(), models: z.array(ChatgptPlanModelSchema).max(64), grant: z.object({
         revision: z.number().int().nonnegative(), enabled: z.boolean(), background: z.boolean()
-    }).strict(), grantSaveUnconfirmed: z.boolean().optional(), bridgeConnected: z.boolean(), bridgeFailure: z.literal('device_conflict').optional(), revocation: z.enum(['none', 'confirmed', 'unconfirmed'])
+    }).strict(), bridgeConnected: z.boolean(), bridgeFailure: z.literal('device_conflict').optional(), revocation: z.enum(['none', 'confirmed', 'unconfirmed'])
 }).strict();
 export const CHATGPT_PLAN_INVOKE = {
     'chatgpt-plan:status': {
@@ -35,14 +35,7 @@ export const CHATGPT_PLAN_INVOKE = {
     },
     'chatgpt-plan:set-grant': {
         request: ChatgptPlanSessionSchema.extend({
-            enabled: z.boolean(), background: z.boolean(),
-            accountId: z.uuid().optional(),
-            baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1).optional()
-        }).superRefine((input, ctx) => {
-            // Legacy interactive/revoke calls remain valid. Background access
-            // requires fresh, explicit intent for the displayed account/grant.
-            if (input.background && (!input.enabled || !input.accountId || input.baseRevision === undefined))
-                ctx.addIssue({ code: 'custom', message: 'Invalid authorization intent' });
+            enabled: z.boolean(), background: z.literal(false)
         }), response: ChatgptPlanStatusSchema
     },
 } as const;
