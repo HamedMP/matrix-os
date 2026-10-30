@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GettingStartedAppProgress, GettingStartedResults } from "@matrix-os/contracts";
 import {
   GettingStartedAppProvider,
+  useGettingStartedApp,
   GettingStartedAppView,
   gettingStartedAppAction,
   gettingStartedAppToast,
@@ -281,6 +282,22 @@ describe("Getting started app availability", () => {
     await waitFor(() => expect(onEnabledChange).toHaveBeenCalledWith(true));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
     expect(onEnabledChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("says whether this computer serves the app: checking, then enabled or unavailable", async () => {
+    function Availability() {
+      return <span data-testid="availability">{useGettingStartedApp()?.availability ?? "none"}</span>;
+    }
+    const port = makePort();
+    let resolve: (progress: GettingStartedAppProgress) => void = () => undefined;
+    port.loadProgress.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    render(<GettingStartedAppProvider port={port} refreshMs={25} onToast={vi.fn()}><Availability /></GettingStartedAppProvider>);
+    expect(screen.getByTestId("availability").textContent).toBe("checking");
+    await act(async () => resolve({ awards: [], total: 0 }));
+    await waitFor(() => expect(screen.getByTestId("availability").textContent).toBe("enabled"));
+    cleanup();
+    render(<GettingStartedAppProvider port={makePort({ progress: null })} refreshMs={25} onToast={vi.fn()}><Availability /></GettingStartedAppProvider>);
+    await waitFor(() => expect(screen.getByTestId("availability").textContent).toBe("unavailable"));
   });
 });
 

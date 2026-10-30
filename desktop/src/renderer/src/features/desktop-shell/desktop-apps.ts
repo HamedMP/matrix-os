@@ -173,6 +173,18 @@ export const GETTING_STARTED_DESKTOP_APP: DesktopAppConfig = {
   iconColor: APPEARANCE["getting-started"].foreground,
 };
 
+/**
+ * Startup restore waits for the app catalog and for whether this computer serves Getting started,
+ * so a saved Getting started window is not skipped when that check lands after restore.
+ */
+export function desktopStartupCatalogSettled({ appsLoading, gettingStartedApp }: {
+  appsLoading: boolean;
+  /** The Getting started provider's availability; null outside a provider. */
+  gettingStartedApp: "checking" | "enabled" | "unavailable" | null;
+}): boolean {
+  return !appsLoading && gettingStartedApp !== "checking";
+}
+
 /** Desktop destinations for this computer: the defaults, plus Getting started when it is served. */
 export function desktopAppsFor({ gettingStartedApp }: { gettingStartedApp: boolean }): readonly DesktopAppConfig[] {
   return gettingStartedApp ? [...FIXED_DESKTOP_APPS, GETTING_STARTED_DESKTOP_APP] : FIXED_DESKTOP_APPS;

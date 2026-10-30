@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_OS_VIEW_DESKTOP_APP_PATHS, osViewBundledIconUrlForPath } from "@matrix-os/contracts";
-import { FIXED_DESKTOP_APPS, desktopAppsFor } from "@desktop/renderer/src/features/desktop-shell/desktop-apps";
+import { FIXED_DESKTOP_APPS, desktopAppsFor, desktopStartupCatalogSettled } from "@desktop/renderer/src/features/desktop-shell/desktop-apps";
 import { normalizeBuiltInAppPath } from "../../shell/src/lib/builtin-apps";
 
 describe("Getting started app destination (spec 639)", () => {
@@ -18,5 +18,14 @@ describe("Getting started app destination (spec 639)", () => {
   it("uses its bundled icon and canonical built-in path on Web", () => {
     expect(osViewBundledIconUrlForPath("__getting-started__")).toBe("/system-app-icons/v2/getting-started.png");
     expect(normalizeBuiltInAppPath("getting-started")).toBe("__getting-started__");
+  });
+
+  it("holds startup restore until it is known whether the computer serves Getting started", () => {
+    // A saved Getting started window would otherwise be skipped when the check lands after restore.
+    expect(desktopStartupCatalogSettled({ appsLoading: false, gettingStartedApp: "checking" })).toBe(false);
+    expect(desktopStartupCatalogSettled({ appsLoading: false, gettingStartedApp: "enabled" })).toBe(true);
+    expect(desktopStartupCatalogSettled({ appsLoading: false, gettingStartedApp: "unavailable" })).toBe(true);
+    expect(desktopStartupCatalogSettled({ appsLoading: false, gettingStartedApp: null })).toBe(true);
+    expect(desktopStartupCatalogSettled({ appsLoading: true, gettingStartedApp: "enabled" })).toBe(false);
   });
 });

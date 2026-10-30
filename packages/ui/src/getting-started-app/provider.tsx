@@ -31,9 +31,13 @@ export interface GettingStartedAppPort {
 
 export type GettingStartedAppPoints = { kind: "loading" } | { kind: "unavailable" } | { kind: "ready"; total: number };
 
+/** Whether this computer serves the app: still reading, yes, or a gateway that predates it (or no computer). */
+export type GettingStartedAppAvailability = "checking" | "enabled" | "unavailable";
+
 export interface GettingStartedAppState {
   /** False until the first read, and on computers whose gateway predates the app. */
   enabled: boolean;
+  availability: GettingStartedAppAvailability;
   loaded: boolean;
   tasks: GettingStartedAppTask[];
   doneCount: number;
@@ -91,6 +95,7 @@ export function GettingStartedAppProvider({
   refreshMs?: number;
 }) {
   const [enabled, setEnabled] = useState(false);
+  const [checked, setChecked] = useState(false);
   const [results, setResults] = useState<GettingStartedResults | null>(null);
   // Tasks that already paid out stay Done, even if their status can no longer be checked.
   const [earned, setEarned] = useState<readonly GettingStartedAppTaskId[]>([]);
@@ -125,6 +130,7 @@ export function GettingStartedAppProvider({
 
   const reportEnabled = useCallback((next: boolean) => {
     setEnabled(next);
+    setChecked(true);
     if (enabledRef.current === next) return;
     enabledRef.current = next;
     callbacks.current.onEnabledChange?.(next);
@@ -279,14 +285,16 @@ export function GettingStartedAppProvider({
     if (enabled && desktopIconReady) placeDesktopIcon();
   }, [enabled, desktopIconReady, placeDesktopIcon]);
 
+  const availability: GettingStartedAppAvailability = !port ? "unavailable" : !checked ? "checking" : enabled ? "enabled" : "unavailable";
   const value = useMemo<GettingStartedAppState>(() => ({
     enabled,
+    availability,
     loaded: results !== null,
     tasks,
     doneCount: tasks.filter((task) => task.status === "complete").length,
     points,
     open: onOpen ?? null,
-  }), [enabled, results, tasks, points, onOpen]);
+  }), [enabled, availability, results, tasks, points, onOpen]);
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

@@ -8,7 +8,7 @@ import { FILES_WORKSPACE_TAB_SPEC, useTabs, type Tab } from "../../stores/tabs";
 import { EDITOR_WORKSPACE_TAB_SPEC } from "../editor/desktop-editor-store";
 import { openChatIndex, openTerminalIndex } from "../mission-control/navigation-roots";
 import DesktopIconGrid, { type DesktopDestination } from "./DesktopIconGrid";
-import { FIXED_DESKTOP_APPS, desktopAppsFor, type DesktopAppId } from "./desktop-apps";
+import { FIXED_DESKTOP_APPS, desktopAppsFor, desktopStartupCatalogSettled, type DesktopAppId } from "./desktop-apps";
 import { bundledDesktopIconForPath, desktopTabsWithLiveAppArtwork } from "./bundled-app-icons";
 import DesktopSurfaceFrame from "./DesktopSurfaceFrame";
 import DesktopTaskbar from "./DesktopTaskbar";
@@ -260,7 +260,8 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     }
   }, [closeTab, tabs]);
 
-  const gettingStartedAppEnabled = useGettingStartedApp()?.enabled ?? false;
+  const gettingStartedApp = useGettingStartedApp();
+  const gettingStartedAppEnabled = gettingStartedApp?.enabled ?? false;
   const destinations = useMemo<DesktopDestination[]>(() => {
     const fixedApps = desktopAppsFor({ gettingStartedApp: gettingStartedAppEnabled }).map((app) => {
       if (app.id !== "notes" && app.id !== "whiteboard") return app;
@@ -322,7 +323,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
   }, [gettingStartedAppEnabled, installedApps, openRoot, openTab, platformHost, runtimeSlot]);
 
   useNativeChatStartup({
-    entryKey, loadSettled, surfacesRestored, modeHydrated: desktopModeHydrated, catalogSettled: !appsLoading,
+    entryKey, loadSettled, surfacesRestored, modeHydrated: desktopModeHydrated, catalogSettled: desktopStartupCatalogSettled({ appsLoading, gettingStartedApp: gettingStartedApp?.availability ?? null }),
     durableState, installedApps, destinations, navigationChangedRef, restoringRef,
     openChat: () => openRoot(openChatIndex),
   });
