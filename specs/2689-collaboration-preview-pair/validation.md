@@ -241,3 +241,21 @@ run:48/48 across5 files. This verifies API response fidelity only; that existing
 service is not claimed as an approved isolated pair or live journey evidence.
 
 Focused Platform TypeScript passes after the final Cloud Run response-shape correction.
+
+### Provider progress within the activation budget
+
+Greptile identified a30s provider-poll loop inside the10s pair activation budget.
+Three dispatcher assertions failed first (one job per pass, one action observation,
+and immediate recovery of an interrupted job lease); the actual HTTP-client signal
+assertion also failed because parent cancellation was ignored. After the fix,
+**17/17 cases pass across3 files**, zero skipped, including retained provider-client
+coverage. Pair dispatch polls once, releases only its exact job lease, preserves a
+pre-POST creation intent and adopts a later exact-label result without another POST.
+Unknown creation outcomes remain pending and retain capacity. Ordinary dispatch
+keeps its existing poll policy; HTTP requests still have their own10s deadline.
+The database/dispatcher/client are real; provider responses and projection remain
+fixtures. No server creation or pair-readiness claim is made.
+
+Focused ordinary Preview regression checks: **2/2 selected cases pass** (7 other
+cases excluded by filter), exercising continuing create-action polling and
+expired-lease provider adoption. Focused Platform native TypeScript passes.

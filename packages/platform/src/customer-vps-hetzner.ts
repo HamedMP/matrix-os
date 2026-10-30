@@ -71,6 +71,7 @@ export interface CreateHetznerSnapshotInput {
 }
 
 export interface HetznerClient {
+  withSignal?(signal: AbortSignal): HetznerClient;
   createServer(input: CreateHetznerServerInput): Promise<HetznerServer>;
   getServer(serverId: number): Promise<HetznerServer | null>;
   shutdownServer(serverId: number): Promise<void>;
@@ -244,6 +245,7 @@ async function parseJson(res: Response): Promise<unknown> {
 export function createHetznerClient(
   config: CustomerVpsConfig,
   fetchImpl: typeof fetch = fetch,
+  parentSignal?: AbortSignal,
 ): HetznerClient {
   async function request(path: string, init: RequestInit = {}): Promise<Response> {
     const token = requireToken(config);
@@ -254,11 +256,12 @@ export function createHetznerClient(
         'content-type': 'application/json',
         ...(init.headers ?? {}),
       },
-      signal: AbortSignal.timeout(HETZNER_TIMEOUT_MS),
+      signal: parentSignal ? AbortSignal.any([parentSignal, AbortSignal.timeout(HETZNER_TIMEOUT_MS)]) : AbortSignal.timeout(HETZNER_TIMEOUT_MS),
     });
   }
 
   return {
+    withSignal: signal => createHetznerClient(config, fetchImpl, parentSignal ? AbortSignal.any([parentSignal, signal]) : signal),
     async createServer(input) {
       // Hetzner rejects user_data over 32KiB with a generic 422
       // invalid_input; fail with a distinct code before calling out so the
