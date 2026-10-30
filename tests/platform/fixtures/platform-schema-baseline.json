@@ -197,6 +197,7 @@
     {"table_name":"billing_checkout_attempts","column_name":"clerk_user_id","data_type":"text","is_nullable":"NO","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"billing_checkout_attempts","column_name":"stripe_session_id","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"billing_checkout_attempts","column_name":"checkout_url","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
+    {"table_name":"billing_checkout_attempts","column_name":"request_payload","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"billing_checkout_attempts","column_name":"runtime_slot","data_type":"text","is_nullable":"NO","column_default":"'primary'::text","character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"billing_checkout_attempts","column_name":"plan_slug","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},
     {"table_name":"billing_checkout_attempts","column_name":"billing_interval","data_type":"text","is_nullable":"YES","column_default":null,"character_maximum_length":null,"numeric_precision":null,"numeric_scale":null},

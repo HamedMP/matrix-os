@@ -14,6 +14,7 @@ import type {
 import type { PrebillingProvisioningIntent } from '../../packages/platform/src/prebilling-provisioning-store.js';
 import {
   getLatestJourneyEvent,
+  claimCheckoutAttempt,
   getOnboardingFirstRun,
   insertCheckoutAttempt,
   insertUserMachine,
@@ -52,11 +53,13 @@ function attempt(status: BillingCheckoutAttemptRecord['status'], createdAt: stri
     clerkUserId: 'user_123',
     stripeSessionId: 'cs_1',
     checkoutUrl: 'https://checkout.stripe.test/session',
+    requestPayload: null,
     runtimeSlot: 'primary',
     planSlug: 'matrix_builder',
     billingInterval: 'monthly',
     regionSlug: 'region_fsn1',
     serverType: 'cpx32',
+    trialPeriodDays: null,
     status,
     developerTools: ['codex', 'claude-code', 'opencode', 'pi'],
     createdAt,
@@ -116,11 +119,29 @@ describe('platform/journey deriveJourneyPhase', () => {
     expect(s.nextAction.url).toContain('plans=1');
   });
 
-  it('open attempt within window → payment_settling (not delayed)', () => {
-    const s = derive({ checkoutAttempt: attempt('open', '2026-06-11T11:55:00.000Z') });
+  it('unresolved creating attempt stays in payment settling instead of offering another checkout', () => {
+    const s = derive({ checkoutAttempt: attempt('creating', '2026-06-11T11:59:00.000Z') });
     expect(s.phase).toBe('payment_settling');
-    expect(s.settling?.delayed).toBe(false);
     expect(s.nextAction.kind).toBe('wait');
+  });
+
+  it('routes an old unresolved create to support without offering another checkout', () => {
+    const s = derive({ checkoutAttempt: attempt('creating', '2026-06-11T11:00:00.000Z') });
+    expect(s.phase).toBe('payment_settling');
+    expect(s.settling?.delayed).toBe(true);
+    expect(s.nextAction.kind).toBe('contact_support');
+  });
+
+  it('open attempt immediately returns to recoverable billing instead of activation', () => {
+    const s = derive({ checkoutAttempt: attempt('open', '2026-06-11T11:55:00.000Z') });
+    expect(s.phase).toBe('plan_required');
+    expect(s.settling).toBeUndefined();
+    expect(s.nextAction.kind).toBe('open_plans');
+  });
+
+  it('preserves the selected computer when returning an unfinished checkout to billing', () => {
+    const s = derive({ checkoutAttempt: { ...attempt('open', '2026-06-11T11:55:00.000Z'), runtimeSlot: 'studio' } });
+    expect(new URL(s.nextAction.url!).searchParams.get('runtime')).toBe('studio');
   });
 
   it('paid attempt within window → payment_settling (not delayed)', () => {
@@ -136,6 +157,21 @@ describe('platform/journey deriveJourneyPhase', () => {
     const s = derive({ checkoutAttempt: attempt('paid', '2026-06-11T11:40:00.000Z') });
     expect(s.phase).toBe('payment_settling');
     expect(s.settling?.delayed).toBe(true);
+    expect(s.nextAction.kind).toBe('contact_support');
+  });
+
+  it('measures activation delay from confirmation, not from opening checkout', () => {
+    const checkoutAttempt = { ...attempt('paid', '2026-06-11T11:00:00.000Z'), resolvedAt: '2026-06-11T11:59:45.000Z' };
+    const s = derive({ checkoutAttempt });
+    expect(s.phase).toBe('payment_settling');
+    expect(s.settling).toEqual({ since: checkoutAttempt.resolvedAt, delayed: false });
+  });
+
+  it('offers support after a minute of confirmed activation without a fresh purchase', () => {
+    const checkoutAttempt = { ...attempt('paid', '2026-06-11T11:00:00.000Z'), resolvedAt: '2026-06-11T11:58:59.000Z' };
+    const s = deriveJourneyPhase({ entitlement: null, checkoutAttempt, liveMachine: null, prebillingIntent: null,
+      firstRun: null, now: NOW, settlingWindowMs: 60_000, maxProvisionAttempts: 3, appOrigin: APP_ORIGIN });
+    expect(s.phase).toBe('payment_settling');
     expect(s.nextAction.kind).toBe('contact_support');
   });
 
@@ -273,12 +309,25 @@ describe('platform/journey loadJourney', () => {
     expect(rows).toHaveLength(1);
   });
 
-  it('reads a seeded open checkout attempt as payment_settling', async () => {
+  it('reads a seeded open checkout attempt as recoverable billing', async () => {
     await insertCheckoutAttempt(db, {
       id: 'att-1', clerkUserId: 'user_pay', stripeSessionId: 'cs_live_1', createdAt: '2026-06-11T11:57:00.000Z',
     });
     const state = await loadJourney('user_pay', { db, now: () => NOW, maxProvisionAttempts: 3, appOrigin: APP_ORIGIN });
+    expect(state.phase).toBe('plan_required');
+  });
+
+  it('reads an unresolved creating attempt as payment settling instead of opening plans', async () => {
+    await claimCheckoutAttempt(db, {
+      id: 'creating-1', clerkUserId: 'user_creating', runtimeSlot: 'primary',
+      planSlug: 'matrix_builder', billingInterval: 'monthly', regionSlug: 'region_fsn1',
+      createdAt: '2026-06-11T11:59:30.000Z',
+    });
+    const state = await loadJourney('user_creating', {
+      db, now: () => NOW, maxProvisionAttempts: 3, appOrigin: APP_ORIGIN,
+    });
     expect(state.phase).toBe('payment_settling');
+    expect(state.nextAction.kind).toBe('wait');
   });
 
   it('keeps a paid attempt sticky even when a newer open attempt exists past the window', async () => {
@@ -289,6 +338,14 @@ describe('platform/journey loadJourney', () => {
     await insertCheckoutAttempt(db, { id: 'open-2', clerkUserId: 'user_two', stripeSessionId: 'cs_open_new', createdAt: '2026-06-11T11:45:00.000Z' });
     const state = await loadJourney('user_two', { db, now: () => NOW, maxProvisionAttempts: 3, appOrigin: APP_ORIGIN });
     expect(state.phase).toBe('payment_settling');
+  });
+
+  it('offers support by default after a minute of confirmed activation', async () => {
+    await insertCheckoutAttempt(db, { id: 'paid-delayed', clerkUserId: 'user_delayed', stripeSessionId: 'cs_delayed', createdAt: '2026-06-11T11:30:00.000Z' });
+    await resolveCheckoutAttempt(db, 'cs_delayed', 'paid', '2026-06-11T11:58:59.000Z');
+    const state = await loadJourney('user_delayed', { db, now: () => NOW, maxProvisionAttempts: 3, appOrigin: APP_ORIGIN });
+    expect(state.phase).toBe('payment_settling');
+    expect(state.nextAction.kind).toBe('contact_support');
   });
 
   it('upserts and reads a first-run record (write-behind wins)', async () => {

@@ -58,6 +58,9 @@ describe("onboarding billing navigation", () => {
     resetMatrixBillingAccessCacheForTests();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url === "/billing/checkout/reconcile") {
+        return Response.json({ status: "none" });
+      }
       if (url.startsWith("/api/journey")) return Response.json(journey);
       if (url.includes("/billing/status")) {
         return Response.json({ access: { runtimeProxyAllowed: false } });
@@ -100,12 +103,24 @@ describe("onboarding billing navigation", () => {
     "/?plans=1",
     "/?billing=setup",
     "/?checkout=cancelled",
-    "/?checkout=success",
     "/?device_return=%2Fauth%2Fdevice%3Fuser_code%3DBCDF-GHJK",
   ])("does not redirect behind billing at %s", async (url) => {
     window.history.replaceState({}, "", url);
     render(<OnboardingGate><div>Workspace</div></OnboardingGate>);
     await expectStableBilling();
     expect(navigation.replace).not.toHaveBeenCalled();
+  });
+
+  it("verifies a checkout success before deriving its billing destination", async () => {
+    window.history.replaceState({}, "", "/?checkout=success");
+    render(<OnboardingGate><div>Workspace</div></OnboardingGate>);
+
+    await waitFor(() => expect(navigation.replace).toHaveBeenCalledTimes(1));
+    const calls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+    expect(calls.slice(0, 2)).toEqual([
+      "/billing/checkout/reconcile",
+      "/api/journey",
+    ]);
+    expect(new URL(navigation.replace.mock.calls[0][0]).search).toBe("?plans=1");
   });
 });

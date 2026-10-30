@@ -742,6 +742,7 @@ export interface BillingCheckoutAttemptsTable {
   clerk_user_id: string;
   stripe_session_id: string | null;
   checkout_url: string | null;
+  request_payload: string | null;
   runtime_slot: string;
   plan_slug: string | null;
   billing_interval: string | null;
@@ -1020,6 +1021,7 @@ export interface BillingCheckoutAttemptRecord {
   clerkUserId: string;
   stripeSessionId: string | null;
   checkoutUrl: string | null;
+  requestPayload: string | null;
   runtimeSlot: string;
   planSlug: MatrixBillingPlanSlug | null;
   billingInterval: MatrixBillingInterval | null;
@@ -1766,6 +1768,7 @@ export {
 export {
   insertCheckoutAttempt,
   claimCheckoutAttempt,
+  canRetryCreatingCheckoutAttempt,
   claimCardTrialCheckoutAttempt,
   isCardTrialOfferEligible,
   consumeCardTrial,

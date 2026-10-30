@@ -35,7 +35,25 @@ export async function fetchMobileJourney(baseUrl: string, token: string | null):
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), JOURNEY_TIMEOUT_MS);
   try {
-    const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/journey`, {
+    const base = baseUrl.replace(/\/+$/, "");
+    // Reconcile the authenticated owner's persisted Checkout Session before
+    // trusting a plan_required journey. This closes the webhook-lag window for
+    // native users without accepting any session identity from the client.
+    const reconciliation = await fetch(`${base}/billing/checkout/reconcile`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ runtimeSlot: "primary" }),
+      signal: controller.signal,
+    });
+    if (reconciliation.status === 401 || reconciliation.status === 403) {
+      return { status: "unauthorized" };
+    }
+    if (!reconciliation.ok) return { status: "unreachable" };
+    const res = await fetch(`${base}/api/journey`, {
       headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
       signal: controller.signal,
     });

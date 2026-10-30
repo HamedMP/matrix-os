@@ -19,7 +19,7 @@ import {
   type PrebillingProvisioningIntent,
 } from './prebilling-provisioning-store.js';
 
-export const DEFAULT_SETTLING_WINDOW_MS = 10 * 60 * 1000;
+export const DEFAULT_SETTLING_WINDOW_MS = 60 * 1000;
 
 export type JourneyPhase =
   | 'account_required'
@@ -72,13 +72,15 @@ export interface JourneyDerivationInputs {
   settlingWindowMs: number;
   maxProvisionAttempts: number;
   appOrigin: string;
+  runtimeSlot?: string;
   /** Optional readiness annotation supplied by a caller (Phase C); omitted in Phase B. */
   readiness?: JourneyReadinessAnnotation;
 }
 
-function plansUrl(appOrigin: string): string {
+function plansUrl(appOrigin: string, runtimeSlot?: string): string {
   const url = new URL(appOrigin);
   url.searchParams.set('plans', '1');
+  if (runtimeSlot && runtimeSlot !== 'primary') url.searchParams.set('runtime', runtimeSlot);
   return url.toString();
 }
 
@@ -130,27 +132,36 @@ export function deriveJourneyPhase(inputs: JourneyDerivationInputs): JourneyStat
   if (!access.runtimeProxyAllowed) {
     // Billing branch. Settling only applies pre-activation; a lapsed entitlement
     // falls straight through to plan_required.
-    if (isPreActivationEntitlement(entitlement) && checkoutAttempt) {
-      const ageMs = now.getTime() - new Date(checkoutAttempt.createdAt).getTime();
-      const withinWindow = ageMs <= settlingWindowMs;
-      const sustainsSettling =
-        checkoutAttempt.status === 'paid' || (checkoutAttempt.status === 'open' && withinWindow);
-      if (sustainsSettling) {
-        const delayed = ageMs > settlingWindowMs; // only reachable for a `paid` attempt
-        return {
-          phase: 'payment_settling',
-          detail: delayed
-            ? 'Your payment is taking longer than expected to confirm.'
-            : 'Activating your subscription…',
-          nextAction: delayed ? { kind: 'contact_support' } : { kind: 'wait' },
-          settling: { since: checkoutAttempt.createdAt, delayed },
-        };
-      }
+    if (isPreActivationEntitlement(entitlement) && checkoutAttempt?.status === 'creating') {
+      const since = checkoutAttempt.createdAt;
+      const ageMs = now.getTime() - new Date(since).getTime();
+      const delayed = ageMs > settlingWindowMs;
+      return {
+        phase: 'payment_settling',
+        detail: delayed
+          ? 'Your checkout could not be confirmed automatically.'
+          : 'Confirming your checkout…',
+        nextAction: delayed ? { kind: 'contact_support' } : { kind: 'wait' },
+        settling: { since, delayed },
+      };
+    }
+    if (isPreActivationEntitlement(entitlement) && checkoutAttempt?.status === 'paid') {
+      const since = checkoutAttempt.resolvedAt ?? checkoutAttempt.createdAt;
+      const ageMs = now.getTime() - new Date(since).getTime();
+      const delayed = ageMs > settlingWindowMs;
+      return {
+        phase: 'payment_settling',
+        detail: delayed
+          ? 'Your subscription is taking longer than expected to activate.'
+          : 'Activating your subscription…',
+        nextAction: delayed ? { kind: 'contact_support' } : { kind: 'wait' },
+        settling: { since, delayed },
+      };
     }
     return {
       phase: 'plan_required',
       detail: 'Choose a plan to create your Matrix computer.',
-      nextAction: { kind: 'open_plans', url: plansUrl(appOrigin) },
+      nextAction: { kind: 'open_plans', url: plansUrl(appOrigin, inputs.runtimeSlot ?? checkoutAttempt?.runtimeSlot) },
     };
   }
 
@@ -270,6 +281,7 @@ export async function loadJourney(clerkUserId: string, deps: LoadJourneyDeps): P
     settlingWindowMs: deps.settlingWindowMs ?? DEFAULT_SETTLING_WINDOW_MS,
     maxProvisionAttempts: deps.maxProvisionAttempts,
     appOrigin: deps.appOrigin,
+    runtimeSlot: deps.runtimeSlot,
     readiness: deps.readiness,
   });
 

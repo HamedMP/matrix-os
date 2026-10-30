@@ -602,6 +602,17 @@ describe('platform prebilling provisioning foundation', () => {
       now: CREATED_AT,
     });
     expect(preparation).toEqual({ intentId: 'intent-1', expiresAt: EXPIRES_AT });
+    await expect(coordinator.createIntent({
+      checkoutAttemptId: 'checkout-1',
+      clerkUserId: 'user_123',
+      runtimeSlot: 'primary',
+      planSlug: 'matrix_builder',
+      billingInterval: 'monthly',
+      serverType: 'cpx32',
+      regionSlug: 'region_fsn1',
+      developerTools: ['codex', 'claude-code'],
+      now: '2026-06-11T12:05:00.000Z',
+    })).resolves.toEqual({ intentId: 'intent-1', expiresAt: EXPIRES_AT });
     await expect(coordinator.startPreparation({
       intentId: 'intent-1',
       stripeSessionId: 'cs_1',
