@@ -12,7 +12,7 @@ import {
 import type { InteractionLogger } from "../logger.js";
 import { isRequestPrincipalError, mapRequestPrincipalError, requireRequestPrincipal } from "../request-principal.js";
 import { timingSafeStringEquals } from "../security/timing-safe.js";
-import { getSystemInfo } from "../system-info.js";
+import { getSystemInfo, readReleaseInfo } from "../system-info.js";
 import {
   checkForSystemUpdate, listSystemReleases, readSystemUpdateFailure,
   resolveInternalUpgradeInstallTarget, resolveInternalUpgradeStartTarget,
@@ -45,14 +45,23 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
   const { app, homePath, model, runningVersion, interactionLogger, pushAdapter,
     posthogErrorTracker, ownerTelemetryDistinctId, upgradeBodyLimit,
     logBestEffortFailure } = options;
+  // Native host services do not export build variables. Capture matching release
+  // provenance once at registration; later installs cannot relabel this process.
+  const installedAtStartup = readReleaseInfo();
+  const runningRelease = installedAtStartup?.version === runningVersion ? installedAtStartup : undefined;
+  const runningBuild = Object.freeze({
+    sha: process.env.MATRIX_BUILD_SHA ?? runningRelease?.gitCommit ?? "unknown",
+    ref: process.env.MATRIX_BUILD_REF ?? runningRelease?.gitRef ?? "unknown",
+    date: process.env.MATRIX_BUILD_DATE ?? runningRelease?.buildTime ?? "unknown",
+  });
   app.get("/api/system/info", (c) => {
-    const info = getSystemInfo(homePath, { model: model, runningVersion });
+    const info = getSystemInfo(homePath, { model: model, runningVersion, runningBuild });
     const today = new Date().toISOString().slice(0, 10);
     return c.json({ ...info, todayCost: interactionLogger.totalCost(today) });
   });
 
   app.get("/api/system/update", async (c) => {
-    const info = getSystemInfo(homePath, { model: model, runningVersion });
+    const info = getSystemInfo(homePath, { model: model, runningVersion, runningBuild });
     const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
       envChannel: process.env.MATRIX_UPDATE_CHANNEL,
       installedChannel: info.release?.channel,
@@ -73,7 +82,7 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
   });
 
   app.get("/api/system/releases", async (c) => {
-    const info = getSystemInfo(homePath, { model: model, runningVersion });
+    const info = getSystemInfo(homePath, { model: model, runningVersion, runningBuild });
     const channel = resolveSystemUpdateChannel(c.req.query("channel"), {
       envChannel: process.env.MATRIX_UPDATE_CHANNEL,
       installedChannel: info.release?.channel,
@@ -108,7 +117,7 @@ export function registerSystemOperatorRoutes(options: SystemOperatorRouteOptions
         console.warn("[system-update] Failed to parse update request:", err);
       }
     }
-    const info = getSystemInfo(homePath, { model: model, runningVersion });
+    const info = getSystemInfo(homePath, { model: model, runningVersion, runningBuild });
     const parsedTarget = resolveInternalUpgradeStartTarget(body, {
       envChannel: process.env.MATRIX_UPDATE_CHANNEL,
       installedChannel: info.release?.channel,

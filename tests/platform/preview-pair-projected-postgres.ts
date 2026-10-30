@@ -13,10 +13,10 @@ import { bootstrapPlatformRuntimeEndpointDatabase, type RuntimeEndpointPlatformD
 
 /** Actual admission, projection, registration and two databases. Provider IDs are synthetic;
  * this does not exercise paid provisioning, Clerk login or the customer sharing journey. */
-export async function createProjectedPreviewPair(addresses: readonly [string, string] = ["203.0.113.10", "203.0.113.11"]) {
+export async function createProjectedPreviewPair(addresses: readonly [string, string] = ["203.0.113.10", "203.0.113.11"], hostBundleSha256?: string) {
   const previewSecret = "isolated-preview-" + "p".repeat(40);
   const controlSecret = "isolated-control-" + "c".repeat(40);
-  const source = await createSeededPreviewPair({ platformSecret: controlSecret });
+  const source = await createSeededPreviewPair({ platformSecret: controlSecret }, hostBundleSha256);
   let target: Awaited<ReturnType<typeof createIsolatedPreviewPairDatabase>> | undefined;
   try {
     target = await createIsolatedPreviewPairDatabase();

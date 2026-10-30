@@ -10,13 +10,13 @@ import { createMockCustomerVpsSystemStore, createMockHetznerClient } from "./cus
 import { createTestConfig } from "./customer-vps-service-test-helper.js";
 import { upsertHostBundleRelease } from "../../packages/platform/src/db.js";
 
-export async function createSeededPreviewPair(overrides: Partial<ReturnType<typeof createTestConfig>> = {}) {
+export async function createSeededPreviewPair(overrides: Partial<ReturnType<typeof createTestConfig>> = {}, hostBundleSha256 = "c".repeat(64)) {
   const fixture = await createPreviewPairPostgresFixture();
   try {
     const manifest = previewPairManifestFixture();
     const config = loadPreviewPairConfig(previewPairConfigurationFixture()) as EnabledPreviewPairConfig;
     const candidate = { sourceSha: manifest.sourceSha, hostBundleVersion: manifest.members.owner.installedVersion,
-      hostBundleSha256: "c".repeat(64), desktopArtifacts: manifest.desktopArtifacts, browserOrigin: manifest.browserOrigin,
+      hostBundleSha256, desktopArtifacts: manifest.desktopArtifacts, browserOrigin: manifest.browserOrigin,
       apiOrigin: manifest.apiOrigin, identityIssuer: manifest.identityIssuer, platformSource: manifest.platformSource };
     await upsertHostBundleRelease(fixture.db, { version: candidate.hostBundleVersion, channel: null,
       sha256: candidate.hostBundleSha256, gitCommit: manifest.sourceSha, sourcePr: manifest.pr,
