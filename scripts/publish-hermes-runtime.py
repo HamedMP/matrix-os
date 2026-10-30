@@ -259,6 +259,28 @@ def _archive_transaction(state,record,status):
     history=_directory(state/"history")
     os.rename(state/"transaction.json",history/(record["id"]+"-"+uuid.uuid4().hex+".json"))
 
+def _current_receipt(record,status):
+    # Previous receipts belong only in the in-flight journal/history. Keeping
+    # them in current.json would recursively grow metadata on every upgrade.
+    return {**{key:value for key,value in record.items() if key!="previousCurrent"},"status":status}
+
+def _restore_current(root,state,record):
+    if "previousCurrent" not in record:
+        # Older journals did not save the prior receipt. Only resume a full
+        # input proven by their original digest, never an inferred artifact.
+        if _snapshot(root)[1]!=record["inputDigest"] or not (root/MEMBER).is_file():
+            raise ArtifactError("Previous publication receipt is ambiguous; inputs retained")
+        previous=_current_receipt({**record,"artifactIdentity":record["originalIdentity"],
+                                   "artifactDigest":record["inputDigest"]},"restored-for-upgrade")
+    else: previous=record["previousCurrent"]
+    if previous is not None:
+        _write_json(state/"current.json",previous)
+    else:
+        (state/"current.json").unlink(missing_ok=True)
+        fd=os.open(state,os.O_RDONLY)
+        try:os.fsync(fd)
+        finally:os.close(fd)
+
 def _recover(root,state):
     journal=state/"transaction.json"
     if not journal.exists(): return {"recovered":False}
@@ -266,6 +288,7 @@ def _recover(root,state):
     if _facts(root)!=record["pmFactsSHA256"]:
         raise ArtifactError("Interrupted PM state changed; inputs retained")
     if root.exists() and _identity(root)==record["originalIdentity"]:
+        _restore_current(root,state,record)
         _archive_transaction(state,record,"original-intact")
         return {"recovered":False}
     candidate=stage/"source"
@@ -277,7 +300,8 @@ def _recover(root,state):
         raise ArtifactError("Interrupted PM state changed; inputs retained")
     with _checkout_lock(backup):
         if not root.exists():
-            os.rename(backup,root);_archive_transaction(state,record,"restored")
+            os.rename(backup,root);_restore_current(root,state,record)
+            _archive_transaction(state,record,"restored")
             return {"recovered":True}
         if _identity(root)!=record["artifactIdentity"]:
             raise ArtifactError("Source changed after interruption; inputs retained")
@@ -288,7 +312,7 @@ def _recover(root,state):
                 raise ArtifactError("Interrupted source identity changed; inputs retained")
             _git(root,"diff","--quiet","--no-ext-diff","--no-textconv","HEAD","--")
             status="restored-for-upgrade" if record.get("purpose")=="upgrade" else "committed"
-            _write_json(state/"current.json",{**record,"status":status})
+            _write_json(state/"current.json",_current_receipt(record,status))
             _archive_transaction(state,record,status)
             return {"recovered":True,"committed":True}
 
@@ -332,7 +356,8 @@ def prepare_upgrade(source,policy=DEFAULT):
                     with _checkout_lock(candidate):
                         record={**current,"id":token,"purpose":"upgrade","backup":str(state/("full-"+token)),
                                 "originalIdentity":_identity(root),"artifactIdentity":_identity(candidate),"pmFactsSHA256":facts,
-                                "inputDigest":current["artifactDigest"],"artifactDigest":current["inputDigest"],"status":"prepared"}
+                                "inputDigest":current["artifactDigest"],"artifactDigest":current["inputDigest"],
+                                "previousCurrent":current,"status":"prepared"}
                         _write_json(state/"transaction.json",record)
                         _exchange(root,candidate)
             _recover(root,state)
@@ -380,24 +405,27 @@ def publish(source,policy=DEFAULT):
                 with _checkout_lock(candidate):
                     record={"schema":1,"id":token,"source":str(root),"backup":str(backup),"commit":policy.commit,
                             "memberHash":policy.member_hash,"inputDigest":digest,"artifactDigest":artifact_digest,
-                            "originalIdentity":_identity(root),"artifactIdentity":_identity(candidate),"pmFactsSHA256":facts,"status":"prepared"}
+                            "originalIdentity":_identity(root),"artifactIdentity":_identity(candidate),"pmFactsSHA256":facts,
+                            "previousCurrent":_json(state/"current.json") if (state/"current.json").exists() else None,"status":"prepared"}
                     _write_json(state/"transaction.json",record)
                     try:
                         _exchange(root,candidate);os.rename(candidate,backup)
                         if _snapshot(root)[1]!=artifact_digest or _facts(root)!=facts: raise ArtifactError("Published artifact changed")
                         _validate(root,policy,False)
-                        result={**record,"status":"committed","alreadyCurrent":False}
+                        result={**_current_receipt(record,"committed"),"alreadyCurrent":False}
                         _write_json(state/"current.json",result);_archive_transaction(state,record,"committed")
                         return result
                     except Exception as error:
                         original=backup if backup.exists() else candidate
                         if root.exists() and _identity(root)==record["originalIdentity"]:
+                            _restore_current(root,state,record)
                             _archive_transaction(state,record,"original-intact")
                         elif original.exists() and _identity(original)==record["originalIdentity"]:
                             if not root.exists() or _identity(root)!=record["artifactIdentity"]:
                                 raise ArtifactError("Publication changed unexpectedly; inputs retained") from error
                             _exchange(root,original)
                             os.rename(original,state/("failed-"+token))
+                            _restore_current(root,state,record)
                             _archive_transaction(state,record,"rolled-back")
                         raise ArtifactError("Source publication failed; original restored or retained") from error
     except ArtifactError: raise

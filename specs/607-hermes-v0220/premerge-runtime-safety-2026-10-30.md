@@ -32,15 +32,25 @@ atomically. The old complete audited backup stays unchanged. Once upstream owns
 its working copy, interrupted Git/npm stages may retry; publication still rejects
 incomplete or changed source under the unchanged full admission rules.
 
+## Receipt restoration
+
+Greptile reproduced an additional failure after current.json was written but
+transaction archival failed: source rollback alone left the new curated receipt
+behind, blocking managed retries. The transaction now saves the previous receipt;
+rollback and recovery restore it before archiving, including process death during
+rollback and legacy missing-root recovery. Active receipts exclude journal-only
+previous state, preventing recursively growing metadata. Both original absence
+and an existing prior receipt are covered by executed regressions.
+
 ## Verification
 
 - Original publication reproduced the selected-state loss with the actual pinned
   upstream collector; the corrected publisher preserves the canonical directory,
   facts and selected generation.
-- 38 real-filesystem cases cover full input retention, PM writer exclusion,
+- 42 real-filesystem cases cover full input retention, PM writer exclusion,
   rollback, process death on both sides of backup archival, interrupted preparation,
   repeated installation, partial upstream Git/npm stages and changed PM selection.
-- macOS and isolated Linux x64 pass all 38 cases. Linux uses no network, a non-root
+- macOS and isolated Linux x64 pass all 42 cases. Linux uses no network, a non-root
   user and a read-only root. An initial 256 MiB fixture filesystem correctly
   refused the unchanged 4.5 GiB rollback reserve; a bounded larger fixture was used.
 - 57 targeted installer, Codex npm/update/retry and staging tests pass. The expanded

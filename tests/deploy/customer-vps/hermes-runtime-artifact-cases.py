@@ -24,6 +24,8 @@ class Cases(unittest.TestCase):
         return subprocess.check_output(["/usr/bin/git","-c","core.fsmonitor=false","-c","core.hooksPath=/dev/null","-C",str(self.source),*args],stderr=subprocess.DEVNULL,text=True,env={"PATH":"/usr/bin:/bin","GIT_CONFIG_NOSYSTEM":"1","GIT_CONFIG_GLOBAL":"/dev/null","GIT_TERMINAL_PROMPT":"0"})
     def retained(self):
         self.assertEqual(self.owner.read_text(),"owner-fixture: preserve\n");self.assertEqual(self.facts.read_bytes(),self.facts_before)
+        receipt=self.source.parent/".matrix-runtime-artifacts/current.json"
+        if receipt.exists():self.assertNotIn("previousCurrent",json.loads(receipt.read_text()))
     def legacy_environment(self):
         import venv
         ignore=self.source/".gitignore";ignore.write_text(ignore.read_text()+"venv/\n")
@@ -183,6 +185,47 @@ class Cases(unittest.TestCase):
             with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
         finally:m.os.rename=rename;m._write_json=write
         self.assertEqual(self.member.read_bytes(),PAYLOAD);self.retained()
+    def test_receipt_archival_failure_restores_upgrade_retry_after_source_rollback(self):
+        for previous in (False,True):
+            with self.subTest(previous=previous):
+                if previous:
+                    m.publish(self.source,self.policy);m.prepare_upgrade(self.source,self.policy)
+                original=m._archive_transaction
+                def failed(*args,**kwargs):raise OSError("injected archival failure after current receipt")
+                m._archive_transaction=failed
+                try:
+                    with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
+                finally:m._archive_transaction=original
+                self.assertEqual(self.member.read_bytes(),PAYLOAD)
+                m.prepare_upgrade(self.source,self.policy)
+                m.publish(self.source,self.policy);self.retained()
+                if not previous:m.prepare_upgrade(self.source,self.policy)
+    def test_process_death_after_rollback_recovers_the_previous_receipt(self):
+        pid=os.fork()
+        if pid==0:
+            exchange=m._exchange;archive=m._archive_transaction;count=0
+            def failed(state,record,status):
+                if status=="committed":raise OSError("injected completion archival failure")
+                return archive(state,record,status)
+            def killed(left,right):
+                nonlocal count
+                exchange(left,right);count+=1
+                if count==2:os._exit(95)
+            m._archive_transaction=failed;m._exchange=killed
+            try:m.publish(self.source,self.policy)
+            finally:os._exit(96)
+        _,status=os.waitpid(pid,0);self.assertEqual(os.waitstatus_to_exitcode(status),95)
+        self.assertEqual(self.member.read_bytes(),PAYLOAD)
+        m.prepare_upgrade(self.source,self.policy);m.publish(self.source,self.policy);self.retained()
+    def test_unsupported_atomic_exchange_leaves_complete_source_retryable(self):
+        original=m._exchange
+        def refused(*args):raise m.ArtifactError("fixture filesystem lacks atomic exchange")
+        m._exchange=refused
+        try:
+            with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
+        finally:m._exchange=original
+        self.assertEqual(self.member.read_bytes(),PAYLOAD)
+        self.assertFalse(m.prepare_upgrade(self.source,self.policy)["prepared"]);self.retained()
     def test_copy_race_preserves_changed_input(self):
         real=shutil.copytree
         def changed(*args,**kwargs):
@@ -287,6 +330,17 @@ class Cases(unittest.TestCase):
         self.crash_after_candidate();self.facts.unlink()
         with self.assertRaises(m.ArtifactError):m.recover(self.source)
         self.assertTrue(self.source.is_dir());self.assertFalse(self.member.exists())
+    def test_legacy_missing_root_recovery_reconciles_stale_curated_receipt(self):
+        current=m.publish(self.source,self.policy)
+        state=self.source.parent/".matrix-runtime-artifacts"
+        # Old two-rename rollback could die after publishing current.json
+        # and moving curated source aside, before restoring the full backup.
+        m._write_json(state/"transaction.json",{**current,"status":"prepared"})
+        os.rename(self.source,state/"legacy-failed-artifact")
+        self.assertFalse(self.source.exists())
+        m.prepare_upgrade(self.source,self.policy)
+        self.assertEqual(self.member.read_bytes(),PAYLOAD)
+        m.publish(self.source,self.policy);self.retained()
     def test_git_directory_alias_is_rejected_before_any_external_lock_write(self):
         actual=self.base/"external-git";os.rename(self.source/".git",actual);(self.source/".git").symlink_to(actual,target_is_directory=True)
         with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
