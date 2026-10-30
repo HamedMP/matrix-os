@@ -1,3 +1,5 @@
+import {DefinitiveProviderRejectionError} from "../../packages/platform/src/customer-vps-errors.js";
+import {createPreviewPairProviderCleanup} from "../../packages/platform/src/preview-pair/cleanup-provider.js";
 import {afterEach,beforeEach,describe,expect,it,vi} from "vitest";
 import {createSeededPreviewPair} from "./preview-pair-seeded-postgres.js";
 import {PAIR_NOW,previewPairManifestFixture} from "./preview-pair-test-support.js";
@@ -36,10 +38,11 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("narrow Preview-pair dura
   vi.mocked(f.hetzner.listServersByLabel!).mockImplementation(async selector=>servers.filter(server=>selector===`machine_id=${server.labels?.machine_id}`));
   vi.mocked(f.hetzner.getAction).mockResolvedValueOnce({id:900,status:"running",command:"create_server"}).mockResolvedValue({id:900,status:"success",command:"create_server"});
   const {claim,input,activate}=await setup();
+  await f.db.executor.updateTable("provisioning_jobs").set({attempts:99}).execute();
   expect(await activate(input,claim,new AbortController().signal)).toBe(false);
   expect(f.hetzner.getAction).toHaveBeenCalledTimes(1);
   const job=await f.db.executor.selectFrom("provisioning_jobs").selectAll().where("machine_id","=",servers[0].labels!.machine_id!).executeTakeFirstOrThrow();
-  expect(job.status).toBe("queued");expect(job.lease_expires_at).toBeNull();
+  expect(job.status).toBe("queued");expect(job.lease_expires_at).toBeNull();expect(job.attempts).toBe(99);
   expect(Number(job.provider_create_action_id)).toBe(900);expect(job.activation_step).toBe("creating");
   expect(await activate(input,claim,new AbortController().signal)).toBe(false);
   expect(f.hetzner.createServer).toHaveBeenCalledTimes(1);
@@ -56,6 +59,18 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("narrow Preview-pair dura
   expect(job.status).toBe("queued");expect(job.activation_step).toBe("creating");expect(job.lease_expires_at).toBeNull();
   expect(await activate(input,claim,new AbortController().signal)).toBe(false);
   expect(f.hetzner.createServer).toHaveBeenCalledTimes(1);expect(f.hetzner.deleteServer).not.toHaveBeenCalled();
+ });
+ it.each(["quota_exceeded","provider_unavailable"] as const)("a definitive %s create rejection does not quarantine an uncreated server",async code=>{
+  vi.mocked(f.hetzner.createServer).mockRejectedValue(new DefinitiveProviderRejectionError(400,code,"Provisioning unavailable"));
+  f.hetzner.inspectServersByLabel=vi.fn(async()=>({servers:[],complete:true}));
+  const {claim,input,activate}=await setup();
+  await expect(activate(input,claim,new AbortController().signal)).rejects.toThrow();
+  const job=await f.db.executor.selectFrom("provisioning_jobs").selectAll().where("machine_id","=",f.hetzner.createServer.mock.calls[0][0].labels.machine_id).executeTakeFirstOrThrow();
+  expect(job.status).toBe("failed");expect(job.activation_step).not.toBe("creating");
+  const pending=await requestPreviewPairStop(f.db,f.pair.pair_id,1,claim.revision,PAIR_NOW);
+  const cleanupClaim=await claimPreviewPair(f.db,pending.pair_id,1,pending.revision,PAIR_NOW);
+  const member=input.members.find(member=>member.jobId===job.job_id)!;
+  expect(await createPreviewPairProviderCleanup(f.db,f.hetzner,()=>PAIR_NOW).proveAbsent({...member,pairId:input.pairId,generation:1,providerServerId:null},cleanupClaim)).toMatchObject({creationSettled:true});
  });
  it("does not consume either job when isolation cannot be verified",async()=>{
   const {claim,input,activate}=await setup(false);await expect(activate(input,claim,new AbortController().signal)).rejects.toThrow("unavailable");

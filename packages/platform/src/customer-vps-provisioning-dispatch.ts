@@ -1,4 +1,4 @@
-import { markPairCreateIntent, releasePairProvisioningPass } from "./customer-vps-pair-jobs.js";
+import { markPairCreateIntent, releasePairProvisioningPass, clearRejectedPairCreateIntent } from "./customer-vps-pair-jobs.js";
 import { withAccountDeletionAdmission } from './account-deletion/admission.js';
 import { PAIR_PREVIEW_HANDLE_PATTERN } from '@matrix-os/clerk-sync';
 /** Customer VPS provisioning job dispatch, split from customer-vps.ts. */
@@ -8,6 +8,7 @@ import type { PlatformDB } from './db.js';
 import { getUserMachine, runInPlatformTransaction, updateUserMachine } from './db.js';
 import {
   CustomerVpsError,
+  DefinitiveProviderRejectionError,
   PreviewSnapshotUnavailableError,
   genericProviderError,
   logCustomerVpsError,
@@ -419,6 +420,7 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
           }
         } catch (createErr: unknown) {
           if (admissionCommitFailedWithKnownResult) throw createErr;
+          if (pair && createErr instanceof DefinitiveProviderRejectionError) throw createErr;
           if (isAmbiguousProviderCreateError(createErr)) {
             logCustomerVpsError('provision create outcome is ambiguous; awaiting exact-label reconciliation', createErr);
             return 'pending';
@@ -605,7 +607,7 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
       }
       return 'completed';
     } catch (err: unknown) {
-      if (pair?.signal.aborted) {
+      if (pair?.signal.aborted && !(err instanceof DefinitiveProviderRejectionError)) {
         logCustomerVpsError('pair provisioning pass interrupted; retaining durable progress', err);
         return 'pending';
       }
@@ -630,6 +632,7 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
       const failedAt = now().toISOString();
       try {
         await runInPlatformTransaction(deps.db, async (trx) => {
+          if (pair && err instanceof DefinitiveProviderRejectionError) await clearRejectedPairCreateIntent(trx, job, failedAt);
           await updateUserMachine(trx, row.machineId, {
             status: 'failed',
             failureCode: toFailureCode(err),

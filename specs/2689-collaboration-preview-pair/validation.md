@@ -190,6 +190,21 @@ GOMAXPROCS=2). Dependency builds completed in the earlier pipeline stage. This
 qualifies the declaration correction; the failed classic512MiB attempt remains
 recorded above.
 
+### Controller second review: retry allowance and mounted data
+
+Five intended assertions failed first: progress at the final retry slot, two
+mounted-secret revisions, and two definitive rejection outcomes. Normal pending
+pair passes now restore their retry allowance under the exact job lease; successful
+adoption remains possible at the last failure slot. Typed definitive provider
+rejection clears only that leased creation intent inside the failure transaction;
+ambiguous outcomes keep their intent and capacity. Unsupported volumes/mounts are
+rejected even if a mounted secret's name also appears on the environment allowlist.
+Shapes follow the [Cloud Run Volume](https://docs.cloud.google.com/run/docs/reference/rest/v2/Volume)
+and [Container](https://docs.cloud.google.com/run/docs/reference/rest/v2/Container) API contracts.
+Final focused verification: **24/24 pass across3 files**, zero skipped; real
+Postgres for dispatcher/cleanup, provider HTTP and Cloud Run responses are fixtures.
+Focused Platform native TypeScript passes.
+
 ### Verified controller adapters and guarded dispatch
 
 - Existing Clerk wrapper now retains cryptographically verified issuer/expiry.

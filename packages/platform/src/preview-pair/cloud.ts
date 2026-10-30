@@ -7,7 +7,8 @@ const Env=z.object({name:z.string().max(128),value:z.string().max(16384).optiona
   valueSource:z.object({secretKeyRef:z.object({secret:z.string().max(256),version:z.string().regex(/^[1-9][0-9]{0,18}$/)})}).optional()});
 const Ready=z.object({type:z.literal("Ready"),state:z.literal("CONDITION_SUCCEEDED")});
 const Revision=z.object({name:z.string(),service:z.string(),reconciling:z.literal(false).optional(),conditions:z.array(z.object({type:z.string(),state:z.string()})).max(16),serviceAccount:z.string(),
-  containers:z.array(z.object({image:z.string().regex(/@sha256:[a-f0-9]{64}$/),env:z.array(Env).max(128)})).length(1)});
+  volumes:z.array(z.never()).max(0).optional(),
+  containers:z.array(z.object({image:z.string().regex(/@sha256:[a-f0-9]{64}$/),env:z.array(Env).max(128),volumeMounts:z.array(z.never()).max(0).optional()})).length(1)});
 const Service=z.object({name:z.string(),reconciling:z.literal(false).optional(),terminalCondition:Ready,trafficStatuses:z.array(z.object({
   tag:z.string().optional(),uri:z.string().optional(),revision:z.string(),percent:z.number().int().min(0).max(100).optional(),
 })).max(128)});

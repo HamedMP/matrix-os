@@ -21,6 +21,10 @@ function setup(fault?:string){
   if(fault==="raw signing secret")env[8]={name:"PLATFORM_JWT_SECRET",value:"production-key"};
   if(fault==="missing signing secret")env.splice(8,1);
   if(fault==="reconciling")Object.assign(rev,{reconciling:true});
+  if(fault==="mounted production secret"||fault==="mounted approved secret"){
+   Object.assign(rev,{volumes:[{name:"file-secret",secret:{secret:fault==="mounted production secret"?"production-secret":f.config.clerkSecretRef,items:[{path:"secret",version:"1"}]}}]});
+   Object.assign(rev.containers[0],{volumeMounts:[{name:"file-secret",mountPath:"/etc/secrets"}]});
+  }
   if(fault==="sidecar")rev.containers.push({image:"other",env:[]});
   const fetchImpl=vi.fn(async (url:any)=>Response.json(String(url).endsWith("/revisions/matrix-platform-preview-pair")?rev:service));
   return {f,fetchImpl,read:(cloud as any).createPreviewPairCloudAuthority({config:f.config,project:"pair-test",region:"europe-west1",service:"matrix-platform-preview",approvedSecretRefs:[f.config.clerkSecretRef,f.config.databaseSecretRef,f.config.ticketKeysSecretRef,"platform-secret-preview","platform-jwt-preview","edge-router-preview"],accessToken:async()=>"iam-fixture",fetchImpl,now:()=>Date.parse("2026-10-30T10:00:00Z")})};
@@ -30,7 +34,7 @@ describe("actual Cloud Run revision isolation reader",()=>{
     const {f,read,fetchImpl}=setup();expect(await read(f.input.browserOrigin,f.input.apiOrigin)).toMatchObject({sourceSha:f.input.sourceSha,serviceAccount:f.config.serviceAccount,clerkSecretRef:f.config.clerkSecretRef});
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
-  it.each(["account","database","api classified","retarget","provider secret","mutable secret","source","sidecar","not ready","raw signing secret","missing signing secret","reconciling"])("fails closed for %s bindings",async fault=>{
+  it.each(["account","database","api classified","retarget","provider secret","mutable secret","source","sidecar","not ready","raw signing secret","missing signing secret","reconciling","mounted production secret","mounted approved secret"])("fails closed for %s bindings",async fault=>{
     const {f,read}=setup(fault);await expect(read(f.input.browserOrigin,f.input.apiOrigin)).rejects.toThrow("unavailable");
   });
 });
