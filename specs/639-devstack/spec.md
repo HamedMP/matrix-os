@@ -16,9 +16,9 @@
 
 An engineer or coding agent can change uncommitted source, run the affected Matrix OS services, inspect build/runtime/test output, and receive human feedback through an authenticated preview before opening an implementation PR. Multiple worktrees and authorized engineers can use the development infrastructure concurrently.
 
-The first delivery establishes a reproducible local development baseline. The same service/configuration contract then runs on shared Linux development infrastructure. A successful single-worktree run is an intermediate gate, not completion. The final concurrency contract is configurable **N worktrees**, not a two-worktree product limit.
+Delivery follows this order: **1. local OrbStack -> 2. existing Linux/x64 Dev Computer acceptance -> 3. shared Linux**. First establish the application/control-plane baseline and fast feedback locally; then prove native runtime compatibility on the existing Dev; finally move the same Compose/bootstrap contract to approved shared infrastructure. A successful single-worktree run is an intermediate gate, not completion. The final concurrency contract is configurable **N worktrees**, not a two-worktree product limit.
 
-The existing personal Dev Computer is already available and remains a separate host-native acceptance target. Obtaining another persistent Computer is not a prerequisite or deliverable.
+The existing personal Dev Computer is already available and is the phase 2 host-native acceptance target. Use an explicitly authorized, isolated test target while preserving its active service identity, data, authentication and accounting. Obtaining another persistent Computer or adding a nested VM is not a prerequisite or deliverable.
 
 ### In scope
 
@@ -52,9 +52,21 @@ These are source findings at the evidence baseline, not claims of successful liv
 
 ## 3. Recommended architecture
 
-This is the recommended design, subject to the explicitly identified technical checks and team decisions below. A Docker-to-Linux managed execution bridge is work to implement and validate, not an existing capability.
+This is the recommended design, subject to the explicitly identified technical checks and team decisions below. **Start with local OrbStack, accept on the existing Linux Dev, then deploy to shared Linux.** A Linux host is required for native execution; an additional Linux VM is not a mandatory component. Running Platform or Relay on an existing Linux host does not itself require a nested VM.
 
-For the first complete connected environment, recommend co-locating the Gateway-owned broker and managed execution within the same isolated Linux VM/worker boundary. Run the portable services with Docker there and validate protected socket, filesystem and UID mappings in T1. Do not begin by designing a remote broker protocol. Mac-only Docker remains useful for portable-service checks; it is not the full managed-execution acceptance environment.
+In phase 1, use OrbStack Docker for Platform, dedicated funded Relay, Postgres, object storage and applicable shell/Gateway development services. Validate configuration/bootstrap, real Dev auth and control-plane contracts, source feedback, and container-level worktree isolation locally. Keep native managed execution explicitly unverified or unavailable until its requirements pass; do not label the full stack ready from container health. An OrbStack Linux machine is an optional technical candidate if systemd is needed locally, not a required new machine or an assumed execution-isolation guarantee. See the official [Docker](https://docs.orbstack.dev/docker/) and [Linux machine](https://docs.orbstack.dev/machines/) capability references.
+
+In phase 2, run the same source/configuration contract against an isolated authorized target on the existing Linux/x64 Dev Computer. Prefer co-locating the Gateway-owned broker and native managed execution on that Linux host, and validate protected sockets, filesystem/UID mappings, SDK layout and worker lifecycle in T1/T2. Do not begin by inventing a remote broker protocol or share the active customer's execution sockets as a shortcut. If a safe test target cannot coexist with active services, report the blocked native gate and request a specific deployment/isolation decision; do not implicitly repoint, upgrade or provision a replacement VPS.
+
+Phase 3 follows existing Dev acceptance and measured requirements: reuse the same composition and bootstrap with explicit placement overrides on approved shared Linux capacity. Multiple native instances still require proved isolation; a stronger host supplies capacity, not that proof. No shared-host allocation is needed to begin phase 1.
+
+```mermaid
+flowchart LR
+  O["1. Local OrbStack: baseline, bootstrap, feedback and portable isolation"] -->|"same sources and Compose/bootstrap contract"| V["2. Existing Dev: native Linux/x64 acceptance, T1/T2"]
+  V -->|"accepted native behavior and measured requirements"| S["3. Shared Linux: multiple worktrees and team previews"]
+```
+
+The following service relationships are reused across placements; capability status must identify what is actually supported in each one.
 
 ```mermaid
 flowchart LR
@@ -62,26 +74,25 @@ flowchart LR
   D -->|"build/runtime/test output"| W
   U["Browser and local Electron Desktop"] -->|"authenticated preview"| D
   D --> P["Docker: Platform, funded Relay, Postgres, object storage"]
-  D --> A["Docker: shell and Gateway with its broker"]
-  A <-->|"worker/broker protocol; transport validated in T1"| L["Isolated Linux execution environment: scope runtime + managed workers"]
+  D --> A["Shell and Gateway with its broker"]
+  A <-->|"native capability proved on existing Dev in phase 2; optional local candidate"| L["Linux host execution: scope runtime + managed workers"]
   A -->|"credential issuance and funded inference"| P
-  V["Separate personal Dev Computer / approved Preview VPS"] --> H["Exact-bundle, systemd and upgrade acceptance"]
 ```
 
 | Component or behavior | Recommended placement | Boundary |
 |---|---|---|
-| Platform, dedicated funded Relay, Postgres, object storage, local TLS/ingress | Docker, first locally and then on the shared Linux host | Dev-only authorities, data and routing; same application contract in both placements |
+| Platform, dedicated funded Relay, Postgres, object storage, local TLS/ingress | OrbStack Docker first; existing Dev in phase 2; approved shared Linux in phase 3 | Same Compose/bootstrap contract with declared placement overrides and Dev-only authorities/data/routing |
 | Shell and Gateway application code | Source-mounted Docker development services; local Electron dev server on the physical computer | Source edits must reach the correct instance without publishing a release |
-| Kernel/SDK code used by managed workers | Within the selected isolated Linux execution environment | Resolve the intended worktree source/build, dependencies and native binaries; do not silently execute the installed baseline version |
-| Scope supervisor and managed workers | Initially prefer a dedicated Linux VM/execution boundary; evaluate denser sharing only after isolation is proved | Preserve systemd, DynamicUser, fixed profiles, resource limits, filesystem and socket guarantees; Gateway owns the broker and T1 must validate transport across the selected boundary |
+| Kernel/SDK code used by managed workers | Validate native behavior on the existing Linux/x64 Dev in phase 2; optionally investigate a supported OrbStack machine in phase 1 | Record architecture and actual capability status; resolve the intended worktree source/build and native binaries, without treating emulation as native acceptance |
+| Scope supervisor and managed workers | Existing Linux Dev host for phase 2; isolated instances on shared Linux after T1/T2 | Preserve systemd, DynamicUser, fixed profiles, resource limits, filesystem/socket guarantees and broker ownership; choose a VM only if evidence justifies that isolation mechanism |
 | Clerk, Cloudflare AI Gateway/upstream models, Pipedream and OAuth services | Approved external Dev projects/accounts | Actual external dependencies remain explicit; local fixtures cannot prove upstream acceptance |
-| Customer installation, host bundle, native services and updates | Separate existing Dev Computer or explicitly allocated Preview VPS | Docker acceptance does not establish host-release parity |
+| Customer installation, host bundle, native services and updates | Existing Dev acceptance in phase 2; exact bundle/install/update tests only when relevant and separately authorized | Preserve active customer data/auth/accounting; no implicit new VPS or inference of host-release parity from OrbStack success |
 
-**Technical validation T1:** prove the existing execution protocol can connect the application services and Gateway-owned broker to a selected isolated Linux environment, with the correct worktree source and native dependencies. Current host paths include a Linux x64 SDK layout; an Apple Silicon container smoke is insufficient evidence. Preserve worker network isolation and validate the transport rather than assuming the existing local sockets support remote use. Prefer reuse over a new in-process runner. If this requires excessive divergence, return with evidence and revise this section before implementation proceeds.
+**Technical validation T1:** establish the complete native gate on the existing Linux/x64 Dev in phase 2: application services and the Gateway-owned broker must connect to the authorized isolated execution target with the correct worktree source and dependencies. Current host paths include a Linux x64 SDK layout; ARM containers or x64 emulation on a Mac do not establish native x64/systemd acceptance. Optional local machine evidence must state its actual coverage. Preserve worker network isolation and validate the transport rather than assuming local sockets support remote use. Native uncertainty does not block phase 1 portable work; excessive divergence requires an evidence-backed plan amendment before dependent native/shared work proceeds.
 
-**Technical validation T2:** prove supervisor and worker isolation, including service discovery, cleanup, sockets, state roots, credentials and source paths. The existing systemd launcher discovers global `matrix-scope-runtime-*` units; changing a state directory alone is insufficient. Never mount the active personal Dev Computer's execution sockets into DevStack or reuse its runtime identity.
+**Technical validation T2:** on the phase 2 native target, prove supervisor and worker isolation, including service discovery, cleanup, sockets, state roots, credentials and source paths. The existing systemd launcher discovers global `matrix-scope-runtime-*` units; changing a state directory alone is insufficient. Never reuse the active Dev Computer's execution sockets, runtime identity, home, credentials or ledger. Native concurrency that cannot fit safely on that host remains explicitly unverified and is gated on qualified capacity in phase 3; do not relax isolation or claim a pass.
 
-T1/T2 are engineering work owned by the implementation owners. Team decision D1 authorizes the available execution infrastructure; it does not delegate implementation to Hamed.
+T1/T2 are engineering work owned by the implementation owners. D1 concerns phase 3 shared capacity; it is not a prerequisite for local OrbStack work or an instruction to allocate a new VM. Native tests and any Dev-only deployment still require their own scoped authorization.
 
 ## 4. Configuration and bootstrap contract
 
@@ -115,7 +126,7 @@ Bootstrap must assemble a coherent Dev environment rather than copy a Preview/pr
 - **FR-01:** Support the complete source-edit -> run -> logs/tests -> authenticated preview -> feedback loop without requiring a commit, GitHub push, host bundle or full image build for ordinary source changes.
 - **FR-02:** Cover shell, Gateway, Kernel, Platform and funded Relay. Define watch/build/restart behavior for each, plus explicit restart/rebuild semantics for configuration, lockfile and native dependency changes. Validate runtime/package-manager compatibility against the repository lockfile.
 - **FR-03:** Provide agent-usable lifecycle operations for preflight, start, status, command execution, logs, tests, preview, stop, resume and explicit data reset. Reuse the slot runner and existing CLI seams; the final CLI syntax is a later implementation decision, not an existing command claim.
-- **FR-04:** Every instance exposes a redacted manifest containing instance/worktree identity, placement, baseline versions, overridden components, commit and dirty-source digest, applied sync revision, endpoints, state namespace and capability status. It must be possible to detect stale source and incompatible baseline/override combinations before interpreting test results.
+- **FR-04:** Every instance exposes a redacted manifest containing instance/worktree identity, placement, OS/architecture, baseline versions, overridden components, commit and dirty-source digest, applied sync revision, endpoints, state namespace and capability status. Distinguish supported, unverified and unavailable native capabilities. Detect stale source and incompatible baseline/override combinations before interpreting test results.
 - **FR-05:** Web Desktop and Electron Desktop must both support real connected use. Existing applicable Web Canvas, Web Mobile and Native Mobile access must preserve the same identity/auth/data semantics. This does not add new mobile infrastructure UI; any actual platform limitation must be recorded and reviewed.
 - **FR-06:** Electron development runs from source on the physical computer and connects to the intended DevStack. A browser-only test cannot stand in for Electron callback, connection and update-feedback acceptance.
 
@@ -126,13 +137,13 @@ Bootstrap must assemble a coherent Dev environment rather than copy a Preview/pr
 - **FR-09:** Share trusted baseline services where compatible and start only changed components per worktree. Baseline service versions are explicit. Shared services may process data only in enforced instance/owner namespaces; overrides cannot mutate baseline configuration, other worktrees or shared credentials.
 - **FR-10:** Isolate mutable home, conversations, DB data, object storage, runtime identity, personal connections and accounting. Platform/schema changes require an isolated Platform database and service authority. No unqualified shared DB, home or writable AI-auth volume is accepted as worktree isolation.
 - **FR-11:** Stop preserves the instance's persistent data. Reset/destruction is explicit and owned-resource scoped. Leases, TTL and crash reconciliation must not reap active sessions merely because a claim is old. Cleanup must never discover or delete another supervisor's workers or customer resources.
-- **FR-12:** Apply bounded compute/inference budgets and per-instance timeouts. At capacity, return an actionable rejection without starting partial work. Releasing capacity permits later admission; choose initial limits after measurement and D1/D3.
+- **FR-12:** Apply bounded compute/inference budgets and per-instance timeouts. At capacity, return an actionable rejection without starting partial work. Releasing capacity permits later admission. Local/Dev limits use their authorized resource envelope and measurements; D3 governs paid calls, while D1 governs phase 3 shared capacity only.
 
 ### Source transport and shared preview
 
 - **FR-13:** Choose one authoritative source location per worktree. Initial recommendation: authoring remains with the engineer/agent; remote execution receives a one-way source projection. Source transport includes dirty edits, explicitly selected untracked files and deletions, and excludes secrets, host dependencies, `.git` internals and generated caches.
 - **FR-14:** Acknowledge applied source revisions/digests, surface interrupted sync and divergence, and never silently overwrite authoritative edits. Execute only a coherent acknowledged source state; synchronize/build native dependencies for the target OS rather than copying host `node_modules`.
-- **FR-15:** Local and remote placements use the same application/configuration/lifecycle contract. Reuse suitable Matrix Sync functionality only after proving arbitrary worktree, profile and daemon isolation; never repoint an engineer's existing personal synchronization target as a shortcut.
+- **FR-15:** OrbStack, existing Dev and shared Linux use the same source, Compose/bootstrap and lifecycle contract, with declared placement overrides and architecture-appropriate builds. Produce a handoff receipt before each promotion: source/lockfile/build versions, effective configuration names, architecture, capability results and permitted differences. Generate target-specific credentials and data rather than copying an active customer configuration. Reuse Matrix Sync only after proving arbitrary worktree, profile and daemon isolation; never repoint an engineer's existing personal synchronization target as a shortcut.
 - **FR-16:** Previews use authenticated HTTPS ingress and WebSocket support with explicit origin rules. Authorize viewers per worktree and permission level, revoke access promptly, and identify the viewed instance. Do not expose control-plane ports or reusable machine bearer tokens to viewers.
 - **FR-17:** Authorizing a viewer does not grant access to the owner's personal provider/integration credentials. Personal connection consent remains owner-bound. When a coding agent performs a flow, it uses its explicitly granted capability rather than inherited host authority.
 
@@ -177,8 +188,9 @@ Implementation begins with failing contract/isolation tests, followed by real in
 | A10 | Override Platform/schema in one worktree; reuse compatible baseline elsewhere | Isolated migration/data/service authority; incompatible combinations fail before start, without mutating baseline or peers |
 | A11 | Sync dirty/new/deleted source, interrupt and resume transfer | Remote applied digest matches authoritative source; no secret/cache transfer, partial source execution or reverse overwrite |
 | A12 | Open and revoke a second authorized client's preview | Correct authenticated instance and WS behavior; unauthorized/revoked client denied; view access exposes no owner credentials |
-| A13 | Repeat the development loop remotely and in Electron Desktop | Same contract and correct source/version observed; native sign-in/connection and local Electron source feedback work independently of browser success |
-| A14 | Validate a relevant exact host bundle on a separate approved VPS target | Native runtime/install/update results recorded independently; no inference from Docker health and no changes to Main |
+| A13 | After phase 2 Dev acceptance, repeat the development loop on shared Linux and in Electron Desktop | Same contract and correct source/version observed; native sign-in/connection and local Electron source feedback work independently of browser success |
+| A14 | In phase 2, validate Linux/x64 runtime behavior on the existing Dev's isolated authorized target | T1/T2, systemd, SDK and broker/path behavior have actual native evidence; any relevant exact-bundle install/update is separately authorized. Preserve active services/data/auth/accounting; no implicit repoint, new VPS or inference from OrbStack health |
+| A15 | Hand off OrbStack -> existing Dev -> shared Linux in that order | Same source/lockfile and Compose/bootstrap contract; only declared placement overrides and target-native builds differ. Record independent capabilities/provenance per target; no copied customer identities/secrets or silent substitution of local/emulated evidence for native acceptance |
 
 For A6/A13 measure warm edit-to-response, edit-to-UI, source-transfer and log availability latency, plus cold startup and peak resources. Proposed warm targets are under 10 seconds for application changes and under 30 seconds for Kernel/managed-worker updates on qualified infrastructure, excluding provider latency. Validate these targets in T1/T2 and record exceptions before final technical-plan approval; repeated manual restarts are not an acceptable steady-state workflow.
 
@@ -186,23 +198,24 @@ For A6/A13 measure warm edit-to-response, edit-to-UI, source-transfer and log av
 
 Local verification and PR delivery are complementary: retained repository changes need a PR even when first validated locally. This spec PR changes documentation only. It does not authorize running the future gates, creating resources or making external configuration changes.
 
-| Step | Local/isolated validation first | Required repository delivery | External dependency |
+| Ordered phase / step | Validation and exit evidence | Required repository delivery | Dependency |
 |---|---|---|---|
-| 1. Requirements and technical evidence | Audit capability/configuration gaps; bounded T1/T2 checks on authorized infrastructure | **This new spec PR**, then an evidence-backed technical plan/amendment | Team decisions below; approved Linux environment for actual execution checks |
-| 2. Config/preflight and bootstrap | Generated test configuration, empty isolated DB, repeated initialization, failure recovery | **Implementation PR(s)** for schemas, templates, doctor/bootstrap and tests | Approved Dev projects/credentials and budget policy |
-| 3. Integrated baseline | Compose rendering, dependency resolution, auth, internal TLS, dedicated Relay and complete connected flow | **Implementation PR(s)** for composition/images/wiring; Linux execution/isolation changes reviewed separately | Authorized real accounts and bounded upstream tests |
-| 4. Complete developer feedback | Every-service source edits, errors, provenance and local Electron loop | **Implementation PR(s)** for watchers/build/lifecycle/log contracts and tests | No new cloud allocation needed for portable local checks |
-| 5. N-worktree isolation | A7-A11 with configured capacity and selective overrides | **Implementation PR(s)** extending the existing slot runner and isolation tests | Qualified capacity; no assumption that an active personal VPS can host the load |
-| 6. Shared remote development | Same composition, source projection, authenticated preview, A12/A13 | **Implementation PR(s)** for retained sync/ingress/CLI/skill behavior | Approved shared host, access and domain/callback configuration |
-| 7. Native acceptance and documentation | Exact-version VPS receipts, recovery and operational rehearsal | Fixes as needed; repository guide plus a **separate `FinnaAI/matrix-os-site` documentation PR** under `content/docs/` | Explicitly approved acceptance target and deployment |
+| Preparation: specification and source evidence | Confirm this order, capability/configuration gaps and native risks | **This spec PR**, then an evidence-backed technical plan/amendment | No runtime/resource action authorized by the planning PR |
+| **1a. OrbStack: config and bootstrap** | Generated Dev configuration, isolated local DB, migrations, repeated initialization and recovery | **Implementation PR(s)** for schemas, templates, doctor/bootstrap and tests | D2/D3 for real external projects/tests; no shared-host allocation |
+| **1b. OrbStack: integrated application/control plane** | Platform, dedicated Relay, DB/storage, real Dev auth, trusted HTTPS and bounded credential/accounting contracts | **Implementation PR(s)** for Compose/images/wiring and integration tests | External credentials/budgets as applicable; unsupported managed execution reported as a pending native gate |
+| **1c. OrbStack: feedback and portable isolation** | Source edits, errors, provenance, local Electron and container-level A7-A11 where capacity permits; optional local Linux machine investigation | **Implementation PR(s)** for watchers/build/lifecycle and existing slot-runner extensions | No mandatory new Linux VM; record actual coverage and resource measurements |
+| **2a. Existing Dev: native acceptance** | A15 handoff of the same contract; A1-A6 full connected behavior plus A14/T1/T2 on a safe Linux/x64 target | **Implementation PR(s)** for required runtime/isolation fixes; no ad-hoc production bypass | Explicit authorization for target/deployment and real calls; preserve active customer state. A blocked safe target requires a decision, not an automatic new VPS |
+| **2b. Existing Dev: qualify shared deployment requirements** | Native isolation failure cases and resource evidence; record any concurrency tests that do not fit safely | Reviewed fixes/contract tests and capacity/handoff receipts | Full N-worktree load may wait for qualified shared capacity, but native correctness must pass before phase 3 |
+| **3a. Shared Linux: same contract remotely** | After native acceptance, migrate using declared placement overrides; source projection, authenticated preview and A12/A13 | **Implementation PR(s)** for retained sync/ingress/CLI/skill behavior | D1 shared host/cost approval, D4 access and domain/callback configuration |
+| **3b. Shared Linux: multiple worktrees and operations** | Complete A7-A11 at qualified capacity with at least three worktrees; admission/recovery, sharing/revocation and measured limits | Isolation/capacity tests, repository guide and a **separate `FinnaAI/matrix-os-site` documentation PR** under `content/docs/` | D3 shared inference caps and D5 retention; native/bundle gates continue for applicable later changes |
 
 Actual secret values, IAM grants, DNS, external project settings and operator-created test budgets are operational configuration, not Git commits. Their templates, automation and verification logic belong in reviewed PRs. Do not publish private operator identifiers or account credentials in this public repository. Existing Preview PRs do not substitute for this new specification PR.
 
-Suggested milestone gates:
+Milestone gates follow the same order; every partial capability remains visible until the corresponding native/shared gate passes:
 
-- **M1: Reproducible complete baseline** — A1-A6 plus T1/T2; local placement is complete only with its explicitly supported Linux execution boundary. Mac-only portable checks are partial evidence.
-- **M2: Multiple worktrees usable for daily development** — A7-A11, independent mutable state and no manual source/restart workarounds.
-- **M3: Shared remote feedback loop** — A12/A13, access revocation, measured capacity/latency and documented operations. A14 remains required for applicable host-native changes.
+- **M1: Local OrbStack baseline** — repeatable application/control-plane bootstrap, real configured auth/credential/accounting checks, source feedback and portable isolation evidence. Record A1/A2, the portable portions of A6, and relevant A4/A5/A7-A11 coverage. Native Kernel/worker execution and managed A3/T1/T2 remain M2 gates unless separately proved locally; no container, ARM or emulated result is promoted to full native acceptance.
+- **M2: Existing Dev native acceptance** — same-contract A15 handoff, A1-A6 full connected acceptance and A14/T1/T2 on the authorized Linux/x64 target, preserving active customer state. Record native isolation evidence and remaining capacity-qualified concurrency work. Only then proceed to shared deployment.
+- **M3: Shared Linux developer loop** — next A15 handoff, complete A7-A13 with at least three concurrent worktrees on qualified capacity, access revocation, measured limits and documented operations. This is the multiple-worktree outcome, not a hardcoded concurrency ceiling; repeat relevant native/bundle gates for later host changes.
 
 ## 9. Decisions to take to the team
 
@@ -210,7 +223,7 @@ The recommendations below provide defaults for discussion; they are not approval
 
 | ID / discussion owner | Question and recommendation | What resolution unblocks |
 |---|---|---|
-| **D1 — Hamed / shared infrastructure owner; Yuhan for local resources** | Which shared Linux development environment can we use, who owns it, and what compute/storage/cost envelope is approved? **Recommend** a separately allocated Dev environment, initially using a VM boundary for managed execution; do not repurpose an engineer's active Computer or assume CI capacity is available. Size from measurements, including at least three concurrent worktrees | Shared execution, capacity acceptance and remote placement. Local T1/T2 may use a separately authorized local Linux VM without waiting for a shared-host allocation; VM/namespace technical selection remains our engineering task |
+| **D1 — Hamed / shared infrastructure owner; Yuhan for local resources** | After OrbStack baseline and existing Dev acceptance, which shared Linux host/capacity, owner and compute/storage/cost envelope are approved? **Recommend** size from phases 1/2 measurements, including the at-least-three-worktree target; use approved capacity without assuming the CI server is available. A Linux Docker host is the requirement; extra VMs are an optional isolation choice justified by evidence | **Phase 3 only**: shared allocation/deployment and full concurrency load. Phase 1 local OrbStack and phase 2 authorized existing Dev acceptance do not wait for this allocation |
 | **D2 — Hamed / auth and integration project owners** | Which Dev Clerk application, Pipedream development project, Cloudflare AI Gateway/model project and callback domain are approved, and what effective permissions do we already have? **Recommend** dedicated Dev projects and narrowly scoped credentials; stable callback routing; normal personal consent. We audit existing permissions and perform configuration we are authorized to do | Real sign-in, provider/Chat and integration acceptance; only unavailable project authority/configuration needs owner assistance |
 | **D3 — Hamed / budget owner** | Who funds Dev inference/integrations, with what per-instance and shared caps, real-test allowance and refill policy? **Recommend** explicit small non-renewing test grants, server-enforced per-instance plus shared limits, and no borrowing from customer balances. Do not infer a new allowance from an existing Dev Computer credit | Billable acceptance and real shared usage; fixtures may run independently |
 | **D4 — Hamed / engineering access owner** | Who can start stacks, preview them, execute commands and connect personal integrations? **Recommend** developer allowlist, owner-private write/exec by default, explicitly granted viewer access and prompt revocation. Membership does not grant personal credentials | Shared preview/access policy and negative acceptance cases |
