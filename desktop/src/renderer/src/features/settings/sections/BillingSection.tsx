@@ -4,7 +4,9 @@ import {
   getMatrixBillingDefaultPlanSlug,
   getMatrixBillingTrialDurationDays,
   MATRIX_HOSTED_TRIAL_RETENTION_NOTICE,
+  MATRIX_HOSTED_BILLING_REGIONS,
   closestMatrixRegionSlug,
+  type MatrixHostedBillingRegionSlug,
   type MatrixBillingPublicEntitlement,
   type MatrixBillingStatus,
 } from "@matrix-os/contracts";
@@ -26,7 +28,7 @@ const BillingAbandonSchema = z.strictObject({ abandoned: z.boolean() });
 type BillingEntitlement = MatrixBillingPublicEntitlement;
 type BillingInterval = "monthly";
 type BillingPlan = "matrix_starter" | "matrix_builder" | "matrix_max";
-type BillingRegion = "region_fsn1" | "region_nbg1" | "region_ash" | "region_hil";
+type BillingRegion = MatrixHostedBillingRegionSlug;
 type BillingAction = "checkout" | "portal" | "abandon";
 
 interface BillingUiState {
@@ -72,12 +74,9 @@ const PLANS: Array<{ slug: BillingPlan; label: string }> = [
   { slug: "matrix_max", label: "Max · $200/month" },
 ];
 
-const REGIONS: Array<{ slug: BillingRegion; label: string }> = [
-  { slug: "region_fsn1", label: "🇩🇪 Falkenstein, Germany" },
-  { slug: "region_nbg1", label: "🇩🇪 Nuremberg, Germany" },
-  { slug: "region_ash", label: "🇺🇸 Ashburn, Virginia" },
-  { slug: "region_hil", label: "🇺🇸 Hillsboro, Oregon" },
-];
+const REGIONS: Array<{ slug: BillingRegion; label: string }> = MATRIX_HOSTED_BILLING_REGIONS.map(
+  (region) => ({ slug: region.slug, label: `${region.flag} ${region.label}` }),
+);
 
 function closestBillingRegion(): BillingRegion {
   try {

@@ -1,6 +1,7 @@
 import {
   MATRIX_HOSTED_BILLING_PLANS,
   MATRIX_HOSTED_BILLING_REGIONS,
+  MATRIX_HOSTED_BILLING_REGION_SLUGS,
   MATRIX_HOSTED_MACHINE_PROFILES,
   type MatrixBillingPublicEntitlement,
   type MatrixHostedBillingRegionSlug,
@@ -254,7 +255,7 @@ function isRuntimeCatalogProfile(
     typeof candidate.diskGb === 'number' &&
     (candidate.regionSlug === null || candidate.regionSlug === undefined || (
       typeof candidate.regionSlug === 'string'
-      && ['region_fsn1', 'region_nbg1', 'region_ash', 'region_hil'].includes(candidate.regionSlug)
+      && MATRIX_HOSTED_BILLING_REGION_SLUGS.some((slug) => slug === candidate.regionSlug)
     )) &&
     typeof candidate.active === 'boolean'
   );
