@@ -16,7 +16,7 @@ approved isolated identity/origin/funding fixtures exist.
 
 ## Technical Context
 
-**Language/Version**: TypeScript 5.9 strict on Node 24; Bash/Python 3 for existing Spec Kit helpers; native workflow YAML.
+**Language/Version**: TypeScript 5.9 strict on Node 24; Bash/Node for Spec Kit helpers; native workflow YAML.
 **Primary Dependencies**: Existing Hono, Zod 4, Kysely, pg, jose, Electron 41, official GitHub Actions and `github/gh-stack`; no new persistence engine or credential store.
 **Storage**: Platform Postgres for pair/generation/fixture leases; owner Postgres remains collaboration authority; credential-free local context/profile files use the existing Electron stores.
 **Testing**: Vitest, independent real Postgres connections, existing workflow shell fixtures, actual Electron E2E/Xvfb and separately scoped live Web Desktop/Electron Desktop acceptance.

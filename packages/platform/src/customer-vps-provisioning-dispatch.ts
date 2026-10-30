@@ -1,4 +1,5 @@
 import { withAccountDeletionAdmission } from './account-deletion/admission.js';
+import { PAIR_PREVIEW_HANDLE_PATTERN } from '@matrix-os/clerk-sync';
 /** Customer VPS provisioning job dispatch, split from customer-vps.ts. */
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_CLOUD_INIT_TEMPLATE, buildHostConfig } from './customer-vps-host-config.js';
@@ -83,6 +84,10 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
   ): Promise<'completed' | 'failed' | 'skipped' | 'pending'> {
     const claimedAt = now();
     const pendingJob = await getProvisioningJob(deps.db, jobId);
+    const pendingMachine = pendingJob ? await getUserMachine(deps.db, pendingJob.machineId) : undefined;
+    // Pair jobs require an isolated, independently verified authority adapter.
+    // The ordinary worker must never boot one with customer configuration.
+    if (pendingMachine && PAIR_PREVIEW_HANDLE_PATTERN.test(pendingMachine.handle)) return 'skipped';
     if (
       pendingJob?.status === 'running'
       && pendingJob.attempts >= MAX_PROVISIONING_JOB_ATTEMPTS
