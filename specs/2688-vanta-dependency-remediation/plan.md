@@ -44,3 +44,16 @@ The completed fourth shard also found its old static MCP expectation (`^1.29.0`)
 
 
 The preserved other-shard logs identified three additional Hono compatibility failures, all reproduced locally. Restore the WhatsApp API's explicit JSON/no-store 413 at middleware ingress, before authentication or linking, and retain verified-owner checks for valid bounded requests. Replace the device test's obsolete Request.formData spy with an actual malformed multipart request through the updated parser; verify generic failure, diagnostic logging, and that the device code remains unapproved. No device authorization implementation changes are required. All 331 tests in 15 WhatsApp/device suites, native TypeScript and the pattern gate pass; the complete final-head CI run remains required.
+
+
+## Remaining high follow-up — 29 October 2026
+
+Scope the maintained Metro 0.84.5 patch, Excalidraw converter Nanoid 5.1.16 and Miniflare Sharp 0.35.5. Keep seven-day release quarantine, Pi pins, branch bypasses, deployment settings and mobile runtime 0.2.9 unchanged. The initial root high count falls from 12 to 4; see the separate manifest backlog above before interpreting GitHub/Vanta counts.
+
+Regression evidence follows real consumer boundaries: bounded Metro malformed images, actual Excalidraw class-to-frame conversion/ID references, and image info/resize/PNG dimensions through a real Miniflare Worker IMAGES binding. The old ICNS parser and converter's negative-size Nanoid call exhaust bounded child heaps; the new graph terminates safely. Do not use Miniflare's synchronous Node image binding accessor in tests: its RPC bridge can block the event loop; Worker dispatch preserves the real runtime boundary and can be timed out.
+
+Strict mobile TypeScript exposed 59 declaration errors on unchanged merged main. Seven packages omitted React type dependencies, and PostHog omitted its React Native peer. Explicit package extensions restore the installed declaration edges without casts, skipped checks or tsconfig relaxation. Eight real TypeScript resolution assertions and strict native/root TypeScript pass. The complete mobile suite passes all 3,232 tests. The direct root graph and frozen lockfile remain authoritative.
+
+Other validation and qualification limits are recorded in the PR description. Desktop/shell builds, Wrangler dry run and native iOS/Android bundle export exercise the changed graph; no native binary, OTA publish or deployed remediation is claimed. An exploratory all-platform export additionally attempted unsupported web static rendering and exposed a theme-initialization error; this is not counted as native export qualification or silently removed from the record. Native device screenshots/recordings remain outside this dependency/tooling-only change. The separate offline-renderer repair changes the shipped native WebView bundle and requires its own surface evidence.
+
+Companion site work: the private site's next dependency PR independently qualifies Transformers/Sharp and Metro, documents exact image qualification limits in docs/operations/dependency-image-security.md, and reduces its root highs from five to zero. No user-facing API or runtime requirement changes in this follow-up; the canonical public release/OTA documentation from merged #313 remains current.
