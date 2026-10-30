@@ -61,3 +61,21 @@ export function createBotContinuationAdmitter(deps: {
     }
   };
 }
+
+export function botRoutineRequestId(fire:{fireId:string;attempts?:number}):string {
+  return `req_routine_${fire.fireId}${(fire.attempts??1)>1?`_a${fire.attempts}`:""}`;
+}
+
+/** A fire is admitted once through the ordinary one-run-per-Chat path, including its durable queue. */
+export function createBotRoutineCanonicalRunner(deps: Omit<Parameters<typeof createBotContinuationAdmitter>[0], "repository"> & {repository:Pick<ChatRepository,"get"|"findQueuedAdmission">}) {
+  const admit=createBotContinuationAdmitter(deps);
+  return async (routine:{ownerId:string;chatId:string;proposal:{prompt:string}},fire:{fireId:string;attempts?:number},signal:AbortSignal):Promise<{status:"accepted"|"cancelled"}> => {
+    if (signal.aborted) return {status:"cancelled"};
+    const clientRequestId=botRoutineRequestId(fire);
+    const requestHash=chatContextRequestHash({parts:[{type:"text",text:routine.proposal.prompt}],selection:MATRIX_BOT_SELECTION,interactionMode:"default",permissionMode:"default"});
+    if (await deps.repository.findQueuedAdmission({type:"personal",ownerId:routine.ownerId},routine.chatId,clientRequestId,requestHash)) return {status:"accepted"};
+    await admit({userId:routine.ownerId,source:"configured-container"},{chatId:routine.chatId,clientRequestId,text:routine.proposal.prompt});
+    // Accepted is not completion. The canonical adapter records the eventual fire outcome.
+    return {status:"accepted"};
+  };
+}
