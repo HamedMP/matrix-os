@@ -4,6 +4,7 @@ import { PreviewPairActorSchema, PreviewPairIdSchema, PreviewPairPrSchema, Previ
 import type { PlatformDB } from "../db.js";
 import type { EnabledPreviewPairConfig } from "./config.js";
 import { PreviewPairCandidateSchema } from "./provenance.js";
+import { adoptPreviewPairCloudIntent } from "./cloud-intents.js";
 import { PreviewPairConflictError, readPreviewPair, prepareLeasedPairMembers, recordPreviewPairCurrency, type PreparePairMember } from "./repository.js";
 
 const Request = z.strictObject({ controllerRunId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(), pairId: PreviewPairIdSchema, pr: PreviewPairPrSchema,
@@ -47,6 +48,7 @@ export async function admitPreviewPair(db: PlatformDB, config: EnabledPreviewPai
   raw: unknown, prepare: PreparePairMember, now: number) {
   const input = Request.parse(raw);
   if (!Number.isFinite(now) || input.sourceSha !== input.candidate.sourceSha) throw new PreviewPairConflictError();
+  if (config.sourceProfileFingerprint && input.candidate.sourceProfileFingerprint !== config.sourceProfileFingerprint) throw new PreviewPairConflictError();
   return db.transaction(async trx => {
   // Shared across service instances; fixture/config and queue checks belong to
   // the same admission boundary as both owners' quota and deletion locks.
@@ -67,7 +69,18 @@ export async function admitPreviewPair(db: PlatformDB, config: EnabledPreviewPai
   }
   const existing = await trx.executor.selectFrom("preview_pairs").selectAll()
     .where("repository", "=", "HamedMP/matrix-os").where("pr", "=", input.pr).where("state", "!=", "stopped").executeTakeFirst();
-  if (existing) return recordPreviewPairCurrency(trx, existing, input.sourceSha);
+  async function adopt() {
+    if (!input.candidate.sourceProfileFingerprint) return;
+    if (!input.controllerRunId) throw new PreviewPairConflictError();
+    await adoptPreviewPairCloudIntent(trx, { pairId: input.pairId, generation: 1, pr: input.pr,
+      requesterId: input.requesterId, sourceSha: input.sourceSha, controllerRunId: input.controllerRunId,
+      profileFingerprint: input.candidate.sourceProfileFingerprint }, now);
+  }
+  if (existing) {
+    if (existing.pair_id === input.pairId) await adopt();
+    return recordPreviewPairCurrency(trx, existing, input.sourceSha);
+  }
+  await adopt();
   for (const kind of ["ui", "api"] as const) {
     const origin = kind === "ui" ? input.candidate.browserOrigin : input.candidate.apiOrigin;
     if (!origin.startsWith(`https://${previewPairTag(input.pairId, 1, kind)}---`)) throw new PreviewPairConflictError();

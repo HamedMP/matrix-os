@@ -103,6 +103,16 @@ remain occupied while cleanup is pending or provider absence is unknown.
 
 ## Retention and ownership
 
+`preview_pair_cloud_intents` is source-owned and precedes any candidate cloud
+publication. Its primary key is full pair UUID/generation; immutable fields bind
+PR, verified requester, controller run, full SHA and source-profile fingerprint.
+States are `prepared`, `adopted`, `cleanup_pending`, and `stopped`. It has no foreign
+key to a not-yet-created pair and reserves no fixture. A two-hour publication
+window never extends on replay and is capped by the hard expiry during updates.
+The shared admission transaction lock serializes adoption against cancellation;
+adoption rolls back with failed pair/job writes. Only exact retirement can move a
+cancelled request to `stopped`; expiry by itself is not proof of cloud absence.
+
 - Live pairs expire no later than72h; stopping revokes new access immediately and
   queues exact cleanup. Pair lifetimes do not extend the shorter funded allowance.
 - Keep small retired metadata/evidence references under existing artifact/audit

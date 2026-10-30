@@ -8,18 +8,18 @@ describe("pair lifecycle schema is part of real Platform startup", () => {
   beforeAll(async () => { ({ db } = await createTestPlatformDb({ freshSchema: true })); });
   afterAll(async () => { await destroyTestPlatformDb(db); });
 
-  it("creates all four durable pair tables instead of leaving lifecycle state in memory", async () => {
+  it("creates all durable pair tables including pre-admission cloud recovery", async () => {
     const result = await sql<{ tablename: string }>`SELECT tablename FROM pg_tables
       WHERE schemaname = current_schema() AND tablename LIKE 'preview_pair%'
       ORDER BY tablename`.execute(db.executor);
     expect(result.rows.map(row => row.tablename)).toEqual([
-      "preview_pair_fixtures", "preview_pair_generations", "preview_pair_members", "preview_pairs",
+      "preview_pair_cloud_intents", "preview_pair_fixtures", "preview_pair_generations", "preview_pair_members", "preview_pairs",
     ]);
   });
 
   it("tracks the new schema independently of the core migration generation", async () => {
     const result = await sql<{ generation: number; fingerprint: string }>`SELECT generation, fingerprint
       FROM platform_schema_revisions WHERE scope = 'preview-pairs'`.execute(db.executor);
-    expect(result.rows).toEqual([{ generation: 2, fingerprint: "collaboration-preview-pair-controller-v2" }]);
+    expect(result.rows).toEqual([{ generation: 3, fingerprint: "collaboration-preview-pair-cloud-intents-v3" }]);
   });
 });
