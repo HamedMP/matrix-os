@@ -6,6 +6,7 @@ records are retained; owner data and PM generations are never rewritten.
 from __future__ import annotations
 import argparse
 import contextlib
+import ctypes
 from dataclasses import dataclass
 import fcntl
 import hashlib
@@ -205,10 +206,42 @@ def _copy_budget(root):
     return 2*allocation+int(4.5*1024**3)
 
 def _facts(root):
+    return hashlib.sha256(_regular_bytes(_install_state(root)/"facts.json")).hexdigest()
+
+def _install_state(root):
     key=hashlib.sha256(str(root).encode()).hexdigest()[:16]
     state=root.parent/"installs"/key
     if state.resolve()!=state: raise ArtifactError("PM completion state is aliased")
-    return hashlib.sha256(_regular_bytes(state/"facts.json")).hexdigest()
+    return state
+
+@contextlib.contextmanager
+def _pm_lock(root):
+    state=_install_state(root)
+    if not state.is_dir(): raise ArtifactError("Committed PM state is missing")
+    # The pinned PM installer and orphan collector use this exact lock.
+    with _lock(state/".install.lock"): yield
+
+def _exchange(left,right):
+    # Never expose a missing canonical checkout, even if this process dies.
+    # Refuse unsupported filesystems rather than falling back to two renames.
+    libc=ctypes.CDLL(None,use_errno=True)
+    if sys.platform.startswith("linux"):
+        operation=getattr(libc,"renameat2",None)
+        if operation is None: raise ArtifactError("Atomic source exchange is unavailable")
+        operation.argtypes=[ctypes.c_int,ctypes.c_char_p,ctypes.c_int,ctypes.c_char_p,ctypes.c_uint]
+        args=(-100,os.fsencode(left),-100,os.fsencode(right),2)
+    elif sys.platform=="darwin":
+        operation=getattr(libc,"renamex_np",None)
+        if operation is None: raise ArtifactError("Atomic source exchange is unavailable")
+        operation.argtypes=[ctypes.c_char_p,ctypes.c_char_p,ctypes.c_uint]
+        args=(os.fsencode(left),os.fsencode(right),2)
+    else: raise ArtifactError("Atomic source exchange is unavailable")
+    operation.restype=ctypes.c_int
+    if operation(*args)!=0: raise ArtifactError("Atomic source exchange failed")
+    for parent in {left.parent,right.parent}:
+        fd=os.open(parent,os.O_RDONLY)
+        try: os.fsync(fd)
+        finally: os.close(fd)
 
 def _paths(root,record,state):
     if record.get("source")!=str(root): raise ArtifactError("Transaction belongs to another source")
@@ -226,18 +259,49 @@ def _archive_transaction(state,record,status):
     history=_directory(state/"history")
     os.rename(state/"transaction.json",history/(record["id"]+"-"+uuid.uuid4().hex+".json"))
 
+def _current_receipt(record,status):
+    # Previous receipts belong only in the in-flight journal/history. Keeping
+    # them in current.json would recursively grow metadata on every upgrade.
+    return {**{key:value for key,value in record.items() if key!="previousCurrent"},"status":status}
+
+def _restore_current(root,state,record):
+    if "previousCurrent" not in record:
+        # Older journals did not save the prior receipt. Only resume a full
+        # input proven by their original digest, never an inferred artifact.
+        if _snapshot(root)[1]!=record["inputDigest"] or not (root/MEMBER).is_file():
+            raise ArtifactError("Previous publication receipt is ambiguous; inputs retained")
+        previous=_current_receipt({**record,"artifactIdentity":record["originalIdentity"],
+                                   "artifactDigest":record["inputDigest"]},"restored-for-upgrade")
+    else: previous=record["previousCurrent"]
+    if previous is not None:
+        _write_json(state/"current.json",previous)
+    else:
+        (state/"current.json").unlink(missing_ok=True)
+        fd=os.open(state,os.O_RDONLY)
+        try:os.fsync(fd)
+        finally:os.close(fd)
+
 def _recover(root,state):
     journal=state/"transaction.json"
     if not journal.exists(): return {"recovered":False}
     record=_json(journal);stage,backup=_paths(root,record,state)
+    if _facts(root)!=record["pmFactsSHA256"]:
+        raise ArtifactError("Interrupted PM state changed; inputs retained")
     if root.exists() and _identity(root)==record["originalIdentity"]:
+        _restore_current(root,state,record)
         _archive_transaction(state,record,"original-intact")
         return {"recovered":False}
+    candidate=stage/"source"
+    if not backup.exists() and candidate.exists() and _identity(candidate)==record["originalIdentity"]:
+        os.rename(candidate,backup)
     if not backup.exists() or _identity(backup)!=record["originalIdentity"]:
         raise ArtifactError("Interrupted publication is ambiguous; inputs retained")
+    if _facts(root)!=record["pmFactsSHA256"]:
+        raise ArtifactError("Interrupted PM state changed; inputs retained")
     with _checkout_lock(backup):
         if not root.exists():
-            os.rename(backup,root);_archive_transaction(state,record,"restored")
+            os.rename(backup,root);_restore_current(root,state,record)
+            _archive_transaction(state,record,"restored")
             return {"recovered":True}
         if _identity(root)!=record["artifactIdentity"]:
             raise ArtifactError("Source changed after interruption; inputs retained")
@@ -247,23 +311,74 @@ def _recover(root,state):
             if _git(root,"rev-parse","HEAD").decode().strip()!=record["commit"]:
                 raise ArtifactError("Interrupted source identity changed; inputs retained")
             _git(root,"diff","--quiet","--no-ext-diff","--no-textconv","HEAD","--")
-            _write_json(state/"current.json",{**record,"status":"committed"})
-            _archive_transaction(state,record,"committed")
+            status="restored-for-upgrade" if record.get("purpose")=="upgrade" else "committed"
+            _write_json(state/"current.json",_current_receipt(record,status))
+            _archive_transaction(state,record,status)
             return {"recovered":True,"committed":True}
+
+def prepare_upgrade(source,policy=DEFAULT):
+    """Restore complete audited input before upstream reuses dependencies.
+
+    A successful upstream rerun refreshes its stamps without replacing an
+    otherwise current node_modules. Never waive the old curated digest: swap
+    back its retained, verified full input before upstream can modify it.
+    """
+    try:
+        root=_source(source);state=root.parent/".matrix-runtime-artifacts"
+        if not state.exists(): return {"prepared":False}
+        _directory(state)
+        with _lock(state/"publish.lock"),_pm_lock(root):
+            _recover(root,state)
+            if not (state/"current.json").exists(): return {"prepared":False}
+            current=_json(state/"current.json");_,backup=_paths(root,current,state)
+            if current.get("status")=="restored-for-upgrade":
+                # Upstream owns this mutable working copy now. A failed Git or
+                # npm stage must remain repairable by its next official run;
+                # publication still performs every full-source admission check.
+                return {"prepared":True,"alreadyPrepared":True}
+            with _checkout_lock(root):
+                _validate(root,policy,False)
+                if _snapshot(root)[1]!=current["artifactDigest"]:
+                    raise ArtifactError("Managed artifact changed; upgrade inputs retained")
+                with _checkout_lock(backup):
+                    _validate(backup,policy,True)
+                    if _identity(backup)!=current["originalIdentity"] or _snapshot(backup)[1]!=current["inputDigest"]:
+                        raise ArtifactError("Rollback input changed; upgrade inputs retained")
+                    if shutil.disk_usage(root.parent).free < _copy_budget(backup):
+                        raise ArtifactError("Insufficient space to retain verified upgrade input")
+                    facts=_facts(root);token=uuid.uuid4().hex;stage=_directory(state/("stage-"+token));candidate=stage/"source"
+                    # Keep the audited full input immutable while upstream
+                    # modifies its copy, including interrupted Git/npm stages.
+                    shutil.copytree(backup,candidate,symlinks=True,
+                        ignore=lambda parent,names:["hermes-update.lock"] if Path(parent)==backup/".git" else [])
+                    if _snapshot(candidate)[1]!=current["inputDigest"] or _facts(root)!=facts:
+                        raise ArtifactError("Upgrade input changed while preparing")
+                    with _checkout_lock(candidate):
+                        record={**current,"id":token,"purpose":"upgrade","backup":str(state/("full-"+token)),
+                                "originalIdentity":_identity(root),"artifactIdentity":_identity(candidate),"pmFactsSHA256":facts,
+                                "inputDigest":current["artifactDigest"],"artifactDigest":current["inputDigest"],
+                                "previousCurrent":current,"status":"prepared"}
+                        _write_json(state/"transaction.json",record)
+                        _exchange(root,candidate)
+            _recover(root,state)
+            return {"prepared":True,"alreadyPrepared":False}
+    except ArtifactError: raise
+    except (OSError,ValueError,KeyError,subprocess.SubprocessError) as error:
+        raise ArtifactError("Upgrade preparation failed; inputs retained") from error
 
 def recover(source):
     try:
         root=_source(source);state=root.parent/".matrix-runtime-artifacts"
         if not state.exists(): return {"recovered":False}
         _directory(state)
-        with _lock(state/"publish.lock"): return _recover(root,state)
+        with _lock(state/"publish.lock"),_pm_lock(root): return _recover(root,state)
     except ArtifactError: raise
     except (OSError,ValueError,KeyError,subprocess.SubprocessError) as error: raise ArtifactError("Source recovery failed; inputs retained") from error
 
 def publish(source,policy=DEFAULT):
     root=_source(source);state=_directory(root.parent/".matrix-runtime-artifacts")
     try:
-        with _lock(state/"publish.lock"):
+        with _lock(state/"publish.lock"),_pm_lock(root):
             _recover(root,state)
             with _checkout_lock(root):
                 if not (root/MEMBER).exists() and (state/"current.json").exists():
@@ -290,21 +405,27 @@ def publish(source,policy=DEFAULT):
                 with _checkout_lock(candidate):
                     record={"schema":1,"id":token,"source":str(root),"backup":str(backup),"commit":policy.commit,
                             "memberHash":policy.member_hash,"inputDigest":digest,"artifactDigest":artifact_digest,
-                            "originalIdentity":_identity(root),"artifactIdentity":_identity(candidate),"pmFactsSHA256":facts,"status":"prepared"}
+                            "originalIdentity":_identity(root),"artifactIdentity":_identity(candidate),"pmFactsSHA256":facts,
+                            "previousCurrent":_json(state/"current.json") if (state/"current.json").exists() else None,"status":"prepared"}
                     _write_json(state/"transaction.json",record)
                     try:
-                        os.rename(root,backup);os.rename(candidate,root)
+                        _exchange(root,candidate);os.rename(candidate,backup)
                         if _snapshot(root)[1]!=artifact_digest or _facts(root)!=facts: raise ArtifactError("Published artifact changed")
                         _validate(root,policy,False)
-                        result={**record,"status":"committed","alreadyCurrent":False}
+                        result={**_current_receipt(record,"committed"),"alreadyCurrent":False}
                         _write_json(state/"current.json",result);_archive_transaction(state,record,"committed")
                         return result
                     except Exception as error:
-                        if backup.exists():
-                            if root.exists():
-                                if _identity(root)!=record["artifactIdentity"]: raise ArtifactError("Publication changed unexpectedly; inputs retained") from error
-                                os.rename(root,state/("failed-"+token))
-                            os.rename(backup,root)
+                        original=backup if backup.exists() else candidate
+                        if root.exists() and _identity(root)==record["originalIdentity"]:
+                            _restore_current(root,state,record)
+                            _archive_transaction(state,record,"original-intact")
+                        elif original.exists() and _identity(original)==record["originalIdentity"]:
+                            if not root.exists() or _identity(root)!=record["artifactIdentity"]:
+                                raise ArtifactError("Publication changed unexpectedly; inputs retained") from error
+                            _exchange(root,original)
+                            os.rename(original,state/("failed-"+token))
+                            _restore_current(root,state,record)
                             _archive_transaction(state,record,"rolled-back")
                         raise ArtifactError("Source publication failed; original restored or retained") from error
     except ArtifactError: raise
@@ -312,7 +433,8 @@ def publish(source,policy=DEFAULT):
         raise ArtifactError("Source artifact preparation failed; inputs retained") from error
 
 if __name__=="__main__":
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument("source");parser.add_argument("--recover",action="store_true");args=parser.parse_args()
-    try: print(json.dumps(recover(args.source) if args.recover else publish(args.source),sort_keys=True))
+    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument("source")
+    mode=parser.add_mutually_exclusive_group();mode.add_argument("--recover",action="store_true");mode.add_argument("--prepare-upgrade",action="store_true");args=parser.parse_args()
+    try: print(json.dumps(prepare_upgrade(args.source) if args.prepare_upgrade else recover(args.source) if args.recover else publish(args.source),sort_keys=True))
     except ArtifactError as error:
         print("matrix-hermes-runtime: "+str(error),file=sys.stderr);raise SystemExit(1)

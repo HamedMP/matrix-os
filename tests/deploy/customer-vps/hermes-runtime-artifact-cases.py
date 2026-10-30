@@ -24,6 +24,8 @@ class Cases(unittest.TestCase):
         return subprocess.check_output(["/usr/bin/git","-c","core.fsmonitor=false","-c","core.hooksPath=/dev/null","-C",str(self.source),*args],stderr=subprocess.DEVNULL,text=True,env={"PATH":"/usr/bin:/bin","GIT_CONFIG_NOSYSTEM":"1","GIT_CONFIG_GLOBAL":"/dev/null","GIT_TERMINAL_PROMPT":"0"})
     def retained(self):
         self.assertEqual(self.owner.read_text(),"owner-fixture: preserve\n");self.assertEqual(self.facts.read_bytes(),self.facts_before)
+        receipt=self.source.parent/".matrix-runtime-artifacts/current.json"
+        if receipt.exists():self.assertNotIn("previousCurrent",json.loads(receipt.read_text()))
     def legacy_environment(self):
         import venv
         ignore=self.source/".gitignore";ignore.write_text(ignore.read_text()+"venv/\n")
@@ -62,6 +64,56 @@ class Cases(unittest.TestCase):
     def test_repeat_setup_is_idempotent(self):
         first=m.publish(self.source,self.policy);second=m.publish(self.source,self.policy)
         self.assertIn("backup",first);self.assertEqual(first["backup"],second["backup"]);self.assertTrue(second["alreadyCurrent"]);self.retained()
+    def test_repeat_upstream_install_gets_full_audited_input_before_reusing_dependencies(self):
+        m.publish(self.source,self.policy)
+        # The actual installer recovery hook must restore full source before
+        # upstream reuses node_modules and refreshes its completion stamp.
+        m.prepare_upgrade(self.source,self.policy)
+        self.assertEqual(self.member.read_bytes(),PAYLOAD)
+        (self.source/"install-stamp.json").write_text('{"builtAt":"next-official-completion"}')
+        second=m.publish(self.source,self.policy)
+        self.assertFalse(self.member.exists())
+        self.assertTrue((pathlib.Path(second["backup"])/"install-stamp.json").is_file());self.retained()
+    def test_prepare_upgrade_does_not_replace_owner_modified_artifact(self):
+        m.publish(self.source,self.policy);(self.source/"owner-added.py").write_text("preserve")
+        with self.assertRaises(m.ArtifactError):m.prepare_upgrade(self.source,self.policy)
+        self.assertEqual((self.source/"owner-added.py").read_text(),"preserve");self.retained()
+    def test_prepare_upgrade_is_idempotent_and_retains_curated_input(self):
+        first=m.publish(self.source,self.policy)
+        m.prepare_upgrade(self.source,self.policy)
+        self.assertTrue(m.prepare_upgrade(self.source,self.policy)["alreadyPrepared"])
+        self.assertEqual(self.member.read_bytes(),PAYLOAD)
+        self.assertEqual((pathlib.Path(first["backup"])/"node_modules/flatted/python/flatted.py").read_bytes(),PAYLOAD);self.retained()
+    def test_partial_upstream_dependency_stage_can_retry_without_admitting_incomplete_source(self):
+        m.publish(self.source,self.policy);m.prepare_upgrade(self.source,self.policy)
+        self.member.unlink()
+        self.assertTrue(m.prepare_upgrade(self.source,self.policy)["alreadyPrepared"])
+        with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
+        self.member.write_bytes(PAYLOAD);m.publish(self.source,self.policy);self.retained()
+    def test_partial_upstream_repository_stage_can_retry_without_admitting_changed_source(self):
+        m.publish(self.source,self.policy);m.prepare_upgrade(self.source,self.policy)
+        (self.source/"runtime.py").write_text("partial official checkout")
+        self.assertTrue(m.prepare_upgrade(self.source,self.policy)["alreadyPrepared"])
+        with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
+        self.git("checkout","--","runtime.py");m.publish(self.source,self.policy);self.retained()
+    def test_legitimate_pm_selection_change_is_preserved_across_upgrade_preparation(self):
+        m.publish(self.source,self.policy);self.facts.write_text('{"fixture":"new-committed-extras"}')
+        self.facts_before=self.facts.read_bytes()
+        m.prepare_upgrade(self.source,self.policy);m.publish(self.source,self.policy);self.retained()
+    def test_dead_upgrade_preparation_is_recovered_without_a_missing_checkout(self):
+        m.publish(self.source,self.policy);pid=os.fork()
+        if pid==0:
+            real=m._exchange
+            def killed(left,right):
+                real(left,right);os._exit(93)
+            m._exchange=killed
+            try:m.prepare_upgrade(self.source,self.policy)
+            finally:os._exit(94)
+        _,status=os.waitpid(pid,0);self.assertEqual(os.waitstatus_to_exitcode(status),93)
+        self.assertTrue(self.source.is_dir());self.retained()
+        m.prepare_upgrade(self.source,self.policy)
+        self.assertEqual(self.member.read_bytes(),PAYLOAD)
+        m.publish(self.source,self.policy);self.assertFalse(self.member.exists());self.retained()
     def test_wrong_member_hash_is_rejected_without_publication(self):
         self.member.write_bytes(b"unexpected")
         with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
@@ -89,6 +141,91 @@ class Cases(unittest.TestCase):
             with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
         finally:os.close(fd)
         self.assertTrue(self.member.exists());self.retained()
+    def test_official_pm_install_lock_prevents_publication(self):
+        fd=os.open(self.facts.parent/".install.lock",os.O_RDWR|os.O_CREAT,0o600)
+        try:
+            fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
+        finally:os.close(fd)
+        self.assertTrue(self.member.exists());self.retained()
+    def test_canonical_source_never_disappears_during_publication(self):
+        real=m.os.rename
+        def observed(src,dst,*args,**kwargs):
+            result=real(src,dst,*args,**kwargs)
+            self.assertTrue(self.source.is_dir(),"PM GC must never observe a missing checkout")
+            return result
+        m.os.rename=observed
+        try:m.publish(self.source,self.policy)
+        finally:m.os.rename=real
+        self.assertFalse(self.member.exists());self.retained()
+    def test_real_process_death_before_backup_archival_keeps_pm_checkout_live(self):
+        pid=os.fork()
+        if pid==0:
+            real=m.os.rename
+            def killed(src,dst,*args,**kwargs):
+                if pathlib.Path(dst).name.startswith("full-"):os._exit(91)
+                return real(src,dst,*args,**kwargs)
+            m.os.rename=killed
+            try:m.publish(self.source,self.policy)
+            finally:os._exit(92)
+        _,status=os.waitpid(pid,0);self.assertEqual(os.waitstatus_to_exitcode(status),91)
+        self.assertTrue(self.source.is_dir());self.assertFalse(self.member.exists());self.retained()
+        self.assertTrue(m.recover(self.source).get("committed"));self.retained()
+    def test_rollback_never_exposes_missing_checkout(self):
+        rename=m.os.rename;write=m._write_json
+        def observed(src,dst,*args,**kwargs):
+            result=rename(src,dst,*args,**kwargs)
+            self.assertTrue(self.source.is_dir(),"rollback must preserve PM checkout visibility")
+            return result
+        def failed(path,value):
+            if pathlib.Path(path).name=="current.json":raise OSError("injected receipt failure")
+            return write(path,value)
+        m.os.rename=observed;m._write_json=failed
+        try:
+            with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
+        finally:m.os.rename=rename;m._write_json=write
+        self.assertEqual(self.member.read_bytes(),PAYLOAD);self.retained()
+    def test_receipt_archival_failure_restores_upgrade_retry_after_source_rollback(self):
+        for previous in (False,True):
+            with self.subTest(previous=previous):
+                if previous:
+                    m.publish(self.source,self.policy);m.prepare_upgrade(self.source,self.policy)
+                original=m._archive_transaction
+                def failed(*args,**kwargs):raise OSError("injected archival failure after current receipt")
+                m._archive_transaction=failed
+                try:
+                    with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
+                finally:m._archive_transaction=original
+                self.assertEqual(self.member.read_bytes(),PAYLOAD)
+                m.prepare_upgrade(self.source,self.policy)
+                m.publish(self.source,self.policy);self.retained()
+                if not previous:m.prepare_upgrade(self.source,self.policy)
+    def test_process_death_after_rollback_recovers_the_previous_receipt(self):
+        pid=os.fork()
+        if pid==0:
+            exchange=m._exchange;archive=m._archive_transaction;count=0
+            def failed(state,record,status):
+                if status=="committed":raise OSError("injected completion archival failure")
+                return archive(state,record,status)
+            def killed(left,right):
+                nonlocal count
+                exchange(left,right);count+=1
+                if count==2:os._exit(95)
+            m._archive_transaction=failed;m._exchange=killed
+            try:m.publish(self.source,self.policy)
+            finally:os._exit(96)
+        _,status=os.waitpid(pid,0);self.assertEqual(os.waitstatus_to_exitcode(status),95)
+        self.assertEqual(self.member.read_bytes(),PAYLOAD)
+        m.prepare_upgrade(self.source,self.policy);m.publish(self.source,self.policy);self.retained()
+    def test_unsupported_atomic_exchange_leaves_complete_source_retryable(self):
+        original=m._exchange
+        def refused(*args):raise m.ArtifactError("fixture filesystem lacks atomic exchange")
+        m._exchange=refused
+        try:
+            with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
+        finally:m._exchange=original
+        self.assertEqual(self.member.read_bytes(),PAYLOAD)
+        self.assertFalse(m.prepare_upgrade(self.source,self.policy)["prepared"]);self.retained()
     def test_copy_race_preserves_changed_input(self):
         real=shutil.copytree
         def changed(*args,**kwargs):
@@ -104,7 +241,7 @@ class Cases(unittest.TestCase):
     def test_second_rename_failure_restores_original_source(self):
         real=os.rename
         def failed(src,dst,*args,**kwargs):
-            if pathlib.Path(dst)==self.source and pathlib.Path(src).parent.name.startswith("stage-"):raise OSError("injected publication failure")
+            if pathlib.Path(dst).name.startswith("full-"):raise OSError("injected backup archival failure")
             return real(src,dst,*args,**kwargs)
         m.os=os;original=m.os.rename;m.os.rename=failed
         try:
@@ -117,14 +254,15 @@ class Cases(unittest.TestCase):
             real=m.os.rename
             def killed(src,dst,*args,**kwargs):
                 value=real(src,dst,*args,**kwargs)
-                if pathlib.Path(src)==self.source:os._exit(87)
+                if pathlib.Path(dst).name.startswith("full-"):os._exit(87)
                 return value
             m.os.rename=killed
             try:m.publish(self.source,self.policy)
             finally:os._exit(88)
         _,status=os.waitpid(pid,0);self.assertEqual(os.waitstatus_to_exitcode(status),87)
-        self.assertFalse(self.source.exists());result=m.recover(self.source);self.assertTrue(result["recovered"])
-        self.assertEqual(self.member.read_bytes(),PAYLOAD);self.retained()
+        self.assertTrue(self.source.is_dir(),"a dead publisher must not expose PM state to orphan GC")
+        result=m.recover(self.source);self.assertTrue(result["recovered"])
+        self.assertTrue(result.get("committed"));self.assertFalse(self.member.exists());self.retained()
     def test_git_index_lock_is_not_copied_into_runtime(self):
         (self.source/".git/index.lock").write_text("another git writer")
         with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)
@@ -173,12 +311,11 @@ class Cases(unittest.TestCase):
     def crash_after_candidate(self):
         pid=os.fork()
         if pid==0:
-            real=m.os.rename
-            def killed(src,dst,*args,**kwargs):
-                value=real(src,dst,*args,**kwargs)
-                if pathlib.Path(dst)==self.source and pathlib.Path(src).parent.name.startswith("stage-"):os._exit(89)
-                return value
-            m.os.rename=killed
+            real=m._write_json
+            def killed(path,value):
+                if pathlib.Path(path).name=="current.json":os._exit(89)
+                return real(path,value)
+            m._write_json=killed
             try:m.publish(self.source,self.policy)
             finally:os._exit(90)
         _,status=os.waitpid(pid,0);self.assertEqual(os.waitstatus_to_exitcode(status),89)
@@ -189,6 +326,21 @@ class Cases(unittest.TestCase):
         self.crash_after_candidate();(self.source/"runtime.py").write_text("later owner change")
         with self.assertRaises(m.ArtifactError):m.recover(self.source)
         self.assertEqual((self.source/"runtime.py").read_text(),"later owner change");self.retained()
+    def test_recovery_refuses_missing_pm_selection(self):
+        self.crash_after_candidate();self.facts.unlink()
+        with self.assertRaises(m.ArtifactError):m.recover(self.source)
+        self.assertTrue(self.source.is_dir());self.assertFalse(self.member.exists())
+    def test_legacy_missing_root_recovery_reconciles_stale_curated_receipt(self):
+        current=m.publish(self.source,self.policy)
+        state=self.source.parent/".matrix-runtime-artifacts"
+        # Old two-rename rollback could die after publishing current.json
+        # and moving curated source aside, before restoring the full backup.
+        m._write_json(state/"transaction.json",{**current,"status":"prepared"})
+        os.rename(self.source,state/"legacy-failed-artifact")
+        self.assertFalse(self.source.exists())
+        m.prepare_upgrade(self.source,self.policy)
+        self.assertEqual(self.member.read_bytes(),PAYLOAD)
+        m.publish(self.source,self.policy);self.retained()
     def test_git_directory_alias_is_rejected_before_any_external_lock_write(self):
         actual=self.base/"external-git";os.rename(self.source/".git",actual);(self.source/".git").symlink_to(actual,target_is_directory=True)
         with self.assertRaises(m.ArtifactError):m.publish(self.source,self.policy)

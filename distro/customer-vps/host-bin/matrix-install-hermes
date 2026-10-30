@@ -95,8 +95,8 @@ if command -v systemctl >/dev/null 2>&1 &&
 fi
 trap restore_hermes_dashboard EXIT
 
-log "recovering interrupted Hermes runtime publication"
-run_hermes_artifact_helper --recover
+log "recovering publication and preparing complete Hermes upgrade input"
+run_hermes_artifact_helper --prepare-upgrade
 
 
 log "installing Hermes Agent $HERMES_RELEASE for $MATRIX_RUNTIME_USER"
