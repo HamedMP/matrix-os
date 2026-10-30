@@ -45,6 +45,7 @@ describe("isolated Codex execution boundary", () => {
       "--config", "tools.update_plan.enabled=false",
       "--config", "tools.experimental_request_user_input.enabled=false",
     ]));
+    expect(launch.args).not.toContain("disable_response_storage=true");
     expect(JSON.stringify(launch)).not.toMatch(/API_KEY|AUTH_TOKEN|refresh_token|owner/i);
   });
 

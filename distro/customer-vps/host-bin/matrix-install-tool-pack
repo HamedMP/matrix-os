@@ -50,6 +50,7 @@ resolve_runtime_user
 usage() {
   cat >&2 <<'EOF'
 Usage: matrix-install-tool-pack <claude-code|codex|opencode|pi|coding-agents|code-server|hermes|linux-tools|all>
+       matrix-install-tool-pack codex --reconcile-only
 EOF
 }
 
@@ -168,6 +169,16 @@ sync_agent_skills() {
   fi
 }
 
+reconcile_agent_npm_prefix() {
+  if [ -f "$MATRIX_APP_DIR/scripts/reconcile-agent-npm-prefix.mjs" ]; then
+    run_as_matrix env \
+      MATRIX_RUNTIME_HOME="$MATRIX_RUNTIME_HOME" \
+      MATRIX_NODE_PREFIX="$NODE_PREFIX" \
+      HERMES_HOME="${HERMES_HOME:-$MATRIX_RUNTIME_HOME/.hermes}" \
+      "$NODE_PREFIX/bin/node" "$MATRIX_APP_DIR/scripts/reconcile-agent-npm-prefix.mjs"
+  fi
+}
+
 finish_agent_install() {
   runtime_chmod
   sync_agent_skills
@@ -175,6 +186,11 @@ finish_agent_install() {
     /opt/matrix/bin/matrix-register-integrations-mcp coding-agents || \
       log "coding-agent integrations MCP registration will retry on gateway restart"
   fi
+}
+
+complete_codex_repair() {
+  reconcile_agent_npm_prefix
+  finish_agent_install
 }
 
 install_claude_code_package() {
@@ -197,6 +213,7 @@ install_codex_package() {
 install_codex() {
   log "installing Codex CLI"
   install_codex_package
+  reconcile_agent_npm_prefix
   finish_agent_install
   log "Codex CLI installed"
 }
@@ -233,6 +250,7 @@ install_coding_agents() {
   install_codex_package
   install_opencode_package
   install_pi_package
+  reconcile_agent_npm_prefix
   finish_agent_install
   log "coding agent CLIs installed"
 }
@@ -294,6 +312,14 @@ install_linux_tools() {
 }
 
 pack="${1:-}"
+if [ "$pack" = "codex" ] && [ "$#" -ne 1 ]; then
+  if [ "$#" -eq 2 ] && [ "$2" = "--reconcile-only" ]; then
+    with_pack_lock "$pack" complete_codex_repair
+    exit
+  fi
+  usage
+  exit 2
+fi
 case "$pack" in
   claude-code) with_pack_lock "$pack" install_claude_code ;;
   codex) with_pack_lock "$pack" install_codex ;;
