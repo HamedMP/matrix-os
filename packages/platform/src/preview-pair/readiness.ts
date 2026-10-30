@@ -93,7 +93,7 @@ export async function refreshPreviewPairReadiness(db: PlatformDB, claim: Preview
       if (observation.role !== expected.role || observation.machineId !== expected.machineId || observation.actorId !== expected.actorId
         || observation.runtimeSlot !== expected.handle || observation.handle !== expected.handle
         || now() - observedAt > 30_000 || observedAt > now() + 5_000) throw new PreviewPairReadinessFailure(`${member.role}_runtime`);
-      if (observation.installedVersion !== candidate.hostBundleVersion || observation.bundleSha256 !== candidate.hostBundleSha256
+      if (observation.installedVersion !== candidate.hostBundleVersion || observation.runningVersion !== candidate.hostBundleVersion || observation.bundleSha256 !== candidate.hostBundleSha256
         || observation.installedSha !== pair.source_sha || observation.runningSha !== pair.source_sha) throw new PreviewPairReadinessFailure(`${member.role}_source`);
       const controlAt = Date.parse(observation.lastControlAt);
       if (now() - controlAt > 60_000 || controlAt > now() + 5_000) throw new PreviewPairReadinessFailure(`${member.role}_control`);
@@ -115,7 +115,7 @@ export async function refreshPreviewPairReadiness(db: PlatformDB, claim: Preview
         .where("pair_id", "=", claim.pairId).where("generation", "=", claim.generation).where("machine_id", "=", row.machineId).execute();
       await trx.executor.updateTable("preview_pair_generations").set({ ready_at: sql`COALESCE(ready_at, ${new Date(now()).toISOString()})` })
         .where("pair_id", "=", claim.pairId).where("generation", "=", claim.generation).execute();
-      await trx.executor.updateTable("preview_pairs").set({ state: "ready", failure_code: null, revision: sql`revision + 1`,
+      await trx.executor.updateTable("preview_pairs").set({ state: "ready", failure_code: null, next_attempt_at: new Date(now() + 15_000).toISOString(), revision: sql`revision + 1`,
         claim_id: null, claim_expires_at: null }).where("pair_id", "=", claim.pairId).where("generation", "=", claim.generation)
         .where("revision", "=", claim.revision).where("claim_id", "=", claim.claimId).executeTakeFirstOrThrow();
     });

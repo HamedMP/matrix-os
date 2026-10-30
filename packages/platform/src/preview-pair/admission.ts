@@ -24,7 +24,10 @@ export async function promoteQueuedPreviewPair(db: PlatformDB, config: EnabledPr
     const available = await trx.executor.selectFrom("preview_pair_fixtures").selectAll()
       .where("fixture_id", "in", config.fixtures.map(f => f.id)).where("active_pair_id", "is", null)
       .orderBy("fixture_id").forUpdate().executeTakeFirst();
-    if (!available) return pair;
+    if (!available) return trx.executor.updateTable("preview_pairs")
+      .set({ next_attempt_at: new Date(now + 15_000).toISOString(), revision: sql`revision + 1` })
+      .where("pair_id", "=", pairId).where("revision", "=", revision).where("state", "=", "queued")
+      .returningAll().executeTakeFirstOrThrow();
     const approved = config.fixtures.find(f => f.id === available.fixture_id);
     if (!approved || approved.ownerActorId !== available.owner_actor_id || approved.memberActorId !== available.member_actor_id
       || approved.outsiderActorId !== available.outsider_actor_id || approved.organizationId !== available.organization_id) throw new PreviewPairConflictError();
