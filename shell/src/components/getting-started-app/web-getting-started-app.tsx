@@ -60,10 +60,10 @@ export function WebGettingStartedAppHost({
   onEnabledChange(enabled: boolean): void;
 }) {
   const port = useMemo(() => createWebGettingStartedAppPort(), []);
-  // Spec 639: the icon goes on every owner's desktop once, after the saved layout has loaded.
+  // Spec 639: the icon goes first on every owner's desktop once, after the saved layout has loaded.
   const desktopIconsLoaded = useDesktopConfigStore((state) => state.desktopIcons !== undefined);
   const placeDesktopIcon = useCallback(async () => {
-    const result = await useDesktopConfigStore.getState().addDesktopIcon(GETTING_STARTED_APP_PATH);
+    const result = await useDesktopConfigStore.getState().addDesktopIcon(GETTING_STARTED_APP_PATH, undefined, { first: true });
     if (result === "failed" || result === "desktop-full") console.warn("[getting-started-app] desktop icon not placed:", result);
     return result;
   }, []);

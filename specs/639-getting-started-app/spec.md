@@ -28,7 +28,7 @@ The Get started wizard (spec 635) runs once, before the desktop. This app is wha
 
 ## Journey
 
-**First open.** The app opens once automatically, and its icon is placed on the desktop, the first time the desktop loads after the Get started wizard has finished or been skipped. The server claim (`/auto-open`) makes this happen once per owner across Web and Electron. Owners who never get the wizard are not auto-opened. After that it opens from its icon, the launcher or the Help popover.
+**First open.** The app opens once automatically, and its icon is placed first on the desktop, the first time the desktop loads after the Get started wizard has finished or been skipped. The server claim (`/auto-open`) makes this happen once per owner across Web and Electron. Owners who never get the wizard are not auto-opened. After that it opens from its icon, the launcher or the Help popover.
 
 **Screen** (Figma "First login"):
 
@@ -68,6 +68,7 @@ The Get started wizard (spec 635) runs once, before the desktop. This app is wha
 - A card's Done follows its live status: a disconnected Slack, GitHub or AI provider shows "20 pts earned" instead of Done until it is reconnected. Tasks Matrix cannot check, and the one-time first prompt, stay Done once earned.
 - When a task pays out while the app is on screen, the reward plays in the app (the hero shows it, the total floats "+N") instead of a corner toast. A minimized window or background tab gets the corner toast.
 - Desktop icon names wrap to two lines on Web Desktop and Electron Desktop, so "Getting started" is never cut off.
+- The icon takes the top-left slot. Icons on the slots before the first empty one move down one slot each (filling down, then right), once, when the icon is placed. If a hand-placed icon sits in that run, it goes in the first empty slot instead.
 - The server decides the amount from its own table; the client only names the task.
 - Points are progress, not money. Before points ever become credit or rewards, completion must be verified by the server or platform (see Risks).
 

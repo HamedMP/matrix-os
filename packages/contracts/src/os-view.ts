@@ -247,11 +247,8 @@ function validDesktopSlot(x: number, y: number, bounds: OsViewDesktopBounds): bo
     && y + OS_VIEW_DESKTOP_GRID.iconHeight <= bounds.height;
 }
 
-/** Find the first collision-free slot, filling downward before moving right. */
-export function findOpenOsViewDesktopSlot(
-  icons: readonly Pick<OsViewDesktopIcon, "x" | "y">[],
-  bounds: OsViewDesktopBounds,
-): Pick<OsViewDesktopIcon, "x" | "y"> | null {
+/** Grid slots inside the bounds, filling downward before moving right. */
+function* desktopGridSlots(bounds: OsViewDesktopBounds): Generator<Pick<OsViewDesktopIcon, "x" | "y">> {
   const rows = Math.max(0, Math.floor(
     (bounds.height - DEFAULT_DESKTOP_GRID.startY - OS_VIEW_DESKTOP_GRID.iconHeight)
       / DEFAULT_DESKTOP_GRID.rowHeight,
@@ -262,12 +259,58 @@ export function findOpenOsViewDesktopSlot(
   ) + 1);
   for (let column = 0; column < columns; column += 1) {
     for (let row = 0; row < rows; row += 1) {
-      const candidate = {
+      yield {
         x: DEFAULT_DESKTOP_GRID.startX + column * DEFAULT_DESKTOP_GRID.columnWidth,
         y: DEFAULT_DESKTOP_GRID.startY + row * DEFAULT_DESKTOP_GRID.rowHeight,
       };
-      if (!icons.some((icon) => desktopSlotsCollide(icon, candidate))) return candidate;
     }
+  }
+}
+
+/** Find the first collision-free slot, filling downward before moving right. */
+export function findOpenOsViewDesktopSlot(
+  icons: readonly Pick<OsViewDesktopIcon, "x" | "y">[],
+  bounds: OsViewDesktopBounds,
+): Pick<OsViewDesktopIcon, "x" | "y"> | null {
+  for (const candidate of desktopGridSlots(bounds)) {
+    if (!icons.some((icon) => desktopSlotsCollide(icon, candidate))) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Add an icon at the first open slot, or with `first` in the top-left slot:
+ * icons sitting exactly on the slots before the first gap then move down one
+ * slot each, and an off-grid icon in that run means the first open slot is
+ * used instead. Returns the new layout, or null when the desktop is full.
+ */
+export function placeOsViewDesktopIcon<T extends Pick<OsViewDesktopIcon, "path" | "x" | "y">>(
+  icons: readonly T[],
+  path: string,
+  bounds: OsViewDesktopBounds,
+  options: { first?: boolean } = {},
+): Array<T | Pick<OsViewDesktopIcon, "path" | "x" | "y">> | null {
+  const appendAtOpenSlot = () => {
+    const open = findOpenOsViewDesktopSlot(icons, bounds);
+    return open ? [...icons, { path, ...open }] : null;
+  };
+  if (!options.first) return appendAtOpenSlot();
+  const slots: Array<Pick<OsViewDesktopIcon, "x" | "y">> = [];
+  const run: T[] = [];
+  for (const slot of desktopGridSlots(bounds)) {
+    slots.push(slot);
+    const blocking = icons.filter((icon) => desktopSlotsCollide(icon, slot));
+    const [occupant] = blocking;
+    if (!occupant) {
+      const [firstSlot = slot] = slots;
+      const next = new Map(run.map((icon, index) => [icon, slots[index + 1] ?? slot] as const));
+      return [{ path, ...firstSlot }, ...icons.map((icon) => {
+        const moved = next.get(icon);
+        return moved ? { ...icon, ...moved } : icon;
+      })];
+    }
+    if (blocking.length > 1 || occupant.x !== slot.x || occupant.y !== slot.y) return appendAtOpenSlot();
+    run.push(occupant);
   }
   return null;
 }

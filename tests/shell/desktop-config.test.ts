@@ -329,6 +329,31 @@ describe("Desktop config", () => {
     }));
   });
 
+  it("can put a new web Desktop icon first, moving the icons ahead of the first gap down one slot", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ config: {} }) });
+    vi.stubGlobal("fetch", mockFetch);
+    useDesktopConfigStore.getState().setDesktopIcons([
+      { path: "__chat__", x: 20, y: 20 },
+      { path: "__terminal__", x: 108, y: 20 },
+    ]);
+
+    await expect(useDesktopConfigStore.getState().addDesktopIcon(
+      "__getting-started__",
+      { width: 400, height: 300 },
+      { first: true },
+    )).resolves.toBe("added");
+
+    expect(useDesktopConfigStore.getState().desktopIcons).toEqual([
+      { path: "__getting-started__", x: 20, y: 20 },
+      { path: "__chat__", x: 20, y: 112 },
+      { path: "__terminal__", x: 108, y: 20 },
+    ]);
+    await waitFor(() => expect(mockFetch).toHaveBeenCalled());
+    expect(JSON.parse(mockFetch.mock.calls.at(-1)?.[1].body)).toEqual(expect.objectContaining({
+      patch: { desktop: { icons: useDesktopConfigStore.getState().desktopIcons } },
+    }));
+  });
+
   it("reports duplicate and full web Desktop placements without persisting", async () => {
     const mockFetch = vi.fn();
     vi.stubGlobal("fetch", mockFetch);

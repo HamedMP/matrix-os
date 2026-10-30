@@ -7,7 +7,7 @@ import {
 } from "@/lib/os-view-state-client";
 import { DEFAULT_PINNED_APPS } from "@/lib/builtin-apps";
 import {
-  findOpenOsViewDesktopSlot,
+  placeOsViewDesktopIcon,
   normalizeOsViewDesktopIcons,
   type OsViewDesktopAddResult,
   type OsViewDesktopBounds,
@@ -48,7 +48,8 @@ interface DesktopConfigStore {
   setDesktopIcons: (icons: DesktopIconPlacement[] | undefined, expectedHydrationRevision?: number) => void;
   moveDesktopIcon: (path: string, x: number, y: number) => void;
   removeDesktopIcon: (path: string) => void;
-  addDesktopIcon: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
+  /** `first` puts the icon in the top-left slot and moves the icons below it down one slot. */
+  addDesktopIcon: (path: string, bounds?: OsViewDesktopBounds, options?: { first?: boolean }) => Promise<OsViewDesktopAddResult>;
   togglePin: (path: string, aliases?: readonly string[]) => void;
   /** Persist a new section ordering. Accepts a partial update so callers
       can reorder one section without touching the other. */
@@ -277,7 +278,7 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
     const next = current.filter((icon) => icon.path !== path);
     applyDesktopIconMutation(current, next, set);
   },
-  addDesktopIcon: (path, bounds = { width: 1280, height: 640 }) => {
+  addDesktopIcon: (path, bounds = { width: 1280, height: 640 }, options = {}) => {
     if (!path || path.length > 2048) return Promise.resolve("failed");
     const pending = pendingDesktopAdds.get(path);
     if (pending) return pending;
@@ -286,9 +287,8 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
       const current = get().desktopIcons ?? [];
       if (current.some((icon) => icon.path === path)) return "already-present";
       if (current.length >= MAX_DESKTOP_ICONS) return "desktop-full";
-      const slot = findOpenOsViewDesktopSlot(current, bounds);
-      if (!slot) return "desktop-full";
-      const next = [...current, { path, ...slot }];
+      const next = placeOsViewDesktopIcon(current, path, bounds, options);
+      if (!next) return "desktop-full";
       return await applyDesktopIconMutation(current, next, set, true) ? "added" : "failed";
     })();
     pendingDesktopAdds.set(path, operation);

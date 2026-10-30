@@ -12,6 +12,7 @@ import {
   isOsViewDestinationPath,
   canonicalOsViewCatalogPath,
   findOpenOsViewDesktopSlot,
+  placeOsViewDesktopIcon,
   fitOsViewDesktopIconsToViewport,
   legacyDesktopImportFromConfig,
   mergeOsViewStatePatch,
@@ -58,6 +59,34 @@ describe("shared OS-view contract", () => {
       { path: "apps/eight/index.html", x: 196, y: 112 },
       { path: "apps/nine/index.html", x: 196, y: 204 },
     ], { width: 280, height: 300 })).toBeNull();
+  });
+
+  it("puts an icon in the first slot and moves the icons ahead of the first gap down one slot", () => {
+    const icons = [
+      { path: "apps/one/index.html", x: 20, y: 20 },
+      { path: "apps/two/index.html", x: 20, y: 112 },
+      { path: "apps/three/index.html", x: 20, y: 204 },
+      { path: "apps/four/index.html", x: 108, y: 112 },
+    ];
+    expect(placeOsViewDesktopIcon(icons, "__getting-started__", { width: 400, height: 300 }, { first: true })).toEqual([
+      { path: "__getting-started__", x: 20, y: 20 },
+      { path: "apps/one/index.html", x: 20, y: 112 },
+      { path: "apps/two/index.html", x: 20, y: 204 },
+      { path: "apps/three/index.html", x: 108, y: 20 },
+      { path: "apps/four/index.html", x: 108, y: 112 },
+    ]);
+    expect(icons[0]).toEqual({ path: "apps/one/index.html", x: 20, y: 20 });
+  });
+
+  it("falls back to the first open slot when an off-grid icon sits in the way, and reports a full desktop", () => {
+    expect(placeOsViewDesktopIcon([
+      { path: "apps/moved/index.html", x: 24, y: 24 },
+    ], "__getting-started__", { width: 400, height: 300 }, { first: true })).toEqual([
+      { path: "apps/moved/index.html", x: 24, y: 24 },
+      { path: "__getting-started__", x: 20, y: 204 },
+    ]);
+    const full = [20, 108].flatMap((x) => [20, 112, 204].map((y) => ({ path: `apps/${x}-${y}/index.html`, x, y })));
+    expect(placeOsViewDesktopIcon(full, "__getting-started__", { width: 200, height: 300 }, { first: true })).toBeNull();
   });
 
   it("derives safe viewport positions without mutating canonical coordinates", () => {

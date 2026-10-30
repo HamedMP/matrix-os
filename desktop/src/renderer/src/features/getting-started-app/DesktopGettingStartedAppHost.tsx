@@ -67,11 +67,11 @@ export function DesktopGettingStartedAppHost({ children }: { children: ReactNode
   const showToast = useCallback((completion: GettingStartedAppToast) => {
     toast.custom(() => <GettingStartedAppToastView toast={completion} />);
   }, []);
-  // Spec 639: the icon goes on every owner's desktop once (the server decides which surface places it).
+  // Spec 639: the icon goes first on every owner's desktop once (the server decides which surface places it).
   const desktopIconsLoaded = useDesktopIcons((state) => state.loaded);
   const placeDesktopIcon = useCallback(async () => {
     if (!api) return "failed" as const;
-    const result = await useDesktopIcons.getState().add(GETTING_STARTED_PATH, api);
+    const result = await useDesktopIcons.getState().add(GETTING_STARTED_PATH, api, undefined, { first: true });
     if (result === "failed" || result === "desktop-full") console.warn("[getting-started-app] desktop icon not placed:", result);
     return result;
   }, [api]);
