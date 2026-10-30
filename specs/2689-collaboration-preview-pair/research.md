@@ -170,3 +170,20 @@ Activation also pins `MATRIX_PREVIEW_PAIR_CONTROLLER_SHA`. Independent authentic
 readers verify the controller execution/workflow provenance, current open same-repo
 PR, unpromoted host release, exact desktop artifact bytes and observed test-only
 authority bindings. Input syntax or an enabled flag alone proves none of these.
+
+## Implementation refinement: separate collaboration and bounded funding
+
+Candidate collaboration registration, identity and data remain on the isolated API
+and database. The existing funded-AI financial contract deliberately pins the
+trusted control bank and approved relay; an actual gateway request with a candidate
+financial origin returned400. Keep that guard. Allocate the existing capped Preview
+allowance in the control ledger for the exact leased machine/actor/slot/epoch.
+Only its scoped runtime token reaches the host; the candidate receives no control,
+allowance-signing or credential-hash secret. No customer balance or replay refill.
+
+Host collaboration `PLATFORM_INTERNAL_URL` remains the candidate API. The existing
+separate funded-AI origin override supplies the control bank. One bounded maintenance
+pass reads loaded configuration, performs at most one idempotent configuration POST
+and returns pending; a later pass verifies it. A lost response is recovered by reading
+before another POST. No in-call wait/retry loop or Speech dependency is introduced.
+Readiness also checks current ledger balance, policy, quota, epoch and expiry.
