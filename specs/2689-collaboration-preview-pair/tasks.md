@@ -132,8 +132,9 @@ Use official `gh stack init/add/rebase/submit`; never hand-retarget or flatten.
 | 3j | Keep ordinary worker batches, metadata and deletion intents outside pair authority (part of T015) | `codex/eng-418-preview-pair-worker-boundaries` | Layer3i |
 | 3k1 | Pinned source profile, isolated credential/target readers and current provider authority | `codex/eng-418-preview-pair-startup` | Layer3j |
 | 3k2 | Configured Platform mount, worker and owned shutdown (complete T015; part of T033) | `codex/eng-418-preview-pair-startup-wiring` | Layer3k1 |
-| 3l | Protected request/build/publish/reaper workflow and controller CLI (complete T016/T033) | `codex/eng-418-preview-pair-automation` | Layer3k2 |
-| 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3l |
+| 3l1 | Durable pre-publication request, early identity/isolation gate and atomic adoption (part of T016/T033) | `codex/eng-418-preview-pair-cloud-intents` | Layer3k2 |
+| 3l2 | Protected build/publish/reaper workflow and controller CLI (complete T016/T033) | `codex/eng-418-preview-pair-automation` | Layer3l1 |
+| 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3l2 |
 | 5 if needed | Evidence runner, acceptance and internal docs (T026–T029, T036–T042) | `codex/eng-418-preview-pair-qualification` | Layer4 |
 
 Target <1000 additions/<20 files where practical; split a layer before exceeding
