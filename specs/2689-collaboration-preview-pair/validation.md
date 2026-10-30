@@ -298,6 +298,17 @@ are not qualified by this suite. It is included in required Postgres CI. Tempora
 roles/databases have explicit idempotent cleanup, including setup compensation.
 Focused Platform native TypeScript passes for the projection implementation.
 
+### Projection second review: connection aliases and cleanup
+
+The address-report regression failed first: a restricted role with a real control
+ledger grant passed when the owned target database reported another address. The
+fixture adjusts only its own reported-address catalog function; it does not claim
+an actual Unix-socket/VPN transport test. Isolation now requires distinct database
+and login-role names and checks control-table grants regardless of addresses.
+`session_user` prevents a login from hiding its broader privileges behind SET ROLE.
+**13/13 actual two-database cases pass**, zero skipped. Test teardown attempts the
+control fixture in finally even if the independent target cleanup reports failure.
+
 ### Projection review: observations, tombstones and catalog trust
 
 **12/12 actual two-database cases pass**, zero skipped. Four new intended faults

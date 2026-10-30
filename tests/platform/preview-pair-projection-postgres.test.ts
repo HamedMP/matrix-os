@@ -14,7 +14,7 @@ import * as projection from "../../packages/platform/src/preview-pair/projection
 describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("real registration across isolated pair databases",()=>{
  let f:Awaited<ReturnType<typeof createSeededPreviewPair>>,target:Awaited<ReturnType<typeof createIsolatedPreviewPairDatabase>>;
  beforeEach(async()=>{f=await createSeededPreviewPair();try{target=await createIsolatedPreviewPairDatabase();}catch(error:unknown){await f.destroy();throw error;}},30_000);
- afterEach(async()=>{await target?.destroy();await f?.destroy();});
+ afterEach(async()=>{try{await target?.destroy();}finally{await f?.destroy();}});
  async function snapshot(){
   const members=await f.db.executor.selectFrom("preview_pair_members").selectAll().orderBy("role").execute();
   for(let i=0;i<members.length;i++)await f.db.executor.updateTable("user_machines").set({hetzner_server_id:1000+i,public_ipv4:`203.0.113.${10+i}`}).where("machine_id","=",members[i].machine_id).execute();
@@ -100,7 +100,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("real registration across
   await expect(projection.retirePreviewPairProjection(f.db,target.db,{pairId:f.pair.pair_id,generation:1,machineId:member.machine_id,actorId:member.actor_id,handle:member.handle,jobId:fault==="wrong job"?"22222222-2222-4222-8222-222222222222":member.job_id,providerServerId:null},active,()=>PAIR_NOW)).rejects.toThrow();
   expect(await target.db.executor.selectFrom("user_machines").selectAll().execute()).toHaveLength(0);
  });
- it.each(["normal catalog","shadowed catalog"])("refuses a control-readable Preview role with %s",async fault=>{
+ it.each(["normal catalog","shadowed catalog","alternate address"])("refuses a control-readable Preview role with %s",async fault=>{
   const {claim}=await snapshot();
   const role=(await sql<{name:string}>`SELECT current_user AS name`.execute(target.db.executor)).rows[0].name;
   const schema=(await sql<{name:string}>`SELECT current_schema() AS name`.execute(f.db.executor)).rows[0].name;
@@ -109,6 +109,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("real registration across
    await sql`GRANT SELECT ON TABLE ${sql.id(schema,"user_machines")} TO ${sql.id(role)}`.execute(trx.executor);
   });
   try{
+   if(fault==="alternate address")await target.simulateAlternateAddress();
    if(fault==="shadowed catalog"){
     const namespace=(await sql<{name:string}>`SELECT current_schema() AS name`.execute(target.db.executor)).rows[0].name;
     await target.db.transaction(async trx=>{
