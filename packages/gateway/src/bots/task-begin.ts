@@ -5,13 +5,24 @@ import { createBotTasksRepository, type BotTask } from "./repositories/tasks.js"
 
 /** One transaction decides whether this message continues a waiting task. */
 export async function beginBotTask(tx: BotStateTransaction, input: {
-  ownerId: string; botId: string; chatId: string; runId: string; now: string; text: string;
+  ownerId: string; botId: string; chatId: string; runId: string; now: string; text: string; backgroundTaskId?: string;
 }): Promise<{ task: BotTask; continued: boolean }> {
   const tasks = createBotTasksRepository(tx.db);
   const admitted = await tx.db.selectFrom("chat_runs").innerJoin("chats", "chats.id", "chat_runs.chat_id")
     .select("chat_runs.client_request_id").where("chat_runs.id", "=", input.runId)
     .where("chat_runs.chat_id", "=", input.chatId).where("chats.owner_type", "=", "personal")
     .where("chats.owner_id", "=", input.ownerId).executeTakeFirst();
+  if (input.backgroundTaskId) {
+    const claimed = await tasks.get({ ownerId: input.ownerId, taskId: input.backgroundTaskId }, tx.db);
+    if (!claimed || claimed.botId !== input.botId || claimed.chatId !== input.chatId
+      || !(claimed.status === "queued" && !claimed.runId || claimed.status === "blocked" && claimed.blockedReason === "capacity_unavailable")) {
+      throw new BotInteractionError("conflict");
+    }
+    const task = await tasks.transition({ ownerId: input.ownerId, taskId: claimed.taskId, baseRevision: claimed.revision,
+      to: "running", runId: input.runId, now: input.now }, tx.db);
+    await tx.publish(task.chatId, "bot.task.updated", { taskId: task.taskId, chatId: task.chatId, agentId: task.botId, status: task.status, revision: task.revision });
+    return { task, continued: false };
+  }
   let waiting: BotTask | undefined;
   if (admitted?.client_request_id.startsWith("req_answer_")) {
     const interactionId = admitted.client_request_id.slice("req_answer_".length);
