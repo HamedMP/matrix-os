@@ -92,3 +92,29 @@ The fix preserves the staged candidate, changes only its currency during update,
 and carries that currency into the completed generation.
 
 All15 admission/update assertions pass after the lifecycle review correction; Platform TypeScript passes.
+
+### Operator API and readiness implementation
+
+- Actual Hono routes enforce constant-time operator credentials, a16KiB streaming
+  body limit, strict requests, safe errors and prefix isolation. Actual Platform
+  registration remains disabled by default and leaves ordinary routes unchanged.
+- Read authorization is requester/current-maintainer or leased fixture owner/member;
+  the outsider, an expired principal and the wrong identity domain are rejected.
+  The principal verifier is an explicit production adapter contract; no fixture
+  principal verifier is mounted in production.
+- Readiness uses the actual Postgres ledger and generation/revision/claim fences.
+  Host, identity, service and funding observations remain synthetic adapter boundaries
+  in these tests. Reports use the actual readiness producer and expire its proof.
+- Final service/reconciler/admission/update run: **30/30 passed across4 files**,
+  zero skipped. The expiry-progress case first failed because cleanup was repeatedly
+  re-stopped; skipping that transition for cleanup-pending pairs makes it pass.
+- Queue promotion leases a canonical fixture and prepares both members in one
+  transaction. A second-member failure rolls everything back; hard expiry survives
+  queue wait. Controller receipts bind the real requester before admission.
+- Platform TypeScript passes for this layer. No provider boot, identity mutation,
+  grant, deployment, native launch or live visual acceptance is claimed.
+- T015 production provider/identity/source/host adapters and maintenance activation
+  remain in the dependent controller layer; this API is not an operational preview
+  service until those bindings pass independent isolation checks.
+
+Final HTTP/readers/readiness/reports/queue/provenance run: **64/64 passed across7 files**, zero skipped. Combined with the separate30-case run, all94 assertions in these two inventories passed. Required Postgres CI inventory now includes the six new database suites.

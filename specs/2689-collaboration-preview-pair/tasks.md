@@ -36,8 +36,8 @@ is unchanged. Candidate sharing may still fail and must remain diagnosable.
 - [x] T010 [US1] Write failing two-job rollback, duplicate admission, fixture exclusivity and quota-race tests in `tests/platform/preview-pair-admission.test.ts` using the real transaction boundary.
 - [x] T011 [US1] Add a transaction-required internal prepare-only mode in `packages/platform/src/customer-vps-provision.ts`; prove zero provider dispatch before commit and preserve ordinary Preview behavior.
 - [x] T012 [US1] Implement admission/repository and guarded two-owner leases in `packages/platform/src/preview-pair/admission.ts` and `repository.ts`, invoking existing machine/job preparation and quota locks atomically.
-- [ ] T013 [P] [US1] Add failing auth/ownership/strict payload/body-limit cases in `tests/platform/preview-pair-routes.test.ts`, then implement bounded operator and real-session report routes in `packages/platform/src/preview-pair/routes.ts`.
-- [ ] T014 [US1] Add failing stale control/wrong running build/missing membership/funding cases in `tests/platform/preview-pair-readiness.test.ts`, then implement canonical readiness and report derivation in `packages/platform/src/preview-pair/readiness.ts`.
+- [x] T013 [P] [US1] Add failing auth/ownership/strict payload/body-limit cases in `tests/platform/preview-pair-routes.test.ts`, then implement bounded operator and real-session report routes in `packages/platform/src/preview-pair/routes.ts`.
+- [x] T014 [US1] Add failing stale control/wrong running build/missing membership/funding cases in `tests/platform/preview-pair-readiness-postgres.test.ts`, then implement canonical readiness and report derivation in `packages/platform/src/preview-pair/readiness.ts`.
 - [ ] T015 [US1] Wire durable post-commit dispatch, trusted guarded host binding, reserved pair handles and Preview-sensitive guards through `packages/platform/src/preview-pair/service.ts`, `wiring.ts`, `customer-vps-preview.ts`, `customer-vps-schema.ts` and `packages/clerk-sync/src/index.ts`; test personal-account/customer boundary preservation.
 - [ ] T016 [US1] Write tests executing real controller helpers in `tests/platform/preview-pair-workflow.test.ts`, then implement the protected request/report path in `.github/workflows/preview-collaboration-pair.yml` and `scripts/preview-pair/control.ts` with immutable execution-origin proof and no candidate operator secrets.
 - [ ] T017 [US1] Protect exact candidate desktop checkout/source validation with failing producer/consumer tests, then extend `.github/workflows/desktop-build.yml`, `scripts/release/build-source.mjs` and `desktop/electron.vite.config.ts` without changing normal release behavior.
@@ -79,7 +79,7 @@ retains leases and capacity until exact provider absence is proved.
 - [x] T031 [US4] Implement generation-fenced claims, explicit clean-reset updates and access retirement in `packages/platform/src/preview-pair/lifecycle.ts`; do not extend expiry on replay.
 - [x] T032 [US4] Implement durable exact-provider/machine-label absence proof and bounded retry in `packages/platform/src/preview-pair/cleanup.ts`, preserving existing deletion queue and customer behavior.
 - [ ] T033 [US4] Wire close/request-removal/expiry reconciliation and cancellation recovery through `packages/platform/src/preview-pair/wiring.ts` and `.github/workflows/preview-collaboration-pair.yml`; keep unknown provider/PR state visible.
-- [ ] T034 [US4] Add source-currency observations and immutable generation evidence to `packages/platform/src/preview-pair/service.ts` and `readiness.ts`; a push must not silently replace either runtime or desktop build.
+- [x] T034 [US4] Add source-currency observations and immutable generation evidence to `packages/platform/src/preview-pair/service.ts` and `readiness.ts`; a push must not silently replace either runtime or desktop build.
 - [ ] T035 [US4] Complete explicit owned-profile cleanup and repeated-launch reuse in `scripts/preview-pair/launch.ts`, `profiles.ts` and `processes.ts`; prove normal profiles and unrelated child processes remain untouched.
 
 ## Phase 7: Qualification, documentation and review
@@ -119,7 +119,7 @@ Use official `gh stack init/add/rebase/submit`; never hand-retarget or flatten.
 | 1 | Plan/tasks and tested Spec Kit prerequisite | `codex/eng-418-preview-pair-foundation` | #3022 |
 | 2a | Shared contracts, activation config, schema, provenance and real Postgres fixture (T005–T009) | `codex/eng-418-preview-pair-platform` | Layer1 |
 | 2b | Atomic pair admission, guarded preparation and lifecycle/provider cleanup (T010–T012, T030–T032) | `codex/eng-418-preview-pair-lifecycle` | Layer2a |
-| 2c | Operator/session API, readiness, reports and composition (T013–T015) | `codex/eng-418-preview-pair-api` | Layer2b |
+| 2c | Operator/session API, readiness, reports and reconciliation (T013–T014, T034; production adapters from T015 remain in Layer3) | `codex/eng-418-preview-pair-api` | Layer2b |
 | 3 | Trusted adapters/controller, exact-source packaging and reaper (T016–T017, T033–T034) | `codex/eng-418-preview-pair-workflow` | Layer2c |
 | 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3 |
 | 5 if needed | Evidence runner, acceptance and internal docs (T026–T029, T036–T042) | `codex/eng-418-preview-pair-qualification` | Layer4 |
