@@ -4,21 +4,46 @@ import { readyPreviewPair, previewPairReadinessAdapters } from "./preview-pair-r
 import { PAIR_NOW } from "./preview-pair-test-support.js";
 import { requestPreviewPairStop } from "../../packages/platform/src/preview-pair/lifecycle.js";
 import { createPreviewPairReconciler } from "../../packages/platform/src/preview-pair/reconciler.js";
+import { admitPreviewPair } from "../../packages/platform/src/preview-pair/admission.js";
+import { requestPreviewPairUpdate } from "../../packages/platform/src/preview-pair/update.js";
 
 describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("durable pair orchestration uses real claims around external stages", () => {
   let fixture: Awaited<ReturnType<typeof createSeededPreviewPair>>;
   beforeEach(async () => { fixture = await createSeededPreviewPair(); }, 30_000);
   afterEach(async () => { await fixture?.destroy(); });
-  function setup(at = PAIR_NOW) {
+  function setup(at = PAIR_NOW, admissionEnabled = true) {
     const activate = vi.fn<Parameters<typeof createPreviewPairReconciler>[0]["activate"]>(async () => false);
     const inspectRequest = vi.fn(async () => ({ open: true, requested: true, sourceSha: fixture.pair.source_sha }));
-    const reconciler = createPreviewPairReconciler({ db: fixture.db, config: fixture.config, prepare: fixture.prepare,
+    const reconciler = createPreviewPairReconciler({ db: fixture.db, config: { ...fixture.config, admissionEnabled }, prepare: fixture.prepare,
       verifyFixtures: async () => true, activate, inspectRequest, readiness: previewPairReadinessAdapters(fixture),
       cleanup: { retire: async () => undefined, proveAbsent: async member => ({ machineId: member.machineId,
         providerServerId: null, exactServerAbsent: true, labeledServerIds: [], creationSettled: true,
         observedAt: new Date(at).toISOString() }) }, now: () => at });
     return { reconciler, activate, inspectRequest };
   }
+  it.each(["preparing", "queued", "updating"] as const)("maintenance retires %s work without new infrastructure or funding", async state => {
+    let pair = fixture.pair;
+    if (state === "queued") {
+      const pairId = "22222222-2222-4222-8222-222222222222";
+      const candidate = { ...fixture.candidate,
+        browserOrigin: fixture.candidate.browserOrigin.replace(pair.pair_id.slice(0, 8), pairId.slice(0, 8)),
+        apiOrigin: fixture.candidate.apiOrigin.replace(pair.pair_id.slice(0, 8), pairId.slice(0, 8)) };
+      pair = await admitPreviewPair(fixture.db, fixture.config, { pairId, pr: pair.pr + 1, requesterId: "user_maintainer",
+        sourceSha: candidate.sourceSha, candidate }, fixture.prepare, PAIR_NOW);
+    } else if (state === "updating") {
+      pair = await requestPreviewPairUpdate(fixture.db, pair.pair_id, 1, pair.revision,
+        { ...fixture.candidate, sourceSha: "d".repeat(40), platformSource: { kind: "candidate", sha: "d".repeat(40) },
+          browserOrigin: fixture.candidate.browserOrigin.replace("-g1-", "-g2-"),
+          apiOrigin: fixture.candidate.apiOrigin.replace("-g1-", "-g2-") }, PAIR_NOW);
+    }
+    expect(pair.state).toBe(state);
+    const { reconciler, activate, inspectRequest } = setup(PAIR_NOW, false);
+    const pending = await reconciler.run(pair.pair_id, pair.generation, pair.revision);
+    expect(pending.state).toBe("cleanup_pending");
+    expect((await reconciler.run(pending.pair_id, 1, pending.revision)).state).toBe("stopped");
+    expect(activate).not.toHaveBeenCalled(); expect(inspectRequest).not.toHaveBeenCalled();
+    expect(fixture.hetzner.createServer).not.toHaveBeenCalled();
+  });
   it("a pending infrastructure stage releases its claim and schedules bounded recovery", async () => {
     const { reconciler, activate } = setup();
     const row = await reconciler.run(fixture.pair.pair_id, 1, 1);
