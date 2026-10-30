@@ -13,22 +13,23 @@ import { bootstrapPlatformRuntimeEndpointDatabase, type RuntimeEndpointPlatformD
 
 /** Actual admission, projection, registration and two databases. Provider IDs are synthetic;
  * this does not exercise paid provisioning, Clerk login or the customer sharing journey. */
-export async function createProjectedPreviewPair() {
+export async function createProjectedPreviewPair(addresses: readonly [string, string] = ["203.0.113.10", "203.0.113.11"]) {
+  const previewSecret = "isolated-preview-" + "p".repeat(40);
   const source = await createSeededPreviewPair();
   let target: Awaited<ReturnType<typeof createIsolatedPreviewPairDatabase>> | undefined;
   try {
     target = await createIsolatedPreviewPairDatabase();
     const members = await source.db.executor.selectFrom("preview_pair_members").selectAll().orderBy("role").execute();
     for (const [i, member] of members.entries()) await source.db.executor.updateTable("user_machines")
-      .set({ hetzner_server_id: 1000 + i, public_ipv4: `203.0.113.${10 + i}` }).where("machine_id", "=", member.machine_id).execute();
+      .set({ hetzner_server_id: 1000 + i, public_ipv4: addresses[i] }).where("machine_id", "=", member.machine_id).execute();
     const claim = await claimPreviewPair(source.db, source.pair.pair_id, 1, 1, PAIR_NOW);
     await writePreviewPairProjection(target.db, await readPreviewPairProjection(source.db, claim, () => PAIR_NOW));
-    const service = createCustomerVpsService({ db: target.db, config: createTestConfig({ platformSecret: "isolated-preview-" + "p".repeat(40) }),
+    const service = createCustomerVpsService({ db: target.db, config: createTestConfig({ platformSecret: previewSecret }),
       hetzner: source.hetzner, systemStore: createMockCustomerVpsSystemStore(), now: () => new Date(PAIR_NOW) });
     for (const [i, member] of members.entries()) {
       const job = await source.db.executor.selectFrom("provisioning_jobs").selectAll().where("job_id", "=", member.job_id).executeTakeFirstOrThrow();
       const token = openProvisioningPayload(job.encrypted_payload!, "platform-secret").registrationToken;
-      await service.register(token, { machineId: member.machine_id, hetznerServerId: 1000 + i, publicIPv4: `203.0.113.${10 + i}`,
+      await service.register(token, { machineId: member.machine_id, hetznerServerId: 1000 + i, publicIPv4: addresses[i],
         imageVersion: source.candidate.hostBundleVersion, bundleSha256: source.candidate.hostBundleSha256, healthy: true });
     }
     await reconcilePreviewPairProjection(source.db, target.db, claim, () => PAIR_NOW);
@@ -38,7 +39,7 @@ export async function createProjectedPreviewPair() {
     await bootstrapPlatformRuntimeEndpointDatabase(collaborationDb);
     const owner = members.find(member => member.role === "owner")!;
     let cleanupClaim: typeof claim | undefined;
-    return { source, target: destination, members, owner,
+    return { source, target: destination, members, owner, previewSecret,
       collaborationDb,
       async retire() {
         if (!cleanupClaim) {
