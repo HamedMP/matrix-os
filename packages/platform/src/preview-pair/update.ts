@@ -18,7 +18,7 @@ export async function requestPreviewPairUpdate(db: PlatformDB, pairId: string, g
     if (!origin.startsWith(`https://${previewPairTag(pairId, generation + 1, kind)}---`)) throw new PreviewPairConflictError();
   }
   return db.transaction(async trx => {
-    const row = await trx.executor.updateTable("preview_pairs").set({ state: "updating", requested_source_sha: candidate.sourceSha,
+    const row = await trx.executor.updateTable("preview_pairs").set({ state: "updating", requested_source_sha: candidate.sourceSha, outdated: false,
       revision: sql`revision + 1`, claim_id: null, claim_expires_at: null, next_attempt_at: new Date(now).toISOString() })
       .where("pair_id", "=", pairId).where("generation", "=", generation).where("revision", "=", revision)
       .where("expires_at", ">", new Date(now).toISOString()).where("state", "in", ["preparing", "ready", "failed"])
@@ -48,7 +48,7 @@ export async function advancePreviewPairUpdate(db: PlatformDB, claim: PreviewPai
         .where("generation", "=", claim.generation + 1).executeTakeFirstOrThrow();
       if (next.source_sha !== pair.requested_source_sha) throw new PreviewPairConflictError();
       const updated = await current.executor.updateTable("preview_pairs").set({ state: "preparing", generation: claim.generation + 1,
-        source_sha: next.source_sha, requested_source_sha: null, outdated: false, revision: sql`revision + 1`,
+        source_sha: next.source_sha, requested_source_sha: null, outdated: pair.outdated, revision: sql`revision + 1`,
         claim_id: null, claim_expires_at: null, failure_code: null, next_attempt_at: null })
         .where("pair_id", "=", claim.pairId).where("generation", "=", claim.generation).where("revision", "=", claim.revision)
         .where("claim_id", "=", claim.claimId).returningAll().executeTakeFirstOrThrow();

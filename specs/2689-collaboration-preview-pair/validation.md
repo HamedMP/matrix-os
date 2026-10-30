@@ -74,8 +74,21 @@ or linked to the review record.
   task's failed runner/children were stopped; broad qualification remains incomplete.
 - Broad ordinary provisioning attempt also hit fixture timeouts/worker exits. A
   serial memory-bounded assertion inventory verified all20 ordinary provisioning
-  assertions across ten fresh processes. Preview slot coverage is being retried
-  separately; do not call the broad suite qualified. No assertions or deadlines were weakened.
+  assertions across ten fresh processes; all11 ordinary Preview-slot assertions
+  also pass across six fresh processes. This does not qualify the interrupted
+  broad Postgres lane. No assertions or deadlines were weakened.
 - The ordinary dispatcher deliberately leaves pair jobs queued until independently
   verified isolation wiring is added in the controller layer. No public pair routes
   or native launch entrypoints are activated by this layer.
+
+### Lifecycle review correction
+
+Greptile found a real pinned-update target overwrite. Three actual Postgres
+assertions fail before correction: observing a third head overwrites the selected
+target, returning to the old head misses its currency warning, and observing the
+selected target incorrectly marks it outdated. Two further assertions reproduce
+revision churn on identical observations and failure to clear rollback currency.
+The fix preserves the staged candidate, changes only its currency during update,
+and carries that currency into the completed generation.
+
+All15 admission/update assertions pass after the lifecycle review correction; Platform TypeScript passes.

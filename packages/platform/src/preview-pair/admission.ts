@@ -37,12 +37,20 @@ export async function admitPreviewPair(db: PlatformDB, config: EnabledPreviewPai
   const existing = await trx.executor.selectFrom("preview_pairs").selectAll()
     .where("repository", "=", "HamedMP/matrix-os").where("pr", "=", input.pr).where("state", "!=", "stopped").executeTakeFirst();
   if (existing) {
-    if (existing.source_sha !== input.sourceSha) {
-      return trx.executor.updateTable("preview_pairs").set({ outdated: true, requested_source_sha: input.sourceSha,
-        revision: sql`revision + 1` }).where("pair_id", "=", existing.pair_id).where("revision", "=", existing.revision)
+    if (existing.state === "updating") {
+      if (!existing.requested_source_sha) throw new PreviewPairConflictError();
+      const outdated = input.sourceSha !== existing.requested_source_sha;
+      if (outdated === existing.outdated) return existing;
+      return trx.executor.updateTable("preview_pairs").set({ outdated, revision: sql`revision + 1` })
+        .where("pair_id", "=", existing.pair_id).where("revision", "=", existing.revision)
         .returningAll().executeTakeFirstOrThrow();
     }
-    return existing;
+    const outdated = existing.source_sha !== input.sourceSha;
+    const requestedSource = outdated ? input.sourceSha : null;
+    if (existing.outdated === outdated && existing.requested_source_sha === requestedSource) return existing;
+    return trx.executor.updateTable("preview_pairs").set({ outdated, requested_source_sha: requestedSource,
+      revision: sql`revision + 1` }).where("pair_id", "=", existing.pair_id).where("revision", "=", existing.revision)
+      .returningAll().executeTakeFirstOrThrow();
   }
   for (const kind of ["ui", "api"] as const) {
     const origin = kind === "ui" ? input.candidate.browserOrigin : input.candidate.apiOrigin;

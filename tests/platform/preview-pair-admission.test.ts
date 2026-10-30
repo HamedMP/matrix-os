@@ -82,6 +82,29 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("pair admission at the ac
     expect(queued.fixture_id).toBeNull();
     expect(await fixture.db.executor.selectFrom("user_machines").selectAll().execute()).toHaveLength(2);
   });
+  it("replaying the same observed newer head does not repeatedly invalidate the worker revision", async () => {
+    const { prepare } = setup();
+    await admitPreviewPair(fixture.db, config, input(), prepare, PAIR_NOW);
+    const sourceSha = "c".repeat(40);
+    const newer = { ...input(), sourceSha, candidate: { ...candidate, sourceSha,
+      platformSource: { ...candidate.platformSource, sha: sourceSha },
+      desktopArtifacts: candidate.desktopArtifacts.map(item => ({ ...item, sourceSha })) } };
+    const first = await admitPreviewPair(fixture.db, config, newer, prepare, PAIR_NOW);
+    const replay = await admitPreviewPair(fixture.db, config, newer, prepare, PAIR_NOW + 1_000);
+    expect(replay.revision).toBe(first.revision);
+    expect(replay.source_sha).toBe(manifest.sourceSha);
+  });
+  it("clears outdated currency when the observed PR head returns to the pinned source", async () => {
+    const { prepare } = setup();
+    await admitPreviewPair(fixture.db, config, input(), prepare, PAIR_NOW);
+    const sourceSha = "c".repeat(40);
+    await admitPreviewPair(fixture.db, config, { ...input(), sourceSha, candidate: { ...candidate, sourceSha,
+      platformSource: { ...candidate.platformSource, sha: sourceSha },
+      desktopArtifacts: candidate.desktopArtifacts.map(item => ({ ...item, sourceSha })) } }, prepare, PAIR_NOW);
+    const current = await admitPreviewPair(fixture.db, config, input(), prepare, PAIR_NOW + 1_000);
+    expect(current.outdated).toBe(false);
+    expect(current.requested_source_sha).toBeNull();
+  });
   it("an explicit owner quota failure rolls back both reservations", async () => {
     const { prepare } = setup();
     // Existing production quota is reused, not replaced with a pair-only counter.
