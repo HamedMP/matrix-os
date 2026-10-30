@@ -922,6 +922,22 @@ jobs:
             echo "- cache_image: \`${cache_image}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+          print_cloud_build_diagnostics() {
+            echo "::group::Cloud Build diagnostics ($build_id)"
+            if ! gcloud builds describe "$build_id" \
+              --project "$GCP_PROJECT_ID" \
+              --region "$GCP_REGION" \
+              --format='yaml(status,statusDetail,failureInfo,logUrl)'; then
+              echo "Could not read Cloud Build failure metadata." >&2
+            fi
+            if ! gcloud builds log "$build_id" \
+              --project "$GCP_PROJECT_ID" \
+              --region "$GCP_REGION"; then
+              echo "Could not read Cloud Build logs; use the build URL above." >&2
+            fi
+            echo "::endgroup::"
+          }
+
           for attempt in $(seq 1 240); do
             status=$(gcloud builds describe "$build_id" \
               --project "$GCP_PROJECT_ID" \
@@ -933,6 +949,7 @@ jobs:
                 ;;
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
                 echo "Cloud Build $build_id ended with status $status" >&2
+                print_cloud_build_diagnostics
                 exit 1
                 ;;
             esac
@@ -940,6 +957,7 @@ jobs:
           done
           if [ "$status" != "SUCCESS" ]; then
             echo "Timed out waiting for Cloud Build $build_id" >&2
+            print_cloud_build_diagnostics
             exit 1
           fi
           digest="$(gcloud artifacts docker images describe "$image" \

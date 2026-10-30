@@ -6,6 +6,7 @@ import { parse } from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
 
 const workflowPath = new URL("../../.github/workflows/preview-chat-candidate-edge.yml", import.meta.url);
+const selectorProcessTimeoutMs = 30_000;
 
 describe("one-chat Platform candidate Edge deployment", () => {
   it("admits the actual current same-repository labeled stack PR rather than the retired PR", () => {
@@ -114,7 +115,10 @@ describe("executable current-PR candidate selector", () => {
     const result = spawnSync('python3', [helper.pathname, mode, '--event', eventPath, '--repository', repo,
       '--pr', '2348', '--sha', sha, '--ref', ref,
       ...(mode === 'selector' ? ['--raw', raw, '--output', output, '--config', config] : [])],
-    { encoding: 'utf8', input: JSON.stringify(current), timeout: 5_000 });
+    { encoding: 'utf8', input: JSON.stringify(current), timeout: selectorProcessTimeoutMs });
+    if (result.error) {
+      throw new Error(`Candidate selector subprocess failed: ${result.error.message}`);
+    }
     return { ...result, bindings: existsSync(output) ? JSON.parse(readFileSync(output, 'utf8')) : null };
   }
   it('accepts a fresh reviewed selector for the current stack PR and emits only four routing bindings', () => {

@@ -1127,6 +1127,28 @@ describe('CI workflows', () => {
     expect(workflow).toContain('${cache_image}');
   });
 
+  it('prints actionable Cloud Build diagnostics before failing the platform image job', () => {
+    const workflow = readFileSync(join(process.cwd(), '.github/workflows/platform-cloud-run.yml'), 'utf8');
+    const buildStep = workflow.slice(
+      workflow.indexOf('      - name: Build platform image'),
+      workflow.indexOf('      - name: Deploy tagged revision'),
+    );
+
+    expect(buildStep).toContain('print_cloud_build_diagnostics()');
+    expect(buildStep).toContain('gcloud builds log "$build_id"');
+    expect(buildStep).toContain("--format='yaml(status,statusDetail,failureInfo,logUrl)'");
+
+    const terminalFailure = buildStep.indexOf('FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)');
+    const diagnosticsAfterFailure = buildStep.indexOf('print_cloud_build_diagnostics', terminalFailure);
+    const failureExit = buildStep.indexOf('exit 1', terminalFailure);
+    expect(terminalFailure).toBeGreaterThan(0);
+    expect(diagnosticsAfterFailure).toBeGreaterThan(terminalFailure);
+    expect(diagnosticsAfterFailure).toBeLessThan(failureExit);
+
+    const pollTimeout = buildStep.indexOf('Timed out waiting for Cloud Build');
+    expect(buildStep.indexOf('print_cloud_build_diagnostics', pollTimeout)).toBeGreaterThan(pollTimeout);
+  });
+
   it('publishes main dev host bundles without deploying the fleet', () => {
     const root = process.cwd();
     const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
