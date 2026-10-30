@@ -181,6 +181,55 @@ it("retains an unconfirmed revocation across a Settings refresh until the owner 
   expect(native.setGrant).toHaveBeenCalledTimes(1);
 });
 
+it.each(["succeeds", "fails"])("keeps unconfirmed revocation separate when unrelated model refresh %s", async outcome => {
+  const native = client();
+  vi.mocked(native.status).mockResolvedValueOnce({ ...connected, grant: { enabled: true, background: true, revision: 2 } })
+    .mockResolvedValue({ ...connected, models: [], bridgeConnected: false, bridgeFailure: "device_conflict",
+      grant: { enabled: true, background: false, revision: 3 } });
+  vi.mocked(native.setGrant).mockRejectedValue(new Error("Fixture persistence failure"));
+  if (outcome === "succeeds") vi.mocked(native.refreshModels).mockResolvedValue({ ...connected, grant: { enabled: true, background: false, revision: 3 } });
+  else vi.mocked(native.refreshModels).mockRejectedValue(new Error("Fixture catalog failure"));
+  render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("checkbox", { name: /Allow scheduled and background/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Save background permission" }));
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/Saving could not be confirmed/));
+  fireEvent.click(screen.getByRole("button", { name: "Check subscription models" }));
+  await waitFor(() => expect(native.refreshModels).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save background permission" })).toBeEnabled());
+  expect(screen.getByRole("alert")).toHaveTextContent(/Saving could not be confirmed/);
+  expect(native.setGrant).toHaveBeenCalledTimes(1);
+});
+
+it.each(["refresh", "poll"])("preserves the explicit revoke retry when a later %s status read fails", async mode => {
+  const native = client();
+  const before = { ...connected, grant: { enabled: true, background: true, revision: 2 } };
+  const stopped: LocalChatgptPlanStatus = { ...connected, bridgeConnected: false,
+    ...(mode === "refresh" ? { bridgeFailure: "device_conflict" as const } : {}),
+    grant: { enabled: true, background: false, revision: 3 } };
+  vi.mocked(native.status).mockResolvedValueOnce(before).mockResolvedValueOnce(stopped)
+    .mockRejectedValue(new Error("Fixture status unavailable"));
+  vi.mocked(native.setGrant).mockRejectedValue(new Error("Fixture persistence failure"));
+  const props = { client: native, disabled: false, readOnly: false, onChanged: vi.fn() };
+  const view = render(<LocalChatgptSubscription {...props} refreshRevision={0}/>);
+  fireEvent.click(await screen.findByRole("checkbox", { name: /Allow scheduled and background/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Save background permission" }));
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/Saving could not be confirmed/));
+  if (mode === "refresh") view.rerender(<LocalChatgptSubscription {...props} refreshRevision={1}/>);
+  await waitFor(() => expect(native.status).toHaveBeenCalledTimes(3), { timeout: 3000 });
+  expect(screen.getByRole("alert")).toHaveTextContent(/Saving could not be confirmed/);
+  expect(screen.getByRole("button", { name: "Save background permission" })).toBeEnabled();
+  expect(native.setGrant).toHaveBeenCalledTimes(1);
+  vi.mocked(native.status).mockResolvedValue(stopped);
+  view.rerender(<LocalChatgptSubscription {...props} refreshRevision={2}/>);
+  await waitFor(() => expect(native.status).toHaveBeenCalledTimes(4));
+  expect(screen.getByRole("alert")).toHaveTextContent(/Saving could not be confirmed/);
+  vi.mocked(native.setGrant).mockResolvedValue({ ...connected, grant: { enabled: true, background: false, revision: 4 } });
+  fireEvent.click(screen.getByRole("button", { name: "Save background permission" }));
+  await waitFor(() => expect(native.setGrant).toHaveBeenLastCalledWith({ enabled: true, background: false,
+    accountId: connected.account!.id, baseRevision: 3 }, expect.any(AbortSignal)));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+});
+
 it("does not claim a failed revocation stopped access when authority readback also fails", async () => {
   const native = client();
   vi.mocked(native.status).mockResolvedValue({ ...connected, grant: { enabled: true, background: true, revision: 2 } });
