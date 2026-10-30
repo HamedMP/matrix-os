@@ -433,3 +433,32 @@ legal cp-prefixed customer handles retain directory, endpoint and both ticket
 paths. All5 real two-database retirement cases pass, zero skipped; focused Platform
 native TypeScript passes. Existing pair tombstone and in-flight writer fences
 remain exercised. This is a source fix, not a live customer mutation.
+
+### Actual host observation checkpoint
+
+The new reader consumes the existing gateway system-info producer, canonical
+control metadata, actual isolated registration and the existing target endpoint
+registry. Provider responses and HTTP transport are fixtures; no public-IP request
+or paid machine was made. It checks provider labels/address, global-IP safety,
+installed and running source/digests, slot/owner/epoch, protocol, actual target
+confirmation and fresh control activity. Infrastructure readiness grants no access.
+
+The unimplemented positive path failed first. A401 response-body cancellation
+assertion failed before its fix. Removing the final canonical check made a real
+stop request during the probe return healthy; restoring the check rejects that
+completion while the target/control remain healthy. Ten response mismatch variants
+assert the responsible HTTP boundary is reached. Stale control recovers only after
+an actual heartbeat; unsafe addresses and unrelated providers cannot trigger probes.
+
+Final original-fixture run: **6/6 pass, zero skipped/errors**; focused Platform native
+TypeScript passes. One earlier run passed its6 assertions but reported an unhandled
+Postgres57P01 during fixture DROP DATABASE; that invocation is not counted green.
+Two diagnostic reruns and the final run passed, but no teardown root cause is
+claimed resolved. The temporary timing probe was removed; required qualification
+must still fail on any recurrence. Raw driver error logs stay private.
+
+Registration confirmation is read from the Preview database; the control ledger
+retains desired bundle metadata. An early new-reader contract mistake and a fixture
+expectation of a non-manifest tokenEpoch field were corrected; neither counts as
+regression proof. No real login, model prompt, live surface evidence or completed
+pair readiness is claimed. Funding and production maintenance composition remain open.
