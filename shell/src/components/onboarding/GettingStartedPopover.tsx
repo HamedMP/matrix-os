@@ -234,16 +234,16 @@ function activateBotRow(
 }
 
 /**
- * Spec 639: where this computer serves the Getting started app, Help keeps one row that opens it
- * (plus the desktop download); the checklist popover remains for computers that predate the app.
+ * Spec 639: where this computer serves the Getting started app, the Getting started toggle shows
+ * only its summary (plus the desktop download); the checklist remains for computers that predate it.
  */
 export function GettingStartedPopover(props: GettingStartedPopoverProps) {
   const { scope } = useGettingStartedVisibility();
   const helpMode = useGettingStartedHelpMode();
   const downloadSuggestion = useDesktopDownloadSuggestion();
   if (props.helpMenu && helpMode === "app") {
-    return <GettingStartedAppHelpMenu {...props.helpMenu}
-      extra={(closeHelp) => <DesktopDownloadLink suggestion={downloadSuggestion} onClick={closeHelp} />} />;
+    return <GettingStartedAppHelpMenu {...props.helpMenu} zIndex={SHELL_Z_INDEX.popover}
+      extra={(closePopover) => <DesktopDownloadLink suggestion={downloadSuggestion} onClick={closePopover} />} />;
   }
   return <GettingStartedPopoverContent key={scope} {...props} downloadSuggestion={downloadSuggestion} />;
 }

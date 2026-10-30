@@ -145,7 +145,7 @@ describe("web getting started status", () => {
     expect(DESKTOP_APP_DOWNLOAD_URL).toBe("https://matrix-os.com/desktop");
   });
 
-  it("keeps only the Getting started app row and the desktop download in Help when this computer serves the app", async () => {
+  it("keeps the Getting started toggle in Help with only the app summary and the desktop download when this computer serves the app", async () => {
     vi.stubGlobal("PointerEvent", MouseEvent);
     installSuccessfulFetch();
     const onOpen = vi.fn();
@@ -164,12 +164,13 @@ describe("web getting started status", () => {
       </GettingStartedAppProvider>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Help" }));
-    const row = await screen.findByRole("button", { name: /^Getting started — 0 of 12 done/ });
-    expect(screen.getByRole("link", { name: /desktop|Download|Mac|Windows|Linux/i })).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: /^Getting started — 0 of 12 done/ }));
+    const popover = await screen.findByRole("dialog", { name: "Getting started" });
+    expect(within(popover).getByRole("link", { name: /desktop|Download|Mac|Windows|Linux/i })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^Getting started — \d+ of 5/ })).toBeNull();
-    fireEvent.click(row);
+    expect(within(popover).queryByTestId("getting-started-app-gallery")).toBeNull();
+    fireEvent.click(within(popover).getByRole("button", { name: /Open Getting started/ }));
     expect(onOpen).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull();
   });
 
   it("opens the Web checklist through the shared nested Help menu", async () => {

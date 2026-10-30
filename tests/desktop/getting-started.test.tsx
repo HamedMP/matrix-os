@@ -369,7 +369,7 @@ describe("GettingStartedPopover", () => {
     expect(screen.getByRole("dialog", { name: "Getting started" })).not.toBeNull();
   });
 
-  it("keeps only the Getting started app row in Help when this computer serves the app", async () => {
+  it("keeps the Getting started toggle in Help with only the app summary when this computer serves the app", async () => {
     const onOpen = vi.fn();
     const port: GettingStartedAppPort = {
       loadResults: vi.fn(async () => { throw new Error("not needed"); }),
@@ -387,11 +387,12 @@ describe("GettingStartedPopover", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Help", exact: true }));
     expect(useUi.getState().rendererOverlayCount).toBe(1);
-    const row = await screen.findByRole("button", { name: /^Getting started — 0 of 12 done/ });
+    fireEvent.click(await screen.findByRole("button", { name: /^Getting started — 0 of 12 done/ }));
+    const popover = await screen.findByRole("dialog", { name: "Getting started" });
     expect(screen.queryByRole("button", { name: /^Getting started — \d+ of 5/ })).toBeNull();
-    fireEvent.click(row);
+    fireEvent.click(within(popover).getByRole("button", { name: /Open Getting started/ }));
     expect(onOpen).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull());
     await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
   });
 

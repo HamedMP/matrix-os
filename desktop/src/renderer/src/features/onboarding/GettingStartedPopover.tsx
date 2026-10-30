@@ -120,13 +120,13 @@ function StepIndicator({ step }: { step: { status: GettingStartedStepStatus } })
 }
 
 /**
- * Spec 639: where this computer serves the Getting started app, Help keeps one row that opens it;
- * the checklist popover remains for computers that predate the app.
+ * Spec 639: where this computer serves the Getting started app, the Getting started toggle shows
+ * only its summary; the checklist remains for computers that predate it.
  */
 export default function GettingStartedPopover(props: { helpMenu?: { onSupport(): void; discordIcon: ReactNode } } = {}) {
   const { scope } = useGettingStartedVisibility();
   const helpMode = useGettingStartedHelpMode();
-  if (props.helpMenu && helpMode === "app") return <GettingStartedAppHelpMenu overlay={menuOverlay} {...props.helpMenu} />;
+  if (props.helpMenu && helpMode === "app") return <GettingStartedAppHelpMenu overlay={menuOverlay} {...props.helpMenu} zIndex={DESKTOP_Z_INDEX.popover} />;
   return <GettingStartedPopoverContent key={scope} {...props} />;
 }
 

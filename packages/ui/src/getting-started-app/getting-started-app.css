@@ -5,7 +5,7 @@
    shell's, so light and dark themes both work (same chain as
    agents-providers.css). */
 .mxo-gsa,
-.mxo-gsa-help,
+.mxo-gsa-summary,
 .mxo-gsa-toast {
   /* Page, cards (#f3f2f2 in both light themes) and the lighter tiles on cards. */
   --gsa-paper: var(--bg-app, var(--background, #fafafa));
@@ -33,7 +33,7 @@
   -webkit-font-smoothing: antialiased;
 }
 
-:is(.dark, [data-theme="dark"]) :is(.mxo-gsa, .mxo-gsa-help) {
+:is(.dark, [data-theme="dark"]) :is(.mxo-gsa, .mxo-gsa-summary) {
   --gsa-gold-bg: var(--gsa-tint-gold-bg-dark);
   --gsa-gold-border: var(--gsa-tint-gold-border-dark);
   --gsa-gold-text: var(--gsa-tint-gold-text-dark);
@@ -942,6 +942,53 @@
   .mxo-gsa__confetti {
     display: none;
   }
+}
+
+/* Help › Getting started popover: the app summary row. */
+.mxo-gsa-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 24px);
+  margin: 0 12px 10px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--gsa-card);
+  color: var(--gsa-text);
+  font: inherit;
+  font-family: var(--gsa-font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mxo-gsa-summary:hover {
+  background: var(--gsa-card-hover);
+}
+
+.mxo-gsa-summary:focus-visible {
+  outline: 2px solid var(--gsa-focus);
+  outline-offset: 2px;
+}
+
+.mxo-gsa-summary__text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mxo-gsa-summary__title {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.mxo-gsa-summary__detail {
+  color: var(--gsa-muted);
+  font-size: 11px;
+  line-height: 14px;
 }
 
 /* Completion toast (Figma 1938:1226): dark pill, check, title, gold points. */
