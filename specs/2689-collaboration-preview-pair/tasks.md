@@ -78,7 +78,7 @@ retains leases and capacity until exact provider absence is proved.
 - [x] T030 [P] [US4] Add failing stale-claim, concurrent update/stop, hard-expiry and ambiguous deletion cases in `tests/platform/preview-pair-lifecycle.test.ts`.
 - [x] T031 [US4] Implement generation-fenced claims, explicit clean-reset updates and access retirement in `packages/platform/src/preview-pair/lifecycle.ts`; do not extend expiry on replay.
 - [x] T032 [US4] Implement durable exact-provider/machine-label absence proof and bounded retry in `packages/platform/src/preview-pair/cleanup.ts`, preserving existing deletion queue and customer behavior.
-- [ ] T033 [US4] Wire close/request-removal/expiry reconciliation and cancellation recovery through `packages/platform/src/preview-pair/wiring.ts` and `.github/workflows/preview-collaboration-pair.yml`; keep unknown provider/PR state visible.
+- [ ] T033 [US4] Wire close/request-removal/expiry reconciliation, durable pre-admission cloud intent and cancellation recovery through `packages/platform/src/preview-pair/wiring.ts` and `.github/workflows/preview-collaboration-pair.yml`; keep unknown provider/PR state visible.
 - [x] T034 [US4] Add source-currency observations and immutable generation evidence to `packages/platform/src/preview-pair/service.ts` and `readiness.ts`; a push must not silently replace either runtime or desktop build.
 - [ ] T035 [US4] Complete explicit owned-profile cleanup and repeated-launch reuse in `scripts/preview-pair/launch.ts`, `profiles.ts` and `processes.ts`; prove normal profiles and unrelated child processes remain untouched.
 
@@ -130,8 +130,9 @@ Use official `gh stack init/add/rebase/submit`; never hand-retarget or flatten.
 | 3h | Candidate runtime-only registration and startup isolation (part of T015) | `codex/eng-418-preview-pair-bootstrap` | Layer3g |
 | 3i | Guarded runtime activation, maintenance and owned deletion composition (part of T015/T033) | `codex/eng-418-preview-pair-wiring` | Layer3h |
 | 3j | Keep ordinary worker batches, metadata and deletion intents outside pair authority (part of T015) | `codex/eng-418-preview-pair-worker-boundaries` | Layer3i |
-| 3k | Configured controller startup, resource ownership and worker (complete T015; part of T033) | `codex/eng-418-preview-pair-startup` | Layer3j |
-| 3l | Protected request/build/publish/reaper workflow and controller CLI (complete T016/T033) | `codex/eng-418-preview-pair-automation` | Layer3k |
+| 3k1 | Pinned source profile, isolated credential/target readers and current provider authority | `codex/eng-418-preview-pair-startup` | Layer3j |
+| 3k2 | Configured Platform mount, worker and owned shutdown (complete T015; part of T033) | `codex/eng-418-preview-pair-startup-wiring` | Layer3k1 |
+| 3l | Protected request/build/publish/reaper workflow and controller CLI (complete T016/T033) | `codex/eng-418-preview-pair-automation` | Layer3k2 |
 | 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3l |
 | 5 if needed | Evidence runner, acceptance and internal docs (T026–T029, T036–T042) | `codex/eng-418-preview-pair-qualification` | Layer4 |
 

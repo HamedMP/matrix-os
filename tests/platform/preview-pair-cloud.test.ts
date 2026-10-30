@@ -2,7 +2,7 @@ import {describe,expect,it,vi} from "vitest";
 import {previewPairProvenanceFixture} from "./preview-pair-provenance-fixture.js";
 import * as cloud from "../../packages/platform/src/preview-pair/cloud.js";
 import {previewPairRevisionName} from "../../packages/platform/src/preview-pair/cloud-resource.js";
-function setup(fault?:string){
+function setup(fault?:string,pinned=false){
   const f=previewPairProvenanceFixture(),resource="projects/pair-test/locations/europe-west1/services/matrix-platform-preview",revision=resource+"/revisions/"+previewPairRevisionName("matrix-platform-preview",f.expected.pairId,f.expected.generation);
   const tag=(origin:string)=>new URL(origin).hostname.split("---")[0];
   const service={name:resource,terminalCondition:{type:"Ready",state:"CONDITION_SUCCEEDED"},trafficStatuses:[{tag:tag(f.input.browserOrigin),uri:f.input.browserOrigin,revision,percent:0},{tag:tag(f.input.apiOrigin),uri:f.input.apiOrigin,revision,percent:0}]};
@@ -14,6 +14,9 @@ function setup(fault?:string){
     {name:"MATRIX_PREVIEW_PAIR_RUNTIME_ONLY",value:"true"},{name:"CUSTOMER_VPS_ENABLED",value:"false"},
     {name:"MATRIX_FUNDED_AI_RUNTIME_ENABLED",value:"false"},{name:"MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED",value:"false"});
   const rev={name:revision,service:"matrix-platform-preview",conditions:[{type:"Ready",state:"CONDITION_SUCCEEDED"}],serviceAccount:f.config.serviceAccount,containers:[{image:`registry.example/pair@sha256:${"d".repeat(64)}`,env}]};
+  const expectedSecretBindings=Object.fromEntries(env.filter(item=>item.valueSource).map(item=>[item.name,{ref:item.valueSource.secretKeyRef.secret,version:item.valueSource.secretKeyRef.version}]));
+  if(fault==="pinned version")env.find(item=>item.name==="PLATFORM_SECRET").valueSource.secretKeyRef.version="2";
+  if(fault==="swapped host key")env.find(item=>item.name==="PLATFORM_SECRET").valueSource.secretKeyRef.secret="platform-jwt-preview";
   if(fault==="allowance signing key")env.push({name:"MATRIX_PREVIEW_RUNTIME_SECRET",value:"test-fixture-key"});
   if(fault==="bank credential key")env.push({name:"AI_FUNDED_CREDENTIAL_HASH_SECRET",value:"test-fixture-key"});
   if(fault==="paid provider enabled")env.find(item=>item.name==="CUSTOMER_VPS_ENABLED").value="true";
@@ -38,12 +41,18 @@ function setup(fault?:string){
   }
   if(fault==="sidecar")rev.containers.push({image:"other",env:[]});
   const fetchImpl=vi.fn(async (url:any)=>Response.json(String(url).includes("/revisions/")?rev:service));
-  return {f,fetchImpl,read:(cloud as any).createPreviewPairCloudAuthority({config:f.config,project:"pair-test",region:"europe-west1",service:"matrix-platform-preview",approvedSecretRefs:[f.config.clerkSecretRef,f.config.databaseSecretRef,f.config.ticketKeysSecretRef,"platform-secret-preview","platform-jwt-preview","edge-router-preview"],accessToken:async()=>"iam-fixture",fetchImpl,now:()=>Date.parse("2026-10-30T10:00:00Z")})};
+  return {f,fetchImpl,read:(cloud as any).createPreviewPairCloudAuthority({config:f.config,project:"pair-test",region:"europe-west1",service:"matrix-platform-preview",...(pinned?{expectedSecretBindings}:{}),approvedSecretRefs:[f.config.clerkSecretRef,f.config.databaseSecretRef,f.config.ticketKeysSecretRef,"platform-secret-preview","platform-jwt-preview","edge-router-preview"],accessToken:async()=>"iam-fixture",fetchImpl,now:()=>Date.parse("2026-10-30T10:00:00Z")})};
 }
 describe("actual Cloud Run revision isolation reader",()=>{
   it("binds two generation tags to one immutable approved revision",async()=>{
     const {f,read,fetchImpl}=setup();expect(await read(f.input.browserOrigin,f.input.apiOrigin)).toMatchObject({pairId:f.expected.pairId,generation:f.expected.generation,sourceSha:f.input.sourceSha,serviceAccount:f.config.serviceAccount,clerkSecretRef:f.config.clerkSecretRef});
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+  it("accepts exactly the independently resolved pinned versions",async()=>{
+    const {f,read}=setup(undefined,true);expect(await read(f.input.browserOrigin,f.input.apiOrigin)).toMatchObject({pairId:f.expected.pairId});
+  });
+  it.each(["pinned version","swapped host key"])("rejects a %s despite an otherwise approved secret reference",async fault=>{
+    const {f,read}=setup(fault,true);await expect(read(f.input.browserOrigin,f.input.apiOrigin)).rejects.toThrow("unavailable");
   });
   it.each(["account","database","api classified","retarget","provider secret","mutable secret","source","sidecar","not ready","raw signing secret","missing signing secret","reconciling","mounted production secret","mounted approved secret","allowance signing key","bank credential key","paid provider enabled","wrong revision name"])("fails closed for %s bindings",async fault=>{
     const {f,read}=setup(fault);await expect(read(f.input.browserOrigin,f.input.apiOrigin)).rejects.toThrow("unavailable");

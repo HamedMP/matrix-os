@@ -36,7 +36,7 @@ export class PreviewPairConfigurationError extends Error {
 }
 export type PreviewPairFixture = z.infer<typeof Fixture>;
 export type EnabledPreviewPairConfig = z.infer<typeof Config> & {
-  enabled: true; admissionEnabled: boolean; maxActivePairs: number; maxQueued: number; maxLifetimeMs: number;
+  enabled: true; sourceProfileFingerprint?: string; admissionEnabled: boolean; maxActivePairs: number; maxQueued: number; maxLifetimeMs: number;
 };
 export type PreviewPairConfig = { enabled: false } | EnabledPreviewPairConfig;
 
