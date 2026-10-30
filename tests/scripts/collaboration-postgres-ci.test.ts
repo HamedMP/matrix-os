@@ -150,7 +150,7 @@ describe("required collaboration PostgreSQL workflow", () => {
     expect(selected.stdout.trim().split("\n")).toContain("tests/platform/account-deletion-slack-postgres.test.ts");
   });
 
-  it("retains the existing required job, exact-source checkout, commands and ten-minute bound", () => {
+  it("preserves required job wiring and provides collaboration runtime margin", () => {
     const workflow = parse(readFileSync(".github/workflows/ci.yml", "utf8")); const job = workflow.jobs["funded-postgres"];
     expect(job.needs).toBe("changes"); expect(job["timeout-minutes"]).toBe(10);
     expect(job.if).not.toMatch(/dedicated|ci-backend/);
@@ -163,7 +163,11 @@ describe("required collaboration PostgreSQL workflow", () => {
     expect(collaboration).toBeDefined();
     expect(collaboration.needs).toBe("changes");
     expect(collaboration.if).toBe(job.if);
-    expect(collaboration["timeout-minutes"]).toBe(10);
+    // Run41112133779 completed67 selected files at9m55, then hit the10m
+    // job limit before completion/upload. Keep margin above observed runtime;
+    // the collaboration budget must not be frozen to the shorter funded lane.
+    const observedQualificationSeconds = 9 * 60 + 55;
+    expect(collaboration["timeout-minutes"] * 60).toBeGreaterThan(observedQualificationSeconds + 120);
     expect(collaboration.services).toEqual(job.services);
     expect(collaboration.env).toEqual(job.env);
     expect(collaboration.steps.slice(0, 6)).toEqual(job.steps.slice(0, 6));

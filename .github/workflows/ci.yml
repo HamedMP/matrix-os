@@ -925,7 +925,8 @@ jobs:
     needs: changes
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The expanded required inventory exceeded10m after passing collected suites.
+    timeout-minutes: 30
     services:
       postgres:
         # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
