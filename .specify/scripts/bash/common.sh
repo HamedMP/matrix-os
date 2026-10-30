@@ -131,46 +131,45 @@ find_feature_dir_by_prefix() {
 
 # Exit 3 means no explicit selection; malformed selections must never fall back.
 resolve_specified_feature_dir() {
-    python3 - "$1" <<'PY'
-import json, os, re, sys
-from pathlib import Path
-
-root = Path(sys.argv[1]).resolve()
-metadata = root / ".specify" / "feature.json"
-value = os.environ.get("SPECIFY_FEATURE_DIRECTORY")
-try:
-    if not value and os.environ.get("SPECIFY_FEATURE"):
-        selector = os.environ["SPECIFY_FEATURE"]
-        match = re.fullmatch(r"([0-9]{3,})-[a-zA-Z0-9_-]+", selector)
-        if not match:
-            raise ValueError("selector")
-        matches = [path for path in (root / "specs").glob(match[1] + "-*") if path.is_dir()]
-        if len(matches) != 1:
-            raise ValueError("selector")
-        value = str(matches[0])
-    if not value:
-        if metadata.is_symlink():
-            raise ValueError("metadata")
-        if not metadata.exists():
-            sys.exit(3)
-        if metadata.stat().st_size > 65536:
-            raise ValueError("metadata")
-        value = json.loads(metadata.read_text())["feature_directory"]
-    if not isinstance(value, str) or not value or len(value) > 4096:
-        raise ValueError("directory")
-    if any(char in value for char in ("\0", "\n", "\r")) or ".." in Path(value).parts:
-        raise ValueError("directory")
-    specs = (root / "specs").resolve()
-    selected = (root / value).resolve()
-    if not specs.is_relative_to(root) or selected == specs or not selected.is_relative_to(specs):
-        raise ValueError("boundary")
-    if not selected.is_dir() or not (selected / "spec.md").is_file():
-        raise ValueError("missing specification")
-except (OSError, ValueError, TypeError, KeyError):
-    print("ERROR: Invalid feature directory; select an existing specification inside specs/", file=sys.stderr)
-    sys.exit(1)
-print(selected)
-PY
+    node - "$1" <<'JS'
+const fs = require('node:fs');
+const path = require('node:path');
+const root = fs.realpathSync(process.argv[2]);
+const metadata = path.join(root, '.specify', 'feature.json');
+let value = process.env.SPECIFY_FEATURE_DIRECTORY;
+try {
+    if (!value && process.env.SPECIFY_FEATURE) {
+        const match = /^([0-9]{3,})-[a-zA-Z0-9_-]+$/.exec(process.env.SPECIFY_FEATURE);
+        if (!match) throw new Error('selector');
+        const specs = path.join(root, 'specs');
+        const matches = fs.readdirSync(specs).filter(name => name.startsWith(match[1] + '-')
+            && fs.statSync(path.join(specs, name)).isDirectory());
+        if (matches.length !== 1) throw new Error('selector');
+        value = path.join(specs, matches[0]);
+    }
+    if (!value) {
+        let stat;
+        try { stat = fs.lstatSync(metadata); }
+        catch (error) { if (error.code === 'ENOENT') process.exit(3); throw error; }
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 65536) throw new Error('metadata');
+        value = JSON.parse(fs.readFileSync(metadata, 'utf8')).feature_directory;
+    }
+    if (typeof value !== 'string' || !value || value.length > 4096
+        || /[\0\n\r]/.test(value) || value.split(/[\\/]/).includes('..')) throw new Error('directory');
+    const specs = fs.realpathSync(path.join(root, 'specs'));
+    const selected = fs.realpathSync(path.resolve(root, value));
+    const inside = (base, target) => {
+        const relative = path.relative(base, target);
+        return relative && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
+    };
+    if (!inside(root, specs) || !inside(specs, selected) || !fs.statSync(selected).isDirectory()
+        || !fs.statSync(path.join(selected, 'spec.md')).isFile()) throw new Error('boundary');
+    process.stdout.write(selected + '\n');
+} catch (error) {
+    process.stderr.write('ERROR: Invalid feature directory; select an existing specification inside specs/\n');
+    process.exit(1);
+}
+JS
 }
 
 get_feature_paths() {
