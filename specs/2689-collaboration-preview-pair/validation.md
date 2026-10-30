@@ -527,3 +527,33 @@ including retained gateway, real two-database observation and funding/activation
 The required inventory remains valid at71 files. All8 native TypeScript projects
 pass again; changed-file patterns report0 violations/0 warnings. Current-head
 hosted review/CI still need requalification for this correction.
+
+### Complete retirement composition checkpoint
+
+Six assertions reproduced missing full pair/generation proof, allowed bank keys
+and enabled provider access in revision metadata. A further assertion reproduced
+acceptance of another revision name despite matching tags. Admission now binds
+the full deterministic revision identity and explicit runtime-only configuration.
+
+The actual SQL lifecycle regression also reproduced only one cleanup attempt and
+the second member remaining active when the first external effect failed. Both
+source machines/jobs/members now retire in one transaction before external calls.
+Independent attempts cannot block the other member; incomplete proof still keeps
+the whole fixture reserved. Composed tests execute the real durable deletion queue
+and target transactions: corrupt target ownership and unavailable cloud retirement
+still queue both provider deletions without releasing the lease or changing the
+unrelated target owner. Only all-boundary confirmation releases it.
+
+Cloud retirement's positive path failed before implementation. Its HTTP fixture
+exercises real canonical claims and preserves unrelated desired traffic; tag
+removal waits for observed removal, deletion waits for a later404. Etag conflicts
+are pending without an in-call retry. Full identity/source mismatch, live traffic
+and unrelated aliases cannot mutate resources. An unsuccessful-body cancellation
+assertion failed before correction. All cloud/provider responses remain fixtures;
+no actual cloud mutation, physical deletion or live isolation proof is claimed.
+
+Combined result: **62/62 assertions pass across6 files, zero skips/errors**.
+Focused Platform native TypeScript passes. Both new SQL suites are registered;
+the required PostgreSQL inventory validates all73 files. Production startup,
+admission-off maintenance and runtime-only registration still remain to compose;
+T015/T016/T033 stay unchecked.

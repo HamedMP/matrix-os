@@ -1,7 +1,8 @@
 import {z} from "zod/v4";
-import {PreviewPairOriginSchema,PreviewPairShaSchema} from "@matrix-os/contracts/preview-pair";
+import {PreviewPairOriginSchema,PreviewPairShaSchema,PreviewPairIdSchema,PreviewPairGenerationSchema,previewPairTag} from "@matrix-os/contracts/preview-pair";
 import type {EnabledPreviewPairConfig} from "./config.js";
 import {PreviewPairUpstreamError,readPreviewPairJson} from "./http.js";
+import {previewPairCloudResource,previewPairRevisionName} from "./cloud-resource.js";
 const Slug=z.string().max(80).regex(/^[a-z][a-z0-9-]+$/);
 const Env=z.object({name:z.string().max(128),value:z.string().max(16384).optional(),
   valueSource:z.object({secretKeyRef:z.object({secret:z.string().max(256),version:z.string().regex(/^[1-9][0-9]{0,18}$/)})}).optional()});
@@ -17,7 +18,7 @@ export function createPreviewPairCloudAuthority(options:{config:EnabledPreviewPa
   approvedSecretRefs:string[];accessToken:()=>Promise<string>;fetchImpl?:typeof fetch;now?:()=>number}) {
   const {config}=options,project=Slug.parse(options.project),region=Slug.parse(options.region),service=Slug.parse(options.service);
   const allowed=z.array(z.string().max(96).regex(/^[a-z][a-z0-9-]+$/).refine(value=>value.includes("preview"))).min(3).max(16).parse(options.approvedSecretRefs);
-  const resource=`projects/${project}/locations/${region}/services/${service}`,fetchImpl=options.fetchImpl??fetch;
+  const resource=previewPairCloudResource(project,region,service),fetchImpl=options.fetchImpl??fetch;
   return async (browserOrigin:string,apiOrigin:string)=>{
     try {
       PreviewPairOriginSchema.parse(browserOrigin);PreviewPairOriginSchema.parse(apiOrigin);
@@ -40,7 +41,7 @@ export function createPreviewPairCloudAuthority(options:{config:EnabledPreviewPa
       const entries=revision.containers[0]!.env;
       if(new Set(entries.map(entry=>entry.name)).size!==entries.length)throw new PreviewPairUpstreamError();
       for(const entry of entries){
-        if(/^(HETZNER_API_TOKEN|GITHUB_TOKEN|GH_TOKEN|GITHUB_APP_PRIVATE_KEY|GOOGLE_APPLICATION_CREDENTIALS|MATRIX_PREVIEW_PAIR_OPERATOR_SECRET|GOLDEN_SNAPSHOT_OPERATOR_SECRET)$/.test(entry.name))throw new PreviewPairUpstreamError();
+        if(/^(HETZNER_API_TOKEN|GITHUB_TOKEN|GH_TOKEN|GITHUB_APP_PRIVATE_KEY|GOOGLE_APPLICATION_CREDENTIALS|MATRIX_PREVIEW_PAIR_OPERATOR_SECRET|GOLDEN_SNAPSHOT_OPERATOR_SECRET|MATRIX_PREVIEW_RUNTIME_SECRET|AI_FUNDED_CREDENTIAL_HASH_SECRET|AI_FUNDED_RELAY_CONTROL_TOKEN)$/.test(entry.name))throw new PreviewPairUpstreamError();
         if(entry.valueSource){
           if(entry.value!==undefined)throw new PreviewPairUpstreamError();
           const raw=entry.valueSource.secretKeyRef.secret;
@@ -58,9 +59,16 @@ export function createPreviewPairCloudAuthority(options:{config:EnabledPreviewPa
         if(!entry?.valueSource||entry.value!==undefined)throw new PreviewPairUpstreamError();
       }
       const hosts=literal("MATRIX_APP_DOMAIN_HOSTS").split(",");
+      const pairId=PreviewPairIdSchema.parse(literal("MATRIX_PREVIEW_PAIR_ID"));
+      const generation=PreviewPairGenerationSchema.parse(Number(z.string().regex(/^[1-9][0-9]*$/).max(10).parse(literal("MATRIX_PREVIEW_PAIR_GENERATION"))));
+      if(bindings[0]!==previewPairRevisionName(service,pairId,generation))throw new PreviewPairUpstreamError();
       if(hosts.length>8||!hosts.includes(new URL(browserOrigin).hostname)||hosts.includes(new URL(apiOrigin).hostname)
-        ||literal("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY")!==config.clerkPublishableKey||literal("MATRIX_PREVIEW_PAIR_ENABLED")!=="false")throw new PreviewPairUpstreamError();
-      return {browserOrigin,apiOrigin,identityIssuer:config.identityIssuer,sourceSha:PreviewPairShaSchema.parse(literal("MATRIX_BUILD_SHA")),
+        ||literal("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY")!==config.clerkPublishableKey||literal("MATRIX_PREVIEW_PAIR_ENABLED")!=="false"
+        ||literal("MATRIX_PREVIEW_PAIR_RUNTIME_ONLY")!=="true"||literal("CUSTOMER_VPS_ENABLED")!=="false"
+        ||literal("MATRIX_FUNDED_AI_RUNTIME_ENABLED")!=="false"||literal("MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED")!=="false"
+        ||!browserOrigin.startsWith(`https://${previewPairTag(pairId,generation,"ui")}---`)
+        ||!apiOrigin.startsWith(`https://${previewPairTag(pairId,generation,"api")}---`))throw new PreviewPairUpstreamError();
+      return {pairId,generation,browserOrigin,apiOrigin,identityIssuer:config.identityIssuer,sourceSha:PreviewPairShaSchema.parse(literal("MATRIX_BUILD_SHA")),
         serviceAccount:revision.serviceAccount,clerkSecretRef:secret("CLERK_SECRET_KEY",config.clerkSecretRef),
         databaseSecretRef:secret("PLATFORM_DATABASE_URL",config.databaseSecretRef),ticketKeysSecretRef:secret("MATRIX_COLLABORATION_TICKET_KEYS",config.ticketKeysSecretRef),
         appDomainHosts:hosts,browserRevision:bindings[0],apiRevision:bindings[1],observedAt:new Date(options.now?.()??Date.now()).toISOString()};

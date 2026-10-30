@@ -187,3 +187,26 @@ pass reads loaded configuration, performs at most one idempotent configuration P
 and returns pending; a later pass verifies it. A lost response is recovered by reading
 before another POST. No in-call wait/retry loop or Speech dependency is introduced.
 Readiness also checks current ledger balance, policy, quota, epoch and expiry.
+
+## Implementation refinement: full revision ownership and resumable retirement
+
+Cloud Run admission now checks the full pair UUID and generation in observed
+revision metadata, explicit runtime-only flags, and absence of bank/operator keys.
+The dedicated preview service name is bounded so its deterministic revision name
+can contain the complete UUID: service-p-UUID32-gGEN. This avoids discovering a
+deleted tag's owner through an unbounded revision inventory after interruption.
+
+Cleanup reads desired traffic and observed traffic separately, preserves every
+unrelated allocation, and uses service/revision etags. Removing tags or deleting
+a revision yields pending; a later observation must confirm absence. Nonzero
+traffic, another alias, foreign identity/source or a stale claim blocks mutation.
+Both source machines lose access atomically before external effects; provider
+deletion, projected access retirement and cloud retirement then progress
+independently. Capacity stays held until all boundaries confirm completion.
+
+Primary API contracts checked: [Service and traffic fields](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.services),
+[service patch](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.services/patch),
+[revision list](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.services.revisions/list),
+and [revision deletion](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.services.revisions/delete).
+Observed secret references and service-account names do not prove effective IAM;
+an approved test profile and live isolation verification remain prerequisites.

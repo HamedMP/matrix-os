@@ -16,7 +16,7 @@ export function previewPairProvenanceFixture() {
   const build = { id: 123, status: "completed", conclusion: "success", path: ".github/workflows/desktop-build.yml",
     head_sha: "d".repeat(40), event: "workflow_dispatch", repository: { full_name: m.repository }, head_repository: { full_name: m.repository } };
   const receipt = { runId: 123, artifactId: 456, sourceSha: m.sourceSha, workflowSha: build.head_sha };
-  const authority = { browserOrigin: m.browserOrigin, apiOrigin: m.apiOrigin, identityIssuer: config.identityIssuer,
+  const authority = { pairId: m.pairId, generation: m.generation, browserOrigin: m.browserOrigin, apiOrigin: m.apiOrigin, identityIssuer: config.identityIssuer,
     sourceSha: m.sourceSha, serviceAccount: config.serviceAccount, clerkSecretRef: config.clerkSecretRef,
     databaseSecretRef: config.databaseSecretRef, ticketKeysSecretRef: config.ticketKeysSecretRef,
     appDomainHosts: [new URL(m.browserOrigin).hostname], browserRevision: "pair-revision", apiRevision: "pair-revision",
