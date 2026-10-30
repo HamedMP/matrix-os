@@ -42,6 +42,7 @@ async function createRouteHarness(options: {
   ghCommandFactory?: (homePath: string) => Promise<string>;
   maxQueueDepth?: number;
   projectOwnerId?: string;
+  ownerIdentity?: false | { name: string; email: string };
 } = {}) {
   const homePath = await mkdtemp(join(tmpdir(), "matrix-coding-agent-source-control-"));
   const worktreeRoot = join(homePath, "projects", projectId, "worktrees", worktreeId);
@@ -50,6 +51,16 @@ async function createRouteHarness(options: {
   execFileSync("git", ["init"], { cwd: worktreeRoot, stdio: "ignore" });
   execFileSync("git", ["add", "."], { cwd: worktreeRoot, stdio: "ignore" });
   execFileSync("git", [...gitIdentity, "commit", "-m", "init"], { cwd: worktreeRoot, stdio: "ignore" });
+  if (options.ownerIdentity !== false) {
+    const identity = options.ownerIdentity ?? { name: "Owner Example", email: "owner@example.com" };
+    const ownerGitEnv = {
+      ...process.env,
+      HOME: homePath,
+      GIT_CONFIG_GLOBAL: join(homePath, ".gitconfig"),
+    };
+    execFileSync("git", ["config", "--global", "user.name", identity.name], { env: ownerGitEnv });
+    execFileSync("git", ["config", "--global", "user.email", identity.email], { env: ownerGitEnv });
+  }
   const gitCommand = await options.gitCommandFactory?.(homePath);
   const ghCommand = await options.ghCommandFactory?.(homePath);
 
@@ -130,6 +141,10 @@ describe("coding agent source-control route", () => {
         cwd: harness.worktreeRoot,
         encoding: "utf8",
       });
+      const author = execFileSync("git", ["log", "-1", "--format=%an <%ae>"], {
+        cwd: harness.worktreeRoot,
+        encoding: "utf8",
+      }).trim();
 
       expect(res.status).toBe(201);
       expect(committedContent).toBe("export const answer = 43;\n");
@@ -138,6 +153,7 @@ describe("coding agent source-control route", () => {
         stdio: "ignore",
       })).toThrow();
       expect(stillStaged.trim()).toBe("src/other.ts");
+      expect(author).toBe("Owner Example <owner@example.com>");
       expect(body).toMatchObject({
         status: "committed",
         branch: expect.any(String),
@@ -148,6 +164,41 @@ describe("coding agent source-control route", () => {
       expect(JSON.stringify(body)).not.toMatch(/\/tmp\/matrix-coding-agent-source-control|src\/index|token|bearer|secret/i);
     } finally {
       await rm(harness.homePath, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  it("refuses to commit when the owner has no validated Git identity", async () => {
+    const harness = await createRouteHarness({
+      ownerIds: [testPrincipal.userId],
+      ownerIdentity: false,
+    });
+    try {
+      const before = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: harness.worktreeRoot,
+        encoding: "utf8",
+      }).trim();
+      await writeFile(join(harness.worktreeRoot, "src", "index.ts"), "export const answer = 99;\n");
+
+      const response = await harness.app.request("/api/coding-agents/source-control/prepare-commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId,
+          worktreeId,
+          message: "fix: require owner identity",
+          paths: ["src/index.ts"],
+          clientRequestId: "req_missing_owner_identity",
+        }),
+      });
+
+      expect(response.status).toBe(503);
+      expect(execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: harness.worktreeRoot,
+        encoding: "utf8",
+      }).trim()).toBe(before);
+      expect(JSON.stringify(await response.json())).not.toMatch(/Matrix OS|matrix-os@|\/tmp|\.gitconfig/i);
+    } finally {
+      await rm(harness.homePath, { recursive: true, force: true });
     }
   });
 

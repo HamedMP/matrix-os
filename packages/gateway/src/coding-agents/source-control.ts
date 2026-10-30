@@ -1,7 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { lstat, realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+import { z } from "zod/v4";
 import {
   SourceControlCreatePullRequestRequestSchema,
   SourceControlCreatePullRequestResponseSchema,
@@ -12,7 +13,6 @@ import {
   type SourceControlPrepareCommitRequest,
   type SourceControlPrepareCommitResponse,
 } from "@matrix-os/contracts";
-import { GIT_ENV } from "../git-env.js";
 import type { RequestPrincipal } from "../request-principal.js";
 import { resolveOwnedWorktree, type OwnerScopedWorktreeSource } from "./owned-worktree.js";
 
@@ -24,6 +24,13 @@ const DEFAULT_GIT_TIMEOUT_MS = 10_000;
 const DEFAULT_GIT_OUTPUT_BYTES = 128 * 1024;
 const MAX_STAGED_PATCH_BYTES = 1024 * 1024;
 const MAX_STATUS_LINES = 1000;
+const GitIdentityNameSchema = z.string().trim().min(1).max(200).regex(/^[^\x00-\x1f\x7f]+$/);
+const GitIdentityEmailSchema = z.email().max(320);
+
+interface OwnerGitIdentity {
+  name: string;
+  email: string;
+}
 
 type SourceControlErrorCode =
   | "source_control_not_found"
@@ -145,11 +152,25 @@ export function createCodingAgentSourceControlStore(options: {
   const ghCommand = options.ghCommand ?? "gh";
   const maxQueueDepth = Math.max(1, Math.min(options.maxQueueDepth ?? DEFAULT_MAX_QUEUE_DEPTH, 64));
   const locks = new Map<string, SourceControlLockState>();
+  const ownerCommandEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: homePath,
+    XDG_CONFIG_HOME: join(homePath, ".config"),
+    GH_CONFIG_DIR: join(homePath, ".config", "gh"),
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: join(homePath, ".gitconfig"),
+    GH_PROMPT_DISABLED: "1",
+  };
 
-  async function run(cwd: string, command: string, args: string[], options: { maxBuffer?: number; trim?: boolean } = {}): Promise<string> {
+  async function run(
+    cwd: string,
+    command: string,
+    args: string[],
+    options: { env?: NodeJS.ProcessEnv; maxBuffer?: number; trim?: boolean } = {},
+  ): Promise<string> {
     const result = await execFileAsync(command, args, {
       cwd,
-      env: { ...process.env, ...GIT_ENV, GH_PROMPT_DISABLED: "1" },
+      env: { ...ownerCommandEnv, ...options.env },
       signal: AbortSignal.timeout(gitTimeoutMs),
       maxBuffer: options.maxBuffer ?? DEFAULT_GIT_OUTPUT_BYTES,
     });
@@ -157,11 +178,19 @@ export function createCodingAgentSourceControlStore(options: {
     return options.trim === false ? stdout : stdout.trim();
   }
 
-  async function git(cwd: string, args: string[], options: { maxBuffer?: number; trim?: boolean } = {}): Promise<string> {
+  async function git(
+    cwd: string,
+    args: string[],
+    options: { env?: NodeJS.ProcessEnv; maxBuffer?: number; trim?: boolean } = {},
+  ): Promise<string> {
     return run(cwd, gitCommand, args, options);
   }
 
-  async function gh(cwd: string, args: string[], options: { maxBuffer?: number; trim?: boolean } = {}): Promise<string> {
+  async function gh(
+    cwd: string,
+    args: string[],
+    options: { env?: NodeJS.ProcessEnv; maxBuffer?: number; trim?: boolean } = {},
+  ): Promise<string> {
     return run(cwd, ghCommand, args, options);
   }
 
@@ -169,7 +198,7 @@ export function createCodingAgentSourceControlStore(options: {
     return new Promise((resolveCommand, rejectCommand) => {
       const child = spawn(gitCommand, args, {
         cwd,
-        env: { ...process.env, ...GIT_ENV },
+        env: ownerCommandEnv,
         stdio: ["pipe", "pipe", "pipe"],
       });
       let settled = false;
@@ -216,6 +245,25 @@ export function createCodingAgentSourceControlStore(options: {
       });
       child.stdin.end(input);
     });
+  }
+
+  async function ownerGitIdentity(root: string): Promise<OwnerGitIdentity> {
+    try {
+      const [name, email] = await Promise.all([
+        git(root, ["config", "--global", "--get", "user.name"]),
+        git(root, ["config", "--global", "--get", "user.email"]),
+      ]);
+      const parsedName = GitIdentityNameSchema.safeParse(name);
+      const parsedEmail = GitIdentityEmailSchema.safeParse(email);
+      if (!parsedName.success || !parsedEmail.success) {
+        throw new CodingAgentSourceControlError("source_control_unavailable");
+      }
+      return { name: parsedName.data, email: parsedEmail.data };
+    } catch (err: unknown) {
+      if (err instanceof CodingAgentSourceControlError) throw err;
+      console.warn("[coding-agents] owner Git identity unavailable");
+      throw new CodingAgentSourceControlError("source_control_unavailable");
+    }
   }
 
   async function resolveWorktree(
@@ -373,6 +421,7 @@ export function createCodingAgentSourceControlStore(options: {
       const pathspecs = pathspecsFor(root, request);
 
       return withSourceControlLock(locks, root, maxQueueDepth, async () => {
+        const identity = await ownerGitIdentity(root);
         let changedFileCount: number;
         try {
           const status = await git(root, ["status", "--porcelain", "--untracked-files=normal", "--", ...pathspecs]);
@@ -395,7 +444,14 @@ export function createCodingAgentSourceControlStore(options: {
           });
           await git(root, ["add", "--", ...pathspecs]);
           try {
-            await git(root, ["commit", "--only", "--no-verify", "-m", request.message, "--", ...pathspecs]);
+            await git(root, ["commit", "--only", "--no-verify", "-m", request.message, "--", ...pathspecs], {
+              env: {
+                GIT_AUTHOR_NAME: identity.name,
+                GIT_AUTHOR_EMAIL: identity.email,
+                GIT_COMMITTER_NAME: identity.name,
+                GIT_COMMITTER_EMAIL: identity.email,
+              },
+            });
           } catch (err: unknown) {
             try {
               await restoreStagedSnapshot(root, pathspecs, stagedPatch);

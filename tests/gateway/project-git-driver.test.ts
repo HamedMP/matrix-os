@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -32,6 +32,7 @@ async function repository(): Promise<string> {
 
 const ambientHome = process.env.HOME;
 const ambientXdgConfigHome = process.env.XDG_CONFIG_HOME;
+const ambientPath = process.env.PATH;
 
 /** Identity reads honour ordinary Git config precedence, so tests pin the owner home they assert against. */
 async function ownerHome(gitconfig?: string): Promise<string> {
@@ -48,6 +49,8 @@ afterEach(async () => {
   else process.env.HOME = ambientHome;
   if (ambientXdgConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = ambientXdgConfigHome;
+  if (ambientPath === undefined) delete process.env.PATH;
+  else process.env.PATH = ambientPath;
   await Promise.all(rootPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -197,5 +200,48 @@ describe("owner Git driver", () => {
     await git(root, "remote", "add", "origin", root);
     await expect(driver.run({ ...common, request: { type: "push", clientRequestId: "80000000-0000-4000-8000-000000000004", expectedRevision: "1", payloadHash: "b".repeat(64), branch: "feature/member", expectedHeadSha: await git(root, "rev-parse", "HEAD") } }))
       .rejects.toMatchObject({ code: "unavailable" });
+  });
+
+  it.each([
+    ["SSH", "git@github.com:HamedMP/matrix-os.git"],
+    ["HTTPS", "https://github.com/HamedMP/matrix-os.git"],
+  ])("preserves an existing %s GitHub remote for owner-authenticated pushes", async (_label, remoteUrl) => {
+    const root = await repository();
+    const home = await ownerHome();
+    await git(root, "remote", "add", "origin", remoteUrl);
+    const realGit = (await run("which", ["git"], { encoding: "utf8" })).stdout.trim();
+    const fakeBin = join(home, "bin");
+    const logPath = join(home, "git-commands.log");
+    await mkdir(fakeBin);
+    await writeFile(join(fakeBin, "git"), `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}
+case " $* " in
+  *" push "*) exit 0 ;;
+esac
+exec ${JSON.stringify(realGit)} "$@"
+`);
+    await chmod(join(fakeBin, "git"), 0o755);
+    process.env.PATH = `${fakeBin}:${ambientPath ?? "/usr/bin:/bin"}`;
+
+    const driver = createProjectGitDriver({ resolveProjectRoot: async () => root });
+    const ownerIdentity = await driver.resolveOwnerIdentity({ ownerId: OWNER, projectId: PROJECT });
+    const head = await git(root, "rev-parse", "HEAD");
+    await expect(driver.run({
+      operationId: "80000000-0000-4000-8000-000000000011",
+      scopeId: "80000000-0000-4000-8000-000000000012",
+      ownerId: OWNER,
+      projectId: PROJECT,
+      requestingActorId: "user_member",
+      ownerIdentity,
+      request: {
+        type: "push",
+        clientRequestId: "80000000-0000-4000-8000-000000000013",
+        expectedRevision: "1",
+        payloadHash: "d".repeat(64),
+        branch: "feature/member",
+        expectedHeadSha: head,
+      },
+    })).resolves.toEqual({ commitSha: head, remoteBranch: "feature/member" });
+    expect(await readFile(logPath, "utf8")).toContain(`push --porcelain ${remoteUrl}`);
   });
 });
