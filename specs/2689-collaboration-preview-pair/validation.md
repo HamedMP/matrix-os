@@ -297,3 +297,23 @@ provider, Cloud Run identity/IAM, full directory retirement and runtime workflow
 are not qualified by this suite. It is included in required Postgres CI. Temporary
 roles/databases have explicit idempotent cleanup, including setup compensation.
 Focused Platform native TypeScript passes for the projection implementation.
+
+### Projection review: observations, tombstones and catalog trust
+
+**12/12 actual two-database cases pass**, zero skipped. Four new intended faults
+were reproduced: registered-address mismatch overwritten before comparison,
+missing projection recreated as already running, retirement timestamp refreshed on
+retry, and Preview-owned catalog-shadowing functions hiding a control-ledger grant.
+Registered fields are preserved in the locked upsert row, so concurrent registration
+cannot be erased between a pre-read and write. Missing rows start provisioning;
+retries retain first deletion time and the higher revocation epoch. System catalogs,
+identity/privilege functions and the access-list array check are explicitly qualified.
+
+One attempted boot-race fixture was rejected by the existing real registration
+provider-ID check; it was not a possible accepted producer result, so it was replaced
+with the actual missing-projection recovery fault. That fixture failure and an
+initial SQL quoting failure are not counted as regression-red evidence. The
+registration guard was not weakened and no retained production protection removed.
+After final catalog qualification/helper naming, all3 selected boundary cases pass
+(9 excluded by filter); the preceding full12-case run also passed without skips.
+Focused Platform native TypeScript passes for the reviewed projection changes.

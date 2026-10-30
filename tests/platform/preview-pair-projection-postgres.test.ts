@@ -39,6 +39,38 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("real registration across
   await projection.reconcilePreviewPairProjection(f.db,target.db,claim,()=>PAIR_NOW);
   expect((await f.db.executor.selectFrom("user_machines").select("status").where("provisioning_class","=","preview").execute()).every(row=>row.status==="running")).toBe(true);
  });
+ async function registerOne(member:{job_id:string;machine_id:string},serverId:number,address:string){
+  const job=await f.db.executor.selectFrom("provisioning_jobs").selectAll().where("job_id","=",member.job_id).executeTakeFirstOrThrow();
+  const token=openProvisioningPayload(job.encrypted_payload!,"platform-secret").registrationToken;
+  const service=createCustomerVpsService({db:target.db,config:createTestConfig({platformSecret:"isolated-preview-"+"p".repeat(40)}),hetzner:f.hetzner,systemStore:createMockCustomerVpsSystemStore(),now:()=>new Date(PAIR_NOW)});
+  await service.register(token,{machineId:member.machine_id,hetznerServerId:serverId,publicIPv4:address,imageVersion:f.candidate.hostBundleVersion,bundleSha256:f.candidate.hostBundleSha256,healthy:true});
+ }
+ it("does not erase a conflicting address reported by real registration",async()=>{
+  const {claim,data,members}=await snapshot();await projection.writePreviewPairProjection(target.db,data);
+  await registerOne(members[0],1000,"203.0.113.200");
+  await expect(projection.reconcilePreviewPairProjection(f.db,target.db,claim,()=>PAIR_NOW)).rejects.toThrow("unavailable");
+  expect((await target.db.executor.selectFrom("user_machines").select("public_ipv4").where("machine_id","=",members[0].machine_id).executeTakeFirstOrThrow()).public_ipv4).toBe("203.0.113.200");
+  expect((await f.db.executor.selectFrom("user_machines").select("status").where("machine_id","=",members[0].machine_id).executeTakeFirstOrThrow()).status).toBe("provisioning");
+ });
+ it("never fabricates registration when a projected machine disappears",async()=>{
+  const {claim,data,members}=await snapshot(),member=members[0];
+  await projection.writePreviewPairProjection(target.db,data);await registerOne(member,1000,"203.0.113.10");
+  await projection.reconcilePreviewPairProjection(f.db,target.db,claim,()=>PAIR_NOW);
+  await target.db.executor.deleteFrom("user_machines").where("machine_id","=",member.machine_id).execute();
+  await projection.writePreviewPairProjection(target.db,await projection.readPreviewPairProjection(f.db,claim,()=>PAIR_NOW));
+  expect((await target.db.executor.selectFrom("user_machines").select("status").where("machine_id","=",member.machine_id).executeTakeFirstOrThrow()).status).toBe("provisioning");
+ });
+ it("a later retirement retry preserves the first tombstone time",async()=>{
+  const {claim,members}=await snapshot();const member=members[0];
+  const pending=await requestPreviewPairStop(f.db,f.pair.pair_id,1,claim.revision,PAIR_NOW);
+  const cleanupClaim=await claimPreviewPair(f.db,pending.pair_id,1,pending.revision,PAIR_NOW);
+  const input={pairId:f.pair.pair_id,generation:1,machineId:member.machine_id,actorId:member.actor_id,handle:member.handle,jobId:member.job_id,providerServerId:null};
+  await projection.retirePreviewPairProjection(f.db,target.db,input,cleanupClaim,()=>PAIR_NOW);
+  await projection.retirePreviewPairProjection(f.db,target.db,input,cleanupClaim,()=>PAIR_NOW+5_000);
+  const machine=await target.db.executor.selectFrom("user_machines").selectAll().where("machine_id","=",member.machine_id).executeTakeFirstOrThrow();
+  expect(new Date(machine.deleted_at!).toISOString()).toBe(new Date(PAIR_NOW).toISOString());
+  expect(machine.registration_token_hash).toBeNull();expect(machine.runtime_token_epoch).toBe(2);
+ });
  it("rolls back the first projection if the second machine collides with a customer",async()=>{
   const {data,members}=await snapshot();
   await insertUserMachine(target.db,{machineId:members[1].machine_id,clerkUserId:"user_customer",handle:"customer",runtimeSlot:"primary",provisioningClass:"customer",status:"running",provisionedAt:new Date(PAIR_NOW).toISOString()});
@@ -68,7 +100,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("real registration across
   await expect(projection.retirePreviewPairProjection(f.db,target.db,{pairId:f.pair.pair_id,generation:1,machineId:member.machine_id,actorId:member.actor_id,handle:member.handle,jobId:fault==="wrong job"?"22222222-2222-4222-8222-222222222222":member.job_id,providerServerId:null},active,()=>PAIR_NOW)).rejects.toThrow();
   expect(await target.db.executor.selectFrom("user_machines").selectAll().execute()).toHaveLength(0);
  });
- it("refuses an otherwise restricted Preview role that can read the control ledger",async()=>{
+ it.each(["normal catalog","shadowed catalog"])("refuses a control-readable Preview role with %s",async fault=>{
   const {claim}=await snapshot();
   const role=(await sql<{name:string}>`SELECT current_user AS name`.execute(target.db.executor)).rows[0].name;
   const schema=(await sql<{name:string}>`SELECT current_schema() AS name`.execute(f.db.executor)).rows[0].name;
@@ -77,7 +109,14 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("real registration across
    await sql`GRANT SELECT ON TABLE ${sql.id(schema,"user_machines")} TO ${sql.id(role)}`.execute(trx.executor);
   });
   try{
-   await expect(projection.reconcilePreviewPairProjection(f.db,target.db,claim,()=>PAIR_NOW)).rejects.toThrow("unavailable");
+   if(fault==="shadowed catalog"){
+    const namespace=(await sql<{name:string}>`SELECT current_schema() AS name`.execute(target.db.executor)).rows[0].name;
+    await target.db.transaction(async trx=>{
+     await sql`CREATE FUNCTION ${sql.id(namespace,"inet_server_addr")}() RETURNS inet LANGUAGE sql AS $$ SELECT '10.99.0.1'::inet $$`.execute(trx.executor);
+     await sql`SET LOCAL search_path TO ${sql.id(namespace)},pg_catalog`.execute(trx.executor);
+     await expect(projection.reconcilePreviewPairProjection(f.db,trx,claim,()=>PAIR_NOW)).rejects.toThrow("unavailable");
+    });
+   }else await expect(projection.reconcilePreviewPairProjection(f.db,target.db,claim,()=>PAIR_NOW)).rejects.toThrow("unavailable");
    expect(await target.db.executor.selectFrom("user_machines").selectAll().execute()).toHaveLength(0);
   }finally{
    await f.db.transaction(async trx=>{
