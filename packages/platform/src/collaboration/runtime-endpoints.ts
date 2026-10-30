@@ -1,3 +1,4 @@
+import type { CollaborationRuntimeWriteAdmission } from "./runtime-write-admission.js";
 /**
  * Runtime endpoint directory (S05 / T026).
  *
@@ -139,13 +140,15 @@ async function applyRuntimeEndpointSchema(db: Transaction<RuntimeEndpointPlatfor
 export class CollaborationRuntimeEndpointRegistry {
   private readonly now: () => Date;
   private readonly keyOverlapMs: number;
+  private readonly admitRuntimeWrite?: CollaborationRuntimeWriteAdmission;
 
   constructor(
     private readonly db: Kysely<RuntimeEndpointPlatformDatabase>,
-    options: { now?: () => Date; keyOverlapMs?: number } = {},
+    options: { now?: () => Date; keyOverlapMs?: number; admitRuntimeWrite?: CollaborationRuntimeWriteAdmission } = {},
   ) {
     this.now = options.now ?? (() => new Date());
     this.keyOverlapMs = options.keyOverlapMs ?? DEFAULT_KEY_OVERLAP_MS;
+    this.admitRuntimeWrite = options.admitRuntimeWrite;
   }
 
   /**
@@ -186,6 +189,7 @@ export class CollaborationRuntimeEndpointRegistry {
     // a key or regress the generation.
     const keyOverlapMs = this.keyOverlapMs;
     await this.db.transaction().execute(async (trx) => {
+      await this.admitRuntimeWrite?.(trx, { runtimeId: logical, ownerId: parsed.ownerId });
       await trx.insertInto("collaboration_runtime_endpoints").values({
         runtime_id: logical,
         owner_id: parsed.ownerId,
@@ -262,6 +266,7 @@ export class CollaborationRuntimeEndpointRegistry {
   async issueControlTicket(logicalRuntimeId: string, token: string, expiresAt: Date): Promise<void> {
     // Issue and prune commit together: a failed prune never leaves a half-issued ticket behind.
     await this.db.transaction().execute(async (trx) => {
+      await this.admitRuntimeWrite?.(trx, { runtimeId: logicalRuntimeId });
       await this.writeControlTicket(trx, logicalRuntimeId, token, expiresAt);
     });
   }

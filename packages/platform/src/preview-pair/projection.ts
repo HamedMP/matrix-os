@@ -1,3 +1,4 @@
+import {retirePreviewPairCollaborationAccess} from "./cleanup-access.js";
 import {sql,type Selectable} from "kysely";
 import {previewPairHandle} from "@matrix-os/contracts/preview-pair";
 import type {PlatformDB,HostBundleReleaseRecord,UserMachinesTable} from "../db.js";
@@ -129,5 +130,6 @@ export async function retirePreviewPairProjection(source:PlatformDB,target:Platf
    .where("user_machines.clerk_user_id","=",member.actorId).where("user_machines.handle","=",member.handle)
    .where("user_machines.runtime_slot","=",member.handle).where("user_machines.provisioning_class","=","preview"))
    .returning("machine_id").executeTakeFirstOrThrow();
+  await retirePreviewPairCollaborationAccess(trx,member.machineId,member.actorId);
  });
 }

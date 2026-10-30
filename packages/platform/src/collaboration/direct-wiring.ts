@@ -1,3 +1,4 @@
+import type { CollaborationRuntimeWriteAdmission } from "./runtime-write-admission.js";
 /**
  * Direct-transport platform composition (S05 / T026).
  *
@@ -84,9 +85,10 @@ export async function createPlatformCollaborationDirect(options: {
   resolveRuntimeOrigin(runtimeId: string, ownerId: string): Promise<string | null>;
   relayFetch?: typeof fetch;
   now?: () => Date;
+  admitRuntimeWrite?: CollaborationRuntimeWriteAdmission;
 }): Promise<PlatformCollaborationDirect> {
   await bootstrapPlatformRuntimeEndpointDatabase(options.db);
-  const endpoints = new CollaborationRuntimeEndpointRegistry(options.db, { now: options.now });
+  const endpoints = new CollaborationRuntimeEndpointRegistry(options.db, { now: options.now, admitRuntimeWrite: options.admitRuntimeWrite });
   let issuer: CollaborationTicketIssuer | null = null;
   if (options.keyring) {
     issuer = new CollaborationTicketIssuer({
