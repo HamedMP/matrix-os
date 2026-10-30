@@ -25,8 +25,11 @@ export const admitCollaborationRuntimeWrite: CollaborationRuntimeWriteAdmission 
     FROM user_machines WHERE machine_id = ${match[1]} FOR SHARE`.execute(trx);
   const machine = result.rows[0];
   if (!machine) throw new CollaborationRuntimeWriteError();
-  if (!machine.handle.startsWith("cp-") && !machine.runtime_slot.startsWith("cp-")) return;
-  if (!PreviewPairHandleSchema.safeParse(machine.handle).success || machine.runtime_slot !== machine.handle
+  const pairHandle = PreviewPairHandleSchema.safeParse(machine.handle).success;
+  const pairSlot = PreviewPairHandleSchema.safeParse(machine.runtime_slot).success;
+  // Only the full reserved marker identifies a pair; cp-alice is a legal customer.
+  if (!pairHandle && !pairSlot) return;
+  if (!pairHandle || machine.runtime_slot !== machine.handle
     || machine.provisioning_class !== "preview" || machine.status !== "running" || machine.deleted_at !== null
     || !machine.empty_access || (identity.ownerId !== undefined && machine.clerk_user_id !== identity.ownerId)) {
     throw new CollaborationRuntimeWriteError();
