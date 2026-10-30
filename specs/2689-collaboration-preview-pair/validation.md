@@ -160,3 +160,19 @@ are not regression red evidence. New build-context tests first rejected candidat
 execution; the retained real-Git producer now embeds the actual checkout while
 keeping controller execution separate. No native artifact build or workflow dispatch
 was performed, and no packaged launch is claimed.
+
+### Packaging review correction
+
+Greptile found that a candidate build could overwrite the sibling controller
+checkout before its later verifier ran. The intended runner-boundary assertion
+failed first. Admission, candidate build and provenance now run in separate jobs;
+the fresh provenance runner checks out only the reviewed controller, never downloads
+or executes candidate artifacts, and reads immutable artifact IDs/digests from the
+GitHub API before publishing separate small source receipts. Candidate outputs are
+data only across that boundary. This is provenance of a selected candidate build,
+not a reproducible/hermetic build attestation.
+
+**62/62 assertions pass across4 files**, including wrong/expired/duplicate/missing
+artifact rejection and the retained release tests. No native workflow dispatch or
+live artifact launch is claimed. Artifact signing and operator secrets remain absent
+from candidate execution.
