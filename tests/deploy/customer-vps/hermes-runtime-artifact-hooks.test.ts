@@ -16,13 +16,13 @@ it.each([{ recovery: false, code: 0 }, { recovery: false, code: 37 }, { recovery
     try {
       await mkdir(join(root, "app/scripts"), { recursive: true });
       await writeFile(join(root, "app/scripts/publish-hermes-runtime.py"), `import os,sys,json\nfrom pathlib import Path\nPath(os.environ['HOME'],'invocation.json').write_text(json.dumps({'args':sys.argv[1:],'home':os.environ['HOME'],'hermes':os.environ['HERMES_HOME'],'isolated':sys.flags.isolated,'noBytecode':sys.dont_write_bytecode}))\nraise SystemExit(${code})\n`);
-      const script = `set -eu\nMATRIX_RUNTIME_HOME="$1"\nHERMES_HOME="$1/.hermes"\nMATRIX_APP_DIR="$1/app"\nrun_installer_as_runtime_user() { "$@"; }\n${helper}\nrun_hermes_artifact_helper ${recovery ? "--recover" : ""}\nprintf success > "$1/success"\n`;
+      const script = `set -eu\nMATRIX_RUNTIME_HOME="$1"\nHERMES_HOME="$1/.hermes"\nMATRIX_APP_DIR="$1/app"\nrun_installer_as_runtime_user() { "$@"; }\n${helper}\nrun_hermes_artifact_helper ${recovery ? "--prepare-upgrade" : ""}\nprintf success > "$1/success"\n`;
       let status = 0;
       try { await run("bash", ["-c", script, "fixture", root], { timeout: 10_000 }); }
       catch (error) { status = Number((error as { code: number }).code); }
       expect(status).toBe(code);
       const invocation = JSON.parse(await readFile(join(root, "invocation.json"), "utf8"));
-      expect(invocation).toEqual({ args: [join(root, ".hermes/hermes-agent"), ...(recovery ? ["--recover"] : [])], home: root, hermes: join(root, ".hermes"), isolated: 1, noBytecode: true });
+      expect(invocation).toEqual({ args: [join(root, ".hermes/hermes-agent"), ...(recovery ? ["--prepare-upgrade"] : [])], home: root, hermes: join(root, ".hermes"), isolated: 1, noBytecode: true });
       if (code === 0) await expect(access(join(root, "success"))).resolves.toBeUndefined();
       else await expect(access(join(root, "success"))).rejects.toThrow();
     } finally { await rm(root, { recursive: true, force: true }); }
@@ -31,7 +31,7 @@ it.each([{ recovery: false, code: 0 }, { recovery: false, code: 37 }, { recovery
 
 it("recovers before upstream writes and publishes only after dependency/setup reconciliation", async () => {
   const installer = await readFile(installerPath, "utf8");
-  const recovery = installer.indexOf('run_hermes_artifact_helper --recover');
+  const recovery = installer.indexOf('run_hermes_artifact_helper --prepare-upgrade');
   const publish = installer.lastIndexOf('run_hermes_artifact_helper\n');
   expect(recovery).toBeGreaterThan(-1);
   expect(recovery).toBeGreaterThan(installer.indexOf('trap restore_hermes_dashboard EXIT'));
