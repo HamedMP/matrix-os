@@ -2,6 +2,10 @@ import type { PlatformDB } from "../db.js";
 import { lockUserMachineProvisioning } from "../db.js";
 import { withAccountDeletionAdmission } from "../account-deletion/admission.js";
 import { previewPairHandle } from "@matrix-os/contracts/preview-pair";
+import { PreviewPairShaSchema } from "@matrix-os/contracts/preview-pair";
+import type { Selectable } from "kysely";
+import { sql } from "kysely";
+import type { PreviewPairsTable } from "./types.js";
 
 export type PreparePairMember = (pairId: string, generation: number, role: "owner" | "member") =>
   Promise<{ machineId: string; jobId: string; handle: string; actorId: string }>;
@@ -11,6 +15,20 @@ export class PreviewPairConflictError extends Error {
 }
 export async function readPreviewPair(db: PlatformDB, pairId: string) {
   return db.executor.selectFrom("preview_pairs").selectAll().where("pair_id", "=", pairId).executeTakeFirst();
+}
+
+/** Shared by request replay and the controller observer: a push never replaces an update target. */
+export async function recordPreviewPairCurrency(db: PlatformDB, pair: Selectable<PreviewPairsTable>, observedSha: string) {
+  PreviewPairShaSchema.parse(observedSha);
+  if (pair.state === "updating" && !pair.requested_source_sha) throw new PreviewPairConflictError();
+  const outdated = observedSha !== (pair.state === "updating" ? pair.requested_source_sha : pair.source_sha);
+  const requested = pair.state === "updating" ? pair.requested_source_sha : outdated ? observedSha : null;
+  if (pair.outdated === outdated && pair.requested_source_sha === requested) return pair;
+  const updated = await db.executor.updateTable("preview_pairs").set({ outdated, requested_source_sha: requested, revision: sql`revision + 1` })
+    .where("pair_id", "=", pair.pair_id).where("generation", "=", pair.generation).where("revision", "=", pair.revision)
+    .returningAll().executeTakeFirst();
+  if (!updated) throw new PreviewPairConflictError();
+  return updated;
 }
 
 export async function prepareLeasedPairMembers(db: PlatformDB, pairId: string, generation: number, prepare: PreparePairMember) {
