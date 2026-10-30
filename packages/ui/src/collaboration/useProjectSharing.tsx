@@ -15,6 +15,7 @@ import { ProjectSharingDialog } from "./ProjectSharingDialog.js";
 const GrantsSchema = z.array(CollaborationGrantSchema).max(100);
 
 export const PROJECT_SHARING_UNAVAILABLE_MESSAGE = "Project sharing is unavailable. The project remains private and unchanged.";
+const ORGANIZATION_MISMATCH_MESSAGE = "This project is associated with another organization. Select that organization to manage sharing. Access has not changed.";
 
 const PUBLICATION_POLL_MS = 1_000;
 const PUBLICATION_WAIT_MS = 60_000;
@@ -23,6 +24,7 @@ export interface ProjectSharingController {
   pending: boolean;
   open: boolean;
   error: boolean;
+  errorMessage: string | null;
   start(): void;
   close(): void;
   dialogs: ReactNode;
@@ -47,7 +49,7 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
   const [inventory, setInventory] = useState<CollaborationProjectInventory | null>(null);
   const organizationName = selectedOrganizationName ?? undefined;
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const alive = useRef(true);
   const starting = useRef(false);
   /** The scope whose publication is being awaited; cleared by close so the wait ends with the dialog. */
@@ -113,16 +115,20 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
   const begin = async () => {
     if (starting.current) return;
     if (!runtimeId || !organizationId) {
-      setError(true);
+      setErrorMessage(PROJECT_SHARING_UNAVAILABLE_MESSAGE);
       return;
     }
     starting.current = true;
     setPending(true);
-    setError(false);
+    setErrorMessage(null);
     try {
       const preflightValue = await api.post(`/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`,
         { kind: "project", resourceId: projectId, organizationId });
       const preflight = CollaborationScopePreflightResponseSchema.parse(preflightValue);
+      if (!preflight.eligible && preflight.reason === "organization_mismatch") {
+        if (alive.current) setErrorMessage(ORGANIZATION_MISMATCH_MESSAGE);
+        return;
+      }
       if (!preflight.eligible || !preflight.confirmationToken) throw new Error("Project unavailable");
       const scopeId = preflight.existingScopeId ?? CollaborationScopeSchema.parse(await api.post(
         `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes`,
@@ -141,7 +147,7 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
       if (alive.current) setSurface("dialog");
     } catch (failure: unknown) {
       console.warn("[project-collaboration] setup failed", failure instanceof Error ? failure.name : "UnknownError");
-      if (alive.current) setError(true);
+      if (alive.current) setErrorMessage(PROJECT_SHARING_UNAVAILABLE_MESSAGE);
     } finally {
       starting.current = false;
       if (alive.current) setPending(false);
@@ -210,7 +216,7 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
     setSurface(null);
     setInventory(null);
     setScope(null);
-    setError(false);
+    setErrorMessage(null);
     onClose?.();
   };
 
@@ -237,5 +243,5 @@ export function useProjectSharing({ api, runtimeId, organizationId, organization
     /> : null}
   </>;
 
-  return { pending, open: surface !== null, error, start: () => { void begin(); }, close, dialogs };
+  return { pending, open: surface !== null, error: errorMessage !== null, errorMessage, start: () => { void begin(); }, close, dialogs };
 }

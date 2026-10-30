@@ -115,7 +115,7 @@ export const CollaborationScopePreflightRequestSchema = z.object({
 
 export const CollaborationScopePreflightResponseSchema = z.object({
   eligible: z.boolean(),
-  reason: z.enum(["active_work", "unsupported", "unavailable"]).optional(),
+  reason: z.enum(["active_work", "unsupported", "unavailable", "organization_mismatch"]).optional(),
   resourceRevision: CollaborationRevisionSchema,
   confirmationToken: z.string().min(64).max(4_096).regex(/^[A-Za-z0-9_.-]+$/).optional(),
   existingScopeId: CollaborationIdSchema.optional(),

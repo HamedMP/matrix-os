@@ -7,7 +7,7 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { COLLABORATION_DIRECT_PROTOCOL_VERSION, CollaborationGrantSchema } from "@matrix-os/contracts";
+import { COLLABORATION_DIRECT_PROTOCOL_VERSION, CollaborationGrantSchema, CollaborationScopePreflightResponseSchema } from "@matrix-os/contracts";
 import { z } from "zod/v4";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { CollaborationActorProofVerifier } from "../../packages/gateway/src/collaboration/actor-proof.js";
@@ -20,6 +20,7 @@ import { createDirectSessionRoutes } from "../../packages/gateway/src/collaborat
 import { DirectSessionService } from "../../packages/gateway/src/collaboration/direct-sessions.js";
 import { createOrganizationPrecondition } from "../../packages/gateway/src/collaboration/organization-precondition.js";
 import { OwnerRuntimeSessionService } from "../../packages/gateway/src/collaboration/owner-runtime-sessions.js";
+import { CollaborationProjectScopeService } from "../../packages/gateway/src/collaboration/project-scope.js";
 import { CollaborationRepository } from "../../packages/gateway/src/collaboration/repository.js";
 import { createCollaborationRoutes, type CollaborationRouteOptions } from "../../packages/gateway/src/collaboration/routes.js";
 import { CollaborationRelay } from "../../packages/platform/src/collaboration/relay.js";
@@ -95,13 +96,18 @@ describe("choosing access on a private project before sharing it", () => {
       capabilityEvaluator: new CollaborationCapabilityEvaluator({ db: fixture.db, grants: capabilities, organizationPrecondition: precondition, now: () => now }),
       verifier: new CollaborationActorProofVerifier({ runtimeId, keys: { "legacy-1": "x".repeat(32) }, now: () => now, authority }),
       executionPolicies: { resolve: async () => null },
+      projectScope: new CollaborationProjectScopeService(fixture.db, {
+        runtimeId, preflightSecret: "preflight-secret-for-private-project-grants", now: () => now,
+        source: { getProject: async (actor, id) => actor === ownerId && ["project_private", "project_shared"].includes(id)
+          ? { id, ownerId, revision: 1 } : null },
+      }),
       resolveParticipant: async (actorId: string) => ({ actorId, displayName: actorId }),
     } as unknown as CollaborationRouteOptions));
     relay = new CollaborationRelay({
       // A private project is not in the directory; only the shared one has a scope route.
       resolveScopeHome: async (id) => (id === sharedScopeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null),
       resolveInvitationHome: async () => null,
-      resolveRuntimeHome: async () => null,
+      resolveRuntimeHome: async (actor, id) => actor === ownerId && id === runtimeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null,
       resolveSessionHome: async (id) => (id === logicalRuntimeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null),
       resolveOwnerRuntimeHome: async (actorId, id) => (actorId === ownerId && id === logicalRuntimeId ? { runtimeId: logicalRuntimeId, origin: HOME } : null),
       fetchImpl: (async (input: string, init: RequestInit) => {
@@ -120,7 +126,7 @@ describe("choosing access on a private project before sharing it", () => {
   });
 
   /** The platform: issues the owner-runtime ticket for the signed-in actor and relays everything else. */
-  const client = (actorId: string) => createCollaborationDirectClient({
+  const client = (actorId: string, selectedOrganizationId = organizationId) => createCollaborationDirectClient({
     platformBaseUrl: PLATFORM, clientOrigin: PLATFORM, now: () => now,
     fetchImpl: (async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(input));
@@ -129,7 +135,7 @@ describe("choosing access on a private project before sharing it", () => {
         const request = JSON.parse(body) as { proofPublicKey: string };
         const ticket = {
           protocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION, ticketId: randomUUID(), nonce: randomUUID().replaceAll("-", ""),
-          actorId, organizationId, resource: { kind: "owner_runtime" }, purpose: "owner_runtime",
+          actorId, organizationId: selectedOrganizationId, resource: { kind: "owner_runtime" }, purpose: "owner_runtime",
           runtime: { runtimeId: logicalRuntimeId, authorityGeneration: 1 }, proofKeyThumbprint: proofKeyThumbprint(request.proofPublicKey),
           maxActions: 32, issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 30_000).toISOString(),
         };
@@ -147,6 +153,22 @@ describe("choosing access on a private project before sharing it", () => {
 
   const outboxRows = () => fixture.db.selectFrom("collaboration_directory_outbox").select("event_id")
     .where("scope_id", "=", privateScopeId).execute();
+
+  it.each(["private", "shared"])("refuses another organization's %s scope during signed preflight through the real relay", async (lifecycle) => {
+    const selected = "org_other_selected";
+    const direct = client(ownerId, selected);
+    const before = await fixture.db.selectFrom("collaboration_scopes").selectAll().orderBy("id").execute();
+    try {
+      const response = CollaborationScopePreflightResponseSchema.parse(await direct.requestOwnerRuntime(
+        runtimeId, selected, `/api/collaboration/runtimes/${encodeURIComponent(runtimeId)}/scopes/preflight`,
+        { kind: "project", resourceId: `project_${lifecycle}`, organizationId: selected },
+      ));
+      expect(response).toEqual({ eligible: false, reason: "organization_mismatch", resourceRevision: "1" });
+      expect(await fixture.db.selectFrom("collaboration_scopes").selectAll().orderBy("id").execute()).toEqual(before);
+      expect(await fixture.db.selectFrom("collaboration_grants").selectAll().execute()).toEqual([]);
+      expect(await outboxRows()).toEqual([]);
+    } finally { direct.close(); }
+  });
 
   it("lists, creates, changes and revokes grants with the owner setup key and publishes none of them", async () => {
     const direct = client(ownerId);

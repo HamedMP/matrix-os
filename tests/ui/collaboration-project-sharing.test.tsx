@@ -13,6 +13,25 @@ beforeAll(() => {
   HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.open = false; });
 });
 
+describe("project sharing organization selection", () => {
+  it("explains an existing organization binding before reading a scope or changing access", async () => {
+    const api = { get: vi.fn(), post: vi.fn(async () => ({ eligible: false, reason: "organization_mismatch", resourceRevision: "7" })),
+      delete: vi.fn() };
+    const rendered = render(<ProjectSharingButton api={api} runtimeId="vps:runtime" organizationId="org_selected"
+      projectId="proj_launch" projectName="Launch" />);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Share project" }));
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(
+        "This project is associated with another organization. Select that organization to manage sharing. Access has not changed.",
+      ));
+      expect(api.get).not.toHaveBeenCalled();
+      expect(api.post).toHaveBeenCalledOnce();
+      expect(api.delete).not.toHaveBeenCalled();
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally { rendered.unmount(); }
+  });
+});
+
 const scope: CollaborationScope = {
   id: "10000000-0000-4000-8000-000000000401",
   ownerId: "user_owner",
