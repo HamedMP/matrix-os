@@ -23,6 +23,14 @@ export async function createIsolatedPreviewPairDatabase(){
   await admin.query(`CREATE DATABASE "${database}" OWNER "${role}"`);databaseCreated=true;
   const url=new URL(base);url.username=role;url.password=password;url.pathname=`/${database}`;
   fixture=await createPreviewPairPostgresFixture(url.toString());
-  return {db:fixture.db,destroy};
+  async function simulateAlternateAddress(){
+   // Fixture only: mimic a different connection address in this owned database's
+   // catalog, without depending on Docker/CI exposing a Unix-domain socket.
+   const adminUrl=new URL(base!);adminUrl.pathname=`/${database}`;
+   const probe=new Pool({connectionString:adminUrl.toString(),max:1,connectionTimeoutMillis:10_000,statement_timeout:10_000});
+   try{await probe.query("CREATE OR REPLACE FUNCTION pg_catalog.inet_server_addr() RETURNS inet LANGUAGE sql AS $$ SELECT '10.99.0.1'::inet $$");}
+   finally{await probe.end();}
+  }
+  return {db:fixture.db,destroy,simulateAlternateAddress};
  }catch(error:unknown){await destroy();throw error;}
 }

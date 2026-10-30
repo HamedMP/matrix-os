@@ -11,16 +11,17 @@ import type {PreviewPairCleanupMember} from "./cleanup.js";
 interface ProjectedMember {role:"owner"|"member";machine:Selectable<UserMachinesTable>}
 export interface PreviewPairProjection {pairId:string;generation:number;pr:number;sourceSha:string;release:HostBundleReleaseRecord;members:ProjectedMember[]}
 async function identity(db:PlatformDB){
- const result=await sql<{database:string;role:string;server:string|null;port:number|null;unsafe:boolean}>`SELECT pg_catalog.current_database() AS database,current_user AS role,
- pg_catalog.inet_server_addr()::pg_catalog.text AS server,pg_catalog.inet_server_port() AS port,EXISTS(SELECT 1 FROM pg_catalog.pg_roles r
- WHERE pg_catalog.pg_has_role(current_user,r.oid,'MEMBER') AND (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls
+ const result=await sql<{database:string;role:string;unsafe:boolean}>`SELECT pg_catalog.current_database() AS database,session_user AS role,EXISTS(SELECT 1 FROM pg_catalog.pg_roles r
+ WHERE pg_catalog.pg_has_role(session_user,r.oid,'MEMBER') AND (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls
  OR r.rolname IN ('pg_read_all_data','pg_write_all_data','pg_read_server_files','pg_write_server_files','pg_execute_server_program','pg_signal_backend','pg_monitor','pg_read_all_stats','pg_read_all_settings'))) AS unsafe`.execute(db.executor);
  if(!result.rows[0])throw new PreviewPairConflictError();return result.rows[0];
 }
 export async function assertPreviewPairDataIsolation(source:PlatformDB,target:PlatformDB){
  const [left,right]=await Promise.all([identity(source),identity(target)]);
- if(right.unsafe||(left.database===right.database&&left.server===right.server&&left.port===right.port))throw new PreviewPairConflictError();
- if(left.server===right.server&&left.port===right.port){
+ // Addresses are not cluster identity (aliases, sockets and replicas differ).
+ // Require a dedicated database AND login role; check control grants unconditionally.
+ if(right.unsafe||left.database===right.database||left.role===right.role)throw new PreviewPairConflictError();
+ {
   // Also inspect SET ROLE membership: a NOINHERIT grant can still cross the boundary.
   const grants=await sql<{unsafe:boolean}>`SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_roles preview
    JOIN pg_catalog.pg_roles reachable ON pg_catalog.pg_has_role(preview.oid,reachable.oid,'MEMBER')
