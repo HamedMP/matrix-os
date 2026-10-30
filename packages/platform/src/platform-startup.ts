@@ -32,7 +32,11 @@ import { startAtsBackgroundWorker } from './ats-background-worker.js';
 import { startGooglePurchaseWorker } from './billing/google-purchases.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { ClerkAuth } from './clerk-auth.js';
-import { createClerkAuth, createClerkSessionRevoker } from './clerk-auth.js';
+import {
+  createClerkAuth,
+  createClerkSessionRevoker,
+  resolveClerkVerificationConfig,
+} from './clerk-auth.js';
 import type { MatrixProvisioner } from './matrix-provisioning.js';
 import type { CustomerVpsService } from './customer-vps.js';
 import type { GoldenSnapshotService } from './golden-snapshot-service.js';
@@ -456,15 +460,21 @@ async function startPlatformServerWithCleanup(
   }
 
   let clerkAuth: ClerkAuth | undefined;
-  const clerkSecretKey = process.env.CLERK_SECRET_KEY;
-  if (clerkSecretKey) {
+  const clerkVerificationConfig = resolveClerkVerificationConfig(process.env);
+  if (clerkVerificationConfig) {
     const { verifyToken } = await import('@clerk/backend');
     clerkAuth = createClerkAuth({
       verifyToken: async (token: string) => {
-        const payload = await verifyToken(token, { secretKey: clerkSecretKey });
+        const payload = await verifyToken(token, clerkVerificationConfig.verifyTokenOptions);
         return payload as { sub: string; [key: string]: unknown };
       },
-      revokeSession: createClerkSessionRevoker({ secretKey: clerkSecretKey }),
+      ...(clerkVerificationConfig.sessionRevocationSecret
+        ? {
+            revokeSession: createClerkSessionRevoker({
+              secretKey: clerkVerificationConfig.sessionRevocationSecret,
+            }),
+          }
+        : {}),
     });
   }
 
@@ -1119,7 +1129,7 @@ async function startPlatformServerWithCleanup(
     service: 'matrix-platform',
   });
 
-  const server = serve({ fetch: app.fetch, port }, () => {
+  const server = serve({ fetch: app.fetch, hostname: process.env.MATRIX_BIND_HOST, port }, () => {
     console.log(`Platform listening on :${port}`);
   });
   if (backgroundWorkersEnabled) whatsappRuntime?.start();
