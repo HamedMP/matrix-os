@@ -179,7 +179,13 @@ from candidate execution.
 
 Packaging CI found TS2724: the new JavaScript build-source function was missing
 from its existing .d.mts export declaration. The actual Electron node typecheck
-reproduced it before the declaration was added. The focused Electron node check
-passes after correction. The broad local pipeline built its dependencies but timed
+reproduced it before the declaration was added. The classic focused Electron node check then exhausted its512MiB heap;
+it did not complete. The broad local pipeline built its dependencies but timed
 out at the native gateway compiler under host pressure; a resource-bounded rerun is
 recorded separately. No broad typecheck pass is claimed from the interrupted run.
+
+The resource-bounded native rerun completed successfully for all8 configured
+projects, including Electron renderer and node configs (GOMEMLIMIT=1GiB,
+GOMAXPROCS=2). Dependency builds completed in the earlier pipeline stage. This
+qualifies the declaration correction; the failed classic512MiB attempt remains
+recorded above.
