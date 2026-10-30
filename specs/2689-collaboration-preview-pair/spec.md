@@ -179,7 +179,8 @@ implementation. The user-visible authorization contract is:
 | Request/update/stop a pair | Authorized maintainer; authoritative pair ownership, PR eligibility and generation | Outsider, unapproved PR, another run or customer machine |
 | Inspect a manifest/report | Authorized tester or operator within that pair's evidence policy | A copied manifest confers no access; no embedded credentials |
 | Open computer A or B | Its respective real authenticated test owner and current machine binding | The other account gains no blanket access to its peer's computer |
-| Discover/open a shared project | Current organization member with the actual project grant and required acceptance | Nonmember, pending/unaccepted access, revoked or wrong-pair identity |
+| Discover/accept a project invitation | Current organization member with an actual pending project grant; acceptance uses the existing Open flow | Nonmember, revoked or wrong-pair identity |
+| Open shared project content | Current organization member with the actual accepted project grant | Nonmember, pending/unaccepted access, revoked or wrong-pair identity |
 | Send an inherited Chat prompt | Authenticated, currently authorized project member under owner-runtime and test AI policy | Outsider, stale/revoked authorization or wrong machine/scope |
 | Cleanup a run | Trusted lifecycle authority for that exact pair/generation | Customer resources, another pair or baseline fixture identities |
 
