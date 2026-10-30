@@ -16,6 +16,8 @@ const ACTIONS: Record<GettingStartedAppTaskId, GettingStartedAppAction | null> =
   "build-app": { type: "app-gallery" },
   "create-agent": { type: "chat", prompt: "Create an agent that " },
   "build-memory": { type: "chat", prompt: "Here is what matters to me: " },
+  gmail: { type: "settings", section: "integrations" },
+  "google-calendar": { type: "settings", section: "integrations" },
   slack: { type: "settings", section: "integrations" },
   whatsapp: { type: "settings", section: "integrations" },
   github: { type: "settings", section: "integrations" },

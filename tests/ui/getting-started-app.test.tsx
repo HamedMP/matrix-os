@@ -86,7 +86,7 @@ function renderApp(
 describe("Getting started app view", () => {
   it("shows the header, hero and the task grid from the Figma design", async () => {
     renderApp(makePort());
-    expect(await screen.findByText("0 of 10 done")).toBeTruthy();
+    expect(await screen.findByText("0 of 12 done")).toBeTruthy();
     expect(screen.getByText("Getting started")).toBeTruthy();
     expect(screen.getByLabelText("0 points")).toBeTruthy();
     expect(screen.getByText("Start here")).toBeTruthy();
@@ -107,7 +107,7 @@ describe("Getting started app view", () => {
   it("marks done tasks and moves the hero to the next task", async () => {
     const port = makePort({ results: () => results({ ...slackConnected, chats: fulfilled({ items: [{ id: "chat_1" }] }) }) });
     renderApp(port);
-    expect(await screen.findByText("2 of 10 done")).toBeTruthy();
+    expect(await screen.findByText("2 of 12 done")).toBeTruthy();
     expect(screen.getByText("Up next")).toBeTruthy();
     expect(within(screen.getByRole("button", { name: /Slack/ })).getByText("Done")).toBeTruthy();
     await waitFor(() => expect(screen.getByLabelText("70 points")).toBeTruthy());
@@ -121,17 +121,41 @@ describe("Getting started app view", () => {
     expect(screen.queryByText("You're all set")).toBeNull();
   });
 
-  it("says the rest can't be checked yet when only unavailable tasks remain", async () => {
+  it("celebrates Matrix fully unlocked once every task it can check is done", async () => {
     const port = makePort({ results: () => results({
-      ...slackConnected,
+      integrations: fulfilled([
+        { id: "c1", service: "slack", status: "active" },
+        { id: "c4", service: "gmail", status: "active" },
+        { id: "c5", service: "google_calendar", status: "active" },
+      ]),
       github: fulfilled({ authenticated: true }),
       agents: fulfilled({ agents: [{ agent: "codex", status: "available" }] }),
       chats: fulfilled({ items: [{ id: "chat_1" }] }),
     }) });
-    renderApp(port);
-    expect(await screen.findByText("4 of 10 done")).toBeTruthy();
-    expect(screen.getByText("The rest can't be checked yet")).toBeTruthy();
-    expect(screen.queryByText("You're all set")).toBeNull();
+    const { onAction } = renderApp(port);
+    expect(await screen.findByText("6 of 12 done")).toBeTruthy();
+    const unlocked = await screen.findByRole("region", { name: "Matrix unlocked" });
+    expect(within(unlocked).getByRole("heading", { name: "Matrix is fully unlocked" })).toBeTruthy();
+    await waitFor(() => expect(within(unlocked).getByText("150 pts collected")).toBeTruthy());
+    expect(within(unlocked).getByText("6 tasks done")).toBeTruthy();
+    expect(screen.queryByText("Up next")).toBeNull();
+    fireEvent.click(within(unlocked).getByRole("button", { name: "Put Matrix to work" }));
+    expect(onAction).toHaveBeenLastCalledWith({ type: "chat" });
+  });
+
+  it("does not celebrate while a checkable task is still open", async () => {
+    renderApp(makePort({ results: () => results({ ...slackConnected, chats: fulfilled({ items: [{ id: "chat_1" }] }) }) }));
+    expect(await screen.findByText("Up next")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Matrix unlocked" })).toBeNull();
+  });
+
+  it("shows the Gmail and Google Calendar cards with their catalog logos", async () => {
+    renderApp(makePort({ logos: { gmail: "https://cdn.example.com/gmail.svg", "google-calendar": "https://cdn.example.com/gcal.svg" } }));
+    const gmail = await screen.findByRole("button", { name: /Gmail/ });
+    const calendar = screen.getByRole("button", { name: /Google Calendar/ });
+    await waitFor(() => expect(gmail.querySelector('img[src="https://cdn.example.com/gmail.svg"]')).toBeTruthy());
+    expect(calendar.querySelector('img[src="https://cdn.example.com/gcal.svg"]')).toBeTruthy();
+    expect(within(calendar).getByText("+20 pts")).toBeTruthy();
   });
 
   it("keeps points on a task Matrix cannot check yet, and never marks it done", async () => {
@@ -146,7 +170,7 @@ describe("Getting started app view", () => {
     renderApp(makePort({
       progress: { awards: [{ taskId: "mobile-app", points: 20, awardedAt: "2026-10-28T10:00:00.000Z" }], total: 20 },
     }));
-    expect(await screen.findByText("1 of 10 done")).toBeTruthy();
+    expect(await screen.findByText("1 of 12 done")).toBeTruthy();
     expect(within(screen.getByRole("button", { name: /Get the mobile app/ })).getByText("Done")).toBeTruthy();
   });
 
@@ -158,7 +182,7 @@ describe("Getting started app view", () => {
     await waitFor(() => expect(within(slack).getByText("20 pts earned")).toBeTruthy());
     expect(within(slack).queryByText("Done")).toBeNull();
     expect(within(slack).queryByText("+20 pts")).toBeNull();
-    expect(screen.getByText("0 of 10 done")).toBeTruthy();
+    expect(screen.getByText("0 of 12 done")).toBeTruthy();
     expect(screen.getByText("20 pts")).toBeTruthy();
   });
 
@@ -167,10 +191,10 @@ describe("Getting started app view", () => {
       results: () => results({ chats: fulfilled({ items: [{ id: "chat-1" }] }) }),
       progress: { awards: [
         { taskId: "first-prompt", points: 50, awardedAt: "2026-10-28T10:00:00.000Z" },
-        { taskId: "slack", points: 20, awardedAt: "2026-10-28T10:00:00.000Z" },
+        { taskId: "gmail", points: 20, awardedAt: "2026-10-28T10:00:00.000Z" },
       ], total: 70 },
     }));
-    const title = await screen.findByRole("heading", { name: "Slack" });
+    const title = await screen.findByRole("heading", { name: "Gmail" });
     const hero = title.parentElement!;
     expect(within(hero).getByText("20 pts earned")).toBeTruthy();
     expect(within(hero).queryByText("+20 pts")).toBeNull();
@@ -179,11 +203,11 @@ describe("Getting started app view", () => {
   it("shows the next task's logo large in the Up next panel", async () => {
     renderApp(makePort({
       results: () => results({ chats: fulfilled({ items: [{ id: "chat-1" }] }) }),
-      logos: { slack: "https://cdn.example.com/slack.svg" },
+      logos: { gmail: "https://cdn.example.com/gmail.svg" },
     }));
-    const title = await screen.findByRole("heading", { name: "Slack" });
+    const title = await screen.findByRole("heading", { name: "Gmail" });
     const panel = title.closest(".mxo-gsa__next") as HTMLElement;
-    await waitFor(() => expect(panel.querySelector('.mxo-gsa__next-art img[src="https://cdn.example.com/slack.svg"]')).toBeTruthy());
+    await waitFor(() => expect(panel.querySelector('.mxo-gsa__next-art img[src="https://cdn.example.com/gmail.svg"]')).toBeTruthy());
     expect(within(panel).getByRole("button", { name: "Connect" }).className).toContain("mxo-gsa__primary--brand");
   });
 
@@ -191,7 +215,7 @@ describe("Getting started app view", () => {
     renderApp(makePort({
       progress: { awards: [{ taskId: "first-prompt", points: 50, awardedAt: "2026-10-28T10:00:00.000Z" }], total: 50 },
     }));
-    expect(await screen.findByText("1 of 10 done")).toBeTruthy();
+    expect(await screen.findByText("1 of 12 done")).toBeTruthy();
     expect(screen.queryByText("What should I start on?")).toBeNull();
   });
 
@@ -235,7 +259,7 @@ describe("Getting started app awards", () => {
     const port = makePort({ results: () => results(connected ? slackConnected : {}) });
     // The app window is minimized, so the corner toast tells the owner.
     const { onToast } = renderApp(port, {}, { visible: false });
-    await screen.findByText("0 of 10 done");
+    await screen.findByText("0 of 12 done");
     connected = true;
     await waitFor(() => expect(port.award).toHaveBeenCalledWith("slack", false, expect.any(AbortSignal)));
     await waitFor(() => expect(onToast).toHaveBeenCalledWith({ title: "Slack connected", points: 20 }));
@@ -262,7 +286,7 @@ describe("Getting started app awards", () => {
     let connected = false;
     const port = makePort({ results: () => results(connected ? slackConnected : {}) });
     const { onToast, rerender } = renderApp(port);
-    await screen.findByText("0 of 10 done");
+    await screen.findByText("0 of 12 done");
     rerender(
       <GettingStartedAppProvider port={port} refreshMs={25} onToast={onToast}>
         <GettingStartedAppView onAction={vi.fn()} visible={false} />
@@ -311,7 +335,7 @@ describe("Getting started app awards", () => {
   it("does not claim the automatic open when not eligible", async () => {
     const port = makePort({ autoOpen: true });
     renderApp(port, { autoOpenEligible: false });
-    await screen.findByText("0 of 10 done");
+    await screen.findByText("0 of 12 done");
     expect(port.claimAutoOpen).not.toHaveBeenCalled();
   });
 
@@ -338,7 +362,7 @@ describe("Getting started app awards", () => {
     port.award.mockRejectedValueOnce(new Error("offline"));
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { onToast } = renderApp(port, {}, { visible: false });
-    await screen.findByText("0 of 10 done");
+    await screen.findByText("0 of 12 done");
     connected = true;
     await waitFor(() => expect(port.award).toHaveBeenCalledTimes(1));
     port.award.mockImplementation(realAward);
@@ -428,7 +452,7 @@ describe("Getting started app after a computer switch", () => {
       settle = () => resolve({ awarded: true, points: 20, total: 20 });
     }));
     const { unmount, onToast } = renderApp(port);
-    await screen.findByText("0 of 10 done");
+    await screen.findByText("0 of 12 done");
     connected = true;
     await waitFor(() => expect(port.award).toHaveBeenCalled());
     unmount();
@@ -442,7 +466,7 @@ describe("Getting started desktop icon", () => {
     const port = makePort();
     const onPlaceDesktopIcon = vi.fn(async () => "added" as const);
     const { rerender } = renderApp(port, { desktopIconReady: false, onPlaceDesktopIcon });
-    await screen.findByText("0 of 10 done");
+    await screen.findByText("0 of 12 done");
     expect(port.desktopIconPlaced).not.toHaveBeenCalled();
     rerender(
       <GettingStartedAppProvider port={port} refreshMs={25} desktopIconReady onPlaceDesktopIcon={onPlaceDesktopIcon}>
@@ -538,7 +562,7 @@ describe("Getting started as an extension of onboarding", () => {
     let connected = false;
     const port = makePort({ results: () => results(connected ? slackConnected : {}) });
     renderApp(port);
-    await screen.findByText("0 of 10 done");
+    await screen.findByText("0 of 12 done");
     connected = true;
     await waitFor(() => expect(screen.getByRole("button", { name: /Slack/ }).className).toContain("mxo-gsa__card--celebrate"));
     expect(screen.getByText(/Slack connected, nice\./)).toBeTruthy();

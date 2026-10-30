@@ -19,6 +19,8 @@ export const GETTING_STARTED_APP_TASK_IDS = [
   "build-app",
   "create-agent",
   "build-memory",
+  "gmail",
+  "google-calendar",
   "slack",
   "whatsapp",
   "github",
@@ -46,6 +48,8 @@ export const GETTING_STARTED_APP_TASKS: readonly GettingStartedAppTaskDefinition
   { id: "build-app", group: "build", title: "Build an app", description: "Describe it, Matrix builds it.", points: 30, doneMessage: "App built" },
   { id: "create-agent", group: "build", title: "Create an agent", description: "A teammate that works 24/7.", points: 30, doneMessage: "Agent created" },
   { id: "build-memory", group: "build", title: "Build your memory", description: "Teach Matrix what matters to you.", points: 30, doneMessage: "Memory started" },
+  { id: "gmail", group: "connect", title: "Gmail", description: "Let Matrix sort and draft your email.", points: 20, doneMessage: "Gmail connected" },
+  { id: "google-calendar", group: "connect", title: "Google Calendar", description: "Let Matrix plan your week.", points: 20, doneMessage: "Google Calendar connected" },
   { id: "slack", group: "connect", title: "Slack", description: "Send work to Matrix from Slack.", points: 20, doneMessage: "Slack connected" },
   { id: "whatsapp", group: "connect", title: "WhatsApp", description: "Chat with Matrix on the go.", points: 20, doneMessage: "WhatsApp connected" },
   { id: "github", group: "connect", title: "GitHub", description: "Let agents work in your repos.", points: 20, doneMessage: "GitHub connected" },
@@ -87,6 +91,8 @@ export function deriveGettingStartedAppTasks(results: GettingStartedResults): Ge
     "build-app": "unavailable",
     "create-agent": "unavailable",
     "build-memory": "unavailable",
+    gmail: gettingStartedServicesStatus(results, ["gmail"]),
+    "google-calendar": gettingStartedServicesStatus(results, ["google_calendar"]),
     slack: gettingStartedServicesStatus(results, ["slack"]),
     whatsapp: "unavailable",
     github: gettingStartedGithubStatus(results),
@@ -164,16 +170,22 @@ export const GettingStartedAppDesktopIconResponseSchema = z.object({
 
 export type GettingStartedAppDesktopIconResponse = z.infer<typeof GettingStartedAppDesktopIconResponseSchema>;
 
-/** Integrations whose logos the app shows (Settings › Integrations catalog ids). */
-export const GETTING_STARTED_APP_LOGO_SERVICES = ["slack", "whatsapp", "github"] as const;
+/** Settings › Integrations catalog id for each task that shows that integration's logo. */
+const GETTING_STARTED_APP_LOGO_SERVICES: Readonly<Record<string, GettingStartedAppTaskId>> = Object.freeze({
+  gmail: "gmail",
+  google_calendar: "google-calendar",
+  slack: "slack",
+  whatsapp: "whatsapp",
+  github: "github",
+});
 
-/** Logo URLs for the app's integrations from `/api/integrations/available` (same parser as the onboarding widget). */
+/** Logo URLs keyed by task id, from `/api/integrations/available` (same parser as the onboarding widget). */
 export function gettingStartedAppLogos(value: unknown): Readonly<Record<string, string>> {
-  const wanted = new Set<string>(GETTING_STARTED_APP_LOGO_SERVICES);
   const logos: Record<string, string> = {};
   for (const integration of parseAvailableIntegrations(value)) {
-    if (!wanted.has(integration.id) || !integration.logoUrl?.startsWith("https://")) continue;
-    logos[integration.id] = integration.logoUrl;
+    const taskId = Object.hasOwn(GETTING_STARTED_APP_LOGO_SERVICES, integration.id) ? GETTING_STARTED_APP_LOGO_SERVICES[integration.id] : undefined;
+    if (!taskId || !integration.logoUrl?.startsWith("https://")) continue;
+    logos[taskId] = integration.logoUrl;
   }
   return logos;
 }

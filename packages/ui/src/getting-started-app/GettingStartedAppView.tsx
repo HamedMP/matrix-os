@@ -17,7 +17,7 @@ import {
   type GettingStartedAppTaskId,
   type OnboardingStarterTaskId,
 } from "@matrix-os/contracts";
-import { Check, Gift, LifeBuoy, Smartphone, Star, type LucideIcon } from "lucide-react";
+import { Check, Gift, LifeBuoy, Smartphone, Sparkles, Star, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { codingAgentArtworkSrc, settingsHarnessArtworkSrc } from "../coding-agent-artwork.js";
 import { useGetStartedAnswers } from "../get-started/answers-context.js";
@@ -160,13 +160,19 @@ function agentLine(tasks: readonly GettingStartedAppTask[], doneCount: number, c
   const justDone = celebrating.at(-1);
   if (justDone) {
     const done = gettingStartedAppTask(justDone).doneMessage;
-    return next ? `${done}, nice. ${next.title} next?` : `${done}, nice. That's everything I can check for now.`;
+    return next ? `${done}, nice. ${next.title} next?` : `${done}, nice. That's the last one, Matrix is fully unlocked.`;
   }
-  if (doneCount === TOTAL_TASKS) return "You're all set. I'm here whenever you need me.";
   if (tasks.find((task) => task.id === "first-prompt")?.status !== "complete") {
     return "I'm Matrix. I work in your apps, even while you're away. Pick something and I'll start right away.";
   }
-  return next ? `${doneCount} of ${TOTAL_TASKS} done. ${next.title} next?` : "The rest can't be checked yet, but you can still try them below.";
+  return next ? `${doneCount} of ${TOTAL_TASKS} done. ${next.title} next?` : "Matrix is fully unlocked.";
+}
+
+/** Nothing Matrix can check is left; cards it cannot check yet never block the finish line. */
+function isUnlocked(state: ReturnType<typeof useGettingStartedApp>): boolean {
+  if (!state?.loaded || state.celebrating.length > 0) return false;
+  const tasks = state.tasks;
+  return tasks.find((task) => task.id === "first-prompt")?.status === "complete" && gettingStartedAppNextTask(tasks) === null;
 }
 
 function Hero({ onAction }: { onAction(action: GettingStartedAppAction): void }) {
@@ -177,6 +183,7 @@ function Hero({ onAction }: { onAction(action: GettingStartedAppAction): void })
   const firstPrompt = tasks.find((task) => task.id === "first-prompt");
   const startHere = !loaded || firstPrompt?.status !== "complete";
   const name = answers?.name?.trim();
+  if (isUnlocked(state)) return <Unlocked name={name} onAction={onAction} />;
 
   return (
     <div className={`mxo-gsa__hero${startHere ? "" : " mxo-gsa__hero--compact"}`}>
@@ -208,17 +215,67 @@ function HeroNext({ onAction }: { onAction(action: GettingStartedAppAction): voi
   const firstPrompt = tasks.find((task) => task.id === "first-prompt");
   if (firstPrompt?.status !== "complete") return <StarterTasks points={firstPrompt?.points ?? 0} onAction={onAction} />;
   const next = gettingStartedAppNextTask(tasks);
-  if (next) return <UpNext task={next} logo={state.logos[next.id]} earned={state.earned.includes(next.id)} onAction={onAction} />;
-  return state.doneCount === TOTAL_TASKS ? (
-    <>
-      <h2 className="mxo-gsa__next-title">You're all set</h2>
-      <p className="mxo-gsa__next-description">Everything here is done. New ideas will show up as Matrix grows.</p>
-    </>
-  ) : (
-    <>
-      <h2 className="mxo-gsa__next-title">The rest can't be checked yet</h2>
-      <p className="mxo-gsa__next-description">You can still try the remaining cards below. They'll show Done once Matrix can check them.</p>
-    </>
+  return next ? <UpNext task={next} logo={state.logos[next.id]} earned={state.earned.includes(next.id)} onAction={onAction} /> : null;
+}
+
+/** Confetti pieces for the unlocked banner: horizontal position (%), delay (ms) and brand color. */
+const CONFETTI: ReadonlyArray<{ x: number; delay: number; color: string }> = [
+  { x: 6, delay: 0, color: "var(--gsa-brand-gold)" },
+  { x: 14, delay: 420, color: "var(--gsa-brand-teal)" },
+  { x: 23, delay: 160, color: "var(--gsa-brand-glow)" },
+  { x: 31, delay: 640, color: "var(--gsa-brand-gold)" },
+  { x: 40, delay: 260, color: "#fafafa" },
+  { x: 48, delay: 880, color: "var(--gsa-brand-teal)" },
+  { x: 57, delay: 80, color: "var(--gsa-brand-gold)" },
+  { x: 65, delay: 540, color: "var(--gsa-brand-glow)" },
+  { x: 73, delay: 320, color: "#fafafa" },
+  { x: 81, delay: 760, color: "var(--gsa-brand-gold)" },
+  { x: 89, delay: 200, color: "var(--gsa-brand-teal)" },
+  { x: 95, delay: 980, color: "var(--gsa-brand-glow)" },
+];
+
+/** Takes over the hero once nothing checkable is left: the finish line of onboarding, with some fanfare. */
+function Unlocked({ name, onAction }: { name: string | undefined; onAction(action: GettingStartedAppAction): void }) {
+  const state = useGettingStartedApp();
+  const points = state?.points;
+  const doneCount = state?.doneCount ?? 0;
+  const waiting = (state?.tasks ?? []).some((task) => task.status !== "complete");
+  return (
+    <section className="mxo-gsa__unlocked" aria-label="Matrix unlocked">
+      <span className="mxo-gsa__glow mxo-gsa__glow--top" aria-hidden="true" />
+      <span className="mxo-gsa__glow mxo-gsa__glow--bottom" aria-hidden="true" />
+      <span className="mxo-gsa__confetti" aria-hidden="true">
+        {CONFETTI.map((piece) => (
+          <i key={piece.x} style={{ left: `${piece.x}%`, animationDelay: `${piece.delay}ms`, background: piece.color }} />
+        ))}
+      </span>
+      <span className="mxo-gsa__medal" aria-hidden="true">
+        <span className="mxo-gsa__medal-rays" />
+        <span className="mxo-gsa__medal-ring">
+          <RabbitAvatar size={64} />
+        </span>
+        <span className="mxo-gsa__medal-star"><Star size={18} /></span>
+      </span>
+      <div className="mxo-gsa__unlocked-text">
+        <span className="mxo-gsa__badge mxo-gsa__badge--md mxo-gsa__badge--gold">
+          <Sparkles size={12} aria-hidden="true" />
+          Onboarding complete
+        </span>
+        <h2 className="mxo-gsa__unlocked-title">Matrix is fully unlocked</h2>
+        <p className="mxo-gsa__unlocked-line">
+          {name ? `Nice work, ${name}. ` : "Nice work. "}
+          Your agent is set up and your apps are connected, so Matrix can work for you at full potential. Hand it something big.
+        </p>
+        <div className="mxo-gsa__unlocked-stats">
+          {points?.kind === "ready" ? <span className="mxo-gsa__unlocked-stat"><Star size={14} aria-hidden="true" />{points.total} pts collected</span> : null}
+          <span className="mxo-gsa__unlocked-stat"><Check size={14} aria-hidden="true" />{doneCount} tasks done</span>
+        </div>
+        <button type="button" className="mxo-gsa__primary mxo-gsa__primary--gold" onClick={() => onAction({ type: "chat" })}>
+          Put Matrix to work
+        </button>
+        {waiting ? <p className="mxo-gsa__unlocked-note">The other cards turn Done once Matrix can check them.</p> : null}
+      </div>
+    </section>
   );
 }
 

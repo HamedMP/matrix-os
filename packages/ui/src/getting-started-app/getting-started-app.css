@@ -668,6 +668,220 @@
   }
 }
 
+/* Matrix unlocked: takes over the hero once nothing checkable is left (the end of onboarding). */
+.mxo-gsa__unlocked {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  align-items: center;
+  gap: 32px;
+  min-height: 280px;
+  padding: 32px 40px;
+  border-radius: 16px;
+  background:
+    radial-gradient(70% 120% at 18% 50%, color-mix(in srgb, var(--gsa-brand-gold) 30%, transparent), transparent 70%),
+    linear-gradient(135deg, var(--gsa-brand-forest), var(--gsa-brand-forest-deep));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--gsa-brand-gold) 40%, transparent);
+  color: #fafafa;
+  animation: mxo-gsa-unlock 640ms var(--mxo-ease) backwards;
+}
+
+.mxo-gsa__unlocked > .mxo-gsa__glow {
+  z-index: -1;
+}
+
+.mxo-gsa__confetti {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.mxo-gsa__confetti i {
+  position: absolute;
+  top: -16px;
+  width: 7px;
+  height: 12px;
+  border-radius: 2px;
+  opacity: 0;
+  animation: mxo-gsa-confetti 2.6s cubic-bezier(0.25, 0.6, 0.4, 1) 2 forwards;
+}
+
+.mxo-gsa__confetti i:nth-child(even) {
+  width: 9px;
+  height: 9px;
+  border-radius: 9999px;
+}
+
+.mxo-gsa__medal {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 200px;
+  height: 200px;
+}
+
+.mxo-gsa__medal-rays {
+  position: absolute;
+  inset: -12px;
+  border-radius: 9999px;
+  background: repeating-conic-gradient(
+    from 0deg,
+    color-mix(in srgb, var(--gsa-brand-gold) 34%, transparent) 0deg 9deg,
+    transparent 9deg 24deg
+  );
+  mask-image: radial-gradient(circle, #000 30%, transparent 70%);
+  animation: mxo-gsa-spin 24s linear infinite;
+}
+
+.mxo-gsa__medal-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 128px;
+  height: 128px;
+  border-radius: 9999px;
+  background: conic-gradient(from 200deg, #f6d27a, var(--gsa-brand-gold), #b7791f, #f6d27a, var(--gsa-brand-gold), #f6d27a);
+  box-shadow:
+    0 0 0 6px color-mix(in srgb, var(--gsa-brand-gold) 22%, transparent),
+    0 24px 48px -16px rgba(0, 0, 0, 0.55),
+    inset 0 2px 6px rgba(255, 255, 255, 0.5);
+  animation: mxo-gsa-medal 760ms var(--mxo-ease) 120ms backwards;
+}
+
+.mxo-gsa__medal-ring .mxo-rabbit {
+  background: var(--gsa-brand-forest);
+  box-shadow: inset 0 0 0 3px rgba(250, 250, 250, 0.2);
+}
+
+.mxo-gsa__medal-star {
+  position: absolute;
+  top: 26px;
+  right: 30px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  background: #fafafa;
+  color: var(--gsa-brand-gold);
+  box-shadow: 0 6px 16px -4px rgba(0, 0, 0, 0.4);
+  animation: mxo-gsa-pop 520ms var(--mxo-ease) 560ms backwards;
+}
+
+.mxo-gsa__medal-star svg {
+  fill: currentColor;
+}
+
+.mxo-gsa__unlocked-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mxo-gsa__unlocked-title {
+  margin: 0;
+  font-size: 30px;
+  line-height: 36px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  background: linear-gradient(90deg, #fafafa, #f6d27a);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.mxo-gsa__unlocked-line {
+  margin: 0;
+  max-width: 560px;
+  font-size: 15px;
+  line-height: 22px;
+  color: rgba(250, 250, 250, 0.82);
+}
+
+.mxo-gsa__unlocked-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mxo-gsa__unlocked-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 9999px;
+  background: rgba(250, 250, 250, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(250, 250, 250, 0.16);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mxo-gsa__unlocked-stat svg {
+  color: #f6d27a;
+}
+
+.mxo-gsa__primary.mxo-gsa__primary--gold {
+  margin-top: 4px;
+  background: linear-gradient(135deg, #f6d27a, var(--gsa-brand-gold));
+  color: #2a1d05;
+  font-weight: 650;
+  box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--gsa-brand-gold) 80%, transparent);
+}
+
+.mxo-gsa__unlocked-note {
+  margin: 0;
+  font-size: 12px;
+  color: rgba(250, 250, 250, 0.6);
+}
+
+@keyframes mxo-gsa-unlock {
+  from { opacity: 0; transform: scale(0.97); }
+}
+
+@keyframes mxo-gsa-medal {
+  0% { opacity: 0; transform: scale(0.4) rotate(-30deg); }
+  70% { opacity: 1; transform: scale(1.08) rotate(4deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+@keyframes mxo-gsa-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes mxo-gsa-confetti {
+  0% { opacity: 0; transform: translateY(0) rotate(0); }
+  10% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(320px) rotate(540deg); }
+}
+
+@container (max-width: 760px) {
+  .mxo-gsa__unlocked {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    gap: 16px;
+    padding: 28px 24px;
+    text-align: center;
+  }
+  .mxo-gsa__unlocked-text {
+    align-items: center;
+  }
+  .mxo-gsa__medal {
+    width: 160px;
+    height: 160px;
+  }
+  .mxo-gsa__unlocked-title {
+    font-size: 24px;
+    line-height: 30px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mxo-gsa__bar-fill,
   .mxo-gsa__card,
@@ -680,10 +894,15 @@
   .mxo-gsa__next-art,
   .mxo-gsa__reward,
   .mxo-gsa__reward-burst,
-  .mxo-gsa__glow {
+  .mxo-gsa__glow,
+  .mxo-gsa__unlocked,
+  .mxo-gsa__medal-rays,
+  .mxo-gsa__medal-ring,
+  .mxo-gsa__medal-star {
     animation: none;
   }
-  .mxo-gsa__points-pop {
+  .mxo-gsa__points-pop,
+  .mxo-gsa__confetti {
     display: none;
   }
 }
