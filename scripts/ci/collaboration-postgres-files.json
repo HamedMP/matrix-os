@@ -68,6 +68,8 @@
   "tests/platform/preview-pair-reconciler-postgres.test.ts",
   "tests/platform/preview-pair-reports-postgres.test.ts",
   "tests/platform/preview-pair-service-postgres.test.ts",
+  "tests/platform/preview-pair-source-authority-postgres.test.ts",
+  "tests/platform/preview-pair-target-postgres.test.ts",
   "tests/platform/preview-pair-update-base-postgres.test.ts",
   "tests/platform/preview-pair-update-postgres.test.ts",
   "tests/platform/preview-pair-wiring-postgres.test.ts",

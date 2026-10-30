@@ -1,6 +1,6 @@
 import type { PlatformDB } from "../db.js";
 import { z } from "zod/v4";
-import { previewPairHandle, previewPairTag } from "@matrix-os/contracts/preview-pair";
+import { previewPairHandle, previewPairTag, PreviewPairDigestSchema } from "@matrix-os/contracts/preview-pair";
 import type { PreviewPairCleanupMember } from "./cleanup.js";
 import { withPreviewPairClaim, type PreviewPairClaim } from "./lifecycle.js";
 import { PreviewPairConflictError } from "./repository.js";
@@ -8,7 +8,7 @@ import { PreviewPairCandidateSchema } from "./provenance.js";
 import { previewPairCloudResource, previewPairRevisionName } from "./cloud-resource.js";
 import { PreviewPairUpstreamError, readPreviewPairJson } from "./http.js";
 export interface PreviewPairCloudCleanupOptions {
-  db: PlatformDB; project: string; region: string; service: string;
+  db: PlatformDB; profileFingerprint?: string; project: string; region: string; service: string;
   accessToken: (signal: AbortSignal) => Promise<string>; fetchImpl?: typeof fetch; now: () => number;
 }
 const Traffic = z.strictObject({ type: z.enum(["TRAFFIC_TARGET_ALLOCATION_TYPE_UNSPECIFIED", "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST", "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION"]).optional(),
@@ -22,6 +22,7 @@ const Revision = z.object({ name: z.string(), etag: z.string().min(1).max(256), 
 /** No cloud call runs in a ledger transaction. Acknowledgements never prove
  * retirement. Exact tags and revision must be observed absent in a later pass. */
 export function createPreviewPairCloudCleanup(options: PreviewPairCloudCleanupOptions) {
+  if (options.profileFingerprint !== undefined) PreviewPairDigestSchema.parse(options.profileFingerprint);
   const resource = previewPairCloudResource(options.project, options.region, options.service);
   async function canonical(member: PreviewPairCleanupMember, claim: PreviewPairClaim) {
     return withPreviewPairClaim(options.db, claim, options.now(), async trx => {
@@ -38,6 +39,7 @@ export function createPreviewPairCloudCleanup(options: PreviewPairCloudCleanupOp
         .where("machine.runtime_slot", "=", member.handle).where("machine.provisioning_class", "=", "preview").executeTakeFirst();
       if (!row || member.handle !== previewPairHandle(pair.pr, member.pairId, member.generation, row.role)) throw new PreviewPairConflictError();
       const candidate = PreviewPairCandidateSchema.parse(row.candidate);
+      if (options.profileFingerprint && candidate.sourceProfileFingerprint !== options.profileFingerprint) throw new PreviewPairConflictError();
       if (candidate.sourceSha !== row.source_sha) throw new PreviewPairConflictError();
       return candidate;
     });
