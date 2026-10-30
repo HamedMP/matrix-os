@@ -16,15 +16,16 @@ export function createBotModelRouteResolver(options: {
   /** Compatibility only; native Codex identity must never fund a Pi coordinator. */
   resolveCodexIdentity?: ResolveCodexOwnerIdentity;
   lifetime?: AbortSignal;
-}): (selection?: CanonicalChatModelSelection) => Promise<ResolvedBotRoute> {
-  return async (selection) => {
+}): (selection?: CanonicalChatModelSelection, requestClass?: "interactive" | "background") => Promise<ResolvedBotRoute> {
+  return async (selection, requestClass = "interactive") => {
+    if (requestClass === "background" && selection?.instanceId !== "matrix_chatgpt_plan") throw new BotRouteError("model_unavailable");
     if (selection?.instanceId === "matrix_anthropic_api") {
       if (!options.matrixAnthropic || !options.ownerId) throw new BotRouteError("model_unavailable");
-      return options.matrixAnthropic.resolve(selection, options.ownerId, "interactive");
+      return options.matrixAnthropic.resolve(selection, options.ownerId, requestClass);
     }
     if (selection?.instanceId === "matrix_chatgpt_plan") {
       if (!options.chatgptPlan || !options.ownerId) throw new BotRouteError("model_unavailable");
-      return options.chatgptPlan.resolve(selection, options.ownerId, "interactive");
+      return options.chatgptPlan.resolve(selection, options.ownerId, requestClass);
     }
     if (selection) return resolveManagedPiRoute(await options.providers.getSnapshot({ admissionScope: "managed_matrix" }), selection);
     if (options.codexModel !== undefined) throw new BotRouteError("model_unavailable");
