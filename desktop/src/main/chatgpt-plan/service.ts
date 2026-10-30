@@ -244,7 +244,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
                 return;
             }
             const next = {
-                deviceId: record.deviceId, accountId: account.id, grantRevision: permission.revision, enabled: permission.enabled, background: false, models
+                deviceId: record.deviceId, accountId: account.id, grantRevision: permission.revision, enabled: permission.enabled, background: permission.enabled && permission.background, models
             };
             const catalogSignature = JSON.stringify(models);
             const qualified = () => authorized() && current(value) && epoch === generation && active()?.id === account.id
@@ -395,7 +395,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
                 // may replace rejected credentials through the existing PKCE flow.
             }
             if (retryQualified) {
-                if (!grant(value.computerId).enabled)
+                if (!grant(value.computerId).enabled || grant(value.computerId).background)
                     return setGrant({ runtimeSlot: value.runtimeSlot, authGeneration: value.authGeneration, enabled: true, background: false }, expected);
                 await restartPeer(value);
                 return snapshot(value);
@@ -506,9 +506,13 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
         await ensure(value);
         if (disconnecting)
             throw new Error('disconnect in progress');
-        if (parsed.background)
-            throw new Error('background not permitted');
-        if (parsed.enabled && (!active()?.tokens || !models.length))
+        const accountId = active()?.id;
+        const permission = grant(value.computerId);
+        const baseRevision = permission.revision;
+        if (parsed.accountId !== undefined && parsed.accountId !== accountId
+            || parsed.baseRevision !== undefined && parsed.baseRevision !== baseRevision)
+            throw new Error('stale authorization');
+        if ((parsed.background || parsed.enabled && !permission.enabled) && (!active()?.tokens || !models.length))
             throw new Error('not connected');
         if (expected && (expected.generation !== generation || active()?.id !== expected.accountId || !current(value)))
             throw new Error('source changed');
@@ -518,16 +522,24 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             controller.abort();
         await peer.stop();
         await mutate(async () => {
-            if (!record || pending || !current(value) || expected && (epoch !== generation || active()?.id !== expected.accountId))
+            if (!record || pending || !current(value) || epoch !== generation || active()?.id !== accountId
+                || grant(value.computerId).revision !== baseRevision)
                 throw new Error('connection changed');
             const existing = grant(value.computerId);
             const next = {
                 computerId: value.computerId, revision: existing.revision + 1, enabled: parsed.enabled, background: parsed.background
             };
-            await save(value, {
+            const nextRecord = {
                 ...record, grants: [...record.grants.filter(item => item.computerId !== value.computerId), next].slice(-16)
-            });
+            };
+            // A failed downgrade remains an error, but must not let the peer's
+            // automatic recovery restore the old in-memory authority.
+            if (existing.enabled && !next.enabled || existing.background && !next.background)
+                record = nextRecord;
+            await save(value, nextRecord);
         });
+        if (!current(value) || epoch !== generation || active()?.id !== accountId)
+            throw new Error('source changed');
         await restartPeer(value);
         return snapshot(value);
     }
