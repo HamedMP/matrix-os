@@ -484,3 +484,12 @@ TypeScript passes for both checkpoints. HTTP, provider and OS apply/restart are
 explicit fixture boundaries; no real model call, paid machine, process restart,
 Clerk login or completed pair qualification is claimed. Concrete host transport,
 bootstrap/workflow and desktop composition still remain open.
+
+The concrete shared host transport now independently matches canonical membership,
+provider labels and the registered globally routable literal IP. It permits only
+system-info GET and funded-config GET/POST, caps POST bodies at4KB, replaces caller
+auth/Host/Origin headers, rejects redirects and composes caller/10-second deadlines.
+The unimplemented transport failed its intended positive assertion first. The
+combined observation, activation, funding and origin suite passes **14/14 across4
+files**, zero skipped/errors. Invalid paths/methods/body sizes cannot trigger a
+second probe. Actual provider/HTTP remain fixtures; no remote public-IP traffic.

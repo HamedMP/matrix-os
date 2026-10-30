@@ -8,6 +8,7 @@ import { getSystemInfo } from "../../packages/gateway/src/system-info.js";
 import { CollaborationRuntimeEndpointRegistry } from "../../packages/platform/src/collaboration/runtime-endpoints.js";
 import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
 import { createPreviewPairHostObserver } from "../../packages/platform/src/preview-pair/observe-host.js";
+import { createPreviewPairHostRequester } from "../../packages/platform/src/preview-pair/host-request.js";
 import { createProjectedPreviewPair } from "./preview-pair-projected-postgres.js";
 import { PAIR_NOW } from "./preview-pair-test-support.js";
 
@@ -56,8 +57,34 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("real host-info producer 
     const observe = createPreviewPairHostObserver({ db: f.source.db, target: f.target.db, provider,
       previewSecret: f.previewSecret, controlSecret: "c".repeat(48), dispatcher, fetchImpl, now: () => PAIR_NOW });
     const member = { role: "owner" as const, machineId: owner.machine_id, actorId: owner.actor_id, handle: owner.handle, tokenEpoch: 1 };
-    return { info, server, endpoints, logical, fetchImpl, observe, member };
+    return { info, server, provider, endpoints, logical, fetchImpl, observe, member };
   }
+  it("binds AI configuration transport to the canonical provider/IP and replaces caller authority", async () => {
+    const s = await setup(), signal = new AbortController().signal;
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe("https://8.8.4.4:443/api/internal/platform-funded-ai/config");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("authorization")).toBe(`Bearer ${buildPlatformVerificationToken(s.member.handle, f.previewSecret)}`);
+      expect(headers.get("host")).toBeNull(); expect(headers.get("origin")).toBeNull();
+      expect(init).toMatchObject({ method: "POST", body: "{}", redirect: "error", cache: "no-store" });
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      return Response.json({ accepted: true });
+    });
+    const request = createPreviewPairHostRequester({ db: f.source.db, provider: s.provider,
+      previewSecret: f.previewSecret, controlSecret: f.controlSecret, dispatcher, fetchImpl, now: () => PAIR_NOW });
+    const result = await request(s.member, "/api/internal/platform-funded-ai/config", {
+      method: "POST", body: "{}", redirect: "follow", headers: { authorization: "Bearer caller-controlled", host: "169.254.169.254", origin: "https://untrusted.example" },
+    }, signal);
+    expect(await result.response.json()).toEqual({ accepted: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    for (const [path, init] of [
+      ["https://169.254.169.254/api/system/info", { method: "GET" }],
+      ["/api/system/info", { method: "POST", body: "{}" }],
+      ["/api/internal/platform-funded-ai/config", { method: "GET", body: "{}" }],
+      ["/api/internal/platform-funded-ai/config", { method: "POST", body: "x".repeat(4097) }],
+    ] as const) await expect(request(s.member, path, init, signal)).rejects.toThrow("unavailable");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
   it("observes installed/running bytes from the actual producer and fresh owner control metadata", async () => {
     const s = await setup();
     expect(await s.observe(s.member, new AbortController().signal)).toMatchObject({ role: s.member.role, actorId: s.member.actorId, machineId: s.member.machineId, handle: s.member.handle, runtimeSlot: s.member.handle,
