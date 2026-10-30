@@ -328,3 +328,20 @@ registration guard was not weakened and no retained production protection remove
 After final catalog qualification/helper naming, all3 selected boundary cases pass
 (9 excluded by filter); the preceding full12-case run also passed without skips.
 Focused Platform native TypeScript passes for the reviewed projection changes.
+
+### Exact host binding and pinned update policy
+
+Three intended assertions failed first: missing candidate update-base pin,
+unmounted public metadata route through the actual Platform app, and an update
+status that probed intentionally absent channels. Final integrated verification:
+**30/30 cases pass across6 files**, zero skipped, with a single test worker. Both
+actual cloud-init producers bind the verified browser/API, and retained ordinary/
+Private Preview behavior and current pair dispatch remain exercised. Registration,
+Platform routes and databases are real; provider responses and signed object-store
+URLs are fixtures. No host boot or product acceptance is claimed.
+
+All **8 native typecheck projects pass** on the integrated source. Pattern scan:
+**0 violations,5 existing warnings**. Bundle/update mounting was extracted from
+`main.ts`; new route logic stays in focused modules. T015/T016/T033 remain open
+until actual observation, funding, complete retirement and protected automation
+are composed. No production shell/Electron build or live evidence claimed here.
