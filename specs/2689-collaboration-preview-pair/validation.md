@@ -176,3 +176,10 @@ not a reproducible/hermetic build attestation.
 artifact rejection and the retained release tests. No native workflow dispatch or
 live artifact launch is claimed. Artifact signing and operator secrets remain absent
 from candidate execution.
+
+Packaging CI found TS2724: the new JavaScript build-source function was missing
+from its existing .d.mts export declaration. The actual Electron node typecheck
+reproduced it before the declaration was added. The focused Electron node check
+passes after correction. The broad local pipeline built its dependencies but timed
+out at the native gateway compiler under host pressure; a resource-bounded rerun is
+recorded separately. No broad typecheck pass is claimed from the interrupted run.
