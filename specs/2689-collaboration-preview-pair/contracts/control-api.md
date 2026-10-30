@@ -11,9 +11,11 @@ Use existing Hono auth, strict Zod4 boundary schemas and generic error mapping.
 | POST `/vps/preview-pairs` | Existing timing-safe operator bearer; trusted workflow evidence resolves requester/eligible open PR; fixture IDs derive from approved server config | No |
 | POST `/vps/preview-pairs/requests` | Same operator; current reviewed-controller receipt, current maintainer/test membership, actual target isolation and requested same-repo head; profile derives only from source config | No |
 | POST `/vps/preview-pairs/requests/:pairId/actions` | Same operator; strict stop action and exact recorded controller run/generation; cannot stop an adopted pair | No |
+| POST `/vps/preview-pairs/requests/:pairId/publication` | Same operator; exact live request, current reviewed controller/maintainer, fixture/target isolation and eligible source; image digest only, repository and bindings derive from approved source profile | No |
 | POST `/vps/preview-pairs/:pairId/actions` | Same operator authority; expected generation/revision; discriminated update/stop/reconcile payload | No |
 | POST `/vps/preview-pairs/reconcile` | Same operator authority; bounded claim count and worker lifetime | No |
 | GET `/api/preview-pairs/:pairId` | Real first-party Clerk session; requester, configured maintainer or actual leased fixture actor; current pair binding | No |
+| GET `/api/preview-pairs/:pairId/requests/:generation` | Verified control-issuer requester of this exact request or current configured maintainer; Preview-issuer/outsider denied uniformly | No |
 | GET `/api/preview-pairs/:pairId/manifest` | Same real actor check; live ready generation, current identity/routing/artifact/funding prerequisites; cache disabled | No |
 | GET `/api/preview-pairs` | Real configured maintainer membership; bounded cursor/limit; only permitted reports | No |
 | GET `/preview-pair-updates/:handle/system-bundles/releases/:version.json` | Non-authorizing public bundle metadata; exact active projected Preview handle/slot, empty access list and matching confirmed/target version+digest; reject all channel/list/other-version paths | Yes |
@@ -33,6 +35,16 @@ PR head, fixture identity and target database isolation before recording it.
 The reply contains the safe request state, expiry and public profile fingerprint.
 Preparation itself creates no fixture lease, machine, job or cloud resource.
 
+The trusted publisher sends a64-character image digest, generation and recorded
+controller run. It accepts no URL, image repository, environment, secret, actor or
+service override. Current controller/identity/target/source checks repeat before
+publication. The source journals a unique publication nonce and immutable digest
+before its single etag-conditional template/traffic update. Retries poll the
+recorded operation; an ambiguous issuing state never repeats the effect. Existing
+traffic is pinned to observed revisions before zero-percent UI/API tags are added,
+so a `LATEST` target cannot route normal traffic to the candidate. Admission waits
+for a completed successful operation and matching immutable revision/image.
+
 At most32 unadopted requests may exist; cancelled requests still consume this
 capacity until exact retirement is proved. Preparation expires after two hours,
 capped by the existing pair's hard expiry for updates. Replays do not extend it.
@@ -42,9 +54,9 @@ that writes the canonical generation. Cancelling before adoption prevents a late
 admission. Cancelling after adoption returns `adopted`; it does not grant authority
 to retire the canonical pair. Normal generation-fenced stop remains separate.
 
-Durable cleanup scheduling, exact cloud retirement and protected publication are
-completed in the following automation layer; recording an intent alone is not
-proof that a cancelled cloud revision has been retired.
+The source worker durably schedules exact cloud retirement, including an
+unadopted update whose parent stops or advances. Recording an intent alone is not
+proof of retirement. Protected workflow invocation remains a dependent layer.
 
 Input: fixed repository, positive PR number, full selected SHA, trusted source/run
 and artifact identifiers, and the requester resolved by the reviewed controller.
@@ -79,6 +91,16 @@ candidate source, current expected ownership/org membership, empty machine acces
 lists, fresh collaboration control registration and supported exact desktop bytes.
 Missing isolation or inference allowance is explicitly blocked/unavailable.
 A report remains readable for diagnosis even if a product sharing scenario fails.
+
+Before pair admission, the ordinary report path returns a request-only diagnostic
+to its verified control-issuer requester or current maintainer. The explicit
+request/generation path also diagnoses an unadmitted update without replacing the
+active pair's report. It exposes finite publication/lifecycle/failed-stage fields,
+never operation resource names, publication nonces, claims, secrets or provider
+error bodies. Infrastructure readiness is always false and acceptance is not run;
+it grants no manifest or content access. Preview-issuer readers and outsiders get
+the same404 as unknown requests. Invalid/expired sessions retain401; unavailable
+membership/configuration is503 rather than a fake not-found.
 
 ## Adapter and transaction contract
 

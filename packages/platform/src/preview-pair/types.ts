@@ -82,4 +82,5 @@ export interface PreviewPairCloudIntentsTable {
   publication_id: Generated<string | null>;
   publication_state: Generated<"unissued" | "issuing" | "accepted" | "rejected">;
   operation_name: Generated<string | null>;
+  image_sha256: Generated<string | null>;
 }

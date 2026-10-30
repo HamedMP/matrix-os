@@ -137,6 +137,19 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("paired runtime productio
     expect((await source.db.executor.selectFrom("provider_deletion_queue").select("completed_at").where("id", "=", customerDeletion).executeTakeFirstOrThrow()).completed_at).toBeNull();
     expect((await source.db.executor.selectFrom("user_machines").select("status").where("machine_id", "=", "unrelated-customer").executeTakeFirstOrThrow()).status).toBe("running");
   });
+  it("passes the configured publisher through preparation and blocks admission until its exact receipt is ready", async () => {
+    const s = await setup();
+    const publication = { context: { imageRepository: "europe-west1-docker.pkg.dev/matrix-test/matrix-preview-pairs/matrix-platform",
+      clerkPublishableKey: s.options.config.clerkPublishableKey }, publish: vi.fn(), ready: vi.fn(async () => false) };
+    const runtime = createPreviewPairRuntime({ ...s.options, config: { ...s.options.config, sourceProfileFingerprint: "f".repeat(64) },
+      publication });
+    expect(await runtime.service.prepareRequest({ repository: s.request.repository, pairId: s.request.pairId, generation: 1,
+      pr: s.request.pr, sourceSha: s.request.sourceSha, controllerRunId: 42 })).toMatchObject({ buildContext: publication.context });
+    await expect(runtime.service.start(s.request)).rejects.toMatchObject({ status: 503 });
+    expect(publication.ready).toHaveBeenCalledOnce();
+    expect(await source.db.executor.selectFrom("preview_pairs").selectAll().execute()).toEqual([]);
+    expect(s.provider.createServer).not.toHaveBeenCalled();
+  });
   it("refuses a control-readable target before admitting or dispatching new computers", async () => {
     const s = await setup(source.db);
     await expect(s.service.start(s.request)).rejects.toThrow("unavailable");

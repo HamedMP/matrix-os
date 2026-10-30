@@ -66,6 +66,8 @@
   "tests/platform/preview-pair-provider-cleanup-postgres.test.ts",
   "tests/platform/preview-pair-provider-drain-postgres.test.ts",
   "tests/platform/preview-pair-provisioning-postgres.test.ts",
+  "tests/platform/preview-pair-publication-journal-postgres.test.ts",
+  "tests/platform/preview-pair-publisher-postgres.test.ts",
   "tests/platform/preview-pair-queue-postgres.test.ts",
   "tests/platform/preview-pair-readers-postgres.test.ts",
   "tests/platform/preview-pair-readiness-postgres.test.ts",
