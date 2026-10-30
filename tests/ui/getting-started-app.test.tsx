@@ -13,7 +13,6 @@ import {
 import {
   GettingStartedAppOpenButton,
   GettingStartedAppProvider,
-  useGettingStartedApp,
   GettingStartedAppView,
   useGettingStartedApp,
   gettingStartedAppAction,
