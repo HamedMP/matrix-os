@@ -3,8 +3,21 @@ import {
   PlatformStartupConfigError,
   loadPlatformRuntimeConfig,
 } from '../../packages/platform/src/runtime-mode.js';
+import { candidateRuntimeEnvironment } from './preview-pair-candidate-env.js';
 
 describe('platform/runtime-mode', () => {
+  it('boots a validated runtime-only candidate without enabling paid provisioning or Docker', () => {
+    const config = loadPlatformRuntimeConfig({ ...candidateRuntimeEnvironment(), PLATFORM_RUNTIME_MODE: 'cloud_run',
+      PLATFORM_DATABASE_URL: 'postgres://fixture:fixture@preview-db.example/fixture' });
+    expect(config.customerVpsEnabled).toBe(false);
+    expect(config.legacyContainerOrchestrationEnabled).toBe(false);
+  });
+
+  it('validates the candidate before ordinary customer startup can construct provider dependencies', () => {
+    expect(() => loadPlatformRuntimeConfig({ ...candidateRuntimeEnvironment(), CUSTOMER_VPS_ENABLED: 'true',
+      PLATFORM_RUNTIME_MODE: 'cloud_run', PLATFORM_DATABASE_URL: 'postgres://fixture:fixture@preview-db.example/fixture' }))
+      .toThrow('Preview pairs are unavailable');
+  });
   it('defaults to compose-compatible legacy orchestration', () => {
     const config = loadPlatformRuntimeConfig({
       POSTGRES_URL: 'postgres://postgres:postgres@db:5432',
