@@ -10,7 +10,7 @@ describe('subscription native IPC authority',()=>{
 import { readFileSync } from 'node:fs';
 it('boots native subscription service, main-frame IPC and shutdown drain in shipped Electron',()=>{const main=readFileSync('desktop/src/main/index.ts','utf8');const shared=readFileSync('desktop/src/shared/ipc-contract.ts','utf8');expect(main).toContain('createNativeChatgptPlanService');expect(main).toContain('registerChatgptPlanIpc(ipcMain');expect(main).toContain('chatgptPlan.dispose()');expect(shared).toContain('...CHATGPT_PLAN_INVOKE');});
 
-it('rejects background delegation at the trusted IPC boundary for this release',async()=>{const x=fixture();await expect(x.handlers.get('chatgpt-plan:set-grant')!('main',{...input,enabled:true,background:true})).rejects.toThrow('invalid request');expect(x.service.setGrant).not.toHaveBeenCalled();});
+it('rejects implicit background delegation without account-bound revision intent',async()=>{const x=fixture();await expect(x.handlers.get('chatgpt-plan:set-grant')!('main',{...input,enabled:true,background:true})).rejects.toThrow('invalid request');expect(x.service.setGrant).not.toHaveBeenCalled();});
 
 it('requires trusted explicit replacement intent before rebind IPC',async()=>{
  const x=fixture(),handler=x.handlers.get('chatgpt-plan:rebind')!;
