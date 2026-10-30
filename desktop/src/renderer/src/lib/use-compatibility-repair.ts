@@ -23,6 +23,7 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
   const flight = useRef(false);
   const installing = useRef(false);
   const active = useRef<AbortController | null>(null);
+  const localCheck = useRef<Promise<unknown> | null>(null);
   const bound = useMemo(() => ({ api: api?.forRuntime(runtimeSlot) ?? null, generation: captureRuntimeGeneration() }), [api, runtimeSlot]);
   useEffect(() => {
     flight.current = false;
@@ -31,12 +32,24 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
     setBusy(false);
     return () => { active.current?.abort(); };
   }, [bound]);
+  // Electron's updater cannot cancel a check. Reuse the in-flight result when
+  // a reconnect supersedes a repair probe, instead of reading "checking".
+  const checkLocal = useCallback((): Promise<unknown> => {
+    if (localCheck.current) return localCheck.current;
+    const pending = invoke("update:check", {});
+    localCheck.current = pending;
+    void pending.then(
+      () => { if (localCheck.current === pending) localCheck.current = null; },
+      () => { if (localCheck.current === pending) localCheck.current = null; },
+    );
+    return pending;
+  }, []);
   const readLocal = useCallback(async () => {
-    const [version, snapshot] = await Promise.allSettled([invoke("app:get-version", {}), invoke("update:check", {})]);
+    const [version, snapshot] = await Promise.allSettled([invoke("app:get-version", {}), checkLocal()]);
     return { version: version.status === "fulfilled" ? version.value.version : undefined,
       source: version.status === "fulfilled" ? version.value.source : undefined,
       snapshot: snapshot.status === "fulfilled" ? snapshot.value : undefined };
-  }, []);
+  }, [checkLocal]);
   const perform = useCallback(async (install: boolean) => {
     if (!bound.api || (flight.current && (install || installing.current))) return;
     flight.current = true;
@@ -58,7 +71,7 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
       setLoading(false);
       if (install && latest.targets.length) {
         await repairVersions(latest, { ...scope,
-          checkLocal: () => invoke("update:check", {}),
+          checkLocal,
           getLocal: () => invoke("update:get-state", {}),
           installLocal: () => invoke("update:install", {}),
           progress: (message) => { if (current()) setProgress(message); },
@@ -83,7 +96,7 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
       if (active.current === controller) { flight.current = false; installing.current = false; }
       if (current()) { setLoading(false); setBusy(false); }
     }
-  }, [api, bound, noticeKey, readLocal, runtimeSlot]);
+  }, [api, bound, checkLocal, noticeKey, readLocal, runtimeSlot]);
   useEffect(() => { if (open) void perform(false); }, [checkId, open, perform]);
   const plan = planState?.noticeKey === noticeKey
     && planState.api === api && planState.runtimeSlot === runtimeSlot

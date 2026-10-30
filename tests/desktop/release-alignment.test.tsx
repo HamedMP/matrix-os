@@ -89,6 +89,31 @@ describe("released Desktop and cloud content alignment", () => {
     await act(async () => finishFirstCheck({ channel: "dev", latest: { version: info.version }, updateAvailable: false }));
     expect(await screen.findByRole("dialog", { name: "Update Matrix OS" })).toBeTruthy();
   });
+  it("waits for an in-flight desktop update check when reconnecting to a newer release pair", async () => {
+    let finishDesktopCheck!: (value: unknown) => void;
+    let desktopChecks = 0;
+    vi.stubGlobal("operator", { invoke: vi.fn(async (channel: string) => {
+      if (channel === "app:get-version") return { version: "0.1.0", source: { commit: desktopCommit, ancestors: [cloudCommit] } };
+      if (channel === "update:check") {
+        if (++desktopChecks === 1) return new Promise((resolve) => { finishDesktopCheck = resolve; });
+        return { status: "checking" };
+      }
+      return { ok: true };
+    }) });
+    let currentInfo = info;
+    const get = vi.fn(async (path: string) => path === "/api/system/update"
+      ? { channel: "dev", latest: { version: info.version }, updateAvailable: false }
+      : currentInfo);
+    useConnection.setState({ api: { get, forRuntime() { return this; } } as unknown as ApiClient });
+    render(<RuntimeCompatibilityGate><div>Workspace</div></RuntimeCompatibilityGate>);
+    await waitFor(() => expect(desktopChecks).toBe(1));
+    currentInfo = { ...info, build: { sha: "d".repeat(40) } };
+    act(() => window.dispatchEvent(new Event("matrix:runtime-reconnected")));
+    await waitFor(() => expect(get.mock.calls.filter(([path]) => path === "/api/system/info")).toHaveLength(4));
+    await act(async () => finishDesktopCheck({ status: "ready", version: "0.2.0", release: { version: "0.2.0", notes: "Fix" } }));
+    expect(await screen.findByRole("button", { name: "Update & restart" })).toBeTruthy();
+    expect(desktopChecks).toBe(1);
+  });
   it("opens the real gate for a VPS response whose build sha is unknown", async () => {
     vi.stubGlobal("operator", { invoke: vi.fn(async (channel: string) => {
       if (channel === "app:get-version") return { version: "0.1.0",
