@@ -1,3 +1,4 @@
+import { resolveHermesPython } from "./hermes-python-environment.js";
 import type { JevHermesCredentials } from "./jev-hermes-credentials.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -6,11 +7,11 @@ import { boundedOperation } from "../bounded-operation.js";
 import { hermesDependencyArguments, hermesSdkRequirements } from "./jev-hermes-python.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-const PIN = "d337b736aa1e8ebecfab043842d13e4a2d2f48a3";
+const PIN = "e06df9c2eae6901f4c88f464e0ae6e753c0428b8";
 const run = promisify(execFile);
 const command = async (args: string[], signal: AbortSignal) => {
   const result = await run("/usr/bin/git", args, { timeout: 10_000, maxBuffer: 4096, signal,
-    env: { PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0" } });
+    env: { PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" } });
   return result.stdout;
 };
 /** Exact spike-verified upstream source. Git builtins only, no shell, external diff, textconv, fsmonitor or hooks. */
@@ -22,7 +23,9 @@ export async function verifyJevHermesRuntimePin(root: string, signal: AbortSigna
     const revision = await runCommand([...common, "rev-parse", "HEAD"], deadline);
     deadline.throwIfAborted();
     if (revision.trim() !== PIN) throw new Error("Restricted runtime setup required");
-    await runCommand([...common, "diff-index", "--quiet", "--no-ext-diff", "--no-textconv", "HEAD", "--"], deadline);
+    // Copied installs can have stale index stat data with unchanged source bytes.
+    // Compare tracked content against the pinned HEAD, including staged changes.
+    await runCommand([...common, "diff", "--quiet", "--no-ext-diff", "--no-textconv", "HEAD", "--"], deadline);
     deadline.throwIfAborted();
     // Tracked cleanliness does not cover importable additions or ignored caches.
     // Installed venv packages remain an explicit dependency trust boundary;
@@ -48,15 +51,17 @@ export async function verifyJevHermesDependencies(root: string, apiMode: JevHerm
     const result = await run(executable, args, { timeout: 10_000, maxBuffer: 4096, signal: deadline,
       env: { PATH: "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" } });
     return result.stdout;
-  }): Promise<void> {
+  }): Promise<string> {
   signal.throwIfAborted();
-  await boundedOperation(async (deadline) => {
+  return await boundedOperation(async (deadline) => {
     const cachePrefix = await mkdtemp(join(tmpdir(), "matrix-jev-dependency-cache-"));
     try {
       deadline.throwIfAborted();
-      const version = await runPython(join(root, "venv", "bin", "python"), hermesDependencyArguments(root, cachePrefix, apiMode), deadline);
+      const python = await resolveHermesPython(root);
+      const version = await runPython(python, hermesDependencyArguments(root, cachePrefix, apiMode, python), deadline);
       deadline.throwIfAborted();
       if (version !== hermesSdkRequirements(apiMode).map(sdk => `${sdk.version}\n`).join("")) throw new Error("Restricted runtime setup required");
+      return python;
     } finally { await rm(cachePrefix, { recursive: true, force: true }); }
   }, 10_000, signal);
 }

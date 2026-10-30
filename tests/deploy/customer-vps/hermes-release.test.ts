@@ -12,69 +12,61 @@ describe("customer VPS Hermes release", () => {
   it("pins the verified upstream release by immutable commit", async () => {
     const installer = await readFile(installerPath, "utf8");
 
-    expect(installer).toContain('HERMES_RELEASE="${HERMES_RELEASE:-v2026.9.21}"');
+    expect(installer).toContain('HERMES_RELEASE="${HERMES_RELEASE:-v0.22.0}"');
     expect(installer).toContain(
-      'HERMES_COMMIT="${HERMES_COMMIT:-d337b736aa1e8ebecfab043842d13e4a2d2f48a3}"',
+      'HERMES_COMMIT="${HERMES_COMMIT:-e06df9c2eae6901f4c88f464e0ae6e753c0428b8}"',
     );
     expect(installer).toContain(
       'https://raw.githubusercontent.com/NousResearch/hermes-agent/$HERMES_COMMIT/scripts/install.sh',
     );
     expect(installer).toContain(
-      'bash "$HERMES_INSTALLER_PATH" --branch main --commit "$HERMES_COMMIT" --force-commit --skip-setup',
+      'bash "$HERMES_INSTALLER_PATH" --branch main --commit "$HERMES_COMMIT" --skip-setup',
     );
     expect(installer).not.toContain("NousResearch/hermes-agent/main/scripts/install.sh");
   });
 
-  it("installs the optional native SDK from the pinned upstream dependency contract", async () => {
+  it("uses upstream PM to persist native Anthropic and Matrix MCP extras across generation rebuilds", async () => {
     const installer = await readFile(installerPath, "utf8");
-    const sourceInstall = installer.indexOf('bash "$HERMES_INSTALLER_PATH" --branch main');
-    const extraInstall = installer.indexOf('"${HERMES_HOME}/hermes-agent[anthropic]"');
-    expect(extraInstall).toBeGreaterThan(sourceInstall);
-    expect(installer).toContain('timeout 300 uv --no-config pip install');
-    expect(installer).toContain('--python "${HERMES_HOME}/hermes-agent/venv/bin/python"');
-    expect(installer).toContain('--index-url https://pypi.org/simple');
+    expect(installer).toContain('timeout 600 "$MATRIX_RUNTIME_HOME/.local/bin/hermes" pm install --extra anthropic --extra mcp');
+    expect(installer).not.toContain("uv --no-config pip install");
+    expect(installer).not.toContain("--force-commit");
     expect(installer).not.toMatch(/anthropic==|openai==/);
   });
 
-  it.each([0, 42])("propagates dependency install status %i before reporting success", async status => {
+  it("runs the single canonical owner reconciliation after PM extras and bundled setup", async () => {
+    const installer = await readFile(installerPath, "utf8");
+    const hook = installer.indexOf('if [ -f "$MATRIX_APP_DIR/scripts/reconcile-agent-npm-prefix.mjs" ]; then');
+    expect(hook).toBeGreaterThan(installer.indexOf('pm install --extra anthropic'));
+    expect(hook).toBeGreaterThan(installer.indexOf('"$MATRIX_APP_DIR/scripts/configure-hermes-matrix-defaults.mjs"\n'));
+    expect(installer.match(/scripts\/reconcile-agent-npm-prefix\.mjs"\n/g)).toHaveLength(1);
+    const root = await mkdtemp(join(tmpdir(), "hermes-reconcile-hook-"));
+    try {
+      await mkdir(join(root, "node/bin"), { recursive: true });
+      await mkdir(join(root, "app/scripts"), { recursive: true });
+      await writeFile(join(root, "app/scripts/reconcile-agent-npm-prefix.mjs"), "fixture");
+      await writeFile(join(root, "node/bin/node"), '#!/bin/sh\nprintf "%s\\n" "$HOME" "$MATRIX_RUNTIME_HOME" "$HERMES_HOME" "$MATRIX_NODE_PREFIX" "$@" > "$MATRIX_RUNTIME_HOME/hook-invocation"\n', { mode: 0o755 });
+      const block = installer.slice(hook, installer.indexOf("\nfi", hook) + 3);
+      execFileSync("bash", ["-c", `set -eu\nMATRIX_RUNTIME_HOME="$1"\nMATRIX_APP_DIR="$1/app"\nMATRIX_NODE_PREFIX="$1/node"\nHERMES_HOME="$1/.hermes"\nrun_installer_as_runtime_user() { "$@"; }\n${block}`, "fixture", root]);
+      expect(await readFile(join(root, "hook-invocation"), "utf8")).toBe([root, root, `${root}/.hermes`, `${root}/node`, `${root}/app/scripts/reconcile-agent-npm-prefix.mjs`, ""].join("\n"));
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it.each([0, 42])("propagates PM dependency status %i before reporting success", async status => {
     const root = await mkdtemp(join(tmpdir(), "hermes-provision-"));
     try {
       const installer = await readFile(installerPath, "utf8");
       const block = installer.slice(installer.indexOf('log "installing pinned Hermes native-provider dependencies"'), installer.indexOf("for cli in uv uvx hermes; do"));
       await mkdir(join(root, ".local/bin"), { recursive: true });
-      // macOS has no GNU timeout; this fixture only checks process status wiring.
-      await writeFile(join(root, ".local/bin/timeout"), '#!/bin/sh\n[ "$1" = 300 ] || exit 99\nshift\nexec "$@"\n', { mode: 0o755 });
-      await writeFile(join(root, ".local/bin/uv"), `#!/bin/sh\nprintf '%s\\n' "$UV_HTTP_TIMEOUT" "$@" > "$HOME/invocation"\nexit ${status}\n`, { mode: 0o755 });
+      await writeFile(join(root, ".local/bin/timeout"), '#!/bin/sh\n[ "$1" = 600 ] || exit 99\nshift\nexec "$@"\n', { mode: 0o755 });
+      await writeFile(join(root, ".local/bin/hermes"), `#!/bin/sh\nprintf '%s\\n' "$HERMES_HOME" "$@" > "$HOME/invocation"\nexit ${status}\n`, { mode: 0o755 });
       const script = `set -eu\nMATRIX_RUNTIME_HOME="$1"\nHERMES_HOME="$1/.hermes"\nlog() { :; }\nrun_installer_as_runtime_user() { "$@"; }\n${block}\nprintf success > "$1/success"\n`;
       let exitStatus = 0;
       try { execFileSync("bash", ["-c", script, "fixture", root]); }
       catch (error) { exitStatus = (error as { status: number }).status; }
       expect(exitStatus).toBe(status);
-      expect(await readFile(join(root, "invocation"), "utf8")).toBe([
-        "60", "--no-config", "pip", "install", "--python", `${root}/.hermes/hermes-agent/venv/bin/python`,
-        "--index-url", "https://pypi.org/simple", "--editable", `${root}/.hermes/hermes-agent[anthropic]`, "",
-      ].join("\n"));
+      expect(await readFile(join(root, "invocation"), "utf8")).toBe([`${root}/.hermes`, "pm", "install", "--extra", "anthropic", "--extra", "mcp", ""].join("\n"));
       if (status === 0) expect(await readFile(join(root, "success"), "utf8")).toBe("success");
       else await expect(access(join(root, "success"))).rejects.toThrow();
-    } finally { await rm(root, { recursive: true, force: true }); }
-  });
-
-  it("uses managed runtime uv when the owner-local uv is absent", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hermes-managed-uv-"));
-    try {
-      const installer = await readFile(installerPath, "utf8");
-      const managedBin = join(root, "managed/bin");
-      const block = installer.slice(installer.indexOf('log "installing pinned Hermes native-provider dependencies"'),
-        installer.indexOf("for cli in uv uvx hermes; do")).replaceAll("/opt/matrix/runtime/node/bin", managedBin);
-      await mkdir(join(root, ".local/bin"), { recursive: true });
-      await mkdir(managedBin, { recursive: true });
-      await writeFile(join(root, ".local/bin/timeout"), '#!/bin/sh\n[ "$1" = 300 ] || exit 99\nshift\nexec "$@"\n', { mode: 0o755 });
-      await writeFile(join(managedBin, "uv"), '#!/bin/sh\nprintf managed > "$HOME/invocation"\n', { mode: 0o755 });
-      await expect(access(join(root, ".local/bin/uv"))).rejects.toThrow();
-      const script = `set -eu\nMATRIX_RUNTIME_HOME="$1"\nHERMES_HOME="$1/.hermes"\nlog() { :; }\nrun_installer_as_runtime_user() { "$@"; }\n${block}\nprintf success > "$1/success"\n`;
-      execFileSync("bash", ["-c", script, "fixture", root]);
-      expect(await readFile(join(root, "invocation"), "utf8")).toBe("managed");
-      expect(await readFile(join(root, "success"), "utf8")).toBe("success");
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 

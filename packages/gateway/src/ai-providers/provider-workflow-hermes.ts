@@ -1,3 +1,4 @@
+import { resolveHermesPython } from "../chat/hermes-python-environment.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join, resolve } from "node:path";
@@ -30,7 +31,7 @@ export function createHermesCodexReuse(options: { homePath: string }) {
   const installation = join(homePath, ".hermes/hermes-agent");
   return async () => {
     try {
-      await promisify(execFile)(join(installation, "venv/bin/python"), ["-c", HERMES_CODEX_REUSE_SCRIPT], {
+      await promisify(execFile)(await resolveHermesPython(installation), ["-c", HERMES_CODEX_REUSE_SCRIPT], {
         cwd: installation, env: { ...buildAgentRuntimeEnvironment(homePath), HERMES_HOME: join(homePath, ".hermes"), CODEX_HOME: join(homePath, ".codex") },
         timeout: 10000, maxBuffer: 4096, windowsHide: true,
       });
