@@ -274,3 +274,26 @@ fixtures. No server creation or pair-readiness claim is made.
 Focused ordinary Preview regression checks: **2/2 selected cases pass** (7 other
 cases excluded by filter), exercising continuing create-action polling and
 expired-lease provider adoption. Focused Platform native TypeScript passes.
+
+### Isolated Preview data projection
+
+**8/8 actual two-database cases pass**, zero skipped, using a separate non-superuser
+role/database per case. The real registration service rejects wrong bootstrap
+tokens and accepts valid ones under a distinct Preview signing secret. Only the
+two leased machine rows and their immutable release metadata are projected; no
+customer inventory or encrypted provisioning jobs are copied. Pair writes share
+one target transaction; a customer collision rolls back the first member.
+
+Intended fault assertions failed before their fixes: retirement before stop or
+with the wrong job, a restricted role with control-ledger SELECT grants, and a
+widened machine access list. Same-database targets are rejected, including separate
+wrappers. Role membership (including SET ROLE) and control-table privileges are
+checked on a shared server. Cleanup tombstones never-projected machines and a
+late snapshot cannot resurrect them. Initial fixture shape/constraint failures
+were corrected to match production and are not regression-red evidence.
+
+Provider IDs/addresses and bootstrap tokens are synthetic test inputs; the actual
+provider, Cloud Run identity/IAM, full directory retirement and runtime workflow
+are not qualified by this suite. It is included in required Postgres CI. Temporary
+roles/databases have explicit idempotent cleanup, including setup compensation.
+Focused Platform native TypeScript passes for the projection implementation.
