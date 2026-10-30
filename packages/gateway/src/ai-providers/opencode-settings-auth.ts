@@ -241,6 +241,9 @@ export async function enableNativeSettingsConnectedRoute(store: ProviderSettings
   const source = snapshot.accessSources.find(row => row.kind === "harness_profile" && row.harness === kind && row.providerId === provider && row.localObservation?.state === "present_unverified");
   const models = snapshot.modelProviders.find(row => row.id === provider)?.models.filter(model => model.enabled && source?.eligibleModelIds.includes(model.id)) ?? [];
   const model = models.find(row => row.id === harness?.route.modelId) ?? models[0];
-  if (!harness || !source || !model || snapshot.access.mode !== "writable" || snapshot.atomicConnectSupported !== true) throw new ProviderWorkflowError("unavailable");
+  // Internal Store snapshots carry authoritative actions; the HTTP layer alone
+  // decorates them with atomicConnectSupported for capability-aware clients.
+  if (!harness || !source || !model || snapshot.access.mode !== "writable"
+    || !snapshot.supportedActions.includes("set_route") || !snapshot.supportedActions.includes("set_harness_enabled")) throw new ProviderWorkflowError("unavailable");
   await store.mutate({ type: "set_route", harnessInstanceId, route: { kind: "configurable", providerId: provider, modelId: model.id }, accessSourceId: source.id, accountId: source.accountId, enableHarness: true, expectedRevision: snapshot.revision, idempotencyKey });
 }

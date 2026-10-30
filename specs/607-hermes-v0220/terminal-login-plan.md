@@ -109,3 +109,21 @@ both states; existing theme contrast checks remain required. This CSS change
 requires a newly built Electron client and matching Web Preview. Previous
 client captures, CI/review results and successful credential storage do not
 qualify the corrected source or the complete connected model/MCP journey.
+
+## 2026-10-30 — internal connection capability mismatch
+
+The next live attempt at `d70768ad` completed OAuth and native provider/model
+configuration, but Settings still reported failure. The shared native completion
+helper expected `atomicConnectSupported` on an internal Store snapshot. Only the
+HTTP response decorator emits that optional client field, so completion rejected
+before the atomic route write. Existing helper tests supplied the decoration by
+hand and missed the producer/consumer boundary.
+
+Check the internal snapshot's authoritative `supportedActions` for both
+`set_route` and `set_harness_enabled`, matching the public capability's existing
+meaning. Keep provider/source/model validation, native freshness, owner revision,
+writer admission and atomic runtime/configuration commit unchanged. Real
+Service/Store regressions cover both subscription providers, missing capabilities
+despite a forged public flag, absent/stale native evidence, owner revision races
+and failed runtime application. These isolated tests do not qualify live model,
+MCP or video acceptance; the final head needs new CI/review and Preview readback.
