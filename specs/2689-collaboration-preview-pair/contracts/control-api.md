@@ -14,6 +14,7 @@ Use existing Hono auth, strict Zod4 boundary schemas and generic error mapping.
 | GET `/api/preview-pairs/:pairId` | Real first-party Clerk session; requester, configured maintainer or actual leased fixture actor; current pair binding | No |
 | GET `/api/preview-pairs/:pairId/manifest` | Same real actor check; live ready generation, current identity/routing/artifact/funding prerequisites; cache disabled | No |
 | GET `/api/preview-pairs` | Real configured maintainer membership; bounded cursor/limit; only permitted reports | No |
+| GET `/preview-pair-updates/:handle/system-bundles/releases/:version.json` | Non-authorizing public bundle metadata; exact active projected Preview handle/slot, empty access list and matching confirmed/target version+digest; reject all channel/list/other-version paths | Yes |
 
 Every mutating route, including future DELETE aliases, has a16KiB body-limit
 middleware before parsing. Validate UUID params, integer cursors/limits and
@@ -95,3 +96,14 @@ calls timeout10s, whole provisioning readiness30minutes, cleanup retry starts15s
 and caps5minutes with visible pending status. No infinite in-memory queues/maps.
 No route accepts an arbitrary URL: origins come from strict server-approved config
 and exact verified candidate provenance; redirects must be rejected/revalidated.
+
+
+## Pinned host configuration
+
+The internal pair dispatcher supplies the verified browser origin to the existing
+host-config producer. Pair hosts boot directly against the approved API, use only
+the approved browser origin for collaboration relay/client-origin checks, and pin
+the updater to their projected confirmed bundle. Missing/mismatched internal binding
+fails closed. Ordinary and Private Preview configuration retains its current policy.
+The public metadata route grants no user or runtime capability, never accepts
+caller-selected download URLs, and reserves its whole prefix before owner routing.

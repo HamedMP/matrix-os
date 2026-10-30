@@ -60,7 +60,7 @@ import type { HetznerClient } from './customer-vps-hetzner.js';
 
 /** Claims durable provisioning jobs and creates their provider servers. */
 export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsContext,
-  pair?: { signal: AbortSignal; authorizePair: (machineId: string, jobId: string) => Promise<boolean> }) {
+  pair?: { browserOrigin:string; signal: AbortSignal; authorizePair: (machineId: string, jobId: string) => Promise<boolean> }) {
   const { deps, scheduleProvisioningDispatch, now, queueProviderDeletion, enqueueProviderDeletionTx } = context;
 
   async function waitForProvisioningCreateAction(actionId: number): Promise<'success' | 'error' | 'pending'> {
@@ -279,6 +279,7 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
           hostBundleUrl: hostBundleUrlForImageVersion(deps.config, imageVersion),
         },
         row.runtimeTokenEpoch,
+        pair ? {browserOrigin:pair.browserOrigin} : undefined,
       );
       const userData = renderCloudInitTemplate(
         deps.cloudInitTemplate ?? DEFAULT_CLOUD_INIT_TEMPLATE,
