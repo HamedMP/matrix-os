@@ -126,7 +126,7 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
   }
   const connected = status?.state === "connected" && !!status.account;
   const blocked = disabled || readOnly || busy;
-  const revocationUnconfirmed = !!pendingRevocation && pendingRevocation.client === client && pendingRevocation.accountId === status?.account?.id;
+  const revocationUnconfirmed = !!status?.grantSaveUnconfirmed || !!pendingRevocation && pendingRevocation.client === client && pendingRevocation.accountId === status?.account?.id;
   const retryRevocation = revocationUnconfirmed && !background;
   const errorText = revocationUnconfirmed ? REVOKE_ERROR : error?.client === client ? error?.text : undefined;
   const canEnableBackground = connected && !connecting && !!status?.grant.enabled && !!status?.bridgeConnected && status.models.length > 0;
@@ -162,7 +162,8 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
         <span>Uses your subscription without a new message from you while this device stays connected.</span>
       </label>
       <button type="button" className="matrix-ap-button" disabled={blocked || background && !canEnableBackground || background === status.grant.background && !retryRevocation}
-        onClick={() => void act(signal => client.setGrant({ enabled: true, background,
+        onClick={() => void act(signal => client.setGrant({
+          ...(background ? { enabled: true as const, background: true as const } : { enabled: status.grant.enabled, background: false as const }),
           accountId: status.account!.id, baseRevision: status.grant.revision }, signal), "grant")}>
         Save background permission
       </button>

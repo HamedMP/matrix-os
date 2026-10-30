@@ -59,6 +59,22 @@ it("never paints an accepted background grant as revoked while synchronizing a d
   expect(native.setGrant).not.toHaveBeenCalled();
 });
 
+it.each([true, false])("restores the native unconfirmed-save warning on a fresh client without widening enabled=%s", async enabled => {
+  const native = client();
+  vi.mocked(native.status).mockResolvedValue({ ...connected, grantSaveUnconfirmed: true,
+    grant: { enabled, background: false, revision: 3 } });
+  vi.mocked(native.setGrant).mockResolvedValue({ ...connected, grant: { enabled, background: false, revision: 4 } });
+  render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/>);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Saving could not be confirmed");
+  const save = screen.getByRole("button", { name: "Save background permission" });
+  expect(save).toBeEnabled();
+  expect(native.setGrant).not.toHaveBeenCalled();
+  fireEvent.click(save);
+  await waitFor(() => expect(native.setGrant).toHaveBeenCalledWith({ enabled, background: false,
+    accountId: connected.account!.id, baseRevision: 3 }, expect.any(AbortSignal)));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+});
+
 it.each([false, true])("reconciles background=%s after a failed save acknowledgement without repeating the write", async background => {
   const native = client();
   render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/>);

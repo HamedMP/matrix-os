@@ -12,7 +12,7 @@ export const ChatgptPlanStatusSchema = z.object({
         id: z.uuid(), label: z.string().min(1).max(256)
     }).strict().optional(), models: z.array(ChatgptPlanModelSchema).max(64), grant: z.object({
         revision: z.number().int().nonnegative(), enabled: z.boolean(), background: z.boolean()
-    }).strict(), bridgeConnected: z.boolean(), bridgeFailure: z.literal('device_conflict').optional(), revocation: z.enum(['none', 'confirmed', 'unconfirmed'])
+    }).strict(), grantSaveUnconfirmed: z.boolean().optional(), bridgeConnected: z.boolean(), bridgeFailure: z.literal('device_conflict').optional(), revocation: z.enum(['none', 'confirmed', 'unconfirmed'])
 }).strict();
 export const CHATGPT_PLAN_INVOKE = {
     'chatgpt-plan:status': {

@@ -185,6 +185,112 @@ it("keeps background stopped in memory when persistence cannot confirm a revocat
   } finally { await x.cleanup(); }
 });
 
+it.each(["Computer", "owner", "session"] as const)("retains an unconfirmed downgrade across a %s roundtrip until it is saved", async kind => {
+  const x = await fixture();
+  try {
+    await x.signedIn();
+    const before = await x.service.status(session);
+    const optedIn = await x.service.setGrant({ ...session, enabled: true, background: true,
+      accountId: before.account!.id, baseRevision: before.grant.revision });
+    vi.spyOn(x.vault, "save").mockRejectedValueOnce(new Error("Fixture disk failure"));
+    await expect(x.service.setGrant({ ...session, enabled: true, background: false,
+      accountId: before.account!.id, baseRevision: optedIn.grant.revision })).rejects.toThrow("Fixture disk failure");
+    expect((await x.vault.load("owner")).grants.find(g => g.computerId === "computer")?.background).toBe(true);
+    x.authState.authGeneration = 2;
+    if (kind === "Computer") { x.authState.runtimeSlot = "other"; x.authState.handle = "other-computer"; }
+    if (kind === "owner") x.authState.userId = "other-owner";
+    x.service.cancelAll();
+    await x.service.status({ runtimeSlot: x.authState.runtimeSlot, authGeneration: 2 });
+    Object.assign(x.authState, { ...session, authGeneration: 3, userId: "owner", handle: "computer" });
+    x.service.cancelAll();
+    const returned = await x.service.status({ ...session, authGeneration: 3 });
+    expect(returned.grant).toEqual({ enabled: true, background: false, revision: optedIn.grant.revision + 1 });
+    expect(returned).toHaveProperty("grantSaveUnconfirmed", true);
+    expect(x.snapshots.at(-1)).toMatchObject({ background: false, grantRevision: returned.grant.revision });
+    const stale = request("00000000-0000-4000-8000-000000000034", before.account!.id, optedIn.grant.revision);
+    if (stale.action !== "infer") throw new Error("Expected inference fixture");
+    stale.requestClass = "background";
+    x.queue([stale]);
+    await vi.waitFor(() => expect(x.replies.find(reply => reply.id === stale.id)?.ok).toBe(false));
+    expect(x.providerBodies).toHaveLength(0);
+    const repaired = await x.service.setGrant({ ...session, authGeneration: 3, enabled: true, background: false,
+      accountId: before.account!.id, baseRevision: returned.grant.revision });
+    expect(repaired.grant.background).toBe(false);
+    expect(repaired).not.toHaveProperty("grantSaveUnconfirmed");
+    expect((await x.vault.load("owner")).grants.find(g => g.computerId === "computer")).toMatchObject(repaired.grant);
+  } finally { await x.cleanup(); }
+});
+
+it("does not let an earlier token save erase a newer disconnect fence when disconnect persistence fails", async () => {
+  const x = await fixture();
+  let release = () => {};
+  let clock: { mockRestore(): void } | undefined;
+  try {
+    await x.signedIn();
+    const before = await x.service.status(session);
+    await x.service.setGrant({ ...session, enabled: true, background: true,
+      accountId: before.account!.id, baseRevision: before.grant.revision });
+    let started = () => {};
+    const writing = new Promise<void>(resolve => { started = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const originalSave = x.vault.save.bind(x.vault);
+    const save = vi.spyOn(x.vault, "save").mockImplementationOnce(async (owner, next) => {
+      started(); await gate; await originalSave(owner, next);
+    });
+    const readAt = Date.now();
+    const heldClock = vi.spyOn(Date, "now").mockReturnValue(readAt + 301_000);
+    clock = heldClock;
+    const refresh = x.service.refreshModels(session);
+    const refreshed = Promise.allSettled([refresh]);
+    await writing;
+    heldClock.mockReturnValue(readAt);
+    const disconnect = x.service.disconnect(session);
+    const failed = expect(disconnect).rejects.toThrow("Fixture disconnect disk failure");
+    await vi.waitFor(async () => expect((await x.service.status(session)).grant.enabled).toBe(false));
+    save.mockRejectedValueOnce(new Error("Fixture disconnect disk failure"));
+    release();
+    await Promise.all([refreshed, failed]);
+    const returned = await x.service.status(session);
+    expect(returned.state).toBe("disconnected");
+    expect(returned.grant.enabled).toBe(false);
+    expect(returned.bridgeConnected).toBe(false);
+    expect(returned).toHaveProperty("grantSaveUnconfirmed", true);
+    expect(x.providerBodies).toHaveLength(0);
+  } finally { release(); clock?.mockRestore(); await x.cleanup(); }
+});
+
+it("rejects new owners at the unconfirmed-save bound without evicting a downgrade and releases capacity after repair", async () => {
+  const x = await fixture();
+  const save = vi.spyOn(x.vault, "save");
+  try {
+    for (let i = 0; i < 8; i++) {
+      x.authState.userId = `owner-${i}`;
+      x.service.cancelAll();
+      await x.signedIn();
+      const before = await x.service.status(session);
+      const optedIn = await x.service.setGrant({ ...session, enabled: true, background: true,
+        accountId: before.account!.id, baseRevision: before.grant.revision });
+      save.mockRejectedValueOnce(new Error("Fixture disk failure"));
+      await expect(x.service.setGrant({ ...session, enabled: true, background: false,
+        accountId: before.account!.id, baseRevision: optedIn.grant.revision })).rejects.toThrow();
+    }
+    x.authState.userId = "new-owner";
+    x.service.cancelAll();
+    await expect(x.service.status(session)).rejects.toThrow("grant recovery required");
+    x.authState.userId = "owner-0";
+    x.service.cancelAll();
+    const original = await x.service.status(session);
+    expect(original.grant.background).toBe(false);
+    expect(original).toHaveProperty("grantSaveUnconfirmed", true);
+    await x.service.setGrant({ ...session, enabled: true, background: false,
+      accountId: original.account!.id, baseRevision: original.grant.revision });
+    x.authState.userId = "new-owner";
+    x.service.cancelAll();
+    expect((await x.service.status(session)).state).toBe("disconnected");
+    expect(x.providerBodies).toHaveLength(0);
+  } finally { await x.cleanup(); }
+});
+
 it("rejects even complete opt-in intent from an embedded frame", async () => {
   const x = await fixture();
   try {
