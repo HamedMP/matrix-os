@@ -66,7 +66,7 @@ describe('WhatsApp schema startup', () => {
         { scope: 'billing-google-purchases', ...GOOGLE_TRACKING_REVISION },
         { scope: 'core', ...PLATFORM_SCHEMA_REVISION },
         { scope: 'funded-probe-cache', ...FUNDED_PROBE_CACHE_REVISION },
-        { scope: 'preview-pairs', generation: 1, fingerprint: 'collaboration-preview-pair-v1' },
+        { scope: 'preview-pairs', generation: 2, fingerprint: 'collaboration-preview-pair-controller-v2' },
         { scope: 'sites', generation: 1, fingerprint: 'public-app-sites-v1' },
         { scope: 'whatsapp', ...WHATSAPP_SCHEMA_REVISION },
       ]);
