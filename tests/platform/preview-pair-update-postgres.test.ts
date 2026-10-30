@@ -4,6 +4,8 @@ import { PAIR_NOW } from "./preview-pair-test-support.js";
 import { claimPreviewPair, withPreviewPairClaim, requestPreviewPairStop } from "../../packages/platform/src/preview-pair/lifecycle.js";
 import { cleanupPreviewPair } from "../../packages/platform/src/preview-pair/cleanup.js";
 import { requestPreviewPairUpdate, advancePreviewPairUpdate } from "../../packages/platform/src/preview-pair/update.js";
+import { admitPreviewPair } from "../../packages/platform/src/preview-pair/admission.js";
+import { upsertHostBundleRelease } from "../../packages/platform/src/db.js";
 
 describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("explicit clean reset keeps one reserved fixture and the original hard expiry", () => {
   let fixture: Awaited<ReturnType<typeof createSeededPreviewPair>>;
@@ -47,5 +49,29 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("explicit clean reset kee
     ]);
     expect(results.filter(r => r.status === "fulfilled")).toHaveLength(1);
     expect(results.filter(r => r.status === "rejected")).toHaveLength(1);
+  });
+  it.each([["c".repeat(40), true], ["a".repeat(40), true], ["b".repeat(40), false]] as const)("observed head %s cannot replace or strand the pinned update", async (observedSha, expectedOutdated) => {
+    const selectedSha = "b".repeat(40);
+    const selected = { ...candidate(), sourceSha: selectedSha, hostBundleVersion: fixture.candidate.hostBundleVersion + "-b",
+      platformSource: { ...fixture.candidate.platformSource, sha: selectedSha },
+      desktopArtifacts: fixture.candidate.desktopArtifacts.map(item => ({ ...item, sourceSha: selectedSha })) };
+    await upsertHostBundleRelease(fixture.db, { version: selected.hostBundleVersion, gitCommit: selectedSha,
+      sourcePr: fixture.pair.pr, channel: null, sha256: selected.hostBundleSha256, size: 123,
+      buildTime: new Date(PAIR_NOW).toISOString(), bundleKey: "test/bundle-b.tar.gz" });
+    await requestPreviewPairUpdate(fixture.db, fixture.pair.pair_id, 1, 1, selected, PAIR_NOW);
+    const observed = { ...selected, sourceSha: observedSha, platformSource: { ...selected.platformSource, sha: observedSha },
+      desktopArtifacts: selected.desktopArtifacts.map(item => ({ ...item, sourceSha: observedSha })) };
+    const pending = await admitPreviewPair(fixture.db, fixture.config, { pairId: fixture.pair.pair_id,
+      pr: fixture.pair.pr, requesterId: "user_requester", sourceSha: observedSha, candidate: observed }, fixture.prepare, PAIR_NOW);
+    expect(pending.requested_source_sha).toBe(selectedSha);
+    expect(pending.outdated).toBe(expectedOutdated);
+    const claim = await claimPreviewPair(fixture.db, pending.pair_id, 1, pending.revision, PAIR_NOW);
+    await cleanupPreviewPair(fixture.db, claim, { retire: async () => undefined,
+      proveAbsent: async member => ({ machineId: member.machineId, providerServerId: null, exactServerAbsent: true,
+        labeledServerIds: [], creationSettled: true, observedAt: new Date(PAIR_NOW).toISOString() }) }, () => PAIR_NOW);
+    const advanced = await advancePreviewPairUpdate(fixture.db, claim, fixture.prepare, PAIR_NOW);
+    expect(advanced.source_sha).toBe(selectedSha);
+    expect(advanced.outdated).toBe(expectedOutdated);
+    expect(advanced.generation).toBe(2);
   });
 });
