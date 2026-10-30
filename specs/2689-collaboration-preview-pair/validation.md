@@ -557,3 +557,12 @@ Focused Platform native TypeScript passes. Both new SQL suites are registered;
 the required PostgreSQL inventory validates all73 files. Production startup,
 admission-off maintenance and runtime-only registration still remain to compose;
 T015/T016/T033 stay unchecked.
+
+Pattern scope correction: the scanner compares committed HEAD, so its earlier
+pre-commit count omitted the then-uncommitted gateway producer correction.
+Rechecking the actual maintenance head502b315 reports0 violations and3 existing
+warnings (body-limit review, validated push identifiers, trusted host paths).
+The committed composition checkpoint adds one transient-set warning: revision
+schema parsing caps its environment array at128 and the set is discarded per read.
+No warning is suppressed. The earlier0-warning count is not full final-source
+qualification; hosted CI and the final full-stack checks remain required.

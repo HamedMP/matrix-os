@@ -39,6 +39,7 @@ export function createPreviewPairCloudAuthority(options:{config:EnabledPreviewPa
       const revision=Revision.parse(await get(`${resource}/revisions/${bindings[0]}`));
       if(!revision.conditions.some(condition=>Ready.safeParse(condition).success)||revision.name!==`${resource}/revisions/${bindings[0]}`||(revision.service!==resource&&revision.service!==service)||revision.serviceAccount!==config.serviceAccount)throw new PreviewPairUpstreamError();
       const entries=revision.containers[0]!.env;
+      // Revision parsing caps entries at128; this transient set dies with the read.
       if(new Set(entries.map(entry=>entry.name)).size!==entries.length)throw new PreviewPairUpstreamError();
       for(const entry of entries){
         if(/^(HETZNER_API_TOKEN|GITHUB_TOKEN|GH_TOKEN|GITHUB_APP_PRIVATE_KEY|GOOGLE_APPLICATION_CREDENTIALS|MATRIX_PREVIEW_PAIR_OPERATOR_SECRET|GOLDEN_SNAPSHOT_OPERATOR_SECRET|MATRIX_PREVIEW_RUNTIME_SECRET|AI_FUNDED_CREDENTIAL_HASH_SECRET|AI_FUNDED_RELAY_CONTROL_TOKEN)$/.test(entry.name))throw new PreviewPairUpstreamError();
