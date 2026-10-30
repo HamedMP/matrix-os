@@ -48,3 +48,34 @@ or linked to the review record.
   symlink reproduced2 failing assertions, then12/12 real Git/Bash cases pass.
   Spec invitation discovery now explicitly permits acceptance before content access.
 - No live pair, native desktop, funding or visual qualification is claimed.
+
+### Atomic admission and lifecycle implementation
+
+- New real PostgreSQL cases: **34/34 passed across7 files, zero skipped**, serial
+  run with actual Platform migrations and independent connections. This includes
+  both-member rollback, duplicate convergence, one fixture lease, existing owner
+  quota, customer collision preservation, stale claims, stop replay/expiry, explicit
+  reset and competing stop/update, exact provider/label inventory and creation fences.
+- Named faults observed: two unshared-transaction assertions; two prepare dispatch
+  assertions; two handle/quota assertions; ordinary dispatcher booted a pair job;
+  queued customer machine could be reclassified; stop replay failed; two pagination
+  completeness assertions. Each is green after its fix.
+- Claim fence mutation: removing generation/revision/claim/expiry checks makes7
+  assertions fail; restored code passes. This is mutation evidence for new lifecycle
+  behavior, not a claim of an existing production regression.
+- Provider cleanup tests use real HTTP response parsing and durable Postgres queue
+  operations with synthetic provider responses. No paid provider request occurred.
+  Pagination is checked through the provider metadata documented at
+  https://docs.hetzner.cloud/reference/cloud; incomplete inventory cannot prove absence.
+- Platform TypeScript passes; pattern scan has0 violations and5 existing warnings.
+- Broad required Postgres qualification attempted56 files but failed in the first
+  batch: Chat queue concurrent admission produced27 successes instead of32; navigation
+  tests timed out and a controls worker exited. Host swap was exhausted. Only this
+  task's failed runner/children were stopped; broad qualification remains incomplete.
+- Broad ordinary provisioning attempt also hit fixture timeouts/worker exits. A
+  serial memory-bounded assertion inventory verified all20 ordinary provisioning
+  assertions across ten fresh processes. Preview slot coverage is being retried
+  separately; do not call the broad suite qualified. No assertions or deadlines were weakened.
+- The ordinary dispatcher deliberately leaves pair jobs queued until independently
+  verified isolation wiring is added in the controller layer. No public pair routes
+  or native launch entrypoints are activated by this layer.

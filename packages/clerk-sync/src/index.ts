@@ -1,9 +1,10 @@
 export const MATRIX_OS_HANDLE_PATTERN = /^[a-z][a-z0-9-]{2,30}$/;
 /** Private Preview machine handles (spec 537): reserved so no account shares their credential. */
 export const PRIVATE_PREVIEW_HANDLE_PATTERN = /^pv-[1-9][0-9]{0,8}-[0-9a-f]{8}$/;
+export const PAIR_PREVIEW_HANDLE_PATTERN = /^cp-[1-9][0-9]{0,8}-[a-f0-9]{8}-[1-9][0-9]{0,2}-[ab]$/;
 
 export function isReservedMatrixOsHandle(handle: string): boolean {
-  return PRIVATE_PREVIEW_HANDLE_PATTERN.test(handle);
+  return PRIVATE_PREVIEW_HANDLE_PATTERN.test(handle) || PAIR_PREVIEW_HANDLE_PATTERN.test(handle);
 }
 
 export interface ClerkEmailAddress {
