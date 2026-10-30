@@ -43,6 +43,22 @@ it("requires an explicit current-account save after the owner checks background 
   expect(screen.getByRole("button", { name: "Save background permission" })).toBeDisabled();
 });
 
+it("never paints an accepted background grant as revoked while synchronizing a draft", async () => {
+  // Observe actual committed DOM before passive effects run. A second effect
+  // cannot repair a false authority presentation that the owner already saw.
+  const native = client();
+  vi.mocked(native.status).mockResolvedValue({ ...connected, grant: { enabled: true, background: true, revision: 2 } });
+  const painted: boolean[] = [];
+  render(<React.Profiler id="accepted-background" onRender={() => {
+    const checkbox = document.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    if (checkbox) painted.push(checkbox.checked);
+  }}><LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/></React.Profiler>);
+  await screen.findByRole("checkbox", { name: /Allow scheduled and background/ });
+  expect(painted.length).toBeGreaterThan(0);
+  expect(painted.every(Boolean)).toBe(true);
+  expect(native.setGrant).not.toHaveBeenCalled();
+});
+
 it.each([false, true])("reconciles background=%s after a failed save acknowledgement without repeating the write", async background => {
   const native = client();
   render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/>);

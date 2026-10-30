@@ -11,17 +11,17 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
   const [receipt, setReceipt] = useState<{ client: LocalChatgptPlanClient; status: LocalChatgptPlanStatus } | null>(null);
   const [error, setError] = useState<{ client: LocalChatgptPlanClient; text: string; recovery?: boolean; revokeAccountId?: string } | null>(null);
   const [active, setActive] = useState<{ client: LocalChatgptPlanClient; kind: "connect" | "action" } | null>(null);
-  const [background, setBackground] = useState(false);
+  const [backgroundDraft, setBackgroundDraft] = useState<{
+    client: LocalChatgptPlanClient; accountId: string; revision: number; value: boolean;
+  } | null>(null);
   const scope = useRef<{ client: LocalChatgptPlanClient; lifetime: AbortController; revision: number; pending: boolean } | null>(null);
   const changed = useRef(onChanged);
   useEffect(() => { changed.current = onChanged; }, [onChanged]);
   const status = receipt && receipt.client === client ? receipt.status : null;
+  const background = backgroundDraft && backgroundDraft.client === client && backgroundDraft.accountId === status?.account?.id
+    && backgroundDraft.revision === status?.grant.revision ? backgroundDraft.value : status?.grant.background ?? false;
   const busy = active?.client === client && !!client;
   const connecting = status?.state === "connecting" || busy && active?.kind === "connect";
-
-  useEffect(() => {
-    setBackground(status?.grant.background ?? false);
-  }, [client, status?.account?.id, status?.grant.revision, status?.grant.background]);
 
   useEffect(() => {
     if (!client) return;
@@ -92,7 +92,7 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
       if (current.lifetime.signal.aborted || scope.current !== current || current.revision !== revision) return;
       setReceipt({ client, status: value });
       setError(null);
-      if (kind === "grant") setBackground(value.grant.background);
+      if (kind === "grant") setBackgroundDraft(null);
       onChanged();
     } catch (caught) {
       console.warn("[chatgpt-plan] Action unavailable:", caught instanceof Error ? caught.name : typeof caught);
@@ -106,7 +106,7 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
           const value = await client.status(current.lifetime.signal);
           if (current.lifetime.signal.aborted || scope.current !== current || current.revision !== revision) return;
           setReceipt({ client, status: value });
-          if (kind === "grant") { setBackground(value.grant.background); onChanged(); }
+          if (kind === "grant") { setBackgroundDraft(null); onChanged(); }
           if (kind === "rebind" && value.bridgeConnected) { setError(null); onChanged(); }
         } catch (statusError) {
           console.warn("[chatgpt-plan] Recovery status unavailable:", statusError instanceof Error ? statusError.name : typeof statusError);
@@ -148,7 +148,8 @@ export function LocalChatgptSubscription({ client, disabled, readOnly, refreshRe
     </div> : null}
     {client && !readOnly && status && (canEnableBackground || canRevokeBackground) ? <section className="matrix-ap-workflow" aria-label="Background Bot permission">
       <label className="matrix-ap-uninstall-choice">
-        <input type="checkbox" checked={background} disabled={blocked || !canEnableBackground && !background} onChange={event => setBackground(event.target.checked)}/>
+        <input type="checkbox" checked={background} disabled={blocked || !canEnableBackground && !background}
+          onChange={event => setBackgroundDraft({ client, accountId: status.account!.id, revision: status.grant.revision, value: event.target.checked })}/>
         Allow scheduled and background Bot tasks on this Computer
         <span>Uses your subscription without a new message from you while this device stays connected.</span>
       </label>
