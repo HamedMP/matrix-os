@@ -1,23 +1,28 @@
 import { requestPreviewPairStop } from "../../packages/platform/src/preview-pair/lifecycle.js";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "undici";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getSystemInfo } from "../../packages/gateway/src/system-info.js";
+import type { SystemInfo } from "../../packages/gateway/src/system-info.js";
 import { CollaborationRuntimeEndpointRegistry } from "../../packages/platform/src/collaboration/runtime-endpoints.js";
 import { buildPlatformVerificationToken } from "../../packages/platform/src/platform-token.js";
 import { createPreviewPairHostObserver } from "../../packages/platform/src/preview-pair/observe-host.js";
 import { createPreviewPairHostRequester } from "../../packages/platform/src/preview-pair/host-request.js";
 import { createProjectedPreviewPair } from "./preview-pair-projected-postgres.js";
+import { createPreviewPairHostMetadata, createPreviewPairSystemInfoApp } from "./preview-pair-host-metadata.js";
 import { PAIR_NOW } from "./preview-pair-test-support.js";
 
 describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("real host-info producer and projected registration observation", () => {
   let f: Awaited<ReturnType<typeof createProjectedPreviewPair>>, home: string, dispatcher: Agent;
+  let metadata: Awaited<ReturnType<typeof createPreviewPairHostMetadata>>;
   beforeEach(async () => {
-    f = await createProjectedPreviewPair(["8.8.8.8", "8.8.4.4"]);
-    try { home = await mkdtemp(join(tmpdir(), "eng418-host-info-")); dispatcher = new Agent(); }
-    catch (error: unknown) { await f.destroy(); throw error; }
+    home = await mkdtemp(join(tmpdir(), "eng418-host-info-"));
+    try {
+      metadata = await createPreviewPairHostMetadata(home);
+      f = await createProjectedPreviewPair(["8.8.8.8", "8.8.4.4"], metadata.sha256);
+      dispatcher = new Agent();
+    } catch (error: unknown) { await rm(home, { recursive: true, force: true }); throw error; }
   }, 30_000);
   afterEach(async () => {
     vi.unstubAllEnvs(); vi.restoreAllMocks();
@@ -32,16 +37,17 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("real host-info producer 
     } });
     await endpoints.heartbeat(logical);
     await mkdir(join(home, "system"));
-    const releaseFile = join(home, "release.json"), candidate = f.source.candidate;
-    await writeFile(releaseFile, JSON.stringify({ version: candidate.hostBundleVersion, gitCommit: candidate.sourceSha,
-      sha256: candidate.hostBundleSha256, bundleSha256: candidate.hostBundleSha256 }));
-    const env = { MATRIX_RELEASE_FILE: releaseFile, MATRIX_HANDLE: owner.handle, MATRIX_MACHINE_ID: owner.machine_id,
-      MATRIX_RUNTIME_SLOT: owner.handle, MATRIX_BUILD_SHA: candidate.sourceSha, MATRIX_RUNTIME_ID: runtimeId,
+    const candidate = f.source.candidate;
+    const env = { MATRIX_RELEASE_FILE: metadata.releaseFile, MATRIX_BOOTSTRAP_ATTESTATION_FILE: metadata.attestationFile,
+      MATRIX_HANDLE: owner.handle, MATRIX_MACHINE_ID: owner.machine_id,
+      MATRIX_RUNTIME_SLOT: owner.handle, MATRIX_RUNTIME_ID: runtimeId,
       PLATFORM_INTERNAL_URL: candidate.apiOrigin, UPGRADE_TOKEN: buildPlatformVerificationToken(owner.handle, f.previewSecret),
       DATABASE_URL: "postgres://fixture@localhost/owner_test", MATRIX_COLLABORATION_DISABLED: "0" };
     for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    for (const key of ["MATRIX_BUILD_SHA", "MATRIX_BUILD_REF", "MATRIX_BUILD_DATE"]) vi.stubEnv(key, undefined);
     expect((await f.source.db.executor.selectFrom("user_machines").select("confirmed_bundle_version").where("machine_id", "=", owner.machine_id).executeTakeFirstOrThrow()).confirmed_bundle_version).toBeNull();
-    const info = getSystemInfo(home, { runningVersion: candidate.hostBundleVersion });
+    const app = createPreviewPairSystemInfoApp(home, candidate.hostBundleVersion);
+    const info: SystemInfo = await (await app.request("/api/system/info")).json();
     expect(info.capabilities.collaboration).toBe(true);
     const server = { id: 1001, status: "running", publicIPv4: "8.8.4.4", labels: { app: "matrix-os", machine_id: owner.machine_id,
       clerk_user_id: owner.actor_id, runtime_slot: owner.handle } };

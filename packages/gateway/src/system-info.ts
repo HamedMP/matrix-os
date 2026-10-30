@@ -345,7 +345,7 @@ function readDiskUsage(path: string): { totalBytes: number; freeBytes: number } 
 
 export function getSystemInfo(
   homePath: string,
-  kernelOverrides: { model?: string; runningVersion?: string; collaborationConfigured?: boolean } = {},
+  kernelOverrides: { model?: string; runningVersion?: string; runningBuild?: Readonly<SystemInfo["build"]>; collaborationConfigured?: boolean } = {},
 ): SystemInfo {
   const kernel = resolveKernelConfigFile(homePath);
   let modules = 0;
@@ -437,7 +437,7 @@ export function getSystemInfo(
         ?? describeGatewayCollaborationConfiguration(process.env).configured,
       collaborationDirectProtocolVersion: COLLABORATION_DIRECT_PROTOCOL_VERSION,
     },
-    build: {
+    build: kernelOverrides.runningBuild ?? {
       sha: process.env.MATRIX_BUILD_SHA ?? "unknown",
       ref: process.env.MATRIX_BUILD_REF ?? "unknown",
       date: process.env.MATRIX_BUILD_DATE ?? "unknown",
@@ -461,9 +461,12 @@ export function getSystemInfo(
     },
     release: release && bootstrap
       && release.version === bootstrap.targetBundleVersion
+      && (release.sha256 === undefined || release.sha256 === bootstrap.targetBundleSha256)
       && (release.bundleSha256 === undefined
         || release.bundleSha256 === bootstrap.targetBundleSha256)
-      ? { ...release, bootstrap }
+      // release.json is packed before the archive digest exists. Root bootstrap
+      // evidence records the verified installed target; never override a conflict.
+      ? { ...release, sha256: bootstrap.targetBundleSha256, bundleSha256: bootstrap.targetBundleSha256, bootstrap }
       : release,
   };
 }

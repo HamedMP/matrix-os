@@ -500,3 +500,30 @@ validates all71 files, including retirement and the four new maintenance suites.
 Hosted CI is still pending; the external Codex0.166 qualification blocker already
 has its own [ENG-420](https://linear.app/matrix-os/issue/ENG-420/fixci-restore-main-contract-and-build-checks).
 No duplicate issue or compatibility bypass is added.
+
+### Review correction: real installed host metadata
+
+Greptile identified a valid producer/consumer mismatch: GET `/api/system/info`
+returns200 for a healthy fresh host, but the archive's release.json has neither
+digest field. The original observation fixture inserted those fields itself and
+did not protect the installed contract. It is replaced by the actual release,
+manifest/checksum and bootstrap-attestation producers, a minimal real tar archive,
+and actual system-route registration. Timing logs and source identity remain
+explicit fixtures; this is not a full bundle build, host boot or normal-login test.
+
+The fresh-host observation failed with the actual producer's missing fields.
+Gateway cases also reproduced missing digest normalization and acceptance of a
+contradictory sha256. Matching verified bootstrap evidence now exposes both digest
+fields; missing evidence and contradictory version/digests cannot be normalized.
+
+The native host launcher also does not export build-SHA variables. The actual
+route regression reproduced build.sha=unknown. Route registration now captures
+matching release provenance once, while configured build variables retain their
+precedence. A later installed-file change cannot relabel the running process.
+The observer now consumes this actual route without an injected build SHA.
+
+Combined verification: **47/47 assertions pass across6 files, zero skips/errors**,
+including retained gateway, real two-database observation and funding/activation.
+The required inventory remains valid at71 files. All8 native TypeScript projects
+pass again; changed-file patterns report0 violations/0 warnings. Current-head
+hosted review/CI still need requalification for this correction.
