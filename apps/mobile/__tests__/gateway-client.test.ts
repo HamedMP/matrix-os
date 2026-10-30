@@ -150,6 +150,96 @@ function sourcePullRequestPayload() {
 }
 
 describe("GatewayClient", () => {
+  describe("GitHub developer access", () => {
+    const fullStatus = {
+      installed: true,
+      authenticated: true,
+      user: "octocat",
+      gitProtocol: "ssh",
+      sshStatus: "verified",
+      commitIdentity: { status: "ready", label: "Octo Cat <1+octocat@users.noreply.github.com>" },
+      ready: true,
+      errorCode: null,
+    };
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it("accepts the additive status only when every required field has a safe shape", async () => {
+      const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(fullStatus));
+      const client = new GatewayClient("http://localhost:4000", "token");
+
+      await expect(client.getGithubDeveloperStatus()).resolves.toEqual({ ok: true, status: fullStatus });
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://localhost:4000/api/github/status",
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: "Bearer token" }),
+          signal: expect.any(Object),
+        }),
+      );
+    });
+
+    it.each([
+      { installed: true, authenticated: true, user: "legacy" },
+      { ...fullStatus, sshStatus: "maybe" },
+      { ...fullStatus, commitIdentity: { status: "ready", label: "x".repeat(300) } },
+    ])("fails closed for legacy, partial, or malformed status payloads", async (payload) => {
+      jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse(payload));
+      const client = new GatewayClient("http://localhost:4000", "token");
+
+      await expect(client.getGithubDeveloperStatus()).resolves.toEqual({
+        ok: false,
+        error: "GitHub developer access unavailable",
+      });
+    });
+
+    it("does not trust a true ready flag when any readiness prerequisite is incomplete", async () => {
+      jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse({
+        ...fullStatus,
+        sshStatus: "setup_required",
+      }));
+      const client = new GatewayClient("http://localhost:4000", "token");
+
+      await expect(client.getGithubDeveloperStatus()).resolves.toEqual({
+        ok: true,
+        status: { ...fullStatus, sshStatus: "setup_required", ready: false },
+      });
+    });
+
+    it("creates a setup tab with only the fixed GitHub developer login command", async () => {
+      const workspaceId = `tws_${"a".repeat(32)}`;
+      const tabId = `tt_${"b".repeat(32)}`;
+      const fetchMock = jest.spyOn(global, "fetch")
+        .mockResolvedValueOnce(jsonResponse({ workspace: { id: workspaceId } }))
+        .mockResolvedValueOnce(jsonResponse({ tab: { id: tabId } }));
+      const client = new GatewayClient("http://localhost:4000", "token");
+
+      await expect(client.createGithubDeveloperSetupSession()).resolves.toBe(`${workspaceId}:${tabId}`);
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        `http://localhost:4000/api/terminal/workspaces/${workspaceId}/tabs`,
+        expect.objectContaining({
+          method: "POST",
+          body: expect.any(String),
+        }),
+      );
+      const body = JSON.parse(fetchMock.mock.calls[1]?.[1]?.body as string);
+      expect(body).toMatchObject({ cwd: "projects", command: ["matrix-github-developer-login"] });
+      expect(body.command).not.toContain("sh");
+    });
+
+    it("refuses to hand off an invalid terminal reference", async () => {
+      const workspaceId = `tws_${"a".repeat(32)}`;
+      jest.spyOn(global, "fetch")
+        .mockResolvedValueOnce(jsonResponse({ workspace: { id: workspaceId } }))
+        .mockResolvedValueOnce(jsonResponse({ tab: { id: "../../unsafe" } }));
+      const client = new GatewayClient("http://localhost:4000", "token");
+
+      await expect(client.createGithubDeveloperSetupSession()).resolves.toBeNull();
+    });
+  });
+
   it("initializes with disconnected state", () => {
     const client = new GatewayClient("http://localhost:4000");
     expect(client.connectionState).toBe("disconnected");
