@@ -19,6 +19,16 @@ describe("pair candidate source is checked against independent canonical records
     expect(f.controller.executionSha).not.toBe(f.controller.controllerSha);
     await expect(verifyPreviewPairCandidate(f.input, f.expected, f.source, f.config, PAIR_NOW)).resolves.toMatchObject(f.input);
   });
+  it("rejects a different full pair identity even when its abbreviated tag prefix and source match", async () => {
+    const f = fixture();
+    f.authority.pairId = f.expected.pairId.slice(0, -1) + (f.expected.pairId.endsWith("1") ? "2" : "1");
+    expect(f.authority.pairId.slice(0, 8)).toBe(f.expected.pairId.slice(0, 8));
+    await expect(verifyPreviewPairCandidate(f.input, f.expected, f.source, f.config, PAIR_NOW)).rejects.toThrow("Preview candidate is unavailable");
+  });
+  it("rejects another authority generation before preparing machines", async () => {
+    const f = fixture(); f.authority.generation += 1;
+    await expect(verifyPreviewPairCandidate(f.input, f.expected, f.source, f.config, PAIR_NOW)).rejects.toThrow("Preview candidate is unavailable");
+  });
 
   it.each(["closed", "fork", "moved head", "promoted release", "wrong host source", "wrong artifact digest",
     "failed build", "wrong receipt source", "wrong workflow", "API classified as browser", "production credentials", "stale authority", "wrong controller SHA", "wrong execution SHA", "wrong receipt workflow SHA"])(

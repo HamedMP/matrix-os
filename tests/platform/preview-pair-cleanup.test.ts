@@ -44,6 +44,21 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("pair cleanup retains cap
     expect(row.stopped_at).toBe(new Date(PAIR_NOW).toISOString());
     expect((await fixture.db.executor.selectFrom("preview_pair_fixtures").selectAll().executeTakeFirstOrThrow()).active_pair_id).toBeNull();
   });
+  it("retires both members before external effects and attempts both cleanups when the first is unavailable", async () => {
+    const claim = await stop();
+    const unavailable = await fixture.db.executor.selectFrom("preview_pair_members").select("machine_id").orderBy("generation").orderBy("role").executeTakeFirstOrThrow();
+    const retire = vi.fn(async (member: { machineId: string }) => {
+      const machines = await fixture.db.executor.selectFrom("user_machines").select(["machine_id", "status", "deleted_at", "runtime_token_epoch"]).execute();
+      expect(machines).toHaveLength(2);
+      expect(machines.every(machine => machine.status === "deleted" && machine.deleted_at !== null && machine.runtime_token_epoch === 2)).toBe(true);
+      if (member.machineId === unavailable.machine_id) throw new Error("Fixture target unavailable");
+    });
+    await cleanupPreviewPair(fixture.db, claim, { retire, proveAbsent: async member => proof(member.machineId) }, () => PAIR_NOW);
+    expect(retire).toHaveBeenCalledTimes(2);
+    const pair = await fixture.db.executor.selectFrom("preview_pairs").selectAll().executeTakeFirstOrThrow();
+    expect(pair.state).toBe("cleanup_pending"); expect(pair.stopped_at).toBeNull();
+    expect((await fixture.db.executor.selectFrom("preview_pair_fixtures").select("active_pair_id").executeTakeFirstOrThrow()).active_pair_id).toBe(claim.pairId);
+  });
   it("a stale worker performs no host effect and cannot release a newer generation", async () => {
     const claim = await stop();
     await fixture.db.executor.updateTable("preview_pairs").set({ generation: 2, revision: claim.revision + 1 }).where("pair_id", "=", claim.pairId).execute();
