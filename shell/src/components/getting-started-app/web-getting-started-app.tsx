@@ -18,6 +18,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { ShellNotificationCard } from "@/components/ShellNotificationCard";
 import { ShellNotificationPortal } from "@/components/ShellNotificationPortal";
 import type { GettingStartedDestination, GettingStartedSettingsSection } from "../onboarding/GettingStartedPopover";
+import { useGettingStartedConnections } from "../onboarding/use-getting-started-connections";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
 import { GETTING_STARTED_APP_PATH, createWebGettingStartedAppPort } from "./web-getting-started-app-port";
 
@@ -96,8 +97,22 @@ export function WebGettingStartedAppHost({
   }, [dismissToast]);
 
 
+  // Cards start each app's own sign-in here (the onboarding widget's flow); a change re-reads progress.
+  const [changeCount, setChangeCount] = useState(0);
+  const onConnectionChanged = useCallback(() => setChangeCount((count) => (count + 1) % 1_000_000), []);
+  const { connectApp, connectingService, failedServices, appsUnavailable } = useGettingStartedConnections(onConnectionChanged);
+  const connections = useMemo(
+    () => ({ connectingService, failedServices: [...failedServices], changeCount }),
+    [changeCount, connectingService, failedServices],
+  );
+
   const onAction = useCallback((action: GettingStartedAppAction) => {
     switch (action.type) {
+      case "connect":
+        // Without an app connection service on this computer, Settings explains what is possible.
+        if (appsUnavailable) onOpenSettings("integrations");
+        else connectApp(action.service);
+        return;
       case "chat":
         onOpenWork(action.prompt ? { kind: "chat", prompt: action.prompt } : { kind: "chat" });
         return;
@@ -114,7 +129,7 @@ export function WebGettingStartedAppHost({
         onOpenSupport();
         return;
     }
-  }, [onOpenSettings, onOpenSupport, onOpenWork]);
+  }, [appsUnavailable, connectApp, onOpenSettings, onOpenSupport, onOpenWork]);
 
   return (
     <GettingStartedAppProvider
@@ -126,6 +141,7 @@ export function WebGettingStartedAppHost({
       desktopIconReady={desktopIconsLoaded}
       onPlaceDesktopIcon={placeDesktopIcon}
       onEnabledChange={onEnabledChange}
+      connections={connections}
     >
       <ActionContext value={onAction}>{children}</ActionContext>
       {toasts.length > 0 ? (

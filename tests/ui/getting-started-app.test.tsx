@@ -8,6 +8,7 @@ import {
   usePublishOnboardingWidgetStatus,
   type OnboardingWidgetStatus,
 } from "../../packages/ui/src/onboarding-widget/task-requests";
+import { GettingStartedVisibilityProvider } from "../../packages/ui/src/getting-started-visibility";
 import {
   GettingStartedAppHelpMenu,
   GettingStartedAppProvider,
@@ -296,12 +297,54 @@ describe("Getting started app view", () => {
   it("maps each card to its destination", async () => {
     const { onAction } = renderApp(makePort());
     fireEvent.click(await screen.findByRole("button", { name: /Slack/ }));
-    expect(onAction).toHaveBeenLastCalledWith({ type: "settings", section: "integrations" });
+    expect(onAction).toHaveBeenLastCalledWith({ type: "connect", service: "slack" });
     // No onboarding widget is mounted here, so a starter task starts in Chat instead.
     fireEvent.click(screen.getByRole("button", { name: /Research anything/ }));
     expect(onAction).toHaveBeenLastCalledWith({ type: "chat", prompt: "Research anything" });
     fireEvent.click(screen.getByRole("button", { name: /Stuck\? Chat with us/ }));
     expect(onAction).toHaveBeenLastCalledWith({ type: "support" });
+  });
+
+  it("starts each app's own sign-in from its card instead of opening Settings", async () => {
+    const { onAction } = renderApp(makePort());
+    fireEvent.click(await screen.findByRole("button", { name: /Gmail/ }));
+    expect(onAction).toHaveBeenLastCalledWith({ type: "connect", service: "gmail" });
+    fireEvent.click(screen.getByRole("button", { name: /Google Calendar/ }));
+    expect(onAction).toHaveBeenLastCalledWith({ type: "connect", service: "google_calendar" });
+    fireEvent.click(within(screen.getByRole("region", { name: "Connect" })).getByRole("button", { name: /GitHub/ }));
+    expect(onAction).toHaveBeenLastCalledWith({ type: "connect", service: "github" });
+    // WhatsApp is a messaging channel set up in Settings, not an app sign-in.
+    fireEvent.click(screen.getByRole("button", { name: /WhatsApp/ }));
+    expect(onAction).toHaveBeenLastCalledWith({ type: "settings", section: "integrations" });
+  });
+
+  it("shows a sign-in in progress and one that did not finish on the card", async () => {
+    const port = makePort();
+    const { rerender } = renderApp(port, { connections: { connectingService: "gmail", failedServices: [], changeCount: 0 } });
+    const gmail = await screen.findByRole("button", { name: /Gmail/ });
+    expect(within(gmail).getByText("Connecting…")).toBeTruthy();
+    rerender(
+      <GettingStartedAppProvider port={port} refreshMs={25} onToast={vi.fn()} connections={{ connectingService: null, failedServices: ["google_calendar"], changeCount: 0 }}>
+        <GettingStartedAppView onAction={vi.fn()} />
+      </GettingStartedAppProvider>,
+    );
+    const calendar = await screen.findByRole("button", { name: /Google Calendar/ });
+    expect(within(calendar).getByText("Didn't connect, try again")).toBeTruthy();
+  });
+
+  it("re-reads progress as soon as a connection changes", async () => {
+    const port = makePort();
+    const { rerender } = renderApp(port, { refreshMs: 60_000, connections: { connectingService: null, failedServices: [], changeCount: 0 } });
+    await screen.findByText("0 of 12 done");
+    const reads = port.loadResults.mock.calls.length;
+    port.loadResults.mockImplementation(async () => results({ integrations: fulfilled([{ id: "c4", service: "gmail", status: "active" }]) }));
+    rerender(
+      <GettingStartedAppProvider port={port} refreshMs={60_000} onToast={vi.fn()} connections={{ connectingService: null, failedServices: [], changeCount: 1 }}>
+        <GettingStartedAppView onAction={vi.fn()} />
+      </GettingStartedAppProvider>,
+    );
+    await waitFor(() => expect(port.loadResults.mock.calls.length).toBeGreaterThan(reads));
+    expect(await screen.findByText("1 of 12 done")).toBeTruthy();
   });
 
   it("disables Invite friends until referrals exist", async () => {
@@ -661,22 +704,30 @@ describe("Getting started in Help", () => {
     await waitFor(() => expect(screen.getByTestId("availability").textContent).toBe("unavailable"));
   });
 
-  it("keeps one Getting started row in Help that opens the app, plus the surface's extra rows", async () => {
+  it("keeps the Getting started toggle in Help, with only the app summary and the surface's extras", async () => {
     vi.stubGlobal("PointerEvent", MouseEvent);
     const onOpen = vi.fn();
     const port = makePort({ progress: { awards: [{ taskId: "first-prompt", points: 50, awardedAt: "2026-10-29T10:00:00.000Z" }], total: 50 } });
     render(
-      <GettingStartedAppProvider port={port} refreshMs={25} onToast={vi.fn()} onOpen={onOpen}>
-        <GettingStartedAppHelpMenu onSupport={vi.fn()} discordIcon={<span />} extra={() => <a href="https://example.com/desktop">Get the desktop app</a>} />
-      </GettingStartedAppProvider>,
+      <GettingStartedVisibilityProvider scope="test">
+        <GettingStartedAppProvider port={port} refreshMs={25} onToast={vi.fn()} onOpen={onOpen}>
+          <GettingStartedAppHelpMenu onSupport={vi.fn()} discordIcon={<span />} zIndex={10}
+            extra={() => <a href="https://example.com/desktop">Get the desktop app</a>} />
+        </GettingStartedAppProvider>
+      </GettingStartedVisibilityProvider>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Help" }));
-    const row = await screen.findByRole("button", { name: "Getting started — 1 of 12 done, 50 points" });
-    expect(screen.getByRole("link", { name: "Get the desktop app" })).toBeTruthy();
-    expect(screen.queryByText("Research anything")).toBeNull();
-    fireEvent.click(row);
+    fireEvent.click(await screen.findByRole("button", { name: "Getting started — 1 of 12 done, 50 points" }));
+    const popover = await screen.findByRole("dialog", { name: "Getting started" });
+    expect(within(popover).getByTestId("getting-started-counter").textContent).toBe("1 of 12");
+    expect(within(popover).getByRole("link", { name: "Get the desktop app" })).toBeTruthy();
+    expect(within(popover).queryByText("Research anything")).toBeNull();
+    // A toggle: clicking outside or pressing Escape leaves it open.
+    fireEvent.keyDown(popover, { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "Getting started" })).toBeTruthy();
+    fireEvent.click(within(popover).getByRole("button", { name: /Open Getting started/ }));
     expect(onOpen).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Help" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Getting started" })).toBeNull());
   });
 });
 

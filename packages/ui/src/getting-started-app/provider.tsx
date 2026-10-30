@@ -35,6 +35,14 @@ export interface GettingStartedAppPort {
 
 export type GettingStartedAppPoints = { kind: "loading" } | { kind: "unavailable" } | { kind: "ready"; total: number };
 
+/** The surface's app sign-ins (the onboarding widget's flow): in progress, not finished, and a change counter. */
+export interface GettingStartedAppConnections {
+  connectingService: string | null;
+  failedServices: readonly string[];
+  /** Bumped whenever a connection changes anywhere; progress is read again right away. */
+  changeCount: number;
+}
+
 /** Whether this computer serves the app: still reading, yes, or a gateway that predates it (or no computer). */
 export type GettingStartedAppAvailability = "checking" | "enabled" | "unavailable";
 
@@ -56,6 +64,9 @@ export interface GettingStartedAppState {
   celebrating: readonly GettingStartedAppTaskId[];
   /** True while an award request is in flight, so the finish line waits for the last reward. */
   awarding: boolean;
+  /** Integration being signed in to from a card, and those whose sign-in did not finish. */
+  connectingService: string | null;
+  failedServices: readonly string[];
   /** A showing app view registers here; while one is, awards play in the app instead of a corner toast. */
   registerView: () => () => void;
   /** Opens the app window; null when the surface did not provide it. */
@@ -63,6 +74,7 @@ export interface GettingStartedAppState {
 }
 
 export const GETTING_STARTED_APP_REFRESH_MS = 15_000;
+const NO_SERVICES: readonly string[] = Object.freeze([]);
 const CELEBRATION_MS = 2_400;
 
 /** What saving the desktop icon did; the same values as the shells' desktop icon stores. */
@@ -81,6 +93,44 @@ function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+/** Tasks celebrating right now; each stops after CELEBRATION_MS (one timer per task, at most the twelve tasks). */
+function useCelebrations(): [readonly GettingStartedAppTaskId[], (taskId: GettingStartedAppTaskId) => void] {
+  const [celebrating, setCelebrating] = useState<readonly GettingStartedAppTaskId[]>([]);
+  const timers = useRef(new Map<GettingStartedAppTaskId, ReturnType<typeof setTimeout>>());
+  const celebrate = useCallback((taskId: GettingStartedAppTaskId) => {
+    setCelebrating((current) => (current.includes(taskId) ? current : [...current, taskId]));
+    const previous = timers.current.get(taskId);
+    if (previous) clearTimeout(previous);
+    timers.current.set(taskId, setTimeout(() => {
+      timers.current.delete(taskId);
+      setCelebrating((current) => current.filter((id) => id !== taskId));
+    }, CELEBRATION_MS));
+  }, []);
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      for (const timer of pending.values()) clearTimeout(timer);
+      pending.clear();
+    };
+  }, []);
+  return [celebrating, celebrate];
+}
+
+/** Reads again as soon as `changeCount` moves, within the provider's current lifecycle. */
+function useRefreshOnChange(
+  changeCount: number,
+  refresh: (signal: AbortSignal) => Promise<void>,
+  lifecycle: { current: AbortController | null },
+): void {
+  const last = useRef(changeCount);
+  useEffect(() => {
+    if (last.current === changeCount) return;
+    last.current = changeCount;
+    const signal = lifecycle.current?.signal;
+    if (signal && !signal.aborted) void refresh(signal);
+  }, [changeCount, lifecycle, refresh]);
+}
+
 export function GettingStartedAppProvider({
   port,
   children,
@@ -91,6 +141,7 @@ export function GettingStartedAppProvider({
   onPlaceDesktopIcon,
   onOpen,
   onEnabledChange,
+  connections,
   refreshMs = GETTING_STARTED_APP_REFRESH_MS,
 }: {
   /**
@@ -111,6 +162,8 @@ export function GettingStartedAppProvider({
   onOpen?(): void;
   /** Called when this computer starts or stops serving the app, e.g. to show its launcher entry. */
   onEnabledChange?(enabled: boolean): void;
+  /** The surface's app sign-ins; cards show their state and a change re-reads progress. */
+  connections?: GettingStartedAppConnections;
   refreshMs?: number;
 }) {
   const [enabled, setEnabled] = useState(false);
@@ -121,11 +174,9 @@ export function GettingStartedAppProvider({
   const [earned, setEarned] = useState<readonly GettingStartedAppTaskId[]>([]);
   const [points, setPoints] = useState<GettingStartedAppPoints>({ kind: "loading" });
   const [logos, setLogos] = useState<Readonly<Record<string, string>>>({});
-  const [celebrating, setCelebrating] = useState<readonly GettingStartedAppTaskId[]>([]);
+  const [celebrating, celebrate] = useCelebrations();
   const [awardsInFlight, setAwardsInFlight] = useState(0);
   const logosRequested = useRef(false);
-  // One timer per celebrating task (at most the ten tasks), cleared on unmount.
-  const celebrationTimers = useRef(new Map<GettingStartedAppTaskId, ReturnType<typeof setTimeout>>());
   // Last status seen per task this session (at most 10 entries); a task seen
   // incomplete that turns complete gets a toast, one complete on first sight does not.
   const seen = useRef(new Map<GettingStartedAppTaskId, GettingStartedAppTask["status"]>());
@@ -232,24 +283,6 @@ export function GettingStartedAppProvider({
     });
   }, []);
 
-  const celebrate = useCallback((taskId: GettingStartedAppTaskId) => {
-    setCelebrating((current) => (current.includes(taskId) ? current : [...current, taskId]));
-    const previous = celebrationTimers.current.get(taskId);
-    if (previous) clearTimeout(previous);
-    celebrationTimers.current.set(taskId, setTimeout(() => {
-      celebrationTimers.current.delete(taskId);
-      setCelebrating((current) => current.filter((id) => id !== taskId));
-    }, CELEBRATION_MS));
-  }, []);
-
-  useEffect(() => {
-    const timers = celebrationTimers.current;
-    return () => {
-      for (const timer of timers.values()) clearTimeout(timer);
-      timers.clear();
-    };
-  }, []);
-
   const loadLogos = useCallback((signal: AbortSignal) => {
     if (!port?.loadLogos || logosRequested.current) return;
     logosRequested.current = true;
@@ -337,6 +370,9 @@ export function GettingStartedAppProvider({
     }
   }, [awardDone, claimAutoOpen, loadLogos, markEarned, placeDesktopIcon, port, reportEnabled, showTotal]);
 
+  // A connection changed (a card's sign-in finished, or Settings, or another tab): read again now.
+  useRefreshOnChange(connections?.changeCount ?? 0, refresh, lifecycle);
+
   useEffect(() => {
     if (!port) return;
     const controller = new AbortController();
@@ -376,9 +412,11 @@ export function GettingStartedAppProvider({
     logos,
     celebrating,
     awarding: awardsInFlight > 0,
+    connectingService: connections?.connectingService ?? null,
+    failedServices: connections?.failedServices ?? NO_SERVICES,
     registerView,
     open: onOpen ?? null,
-  }), [enabled, availability, results, tasks, earned, connectedServices, points, logos, celebrating, awardsInFlight, registerView, onOpen]);
+  }), [enabled, availability, results, tasks, earned, connectedServices, points, logos, celebrating, awardsInFlight, connections?.connectingService, connections?.failedServices, registerView, onOpen]);
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

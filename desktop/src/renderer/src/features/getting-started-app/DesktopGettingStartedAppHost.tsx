@@ -3,16 +3,18 @@
  * state for the shell, toasts through sonner, and the tab body for the
  * `getting-started` tab kind.
  */
+import type { OnboardingWidgetEvent } from "@matrix-os/contracts";
 import {
   GettingStartedAppProvider,
   GettingStartedAppView,
+  useGetStartedConnectFailures,
   useGetStartedEnded,
   useGettingStartedApp,
   GettingStartedAppToastView,
   type GettingStartedAppAction,
   type GettingStartedAppToast,
 } from "@matrix-os/ui";
-import { useCallback, useMemo, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { invoke } from "../../lib/operator";
 import { useConnection } from "../../stores/connection";
@@ -20,6 +22,7 @@ import { useDesktopIcons } from "../../stores/desktop-icons";
 import { useUi } from "../../stores/ui";
 import { seedNewChatDraft } from "../chat/use-chat-composer-drafts";
 import { showOnboardingTab as showTab } from "../onboarding-widget/onboarding-widget-navigation";
+import { useOnboardingAppConnect } from "../onboarding-widget/use-onboarding-app-connect";
 import { openDesktopSupport } from "../support/DesktopSupportWidget";
 import { GETTING_STARTED_PATH, GETTING_STARTED_TAB, createDesktopGettingStartedAppPort } from "./desktop-getting-started-app-port";
 
@@ -27,8 +30,20 @@ function openGettingStartedTab(): void {
   showTab(GETTING_STARTED_TAB);
 }
 
-function runAction(action: GettingStartedAppAction): void {
+/** Starts an app's own sign-in from a card; null when this computer has no app connection service. */
+const ConnectContext = createContext<((service: string) => void) | null>(null);
+
+function openIntegrationsSettings(): void {
+  useUi.getState().requestSettingsSection("services");
+  showTab({ kind: "settings", title: "Settings" });
+}
+
+function runAction(action: GettingStartedAppAction, connect: ((service: string) => void) | null): void {
   switch (action.type) {
+    case "connect":
+      if (connect) connect(action.service);
+      else openIntegrationsSettings();
+      return;
     case "chat":
       if (action.prompt) seedNewChatDraft(action.prompt);
       showTab({ kind: "work", title: "Chat", workRoute: "chat", chatView: "draft" });
@@ -37,7 +52,11 @@ function runAction(action: GettingStartedAppAction): void {
       showTab({ kind: "app", slug: "app-gallery", title: "App Gallery" });
       return;
     case "settings":
-      useUi.getState().requestSettingsSection(action.section === "integrations" ? "services" : "providers");
+      if (action.section === "integrations") {
+        openIntegrationsSettings();
+        return;
+      }
+      useUi.getState().requestSettingsSection("providers");
       showTab({ kind: "settings", title: "Settings" });
       return;
     case "external":
@@ -54,10 +73,12 @@ function runAction(action: GettingStartedAppAction): void {
 /** Tab body for the `getting-started` tab kind; `visible` is false while the tab is in the background. */
 export function DesktopGettingStartedAppWindow({ visible = true }: { visible?: boolean }) {
   const state = useGettingStartedApp();
+  const connect = useContext(ConnectContext);
+  const onAction = useCallback((action: GettingStartedAppAction) => runAction(action, connect), [connect]);
   if (state && !state.enabled) {
     return <div className="flex h-full items-center justify-center p-6 text-sm text-[var(--text-secondary)]">Getting started is not available on this computer yet.</div>;
   }
-  return <GettingStartedAppView onAction={runAction} visible={visible} />;
+  return <GettingStartedAppView onAction={onAction} visible={visible} />;
 }
 
 export function DesktopGettingStartedAppHost({ children }: { children: ReactNode }) {
@@ -75,6 +96,22 @@ export function DesktopGettingStartedAppHost({ children }: { children: ReactNode
     if (result === "failed" || result === "desktop-full") console.warn("[getting-started-app] desktop icon not placed:", result);
     return result;
   }, [api]);
+  // Cards start each app's own sign-in here (the onboarding widget's flow); a finished one re-reads progress.
+  const [changeCount, setChangeCount] = useState(0);
+  const { onEvent: recordFailure, clear: clearFailure, failedServices } = useGetStartedConnectFailures();
+  const onConnectEvent = useCallback((event: OnboardingWidgetEvent) => {
+    recordFailure(event);
+    if (event.type === "connect.succeeded") setChangeCount((count) => (count + 1) % 1_000_000);
+  }, [recordFailure]);
+  const { connectApp: startConnect, connectingService, appsUnavailable } = useOnboardingAppConnect(api, onConnectEvent);
+  const connect = useCallback((service: string) => {
+    clearFailure(service);
+    startConnect(service);
+  }, [clearFailure, startConnect]);
+  const connections = useMemo(
+    () => ({ connectingService, failedServices: [...failedServices], changeCount }),
+    [changeCount, connectingService, failedServices],
+  );
   return (
     <GettingStartedAppProvider
       port={port}
@@ -84,8 +121,9 @@ export function DesktopGettingStartedAppHost({ children }: { children: ReactNode
       desktopIconReady={desktopIconsLoaded}
       onPlaceDesktopIcon={placeDesktopIcon}
       onOpen={openGettingStartedTab}
+      connections={connections}
     >
-      {children}
+      <ConnectContext value={appsUnavailable ? null : connect}>{children}</ConnectContext>
     </GettingStartedAppProvider>
   );
 }

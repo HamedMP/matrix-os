@@ -26,7 +26,7 @@ import {
   useOnboardingWidgetStatus,
   type OnboardingWidgetStatus,
 } from "../onboarding-widget/task-requests.js";
-import { gettingStartedAppAction, gettingStartedAppActionLabel, gettingStartedAppToast, type GettingStartedAppAction } from "./actions.js";
+import { gettingStartedAppAction, gettingStartedAppActionLabel, gettingStartedAppSignIn, gettingStartedAppToast, type GettingStartedAppAction } from "./actions.js";
 import { useGettingStartedApp } from "./provider.js";
 import { TaskArt } from "./task-art.js";
 
@@ -130,7 +130,10 @@ function HeroNext({ mirror, onAction }: { mirror: OnboardingWidgetStatus | null;
   if (mirror) return <WidgetMirror status={mirror} points={firstPrompt?.status === "complete" ? null : firstPrompt?.points ?? null} />;
   if (firstPrompt?.status !== "complete") return <StarterTasks points={firstPrompt?.points ?? 0} onAction={onAction} />;
   const next = gettingStartedAppNextTask(tasks);
-  if (next) return <UpNext task={next} logo={state.logos[next.id]} earned={state.earned.includes(next.id)} onAction={onAction} />;
+  if (next) {
+    return <UpNext task={next} logo={state.logos[next.id]} earned={state.earned.includes(next.id)}
+      signIn={gettingStartedAppSignIn(next.id, state.connectingService, state.failedServices)} onAction={onAction} />;
+  }
   // Nothing open, but not every check is Done: a status read failed, or a last award is landing.
   return (
     <>
@@ -258,10 +261,11 @@ function Reward({ taskId }: { taskId: GettingStartedAppTaskId }) {
   );
 }
 
-function UpNext({ task, logo, earned, onAction }: {
+function UpNext({ task, logo, earned, signIn, onAction }: {
   task: GettingStartedAppTask;
   logo: string | undefined;
   earned: boolean;
+  signIn: "connecting" | "failed" | null;
   onAction(action: GettingStartedAppAction): void;
 }) {
   const action = gettingStartedAppAction(task.id);
@@ -278,11 +282,13 @@ function UpNext({ task, logo, earned, onAction }: {
         )}
       </div>
       <h2 className="mxo-gsa__next-title">{task.title}</h2>
-      <p className="mxo-gsa__next-description">{task.description}</p>
+      <p className="mxo-gsa__next-description">
+        {signIn === "failed" ? `${task.title} didn't connect. Try again, or connect it in Settings.` : task.description}
+      </p>
       <span className="mxo-gsa__spacer" aria-hidden="true" />
       {action ? (
-        <button type="button" className="mxo-gsa__primary mxo-gsa__primary--brand" onClick={() => onAction(action)}>
-          {gettingStartedAppActionLabel(task.id)}
+        <button type="button" className="mxo-gsa__primary mxo-gsa__primary--brand" disabled={signIn === "connecting"} onClick={() => onAction(action)}>
+          {signIn === "connecting" ? "Connecting…" : signIn === "failed" ? "Try again" : gettingStartedAppActionLabel(task.id)}
         </button>
       ) : null}
     </>

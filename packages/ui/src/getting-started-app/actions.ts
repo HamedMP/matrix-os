@@ -5,6 +5,8 @@ export type GettingStartedAppAction =
   | { type: "chat"; prompt?: string }
   | { type: "app-gallery" }
   | { type: "settings"; section: "integrations" | "agents-providers" }
+  /** Starts the app's own sign-in where Getting started is, by Settings › Integrations catalog id. */
+  | { type: "connect"; service: string }
   | { type: "external"; url: string }
   | { type: "support" };
 
@@ -16,11 +18,12 @@ const ACTIONS: Record<GettingStartedAppTaskId, GettingStartedAppAction | null> =
   "build-app": { type: "app-gallery" },
   "create-agent": { type: "chat", prompt: "Create an agent that " },
   "build-memory": { type: "chat", prompt: "Here is what matters to me: " },
-  gmail: { type: "settings", section: "integrations" },
-  "google-calendar": { type: "settings", section: "integrations" },
-  slack: { type: "settings", section: "integrations" },
+  gmail: { type: "connect", service: "gmail" },
+  "google-calendar": { type: "connect", service: "google_calendar" },
+  slack: { type: "connect", service: "slack" },
+  // A messaging channel set up in Settings, not an app sign-in.
   whatsapp: { type: "settings", section: "integrations" },
-  github: { type: "settings", section: "integrations" },
+  github: { type: "connect", service: "github" },
   "ai-provider": { type: "settings", section: "agents-providers" },
   "mobile-app": { type: "external", url: GETTING_STARTED_APP_MOBILE_URL },
   // Needs referrals (GTM-529).
@@ -31,13 +34,25 @@ export function gettingStartedAppAction(id: GettingStartedAppTaskId): GettingSta
   return ACTIONS[id];
 }
 
+/** Where a card's own sign-in stands: in progress, not finished, or neither. */
+export function gettingStartedAppSignIn(
+  id: GettingStartedAppTaskId,
+  connectingService: string | null,
+  failedServices: readonly string[],
+): "connecting" | "failed" | null {
+  const action = ACTIONS[id];
+  if (action?.type !== "connect") return null;
+  if (action.service === connectingService) return "connecting";
+  return failedServices.includes(action.service) ? "failed" : null;
+}
+
 /** Button label on the hero card for a task. */
 export function gettingStartedAppActionLabel(id: GettingStartedAppTaskId): string {
   const action = ACTIONS[id];
   if (!action) return "Coming soon";
   if (action.type === "chat") return id === "first-prompt" ? "Start in chat" : "Do it in chat";
   if (action.type === "app-gallery") return "Open App Gallery";
-  if (action.type === "settings") return "Connect";
+  if (action.type === "settings" || action.type === "connect") return "Connect";
   if (action.type === "external") return "Get the app";
   return "Open";
 }

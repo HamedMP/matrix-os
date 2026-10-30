@@ -12,7 +12,7 @@ import {
 } from "@matrix-os/contracts";
 import { Check, LifeBuoy, Star } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { gettingStartedAppAction, type GettingStartedAppAction } from "./actions.js";
+import { gettingStartedAppAction, gettingStartedAppSignIn, type GettingStartedAppAction } from "./actions.js";
 import { GETTING_STARTED_APP_BRAND_VARS } from "./brand-vars.js";
 import { Hero } from "./hero.js";
 import { useGettingStartedApp, type GettingStartedAppPoints } from "./provider.js";
@@ -68,6 +68,7 @@ export function GettingStartedAppView({ onAction, visible = true }: { onAction(a
                   logo={logos[task.id]}
                   earned={earned.has(task.id)}
                   celebrating={celebrating.has(task.id)}
+                  signIn={gettingStartedAppSignIn(task.id, state.connectingService, state.failedServices)}
                   onAction={onAction}
                 />
               ))}
@@ -129,11 +130,12 @@ function PointsBadge({ points, gainedFrom }: { points: GettingStartedAppPoints; 
 }
 
 
-function TaskCard({ task, logo, earned, celebrating, onAction }: {
+function TaskCard({ task, logo, earned, celebrating, signIn, onAction }: {
   task: GettingStartedAppTask;
   logo: string | undefined;
   earned: boolean;
   celebrating: boolean;
+  signIn: "connecting" | "failed" | null;
   onAction(action: GettingStartedAppAction): void;
 }) {
   const action = gettingStartedAppAction(task.id);
@@ -147,7 +149,7 @@ function TaskCard({ task, logo, earned, celebrating, onAction }: {
     >
       <span className="mxo-gsa__card-top">
         <span className="mxo-gsa__card-icon" aria-hidden="true"><TaskArt task={task} logo={logo} /></span>
-        <TaskChip task={task} earned={earned} available={action !== null} />
+        <TaskChip task={task} earned={earned} available={action !== null} signIn={signIn} />
       </span>
       <span className="mxo-gsa__card-title">{task.title}</span>
       <span className="mxo-gsa__card-description">{task.description}</span>
@@ -159,8 +161,15 @@ function TaskCard({ task, logo, earned, celebrating, onAction }: {
  * Points until done; tasks Matrix cannot check yet keep their points and never show Done.
  * An earned task that is undone (e.g. Slack disconnected) keeps its points but offers no more.
  */
-function TaskChip({ task, earned, available }: { task: GettingStartedAppTask; earned: boolean; available: boolean }) {
+function TaskChip({ task, earned, available, signIn }: {
+  task: GettingStartedAppTask;
+  earned: boolean;
+  available: boolean;
+  signIn: "connecting" | "failed" | null;
+}) {
   if (!available) return <span className="mxo-gsa__badge mxo-gsa__badge--sm">Coming soon</span>;
+  if (task.status !== "complete" && signIn === "connecting") return <span className="mxo-gsa__badge mxo-gsa__badge--sm mxo-gsa__badge--brand">Connecting…</span>;
+  if (task.status !== "complete" && signIn === "failed") return <span className="mxo-gsa__badge mxo-gsa__badge--sm mxo-gsa__badge--gold">Didn't connect, try again</span>;
   if (task.status === "complete") {
     return (
       <span className="mxo-gsa__badge mxo-gsa__badge--sm mxo-gsa__badge--success">
