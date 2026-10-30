@@ -55,21 +55,13 @@ permissions:
 
 jobs:
 
-  pair_artifacts:
-    name: Unsigned pair ${{ matrix.platform }} ${{ matrix.arch }}
+  pair_admission:
+    name: Verify unsigned pair build request
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha != '' }}
-    environment: collaboration-preview-build
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { platform: linux, arch: x64, runner: ubuntu-latest }
-          - { platform: darwin, arch: arm64, runner: macos-latest }
-          - { platform: darwin, arch: x64, runner: macos-15-intel }
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
         with:
@@ -91,6 +83,24 @@ jobs:
             const {data:pull} = await github.rest.pulls.get({...context.repo,pull_number:Number(process.env.PAIR_PR),request:{timeout:10000}});
             validatePreviewPairBuild({pr:process.env.PAIR_PR,pairId:process.env.PAIR_ID,generation:process.env.PAIR_GENERATION,sourceSha:process.env.PAIR_SOURCE_SHA},pull,
               {repository:`${context.repo.owner}/${context.repo.repo}`,event:context.eventName,sha:context.sha,reviewedControllerSha:process.env.REVIEWED_CONTROLLER_SHA});
+
+  pair_artifacts:
+    needs: [pair_admission]
+    name: Unsigned pair ${{ matrix.platform }} ${{ matrix.arch }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha != '' }}
+    environment: collaboration-preview-build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux, arch: x64, runner: ubuntu-latest }
+          - { platform: darwin, arch: arm64, runner: macos-latest }
+          - { platform: darwin, arch: x64, runner: macos-15-intel }
+    steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.candidate_sha }}
@@ -113,12 +123,6 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm --filter desktop build
-      - name: Verify built checkout independently
-        env:
-          PAIR_SOURCE_SHA: ${{ inputs.candidate_sha }}
-        shell: bash
-        run: |
-          node --input-type=module -e 'import {readBuildSource} from "./controller/scripts/release/build-source.mjs"; readBuildSource(process.cwd()+"/candidate",process.env.PAIR_SOURCE_SHA);'
       - name: Package unsigned portable app
         working-directory: candidate/desktop
         env:
@@ -137,20 +141,67 @@ jobs:
             pnpm exec electron-builder --linux --dir --x64 --publish never
             tar -czf "$RUNNER_TEMP/preview-pair-app.tar.gz" -C dist/linux-unpacked .
           fi
-      - name: Record source and target receipt
-        env:
-          PAIR_SOURCE_SHA: ${{ inputs.candidate_sha }}
-          PAIR_PLATFORM: ${{ matrix.platform }}
-          PAIR_ARCH: ${{ matrix.arch }}
-        shell: bash
-        run: |
-          node --input-type=module -e 'import {writeFile} from "node:fs/promises"; await writeFile(process.env.RUNNER_TEMP+"/preview-pair-source.json",JSON.stringify({schemaVersion:1,repository:process.env.GITHUB_REPOSITORY,runId:Number(process.env.GITHUB_RUN_ID),workflowSha:process.env.GITHUB_SHA,sourceSha:process.env.PAIR_SOURCE_SHA,platform:process.env.PAIR_PLATFORM,arch:process.env.PAIR_ARCH}));'
       - uses: actions/upload-artifact@v6
         with:
           name: preview-pair-desktop-${{ inputs.candidate_sha }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
             ${{ runner.temp }}/preview-pair-app.tar.gz
-            ${{ runner.temp }}/preview-pair-source.json
+          if-no-files-found: error
+          retention-days: 4
+
+  pair_provenance:
+    name: Verify pair artifact provenance on a fresh runner
+    needs: [pair_admission, pair_artifacts]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+      - name: Verify reviewed controller and exact open PR
+        uses: actions/github-script@v8
+        env:
+          PAIR_PR: ${{ inputs.pair_pr }}
+          PAIR_ID: ${{ inputs.pair_id }}
+          PAIR_GENERATION: ${{ inputs.pair_generation }}
+          PAIR_SOURCE_SHA: ${{ inputs.candidate_sha }}
+          REVIEWED_CONTROLLER_SHA: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
+        with:
+          script: |
+            const {validatePreviewPairBuild} = await import(`${process.env.GITHUB_WORKSPACE}/controller/scripts/preview-pair/build-request.mjs`);
+            if (!/^[1-9][0-9]{0,8}$/.test(process.env.PAIR_PR)) throw new Error('Invalid pair request');
+            const {data:pull} = await github.rest.pulls.get({...context.repo,pull_number:Number(process.env.PAIR_PR),request:{timeout:10000}});
+            validatePreviewPairBuild({pr:process.env.PAIR_PR,pairId:process.env.PAIR_ID,generation:process.env.PAIR_GENERATION,sourceSha:process.env.PAIR_SOURCE_SHA},pull,
+              {repository:`${context.repo.owner}/${context.repo.repo}`,event:context.eventName,sha:context.sha,reviewedControllerSha:process.env.REVIEWED_CONTROLLER_SHA});
+      - name: Record trusted source and artifact receipts
+        uses: actions/github-script@v8
+        env:
+          PAIR_PR: ${{ inputs.pair_pr }}
+          PAIR_ID: ${{ inputs.pair_id }}
+          PAIR_GENERATION: ${{ inputs.pair_generation }}
+          PAIR_SOURCE_SHA: ${{ inputs.candidate_sha }}
+          REVIEWED_CONTROLLER_SHA: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
+        with:
+          script: |
+            const {createPreviewPairBuildReceipts}=await import(`${process.env.GITHUB_WORKSPACE}/controller/scripts/preview-pair/build-request.mjs`);
+            const {data:pull}=await github.rest.pulls.get({...context.repo,pull_number:Number(process.env.PAIR_PR),request:{timeout:10000}});
+            const {data:page}=await github.rest.actions.listWorkflowRunArtifacts({...context.repo,run_id:context.runId,per_page:17,request:{timeout:10000}});
+            if(page.total_count!==page.artifacts.length||page.total_count>16) throw new Error('Preview artifacts unavailable');
+            const receipts=createPreviewPairBuildReceipts({pr:process.env.PAIR_PR,pairId:process.env.PAIR_ID,generation:process.env.PAIR_GENERATION,sourceSha:process.env.PAIR_SOURCE_SHA},pull,
+              {repository:`${context.repo.owner}/${context.repo.repo}`,event:context.eventName,sha:context.sha,reviewedControllerSha:process.env.REVIEWED_CONTROLLER_SHA,runId:context.runId},page.artifacts);
+            const fs=await import('node:fs/promises');
+            await fs.mkdir(`${process.env.RUNNER_TEMP}/pair-receipts`,{recursive:true});
+            for(const receipt of receipts) await fs.writeFile(`${process.env.RUNNER_TEMP}/pair-receipts/${receipt.artifactId}.json`,JSON.stringify(receipt),{flag:'wx'});
+      - uses: actions/upload-artifact@v6
+        with:
+          name: preview-pair-source-receipts
+          path: ${{ runner.temp }}/pair-receipts/*.json
           if-no-files-found: error
           retention-days: 4
 
