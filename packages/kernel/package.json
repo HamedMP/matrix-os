@@ -43,7 +43,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.2.3",
     "@types/turndown": "^5.0.6",
-    "drizzle-kit": "^0.31.9",
+    "drizzle-kit": "^0.31.11",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
