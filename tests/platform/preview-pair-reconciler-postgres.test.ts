@@ -10,7 +10,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("durable pair orchestrati
   beforeEach(async () => { fixture = await createSeededPreviewPair(); }, 30_000);
   afterEach(async () => { await fixture?.destroy(); });
   function setup(at = PAIR_NOW) {
-    const activate = vi.fn(async () => false);
+    const activate = vi.fn<Parameters<typeof createPreviewPairReconciler>[0]["activate"]>(async () => false);
     const inspectRequest = vi.fn(async () => ({ open: true, requested: true, sourceSha: fixture.pair.source_sha }));
     const reconciler = createPreviewPairReconciler({ db: fixture.db, config: fixture.config, prepare: fixture.prepare,
       verifyFixtures: async () => true, activate, inspectRequest, readiness: previewPairReadinessAdapters(fixture),
@@ -25,6 +25,32 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("durable pair orchestrati
     expect(row.state).toBe("preparing"); expect(row.claim_id).toBeNull();
     expect(Date.parse(row.next_attempt_at!)).toBeGreaterThan(PAIR_NOW);
     expect(activate).toHaveBeenCalledTimes(1);
+  });
+  it("a bounded activation timeout preserves pending provisioning and resumes on a later pass", async () => {
+    const { reconciler, activate } = setup();
+    const entered = Promise.withResolvers<void>();
+    let activationSignal: AbortSignal | undefined;
+    activate.mockImplementation(async (_context, _claim, signal) => {
+      activationSignal = signal;
+      entered.resolve();
+      return new Promise<boolean>(() => undefined);
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let row: Awaited<ReturnType<typeof reconciler.run>>;
+    try {
+      const running = reconciler.run(fixture.pair.pair_id, 1, 1);
+      await entered.promise;
+      await vi.advanceTimersByTimeAsync(10_001);
+      row = await running;
+    } finally { vi.useRealTimers(); }
+    expect(activationSignal?.aborted).toBe(true);
+    expect(row!.state).toBe("preparing");
+    expect(row!.claim_id).toBeNull();
+    expect(row!.failure_code).toBeNull();
+    expect(Date.parse(row!.next_attempt_at!)).toBe(PAIR_NOW + 15_000);
+    activate.mockResolvedValue(false);
+    expect((await reconciler.run(row!.pair_id, row!.generation, row!.revision)).state).toBe("preparing");
+    expect(activate).toHaveBeenCalledTimes(2);
   });
   it("successful infrastructure activation is followed by actual canonical readiness", async () => {
     const { reconciler, activate } = setup();

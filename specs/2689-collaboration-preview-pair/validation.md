@@ -137,3 +137,12 @@ The unchanged verification run is recorded separately below when complete.
 Final API review verification: **30/30 passed across4 files**, zero skipped, on
 fresh local Postgres; Platform TypeScript passes. All four new fault assertions
 are included in that run. No assertion or timeout was relaxed.
+
+### Bounded provisioning recovery (controller review)
+
+The real-Postgres orchestration regression advanced the actual10s operation timer
+and failed because the pair became `failed`. Activation deadline exhaustion now
+releases the fenced claim and schedules a15s continuation without claiming
+readiness or discarding durable jobs. Non-timeout activation errors retain their
+failure path. All **8/8 orchestration cases pass**, zero skipped; provider polling
+and cancellation are qualified separately in the dependent dispatcher layer.
