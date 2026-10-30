@@ -1,4 +1,5 @@
 import { BotToolDisplaySchema } from "#bots/tool-display";
+import {BotRoutineProposalSchema,BotRoutineToolControlSchema} from "#bots/routines";
 import { z } from "zod/v4";
 import { SharedBrowserActionSchema } from "#shared-browser";
 import { canonicalBoundedText, canonicalEncodedByteLength, canonicalOwnerRelativePath, canonicalReferenceId } from "#canonical-chat-primitives";
@@ -26,6 +27,8 @@ const textEncoder = new TextEncoder();
 
 /** M1 capabilities. Later milestones add handoffs and computer actions. */
 export const BotToolCapabilitySchema = z.enum([
+  "routine.propose",
+  "routine.control",
   "agent.task",
   "browser.action",
   "integration.inventory",
@@ -50,6 +53,8 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
 
 const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
   capability("browser.action", SharedBrowserActionSchema),
+  capability("routine.propose",BotRoutineProposalSchema),
+  capability("routine.control",BotRoutineToolControlSchema),
   capability("agent.task", z.object({ prompt: canonicalBoundedText(16 * 1024, 32 * 1024) }).strict()),
   capability("jev.inbox", JevInboxInputSchema),
   capability("integration.inventory", z.object({ service: BotIntegrationServiceSchema.optional() }).strict()),

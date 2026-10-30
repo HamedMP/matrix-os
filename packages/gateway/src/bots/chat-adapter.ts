@@ -92,7 +92,8 @@ const FAILURES: Partial<Record<NonNullable<BotTurnResult["blockedReason"]>, { co
   budget_exhausted: { code: "run_failed", message: "The bot reached its action limit for this task." },
 };
 
-function completion(result: BotTurnResult): CanonicalProviderRunEvent {
+function completion(result: BotTurnResult,scheduled=false): CanonicalProviderRunEvent {
+  if(scheduled && result.status==="uncertain") return {type:"run.completed",outcome:"failed",error:{code:"run_failed",safeMessage:"This routine's result is unknown. Review it before running it again.",retryable:false,recoveryActions:[]}};
   if (result.status === "completed" || result.status === "waiting_person") return { type: "run.completed", outcome: "completed" };
   if (result.status === "cancelled") return { type: "run.completed", outcome: "aborted" };
   const failure = result.inputUnavailable ? { code: "resource_unavailable" as const, message: BOT_ATTACHMENT_UNAVAILABLE_MESSAGE } : (result.blockedReason && FAILURES[result.blockedReason])
@@ -111,6 +112,7 @@ function messageText(parts: readonly { type: string; text?: string }[]): string 
 export function createMatrixBotChatProviderAdapter(options: {
   orchestrator: Pick<BotTaskOrchestrator, "start" | "steer" | "cancel" | "abandon">;
   stopRuntime(runtimeHandle: string): Promise<void>;
+  routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"prepareRun"|"completeRun">;
 }): CanonicalChatProviderAdapter<BotChatState> {
   return {
     driverKind: "matrix_bot",
@@ -120,16 +122,20 @@ export function createMatrixBotChatProviderAdapter(options: {
     async *start(inputValue) {
       const input = parseCanonicalProviderRunInput(inputValue);
       if (input.owner.type !== "personal") throw new Error("Bots run only for a personal owner");
+      const scheduled=await options.routines?.prepareRun(input);
       const handle = options.orchestrator.start({
         ownerId: input.owner.ownerId, chatId: input.chatId, runId: input.runId,
-        selection: input.selection, text: messageText(input.parts), parts: input.parts, signal: input.signal,
+        selection: scheduled?.selection??input.selection, text: scheduled?.text??messageText(input.parts), parts: scheduled ? [{type:"text",text:scheduled.text}] : input.parts, signal: input.signal,
+        ...(scheduled ? {backgroundTaskId:scheduled.backgroundTaskId} : {}),
       });
       let result: BotTurnResult;
       let drained = false;
       let activities = 0;
+      let ownsScheduledTask = false;
       try {
         for await (const item of handle.events) {
           if (item.kind === "state") {
+            if(scheduled && item.state.taskId===scheduled.backgroundTaskId) ownsScheduledTask=true;
             yield CanonicalProviderRunEventSchema.parse({ type: "state.updated", state: BotChatStateSchema.parse(item.state) });
             continue;
           }
@@ -154,10 +160,11 @@ export function createMatrixBotChatProviderAdapter(options: {
         if (!drained) await options.orchestrator.cancel(input.runId);
         result = await handle.result.catch((error: unknown) => {
           console.warn("[bots] bot turn failed:", error instanceof Error ? error.name : "UnknownError");
-          return { status: "failed" as const };
+          return { status: scheduled ? "uncertain" as const : "failed" as const };
         });
+        if(scheduled && ownsScheduledTask) {const finalized=await options.routines!.completeRun(input,result);if(finalized) result=finalized;}
       }
-      yield CanonicalProviderRunEventSchema.parse(completion(result));
+      yield CanonicalProviderRunEventSchema.parse(completion(result,Boolean(scheduled)));
     },
     async steer(input) {
       const text = messageText(input.parts) || input.prompt;
