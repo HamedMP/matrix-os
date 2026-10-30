@@ -21,10 +21,12 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
   const [error, setError] = useState(false);
   const [complete, setComplete] = useState(false);
   const flight = useRef(false);
+  const installing = useRef(false);
   const active = useRef<AbortController | null>(null);
   const bound = useMemo(() => ({ api: api?.forRuntime(runtimeSlot) ?? null, generation: captureRuntimeGeneration() }), [api, runtimeSlot]);
   useEffect(() => {
     flight.current = false;
+    installing.current = false;
     setPlan(null);
     setBusy(false);
     return () => { active.current?.abort(); };
@@ -36,8 +38,9 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
       snapshot: snapshot.status === "fulfilled" ? snapshot.value : undefined };
   }, []);
   const perform = useCallback(async (install: boolean) => {
-    if (!bound.api || flight.current) return;
+    if (!bound.api || (flight.current && (install || installing.current))) return;
     flight.current = true;
+    installing.current = install;
     active.current?.abort();
     const controller = new AbortController();
     active.current = controller;
@@ -77,7 +80,7 @@ export function useCompatibilityRepair(api: ApiClient | null, runtimeSlot: strin
         setProgress("");
       }
     } finally {
-      if (active.current === controller) flight.current = false;
+      if (active.current === controller) { flight.current = false; installing.current = false; }
       if (current()) { setLoading(false); setBusy(false); }
     }
   }, [api, bound, noticeKey, readLocal, runtimeSlot]);

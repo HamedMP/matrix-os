@@ -70,6 +70,25 @@ describe("released Desktop and cloud content alignment", () => {
     await waitFor(() => expect(get.mock.calls.filter(([path]) => path === "/api/system/update")).toHaveLength(2));
     expect(screen.queryByRole("dialog", { name: "Update Matrix OS" })).toBeNull();
   });
+  it("checks a newer release pair even when the previous channel check is still pending", async () => {
+    let currentInfo = info;
+    let finishFirstCheck!: (value: unknown) => void;
+    let checks = 0;
+    const get = vi.fn(async (path: string) => {
+      if (path === "/api/system/info") return currentInfo;
+      if (++checks === 1) return new Promise((resolve) => { finishFirstCheck = resolve; });
+      return { channel: "dev", latest: { version: "v2026.09.10-1205" }, updateAvailable: true };
+    });
+    useConnection.setState({ api: { get, forRuntime() { return this; } } as unknown as ApiClient });
+    render(<RuntimeCompatibilityGate><div>Workspace</div></RuntimeCompatibilityGate>);
+    await waitFor(() => expect(checks).toBe(1));
+    currentInfo = { ...info, build: { sha: "d".repeat(40) } };
+    act(() => window.dispatchEvent(new Event("matrix:runtime-reconnected")));
+    await waitFor(() => expect(get.mock.calls.filter(([path]) => path === "/api/system/info")).toHaveLength(3));
+    await waitFor(() => expect(checks).toBe(2));
+    await act(async () => finishFirstCheck({ channel: "dev", latest: { version: info.version }, updateAvailable: false }));
+    expect(await screen.findByRole("dialog", { name: "Update Matrix OS" })).toBeTruthy();
+  });
   it("opens the real gate for a VPS response whose build sha is unknown", async () => {
     vi.stubGlobal("operator", { invoke: vi.fn(async (channel: string) => {
       if (channel === "app:get-version") return { version: "0.1.0",
