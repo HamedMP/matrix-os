@@ -146,3 +146,17 @@ releases the fenced claim and schedules a15s continuation without claiming
 readiness or discarding durable jobs. Non-timeout activation errors retain their
 failure path. All **8/8 orchestration cases pass**, zero skipped; provider polling
 and cancellation are qualified separately in the dependent dispatcher layer.
+### Protected desktop packaging
+
+The unsigned pair path in the existing desktop build workflow validates the
+reviewed controller SHA and same-repository open PR head before candidate checkout.
+Three portable targets (macOS arm64/x64, Linux x64) build with read-only repository
+authority and no signing/operator secrets. Source and target receipt ship beside
+the archive. Normal signing and release paths retain their tests.
+
+Real Git checkout/source tests and actual workflow/helper checks: **55/55 passed
+across4 files**. The initial sandbox Git EPERM and missing-module collection failures
+are not regression red evidence. New build-context tests first rejected candidate
+execution; the retained real-Git producer now embeds the actual checkout while
+keeping controller execution separate. No native artifact build or workflow dispatch
+was performed, and no packaged launch is claimed.
