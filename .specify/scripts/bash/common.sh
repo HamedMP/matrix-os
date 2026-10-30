@@ -37,7 +37,7 @@ get_current_branch() {
         for dir in "$specs_dir"/*; do
             if [[ -d "$dir" ]]; then
                 local dirname=$(basename "$dir")
-                if [[ "$dirname" =~ ^([0-9]{3})- ]]; then
+                if [[ "$dirname" =~ ^([0-9]{3,})- ]]; then
                     local number=${BASH_REMATCH[1]}
                     number=$((10#$number))
                     if [[ "$number" -gt "$highest" ]]; then
@@ -72,7 +72,12 @@ check_feature_branch() {
         return 0
     fi
 
-    if [[ ! "$branch" =~ ^[0-9]{3}- ]]; then
+    # A validated directory selection is independent of a stack branch's name.
+    if [[ "${FEATURE_SELECTION_EXPLICIT:-false}" == "true" ]]; then
+        return 0
+    fi
+
+    if [[ ! "$branch" =~ ^[0-9]{3,}- ]]; then
         echo "ERROR: Not on a feature branch. Current branch: $branch" >&2
         echo "Feature branches should be named like: 001-feature-name" >&2
         return 1
@@ -91,7 +96,7 @@ find_feature_dir_by_prefix() {
     local specs_dir="$repo_root/specs"
 
     # Extract numeric prefix from branch (e.g., "004" from "004-whatever")
-    if [[ ! "$branch_name" =~ ^([0-9]{3})- ]]; then
+    if [[ ! "$branch_name" =~ ^([0-9]{3,})- ]]; then
         # If branch doesn't have numeric prefix, fall back to exact match
         echo "$specs_dir/$branch_name"
         return
@@ -120,8 +125,41 @@ find_feature_dir_by_prefix() {
         # Multiple matches - this shouldn't happen with proper naming convention
         echo "ERROR: Multiple spec directories found with prefix '$prefix': ${matches[*]}" >&2
         echo "Please ensure only one spec directory exists per numeric prefix." >&2
-        echo "$specs_dir/$branch_name"  # Return something to avoid breaking the script
+        return 1
     fi
+}
+
+# Exit 3 means no explicit selection; malformed selections must never fall back.
+resolve_specified_feature_dir() {
+    python3 - "$1" <<'PY'
+import json, os, sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+metadata = root / ".specify" / "feature.json"
+value = os.environ.get("SPECIFY_FEATURE_DIRECTORY")
+try:
+    if not value:
+        if not metadata.exists():
+            sys.exit(3)
+        if metadata.is_symlink() or metadata.stat().st_size > 65536:
+            raise ValueError("metadata")
+        value = json.loads(metadata.read_text())["feature_directory"]
+    if not isinstance(value, str) or not value or len(value) > 4096:
+        raise ValueError("directory")
+    if any(char in value for char in ("\0", "\n", "\r")) or ".." in Path(value).parts:
+        raise ValueError("directory")
+    specs = (root / "specs").resolve()
+    selected = (root / value).resolve()
+    if not specs.is_relative_to(root) or selected == specs or not selected.is_relative_to(specs):
+        raise ValueError("boundary")
+    if not selected.is_dir() or not (selected / "spec.md").is_file():
+        raise ValueError("missing specification")
+except (OSError, ValueError, TypeError, KeyError):
+    print("ERROR: Invalid feature directory; select an existing specification inside specs/", file=sys.stderr)
+    sys.exit(1)
+print(selected)
+PY
 }
 
 get_feature_paths() {
@@ -133,22 +171,24 @@ get_feature_paths() {
         has_git_repo="true"
     fi
 
-    # Use prefix-based lookup to support multiple branches per spec
-    local feature_dir=$(find_feature_dir_by_prefix "$repo_root" "$current_branch")
+    local feature_dir selection_status=0 explicit=false
+    feature_dir=$(resolve_specified_feature_dir "$repo_root") || selection_status=$?
+    if [[ "$selection_status" == 0 ]]; then
+        explicit=true
+    elif [[ "$selection_status" == 3 ]]; then
+        feature_dir=$(find_feature_dir_by_prefix "$repo_root" "$current_branch") || return 1
+    else
+        return "$selection_status"
+    fi
 
-    cat <<EOF
-REPO_ROOT='$repo_root'
-CURRENT_BRANCH='$current_branch'
-HAS_GIT='$has_git_repo'
-FEATURE_DIR='$feature_dir'
-FEATURE_SPEC='$feature_dir/spec.md'
-IMPL_PLAN='$feature_dir/plan.md'
-TASKS='$feature_dir/tasks.md'
-RESEARCH='$feature_dir/research.md'
-DATA_MODEL='$feature_dir/data-model.md'
-QUICKSTART='$feature_dir/quickstart.md'
-CONTRACTS_DIR='$feature_dir/contracts'
-EOF
+    # Callers evaluate these assignments; quote values rather than executable text.
+    printf '%s=%q\n' \
+        REPO_ROOT "$repo_root" CURRENT_BRANCH "$current_branch" HAS_GIT "$has_git_repo" \
+        FEATURE_SELECTION_EXPLICIT "$explicit" FEATURE_DIR "$feature_dir" \
+        FEATURE_SPEC "$feature_dir/spec.md" IMPL_PLAN "$feature_dir/plan.md" \
+        TASKS "$feature_dir/tasks.md" RESEARCH "$feature_dir/research.md" \
+        DATA_MODEL "$feature_dir/data-model.md" QUICKSTART "$feature_dir/quickstart.md" \
+        CONTRACTS_DIR "$feature_dir/contracts"
 }
 
 check_file() { [[ -f "$1" ]] && echo "  ✓ $2" || echo "  ✗ $2"; }
