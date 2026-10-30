@@ -36,15 +36,16 @@ export class PreviewPairConfigurationError extends Error {
 }
 export type PreviewPairFixture = z.infer<typeof Fixture>;
 export type EnabledPreviewPairConfig = z.infer<typeof Config> & {
-  enabled: true; maxActivePairs: number; maxQueued: number; maxLifetimeMs: number;
+  enabled: true; admissionEnabled: boolean; maxActivePairs: number; maxQueued: number; maxLifetimeMs: number;
 };
 export type PreviewPairConfig = { enabled: false } | EnabledPreviewPairConfig;
 
 /** Config is an activation prerequisite, not proof that live bindings match it. */
 export function loadPreviewPairConfig(env: NodeJS.ProcessEnv): PreviewPairConfig {
   const flag = env.MATRIX_PREVIEW_PAIR_ENABLED;
-  if (!flag || flag === "false") return { enabled: false };
-  if (flag !== "true") throw new PreviewPairConfigurationError();
+  const maintenance = env.MATRIX_PREVIEW_PAIR_MAINTENANCE_ENABLED;
+  if ([flag, maintenance].some(value => value && value !== "true" && value !== "false")) throw new PreviewPairConfigurationError();
+  if (flag !== "true" && maintenance !== "true") return { enabled: false };
   const raw = env.MATRIX_PREVIEW_PAIR_FIXTURES ?? "";
   if (raw.length > 64 * 1_024 || new TextEncoder().encode(raw).byteLength > 64 * 1_024) throw new PreviewPairConfigurationError();
   let fixtures: unknown;
@@ -63,6 +64,6 @@ export function loadPreviewPairConfig(env: NodeJS.ProcessEnv): PreviewPairConfig
     fixtures,
   });
   if (!parsed.success) throw new PreviewPairConfigurationError();
-  return { ...parsed.data, enabled: true, maxActivePairs: parsed.data.fixtures.length,
+  return { ...parsed.data, enabled: true, admissionEnabled: flag === "true", maxActivePairs: parsed.data.fixtures.length,
     maxQueued: 32, maxLifetimeMs: PREVIEW_PAIR_MAX_LIFETIME_MS };
 }
