@@ -420,6 +420,12 @@ heads must still be checked rather than inferred from the local runs.
 
 ### Retirement review: preserve ordinary customer names
 
+The required cohort additionally reported the new retirement suite missing after
+the earlier ordering failure was fixed. Its exact manifest-drift failure was
+reproduced, then the suite was registered in this owning layer. No discovery or
+non-skipping qualification guard was relaxed; the five actual retirement cases
+remain part of the required database lane.
+
 Greptile found that the broad cp-prefix check classified legal customer handles
 such as cp-alice as managed pairs. The actual production-composition regression
 failed before correction. Recognition now uses the complete reserved pair pattern;
