@@ -345,3 +345,15 @@ All **8 native typecheck projects pass** on the integrated source. Pattern scan:
 `main.ts`; new route logic stays in focused modules. T015/T016/T033 remain open
 until actual observation, funding, complete retirement and protected automation
 are composed. No production shell/Electron build or live evidence claimed here.
+
+### Host updater review: quiet passive polling
+
+The actual Bash poller regression failed first by reaching a channel that paired
+metadata intentionally rejects. Passive polling is extracted from the large sync
+agent into the existing verified-metadata library before adding its pair policy.
+**22/22 actual Bash cases pass across2 files**, zero skipped, including all17
+retained explicit-request/metadata trust assertions. Both shell files pass bash -n.
+Five policy cases cover the verified pair, ordinary Preview, wrong slot, wrong
+generation and missing marker. The extraction retains the harness boundary marker;
+no existing assertion was changed. Initial extraction/harness failures were fixed
+and are not counted as the intended regression. No host restart or live boot claimed.

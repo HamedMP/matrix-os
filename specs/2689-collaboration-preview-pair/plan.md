@@ -210,3 +210,8 @@ mounting the pair metadata policy, containing rather than growing the entrypoint
 Pair behavior stays in focused modules. Subsequent controller startup remains a
 small composition call with its own shutdown ownership; unrelated route families
 are left to later focused extraction rather than moving them with feature logic.
+
+The2057-line sync agent's passive polling function is extracted unchanged into
+the existing focused `matrix-update-manifest` library before adding paired-host
+policy there. Explicit update preparation/apply remain in their current paths;
+retained Bash trust tests exercise them after the extraction.
