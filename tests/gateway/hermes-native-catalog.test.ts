@@ -271,3 +271,8 @@ it.each(['openai-api','anthropic','openrouter'])('projects only fresh Hermes nat
   expect(projectHermesNativeCatalog(snapshot, now).profiles).toEqual([expect.objectContaining({ providerId: provider, models: [{ id: `${provider}:native-model`, displayName: 'native-model', enabled: true }] })]);
   expect(projectHermesNativeCatalog(snapshot, new Date(+now + 5000)).profiles).toEqual([]);
 });
+
+it('makes explicitly observed inactive Hermes Claude OAuth selectable alongside a coherent default',()=>{
+ const snapshot=normalizeHermesRuntimeSnapshot({observedAt:+now,status:{gateway_running:true},options:{provider:'openai-codex',model:'gpt-5.6-sol',providers:[{slug:'openai-codex',authenticated:true,is_user_defined:false,models:['gpt-5.6-sol']},{slug:'anthropic',name:'Anthropic',authenticated:true,is_user_defined:false,auth_type:'oauth',models:['claude-fable-5']}]}});
+ expect(projectHermesNativeCatalog(snapshot,now).profiles.filter(row=>row.providerId === 'anthropic')).toMatchObject([{harness:'hermes',providerId:'anthropic',defaultModelId:null,models:[{id:'anthropic:claude-fable-5',enabled:true}]}]);
+});

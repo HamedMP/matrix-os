@@ -196,3 +196,23 @@ describe("Settings status for Claude on the owner's Anthropic key", () => {
   });
 });
 }
+
+it.each(['openai', 'anthropic'] as const)('opens and resumes the exact Hermes %s Terminal login', async providerId => {
+ const option = {id: `${providerId}_terminal`, providerId, authKind: 'subscription' as const, method: 'terminal' as const, billingKind: 'subscription' as const, executionKind: 'native' as const, availability: 'available' as const};
+ const operation = {id: 'hermes-terminal', harnessInstanceId: 'hermes', kind: 'login', state: 'running', expiresAt: new Date(Date.now()+600000).toISOString(), terminalSessionId: 'tws_1:tt_1', deviceCode: null, authorizationUrl: null, safeFailure: null, connectionOption: option};
+ const client = {capabilities: vi.fn(), start: vi.fn(), get: vi.fn().mockResolvedValue(operation), cancel: vi.fn(), submitKey: vi.fn(), logs: vi.fn(), startConnection: vi.fn().mockResolvedValue(operation)} as unknown as ProviderWorkflowClient;
+ const open = vi.fn();
+ render(<HarnessWorkflowPanel harness={{id:'hermes',harness:'hermes',displayName:'Hermes',installState:'installed',authState:'unauthenticated'}} capability={{...capability,harnessInstanceId:'hermes',harness:'hermes',displayName:'Hermes',loginMethods:['terminal'],apiKeyProviders:[],connectionOptions:[option]}} client={client} disabled={false} onRefresh={vi.fn()} onOpenTerminal={open}/>);
+ fireEvent.click(screen.getByRole('button',{name:new RegExp(`${providerId === 'openai' ? 'ChatGPT' : 'Claude'} account · Log in in Terminal`)}));
+ await waitFor(()=>expect(open).toHaveBeenCalledWith('tws_1:tt_1'));
+ expect(client.startConnection).toHaveBeenCalledWith(expect.objectContaining({harnessInstanceId:'hermes',optionId:`${providerId}_terminal`}),expect.any(AbortSignal));
+ fireEvent.click(screen.getByRole('button',{name:'Continue in Terminal'}));
+ await waitFor(()=>expect(open).toHaveBeenCalledTimes(2));
+});
+it('keeps Hermes API-key connection available where the current surface cannot open a Terminal',()=>{
+ const terminal={id:'openai_terminal',providerId:'openai' as const,authKind:'subscription' as const,method:'terminal' as const,billingKind:'subscription' as const,executionKind:'native' as const,availability:'available' as const};
+ const key={id:'openai_api_key',providerId:'openai' as const,authKind:'api_key' as const,billingKind:'api_key' as const,executionKind:'native' as const,availability:'available' as const};
+ const client={capabilities:vi.fn(),start:vi.fn(),get:vi.fn(),cancel:vi.fn(),submitKey:vi.fn(),logs:vi.fn(),startConnection:vi.fn(),submitConnectionKey:vi.fn()} as unknown as ProviderWorkflowClient;
+ render(<HarnessWorkflowPanel harness={{id:'hermes',harness:'hermes',displayName:'Hermes',installState:'installed',authState:'unauthenticated'}} capability={{...capability,harnessInstanceId:'hermes',harness:'hermes',displayName:'Hermes',loginMethods:['terminal'],apiKeyProviders:['openai'],connectionOptions:[terminal,key]}} client={client} disabled={false} terminalAvailable={false} onRefresh={vi.fn()} onOpenTerminal={vi.fn()}/>);
+ expect(screen.queryByRole('button',{name:/ChatGPT account · Log in in Terminal/})).not.toBeInTheDocument();expect(screen.getByRole('button',{name:/OpenAI API key/})).toBeEnabled();
+});
