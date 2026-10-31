@@ -1,3 +1,4 @@
+import { createNativeTerminalHosts } from "./native-host-lifecycle.js";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod/v4";
@@ -97,6 +98,7 @@ async function main(): Promise<void> {
 
   const runtime = new TerminalRuntime({
     store: new TerminalWorkspaceStore({ homePath }),
+    nativeHosts: createNativeTerminalHosts({ homePath, runtimeRoot: terminalRuntimeRoot }),
     zellij,
     ...resolveTerminalRuntimeLimits(process.env),
   });

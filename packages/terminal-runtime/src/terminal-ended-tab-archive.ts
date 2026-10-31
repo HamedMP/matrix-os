@@ -55,6 +55,8 @@ export async function archiveEndedTerminalTab(
   const workspace = await store.getRuntimeWorkspace(ref.workspaceId);
   const tab = workspace?.tabs[ref.tabId];
   if (!workspace || !tab) throw new TerminalRuntimeError("not_found");
+  // Helper inventory/exit does not prove native workload completion. Preserve history.
+  if (tab.nativeHost) throw new TerminalRuntimeError("unavailable");
   if (tab.agent?.providerId !== input.providerId) throw new TerminalRuntimeError("unavailable");
   if (tab.name !== input.expectedName || tab.revision !== input.baseRevision
     || terminalTabIncarnation(tab) !== input.expectedIncarnation) throw new TerminalRuntimeError("conflict");

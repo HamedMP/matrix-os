@@ -1,3 +1,6 @@
+import type { NativeTabAdmission, NativeTabCompletion, NativeTabReservation } from "@matrix-os/terminal-runtime/native-host-lifecycle";
+import { terminalNativeOrdinaryCommand, TerminalManagedLaunchSchema } from "../terminal/native-launch.js";
+import type { CanonicalTerminalLaunch } from "../terminal/canonical-launch.js";
 import { bodyLimit } from "hono/body-limit";
 import { Hono } from "hono";
 import {
@@ -43,7 +46,8 @@ const CreateTabSchema = z.object({
     threadId: ThreadIdSchema.optional(),
   }).strict().optional(),
   chatId: CanonicalChatIdSchema.optional(),
-}).strict();
+  managedLaunch: TerminalManagedLaunchSchema.optional(),
+}).strict().refine(input => !input.managedLaunch || (!input.command && !input.agent && !input.chatId));
 const RenameTabSchema = z.object({
   name: SafeDisplayStringSchema,
   baseRevision: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
@@ -70,6 +74,8 @@ const PasteAssetsSchema = z.object({
 }).strict();
 
 export interface TerminalWorkspaceRouteRuntime {
+  prepareNativeTab?(workspaceId: string, input: NativeTabAdmission): Promise<NativeTabReservation>;
+  completeNativeTab?(ref: TerminalRef, input: NativeTabCompletion): Promise<TerminalTab>;
   listWorkspaces(): Promise<TerminalWorkspace[]>;
   ensureWorkspace(input?: { projectId?: string }): Promise<TerminalWorkspace>;
   createTab(workspaceId: string, input: {
@@ -77,6 +83,7 @@ export interface TerminalWorkspaceRouteRuntime {
     name: string;
     cwd: string;
     accessScope?: TerminalTab["accessScope"];
+    nativeHost?: import("@matrix-os/contracts").TerminalNativeHostRef;
     command?: string[];
     agent?: TerminalTab["agent"];
   }): Promise<TerminalTab>;
@@ -185,6 +192,7 @@ export async function terminalRuntimeRefAccess(
 export function createTerminalWorkspaceRoutes(options: {
   runtime: TerminalWorkspaceRouteRuntime;
   homePath?: string;
+  managedLaunch?: Pick<CanonicalTerminalLaunch, "launch" | "fence" | "fenceWorkspace" | "available">;
   getPrincipal: (context: Context) => RequestPrincipal;
   getPreviewTerminalOwner?: (context: Context) => string | undefined;
   terminalOwnerIds: readonly string[];
@@ -259,6 +267,13 @@ export function createTerminalWorkspaceRoutes(options: {
         ? await options.chatTerminals.prepare(principal, body.chatId)
         : null;
       return await projectAdmission.withWorkspace(getResourceOwnerId(c, principal), workspaceId, "run", async () => {
+        if (body.managedLaunch) {
+          if (!options.managedLaunch || options.getPreviewTerminalOwner?.(c)) return c.json({ tab: await options.runtime.createTab(workspaceId, {
+            tabId: body.tabId, name: body.name, cwd: body.cwd, accessScope: "owner", agent: { providerId: body.managedLaunch.harness },
+            command: terminalNativeOrdinaryCommand(body.managedLaunch),
+          }) }, 201);
+          return c.json({ tab: await options.managedLaunch.launch(principal, workspaceId, { ...body, managedLaunch: body.managedLaunch }) }, 201);
+        }
         const tab = await options.runtime.createTab(workspaceId, {
           ...(body.tabId ? { tabId: body.tabId } : {}),
           name: body.name,
@@ -317,6 +332,7 @@ export function createTerminalWorkspaceRoutes(options: {
       const ref = terminalRefFromParams(c.req.param("workspaceId"), c.req.param("tabId"));
       const principal = options.getPrincipal(c);
       return await projectAdmission.withWorkspace(getResourceOwnerId(c, principal), ref.workspaceId, "run", async () => {
+        options.managedLaunch?.fence(ref);
         await deleteTab(ref);
         return c.body(null, 204);
       });
@@ -352,6 +368,7 @@ export function createTerminalWorkspaceRoutes(options: {
         if (bound.includes(sessionId)) return c.json({ error: "Terminal operation failed" }, 404);
       }
       return await projectAdmission.withWorkspace(getResourceOwnerId(c, principal), ref.workspaceId, "run", async () => {
+        if (action.type === "close") options.managedLaunch?.fence(ref);
         await options.runtime.paneAction!(ref, action);
         return c.json({ ok: true });
       });
@@ -414,6 +431,7 @@ export function createTerminalWorkspaceRoutes(options: {
         if (impact.runningTabs > 0 && !body.confirmTerminate) {
           return c.json({ error: "terminal_termination_confirmation_required", ...impact }, 409);
         }
+        options.managedLaunch?.fenceWorkspace(workspaceId);
         await options.runtime.deleteWorkspace(workspaceId, body);
         return c.body(null, 204);
       });
