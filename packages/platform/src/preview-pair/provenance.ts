@@ -28,7 +28,7 @@ const Build = z.object({ id: z.number().int().positive(), status: z.literal("com
 const Receipt = z.strictObject({ runId: z.number().int().positive(), artifactId: z.number().int().positive(), sourceSha: PreviewPairShaSchema, workflowSha: PreviewPairShaSchema });
 const Controller = z.object({ controllerSha: PreviewPairShaSchema, executionSha: PreviewPairShaSchema,
   workflowPath: z.string().max(128), treeSha: PreviewPairShaSchema });
-const Authority = z.object({ browserOrigin: PreviewPairOriginSchema, apiOrigin: PreviewPairOriginSchema,
+const Authority = z.object({ pairId: PreviewPairIdSchema, generation: PreviewPairGenerationSchema, browserOrigin: PreviewPairOriginSchema, apiOrigin: PreviewPairOriginSchema,
   identityIssuer: z.string().max(256), sourceSha: PreviewPairShaSchema, serviceAccount: z.string().max(128),
   clerkSecretRef: z.string().max(96), databaseSecretRef: z.string().max(96), ticketKeysSecretRef: z.string().max(96),
   appDomainHosts: z.array(z.string().max(256)).min(1).max(8), browserRevision: z.string().min(1).max(128),
@@ -84,7 +84,8 @@ export async function verifyPreviewPairCandidate(input: unknown, expectedInput: 
     requireProof(pull.number === expected.pr && pull.head.sha === expected.sourceSha);
     requireProof(release.version === candidate.hostBundleVersion && release.gitCommit === expected.sourceSha
       && release.sourcePr === expected.pr && release.sha256 === candidate.hostBundleSha256);
-    requireProof(authority.browserOrigin === candidate.browserOrigin && authority.apiOrigin === candidate.apiOrigin
+    requireProof(authority.pairId === expected.pairId && authority.generation === expected.generation
+      && authority.browserOrigin === candidate.browserOrigin && authority.apiOrigin === candidate.apiOrigin
       && authority.sourceSha === candidate.platformSource.sha && authority.identityIssuer === config.identityIssuer
       && authority.serviceAccount === config.serviceAccount && authority.clerkSecretRef === config.clerkSecretRef
       && authority.databaseSecretRef === config.databaseSecretRef && authority.ticketKeysSecretRef === config.ticketKeysSecretRef
