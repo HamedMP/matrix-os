@@ -95,7 +95,9 @@ describe("getting started status", () => {
       ["billing", "complete"],
     ]);
     expect(snapshot.completedCount).toBe(5);
-    expect(api.get).toHaveBeenCalledTimes(6);
+    // Six checklist reads plus provider settings for the Getting started app's AI task (spec 639).
+    expect(api.get).toHaveBeenCalledTimes(7);
+    expect(api.get).toHaveBeenCalledWith("/api/ai/provider-settings", { signal: controller.signal });
     expect(api.get).toHaveBeenCalledWith("/api/github/status", { signal: controller.signal });
   });
 

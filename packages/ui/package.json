@@ -19,6 +19,7 @@
     "./appearance": "./src/appearance/index.ts",
     "./onboarding-widget.css": "./src/onboarding-widget/onboarding-widget.css",
     "./get-started.css": "./src/get-started/get-started.css",
+    "./getting-started-app.css": "./src/getting-started-app/getting-started-app.css",
     "./onboarding-support-dock.css": "./src/onboarding-widget/support-dock.css",
     "./chat-import.css": "./src/chat-import/chat-import.css"
   },

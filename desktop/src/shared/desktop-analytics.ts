@@ -33,6 +33,7 @@ export const DesktopAppKindSchema = z.enum([
   "whiteboard",
   "installed_app",
   "coding_agent",
+  "getting_started",
 ]);
 
 const AppLifecycleDesktopEventSchema = z.object({

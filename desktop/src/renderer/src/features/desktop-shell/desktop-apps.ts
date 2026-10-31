@@ -2,6 +2,7 @@ import {
   Blocks,
   BrushIcon,
   Code2,
+  Rocket,
   FilePenLine,
   FolderTree,
   Globe2,
@@ -30,7 +31,8 @@ export type DesktopAppId =
   | "browser"
   | "cloud-desktop"
   | "notes"
-  | "whiteboard";
+  | "whiteboard"
+  | "getting-started";
 
 export interface DesktopAppConfig {
   id: DesktopAppId;
@@ -155,8 +157,41 @@ export const FIXED_DESKTOP_APPS: readonly DesktopAppConfig[] = [
   },
 ];
 
+/**
+ * Spec 639: the Getting started app is not a default desktop destination
+ * (FIXED_DESKTOP_APPS mirrors DEFAULT_OS_VIEW_DESKTOP_APP_PATHS). Surfaces add
+ * it only while this computer serves the app.
+ */
+export const GETTING_STARTED_DESKTOP_APP: DesktopAppConfig = {
+  id: "getting-started",
+  path: "__getting-started__",
+  iconUrl: bundledDesktopIconForPath("__getting-started__"),
+  kind: "getting-started",
+  icon: Rocket,
+  name: "Getting started",
+  color: APPEARANCE["getting-started"].background,
+  iconColor: APPEARANCE["getting-started"].foreground,
+};
+
+/**
+ * Startup restore waits for the app catalog and for whether this computer serves Getting started,
+ * so a saved Getting started window is not skipped when that check lands after restore.
+ */
+export function desktopStartupCatalogSettled({ appsLoading, gettingStartedApp }: {
+  appsLoading: boolean;
+  /** The Getting started provider's availability; null outside a provider. */
+  gettingStartedApp: "checking" | "enabled" | "unavailable" | null;
+}): boolean {
+  return !appsLoading && gettingStartedApp !== "checking";
+}
+
+/** Desktop destinations for this computer: the defaults, plus Getting started when it is served. */
+export function desktopAppsFor({ gettingStartedApp }: { gettingStartedApp: boolean }): readonly DesktopAppConfig[] {
+  return gettingStartedApp ? [...FIXED_DESKTOP_APPS, GETTING_STARTED_DESKTOP_APP] : FIXED_DESKTOP_APPS;
+}
+
 export function desktopAppAppearance(kind: TabKind): Pick<DesktopAppConfig, "color" | "iconColor"> {
-  const app = FIXED_DESKTOP_APPS.find((candidate) => candidate.kind === kind)
+  const app = [...FIXED_DESKTOP_APPS, GETTING_STARTED_DESKTOP_APP].find((candidate) => candidate.kind === kind)
     ?? (kind === "terminal" ? FIXED_DESKTOP_APPS.find((candidate) => candidate.id === "terminal") : undefined);
   return { color: app?.color, iconColor: app?.iconColor };
 }

@@ -94,7 +94,9 @@ describe("web getting started status", () => {
       ["billing", "complete"],
     ]);
     expect(snapshot.completedCount).toBe(5);
-    expect(fetcher).toHaveBeenCalledTimes(6);
+    // Six checklist reads plus provider settings for the Getting started app's AI task (spec 639).
+    expect(fetcher).toHaveBeenCalledTimes(7);
+    expect(fetcher).toHaveBeenCalledWith(expect.stringMatching(/\/api\/ai\/provider-settings$/), expect.objectContaining({ signal: controller.signal }));
     expect(fetcher).toHaveBeenCalledWith(
       expect.stringMatching(/\/api\/github\/status$/),
       expect.objectContaining({ signal: controller.signal }),

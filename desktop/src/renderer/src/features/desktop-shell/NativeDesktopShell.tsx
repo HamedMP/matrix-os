@@ -8,7 +8,7 @@ import { FILES_WORKSPACE_TAB_SPEC, useTabs, type Tab } from "../../stores/tabs";
 import { EDITOR_WORKSPACE_TAB_SPEC } from "../editor/desktop-editor-store";
 import { openChatIndex, openTerminalIndex } from "../mission-control/navigation-roots";
 import DesktopIconGrid, { type DesktopDestination } from "./DesktopIconGrid";
-import { FIXED_DESKTOP_APPS, type DesktopAppId } from "./desktop-apps";
+import { FIXED_DESKTOP_APPS, desktopAppsFor, desktopStartupCatalogSettled, type DesktopAppId } from "./desktop-apps";
 import { bundledDesktopIconForPath, desktopTabsWithLiveAppArtwork } from "./bundled-app-icons";
 import DesktopSurfaceFrame from "./DesktopSurfaceFrame";
 import DesktopTaskbar from "./DesktopTaskbar";
@@ -41,6 +41,8 @@ import { useNativeChatStartup, useNativeStartupNavigation } from "./use-native-c
 import { useNativeOsViewPersistence } from "./use-native-os-view-persistence";
 import { analyticsKindForTab, FIXED_APP_ANALYTICS_KINDS } from "./desktop-app-analytics";
 import { reconcileNativeProductSurfaces } from "./browser-product-surfaces";
+import { useGettingStartedApp } from "@matrix-os/ui";
+import { GETTING_STARTED_TAB } from "../getting-started-app/desktop-getting-started-app-port";
 import { nativeBrowserProduct } from "../../../../shared/browser-products";
 
 function currentViewport(): DesktopViewport {
@@ -258,8 +260,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
     }
   }, [closeTab, tabs]);
 
+  const gettingStartedApp = useGettingStartedApp();
+  const gettingStartedAppEnabled = gettingStartedApp?.enabled ?? false;
   const destinations = useMemo<DesktopDestination[]>(() => {
-    const fixedApps = FIXED_DESKTOP_APPS.map((app) => {
+    const fixedApps = desktopAppsFor({ gettingStartedApp: gettingStartedAppEnabled }).map((app) => {
       if (app.id !== "notes" && app.id !== "whiteboard") return app;
       const installed = installedApps.find((candidate) => candidate.path === app.path);
       return installed?.iconUrl && !osViewUsesBundledArtworkForLegacyIcon({ path: app.path, iconUrl: installed.iconUrl })
@@ -289,6 +293,7 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       "cloud-desktop": () => openRoot(() => openTab({ kind: "app", slug: "browser-lab", appIdentity: "matrix-cloud-desktop", title: "Cloud desktop", icon: fixedApps.find(app => app.id === "cloud-desktop")?.iconUrl })),
       notes: () => openRoot(() => openTab({ kind: "notes", title: "Notes", icon: fixedApps.find((app) => app.id === "notes")?.iconUrl })),
       whiteboard: () => openRoot(() => openTab({ kind: "app", slug: "whiteboard", title: "Whiteboard", icon: fixedApps.find((app) => app.id === "whiteboard")?.iconUrl })),
+      "getting-started": () => openRoot(() => openTab(GETTING_STARTED_TAB)),
     };
     const fixed = fixedApps.map((app) => ({
       ...app,
@@ -315,10 +320,10 @@ export default function NativeDesktopShell({ overlayOpen }: { overlayOpen: boole
       }];
     });
     return [...fixed, ...generated];
-  }, [installedApps, openRoot, openTab, platformHost, runtimeSlot]);
+  }, [gettingStartedAppEnabled, installedApps, openRoot, openTab, platformHost, runtimeSlot]);
 
   useNativeChatStartup({
-    entryKey, loadSettled, surfacesRestored, modeHydrated: desktopModeHydrated, catalogSettled: !appsLoading,
+    entryKey, loadSettled, surfacesRestored, modeHydrated: desktopModeHydrated, catalogSettled: desktopStartupCatalogSettled({ appsLoading, gettingStartedApp: gettingStartedApp?.availability ?? null }),
     durableState, installedApps, destinations, navigationChangedRef, restoringRef,
     openChat: () => openRoot(openChatIndex),
   });

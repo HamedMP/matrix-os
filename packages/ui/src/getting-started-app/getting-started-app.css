@@ -1,0 +1,550 @@
+/* Spec 639: the Getting started app, after Figma "🧭 Getting started"
+   (frames 1938:645 and 1938:1226, Matrix DS sizes). Brand values come from
+   @matrix-os/brand (GETTING_STARTED_APP_BRAND_VARS, set inline). Surfaces,
+   text and borders use the Electron theme variables first, then the Web
+   shell's, so light and dark themes both work (same chain as
+   agents-providers.css). */
+.mxo-gsa,
+.mxo-gsa-summary,
+.mxo-gsa-toast {
+  /* Page, cards (#f3f2f2 in both light themes) and the lighter tiles on cards. */
+  --gsa-paper: var(--bg-app, var(--background, #fafafa));
+  --gsa-card: var(--bg-surface, var(--card, #f3f2f2));
+  /* Figma uses the page background for icon tiles and the prompt (Web's --bg-raised equals the card). */
+  --gsa-surface: var(--gsa-paper);
+  --gsa-card-hover: color-mix(in srgb, var(--gsa-card) 96%, var(--gsa-text));
+  --gsa-border: var(--border-subtle, var(--border, #c8c6c6));
+  --gsa-track: var(--muted, color-mix(in srgb, var(--gsa-text) 12%, transparent));
+  --gsa-text: var(--text-primary, var(--foreground, #242323));
+  --gsa-muted: var(--text-secondary, var(--muted-foreground, #635f5f));
+  --gsa-action-bg: var(--primary, var(--gsa-text));
+  --gsa-action-text: var(--primary-foreground, var(--gsa-paper));
+  --gsa-focus: var(--ring, var(--gsa-brand-green));
+  --gsa-gold-bg: var(--tint-warning-fill, var(--gsa-tint-gold-bg));
+  --gsa-gold-border: var(--gsa-tint-gold-border);
+  --gsa-gold-text: var(--gsa-tint-gold-text);
+  --gsa-brand-bg: var(--gsa-tint-brand-bg);
+  --gsa-brand-border: var(--gsa-tint-brand-border);
+  --gsa-brand-text: var(--gsa-tint-brand-text);
+  --gsa-success-bg: var(--tint-success-fill, var(--gsa-tint-success-bg));
+  --gsa-success-border: var(--gsa-tint-success-border);
+  --gsa-success-text: var(--gsa-tint-success-text);
+  font-family: var(--gsa-font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+:is(.dark, [data-theme="dark"]) :is(.mxo-gsa, .mxo-gsa-summary) {
+  --gsa-gold-bg: var(--gsa-tint-gold-bg-dark);
+  --gsa-gold-border: var(--gsa-tint-gold-border-dark);
+  --gsa-gold-text: var(--gsa-tint-gold-text-dark);
+  --gsa-brand-bg: var(--gsa-tint-brand-bg-dark);
+  --gsa-brand-border: var(--gsa-tint-brand-border-dark);
+  --gsa-brand-text: var(--gsa-tint-brand-text-dark);
+  --gsa-success-bg: var(--gsa-tint-success-bg-dark);
+  --gsa-success-border: var(--gsa-tint-success-border-dark);
+  --gsa-success-text: var(--gsa-tint-success-text-dark);
+}
+
+.mxo-gsa {
+  height: 100%;
+  overflow-y: auto;
+  container-type: inline-size;
+  background: var(--gsa-paper);
+  color: var(--gsa-text);
+}
+
+.mxo-gsa *,
+.mxo-gsa *::before,
+.mxo-gsa *::after {
+  box-sizing: border-box;
+}
+
+.mxo-gsa__inner {
+  max-width: 1144px;
+  margin: 0 auto;
+  padding: 48px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+/* Header: Matrix DS heading (17/24 semibold), ui-sm count, 120x6 bar, md badge. */
+.mxo-gsa__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  min-height: 40px;
+}
+
+.mxo-gsa__title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.mxo-gsa__progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mxo-gsa__count {
+  color: var(--gsa-muted);
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.mxo-gsa__bar {
+  position: relative;
+  width: 120px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 9999px;
+  background: var(--gsa-track);
+  overflow: hidden;
+}
+
+.mxo-gsa__bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--gsa-brand-fill);
+  transition: width 320ms cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+/* Matrix DS Badge: sm 22/12px, md 24/13px, radius 6. */
+.mxo-gsa__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--gsa-border);
+  border-radius: 6px;
+  background: var(--gsa-surface);
+  color: var(--gsa-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.mxo-gsa__badge--sm {
+  height: 22px;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.mxo-gsa__badge--md {
+  height: 24px;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.mxo-gsa__badge--gold {
+  border-color: var(--gsa-gold-border);
+  background: var(--gsa-gold-bg);
+  color: var(--gsa-gold-text);
+}
+
+.mxo-gsa__badge--brand {
+  border-color: var(--gsa-brand-border);
+  background: var(--gsa-brand-bg);
+  color: var(--gsa-brand-text);
+}
+
+.mxo-gsa__badge--success {
+  border-color: var(--gsa-success-border);
+  background: var(--gsa-success-bg);
+  color: var(--gsa-success-text);
+}
+
+/* Hero: 320px welcome panel (640 of 1080) + "Start here" card; compact once started. */
+.mxo-gsa__hero {
+  display: grid;
+  grid-template-columns: minmax(0, 640fr) minmax(0, 424fr);
+  gap: 16px;
+  min-height: 320px;
+}
+
+.mxo-gsa__hero--compact {
+  grid-template-columns: minmax(0, 280fr) minmax(0, 784fr);
+  min-height: 216px;
+}
+
+.mxo-gsa__welcome {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 20px;
+  border-radius: 16px;
+  background: var(--gsa-brand-forest);
+  color: var(--gsa-on-brand);
+}
+
+.mxo-gsa__glow {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(56px);
+  pointer-events: none;
+}
+
+.mxo-gsa__glow--top {
+  top: -144px;
+  right: -96px;
+  width: 384px;
+  height: 384px;
+  background: var(--gsa-brand-glow);
+  opacity: 0.6;
+}
+
+.mxo-gsa__glow--bottom {
+  bottom: -176px;
+  left: -96px;
+  width: 320px;
+  height: 320px;
+  background: var(--gsa-brand-glow-soft);
+  opacity: 0.35;
+}
+
+.mxo-gsa__rabbit {
+  position: relative;
+  display: block;
+  width: 25px;
+  height: 32px;
+  background: currentColor;
+  -webkit-mask: var(--gsa-rabbit-mask) center / contain no-repeat;
+  mask: var(--gsa-rabbit-mask) center / contain no-repeat;
+}
+
+.mxo-gsa__welcome-caption {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mxo-gsa__welcome-title {
+  font-family: var(--gsa-font-display);
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 35px;
+}
+
+.mxo-gsa__welcome-subtitle {
+  font-size: 14px;
+  line-height: 20px;
+  opacity: 0.8;
+}
+
+.mxo-gsa__welcome--compact .mxo-gsa__welcome-title {
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.mxo-gsa__welcome--compact .mxo-gsa__welcome-subtitle {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.mxo-gsa__next {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding: 24px;
+  border-radius: 16px;
+  background: var(--gsa-card);
+}
+
+.mxo-gsa__chips {
+  display: flex;
+  gap: 8px;
+}
+
+.mxo-gsa__next-title {
+  margin: 0;
+  font-family: var(--gsa-font-display);
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 35px;
+}
+
+.mxo-gsa__next-description {
+  margin: 0;
+  color: var(--gsa-muted);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.mxo-gsa__prompt {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--gsa-border);
+  border-radius: 8px;
+  background: var(--gsa-surface);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.mxo-gsa__spacer {
+  flex: 1 0 0;
+  min-height: 0;
+}
+
+/* Matrix DS Button primary, md (36). */
+.mxo-gsa__primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--gsa-action-bg);
+  color: var(--gsa-action-text);
+  box-shadow: 0 1px 1px rgba(36, 35, 35, 0.05);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+.mxo-gsa__primary:hover {
+  opacity: 0.9;
+}
+
+.mxo-gsa__primary:focus-visible,
+.mxo-gsa__card:focus-visible,
+.mxo-gsa__support:focus-visible {
+  outline: 2px solid var(--gsa-focus);
+  outline-offset: 2px;
+}
+
+.mxo-gsa__section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mxo-gsa__section-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.mxo-gsa__grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.mxo-gsa__grid--connect {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.mxo-gsa__grid--further {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* GS · Task card (Figma 1937:227): card surface, radius 12, padding 16, gap 12. */
+.mxo-gsa__card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--gsa-card);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.mxo-gsa__card:hover:not(:disabled) {
+  background: var(--gsa-card-hover);
+}
+
+.mxo-gsa__card:disabled {
+  cursor: default;
+}
+
+.mxo-gsa__card:disabled .mxo-gsa__card-icon,
+.mxo-gsa__card:disabled .mxo-gsa__card-title {
+  opacity: 0.6;
+}
+
+.mxo-gsa__card-top {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mxo-gsa__card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--gsa-surface);
+  color: var(--gsa-text);
+}
+
+.mxo-gsa__card-title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.mxo-gsa__card-description {
+  color: var(--gsa-muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* Matrix DS Button ghost, sm (32). */
+.mxo-gsa__support {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--gsa-text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.mxo-gsa__support:hover {
+  background: var(--gsa-card);
+}
+
+@container (max-width: 760px) {
+  .mxo-gsa__inner {
+    padding: 32px 20px;
+    gap: 24px;
+  }
+  .mxo-gsa__hero,
+  .mxo-gsa__hero--compact {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+  .mxo-gsa__welcome {
+    min-height: 160px;
+  }
+  .mxo-gsa__grid,
+  .mxo-gsa__grid--connect,
+  .mxo-gsa__grid--further {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 440px) {
+  .mxo-gsa__grid,
+  .mxo-gsa__grid--connect,
+  .mxo-gsa__grid--further {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mxo-gsa__next-title {
+    font-size: 22px;
+    line-height: 28px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mxo-gsa__bar-fill,
+  .mxo-gsa__card,
+  .mxo-gsa__primary {
+    transition: none;
+  }
+}
+
+/* Help popover summary row. */
+.mxo-gsa-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% - 24px);
+  margin: 0 12px 10px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--gsa-card);
+  color: var(--gsa-text);
+  font: inherit;
+  font-family: var(--gsa-font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mxo-gsa-summary:hover {
+  background: var(--gsa-card-hover);
+}
+
+.mxo-gsa-summary:focus-visible {
+  outline: 2px solid var(--gsa-focus);
+  outline-offset: 2px;
+}
+
+.mxo-gsa-summary__text {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mxo-gsa-summary__title {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.mxo-gsa-summary__detail {
+  color: var(--gsa-muted);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+/* Completion toast (Figma 1938:1226): dark pill, check, title, gold points. */
+.mxo-gsa-toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--gsa-ink);
+  color: var(--gsa-on-brand);
+  box-shadow: 0 12px 16px -4px rgba(36, 35, 35, 0.16), 0 4px 6px -2px rgba(36, 35, 35, 0.08);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.mxo-gsa-toast__points {
+  color: var(--gsa-tint-gold-border);
+}

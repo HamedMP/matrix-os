@@ -14,6 +14,7 @@ export const FIXED_APP_ANALYTICS_KINDS: Record<DesktopAppId, DesktopAppKind> = {
   "cloud-desktop": "installed_app",
   notes: "notes",
   whiteboard: "whiteboard",
+  "getting-started": "getting_started",
 };
 
 const TAB_ANALYTICS_KINDS: Partial<Record<TabKind, DesktopAppKind>> = {
@@ -26,6 +27,7 @@ const TAB_ANALYTICS_KINDS: Partial<Record<TabKind, DesktopAppKind>> = {
   terminal: "terminal",
   terminals: "terminal",
   task: "coding_agent",
+  "getting-started": "getting_started",
   work: "chat",
   chat: "chat",
   projects: "chat",

@@ -36,6 +36,8 @@ import { RuntimeIdentityBanner } from "./RuntimeIdentityBanner";
 import { ShellNotificationStack } from "./ShellNotificationStack";
 import { DesktopOnboardingWidget } from "./onboarding-widget/DesktopOnboardingWidget";
 import { useGettingStartedDestination } from "./onboarding/use-getting-started-destination";
+import { WebGettingStartedAppHost } from "./getting-started-app/web-getting-started-app";
+import { GETTING_STARTED_APP_PATH, GETTING_STARTED_APP_TITLE } from "./getting-started-app/web-getting-started-app-port";
 import { ShellGetStartedGate } from "./get-started/ShellGetStartedGate";
 import { nameToSlug } from "@/lib/utils";
 import { iconUrlForSlug } from "@/lib/app-launch";
@@ -137,7 +139,12 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
     })),
     [apiApps],
   );
-  const apps = useMemo(() => buildWebDesktopIconApps(installedApps), [installedApps]);
+  // Spec 639: the Getting started app is a desktop destination only while this computer serves it.
+  const [gettingStartedAppEnabled, setGettingStartedAppEnabled] = useState(false);
+  const apps = useMemo(
+    () => buildWebDesktopIconApps(installedApps, { gettingStartedApp: gettingStartedAppEnabled }),
+    [installedApps, gettingStartedAppEnabled],
+  );
 
   const [interacting, setInteracting] = useState(false);
   const [taskBoardOpen, setTaskBoardOpen] = useState(false);
@@ -838,9 +845,12 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
   ) : null;
 
   const launcherApps = useMemo(
-    () => buildWebDesktopLauncherApps(installedApps, desktopMode),
-    [installedApps, desktopMode],
+    () => buildWebDesktopLauncherApps(installedApps, desktopMode, { gettingStartedApp: gettingStartedAppEnabled }),
+    [installedApps, desktopMode, gettingStartedAppEnabled],
   );
+  const openGettingStartedApp = useCallback(() => {
+    openAppOrFocus(GETTING_STARTED_APP_PATH, GETTING_STARTED_APP_TITLE);
+  }, [openAppOrFocus]);
 
   const openLauncherDestination = useCallback((name: string, path: string) => {
     if (path === "__settings__" || path === "__plugins__") {
@@ -866,6 +876,13 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
 
   return (
     <TooltipProvider delayDuration={300}>
+      <WebGettingStartedAppHost
+        onOpenSettings={openWebSettings}
+        onOpenWork={openGettingStartedWork}
+        onOpenSupport={() => void openShellSupport()}
+        onOpenApp={openGettingStartedApp}
+        onEnabledChange={setGettingStartedAppEnabled}
+      >
       <ShellNotificationStack>
         <RuntimeIdentityBanner />
         <ConnectionIndicator />
@@ -1389,6 +1406,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
       {/* No fullscreen exit pill: every maximized window keeps its own header
           (Desktop CardHeader / Canvas in-window title bar) with traffic lights,
           and Escape still exits fullscreen as a keyboard fallback. */}
+      </WebGettingStartedAppHost>
     </TooltipProvider>
   );
 }
