@@ -7,6 +7,7 @@
 import {
   GETTING_STARTED_APP_AWARDABLE_TASK_IDS,
   deriveGettingStartedAppTasks,
+  gettingStartedAppKnownTaskIds,
   type GettingStartedAppAwardableTaskId,
   type GettingStartedAppAwardResponse,
   type GettingStartedAppProgress,
@@ -243,8 +244,9 @@ export function GettingStartedAppProvider({
     placeDesktopIcon();
     if (progress) {
       progressKnown.current = true;
-      for (const award of progress.awards) awarded.current.add(award.taskId);
-      markEarned(progress.awards.map((award) => award.taskId));
+      const known = gettingStartedAppKnownTaskIds(progress.awards);
+      for (const taskId of known) awarded.current.add(taskId);
+      markEarned(known);
       showTotal(progress.total);
     } else {
       setPoints((current) => (current.kind === "ready" ? current : { kind: "unavailable" }));

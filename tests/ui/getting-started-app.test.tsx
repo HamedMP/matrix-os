@@ -274,6 +274,19 @@ describe("Getting started app awards", () => {
 });
 
 
+describe("Getting started app on a newer computer", () => {
+  it("keeps working and keeps the total when progress names a task this build does not know", async () => {
+    const port = makePort({
+      results: () => results({ ...slackConnected }),
+      progress: { awards: [{ taskId: "future-task", points: 40, awardedAt: "2026-10-29T10:00:00.000Z" }], total: 40 },
+    });
+    renderApp(port);
+    await waitFor(() => expect(screen.getByLabelText("60 points")).toBeTruthy());
+    expect(screen.getByRole("button", { name: /Slack/ })).toBeTruthy();
+    expect(port.award).toHaveBeenCalledWith("slack", true, expect.anything());
+  });
+});
+
 describe("Getting started app availability", () => {
   it("reports when the computer serves the app, once per change", async () => {
     const port = makePort();
