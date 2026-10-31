@@ -21,3 +21,4 @@ export * from "#bots/owner-personality";
 export * from "#bots/tool-display";
 export * from "#bots/routines";
 export * from "#bots/output-policy";
+export * from "#bots/routine-cli";
