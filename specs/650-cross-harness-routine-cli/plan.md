@@ -44,8 +44,9 @@ Consumes Task1 source/target/action types. Produces internal source-capability o
 
 Files: sync-client/src/cli/commands/routines.ts, routine-client.ts, index/redirect/completion; tests/cli/routines*.test.ts.
 Consumes approved request wire schema and v1 output; produces fixed actual CLI verb mapping, strict bounded stdin/JSON/exit and no-retry reconciliation.
-- [ ] Add failing CLI parsing/identity rejection/process transport tests first.
-- [ ] Implement commands and packaging; Green/review/commit.
+- [x] Add failing CLI parsing/identity rejection/process transport tests first.
+- [x] Implement existing citty commands, actual published-bin IPC/fixed invoker, exact source-only Hono auth consumer and packed lazy execution with explicitly cached public dependency links.
+- [x] Independent Task3 review and fresh parent verification:222 scoped unit/process/auth regressions and7 native transport/packaged cases, strict types/publish/syntax/whitespace. Strict UTF8 and early Node20 API compatibility regressions fixed; no actual Node20/native producer/startup/live qualification.
 
 ### Task 4: Owner default selection/review UI
 
