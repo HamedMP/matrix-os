@@ -1,6 +1,9 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_OS_VIEW_DESKTOP_APP_PATHS, osViewBundledIconUrlForPath } from "@matrix-os/contracts";
 import { FIXED_DESKTOP_APPS, desktopAppsFor, desktopStartupCatalogSettled } from "@desktop/renderer/src/features/desktop-shell/desktop-apps";
+import SurfaceIcon from "@desktop/renderer/src/features/desktop-shell/SurfaceIcon";
 import { normalizeBuiltInAppPath } from "../../shell/src/lib/builtin-apps";
 
 describe("Getting started app destination (spec 639)", () => {
@@ -18,6 +21,11 @@ describe("Getting started app destination (spec 639)", () => {
   it("uses its bundled icon and canonical built-in path on Web", () => {
     expect(osViewBundledIconUrlForPath("__getting-started__")).toBe("/system-app-icons/v2/getting-started.png");
     expect(normalizeBuiltInAppPath("getting-started")).toBe("__getting-started__");
+  });
+
+  it("keeps its colored artwork in the dock, even when the tab's icon URL is relative", () => {
+    const markup = renderToStaticMarkup(createElement(SurfaceIcon, { tab: { kind: "getting-started", title: "Getting started", icon: "./assets/getting-started.png" } }));
+    expect(markup).toContain("<img");
   });
 
   it("holds startup restore until it is known whether the computer serves Getting started", () => {
