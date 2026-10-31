@@ -58,7 +58,8 @@
     "typecheck:legacy": "node scripts/typecheck.mjs legacy",
     "check:patterns": "./scripts/review/check-patterns.sh",
     "check:patterns:diff": "./scripts/review/check-patterns.sh --diff main",
-    "lint": "bun run --filter './shell' lint"
+    "lint": "bun run --filter './shell' lint",
+    "bench:memory": "bun scripts/memory-bench/cli.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
