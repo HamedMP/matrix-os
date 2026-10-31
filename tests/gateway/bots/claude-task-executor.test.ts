@@ -20,7 +20,7 @@ describe('official Claude child task isolation (synthetic protocol)', () => {
   });
   it('retains official auth with no ambient funding, disables native tools/config and confirms result plus actual exit', async () => {
     const process = child(); const controller = new AbortController();
-    const spawn = vi.fn(() => process);
+    const spawn = vi.fn<NonNullable<Parameters<typeof runClaudeBotTask>[0]["spawn"]>>(() => process);
     const running = runClaudeBotTask({ command: '/trusted/claude', homePath: '/owner', cwd: '/owner/bots/test', model: 'observed-model', prompt: 'synthetic',
       signal: controller.signal, mcpUrl: 'http://127.0.0.1:1234', mcpToken: 'ephemeral', spawn });
     await vi.waitFor(() => expect(spawn).toHaveBeenCalledOnce());
@@ -62,4 +62,40 @@ describe('official Claude child task isolation (synthetic protocol)', () => {
     process.emit('close', 0, null); expect((await running).text).toBe('final bytes'); expect(process.kill).not.toHaveBeenCalled();
   });
 
+});
+it('holds first input until admitted source setup and fences the source synchronously at actual native close', async () => {
+  const process = child(); let ready!: () => void, inputText = '', ended = false;
+  process.stdin.on('data', chunk => { inputText += chunk.toString(); });
+  const running = runClaudeBotTask({ command: '/trusted/claude', homePath: '/owner', cwd: '/owner/bots/test', model: 'fixture', prompt: 'fixture input', signal: new AbortController().signal,
+    mcpUrl: 'http://127.0.0.1:1234', mcpToken: 'fixture', spawn: () => process, onStart: () => new Promise<void>(resolve => { ready = resolve; }), onEnd: () => { ended = true; } });
+  await new Promise(resolve => setImmediate(resolve)); expect(inputText).toBe(''); ready(); await new Promise(resolve => setImmediate(resolve)); expect(inputText).toBe('fixture input');
+  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'done', session_id: 'fixture_session' }) + '\n'); process.emit('exit', 0, null); process.emit('close', 0, null);
+  expect(ended).toBe(true); expect((await running).text).toBe('done');
+});
+it('never sends first input after native close wins a pending source registration', async () => {
+  const process = child(); let ready!: () => void, inputText = '', ended = false;
+  process.stdin.on('data', chunk => { inputText += chunk.toString(); });
+  const running = runClaudeBotTask({ command: '/trusted/claude', homePath: '/owner', cwd: '/owner/bots/test', model: 'fixture', prompt: 'must not send', signal: new AbortController().signal,
+    mcpUrl: 'http://127.0.0.1:1234', mcpToken: 'fixture', spawn: () => process, onStart: () => new Promise<void>(resolve => { ready = resolve; }), onEnd: () => { ended = true; } }).catch(error => error);
+  await new Promise(resolve => setImmediate(resolve)); process.emit('exit', 1, null); process.emit('close', 1, null); expect(ended).toBe(true); ready(); await new Promise(resolve => setImmediate(resolve));
+  expect(inputText).toBe(''); expect((await running).message).toBe('Native task did not complete');
+});
+it.each(['result', 'exit', 'failure'] as const)('fences routine source at first native %s while stdio drainage and executor completion remain pending', async stage => {
+  const process = Object.assign(child(), { pid: 126 }); let ended = 0, settled = false;
+  const running = runClaudeBotTask({ command: '/trusted/claude', homePath: '/owner', cwd: '/owner/bots/test', model: 'fixture', prompt: 'fixture', signal: new AbortController().signal,
+    mcpUrl: 'http://127.0.0.1:1234', mcpToken: 'fixture', spawn: () => process, onStart: async () => {}, onEnd: () => { ended++; } }).then(value => { settled = true; return value; }, error => { settled = true; return error; });
+  await new Promise(resolve => setImmediate(resolve));
+  const terminal = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'drained result', session_id: 'fixture_session' }) + '\n';
+  if (stage === 'result') process.stdout.write(terminal);
+  else if (stage === 'exit') process.emit('exit', 0, null);
+  else process.emit('error', Object.assign(new Error('native transport failed'), { code: 'EPIPE' }));
+  const fencedBeforeClose = ended;
+  await new Promise(resolve => setImmediate(resolve)); const pendingBeforeClose = !settled;
+  // A process exit may precede final buffered stdout. Authority is over, but that output must still drain.
+  if (stage === 'exit') process.stdout.write(terminal);
+  process.emit('exit', stage === 'failure' ? 1 : 0, null); process.emit('close', stage === 'failure' ? 1 : 0, null);
+  const result = await running;
+  expect(fencedBeforeClose).toBe(1); expect(pendingBeforeClose).toBe(true); expect(ended).toBe(1);
+  if (stage !== 'failure') expect(result).toEqual({ text: 'drained result', sessionId: 'fixture_session' });
+  else expect(result).toMatchObject({ message: 'Native task did not complete' });
 });

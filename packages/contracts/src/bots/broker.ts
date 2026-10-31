@@ -53,8 +53,8 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
 
 const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
   capability("browser.action", SharedBrowserActionSchema),
-  capability("routine.propose",BotRoutineProposalSchema),
-  capability("routine.control",BotRoutineToolControlSchema),
+  capability("routine.propose",BotRoutineProposalSchema).extend({ routineRequestId: z.uuid().optional() }),
+  capability("routine.control",BotRoutineToolControlSchema).extend({ routineRequestId: z.uuid().optional() }),
   capability("agent.task", z.object({ prompt: canonicalBoundedText(16 * 1024, 32 * 1024) }).strict()),
   capability("jev.inbox", JevInboxInputSchema),
   capability("integration.inventory", z.object({ service: BotIntegrationServiceSchema.optional() }).strict()),

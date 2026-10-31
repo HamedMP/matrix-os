@@ -1,3 +1,5 @@
+import { createClaudeRoutineHook } from "./claude-routine-hook.js";
+import { createClaudeRoutineExecution, type NativeRoutineCliPort } from "./claude-routine-execution.js";
 import type { SharedBrowserBroker } from "../shared-browser/broker.js";
 import { openNativeSharedBrowserRun, type NativeSharedBrowserRun } from "./native-shared-browser-run.js";
 import { configureClaudeSharedBrowser } from "./claude-shared-browser-launch.js";
@@ -160,6 +162,7 @@ function canonicalClaudeActivityEvent(
 
 export function createClaudeChatProviderAdapter(options: {
   homePath: string;
+  routineCli?: NativeRoutineCliPort;
   credentialKey?: Buffer;
   spawnFn?: CanonicalCliSpawn;
   /** Explicit legacy inactivity override; omitted for ordinary busy owner turns. */
@@ -615,10 +618,19 @@ export function createClaudeChatProviderAdapter(options: {
       }
     };
 
+    const routineController = new AbortController();
+    const routineSignal = AbortSignal.any([processSignal, routineController.signal]);
+    const routineExecution = options.routineCli ? createClaudeRoutineExecution({ ...options.routineCli, input, signal: routineSignal,
+      current: () => activeRuns.get(input.runId) === activeRun, publish: humanWait.emit, cwd, homePath: options.homePath }) : undefined;
+    const initialInput = () => writeControl!(`${JSON.stringify({ type: "user", session_id: resumeState?.sessionId ?? "", message: { role: "user", content: nativePrompt }, parent_tool_use_id: null })}\n`);
+    const routineHook = routineExecution ? createClaudeRoutineHook({ signal: routineSignal,
+      write: frame => writeControl!(frame), startInput: initialInput, fail: () => processController.abort(), execute: routineExecution.execute }) : undefined;
+    const closeRoutines = async () => { routineController.abort(); await routineHook?.close(); await routineExecution?.close(); };
     const parseLine = (raw: string) => {
       if (!raw.trim()) return;
       const line = ClaudeStreamLineSchema.parse(JSON.parse(raw));
       markStarted?.();
+      if (routineHook?.handle(line)) return;
       if (inputControl.handle(line)) return;
       if (line.type === "result") {
         if (line.is_error === true || line.subtype === "error") discardProjectedText();
@@ -712,6 +724,7 @@ export function createClaudeChatProviderAdapter(options: {
       }
       if (line.type === "result") {
         sawResult = true;
+        routineController.abort(); // Actual native turn terminal, independent of a completed tool/CLI invocation.
         resultSubtype = line.subtype === "success" || line.subtype === "error"
           ? line.subtype
           : line.subtype === undefined
@@ -746,12 +759,13 @@ export function createClaudeChatProviderAdapter(options: {
       stdoutLimitMode: "caller_bounded_frames",
       maxStderrBytes: MAX_STDERR_BYTES,
       spawnFn: options.spawnFn,
+      onSettled: () => routineController.abort(),
       onStart(write, end, idle, startup) {
         markStarted = () => startup.ready();
         humanWait.attach(idle);
         writeControl = write;
         finishInput = end;
-        void write(`${JSON.stringify({ type: "user", session_id: resumeState?.sessionId ?? "", message: { role: "user", content: nativePrompt }, parent_tool_use_id: null })}\n`).catch(error => {
+        void (routineHook ? routineHook.start() : initialInput()).catch(error => {
           console.warn("[chat-claude] Initial input write failed", error instanceof Error ? error.name : "UnknownError");
           processController.abort();
         });
@@ -763,7 +777,8 @@ export function createClaudeChatProviderAdapter(options: {
         stderrEvidence += chunk.toString("utf8");
         stderrEvidenceBytes += chunk.byteLength;
       },
-    }).then(() => {
+    }).then(async () => {
+      await closeRoutines();
       releaseActiveRun();
       lines.finish();
       if (sawResult && !resultFailed) flushProjectedText();
@@ -900,6 +915,7 @@ export function createClaudeChatProviderAdapter(options: {
       streamCompleted = true;
     } finally {
       processController.abort();
+      await closeRoutines();
       inputControl.close(); humanWait.close();
       discardProjectedText();
       if (!streamCompleted) {

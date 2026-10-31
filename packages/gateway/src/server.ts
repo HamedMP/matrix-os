@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { createSupervisedBrowserRuntime } from "./startup/browser-approvals.js";
 import { createRuntimeProviderSettings, executableChatDrivers } from "./server/provider-discovery-composition.js";
 import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
@@ -1604,7 +1605,10 @@ export async function createGateway(config: GatewayConfig) {
         getBots: () => botServices, modelId: process.env.MATRIX_COMPANY_BOT_MODEL?.trim(),
       });
     }
+    const routineCliTransport = { binPath: fileURLToPath(new URL("../bin/matrix.mjs", import.meta.resolve("@finnaai/matrix"))),
+      endpoint: `http://127.0.0.1:${port}/api/routine-cli/execute` };
     botServices = await startBots({
+      routineCliTransport,
       toolOutputKey, homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}),
       ...(internalPlatformUrl && internalPlatformToken && internalHandle && process.env.MATRIX_MACHINE_ID && process.env.MATRIX_RUNTIME_SLOT
@@ -1638,6 +1642,7 @@ export async function createGateway(config: GatewayConfig) {
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port });
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {
       canonicalAdapters.push(createClaudeChatProviderAdapter({
+        ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
         ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker, sharedBrowserGatewayPort: port } : {}),
         homePath,
         credentialKey: toolOutputKey,

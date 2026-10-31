@@ -204,7 +204,7 @@ export function createBotToolDispatcher(deps: {
   interactions?: Pick<BotInteractionService, "createFromTool">;
   memory?: Pick<BotMemoryService, "propose" | "search">;
   integrations?: Pick<BotIntegrationTools, "inventory" | "call">;
-  nativeTask?: { prepare(binding: PiRuntimeBinding): Promise<void>; execute(binding: PiRuntimeBinding, prompt: string, cwd: string, signal: AbortSignal): Promise<BotToolResult> };
+  nativeTask?: { routine?(binding: PiRuntimeBinding, request: BotToolRequest, signal: AbortSignal): Promise<BotToolResult | undefined>; prepare(binding: PiRuntimeBinding): Promise<void>; execute(binding: PiRuntimeBinding, prompt: string, cwd: string, signal: AbortSignal): Promise<BotToolResult> };
 }): BotToolDispatcher {
   async function workspace(binding: PiRuntimeBinding): Promise<string> {
     try {
@@ -329,6 +329,8 @@ export function createBotToolDispatcher(deps: {
     },
     async dispatch(binding, request, signal) {
       if (request.capability === "routine.propose" || request.capability === "routine.control") {
+        const native = await deps.nativeTask?.routine?.(binding, request, signal);
+        if (native) return { result: native };
         if (!deps.routines || binding.group || isManagedPiBinding(binding) || binding.requestClass!=="interactive") throw new BotBrokerActionError("not_granted");
         if(request.capability==="routine.propose") return {result:textResult(JSON.stringify(await deps.routines.propose(binding,request.args)))};
         if(request.args.operation==="list") return {result:textResult(JSON.stringify(await deps.routines.list(binding.ownerId,binding.botId)))};

@@ -153,6 +153,7 @@ export interface BotServices {
 }
 
 export async function startBots(options: {
+  routineCliTransport?: { binPath: string; endpoint: string };
   routineActionPlatform?: { platformUrl: string; token: string; handle: string; machineId: string; runtimeSlot: string };
   toolOutputKey?: Buffer;
   runtimeOwnerId?: string | null;
@@ -352,8 +353,6 @@ export async function startBots(options: {
       platform: options.routineActionPlatform, now: options.now }) : undefined;
   recoveryRegistry = registry;
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
-  const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
-    registry, profileGuard: options.nativeProfileGuard, lifetime: lifetime.signal, callTool: (binding, request, signal) => brokerTool(binding, request, signal) }) : undefined;
   const jevTools = options.jev ? createBotJevTools({ agents: options.agents, recipes, workflow: options.jev,
     signalFor: binding => registry.inferenceSignal(binding) ?? undefined,
     listGrants: (ownerId, botId) => createBotGrantsRepository(db).listLive({ ownerId, botId, audience: "direct", now: now().toISOString() }),
@@ -401,7 +400,7 @@ export async function startBots(options: {
       runtimeOwnerId: options.runtimeOwnerId,
       computerId: options.computerId,
       connections: providerConnections,
-      nativeTasks: Boolean(nativeTasks),
+      nativeTasks: Boolean(options.nativeProfileGuard),
     }),
     admission,
     registry,
@@ -411,6 +410,8 @@ export async function startBots(options: {
       forgetRun(runId);
     },
   });
+  const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
+    registry, ...(routineCli && options.routineCliTransport ? { routineCli: { runtime: routineCli, ...options.routineCliTransport }, publishRoutineAction: orchestrator.publishRoutineAction } : {}), profileGuard: options.nativeProfileGuard, lifetime: lifetime.signal, callTool: (binding, request, signal) => brokerTool(binding, request, signal) }) : undefined;
   const managed = createManagedPiRuntime({ toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
