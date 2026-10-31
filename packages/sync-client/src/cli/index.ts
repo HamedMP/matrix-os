@@ -20,6 +20,7 @@ import { downloadCommand } from "./commands/download.js";
 import { agentCommand } from "./commands/agent.js";
 import { collaborationCommand } from "./commands/collaboration.js";
 import { chatsCommand } from "./commands/chats.js";
+import { handoffCommand } from "./commands/handoff.js";
 import { forwardAliasCommand, portCommand } from "./commands/port.js";
 import { normalizeLeadingGlobalFlags } from "./global-flags.js";
 import { shouldRunStandaloneDaemon } from "./standalone-runtime.js";
@@ -43,6 +44,7 @@ const subCommands = {
   agent: agentCommand,
   collaboration: collaborationCommand,
   chats: chatsCommand,
+  handoff: handoffCommand,
   port: portCommand,
   forward: forwardAliasCommand,
   doctor: doctorCommand,
