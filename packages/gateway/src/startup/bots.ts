@@ -372,6 +372,7 @@ export async function startBots(options: {
     transact,
     interactions,
     routineTools:true,
+    routineExecution:routines,
     memory,
     agents: options.agents,
     recipes,

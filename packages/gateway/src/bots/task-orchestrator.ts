@@ -48,6 +48,7 @@ import { BotRouteError, type ResolvedBotRoute } from "./route-resolver.js";
 import { requireGroupBotAuthority, type GroupBotAuthorizer, BOT_RUNTIME_REGISTRY_CAPACITY, isManagedPiBinding, type BotRuntimeRegistry } from "./runtime-registry.js";
 import { readOwnerSoul, OwnerPersonalityError, type OwnerPersonalityConfig } from "./owner-personality.js";
 import { buildBotSystemPrompt, BotSystemPromptError } from "./system-prompt.js";
+import { withApprovedRoutineOccurrence } from "./routine-prompt-context.js";
 import { BotSetupStepError, runBotSetupStep } from "./setup-step.js";
 
 /** How long a worker that took the cancel has to end its run before its runtime is stopped. */
@@ -114,6 +115,8 @@ export function createBotTaskOrchestrator(deps: {
   transact: BotStateTransactions;
   interactions?: Pick<BotInteractionService, "answerWithMessage">;
   routineTools?: boolean;
+  /** Server-owned durable checker; no request or model field can provide phase authority. */
+  routineExecution?: Pick<import("./routine-execution.js").BotRoutineExecution, "assertOccurrencePhase">;
   memory?: Pick<BotMemoryService, "admitted">;
   agents: Pick<ChatAgentStore, "get">;
   recipes: BotRecipeCatalog;
@@ -509,6 +512,12 @@ export function createBotTaskOrchestrator(deps: {
       const spec = run?.spec;
       if (!spec || run.stopping || run.finished || run.ownerId !== binding.ownerId || run.chatId !== binding.chatId
         || run.runtime?.runtimeHandle !== binding.runtimeHandle || run.runtime.executionGeneration !== binding.executionGeneration) throw new BotBrokerActionError("stale_generation");
+      if (!isManagedPiBinding(binding) && !binding.group && binding.requestClass === "background" && deps.routineExecution) {
+        // Recheck at delivery, rather than caching a phase from prepareRun before queue/admission.
+        await runBotSetupStep(() => deps.routineExecution!.assertOccurrencePhase(binding), run.signal);
+        if (run.stopping || run.finished || run.signal.aborted || active.get(binding.runId) !== run) throw new BotBrokerActionError("stale_generation");
+        return { ...spec, systemPrompt: withApprovedRoutineOccurrence(spec.systemPrompt) };
+      }
       return spec;
     },
     async readImageChunk(binding, request) {
