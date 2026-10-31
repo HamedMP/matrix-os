@@ -231,7 +231,7 @@ export function createBotBrokerActions(deps: {
       throw new BotBrokerActionError("stale_generation");
     }
     const deadline = request.capability === "jev.inbox" && ["evaluate", "batch_next"].includes(request.args.operation)
-      ? 10 * 60_000 : request.capability === "browser.action" ? SHARED_BROWSER_ACTION_DEADLINE_MS : request.capability === "agent.task" ? 120_000 : toolTimeoutMs;
+      ? 10 * 60_000 : request.capability === "browser.action" ? SHARED_BROWSER_ACTION_DEADLINE_MS : request.capability === "agent.task" || request.capability === "routine.cli" ? 120_000 : toolTimeoutMs;
     const signal = AbortSignal.any([runSignal, deps.inference.lifetime, AbortSignal.timeout(deadline)]);
     try {
       await reauthorize(binding, runSignal);
@@ -327,7 +327,7 @@ export function createBotBrokerActions(deps: {
             if (!await publishEvent(binding, request.event)) return refusal(request.requestId, "invalid_arguments");
             return success(request.requestId, { accepted: true });
           case "bot.tool":
-            return success(request.requestId, await runTool(binding, request.tool));
+            return success(request.requestId, await runTool(binding, request.tool, transportSignal));
         }
       } catch (error: unknown) {
         if (error instanceof BotBrokerActionError) return refusal(request.requestId, error.code);

@@ -12,6 +12,7 @@ import {
   BotSessionSaveResultSchema,
   BotSessionSnapshotSchema,
   BotToolResultSchema,
+  type BotBrokerRequest,
   type BotEvent,
   type BotImageChunk,
   type BotImageChunkRequest,
@@ -37,7 +38,7 @@ export class BotBrokerError extends Error {
 export interface BotBrokerClient {
   loadSession(): Promise<BotSessionSnapshot>;
   saveSession(session: BotSessionSaveRequest): Promise<{ revision: number }>;
-  tool(request: BotToolRequest): Promise<BotToolResult>;
+  tool(request: BotToolRequest, signal?: AbortSignal): Promise<BotToolResult>;
   event(event: BotEvent): Promise<void>;
 }
 
@@ -55,10 +56,11 @@ export interface BotBrokerClientOptions {
   timeoutMs?: number;
   connectFn?: (path: string) => Socket;
   requestIdFactory?: () => string;
+  signal?: AbortSignal;
 }
 
 /** One request per connection, newline-delimited JSON, mirroring the existing worker bridge. */
-function exchange(options: BotBrokerClientOptions, frame: unknown): Promise<unknown> {
+function exchange(options: BotBrokerClientOptions, frame: BotBrokerRequest): Promise<unknown> {
   const connectFn = options.connectFn ?? ((path: string) => connect({ path }));
   return new Promise((resolve, reject) => {
     const socket = connectFn(options.socketPath);
@@ -67,13 +69,22 @@ function exchange(options: BotBrokerClientOptions, frame: unknown): Promise<unkn
     const finish = (error?: BotBrokerError, value?: unknown) => {
       if (settled) return;
       settled = true;
+      options.signal?.removeEventListener("abort", abort);
       socket.destroy();
       if (error) reject(error);
       else resolve(value);
     };
+    const abort = () => finish(new BotBrokerError("stale_generation"));
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) { abort(); return; }
     socket.setTimeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, () => finish(new BotBrokerError("timeout")));
-    // The broker handles one frame after EOF, then replies on the half-open socket.
-    socket.once("connect", () => socket.end(`${JSON.stringify(frame)}\n`));
+    // Live routine calls keep their write direction open: cancellation has a fresh EOF
+    // observable by the host while approval/CLI work is pending. Other frames retain legacy EOF.
+    socket.once("connect", () => {
+      const text = `${JSON.stringify(frame)}\n`;
+      if (frame.action === "bot.tool" && frame.transport === "live") socket.write(text);
+      else socket.end(text);
+    });
     socket.on("data", (chunk: Buffer) => {
       reply = Buffer.concat([reply, chunk]);
       if (reply.length > MAX_REPLY_BYTES) {
@@ -97,7 +108,7 @@ function exchange(options: BotBrokerClientOptions, frame: unknown): Promise<unkn
 export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorkerBrokerClient {
   const requestIdFactory = options.requestIdFactory ?? randomUUID;
 
-  async function call<T>(action: Record<string, unknown>, resultSchema: z.ZodType<T>): Promise<T> {
+  async function call<T>(action: Record<string, unknown>, resultSchema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
     const requestId = requestIdFactory();
     const frame = BotBrokerRequestSchema.safeParse({
       version: 1,
@@ -106,15 +117,18 @@ export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorke
       executionGeneration: options.executionGeneration,
       runId: options.runId,
       ...action,
+      ...(action.action === "bot.tool" && typeof action.tool === "object" && action.tool !== null
+        && "capability" in action.tool && action.tool.capability === "routine.cli" ? { transport: "live" } : {}),
     });
     if (!frame.success) throw new BotBrokerError("invalid_arguments");
     const tool = frame.data.action === "bot.tool" ? frame.data.tool : undefined;
     const waitsForApproval = tool?.capability === "integration.call" || tool?.capability === "mcp.call";
     // Jev's paid classification and confirmed label readback use the gateway's bounded long-operation deadline.
     const longJevOperation = tool?.capability === "jev.inbox" && ["evaluate", "batch_next"].includes(tool.args.operation);
+    const routine = tool?.capability === "routine.cli";
     const browserPause = tool?.capability === "browser.action";
-    const raw = await exchange(options.timeoutMs === undefined && (waitsForApproval || longJevOperation || browserPause)
-      ? { ...options, timeoutMs: browserPause ? SHARED_BROWSER_ACTION_DEADLINE_MS + 30_000 : 10 * 60_000 + 35_000 } : options, frame.data);
+    const raw = await exchange({ ...options, signal, ...(options.timeoutMs === undefined && (waitsForApproval || longJevOperation || browserPause || routine)
+      ? { timeoutMs: routine ? 125_000 : browserPause ? SHARED_BROWSER_ACTION_DEADLINE_MS + 30_000 : 10 * 60_000 + 35_000 } : {}) }, frame.data);
     const reply = BotBrokerResponseSchema.safeParse(raw);
     if (!reply.success || reply.data.requestId !== requestId) throw new BotBrokerError("unavailable");
     if (!reply.data.ok) throw new BotBrokerError(reply.data.code);
@@ -128,7 +142,7 @@ export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorke
     readImageChunk: (image) => call({ action: "bot.input.image", image }, BotImageChunkSchema),
     loadSession: () => call({ action: "bot.session.load" }, BotSessionSnapshotSchema),
     saveSession: (session) => call({ action: "bot.session.save", session }, BotSessionSaveResultSchema),
-    tool: (tool) => call({ action: "bot.tool", tool }, BotToolResultSchema),
+    tool: (tool, signal) => call({ action: "bot.tool", tool }, BotToolResultSchema, signal),
     event: async (event) => {
       await call({ action: "bot.event", event }, BotEventAcceptedSchema);
     },

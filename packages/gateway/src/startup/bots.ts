@@ -360,7 +360,9 @@ export async function startBots(options: {
   }) : undefined;
   const admission = createPrivateBotAdmission({ db, host, roots: options.executionRoots, registry, homePath: options.homePath,
     ...(options.group ? { authorizeGroup: options.group.authorizeGroup, getGroupRevocation: options.group.getGroupRevocation } : {}) });
+  const managedRoutineCli = routineCli && options.routineCliTransport ? { runtime: routineCli, ...options.routineCliTransport } : undefined;
   const managedCapabilities: import("@matrix-os/contracts").BotToolCapability[] = [
+    ...(managedRoutineCli ? ["routine.cli"] as const : []),
     ...(options.sharedBrowser ? ["browser.action"] as const : []),
     ...(integrationClient ? ["integration.inventory", "integration.describe", "integration.call"] as const : []),
     ...(options.managedMcp ? ["mcp.inventory", "mcp.describe", "mcp.call"] as const : []),
@@ -412,10 +414,10 @@ export async function startBots(options: {
   });
   const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
     registry, ...(routineCli && options.routineCliTransport ? { routineCli: { runtime: routineCli, ...options.routineCliTransport }, publishRoutineAction: orchestrator.publishRoutineAction } : {}), profileGuard: options.nativeProfileGuard, lifetime: lifetime.signal, callTool: (binding, request, signal) => brokerTool(binding, request, signal) }) : undefined;
-  const managed = createManagedPiRuntime({ toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
+  const managed = createManagedPiRuntime({ routineCli: managedRoutineCli, routineSignal: binding => registry.inferenceSignal(binding), toolOutputKey: options.toolOutputKey, personality: { homePath: options.homePath, runtimeOwnerId: options.runtimeOwnerId }, inputHistory, homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource, ...(isolatedChat ? { isolatedChat } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}), ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ownerTools, admission: managedAdmission, host, providers: options.providers, lifetime: lifetime.signal,
     forgetRun: (runId) => forgetRun(runId), cancelInference: (binding) => registry.cancelInference(binding) });
   const tools = createBotToolDispatcher({
-    homePath: options.homePath, routines, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
+    homePath: options.homePath, managedRoutine: { execute: managed.executeRoutine }, routines, ...(jevTools ? { jev: jevTools } : {}), managedTools: ownerTools, managedWorkspace: managedAdmission.workspace, interactions, memory,
     assertSource: revalidateSource,
     submittedArtifact: (binding, args) => isManagedPiBinding(binding) ? managed.readSubmittedArtifact(binding, args) : orchestrator.readSubmittedArtifact(binding, args),
     ...(integrationTools ? { integrations: integrationTools } : {}), ...(nativeTasks ? { nativeTask: nativeTasks } : {}),

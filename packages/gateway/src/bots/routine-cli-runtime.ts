@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+import { isManagedPiBinding, type ManagedPiRuntimeBinding } from "./runtime-registry.js";
 import { createDelegatedRoutineSourceProducer } from "./routine-cli-delegated-source.js";
 import { createChatRoutineSourceProducer } from "../chat/routine-chat-source.js";
 import { createHash } from "node:crypto";
@@ -81,6 +83,21 @@ export function createRoutineCliRuntime(options: {
       const ports = await forOwner(actual.producer.source.ownerId).controller.register(actual.producer);
       if (input.signal.aborted || !input.current()) { await ports.revoke(); throw new RoutineCliError("permission_denied"); }
       return { ...ports, narrowNativeMode: actual.narrowNativeMode };
+    },
+    async registerManagedChat(input: Omit<Parameters<typeof createChatRoutineSourceProducer>[0], "computerId" | "provider"> & { binding: ManagedPiRuntimeBinding }) {
+      const binding = structuredClone(input.binding), parentSignal = options.registry.inferenceSignal(binding);
+      const current = (invocation?: import("./routine-cli-source.js").RoutineCliVerifiedInvocation) => {
+        const actual = options.registry.lookupRun(binding);
+        return !!actual && isManagedPiBinding(actual) && isDeepStrictEqual(actual, binding) && parentSignal?.aborted === false
+          && binding.ownerId === input.input.owner.ownerId && binding.chatId === input.input.chatId && binding.runId === input.input.runId
+          && !binding.group && binding.requestClass === "interactive" && binding.capabilities.includes("routine.cli") && input.current(invocation);
+      };
+      requireCanonical();
+      if (!current() || input.input.owner.type !== "personal" || input.input.sharedScopeId) throw new RoutineCliError("permission_denied");
+      const actual = createChatRoutineSourceProducer({ ...input, signal: AbortSignal.any([input.signal, parentSignal!]), current, provider: "matrix_pi", computerId: options.computerId });
+      const ports = await forOwner(binding.ownerId).controller.register(actual.producer);
+      if (!current() || input.signal.aborted) { await ports.revoke(); throw new RoutineCliError("permission_denied"); }
+      return ports;
     },
     async registerBotChild(input: Omit<Parameters<typeof createDelegatedRoutineSourceProducer>[0], "computerId" | "registry">) {
       requireCanonical(); const actual = createDelegatedRoutineSourceProducer({ ...input, computerId: options.computerId, registry: options.registry });
