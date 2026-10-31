@@ -1,4 +1,5 @@
 import { bootstrapCollaborationDatabase } from "../collaboration/database.js";
+import { createRoutineCliRuntime, type RoutineCliRuntime } from "../bots/routine-cli-runtime.js";
 import { createRoutineCliDestinationService } from "../bots/routine-cli-destination-service.js";
 import {createBotRoutineApprovals} from "../bots/routine-approval.js";
 import {createBotRoutineExecution,type BotRoutineExecution} from "../bots/routine-execution.js";
@@ -126,6 +127,7 @@ export async function runConnectionReconciliationPass(
 }
 
 export interface BotServices {
+  routineCli?: RoutineCliRuntime;
   routineDestination?: ReturnType<typeof createRoutineCliDestinationService>;
   routines?: BotRoutineExecution;
   providerConnections?: BotProviderConnectionsService;
@@ -152,6 +154,7 @@ export interface BotServices {
 }
 
 export async function startBots(options: {
+  routineActionPlatform?: { platformUrl: string; token: string; handle: string; machineId: string; runtimeSlot: string };
   toolOutputKey?: Buffer;
   runtimeOwnerId?: string | null;
   /** Fixed trusted runtime config only; preserve each actual principal's existing owner data. */
@@ -160,7 +163,7 @@ export async function startBots(options: {
   nativeProfileGuard?: NativeProviderProfileGuard;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
   homePath: string;
-  repository: Pick<ChatRepository, "kysely" | "withTransaction" | "get" | "getTurnRunContext" | "getDetailPage">;
+  repository: Pick<ChatRepository, "kysely" | "withTransaction" | "get" | "getTurnRunContext" | "getDetailPage" | "findTurnAdmission" | "findQueuedAdmission">;
   agents: ChatAgentStore;
   executionRoots: Pick<ChatExecutionRootResolver, "resolve">;
   providers: { getSnapshot(): Promise<AiProviderSnapshotV3> };
@@ -353,6 +356,10 @@ export async function startBots(options: {
   saveSweepTimer.unref();
 
   const registry = new BotRuntimeRegistry();
+  const routineCli = options.routineActionPlatform && options.computerId && options.configuredOwnerIds?.length
+    ? createRoutineCliRuntime({ db, computerId: options.computerId, configuredOwnerIds: options.configuredOwnerIds,
+      agents: options.agents, repository: options.repository, transact, approvals: routineApprovals, control: routines, registry,
+      platform: options.routineActionPlatform, now: options.now }) : undefined;
   recoveryRegistry = registry;
   let brokerTool: import('../bots/broker-actions.js').BotBrokerActions['callTool'] = async () => { throw new Error('Bot broker not registered'); };
   const nativeTasks = options.nativeProfileGuard ? createNativeBotTasks({ homePath: options.homePath, connections: providerConnections,
@@ -378,6 +385,7 @@ export async function startBots(options: {
   let forgetRun: (runId: string) => void = () => undefined;
   const inputHistory = createBotInputHistoryReader(options.repository);
   const orchestrator = createBotTaskOrchestrator({
+    routineProposals: routineCli?.proposals,
     inputHistory,
     homePath: options.homePath, expectedOwnerId: options.runtimeOwnerId, assertSource: revalidateSource,
     ...(isolatedChat ? { isolatedChat } : {}),
@@ -474,11 +482,11 @@ export async function startBots(options: {
   forgetRun = (runId) => actions.forgetRun(runId);
   const unregister = registerBotBroker(host, actions);
   const adapter = createMatrixBotChatProviderAdapter({
-    orchestrator, routines,
+    orchestrator, routines, proposals: routineCli?.proposals,
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
   });
   return {
-    routineDestination,
+    routineCli, routineDestination,
     recipes,
     routines,
     instantiation,
@@ -498,6 +506,7 @@ export async function startBots(options: {
     async close() {
       await routines.stop();
       chatgptPlanPeers?.close();
+      await routineCli?.close();
       lifetime.abort();
       unregister();
       registry.shutdown();

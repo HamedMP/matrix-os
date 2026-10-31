@@ -55,8 +55,8 @@ Consumes authenticated owner route and current target/permission DTOs. Initial o
 Task4a owns default routing UI. Task4b owns the approved exact one-operation action controller, owner proof/submit path and shared Chat/Terminal approval UI (routine-action-policy-design.md). No blanket implementation approval is pending. Terminal uses real session/incarnation/launch and no synthetic Chat/run; Chat preserves/verifies actionDigest end-to-end. Full-access-only is an intermediate state. Native Bash/read-only restrictions, plan/review/shared/org/unsupported ceilings and all actual-account/deploy permission limits remain unchanged.
 - [x] Task4a: failure-first owner HTTP/real target CAS+recovery, shared web/native current-Chat destination, stale async/auth scope and no-grant tests.
 - [x] Task4a independent review and fresh parent checks: 198 Vitest, 48 Native Mobile Jest, 9 native PostgreSQL; scoped types pass. Full Native Mobile types remain blocked at 59 baseline/current diagnostics with zero added/removed.
-- [ ] Task4b: fail separate exact action approval/controller tests first.
-- [ ] Wire common Web Canvas/Web Desktop/Electron behavior and applicable mobile review boundary; scoped tests/review/commit. Do not occupy A's GUI.
+- [x] Task4b: failure-first exact action controller, trusted current-source policy, Platform-only owner proof and bounded canonical/Terminal decision ports; independent review fixed stale authority callbacks and portable Native token/fetch/read cancellation.
+- [x] Shared Web Canvas/Web Desktop/Electron and applicable Native Mobile cards/inbox/browser confirmation wired; parent frozen-diff 453 unit/component, 110 PostgreSQL, 46 Native Mobile tests and seven scoped type lanes pass. Actual native/Terminal source producers and live acceptance remain Tasks5–7; full Native types and broad baseline lint/scanner/root-suite blockers remain explicit.
 
 ### Task 5: Claude/Codex/Hermes ordinary Chat and offered delegated Claude
 
