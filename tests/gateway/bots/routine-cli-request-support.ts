@@ -19,7 +19,7 @@ export const TARGET_A = { botId: BOT, chatId: "chat_target_a" }, TARGET_B = { bo
 export const proposal: BotRoutineProposal = { name: "Daily report", prompt: "private prompt", schedule: { kind: "interval", everyMs: 60_000 }, selection: { instanceId: "matrix_chatgpt_plan", model: "private-model" }, authorizedEffects: ["read"] };
 export const propose = (n = 100): RoutineCliOperation => ({ operation: "propose", requestId: invocation(n), proposal });
 export const routineId = (n: number) => `rt_${n.toString(16).padStart(24, "0")}`;
-export async function requestFixture(db: Kysely<OwnerBotDatabase>) {
+export async function requestFixture(db: Kysely<OwnerBotDatabase>, options: { actualSourceOnly?: boolean } = {}) {
   const home = await mkdtemp(join(tmpdir(), "routine-cli-requests-"));
   const chats = new ChatRepository(db as unknown as Kysely<ChatDatabase>);
   const agents = new ChatAgentStore({ homePath: home, db: chats.kysely }); await agents.bootstrap();
@@ -34,7 +34,8 @@ export async function requestFixture(db: Kysely<OwnerBotDatabase>) {
   const targets = createRoutineCliTargetService({ db, scope, agents, now: () => new Date(state.clock), revalidateSource: sources.revalidateSource, canAccessTarget: async () => true });
   const principal = { userId: OWNER, source: "jwt" as const };
   await targets.remember(principal, { ...TARGET_A, baseRevision: 0 });
-  const source = await sources.register(context()); let nextInvocation = 1;
+  // Actual native-source lanes must mint through their canonical adapter, never pre-seed a source.
+  const source: Awaited<ReturnType<typeof sources.register>> | "" = options.actualSourceOnly ? "" : await sources.register(context()); let nextInvocation = 1;
   // Explicit atomic ledger fixture port, NOT real canonical proposal/control admission.
   const admitMutation: RoutineCliMutationAdmission = async ({ transaction, target }) => {
     const task = await createBotTasksRepository(transaction.db).create({ ownerId: OWNER, botId: target.botId, chatId: target.chatId, now: state.clock }, transaction.db);
@@ -44,7 +45,10 @@ export async function requestFixture(db: Kysely<OwnerBotDatabase>) {
   const transact = createBotStateTransactions(chats);
   const service = (overrides: Partial<RoutineCliRequestDependencies> = {}) => createRoutineCliRequestService({ db, scope, sources, targets, transact,
     now: () => new Date(state.clock), authorizeTarget: async () => state.targetAllowed, admitMutation, ...overrides });
-  const token = async (operation: RoutineCliOperation, registered = source) => (await sources.issue(registered, { invocationId: invocation(nextInvocation++), operation })).takeToken();
+  const token = async (operation: RoutineCliOperation, registered: typeof source = source) => {
+    if (!registered) throw new Error("Actual canonical native source required");
+    return (await sources.issue(registered, { invocationId: invocation(nextInvocation++), operation })).takeToken();
+  };
   return { home, db, state, chats, agents, sources, targets, source, principal, transact, service, token, admitMutation,
     execute: async (operation: RoutineCliOperation, overrides: Partial<RoutineCliRequestDependencies> = {}) => service(overrides).execute({ token: await token(operation), operation }),
     switchDefault: async () => { const current = await targets.getStoredPreference(principal); await targets.remember(principal, { ...TARGET_B, baseRevision: current.revision }); },
