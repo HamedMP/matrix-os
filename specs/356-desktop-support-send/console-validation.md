@@ -28,9 +28,10 @@ Remaining failures are explicit:
 
 - The production support identity endpoint still signs with the unnormalized key. The local
   platform repair must reach a reviewed test runtime before send/reply acceptance testing.
-- One shared drive's direct-session exchange returns 401, producing a share-unavailable
-  warning. Other scope and drive reads succeed. The generic client response does not expose
-  the owner home's denial reason; inspect that home's sanitized denial code before repair.
+- A separate shared project's owner home rejects direct-session exchange with 401, producing
+  a share-unavailable warning. Platform ticket issuance succeeds. Its owner-home diagnosis
+  has been handed off separately at the requester's direction and is outside this support
+  repair's release scope. No authorization or log filtering was changed to hide that failure.
 - Earlier captures showed blocked third-party tracking scripts in an embedded remote page.
   They did not recur in this new session. CSP must remain scoped; investigate the page's
   script inclusion if they recur rather than allowlisting tracking origins to clear errors.
@@ -48,7 +49,8 @@ Electron Desktop consumers; those other surfaces remain unqualified here.
 - Atomicity: no database writes, new endpoints, locks or transactions are added.
 - Failure: direct-session errors retain their safe unavailable/denied behavior.
 - Resources: icon warmup remains capped and explicitly removed on identity/runtime changes.
-- Release: successful real support submission/reply and the remaining denial diagnosis are open.
+- Release: real support submission/reply, current-head review and CI remain open. The separate
+  owner-home collaboration diagnosis is a distinct handoff rather than this task's blocker.
 
 Public-site documentation: no new product capability or user instructions; these restore
 existing behavior. A documentation PR is unnecessary unless review identifies changed guidance.

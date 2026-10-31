@@ -46,9 +46,19 @@ synthetic read verification does not qualify authenticated message submission or
 receipt. Production configuration and deployment remain unchanged. Do not remove identity
 verification or weaken authorization to make the request succeed.
 
+A subsequent read-only probe exercised the actual candidate `createAuthRoutes` identity
+endpoint, using an ephemeral test JWT key and a random synthetic identity. The route's
+returned proof was accepted by the real provider (200); the original raw-key signature and
+an intentionally invalid signature were both rejected (403). Missing route authentication
+still returned 401. This verifies the production signing code against the real provider;
+it does not establish message submission or reply delivery. No customer identity, messages
+or tickets were created or read. Tested source: `6f9ee6c962fc4c7cf9f39448eab3765ef93bff3c`.
+
 ## Completion checks
 
-- Confirm the actual provider rejection cause and address it without changing ownership.
+- Provider rejection cause confirmed; the local signing repair passes the real-provider read probe.
+- Publish the prepared candidate for current-head review and CI, then validate the platform
+  repair on a reviewed runtime before promoting a Desktop release.
 - Observe a real authenticated send and reply receipt from the final candidate.
 - Repeat after sign-out/sign-in and a runtime switch; verify onboarding flags still load.
 - Attach exact-build live captures before claiming review readiness. Local unit tests and
