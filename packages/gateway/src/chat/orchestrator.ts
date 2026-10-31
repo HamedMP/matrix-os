@@ -1,3 +1,4 @@
+import type { RoutineCliActionController } from "../bots/routine-action-controller.js";
 import { registerBrowserApprovalRun } from "./browser-approval-registration.js";
 import { settleSteerCallbackFailure } from "./steering-delivery.js";
 import type { BrowserApprovalControl } from "./browser-approval-control.js";
@@ -201,6 +202,7 @@ export class CanonicalChatOrchestrator {
     catalog: Pick<ChatProviderCatalogService, "getCatalog">;
     adapters: CanonicalChatProviderRegistry;
     browserApprovals?: BrowserApprovalControl;
+    routineActions?: Pick<RoutineCliActionController, "submitChat">;
     executionRoots?: ChatExecutionRootResolver;
     agentContext?: ChatAgentContext;
     collaborationGuard?: {
@@ -1049,7 +1051,7 @@ export class CanonicalChatOrchestrator {
     await this.assertPersonalExecutionAllowed(owner, chatId);
     return submitCanonicalApproval({ repository: this.options.repository,
       active: this.active.get(runId) ?? await recoverBackgroundRunControl({ owner, chatId, runId, repository: this.options.repository, adapters: this.options.adapters }),
-      browserApprovals: this.options.browserApprovals,
+      browserApprovals: this.options.browserApprovals, routineActions: this.options.routineActions,
     }, owner, chatId, runId, approvalId, inputValue, provenance);
   }
 

@@ -201,6 +201,7 @@ export interface CanonicalChatProviderAdapter<State = unknown> {
     decision: CanonicalChatApprovalDecision;
     clientRequestId: string;
     platformApprovalProof?: string;
+    actionDigest?: string;
     state?: State;
   }): Promise<void>;
 }

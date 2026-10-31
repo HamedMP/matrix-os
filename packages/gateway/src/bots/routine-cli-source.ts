@@ -61,6 +61,8 @@ export interface RoutineCliSourceDependencies {
    * A remembered target, generic owner principal, harness label or injected actions list never suffices.
    * Retain required policy/lifecycle row gates through this transaction in the documented lock order.
    * Both callbacks must perform only bounded local/DB checks, no network/model/cancellation work. */
+  /** Issuance-only target gate, after source locks. Consumption uses RequestService target lock order. */
+  authorizeIssueTarget?: (source: RoutineCliSourceContext, operation: RoutineCliOperation, trx: Transaction<OwnerBotDatabase>, invocation: RoutineCliVerifiedInvocation) => Promise<boolean>;
   authorizeOperation?: (source: RoutineCliSourceContext, operation: RoutineCliOperation, trx: Transaction<OwnerBotDatabase>, invocation: RoutineCliVerifiedInvocation) => Promise<boolean>;
 }
 
@@ -158,6 +160,17 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
     }
   });
   return {
+    /** Invocation-local secret cleanup. Preserve consumed tombstones and accepted exact decisions. */
+    releaseInvocation: (reference: RoutineCliSourceReference, invocationId: string): Promise<{ consumed: boolean }> => routineCliBoundary(() => deps.db.transaction().execute(async trx => {
+      const record = await lockReference(trx, reference), { scope } = configured();
+      const cap = await trx.selectFrom("routine_cli_capabilities").select(["consumed_at"]).where("source_id", "=", record.source_id)
+        .where("invocation_id", "=", z.uuid().parse(invocationId)).forUpdate().executeTakeFirst();
+      if (cap?.consumed_at) return { consumed: true };
+      await trx.updateTable("routine_cli_capabilities").set({ token_hash: null }).where("owner_id", "=", scope.ownerId)
+        .where("computer_id", "=", scope.computerId).where("source_id", "=", record.source_id).where("invocation_id", "=", invocationId)
+        .where("consumed_at", "is", null).execute();
+      return { consumed: false };
+    })),
     /** Private handoff check against an ALREADY consumed host invocation, not token reuse/issuance.
      * Token expiry/cleanup is irrelevant; original source expiry/revoke/action policy still fences claim.
      * Retain this gate through the real task/run claim and propagate rejection out of its transaction. */
@@ -189,6 +202,7 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
         const record = await lockReference(trx, reference);
         const verified = Object.freeze({ sourceId: record.source_id, invocationId: input.invocationId, operationDigest: hash(JSON.stringify(operation)) });
         const source = await liveRecord(record, trx, actionFor(operation), operation, verified), current = now();
+        if (deps.authorizeIssueTarget && await deps.authorizeIssueTarget(source, operation, trx, verified) !== true) throw new RoutineCliError("permission_denied");
         if (await repo.activeCapabilities(scope, current.toISOString(), record.source_id, trx) >= limits.maxCapabilitiesPerSource
           || await repo.activeCapabilities(scope, current.toISOString(), undefined, trx) >= limits.maxCapabilitiesPerScope)
           throw new RoutineCliError("unavailable");
@@ -199,6 +213,7 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
           issued_at: current.toISOString(), expires_at: expiresAt, consumed_at: null }, trx);
         // Admission-triggered bounded cleanup; SKIP LOCKED never waits for another consumer's capability.
         await repo.cleanup(scope, now().toISOString(), limits.cleanupBatchSize, trx);
+        await liveRecord(record, trx, actionFor(operation), operation, verified);
         requireTime(source);
         if (Date.parse(expiresAt) <= now().getTime()) throw new RoutineCliError("permission_denied");
         return new RoutineCliCapabilityDelivery(token, expiresAt);

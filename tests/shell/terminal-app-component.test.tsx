@@ -4,6 +4,8 @@ import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@clerk/nextjs", () => { const getToken = async () => null; return { useAuth: () => ({ getToken, userId: "fixture-owner", sessionId: "fixture-session" }) }; });
+
 const paneGridSpy = vi.fn();
 const WORKSPACE_ID = "tws_00000000000000000000000000000001";
 const TAB_ID = "tt_00000000000000000000000000000001";

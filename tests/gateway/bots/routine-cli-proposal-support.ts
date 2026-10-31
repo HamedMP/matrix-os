@@ -21,7 +21,7 @@ import { OWNER, BOT, NOW } from "./bot-state-support.js";
  * source policy and bounded external background-authority snapshot are fixtures, never account execution. */
 export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: <Args extends unknown[], Result>(fn: (...args: Args) => Result) => (...args: Args) => Result = fn => fn) {
   const f = await requestFixture(db), registry = new BotRuntimeRegistry();
-  const hooks: { transact?: BotStateTransactions; authorizeTarget?: RoutineCliProposalDependencies["authorizeTarget"] } = {};
+  const hooks: { transact?: BotStateTransactions; authorizeTarget?: RoutineCliProposalDependencies["authorizeTarget"]; sources?: RoutineCliProposalDependencies["sources"]; targets?: RoutineCliProposalDependencies["targets"] } = {};
   const proposalTransactions: BotStateTransactions = (owner, work) => (hooks.transact ?? f.transact)(owner, work);
   const state = { background: true, sourceAllowed: true, stopBeforeProposal: false };
   const route = { api: "openai-responses" as const, modelId: proposal.selection.model, input: ["text" as const], contextWindow: 8192, maxOutputTokens: 256 };
@@ -36,7 +36,9 @@ export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: 
   let canonical!: CanonicalChatOrchestrator;
   const transport = { admitTurn: (...args: Parameters<CanonicalChatOrchestrator["admitTurn"]>) => canonical.admitTurn(...args),
     enqueueQueuedTurn: (...args: Parameters<CanonicalChatOrchestrator["enqueueQueuedTurn"]>) => canonical.enqueueQueuedTurn(...args) };
-  const proposals = createRoutineCliProposals({ db, scope, transact: proposalTransactions, sources: f.sources, targets: f.targets,
+  const proposals = createRoutineCliProposals({ db, scope, transact: proposalTransactions, sources: { validateAcceptedWithin: (trx, input, work) => (hooks.sources ?? f.sources).validateAcceptedWithin(trx, input, work) },
+    targets: { validatePinnedWithin: (...args) => (hooks.targets ?? f.targets).validatePinnedWithin(...args),
+      validateClaimedTargetWithin: (...args) => (hooks.targets ?? f.targets).validateClaimedTargetWithin(...args) },
     authorizeTarget: async (...args) => hooks.authorizeTarget ? hooks.authorizeTarget(...args) : f.state.targetAllowed, approvals, registry,
     canonical: { repository: f.chats, orchestrator: transport }, now: () => new Date(f.state.clock) });
   const runBot = instrument(async (input: { command: { kind: string; runId: string } }): Promise<{ ok: true; reply: Record<string, unknown> }> => {

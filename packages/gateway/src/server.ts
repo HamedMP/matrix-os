@@ -1607,6 +1607,9 @@ export async function createGateway(config: GatewayConfig) {
     botServices = await startBots({
       toolOutputKey, homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}),
+      ...(internalPlatformUrl && internalPlatformToken && internalHandle && process.env.MATRIX_MACHINE_ID && process.env.MATRIX_RUNTIME_SLOT
+        ? { routineActionPlatform: { platformUrl: internalPlatformUrl, token: internalPlatformToken, handle: internalHandle,
+          machineId: process.env.MATRIX_MACHINE_ID, runtimeSlot: process.env.MATRIX_RUNTIME_SLOT } } : {}),
       runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,
       configuredOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter((ownerId): ownerId is string => Boolean(ownerId)),
       providers: aiProviderService,
@@ -1682,7 +1685,7 @@ export async function createGateway(config: GatewayConfig) {
       canonicalExecutableDriverKinds.push("matrix_pi");
     }
     canonicalChatRuntime = await createCanonicalChatRuntime({
-      homePath, browserApprovals: supervisedBrowserRuntime?.control,
+      homePath, browserApprovals: supervisedBrowserRuntime?.control, routineActions: botServices?.routineCli,
       executionAdmissionFence,
       ...(chatDriveContext.service ? {drives:chatDriveContext.service} : {}),
       assertChatReferenceAllowed: chatDriveContext.assertChatReferenceAllowed,
@@ -1700,6 +1703,7 @@ export async function createGateway(config: GatewayConfig) {
       ...(previewDriveWiring.beforeDispatch ? { beforePreviewDispatch: previewDriveWiring.beforeDispatch } : {}),
       ...(jevInboxRuntime ? { admitJevWorkflow: (owner, agent) => jevInboxRuntime.admit(owner.ownerId, agent) } : {}),
     });
+    botServices?.routineCli?.bindCanonical(canonicalChatRuntime.orchestrator);
     canonicalChatOrchestrator = canonicalChatRuntime.orchestrator;
     botServices?.startConnectionReconciler(createBotContinuationAdmitter({ repository: chatRepository, orchestrator: canonicalChatOrchestrator }));
     await botServices?.routines?.start({repository:chatRepository,orchestrator:canonicalChatOrchestrator});

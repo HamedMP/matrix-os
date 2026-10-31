@@ -4,7 +4,10 @@ import { CanonicalApprovalMessage } from "@/components/CanonicalApprovalMessage"
 import { useChatThread } from "@/components/chat/use-chat-thread";
 import type { TranscriptMessage } from "@/lib/canonical-chat-transcript";
 
-jest.mock("@clerk/clerk-expo", () => { const getToken = async () => "test-token"; return { useAuth: () => ({ getToken }) }; });
+jest.mock("expo/fetch", () => ({ fetch: (...args: Parameters<typeof fetch>) => fetch(...args) }));
+const mockRoutineAuth = { userId: "owner-a", sessionId: "session-a", token: null as Promise<string> | null };
+jest.mock("@clerk/clerk-expo", () => { const getToken = () => mockRoutineAuth.token ?? Promise.resolve("test-token");
+  return { useAuth: () => ({ getToken, userId: mockRoutineAuth.userId, sessionId: mockRoutineAuth.sessionId }) }; });
 // Unrelated ESM-only export from the contracts barrel; this suite exercises approval HTTP, not shared HTML.
 jest.mock("micromark", () => ({ micromark: jest.fn() }));
 jest.mock("micromark-extension-gfm", () => ({ gfm: jest.fn(), gfmHtml: jest.fn() }));
@@ -20,7 +23,7 @@ const approval = {
 const refresh = jest.fn();
 const props = { chatId: "chat_test", gatewayUrl: "https://app.matrix-os.com/vm/pr-1580", onSettled: refresh };
 
-afterEach(() => { jest.restoreAllMocks(); refresh.mockClear(); });
+afterEach(() => { jest.restoreAllMocks(); refresh.mockClear(); mockRoutineAuth.userId = "owner-a"; mockRoutineAuth.sessionId = "session-a"; mockRoutineAuth.token = null; });
 
 it("submits a one-time decision to the selected chat and run, then refreshes", async () => {
   const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, json: async () => ({ approvalId: "approval_test", decision: "decline", submission: "accepted" }) } as Response);
@@ -169,4 +172,61 @@ it.each(["active", "error"])("does not let an earlier %s grant read overwrite co
   expect(screen.getByText("Remembered browser access removed")).toBeTruthy();
   expect(screen.queryByText("Undo")).toBeNull();
   expect(screen.queryByText("Could not check browser access. Refresh this Chat.")).toBeNull();
+});
+
+it.each(["modern", "expo-native", "native-minimal"])("loads and decides the exact routine action with %s abort APIs", async mode => {
+  // RN abort-controller lacks throwIfAborted. Expo winter patches any/timeout only.
+  const descriptors = [
+    [AbortSignal, "any"], [AbortSignal, "timeout"], [AbortSignal.prototype, "throwIfAborted"],
+  ].map(([object, key]) => ({ object: object as object, key: key as string, descriptor: Object.getOwnPropertyDescriptor(object, key as string) }));
+  for (const { object, key } of descriptors.filter(({ key }) => mode === "native-minimal" || mode === "expo-native" && key === "throwIfAborted")) Object.defineProperty(object, key, { configurable: true, value: undefined });
+  try {
+  const id = `rcact_${"a".repeat(32)}`, routine = `rt_${"b".repeat(24)}`;
+  const view = { challengeId: id, actionDigest: "d".repeat(64), sourceKind: "chat_run", operation: "pause", status: "pending",
+    intent: { operation: "pause", routineId: routine, requestId: "de000000-0000-4000-8000-000000000001", baseRevision: 3 },
+    target: { botId: "bot_target", chatId: "chat_target" }, sourceLabel: "Chat chat_test", title: "Allow routine pause?",
+    expiresAt: new Date(Date.now() + 120_000).toISOString(), description: "Allow this operation only. Routine activation, background model consent and integration permissions remain separate." };
+  let decided = false;
+  const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async (_url, init) => {
+    if (init?.method === "POST") decided = true;
+    const bytes = new TextEncoder().encode(JSON.stringify(init?.method === "POST" ? { submission: "accepted" } : { ...view, status: decided ? "approved" : "pending" }));
+    let sent = false; return { ok: true, headers: new Headers(), body: { getReader: () => ({ read: async () => sent ? { done: true } : (sent = true, { done: false, value: bytes }), releaseLock: () => {}, cancel: async () => {} }) } } as unknown as Response;
+  });
+  render(<CanonicalApprovalMessage {...props} approval={{ ...approval, approvalId: id, actionDigest: view.actionDigest, allowedDecisions: [...approval.allowedDecisions] }}/>);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  expect(fetchMock.mock.calls[0]?.[0]).toBe(`https://app.matrix-os.com/vm/pr-1580/api/routine-cli/actions/${id}`);
+  expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("GET");
+  expect(screen.queryByText("Approve for session")).toBeNull();
+  fireEvent.press(await screen.findByText("Allow once"));
+  await screen.findByText("This operation was allowed");
+  const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST")!;
+  expect(post[0]).toBe(`https://app.matrix-os.com/vm/pr-1580/api/routine-cli/actions/${id}/decision`);
+  expect(post[1]?.headers).toEqual(expect.objectContaining({ authorization: "Bearer test-token" }));
+  expect(JSON.parse(String(post[1]?.body))).toEqual({ actionDigest: view.actionDigest, decision: "approve", clientRequestId: expect.stringMatching(/^req_[a-f0-9]{32}$/) });
+  } finally { for (const { object, key, descriptor } of descriptors) { if (descriptor) Object.defineProperty(object, key, descriptor); else Reflect.deleteProperty(object, key); } }
+});
+
+it.each(["owner", "session", "computer", "unmount"])("actual Native card prevents a token-wait decision after %s changes", async change => {
+  const id = `rcact_${"a".repeat(32)}`;
+  const view = { challengeId: id, actionDigest: "d".repeat(64), sourceKind: "chat_run", operation: "pause", status: "pending",
+    intent: { operation: "pause", routineId: `rt_${"b".repeat(24)}`, requestId: "de000000-0000-4000-8000-000000000001", baseRevision: 3 },
+    target: { botId: "bot_target", chatId: "chat_target" }, sourceLabel: "Chat chat_test", title: "Allow routine pause?",
+    expiresAt: new Date(Date.now() + 120_000).toISOString(), description: "Allow this operation only. Routine activation, background model consent and integration permissions remain separate." };
+  const fetchMock = jest.spyOn(global, "fetch").mockImplementation(async () => {
+    const bytes = new TextEncoder().encode(JSON.stringify(view)); let sent = false;
+    return { ok: true, headers: new Headers(), body: { getReader: () => ({ read: async () => sent ? { done: true } : (sent = true, { done: false, value: bytes }), releaseLock: () => {}, cancel: async () => {} }) } } as unknown as Response;
+  });
+  const renderedApproval = { ...approval, approvalId: id, actionDigest: view.actionDigest, allowedDecisions: [...approval.allowedDecisions] };
+  const mounted = render(<CanonicalApprovalMessage {...props} approval={renderedApproval}/>);
+  await screen.findByText("Allow once");
+  let finish!: (token: string) => void;
+  mockRoutineAuth.token = new Promise(resolve => { finish = resolve; });
+  fireEvent.press(screen.getByText("Allow once"));
+  if (change === "owner") mockRoutineAuth.userId = "owner-b";
+  if (change === "session") mockRoutineAuth.sessionId = "session-b";
+  mockRoutineAuth.token = null;
+  if (change === "unmount") mounted.unmount();
+  else mounted.rerender(<CanonicalApprovalMessage {...props} gatewayUrl={change === "computer" ? "https://app.matrix-os.com/vm/other-pc" : props.gatewayUrl} approval={renderedApproval}/>);
+  await act(async () => { finish("new-session-token"); await Promise.resolve(); });
+  expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
 });

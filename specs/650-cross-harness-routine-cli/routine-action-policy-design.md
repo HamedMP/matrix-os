@@ -29,6 +29,8 @@ For Chat, reuse the existing canonical pending-approval card and add a routine-s
 
 Use the existing platform authenticated-owner proxy/proof pattern with a narrow routine decision tuple. Chat/native source capabilities and generic agent/CLI credentials cannot mint this owner proof. The gateway validates actual configured owner+Computer and the exact stored challenge, proof, digest, decision and one-time request identity. New endpoints have explicit auth registration, bodyLimit and strict bounded schemas. A source capability cannot approve its own challenge or save a default.
 
+Source inspection found that existing platform source=auth and clerk-device provenance both include generic CLI/device credentials; clientId is not verified native origin. The new routine-purpose mint must require an actual verified Clerk user session or preserved clerk-browser provenance with current expiry, not reuse the existing broader predicate. Native Mobile already submits a Clerk session; device-only Electron uses explicit browser confirmation of the exact stored challenge, with browser-open/pending/reopen behavior and no automatic decision on GET/focus/deep link. Device-cookie exchange must not upgrade provenance. Mint/verify use a platform-only proof secret and distinct purpose through existing bounded service transport; a holder-known runtime/upgrade token is never the owner-proof signing key. This adds no persistent grant or native-client identity claim.
+
 UI waits occur outside transactions. Pending challenges/decision handles have hard count/TTL limits, source cancellation, expiry, shutdown drain and no late delivery. After owner approval, revalidate the same live source/policy/target before issuing the operation-bound capability. Consume checks the decision and current policy again while writing the durable receipt. Default changes never silently retarget the decision; policy/source changes fail closed.
 
 ## Independent approval boundaries
@@ -43,3 +45,8 @@ No real owner decision/grant/account test is performed as part of implementing t
 ## Verification
 
 Add failing tests first for self-approval/source-token/JWT-fallback rejection, altered digest/target/invocation/source generation, replay/late/duplicate answers, decline/timeout/cancel, changed policy during wait and consume, full-access current-policy mapping, plan/review denial, supervised exact one-operation approval and unchanged native read-only/Bash restrictions. Chat and Terminal use real distinct source kinds. Test actual owner proof producer/consumer and submit routing rather than local replicas. Fixtures are labeled and do not establish live human/native acceptance.
+
+
+## Implemented Task4b mapping
+
+The source registry, exact controller, Platform purpose mint/verify, capability/request/canonical startup composition and shared owner confirmation paths are implemented; see interfaces.md for the concrete auth matrix, owner namespace limit, route/proxy wiring and lifecycle. Trusted native producers remain Tasks5/6 and real Terminal launch proof remains Task7. No missing producer is replaced by a fixture or generic identity path. Browser-purpose consent uses the actual verified Clerk namespace and selected owned machine; distinct legacy/local namespaces without an established mapping remain unsupported, with no alias merge. Source/code/HTTP/Postgres/component evidence is separate from native/provider/live acceptance.

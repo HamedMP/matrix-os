@@ -1,3 +1,5 @@
+import { RoutineActionIdSchema } from "@matrix-os/contracts";
+import { CanonicalRoutineActionMessage } from "./CanonicalRoutineActionMessage";
 import { BrowserPermissionCard, type BrowserPermissionClient } from "@matrix-os/ui";
 import { browserCanonicalDecision, type BrowserPermissionChoice, type CanonicalChatApprovalView } from "@matrix-os/contracts";
 import {
@@ -79,6 +81,7 @@ export function CanonicalApprovalMessage({
   if (!approval) {
     return <div className="rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">{message.content}</div>;
   }
+  if (approval.pending && RoutineActionIdSchema.safeParse(approval.approvalId).success) return <CanonicalRoutineActionMessage challengeId={approval.approvalId}/>;
   if (approval.browserApproval) return <BrowserPermissionCard chatId={chatId} approval={approval as CanonicalChatApprovalView} submitting={submitting} client={browserPermissions} onOpenPermissionMode={onOpenPermissionMode}
     onDecision={onSubmit ? choice => onSubmit(approval.runId, approval.approvalId, browserCanonicalDecision(choice), choice) : undefined}/>;
   async function submitGeneric(decision: CanonicalChatApprovalDecision) {
