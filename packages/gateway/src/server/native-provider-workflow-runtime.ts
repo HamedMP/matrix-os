@@ -1,3 +1,4 @@
+import { createHermesTerminalLoginRuntime } from "../ai-providers/hermes-terminal-login.js";
 import { createHermesSettingsConnection } from "../ai-providers/hermes-settings-auth.js";
 import { createOwnerAnthropicKeySaver } from "../ai-providers/owner-anthropic-key.js";
 import { join } from "node:path";
@@ -27,6 +28,7 @@ export async function createNativeProviderWorkflowRuntime(options: {
   terminal: Pick<TerminalRuntimeSocketClient, "ensureWorkspace" | "createTab" | "terminateTab" | "attach" | "listWorkspaces" | "getCommandResult">;
   profileGuard: NativeProviderProfileGuard;
   inventory: () => Promise<Pick<AiProviderSnapshotV3, "drivers">>;
+  invalidateNativeLoginCatalog?: (ownerId: string, harness: "claude" | "codex") => void;
 }) {
   const { app, homePath, store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard } = options;
   const genericWriter = createGenericNativeWriter(homePath);
@@ -48,6 +50,9 @@ export async function createNativeProviderWorkflowRuntime(options: {
   const hermesSettingsConnection = guardGenericNativeKeys(genericWriter, "hermes", createHermesSettingsConnection({ homePath,
     enableConnected: (id, provider, key) => enableNativeSettingsConnectedRoute(workflowStore, id, "hermes", provider, key),
   }));
+  const hermesTerminalLogin = createHermesTerminalLoginRuntime({ homePath,
+    enableConnected: (id, provider, key, revision) => enableNativeSettingsConnectedRoute(workflowStore, id, "hermes", provider, key, revision),
+  });
   const providerWorkflowLifecycle = await registerProviderWorkflowRuntime({
     app,
     ownerId: options.ownerId,
@@ -56,7 +61,11 @@ export async function createNativeProviderWorkflowRuntime(options: {
       store: workflowStore, terminal: terminalWorkspaceRuntime, profileGuard: nativeProviderProfileGuard,
       genericWriter,
       codexSettingsConnection: createCodexSettingsConnection({ homePath, profileGuard: nativeProviderProfileGuard }),
+      onLoginSucceeded: harness => {
+        if (options.ownerId !== null) options.invalidateNativeLoginCatalog?.(options.ownerId, harness);
+      },
       hermesConnection: hermesSettingsConnection,
+      hermesTerminalLogin,
       claudeBrowserLogin: createClaudeSettingsLogin({ command: "claude", cwd: homePath, env: buildSettingsAccountEnvironment(homePath), acquire: () => nativeProviderProfileGuard.acquire("claude", { kind: "write", durable: true }) }),
       opencodeConnection: opencodeSettingsConnection,
       piConnection: piSettingsConnection,

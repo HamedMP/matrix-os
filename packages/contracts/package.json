@@ -40,6 +40,7 @@
     "#release-alignment": "./src/release-alignment.ts",
     "#runtime-compatibility": "./src/runtime-compatibility.ts",
     "#chat-message-wire": "./src/chat-message-wire.ts",
+    "#chat-legacy-assistant-text": "./src/chat-legacy-assistant-text.ts",
     "#chat-links": "./src/chat-links.ts",
     "#chat-artifacts": "./src/chat-artifacts.ts",
     "#file-preview": "./src/file-preview.ts",

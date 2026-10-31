@@ -234,12 +234,16 @@ export function createOpenCodeSettingsConnection(options: {
 export async function enableOpenCodeConnectedRoute(store: ProviderSettingsStoreWriter, harnessInstanceId: string, idempotencyKey: string) {
   return enableNativeSettingsConnectedRoute(store, harnessInstanceId, "opencode", "openai", idempotencyKey);
 }
-export async function enableNativeSettingsConnectedRoute(store: ProviderSettingsStoreWriter, harnessInstanceId: string, kind: "opencode" | "pi" | "openclaw" | "hermes", provider: "openai" | "openai-codex" | "openai-api" | "anthropic" | "openrouter", idempotencyKey: string) {
+export async function enableNativeSettingsConnectedRoute(store: ProviderSettingsStoreWriter, harnessInstanceId: string, kind: "opencode" | "pi" | "openclaw" | "hermes", provider: "openai" | "openai-codex" | "openai-api" | "anthropic" | "openrouter", idempotencyKey: string, expectedRevision?: number) {
   const snapshot = await store.getSnapshot({ refresh: true });
+  if (expectedRevision !== undefined && snapshot.revision !== expectedRevision) throw new ProviderWorkflowError("unavailable");
   const harness = snapshot.harnesses.find(row => row.id === harnessInstanceId && row.harness === kind);
   const source = snapshot.accessSources.find(row => row.kind === "harness_profile" && row.harness === kind && row.providerId === provider && row.localObservation?.state === "present_unverified");
   const models = snapshot.modelProviders.find(row => row.id === provider)?.models.filter(model => model.enabled && source?.eligibleModelIds.includes(model.id)) ?? [];
   const model = models.find(row => row.id === harness?.route.modelId) ?? models[0];
-  if (!harness || !source || !model || snapshot.access.mode !== "writable" || snapshot.atomicConnectSupported !== true) throw new ProviderWorkflowError("unavailable");
+  // Internal Store snapshots carry authoritative actions; the HTTP layer alone
+  // decorates them with atomicConnectSupported for capability-aware clients.
+  if (!harness || !source || !model || snapshot.access.mode !== "writable"
+    || !snapshot.supportedActions.includes("set_route") || !snapshot.supportedActions.includes("set_harness_enabled")) throw new ProviderWorkflowError("unavailable");
   await store.mutate({ type: "set_route", harnessInstanceId, route: { kind: "configurable", providerId: provider, modelId: model.id }, accessSourceId: source.id, accountId: source.accountId, enableHarness: true, expectedRevision: snapshot.revision, idempotencyKey });
 }

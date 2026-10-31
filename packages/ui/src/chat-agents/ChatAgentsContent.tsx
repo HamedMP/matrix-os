@@ -4,9 +4,12 @@ import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import type { ChatAgentClient } from "./client.js";
 import type { AgentProviderCatalogSource } from "./use-agent-provider-catalog.js";
 
-export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrome = false, providerCatalog, children }: {
+export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrome = false, providerCatalog, headerLeading, children }: {
   hostedChrome?: boolean; client?: ChatAgentClient; scopeKey: string; onOpenBotChat?: (chatId: string) => void;
-  providerCatalog?: AgentProviderCatalogSource; children: ReactNode;
+  providerCatalog?: AgentProviderCatalogSource;
+  /** Host controls before the Agents title, such as Web's Chat sidebar toggle. */
+  headerLeading?: ReactNode;
+  children: ReactNode;
 }) {
   const navigation = useChatAgentsNavigation();
   const [previousScope, setPreviousScope] = useState({ scopeKey, client });
@@ -28,6 +31,6 @@ export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrom
     {opened ? <ChatAgentsPanel client={opened.client} view={opened.view} onStartChat={opened.onStartChat} onSetup={opened.onSetup}
       requestedRecipeId={opened.requestedRecipeId} onRequestedRecipeResult={opened.onRequestedRecipeResult}
       providerCatalog={providerCatalog}
-      hostedChrome={hostedChrome} onTitleChange={onTitleChange} onOpenBotChat={onOpenBotChat} onClose={() => close?.(true)} /> : null}
+      hostedChrome={hostedChrome} headerLeading={headerLeading} onTitleChange={onTitleChange} onOpenBotChat={onOpenBotChat} onClose={() => close?.(true)} /> : null}
   </>;
 }

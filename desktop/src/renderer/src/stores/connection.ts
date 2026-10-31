@@ -43,7 +43,8 @@ interface ConnectionState {
   /** Invalidates catalogs only for an accepted Settings change in this identity. */
   providerCatalogGeneration: number;
   providerCatalogAffectedInstanceIds: readonly string[] | null;
-  invalidateProviderCatalog: (identityKey: string, affectedInstanceIds?: readonly string[] | null) => void;
+  providerCatalogForceRefresh: boolean;
+  invalidateProviderCatalog: (identityKey: string, affectedInstanceIds?: readonly string[] | null, forceRefresh?: boolean) => void;
   refresh: () => Promise<void>;
   /** Chooses the organization share controls act in; null clears it. Remembered per user. */
   selectOrganization: (organizationId: string | null) => void;
@@ -77,10 +78,12 @@ export const useConnection = create<ConnectionState>()((set, get) => ({
   api: null,
   providerCatalogGeneration: 0,
   providerCatalogAffectedInstanceIds: null,
-  invalidateProviderCatalog: (identityKey, affectedInstanceIds = null) => {
+  providerCatalogForceRefresh: true,
+  invalidateProviderCatalog: (identityKey, affectedInstanceIds = null, forceRefresh = true) => {
     if (desktopProviderIdentityKey(get()) !== identityKey) return;
     set((state) => ({ providerCatalogGeneration: state.providerCatalogGeneration + 1,
-      providerCatalogAffectedInstanceIds: affectedInstanceIds?.slice(0, 512) ?? null }));
+      providerCatalogAffectedInstanceIds: affectedInstanceIds?.slice(0, 512) ?? null,
+      providerCatalogForceRefresh: forceRefresh }));
   },
 
   refresh: async () => {

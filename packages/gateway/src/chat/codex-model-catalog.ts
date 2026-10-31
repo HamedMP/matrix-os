@@ -308,53 +308,63 @@ export function createCodexModelCatalogSource(options: {
     Math.min(options.terminateGraceMs ?? DEFAULT_TERMINATE_GRACE_MS, 5_000),
   );
   const spawnProcess = options.spawnProcess ?? (nodeSpawn as SpawnProcess);
-  let cached: { expiresAt: number; value: CodingModelCatalogProjection } | null = null;
-  let failedUntil = 0;
+  type Entry = { cached: { expiresAt: number; value: CodingModelCatalogProjection } | null; failedUntil: number };
+  // Runtime metadata is owner-scoped, with bounded FIFO retention. A deleted
+  // entry also fences any lookup that started before confirmed login.
+  const entries = new Map<string | null, Entry>();
   let unconfirmedChildExit: Promise<void> | null = null;
-  let pending: Promise<CodingModelCatalogProjection> | null = null;
+  let pending: { entry: Entry; promise: Promise<CodingModelCatalogProjection> } | null = null;
 
-  return async (provider: AgentProviderSummary): Promise<CodingModelCatalogProjection | null> => {
+  const source = async (provider: AgentProviderSummary, principal?: { userId: string }): Promise<CodingModelCatalogProjection | null> => {
     if (provider.kind !== "codex" && provider.id !== "codex") return null;
-    // Do not launch an app-server (or return a previously ready catalog) after
-    // the canonical provider inventory reports that this connection is unavailable.
     if (provider.availability !== "available") return null;
+    const key = principal?.userId ?? null;
+    let entry = entries.get(key);
+    if (!entry) {
+      if (entries.size >= 64) entries.delete(entries.keys().next().value!);
+      entry = { cached: null, failedUntil: 0 };
+      entries.set(key, entry);
+    }
     const now = Date.now();
-    if (cached && cached.expiresAt > now) return cached.value;
-    if (!pending && (failedUntil > now || unconfirmedChildExit)) {
-      throw new Error("Codex model catalog unavailable");
+    if (entry.cached && entry.cached.expiresAt > now) return entry.cached.value;
+    if (pending) {
+      if (pending.entry === entry) return pending.promise;
+      // Invalidation never launches a second native child over an older one.
+      // Its outcome is obsolete for this entry; read again only after reaping.
+      await pending.promise.then(() => undefined, () => undefined);
+      return source(provider, principal);
     }
-    if (!pending) {
-      pending = fetchCodexModelsWithRetry({
-        executable: options.executable,
-        cwd: options.cwd,
-        environment: options.environment,
-        timeoutMs,
-        terminateGraceMs,
-        maxAttempts,
-        retryDelayMs,
-        spawnProcess,
-      }).then((value) => {
-        cached = { expiresAt: Date.now() + cacheTtlMs, value };
-        failedUntil = 0;
-        return value;
-      }).catch((error: unknown) => {
-        // Cache the failure only briefly (see DEFAULT_FAILURE_CACHE_TTL_MS)
-        // so repeated polling while Codex is down or mid-install cannot
-        // retry-storm it with a fresh spawn+retry sequence on every request.
-        failedUntil = Date.now() + failureCacheTtlMs;
-        if (error instanceof CodexCatalogChildExitTimeoutError) {
-          // Never overlap an app-server whose termination is unconfirmed.
-          const exited = error.exited;
-          unconfirmedChildExit = exited;
-          void exited.then(() => {
-            if (unconfirmedChildExit === exited) unconfirmedChildExit = null;
-          });
-        }
-        throw error;
-      }).finally(() => {
-        pending = null;
-      });
-    }
-    return pending;
+    if (entry.failedUntil > now || unconfirmedChildExit) throw new Error("Codex model catalog unavailable");
+    const current = entry;
+    const promise = fetchCodexModelsWithRetry({
+      executable: options.executable, cwd: options.cwd, environment: options.environment,
+      timeoutMs, terminateGraceMs, maxAttempts, retryDelayMs, spawnProcess,
+    }).then(value => {
+      if (entries.get(key) === current) {
+        current.cached = { expiresAt: Date.now() + cacheTtlMs, value };
+        current.failedUntil = 0;
+      }
+      return value;
+    }).catch((error: unknown) => {
+      if (entries.get(key) === current) current.failedUntil = Date.now() + failureCacheTtlMs;
+      if (error instanceof CodexCatalogChildExitTimeoutError) {
+        const exited = error.exited;
+        unconfirmedChildExit = exited;
+        void exited.then(() => {
+          if (unconfirmedChildExit === exited) unconfirmedChildExit = null;
+        });
+      }
+      throw error;
+    }).finally(() => { if (pending?.promise === promise) pending = null; });
+    pending = { entry: current, promise };
+    return promise;
   };
+  return Object.assign(source, {
+    invalidate(principal?: { userId: string }): void {
+      if (principal) entries.delete(principal.userId);
+      else entries.clear();
+      // Keep pending work and the process-exit fence until the native child
+      // is reaped. Its deleted entry can no longer repopulate current cache.
+    },
+  });
 }

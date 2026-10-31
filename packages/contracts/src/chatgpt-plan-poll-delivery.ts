@@ -4,6 +4,7 @@ import { CHATGPT_PLAN_PEER_MAX_SEQUENCE, ChatGptPlanPeerRequestSchema, ChatGptPl
 export const ChatGptPlanPeerCapabilitiesSchema = ChatGptPlanPeerSessionSchema.extend({
   pollDeliveryVersion: z.literal(2),
   replyDeliveryVersion: z.literal(2).optional(),
+  inferenceStream: z.literal(true).optional(),
 }).strict();
 
 const cursor = z.number().int().min(0).max(CHATGPT_PLAN_PEER_MAX_SEQUENCE);

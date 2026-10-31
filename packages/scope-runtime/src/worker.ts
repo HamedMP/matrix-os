@@ -134,7 +134,6 @@ export function buildScopeCodexExecLaunch(input: {
       ...CODEX_DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]),
       "--config", `model_providers.matrix_scope=${provider}`,
       "--config", "model_provider=\"matrix_scope\"",
-      "--config", "disable_response_storage=true",
       "--config", "web_search=\"disabled\"",
       "--config", "tools.update_plan.enabled=false",
       "--config", "tools.experimental_request_user_input.enabled=false",

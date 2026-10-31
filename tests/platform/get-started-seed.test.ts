@@ -200,7 +200,7 @@ describe('Get started host.env flag', () => {
     ['the production template', () => loadCustomerVpsCloudInitTemplate()],
   ])('passes the platform flag to %s for the restore gate and gateway', async (_label, load) => {
     const template = await load();
-    expect(render(template, 'true')).toContain('MATRIX_GET_STARTED_ENABLED=true');
-    expect(render(template, undefined)).toContain('MATRIX_GET_STARTED_ENABLED=false');
+    expect(render(template, undefined)).toContain('MATRIX_GET_STARTED_ENABLED=true');
+    expect(render(template, 'false')).toContain('MATRIX_GET_STARTED_ENABLED=false');
   });
 });

@@ -109,7 +109,7 @@ it("keeps active Web output and provider controls usable during explicit backgro
   const abort = vi.fn();
   render(<ChatApp messages={[{ id: "assistant-live", role: "assistant", content: "Still streaming this answer", timestamp: 1 }]}
     busy activeRunId="run-live" connected conversations={[]} onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={vi.fn()} onAbortCurrent={abort} />);
-  const trigger = screen.getByRole("button", { name: "Choose model and connection" });
+  const trigger = screen.getByRole("button", { name: "Choose model and provider" });
   expect(within(trigger).getByRole("status", { name: "Checking model availability" })).toBeVisible();
   await act(async () => initial.resolve(Response.json(catalog)));
   await waitFor(() => expect(within(trigger).queryByRole("status")).toBeNull());
@@ -124,7 +124,8 @@ it("keeps active Web output and provider controls usable during explicit backgro
   expect(within(screen.getByRole("listbox")).getByRole("option")).toBeEnabled();
   expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
-  expect(trigger).toHaveFocus();
+  // Radix restores focus to the trigger right after the popover unmounts.
+  await waitFor(() => expect(trigger).toHaveFocus());
   expect(screen.queryByRole("listbox")).toBeNull();
   expect(screen.getByText("Still streaming this answer")).toBeVisible();
   await act(async () => refreshed.resolve(new Response(null, { status: 503 })));

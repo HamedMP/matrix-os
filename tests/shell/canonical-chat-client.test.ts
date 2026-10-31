@@ -39,7 +39,7 @@ describe("canonical shell Chat client", () => {
     expect(opened).toBe(response);
     expect(opened.bodyUsed).toBe(false);
     expect(fetchFn).toHaveBeenCalledWith(
-      "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1&commandPreviewVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1&importSourceVersion=1",
+      "https://matrix.test/api/chats/events?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1&importSourceVersion=1",
       expect.objectContaining({
         method: "GET",
         headers: { Accept: "text/event-stream", "Last-Event-ID": "12", "X-Matrix-Chat-Protocol": "2", "X-Matrix-Chat-Metadata": "1" },
@@ -329,4 +329,57 @@ it("preserves the separate owner browser intent in canonical approval submission
   const browser = { kind: "shared_chrome" as const, decision: "allow_in_chat" as const, leaseEpoch: "178ca19d-9760-4e67-a221-62bedf393b90", challengeRevision: 0, scopeVersion: 1 as const };
   await client.submitApproval("chat_shell_test", "run_shell", "approval_1", "approve", "req_browser", "b".repeat(64), browser);
   expect(JSON.parse(String(fetchFn.mock.calls[0]?.[1]?.body))).toMatchObject({ browserApproval: browser });
+});
+
+it("steers a queued turn into the active run through the canonical steer route", async () => {
+  const steered = {
+    runId: "run_shell_steer",
+    turnId: "cturn_shell_steer",
+    message: {
+      id: "msg_shell_steer", chatId: "chat_shell_test", seq: 2, role: "user", state: "committed",
+      turnId: "cturn_shell_steer", runId: "run_shell_steer",
+      parts: [{ type: "text", text: "Use the second plan" }],
+      createdAt: "2026-08-31T00:00:02.000Z",
+    },
+    steering: "accepted",
+  };
+  const fetchFn = vi.fn(async () => Response.json(steered));
+  const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+
+  await expect(client.steerQueuedTurn("chat_shell_test", "run_shell_steer", "qturn_shell_1", {
+    clientRequestId: "req_steer_1", baseRevision: 4, expectedTurnId: "cturn_shell_steer",
+  })).resolves.toMatchObject({ steering: "accepted", message: { id: "msg_shell_steer" } });
+  const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
+  expect(url).toContain("https://matrix.test/api/chats/chat_shell_test/runs/run_shell_steer/queued-turns/qturn_shell_1/steer?messageVersion=2");
+  expect(init).toMatchObject({ method: "POST", signal: expect.any(AbortSignal) });
+  expect(JSON.parse(String(init.body))).toEqual({ clientRequestId: "req_steer_1", baseRevision: 4, expectedTurnId: "cturn_shell_steer" });
+});
+
+it("rejects unsafe ids before building the steer route", async () => {
+  const fetchFn = vi.fn(async () => Response.json({}));
+  const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+
+  await expect(client.steerQueuedTurn("chat_shell_test", "run_shell_steer", "../qturn", {
+    clientRequestId: "req_steer_1", baseRevision: 4, expectedTurnId: "cturn_shell_steer",
+  })).rejects.toThrow();
+  expect(fetchFn).not.toHaveBeenCalled();
+});
+
+it("moves a Chat to a project with the Chat's revision guard", async () => {
+  const fetchFn = vi.fn(async () => Response.json({ ...record, projectId: "proj_first" }));
+  const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+
+  await expect(client.updateProject("chat_shell_test", { baseRevision: 3, projectId: "proj_first" }))
+    .resolves.toMatchObject({ projectId: "proj_first" });
+  const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
+  expect(url).toMatch(/^https:\/\/matrix\.test\/api\/chats\/chat_shell_test\/project(\?|$)/);
+  expect(init).toMatchObject({ method: "PATCH", signal: expect.any(AbortSignal) });
+  expect(JSON.parse(String(init.body))).toEqual({ baseRevision: 3, projectId: "proj_first" });
+});
+
+it("rejects an unsafe Chat id before building the project route", async () => {
+  const fetchFn = vi.fn(async () => Response.json({}));
+  const client = createCanonicalShellChatClient({ gatewayUrl: "https://matrix.test", fetchFn });
+  await expect(client.updateProject("../chat", { baseRevision: 0, projectId: null })).rejects.toThrow();
+  expect(fetchFn).not.toHaveBeenCalled();
 });

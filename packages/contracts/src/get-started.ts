@@ -7,6 +7,8 @@ import { GET_STARTED_RECIPE_BOT_IDS, GET_STARTED_RECIPE_BOTS_MAX } from "#get-st
 // never display strings, so the gateway can validate them and later layers
 // (ordering, connect, SOUL) can map them without parsing free text.
 
+/** PostHog flag that rolls the wizard out to new computers; every surface reads this one key. */
+export const GET_STARTED_FEATURE_FLAG = "get-started-wizard";
 export const GET_STARTED_NAME_MAX_CHARS = 40;
 export const GET_STARTED_DRAFT_MAX_BYTES = 4 * 1024;
 /** Name, goals, coding agents, tools, the main bot's name and style, App Gallery, bots, and the summary: the last step index is this minus one. */

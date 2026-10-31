@@ -10,7 +10,9 @@ for name in ['hermes_cli', 'hermes_cli.auth', 'hermes_cli.auth_codex', 'agent', 
 auth = sys.modules['hermes_cli.auth']
 auth.AuthError = type('AuthError', (Exception,), {})
 auth._read_codex_tokens = lambda **kwargs: {'tokens': {'access_token': 'fixture-native-token', 'id_token': 'fixture-id-token'}}
-sys.modules['hermes_cli.auth_codex']._pool_codex_access_token = lambda: ''
+sys.modules['hermes_cli.auth_codex']._pool_codex_credential = lambda: ('', '')
+sys.modules['hermes_cli.auth_codex']._codex_base_url = lambda: 'https://chatgpt.com/backend-api/codex'
+sys.modules['hermes_cli.auth_codex']._codex_pool_route_base_url = lambda base: base or 'https://chatgpt.com/backend-api/codex'
 sys.modules['hermes_cli.auth_codex']._decode_jwt_claims = lambda token: {'email': 'hermes@example.test'}
 sys.modules['agent.codex_headers'].codex_account_headers = lambda token: {}
 class Response:
@@ -55,10 +57,31 @@ describe('Hermes safe native metadata helper', () => {
   });
   it('validates singleton and pool selection privately without a usage request or credential refresh', () => {
     const singleton = JSON.parse(evaluate("sys.modules['httpx'].Client = lambda **kwargs: (_ for _ in ()).throw(AssertionError('no request'))\n", true));
-    const pool = JSON.parse(evaluate("auth._read_codex_tokens = lambda **kwargs: (_ for _ in ()).throw(auth.AuthError())\nsys.modules['hermes_cli.auth_codex']._pool_codex_access_token = lambda: 'pool-selected-token'\n", true));
+    const pool = JSON.parse(evaluate("auth._read_codex_tokens = lambda **kwargs: (_ for _ in ()).throw(auth.AuthError())\nsys.modules['hermes_cli.auth_codex']._pool_codex_credential = lambda: ('pool-selected-token', 'https://chatgpt.com/backend-api/codex')\n", true));
     expect(Object.keys(singleton)).toEqual(['binding']);
     expect(pool.binding).not.toBe(singleton.binding);
     expect(JSON.stringify(pool)).not.toContain('pool-selected-token');
+  });
+
+  it('does not send custom-endpoint pool tokens to the official usage endpoint', () => {
+    const text = evaluate("auth._read_codex_tokens = lambda **kwargs: (_ for _ in ()).throw(auth.AuthError())\nsys.modules['hermes_cli.auth_codex']._pool_codex_credential = lambda: ('custom-token', 'https://custom.example.test/v1')\nsys.modules['httpx'].Client = lambda **kwargs: (_ for _ in ()).throw(AssertionError('no request'))\n");
+    expect(JSON.parse(text)).toBeNull();
+  });
+
+  it.each(['singleton', 'pool'])('rejects an effective custom %s route even with a canonical raw URL', kind => {
+    const pool = kind === 'pool' ? "auth._read_codex_tokens = lambda **kwargs: (_ for _ in ()).throw(auth.AuthError())\nsys.modules['hermes_cli.auth_codex']._pool_codex_credential = lambda: ('pool-token', 'https://chatgpt.com/backend-api/codex')\n" : '';
+    const text = evaluate(pool + "sys.modules['hermes_cli.auth_codex']._codex_pool_route_base_url = lambda base: 'https://custom.example.test/v1'\n");
+    expect(JSON.parse(text)).toBeNull();
+  });
+
+  it('drops a same-token effective route change while reading allowance', () => {
+    const text = evaluate("routes = iter(['https://chatgpt.com/backend-api/codex', 'https://custom.example.test/v1'])\nsys.modules['hermes_cli.auth_codex']._codex_pool_route_base_url = lambda base: next(routes)\n");
+    expect(JSON.parse(text)).toBeNull();
+  });
+
+  it('verify-only rejects a custom effective route without probing allowance', () => {
+    const text = evaluate("sys.modules['hermes_cli.auth_codex']._codex_pool_route_base_url = lambda base: 'https://custom.example.test/v1'\nsys.modules['httpx'].Client = lambda **kwargs: (_ for _ in ()).throw(AssertionError('no request'))\n", true);
+    expect(JSON.parse(text)).toBeNull();
   });
 
   it('compares each observation proof independently when selected-profile verification coalesces', async () => {
@@ -73,6 +96,7 @@ describe('Hermes safe native metadata helper', () => {
     const reader = createHermesNativeAccountMetadataReader({ homePath: '/runtime/home', now: () => clock, execute });
     const old = await reader(); clock = new Date(clock.getTime() + 6000); const newer = await reader();
     const first = verifyNativeAccountMetadata(old); const second = verifyNativeAccountMetadata(newer);
+    await vi.waitFor(() => expect(resolveSelection).toBeTypeOf('function'));
     resolveSelection({ stdout: JSON.stringify({ binding: 'a'.repeat(64) }) });
     expect(await first).toBe(old);
     expect(await second).toBeNull();

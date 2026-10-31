@@ -12,7 +12,7 @@ it.each(["0", "1"])("negotiates question payloads on the real HTTP stream with i
       return { touch: vi.fn(), onClose: vi.fn() };
     }) },
   });
-  const response = await app.request(`/api/chats/events?messageVersion=2&inputVersion=${version}`, { headers: { accept: "text/event-stream", "x-matrix-chat-protocol": "2" } });
+  const response = await app.request(`/api/chats/events?messageVersion=2&inputVersion=${version}&assistantTextVersion=1`, { headers: { accept: "text/event-stream", "x-matrix-chat-protocol": "2" } });
   expect(response.status).toBe(200);
   const reader = response.body!.getReader();
   try {

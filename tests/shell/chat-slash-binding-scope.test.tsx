@@ -50,7 +50,9 @@ it.each(["resolve", "reject"] as const)("withholds ordinary-provider Skills whil
   const submit = vi.fn();
   render(<ChatApp messages={[]} sessionId="chat_scope_unknown" busy={false} connected conversations={[]}
     onNewChat={vi.fn()} onSwitchConversation={vi.fn()} onSubmit={submit} agentClient={client} />);
-  await waitFor(() => expect(screen.getByText(/Using/)).toBeTruthy());
+  // The toolbar stays hidden while identity is unknown, so wait for the catalog request itself.
+  await waitFor(() => expect(fetch).toHaveBeenCalled());
+  await act(async () => {});
   const input = screen.getByRole("textbox", { name: "Message chat" });
   fireEvent.change(input, { target: { value: "/" } });
   expect(screen.queryByRole("option", { name: /\/review/ })).toBeNull();

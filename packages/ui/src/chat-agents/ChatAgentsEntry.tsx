@@ -147,6 +147,7 @@ function AgentLibraryBody({ state, client, models, retainedCreation, recover, ed
 
 type ChatAgentsPanelProps = {
   hostedChrome?: boolean; onTitleChange?: (title: "Your AI team" | "New agent" | "Edit agent") => void;
+  headerLeading?: ReactNode;
   client: ChatAgentClient; view?: "library" | "recipes"; onClose(): void; onSetup?: () => void;
   onStartChat?: StartAgentChat; onOpenBotChat?: (chatId: string) => void;
   requestedRecipeId?: string;
@@ -168,7 +169,7 @@ export function ChatAgentsPanel(props: ChatAgentsPanelProps) {
 }
 
 function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onStartChat, onOpenBotChat, hostedChrome = false, onTitleChange,
-  requestedRecipeId, onRequestedRecipeResult, providerCatalog }: ChatAgentsPanelProps) {
+  headerLeading, requestedRecipeId, onRequestedRecipeResult, providerCatalog }: ChatAgentsPanelProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   const scratchTrigger = useRef<HTMLButtonElement | null>(null);
   const [creationView, setCreationView] = useState(view === "recipes");
@@ -439,7 +440,10 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
   useEffect(() => { onTitleChange?.(title); }, [onTitleChange, title]);
   return <section aria-label={recipes ? "Agent recipes" : "Agents"} data-agent-surface={recipes ? "recipes" : "library"} className="matrix-chat-agents-panel ph-no-capture flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={chatAgentSurfaceStyle}>
     <header className={hostedChrome ? "sr-only" : "flex h-12 shrink-0 items-center justify-between gap-3 px-4 sm:px-6"} style={{ borderColor: "var(--border-default,var(--border))" }}>
-      <h2 ref={heading} tabIndex={-1} className="text-sm font-semibold outline-none">{title}</h2>
+      <div className="flex min-w-0 items-center gap-2">
+        {headerLeading}
+        <h2 ref={heading} tabIndex={-1} className="text-sm font-semibold outline-none">{title}</h2>
+      </div>
       {!hostedChrome ? <button type="button" aria-label="Close Agents" className={`${button} shrink-0`} disabled={state.pending} onClick={onClose}>×</button> : null}
     </header>
     {dailyRecipe?.client === client && client.bots && onOpenBotChat ? <DailyBriefCreation onRefreshCatalog={modelCatalog.refresh} onSetup={onSetup} recipe={dailyRecipe.recipe} client={client} models={botModels} catalog={state.catalog} catalogLoading={state.catalogLoading}

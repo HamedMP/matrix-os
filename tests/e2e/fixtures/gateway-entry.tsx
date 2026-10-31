@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { CanonicalProviderCatalog } from "@matrix-os/contracts";
-import { ChatProviderSetupPanel } from "../../../shell/src/components/chat-app-provider-setup";
+import { WebProviderDriverIcon } from "../../../shell/src/components/chat-app-provider-setup";
+import { ChatModelPicker } from "../../../packages/ui/src/chat/composer/ChatModelPicker";
 import { deriveCanonicalProviderChoices } from "../../../packages/ui/src/canonical-provider-choice";
 import type { CanonicalComposerSelection } from "../../../desktop/src/renderer/src/features/chat/canonical-composer-state";
 import { ProviderModelPicker } from "../../../desktop/src/renderer/src/features/chat/ProviderModelPicker";
@@ -32,7 +33,6 @@ function Fixture() {
   const [selection, setSelection] = useState<CanonicalComposerSelection>({ instanceId: instance.id, model: instance.models[0]!.id,
     options: [], interactionMode: "default", permissionMode: "supervised" });
   const [actions, setActions] = useState(0);
-  const [open, setOpen] = useState(false);
   const web = document.documentElement.dataset.surface === "web";
   const current: CanonicalProviderCatalog = { ...catalog, instances: catalog.instances.flatMap(item => {
     if (state === "missing" && item.id === "matrix_pi_default") return [];
@@ -46,12 +46,11 @@ function Fixture() {
     <output id="gateway-state">{state}</output><output id="gateway-selection">{selection.instanceId}:{selection.model}</output>
     <output id="gateway-actions">{actions}</output>
     <div style={{ position: "fixed", bottom: 30, right: 40, ...(web ? { width: 380, height: 600 } : {}) }}>
-      {web ? <><button type="button" data-chat-model-trigger aria-label="Choose model and connection" onClick={() => setOpen(value => !value)}>Choose model</button>
-        {open ? <ChatProviderSetupPanel catalog={current} choices={deriveCanonicalProviderChoices(current)} selected={null}
-          displaySelection={{ instanceId: selection.instanceId, modelId: selection.model }} loading={state === "loading"}
-          onSelect={choice => { setSelection({ ...selection, instanceId: choice.instanceId, model: choice.modelId }); setActions(value => value + 1); }}
-          onInteractionModeChange={() => {}} onPermissionModeChange={() => {}} onOptionChange={() => {}}
-          onSetupAction={() => setActions(value => value + 1)} showChannels={false} channels={new Set()} onToggleChannel={() => {}} onDismiss={() => setOpen(false)} /> : null}</> : <ProviderModelPicker catalog={current} selection={selection} instanceLocked={false} loading={state === "loading"}
+      {web ? <ChatModelPicker catalog={current} choices={deriveCanonicalProviderChoices(current)} label="Choose model" triggerIcon={null}
+        selected={{ instanceId: selection.instanceId, modelId: selection.model }} loading={state === "loading"}
+        renderDriverIcon={kind => <WebProviderDriverIcon kind={kind} />}
+        onSelect={choice => { setSelection({ ...selection, instanceId: choice.instanceId, model: choice.modelId }); setActions(value => value + 1); }}
+        onSetupAction={() => setActions(value => value + 1)} onOpenSettings={() => {}} /> : <ProviderModelPicker catalog={current} selection={selection} instanceLocked={false} loading={state === "loading"}
         onSetupAction={() => setActions(value => value + 1)} onChange={next => { setSelection(next); setActions(value => value + 1); }} />}
     </div>
   </main>;

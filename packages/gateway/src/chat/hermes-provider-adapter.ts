@@ -1,4 +1,5 @@
 import { HermesNativeEventError, hermesFailureDiagnostic, type HermesRunStage } from "./hermes-failure-diagnostic.js";
+import { resolveHermesPython } from "./hermes-python-environment.js";
 import { ChatAgentContextError } from "./agent-context.js";
 import { mapChatAgentContextError } from "./orchestration-errors.js";
 import type { SharedBrowserBroker } from "../shared-browser/broker.js";
@@ -233,7 +234,7 @@ export function createHermesChatProviderAdapter(options: {
   requestTimeoutMs?: number;
   jev?: {
     resolveCredentials(ownerId: string, selection: unknown, signal: AbortSignal): Promise<JevHermesCredentials>;
-    verifyRuntime(root: string, signal: AbortSignal, apiMode: JevHermesCredentials["apiMode"]): Promise<void>;
+    verifyRuntime(root: string, signal: AbortSignal, apiMode: JevHermesCredentials["apiMode"]): Promise<string>;
     preflight(ownerId: string, scope: HermesJevScope, signal: AbortSignal): Promise<void>;
     clearRun(ownerId: string, runId: string): void;
     summary(ownerId: string, scope: HermesJevScope): string | null;
@@ -634,7 +635,10 @@ export function createHermesChatProviderAdapter(options: {
 
     const hermesRoot = join(options.homePath, ".hermes", "hermes-agent");
     const credentials = jevScope ? await options.jev!.resolveCredentials(input.owner.ownerId, input.selection, input.signal) : undefined;
-    if (credentials) await options.jev!.verifyRuntime(hermesRoot, input.signal, credentials.apiMode);
+    // Keep the checked generation through startup even if PM commits a new selection.
+    const python = credentials
+      ? await options.jev!.verifyRuntime(hermesRoot, input.signal, credentials.apiMode)
+      : await resolveHermesPython(hermesRoot);
     const integrationCapability = issueHermesIntegrationCapability(input.owner.ownerId, jevScope);
     let restrictedProfile: Awaited<ReturnType<typeof createJevHermesProfile>> | undefined;
     let browserRun: ReturnType<typeof openHermesSharedBrowserRun> | undefined;
@@ -647,8 +651,8 @@ export function createHermesChatProviderAdapter(options: {
     catch (error) { integrationCapability.revoke(); throw error; }
     const executionCwd = restrictedProfile?.homePath ?? input.executionRoot ?? options.homePath;
     const clientOptions = {
-      command: join(hermesRoot, "venv", "bin", "python"),
-      args: restrictedProfile ? restrictedHermesPythonArguments(hermesRoot, join(restrictedProfile.homePath, "pycache")) : browserRun?.args ?? ["-u", "-m", "tui_gateway.entry"],
+      command: python,
+      args: restrictedProfile ? restrictedHermesPythonArguments(hermesRoot, join(restrictedProfile.homePath, "pycache"), python) : browserRun?.args ?? ["-u", "-m", "tui_gateway.entry"],
       cwd: executionCwd,
       inheritEnvironment: false,
       env: {

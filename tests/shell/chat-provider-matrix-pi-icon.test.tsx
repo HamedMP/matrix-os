@@ -5,7 +5,8 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CanonicalProviderCatalogSchema } from "@matrix-os/contracts";
 import { deriveCanonicalProviderChoices } from "../../packages/ui/src/canonical-provider-choice.js";
-import { ChatProviderSetupPanel } from "../../shell/src/components/chat-app-provider-setup.js";
+import { ChatModelPicker } from "../../packages/ui/src/index.js";
+import { WebProviderDriverIcon } from "../../shell/src/components/chat-app-provider-setup.js";
 
 afterEach(cleanup);
 
@@ -33,10 +34,10 @@ function panel(available: boolean, discoverUnavailableModel = false) {
   const value = catalog(available, discoverUnavailableModel);
   const choices = deriveCanonicalProviderChoices(value);
   const onSelect = vi.fn();
-  const rendered = render(<ChatProviderSetupPanel catalog={value} choices={choices} selected={choices[0] ?? null}
-    onSelect={onSelect} onInteractionModeChange={vi.fn()} onPermissionModeChange={vi.fn()}
-    onOptionChange={vi.fn()} onSetupAction={vi.fn()} showChannels={false} channels={new Set()}
-    onToggleChannel={vi.fn()} onDismiss={vi.fn()} />);
+  const rendered = render(<ChatModelPicker catalog={value} choices={choices} label="Matrix model" triggerIcon={null}
+    selected={choices[0] ?? null} renderDriverIcon={(kind) => <WebProviderDriverIcon kind={kind} />}
+    onSelect={onSelect} onSetupAction={vi.fn()} onOpenSettings={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose model and provider" }));
   return { ...rendered, onSelect, choices };
 }
 

@@ -215,7 +215,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                   setFailure(null);
                   if (active(next)) restartPolling();
                   if (next.state === "succeeded") {
-                    if (next.kind === "login") void refreshAfterLogin();
+                    if (next.kind === "login") void refreshAfterLogin(next);
                     else onRefresh();
                   }
                 }
@@ -244,7 +244,8 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
                   if (["cancelled", "succeeded"].includes(result.state)) {
                     pendingStartRef.current = null;
                     onOperationId?.(null);
-                    onRefresh();
+                    if (result.kind === "login" && result.state === "succeeded") void refreshAfterLogin(result);
+                    else if (result.kind !== "login") onRefresh();
                   }
                 }
               })
@@ -253,7 +254,7 @@ export function HarnessWorkflowPanel(props: HarnessWorkflowPanelProps) {
             Cancel
           </button>
         ) : null}
-        {terminalAvailable && operation?.terminalSessionId && (operation.kind !== "login" || (harness.harness === "codex" ? state.canContinueInTerminal && codexTerminalOperation : active(operation) && harness.harness === "claude" && operation.connectionOption?.method === "terminal")) ? (
+        {terminalAvailable && operation?.terminalSessionId && (operation.kind !== "login" || (harness.harness === "codex" ? state.canContinueInTerminal && codexTerminalOperation : active(operation) && ["claude", "hermes"].includes(harness.harness) && operation.connectionOption?.method === "terminal")) ? (
           <button
             type="button"
             className="matrix-ap-link-button"

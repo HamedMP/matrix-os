@@ -9,6 +9,7 @@ import {
   CollaborationIdSchema,
   CollaborationResourceIdSchema,
   CollaborationUserStatePatchSchema,
+  projectLegacyAssistantMessage,
 } from "@matrix-os/contracts";
 import type { Hono } from "hono";
 import {
@@ -49,11 +50,13 @@ export function registerChatRoutes(routes: Hono, options: CollaborationRouteOpti
     const scopeId = CollaborationIdSchema.parse(c.req.param("scopeId"));
     const context = await authorize(options, c, new Uint8Array(), "read", scopeId);
     const query = MessageQuerySchema.parse(exactQuery(c, ["after", "limit"]));
+    // Shared history has strict released readers and no negotiated text version.
+    // Project the response only; preserve owner rows and sequence pagination.
     return c.json({
-      messages: await options.chatAdapter.listMessages(context, {
+      messages: (await options.chatAdapter.listMessages(context, {
         afterSequence: query.after,
         limit: query.limit,
-      }),
+      })).map(message => projectLegacyAssistantMessage(message, { maxEncodedBytes: Infinity })),
     });
   }));
 

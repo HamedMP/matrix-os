@@ -516,6 +516,9 @@
 .matrix-ap-connection-choice strong { font-size: 14px; font-weight: 500; }
 .matrix-ap-connection-choice > span { font-size: 12px; }
 .matrix-ap-connection-choice .matrix-ap-selected-tag { border: 0; padding: 2px 8px; font-size: 12px; color: var(--matrix-ap-text); background: color-mix(in srgb, var(--matrix-ap-text) 5%, transparent); }
+.matrix-ap-connection-choice.matrix-ap-method-card { display: grid; grid-template-columns: 20px minmax(0, 1fr) 16px; align-items: start; width: 100%; }
+.matrix-ap-method-card .matrix-ap-method-copy { min-width: 0; overflow-wrap: anywhere; }
+.matrix-ap-method-card .matrix-ap-method-check { position: static; justify-self: end; }
 .matrix-ap-agent-logo, .matrix-ap-harness-mark:has(.matrix-ap-agent-logo) { height: 32px; width: 32px; }
 .matrix-ap-agent-logo { border: 1px solid var(--matrix-ap-border); background: var(--matrix-ap-sunken); border-radius: 8px; }
 .matrix-ap-agent-logo img { height: 20px; width: 20px; }

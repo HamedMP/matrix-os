@@ -137,6 +137,13 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     initialCollaborationView ?? null,
   );
   const [detail, setDetail] = useState<CanonicalChatDetailResponse | null>(null);
+  // The project a new Chat will be created in, picked from the composer before the first send.
+  // Scoped to the computer and owner it was picked on, so it never follows a runtime switch.
+  const [draftProject, setDraftProject] = useState<{ identity: string; projectId: string } | null>(null);
+  const draftProjectId = draftProject?.identity === navigationIdentity ? draftProject.projectId : undefined;
+  const setDraftProjectId = useCallback((projectId: string | undefined) => {
+    setDraftProject(projectId ? { identity: navigationIdentity, projectId } : null);
+  }, [navigationIdentity]);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const latestAdmissionId = useRef<string | undefined>(undefined);
@@ -415,7 +422,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
             text: text.trim() ? options.promptText?.trim() || text.trim() : "",
             files: files ?? [], resources: options.resources ?? [], selection,
             interactionMode: options.interactionMode, permissionMode: options.permissionMode,
-            clientRequestId: options.clientRequestId });
+            clientRequestId: options.clientRequestId, projectId: draftProjectId });
           if (draftSendAttempt.current?.payload !== payload) {
             draftSendAttempt.current = { payload, clientRequestId: options.clientRequestId ?? requestId() };
           }
@@ -425,6 +432,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
             clientRequestId: `${draftRequestId}_chat`,
             title: generatedChatTitle(options.displayText?.trim() || text),
             currentSelection: selection,
+            ...(draftProjectId ? { projectId: draftProjectId } : {}),
           });
           if (!isCurrent()) return false;
         }
@@ -530,7 +538,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
       submittingRef.current = false;
       setSubmitting(false);
     });
-  }, [activeChatId, client, loadDetail, loadList, mentionRequests, setActiveChatId, isCurrent, authority.summaryClient, admissions, navigationIdentity]);
+  }, [activeChatId, client, loadDetail, loadList, mentionRequests, setActiveChatId, isCurrent, authority.summaryClient, admissions, navigationIdentity, draftProjectId]);
 
   const cancelQueuedTurn = useCallback(async (queuedTurnId: string) => {
     if (!isCurrent()) return false;
@@ -538,7 +546,8 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     if (!activeChatId || current?.record.chat.id !== activeChatId) return false;
     try {
       await client.cancelQueuedTurn(activeChatId, queuedTurnId, { clientRequestId: requestId(), baseRevision: current.record.chat.revision });
-      if (!isCurrent()) return false;
+      // Reloading a Chat the owner has left would supersede the newly selected Chat's pending load.
+      if (!isCurrent() || activeChatIdRef.current !== activeChatId) return false;
       await loadDetail(activeChatId);
       return isCurrent();
     } catch (error: unknown) {
@@ -549,9 +558,31 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     }
   }, [activeChatId, client, loadDetail, isCurrent]);
 
+  const steerQueuedTurn = useCallback(async (queuedTurnId: string) => {
+    if (!isCurrent()) return false;
+    const current = detailRef.current;
+    const activeRun = current?.record.activeRun;
+    const run = activeRun ? current?.runs.find((candidate) => candidate.id === activeRun.runId) : undefined;
+    if (!activeChatId || current?.record.chat.id !== activeChatId || !activeRun || run?.capabilitySnapshot.steering !== "same_run") return false;
+    try {
+      await client.steerQueuedTurn(activeChatId, activeRun.runId, queuedTurnId, {
+        clientRequestId: requestId(), baseRevision: current.record.chat.revision, expectedTurnId: activeRun.turnId,
+      });
+      if (!isCurrent() || activeChatIdRef.current !== activeChatId) return false;
+      await loadDetail(activeChatId);
+      return isCurrent();
+    } catch (error: unknown) {
+      if (!isCurrent()) return false;
+      // The queue panel shows the failure next to the row; a page-level error would repeat it.
+      console.warn("[canonical-chat] Queue steering failed:", error instanceof Error ? error.name : "UnknownError");
+      return false;
+    }
+  }, [activeChatId, client, loadDetail, isCurrent]);
+
   const newChat = useCallback(async () => {
     if (!isCurrent()) return;
     draftSendAttempt.current = null;
+    setDraftProjectId(undefined);
     activeChatIdRef.current = undefined;
     detailRef.current = null;
     detailRequestGeneration.current += 1;
@@ -560,10 +591,11 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSafeError(null);
     setSelectedCollaborationView(null);
     leaveSharedChatPath();
-  }, [setActiveChatId, isCurrent]);
+  }, [setActiveChatId, setDraftProjectId, isCurrent]);
 
   const switchConversation = useCallback((chatId: string) => {
     if (!isCurrent()) return;
+    setDraftProjectId(undefined);
     activeChatIdRef.current = chatId;
     detailRef.current = null;
     detailRequestGeneration.current += 1;
@@ -572,7 +604,7 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     setSafeError(null);
     setSelectedCollaborationView(null);
     leaveSharedChatPath();
-  }, [setActiveChatId, isCurrent]);
+  }, [setActiveChatId, setDraftProjectId, isCurrent]);
 
   const openSharedChat = useCallback((scopeId: string) => {
     if (!isCurrent()) return;
@@ -733,6 +765,46 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     }
   }, [client, records, loadList, loadDetail, setRecords, isCurrent]);
 
+  /** Picks the project for a new Chat, or moves the open Chat; null removes it. */
+  const setChatProject = useCallback(async (projectId: string | null) => {
+    if (!isCurrent()) return false;
+    const current = detailRef.current;
+    if (!current) {
+      if (activeChatIdRef.current) return false;
+      setDraftProjectId(projectId ?? undefined);
+      return true;
+    }
+    const chatId = current.record.chat.id;
+    const stillOpen = () => isCurrent() && activeChatIdRef.current === chatId;
+    try {
+      const updated = await client.updateProject(chatId, { baseRevision: current.record.chat.revision, projectId });
+      if (!stillOpen()) return false;
+      setRecords((existing) => existing.map((record) => record.chat.id === chatId
+        ? mergeChatNavigationRecord(record, updated) : record));
+      const active = detailRef.current;
+      if (active?.record.chat.id === chatId) {
+        // A late response from an older move loses to the newer revision already shown.
+        const { projectId: _previous, ...record } = active.record;
+        const merged = mergeCanonicalChatRecord(active.record, updated);
+        const next = { ...active, record: {
+          ...record,
+          ...(merged.projectId ? { projectId: merged.projectId } : {}),
+          chat: { ...active.record.chat, revision: merged.chat.revision },
+        } };
+        detailRef.current = next;
+        setDetail(next);
+      }
+      setSafeError(null);
+      return true;
+    } catch (error: unknown) {
+      if (!stillOpen()) return false;
+      console.warn("[canonical-chat] Shell project move failed:", error instanceof Error ? error.name : "UnknownError");
+      await loadDetail(chatId);
+      if (stillOpen()) setSafeError("The Chat could not be moved. Try again.");
+      return false;
+    }
+  }, [client, loadDetail, setRecords, setDraftProjectId, isCurrent]);
+
   /** Permanent; the dialog owns failure copy, so this only reports success. */
   const deleteConversation = useCallback(async (chatId: string) => {
     if (!isCurrent()) return false;
@@ -812,6 +884,10 @@ export function useCanonicalChatState({ initialDraft, initialCollaborationView, 
     botEventRevision,
     queuedTurns: selectedDetail?.queuedTurns ?? [],
     cancelQueuedTurn,
+    steerQueuedTurn,
+    chatProjectId: activeChatId ? activeRecord?.projectId : draftProjectId,
+    setChatProject,
+    canSteerQueuedTurns: selectedDetail?.runs.find((run) => run.id === selectedDetail.record.activeRun?.runId)?.capabilitySnapshot.steering === "same_run",
     providerSelection: selectedDetail?.record.chat.currentSelection,
     executionControls: selectedDetail ? canonicalChatExecutionControls({
       chatId: selectedDetail.record.chat.id, currentSelection: selectedDetail.record.chat.currentSelection, runs: selectedDetail.runs,

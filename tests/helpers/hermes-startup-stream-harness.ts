@@ -37,7 +37,7 @@ export async function hermesStartupStreamHarness(options: Parameters<typeof herm
   const app = new Hono();
   registerCanonicalChatEventHttpRoute({ app, stream, getPrincipal: () => principal });
   const source = createCanonicalChatEventSource({ openStream: async ({ signal, cursor }) => app.request(
-    `/api/chats/events?messageVersion=2${cursor === undefined ? "" : `&cursor=${cursor}`}`,
+    `/api/chats/events?messageVersion=2&assistantTextVersion=1${cursor === undefined ? "" : `&cursor=${cursor}`}`,
     { signal, headers: { accept: "text/event-stream", "x-matrix-chat-protocol": "2" } },
   ) });
   const frames: CanonicalChatContentFrame[] = [];

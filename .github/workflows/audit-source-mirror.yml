@@ -1,0 +1,61 @@
+name: Audit source mirror
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - '.github/workflows/audit-source-mirror.yml'
+      - 'scripts/audit/**'
+permissions:
+  contents: read
+concurrency:
+  group: audit-source-mirror-${{ github.event_name == 'pull_request' && github.event.number || 'main' }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    name: Verify mirror safety
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - run: node --test scripts/audit/sync-mirror.test.mjs
+  synchronize:
+    name: Synchronize main source only
+    needs: verify
+    if: >-
+      github.repository == 'HamedMP/matrix-os' &&
+      github.ref == 'refs/heads/main' &&
+      github.event_name != 'pull_request' &&
+      vars.MATRIX_AUDIT_MIRROR_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Create mirror-only installation token
+        id: mirror-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.MATRIX_AUDIT_MIRROR_APP_ID }}
+          private-key: ${{ secrets.MATRIX_AUDIT_MIRROR_APP_PRIVATE_KEY }}
+          owner: FinnaAI
+          repositories: matrix-os
+          permission-contents: write
+          permission-workflows: write
+          permission-administration: read
+      - name: Verify policy and fast-forward mirror main
+        run: node scripts/audit/sync-mirror.mjs
+        env:
+          MATRIX_AUDIT_MIRROR_TOKEN: ${{ steps.mirror-token.outputs.token }}

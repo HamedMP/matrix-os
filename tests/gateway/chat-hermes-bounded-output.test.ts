@@ -10,7 +10,8 @@ it.each(["segments", "single_segment", "single_delta", "single_interim"])("trunc
   const adapter = createHermesChatProviderAdapter({ homePath: "/home/matrix/home", spawnFn: gateway.spawnFn });
   const events: CanonicalProviderRunEvent[] = [];
   const done = (async () => { for await (const event of adapter.start({ ...baseInput, signal: new AbortController().signal })) events.push(event); })();
-  await vi.advanceTimersByTimeAsync(0);
+  // Emit only after the real asynchronous runtime qualification and prompt setup.
+  await vi.waitFor(() => expect(gateway.requests.some(request => request.method === "prompt.submit")).toBe(true));
   for (let index = 0; index < (mode === "single_delta" || mode === "single_interim" ? 1 : 30); index++) {
     if (mode === "segments" || mode === "single_interim") gateway.event("message.interim", { text: mode === "segments" ? String(index % 10).repeat(4_000) : "x".repeat(120_000) });
     else gateway.event("message.delta", { text: "x".repeat(mode === "single_delta" ? 120_000 : 4_000) });

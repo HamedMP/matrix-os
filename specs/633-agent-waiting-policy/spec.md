@@ -74,6 +74,29 @@ Success is a commit barrier: hold the sole valid `response.completed` and option
 
 Implement and verify in five boundaries: contracts; native parser/peer/service; gateway peer and inference; Unix/HTTP/worker transport; provenance-matched Electron acceptance. Include bounded synthetic replies whose aggregate exceeds 1 MiB, UTF-8 splits, late errors, missing/duplicate terminal, slow consumers, Stop/revocation/close, unsupported old peers, and unchanged egress/control budgets. Developer docs and the separate public-site documentation PR remain deliverables.
 
+### Released native protocol compatibility (2026-10-29)
+
+Native compatibility: a worker's streaming request does not prove that the paired native client supports streaming. The gateway must default each new native session to the strict legacy request/reply wire. Only an authenticated, exact-session `POST /api/chatgpt-plan/device/capabilities?includeInferenceStream=true` opts that session into native streaming. Return the optional `inferenceStream: true` field only for that explicit query, independently of poll/reply receipt versions. New native composition advertises this capability only when it has an inference-stream implementation; an older gateway may omit the response field and retain its prior request behavior.
+
+For a native session without this capability, select the existing bounded whole-body inference path before dispatch and adapt the completed reply into UTF-8 chunks for the worker. Keep its 1 MiB reply cap, 120-second deadline, owner/account/grant/model validation, concurrency cap and cancellation. Never retry an admitted inference by changing protocols. Capability state belongs to the native session and resets on reconnect/rebind. Frozen released-client strict schemas, legacy reply completion and cancellation, new-client negotiation, opt-out response shape, malformed/unauthorized opt-in and session reset require cross-version regression coverage.
+
+### Released assistant text compatibility (2026-10-29)
+
+Stored assistant output may contain whitespace-only text parts. Released Electron 0.1.19 rejects those parts even with `messageVersion=2`. Canonical Chat HTTP and SSE clients opt into raw stored assistant text separately with `assistantTextVersion=1`; omission or `0` retains the released representation. Keep the existing message/input/command versions independent. Older gateways ignore this additional query, preserving new-client/old-gateway reads and admissions. Reject invalid or duplicate capabilities before service calls or mutations.
+
+The legacy response projection must preserve message identity, sequence, actors, cursor/page boundaries, and all nontext parts. Repartition adjacent text losslessly into nonblank parts within 32,000 UTF-16 units and 96 KiB UTF-8 when representable. Some output cannot be represented by the released schema, including wholly blank text or whitespace spans that cannot share a bounded part with visible text. Use an existing status part for those spans rather than fabricating assistant text, removing messages, or silently trimming stored output. At an exact encoded-message limit, retain approvals and other nontext parts even if incompatible display text must be omitted because no notice fits. Raw database/outbox history and exports remain unchanged; opted-in clients receive the complete original representation.
+
+Legacy SSE content uses supported metadata invalidations so the client refetches projected snapshots. Do not send raw part indices or offsets after rebalancing snapshot text. Opted-in clients retain current content/delta delivery. Shared collaboration message reads use the same legacy projection; retain their existing exact query contract so new clients can still read older gateways. Do not alter collaboration authorization, actor attribution, shared-path/credential redaction or raw scope exports.
+
+| Boundary | Existing authority | Compatibility obligation |
+| --- | --- | --- |
+| Canonical detail/admission/steering HTTP | Existing owner/collaborator route authorization | Project legacy output only after validated service readback; capability never grants execution authority. |
+| Canonical SSE | Existing authenticated stream principal | Validate capability before attachment; preserve event cursor/revision and recovery semantics. |
+| Collaboration shared messages | Existing signed scope/member authorization | Project after shared-output redaction; preserve IDs, sequence and pagination. |
+| Raw stored/exported output | Existing owner/export authority | Preserve original bytes and formatting. |
+
+Cross-version regressions must exercise the released nonblank parser against real repository/orchestrator/HTTP and SSE output, ordinary and 32,000-character/newline boundaries, all-blank replies, nontext boundaries, Unicode/escaping and encoded limits, legacy invalidation/refetch, opt-in exactness, and new-client/old-gateway behavior. The legacy wire projection explicitly enforces UTF-16 part length independently of Zod's character-counting semantics. Keep existing stored/write schemas unchanged so historically valid 32,000-codepoint/96-KiB parts remain readable and exportable without rewriting them. Qualify preexisting astral text through real detail and raw export reads. Production trigger frequency remains unmeasured; deterministic reproduction does not establish an incident rate.
+
 ### Active stream deadline correction (2026-10-22)
 
 The stream follow-up still retained absolute per-inference clocks inside a busy turn. A live Native subscription reproduction continued producing output but failed after approximately 121 seconds. An agent turn without an aggregate deadline does not solve this nested failure.

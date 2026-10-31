@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from "react";
 import { productScales } from "@matrix-os/brand/tokens";
-import { getStartedSuggestedName, type GetStartedWizardEvent, type GetStartedWizardState } from "@matrix-os/contracts";
+import { GET_STARTED_FEATURE_FLAG, getStartedSuggestedName, type GetStartedWizardEvent, type GetStartedWizardState } from "@matrix-os/contracts";
+import { useFeatureFlag, type FeatureFlagSource } from "../feature-flags.js";
 import { useGettingStartedAutoOpenSuppression, useGettingStartedBlocker } from "../getting-started-visibility.js";
 import { usePublishGetStartedAnswers } from "./answers-context.js";
 import type { GetStartedAgentLoginHost } from "./agent-login.js";
@@ -130,27 +131,36 @@ export interface GetStartedGateProps {
   suggestedName?: string | null;
   /** The surface's Settings > Agents & providers host for the coding agents screen (spec 636). */
   agentLogin?: GetStartedAgentLoginHost;
+  /** The surface's PostHog flags; the wizard opens only while `get-started-wizard` is on. Omitted where PostHog isn't configured. */
+  featureFlags?: FeatureFlagSource;
 }
 
 /**
  * Spec 635: shows the Get started wizard once on a new computer, over the blurred wallpaper.
  * The backdrop is opaque, so icons, the dock and windows don't show through.
  * It cannot be closed or minimized; it ends only when the owner finishes or skips it.
- * Any load failure falls back to today's desktop.
+ * Any load failure falls back to today's desktop, and so does a rollout flag that is off.
  */
-export function GetStartedGate({ port, zIndex, children, connector: Connector, whileActive: WhileActive, backdropSource, gallery: galleryPort, suggestedName = null, agentLogin }: GetStartedGateProps) {
+export function GetStartedGate({ port, zIndex, children, connector: Connector, whileActive: WhileActive, backdropSource, gallery: galleryPort, suggestedName = null, agentLogin, featureFlags }: GetStartedGateProps) {
   const getStarted = useGetStarted(port);
-  const active = getStarted.phase === "active";
+  const flag = useFeatureFlag(featureFlags, GET_STARTED_FEATURE_FLAG);
+  // The flag is read live until the wizard opens; from then on a flag change never closes it.
+  const [opened, setOpened] = useState(false);
+  const active = getStarted.phase === "active" && (opened || flag === true);
+  if (active && !opened) setOpened(true);
+  const rolledOut = opened || flag;
   const backdrop = useDesktopBackdrop(backdropSource, active);
   const gallery = useGetStartedGallery(galleryPort, active);
   usePrefillName(getStarted.wizard, getStarted.dispatch, suggestedName);
   useBlockBackgroundShortcuts(active);
   useGettingStartedBlocker(active);
-  useGettingStartedAutoOpenSuppression(getStarted.phase !== "done");
+  useGettingStartedAutoOpenSuppression(getStarted.phase !== "done" && rolledOut !== false);
   usePublishGetStartedAnswers(getStarted.answers, getStarted.ended, getStarted.finishedNow);
 
   if (getStarted.phase === "loading") return null;
-  if (getStarted.phase === "done" || !getStarted.wizard) return <>{children}</>;
+  if (getStarted.phase === "done" || !getStarted.wizard || rolledOut === false) return <>{children}</>;
+  // Setup is open but the flag is still loading: hold the widget back, as while state loads.
+  if (rolledOut === null) return null;
   const wizard = getStarted.wizard;
   const renderWizard = (connect: GetStartedConnect | null) => (
     <GetStartedWizard

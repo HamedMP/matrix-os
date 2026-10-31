@@ -25,7 +25,7 @@ function fixture(mode = "ready") {
   });
   const evaluate = vi.fn();
   const runtime = createJevInboxRuntime({ ownerId: owner, getAgent, resolveCredentials: credentials,
-    verifyRuntime: vi.fn(async () => undefined), fundedPolicyReady: vi.fn(async () => mode !== "unfunded"), fundedReady: funded, read, evaluate });
+    verifyRuntime: vi.fn(async () => "/fixture/hermes/venv/bin/python"), fundedPolicyReady: vi.fn(async () => mode !== "unfunded"), fundedReady: funded, read, evaluate });
   return { runtime, getAgent, credentials, funded, read, evaluate };
 }
 it("admission validates selected source and funding without mailbox reads or inference", async () => {
@@ -101,7 +101,7 @@ it("wires a paginated batch through admitted scope, evidence, Jev and exact labe
   const evaluate=vi.fn(async()=>({requestId:"jev_req_batch_fixture",recipe:"email-triage-v1" as const,model:"typesafe/jev" as const,latencyMs:1,
     answers:JEV_EMAIL_TRIAGE_ANSWER_IDS.map(id=>({id,type:"boolean" as const,probability:id==="cold_outreach"?0.94:0.1}))}));
   const f=fixture();const runtime=createJevInboxRuntime({ownerId:owner,getAgent:async()=>current,resolveCredentials:f.credentials,
-    verifyRuntime:async()=>undefined,fundedPolicyReady:async()=>true,fundedReady:async()=>true,read,evaluate,label,batchStore:store});
+    verifyRuntime:async()=>"/fixture/hermes/venv/bin/python",fundedPolicyReady:async()=>true,fundedReady:async()=>true,read,evaluate,label,batchStore:store});
   const controller=new AbortController();await runtime.launch.preflight(owner,boundScope,controller.signal);
   const start=await runtime.broker.execute(owner,boundScope,{operation:"batch_start"});
   if(start.kind!=="batch")throw new Error("Batch missing");

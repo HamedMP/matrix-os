@@ -6,7 +6,6 @@ import type { AppWindow } from "@/hooks/useWindowManager";
 import type { DockConfig } from "@/stores/desktop-config";
 import { SHELL_Z_INDEX } from "@/lib/shell-layering";
 import { routeAppBridgeLaunch } from "@/lib/builtin-apps";
-import { desktopLaunchBarInset } from "@/lib/desktop-work-area";
 import { cn } from "@/lib/utils";
 import {
   Card,
@@ -115,8 +114,8 @@ export function DesktopWindow({
 
   const windowStyle = isFullscreen ? {
     zIndex: SHELL_Z_INDEX.fullscreenWindow,
+    // Like Electron Desktop, a maximized app fills to the bottom edge; the launch bar hides meanwhile.
     top: `${topInset}px`,
-    bottom: desktopLaunchBarInset(desktopParity),
     transition: "all 300ms cubic-bezier(0.22, 1, 0.36, 1)",
   } : {
     "--win-x": `${win.x}px`,
@@ -237,7 +236,7 @@ export function DesktopWindow({
                 onRenameConversation={chat.renameConversation}
                 onDeleteConversation={chat.deleteConversation}
                 onSubmit={chat.submitMessage}
-              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn}
+              agentClient={chat.agentClient} agentSummaryClient={chat.agentSummaryClient} authorityKey={chat.authorityKey} gatewayUrl={chat.gatewayUrl} composerIdentity={chat.composerIdentity} isCurrentAuthority={chat.isCurrentAuthority} navigationFresh={chat.navigationFresh} navigationClassifications={chat.navigationClassifications} botEventRevision={chat.botEventRevision} queuedTurns={chat.queuedTurns} onCancelQueuedTurn={chat.cancelQueuedTurn} onSteerQueuedTurn={chat.steerQueuedTurn} canSteerQueuedTurns={chat.canSteerQueuedTurns} chatProjectId={chat.chatProjectId} onSetChatProject={chat.setChatProject}
                 onSubmitApproval={chat.submitApproval}
                 browserPermissions={chat.browserPermissions}
                 onSubmitInput={chat.submitInput}

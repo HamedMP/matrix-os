@@ -7,6 +7,7 @@ import type { ChatGptPlanAuthority } from './chatgpt-plan.js';
 import { createChunkReceipt, createPeerReplyReceipts } from './chatgpt-plan-reply-receipts.js';
 import { createPeerPollDelivery } from './chatgpt-plan-poll-delivery.js';
 import { ChatGptPlanPeerError } from './chatgpt-plan-peer-error.js';
+import { inferenceChunks } from './inference-stream.js';
 export { ChatGptPlanPeerError } from './chatgpt-plan-peer-error.js';
 type InferenceReply = {
     status: number;
@@ -35,6 +36,7 @@ type Peer = {
     replyReceipts?: ReturnType<typeof createPeerReplyReceipts>;
     mode?: 1 | 2;
     delivery?: ReturnType<typeof createPeerPollDelivery>;
+    inferenceStream?: true;
 };
 /** Owner-authenticated local device, pinned public key, and one explicit source.
  * Holds no OAuth token and never contacts OpenAI from the managed gateway. */
@@ -116,13 +118,15 @@ export function createChatGptPlanPeers(deps: {
     };
     const service = {
         authorizeReply(owner: string) { scope(owner); },
-        capabilities(owner: string, input: unknown, includeReplyDeliveryV2 = false) {
+        capabilities(owner: string, input: unknown, includeReplyDeliveryV2 = false, includeInferenceStream = false) {
             const p = session(owner, input, false);
             if (includeReplyDeliveryV2 && !p.replyReceipts) {
                 if (p.mode !== undefined) throw new ChatGptPlanPeerError('conflict');
                 p.replyReceipts = createPeerReplyReceipts(now);
             }
+            if (includeInferenceStream) p.inferenceStream = true;
             return { version: 1 as const, sessionId: p.sessionId, pollDeliveryVersion: 2 as const,
+                ...(includeInferenceStream ? { inferenceStream: true as const } : {}),
                 ...(includeReplyDeliveryV2 ? { replyDeliveryVersion: 2 as const } : {}) };
         },
         challenge(owner: string) {
@@ -343,12 +347,23 @@ export function createChatGptPlanPeers(deps: {
                 enqueue(p, request);
             });
         },
-        async inferStream(binding: PiRuntimeBinding, body: string, signal: AbortSignal) {
+        async inferStream(binding: PiRuntimeBinding, body: string, signal: AbortSignal): Promise<Omit<InferenceReply, 'body'> & { body: AsyncIterableIterator<string> }> {
             if (!await service.revalidate(binding, signal) || signal.aborted)
                 throw new ChatGptPlanPeerError('unavailable');
             const p = current();
             if (!p || p.sessionId !== binding.subscription?.peerId)
                 throw new ChatGptPlanPeerError('unavailable');
+            // Released native peers have strict schemas. Select their bounded
+            // whole-body path before dispatch; never replay a streamed request.
+            if (!p.inferenceStream) {
+                const response = await service.infer(binding, body, signal);
+                return { ...response, body: (async function* () {
+                    for (const chunk of inferenceChunks(response.body)) {
+                        signal.throwIfAborted();
+                        yield chunk;
+                    }
+                })() };
+            }
             if (p.pending.size >= 4 || p.requests.length >= 32 || p.sequence >= CHATGPT_PLAN_PEER_MAX_SEQUENCE)
                 throw new ChatGptPlanPeerError('unavailable');
             const request = command(p, binding, body, true);

@@ -9,7 +9,7 @@ export interface SettingsRouteOptions {
   app: Hono;
   homePath: string;
   settingsRoutes: Hono;
-  /** Off unless the deployment opts in (MATRIX_GET_STARTED_ENABLED). */
+  /** MATRIX_GET_STARTED_ENABLED=true. The platform sets it on new computers; the surfaces' PostHog flag decides who sees the wizard. */
   getStartedEnabled: boolean;
   getOwnerId(c: Context): string | null;
   botServices: Parameters<typeof createGetStartedBots>[0] | null | undefined;

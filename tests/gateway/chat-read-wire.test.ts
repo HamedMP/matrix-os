@@ -44,7 +44,7 @@ it.each([undefined, "0", "1"].flatMap(version => ["0", "1"].map(metadata => ({ v
       sink.send({ type: "chat.content", event: { cursor: 1, chatId: "chat_wire", revision: 0, eventType: "chat.updated", createdAt: stamp }, content: { record: CanonicalChatRecordSchema.parse(record) } });
       return { onClose() {}, touch() {} };
     } }, setIntervalFn: vi.fn(() => 1), clearIntervalFn: vi.fn() });
-  const response = await app.request(`/api/chats/events?messageVersion=2&inputVersion=1${version === undefined ? "" : `&readStateVersion=${version}`}`, {
+  const response = await app.request(`/api/chats/events?messageVersion=2&inputVersion=1&assistantTextVersion=1${version === undefined ? "" : `&readStateVersion=${version}`}`, {
     headers: { accept: "text/event-stream", "x-matrix-chat-protocol": "2", "x-matrix-chat-metadata": metadata },
   });
   const reader = response.body!.getReader();
