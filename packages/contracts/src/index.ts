@@ -95,6 +95,7 @@ export * from "#get-started-recipe-bots";
 export * from "#get-started-connect";
 export * from "#get-started-wizard";
 export * from "#getting-started";
+export * from "#getting-started-app";
 export * from "#integration-connections";
 export * from "#onboarding-widget";
 export * from "#onboarding-widget-catalog";
