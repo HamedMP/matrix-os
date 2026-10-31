@@ -1,5 +1,5 @@
 /**
- * Getting started desktop app (spec 639): the ten tasks, their points, and
+ * Getting started desktop app (spec 639): the twelve tasks, their points, and
  * the shared status derivation. Completion signals reuse the popover's
  * checks in getting-started.ts so both surfaces agree.
  */
