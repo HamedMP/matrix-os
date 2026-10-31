@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from "vitest";
 import { wireNativeAppOpening } from "../../desktop/src/renderer/src/lib/native-app-opening";
+import { useNativeAppChatNavigation } from "../../desktop/src/renderer/src/features/chat/native-app-chat-navigation";
 import { useConnection } from "../../desktop/src/renderer/src/stores/connection";
 import { useTabs } from "../../desktop/src/renderer/src/stores/tabs";
 import { useDesktopSurfaces } from "../../desktop/src/renderer/src/stores/desktop-surfaces";
@@ -12,7 +13,48 @@ afterEach(() => {
   useTabs.setState(useTabs.getInitialState(), true);
   useDesktopSurfaces.setState(useDesktopSurfaces.getInitialState(), true);
   useConnection.setState(useConnection.getInitialState(), true);
+  useNativeAppChatNavigation.setState(useNativeAppChatNavigation.getInitialState(), true);
   vi.restoreAllMocks(); vi.clearAllMocks();
+});
+it.each(["closed", "open", "minimized"] as const)("opens and queues native Chat recipes when Chat is %s", (state) => {
+  useConnection.setState({ status: "signed-in", runtimeSlot: "primary", authGeneration: 7 });
+  const workId = useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", closable: false });
+  useDesktopSurfaces.getState().reconcileTabs([workId], { width: 1600, height: 1000 });
+  if (state === "closed") useDesktopSurfaces.getState().closeSurface(workId);
+  if (state === "minimized") useDesktopSurfaces.getState().minimizeSurface(workId);
+  wireNativeAppOpening();
+  const receive = native.onEvent.mock.calls.find(([channel]) => channel === "app:open-chat")![1] as
+    (event: EventPayload<"app:open-chat">) => void;
+  receive({ requestId: `request-${state}`, view: "recipes", recipeId: "company-brain", runtimeSlot: "primary", authGeneration: 7 });
+  expect(useTabs.getState().activeTabId).toBe(workId);
+  expect(useDesktopSurfaces.getState().surfaces[workId]?.mode).not.toBe("closed");
+  expect(useDesktopSurfaces.getState().surfaces[workId]?.mode).not.toBe("minimized");
+  expect(useNativeAppChatNavigation.getState().pending).toMatchObject({
+    requestId: `request-${state}`,
+    recipeId: "company-brain",
+    targetTabId: workId,
+  });
+});
+it("clears a queued Chat request when its runtime authority changes before Chat is ready", () => {
+  useConnection.setState({ status: "signed-in", runtimeSlot: "primary", authGeneration: 7 });
+  wireNativeAppOpening();
+  const receive = native.onEvent.mock.calls.find(([channel]) => channel === "app:open-chat")![1] as
+    (event: EventPayload<"app:open-chat">) => void;
+  receive({ requestId: "request-runtime-switch", view: "recipes", recipeId: "company-brain", runtimeSlot: "primary", authGeneration: 7 });
+  expect(useNativeAppChatNavigation.getState().pending?.requestId).toBe("request-runtime-switch");
+  useConnection.setState({ runtimeSlot: "secondary", authGeneration: 8 });
+  expect(useNativeAppChatNavigation.getState().pending).toBeNull();
+});
+it("clears the matching queued Chat request when main cancels revoked app authority", () => {
+  useConnection.setState({ status: "signed-in", runtimeSlot: "primary", authGeneration: 7 });
+  wireNativeAppOpening();
+  const receive = native.onEvent.mock.calls.find(([channel]) => channel === "app:open-chat")![1] as
+    (event: EventPayload<"app:open-chat">) => void;
+  receive({ requestId: "request-app-navigation", view: "recipes", recipeId: "company-brain", runtimeSlot: "primary", authGeneration: 7 });
+  const cancel = native.onEvent.mock.calls.find(([channel]) => channel === "app:open-chat-cancel")![1] as
+    (event: { requestId: string }) => void;
+  cancel({ requestId: "request-app-navigation" });
+  expect(useNativeAppChatNavigation.getState().pending).toBeNull();
 });
 it("opens a normal installed-app tab only in the matching signed-in scope and removes its listener", () => {
   const cleanup = vi.fn(); native.onEvent.mockReturnValue(cleanup);
@@ -27,7 +69,7 @@ it("opens a normal installed-app tab only in the matching signed-in scope and re
   receive({ ...event, runtimeSlot: "other" }); receive({ ...event, authGeneration: 6 });
   useConnection.setState({ status: "signed-out" }); receive(event);
   expect(openTab).toHaveBeenCalledTimes(1);
-  dispose(); expect(cleanup).toHaveBeenCalledOnce();
+  dispose(); expect(cleanup).toHaveBeenCalledTimes(3);
 });
 
 it.each([

@@ -54,7 +54,7 @@ describe('fast CI preserves validation while removing serialized work', () => {
   it('builds prerequisites once in each funded and E2E job before direct test execution', () => {
     expect(scripts['test:prepare']).toContain('@matrix-os/integrations-mcp');
     expect(scripts['test:prepare'].match(/node packages\/gateway\/native\/build\.mjs/g)).toHaveLength(1);
-    expect(scripts['test:e2e:run']).toBe('vitest run --config vitest.e2e.config.ts');
+    expect(scripts['test:e2e:run']).toBe('NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--no-experimental-webstorage" node node_modules/vitest/vitest.mjs run --config vitest.e2e.config.ts');
     for (const id of ['e2e', 'funded-postgres']) {
       const commands = runs(workflow.jobs[id]);
       expect(commands.match(/bun run test:prepare/g)).toHaveLength(1);

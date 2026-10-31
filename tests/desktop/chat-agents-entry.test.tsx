@@ -3,7 +3,7 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatAgentsEntry as AgentsLauncher, ChatAgentsRailSection } from "../../packages/ui/src/chat-agents/ChatAgentsEntry.js";
-import { ChatAgentsWorkspace, useCloseAgentsOnDraftRequest } from "../../packages/ui/src/chat-agents/ChatAgentsNavigation.js";
+import { ChatAgentsWorkspace, useChatAgentsNavigation, useCloseAgentsOnDraftRequest } from "../../packages/ui/src/chat-agents/ChatAgentsNavigation.js";
 import { AgentRecipesPanel } from "../../packages/ui/src/chat-agents/AgentRecipesPanel.js";
 import { ChatAgentsContent } from "../../packages/ui/src/chat-agents/ChatAgentsContent.js";
 import { MATRIX_BOT_SELECTION } from "@matrix-os/contracts";
@@ -39,6 +39,26 @@ HTMLDialogElement.prototype.showModal = function() { this.setAttribute("open", "
 HTMLDialogElement.prototype.close = function() { this.removeAttribute("open"); };
 
 describe("shared Agents entry", () => {
+  it("cancels only the Agents panel owned by the matching native request", async () => {
+    const client = clientFixture({ matrix: true });
+    function OwnerControls() {
+      const navigation = useChatAgentsNavigation();
+      return <>
+        <button onClick={() => navigation?.open({ client, requestId: "request-a" })}>Open owned Agents</button>
+        <button onClick={() => navigation?.cancelRequest("request-b")}>Cancel other request</button>
+        <button onClick={() => navigation?.cancelRequest("request-a")}>Cancel owned request</button>
+      </>;
+    }
+    render(<ChatAgentsWorkspace><OwnerControls />
+      <ChatAgentsContent client={client} scopeKey="chat_one"><p>Current Chat</p></ChatAgentsContent>
+    </ChatAgentsWorkspace>);
+    fireEvent.click(screen.getByRole("button", { name: "Open owned Agents" }));
+    expect(await screen.findByRole("region", { name: "Agents" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel other request" }));
+    expect(screen.getByRole("region", { name: "Agents" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel owned request" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Agents" })).toBeNull());
+  });
   it("offers only the configured Hermes model when editing a Jev bot", async () => {
     const client = clientFixture({ matrix: true });
     client.list.mockResolvedValue({ enabled: true, agents: [{ ...saved, recipe: {

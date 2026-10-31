@@ -4,10 +4,13 @@ import type { ChatAgentClient } from "./client.js";
 
 export type OpenAgents = {
   client: ChatAgentClient;
+  requestId?: string;
   onSetup?: () => void;
   onStartChat?: StartAgentChat;
   view?: "library" | "recipes";
   title?: "Your AI team" | "New agent" | "Edit agent";
+  requestedRecipeId?: string;
+  onRequestedRecipeResult?: (result: { ok: true } | { ok: false; error: "recipe_unavailable" | "navigation_unavailable" }) => void;
 };
 type BotDetailsRequest = {client: ChatAgentClient; chatId: string; agentId: string; sequence: number};
 type Navigation = {
@@ -17,14 +20,17 @@ type Navigation = {
   opened: OpenAgents | null;
   generation: number;
   getGeneration(): number;
-  open(value: OpenAgents, trigger: HTMLButtonElement): void;
+  getOpened(): OpenAgents | null;
+  open(value: OpenAgents, trigger?: HTMLButtonElement): void;
   close(restoreFocus?: boolean): void;
+  cancelRequest(requestId: string): void;
   setTitle(client: ChatAgentClient, generation: number, title: NonNullable<OpenAgents["title"]>): void;
 };
 const Context = createContext<Navigation | null>(null);
 
 function LocalWorkspace({ children }: { children: ReactNode }) {
   const [opened, setOpened] = useState<OpenAgents | null>(null);
+  const openedRef = useRef<OpenAgents | null>(null);
   const [detailsRequest, setDetailsRequest] = useState<BotDetailsRequest | null>(null);
   const detailsSequence = useRef(0);
   const requestDetails = useCallback((client: ChatAgentClient, chatId: string, agentId: string) => {
@@ -36,12 +42,15 @@ function LocalWorkspace({ children }: { children: ReactNode }) {
   const [generation, setGeneration] = useState(0);
   const generationRef = useRef(0);
   const getGeneration = useCallback(() => generationRef.current, []);
+  const getOpened = useCallback(() => openedRef.current, []);
   const trigger = useRef<HTMLButtonElement | null>(null);
-  const open = useCallback((value: OpenAgents, element: HTMLButtonElement) => {
+  const open = useCallback((value: OpenAgents, element?: HTMLButtonElement) => {
     generationRef.current += 1; setGeneration(generationRef.current);
     setDetailsRequest(null);
-    trigger.current = element;
-    setOpened({ ...value, title: value.view === "recipes" ? "New agent" : "Your AI team" });
+    trigger.current = element ?? null;
+    const next = { ...value, title: value.view === "recipes" ? "New agent" as const : "Your AI team" as const };
+    openedRef.current = next;
+    setOpened(next);
   }, []);
   const setTitle = useCallback((client: ChatAgentClient, ownerGeneration: number, title: NonNullable<OpenAgents["title"]>) => {
     if (generationRef.current !== ownerGeneration) return;
@@ -49,11 +58,15 @@ function LocalWorkspace({ children }: { children: ReactNode }) {
   }, []);
   const close = useCallback((restoreFocus = false) => {
     generationRef.current += 1; setGeneration(generationRef.current);
+    openedRef.current = null;
     setOpened(null);
     setDetailsRequest(null);
     if (restoreFocus && trigger.current?.isConnected) trigger.current.focus();
   }, []);
-  const value = useMemo(() => ({ opened, open, close, generation, getGeneration, setTitle, detailsRequest, requestDetails, consumeDetails }), [opened, open, close, generation, getGeneration, setTitle, detailsRequest, requestDetails, consumeDetails]);
+  const cancelRequest = useCallback((requestId: string) => {
+    if (openedRef.current?.requestId === requestId) close();
+  }, [close]);
+  const value = useMemo(() => ({ opened, open, close, cancelRequest, generation, getGeneration, getOpened, setTitle, detailsRequest, requestDetails, consumeDetails }), [opened, open, close, cancelRequest, generation, getGeneration, getOpened, setTitle, detailsRequest, requestDetails, consumeDetails]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 

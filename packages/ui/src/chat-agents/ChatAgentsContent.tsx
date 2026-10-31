@@ -28,7 +28,9 @@ export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrom
       className="min-h-0 min-w-0 flex-1">
       {children}
     </div>
-    {opened ? <ChatAgentsPanel client={opened.client} view={opened.view} onStartChat={opened.onStartChat} onSetup={opened.onSetup} providerCatalog={providerCatalog}
+    {opened ? <ChatAgentsPanel client={opened.client} view={opened.view} onStartChat={opened.onStartChat} onSetup={opened.onSetup}
+      requestedRecipeId={opened.requestedRecipeId} onRequestedRecipeResult={opened.onRequestedRecipeResult}
+      providerCatalog={providerCatalog}
       hostedChrome={hostedChrome} headerLeading={headerLeading} onTitleChange={onTitleChange} onOpenBotChat={onOpenBotChat} onClose={() => close?.(true)} /> : null}
   </>;
 }

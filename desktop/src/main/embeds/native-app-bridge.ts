@@ -6,6 +6,7 @@ import { z } from "zod/v4";
 import { nativeBrowserProduct } from "../../shared/browser-products";
 import { renewBrowserProductSession } from "./browser-product-bootstrap";
 import { NATIVE_APP_OPEN_CHANNEL, NativeAppOpenRequestSchema, NativeAppOpenTargetSchema, type NativeAppOpenRequest, type NativeAppOpenTarget } from "../../shared/native-app-open";
+import { NATIVE_APP_OPEN_CHAT_CHANNEL, NativeAppOpenChatRequestSchema, type NativeAppOpenChatRequest } from "../../shared/native-app-chat";
 import {
   NATIVE_APP_QUERY_CHANNEL,
   NativeAppQuerySchema,
@@ -73,6 +74,7 @@ interface NativeAppBridgeOptions {
   gatewayOrigin: () => string;
   resolveApp?: (request: NativeAppOpenRequest) => Promise<NativeAppOpenTarget>;
   openApp?: (app: NativeAppOpenTarget) => void;
+  openChat?: (request: NativeAppOpenChatRequest, signal: AbortSignal) => Promise<void>;
   maxSenders?: number;
   getSenderLifecycle?: (senderId: number) => NativeAppDocumentLifecycle | undefined;
 }
@@ -224,6 +226,7 @@ export class NativeAppBridge {
   private generateWindow = 0;
   private generateCount = 0;
   private pendingOpens = 0;
+  private pendingChatOpens = 0;
   private pendingCapabilities = 0;
   private readonly options: NativeAppBridgeOptions;
   private readonly maxSenders: number;
@@ -396,6 +399,27 @@ export class NativeAppBridge {
     }
   }
 
+  async openChat(sender: NativeAppSender, rawRequest: unknown): Promise<void> {
+    const identity = this.senders.get(sender.id);
+    const authorized = () => identity && this.senders.get(sender.id) === identity
+      && identity.authGeneration === this.options.authGeneration()
+      && isSenderAtApp(sender, this.options.gatewayOrigin(), identity.routeSlug);
+    if (!identity || !authorized()) throw new Error("not authorized");
+    if (!this.options.openChat) throw new Error("Chat navigation dependency is unavailable");
+    const request = NativeAppOpenChatRequestSchema.parse(rawRequest);
+    const now = Date.now();
+    if (now - identity.openWindow >= 60_000) { identity.openWindow = now; identity.openCount = 0; }
+    if (identity.openCount >= 10 || this.pendingChatOpens >= 1) throw new Error("Chat navigation rate limit exceeded");
+    identity.openCount++;
+    this.pendingChatOpens++;
+    try {
+      await this.options.openChat(request, identity.controller.signal);
+      if (!authorized()) throw new Error("not authorized");
+    } finally {
+      this.pendingChatOpens--;
+    }
+  }
+
   registerIpc(ipcMain: Pick<IpcMain, "handle">): void {
     if (this.options.capabilityRequest || this.options.aiRoutesRequest) {
       if (!this.options.capabilityRequest || !this.options.aiRoutesRequest) throw new Error("App capability dependencies are required");
@@ -417,6 +441,21 @@ export class NativeAppBridge {
         } catch (error: unknown) {
           console.warn("[native-app-bridge] launch failed:", error instanceof Error ? error.name : "UnknownError");
           throw new Error("App launch is unavailable");
+        }
+      });
+    }
+    if (this.options.openChat) {
+      ipcMain.handle(NATIVE_APP_OPEN_CHAT_CHANNEL, async (event: IpcMainInvokeEvent, rawRequest: unknown) => {
+        try {
+          if (event.senderFrame !== event.sender.mainFrame) throw new Error("not authorized");
+          await this.openChat({ id: event.sender.id, get url() {
+            if (event.senderFrame !== event.sender.mainFrame || event.sender.isDestroyed()) return "";
+            return event.sender.getURL();
+          } }, rawRequest);
+          return { ok: true };
+        } catch (error: unknown) {
+          console.warn("[native-app-bridge] Chat navigation failed:", error instanceof Error ? error.name : "UnknownError");
+          throw new Error("Chat navigation is unavailable");
         }
       });
     }

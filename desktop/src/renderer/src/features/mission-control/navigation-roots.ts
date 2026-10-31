@@ -2,8 +2,8 @@ import { useHermesChat } from "../../stores/hermes-chat";
 import { useTabs, type WorkRoute } from "../../stores/tabs";
 import { useThreads } from "../../stores/threads";
 
-function openWorkRoute(workRoute: WorkRoute): void {
-  useTabs.getState().openTab({
+function openWorkRoute(workRoute: WorkRoute): string {
+  return useTabs.getState().openTab({
     kind: "work",
     title: "Chat",
     workRoute,
@@ -12,10 +12,10 @@ function openWorkRoute(workRoute: WorkRoute): void {
   });
 }
 
-export function openChatIndex(): void {
+export function openChatIndex(): string {
   useThreads.getState().setActiveThread(null);
   useHermesChat.getState().showIndex();
-  openWorkRoute("chat");
+  return openWorkRoute("chat");
 }
 
 export function openTerminalIndex(): void {

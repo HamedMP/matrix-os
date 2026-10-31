@@ -2,6 +2,7 @@ import { chatImportSourceVersionUrl } from "@matrix-os/ui";
 import { useWorkAgentDraftRequest } from "./use-work-agent-draft-request";
 import { CanonicalChatClientProvider } from "../chat/CanonicalChatClientContext";
 import { useCompanyDriveChatHandoff } from "./use-company-drive-chat-handoff";
+import { NativeAppChatNavigationHost } from "../chat/native-app-chat-navigation";
 import { chatEventVersionUrl, chatMessageVersionUrl, chatReadStateVersionUrl } from "@matrix-os/contracts";
 import { ChatAgentsWorkspace, type ChatAgentDraftRequest } from "@matrix-os/ui";
 import {
@@ -102,7 +103,11 @@ export function WorkSurfaceRuntimeProvider({ active, tabId, children }: { active
   );
   return <WorkSurfaceRuntimeContext.Provider value={value}>
     <CanonicalChatClientProvider api={api} client={client} runtimeSlot={runtimeSlot} authGeneration={authGeneration}>
-      <ChatAgentsWorkspace>{children}</ChatAgentsWorkspace>
+      <ChatAgentsWorkspace>
+        <NativeAppChatNavigationHost active={active} tabId={tabId} client={client} onStartChat={requestAgentDraft}
+          runtimeSlot={runtimeSlot} authGeneration={authGeneration} />
+        {children}
+      </ChatAgentsWorkspace>
     </CanonicalChatClientProvider>
   </WorkSurfaceRuntimeContext.Provider>;
 }
