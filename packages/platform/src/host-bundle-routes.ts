@@ -1,3 +1,4 @@
+import { isPreviewPairBundle } from "@matrix-os/contracts/preview-pair";
 import { randomUUID } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
@@ -119,6 +120,8 @@ function bearerTokenEquals(authHeader: string | undefined, expected: string): bo
 }
 
 export function createHostBundleRoutes(opts: {
+  /** Internal instance exposed only behind the exact projected pair updater. */
+  allowPreviewPairMetadata?: boolean;
   db: PlatformDB;
   platformSecret: string;
   adminBodyLimit: number;
@@ -220,6 +223,9 @@ export function createHostBundleRoutes(opts: {
     const version = versionJson.endsWith('.json') ? versionJson.slice(0, -5) : versionJson;
     if (!HOST_BUNDLE_IMAGE_VERSION_PATTERN.test(version)) {
       return c.json({ error: 'Invalid request' }, 400);
+    }
+    if (isPreviewPairBundle(version) && !opts.allowPreviewPairMetadata) {
+      return c.json({ error: 'Not found' }, 404);
     }
     try {
       const release = await getHostBundleRelease(db, version);

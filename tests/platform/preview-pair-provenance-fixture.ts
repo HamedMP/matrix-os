@@ -5,7 +5,7 @@ import { PAIR_NOW, previewPairConfigurationFixture, previewPairManifestFixture }
 export function previewPairProvenanceFixture() {
   const m = previewPairManifestFixture();
   const config = loadPreviewPairConfig(previewPairConfigurationFixture()) as EnabledPreviewPairConfig;
-  const input = { sourceSha: m.sourceSha, hostBundleVersion: "v2026.10.30-pr3022-test", hostBundleSha256: "e".repeat(64),
+  const input = { sourceSha: m.sourceSha, hostBundleVersion: m.members.owner.installedVersion, hostBundleSha256: "e".repeat(64),
     desktopArtifacts: m.desktopArtifacts, browserOrigin: m.browserOrigin, apiOrigin: m.apiOrigin,
     identityIssuer: m.identityIssuer, platformSource: m.platformSource };
   const expected = { pairId: m.pairId, generation: m.generation, pr: m.pr, sourceSha: m.sourceSha };

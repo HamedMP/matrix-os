@@ -16,6 +16,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("pair host updater uses r
   const store={getObject:vi.fn(),putObject:vi.fn(),getPresignedGetUrl:vi.fn(async()=>"https://bundles.example/signed-test-bundle")} as unknown as CustomerVpsObjectStore;
   const app=createApp({db:fixture.db,orchestrator:stubOrchestrator(),platformSecret:"test-platform-secret",customerVpsObjectStore:store});
   const base=`/preview-pair-updates/${member.handle}/system-bundles`,path=`${base}/releases/${version}.json`;
+  expect((await app.request(`/system-bundles/releases/${version}.json`)).status).toBe(404);
   const response=await app.request(path);expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({version,gitCommit:manifest.sourceSha,sha256:"c".repeat(64)});
   expect(response.headers.get("cache-control")).toContain("no-store");

@@ -1,3 +1,4 @@
+import { previewPairBundleVersion } from "@matrix-os/contracts/preview-pair";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeededPreviewPair } from "./preview-pair-seeded-postgres.js";
 import { PAIR_NOW } from "./preview-pair-test-support.js";
@@ -108,8 +109,9 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("trusted pre-publication 
   it("adopts the selected update once despite progress revisions, while rejecting a different parent source", async () => {
     const s = setup(), p = s.provenance;
     Object.assign(s.receipt, { pairId: f.pair.pair_id, generation: 2, pr: f.pair.pr });
-    const candidate = { ...p.input, sourceProfileFingerprint: s.config.sourceProfileFingerprint,
+    const candidate = { ...p.input, hostBundleVersion: previewPairBundleVersion(f.pair.pair_id, 2, f.pair.source_sha), sourceProfileFingerprint: s.config.sourceProfileFingerprint,
       browserOrigin: p.input.browserOrigin.replace("g1", "g2"), apiOrigin: p.input.apiOrigin.replace("g1", "g2") };
+    p.release.version = candidate.hostBundleVersion;
     Object.assign(p.authority, { generation: 2, browserOrigin: candidate.browserOrigin, apiOrigin: candidate.apiOrigin,
       appDomainHosts: [new URL(candidate.browserOrigin).hostname] });
     expect((await s.post(undefined, { ...s.input, pairId: f.pair.pair_id, generation: 2, pr: f.pair.pr })).status).toBe(202);

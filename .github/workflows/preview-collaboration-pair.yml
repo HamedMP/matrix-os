@@ -1,0 +1,226 @@
+name: Collaboration Preview Pair
+run-name: Preview pair ${{ inputs.pair_id }} g${{ inputs.generation }} ${{ inputs.source_sha }}
+
+# Requires reviewed one-time protected execution-branch/environment/IAM setup.
+# Creating this file neither activates that setup nor deploys customer runtimes.
+on:
+  workflow_dispatch:
+    inputs:
+      pr: { description: Same-repository open PR, required: true, type: string }
+      source_sha: { description: Exact selected PR head, required: true, type: string }
+      requester_id: { description: Root control identity independently verified by Source, required: true, type: string }
+      pair_id: { description: Fresh pair UUID or explicitly selected update parent, required: true, type: string }
+      generation: { description: Target generation, required: true, type: string }
+      action: { description: Explicit operation, required: true, type: choice, options: [create, update] }
+      base_source_sha: { description: Immutable selected parent source for updates, required: false, type: string, default: '' }
+
+permissions:
+  contents: read
+concurrency:
+  group: preview-pair-${{ inputs.pair_id }}-g${{ inputs.generation }}
+  cancel-in-progress: false
+
+env:
+  PAIR_CONTROLLER_SHA: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
+  PAIR_WORKFLOW_INPUTS: ${{ toJSON(inputs) }}
+  PAIR_CONTROL_ORIGIN: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROL_ORIGIN || 'https://app.matrix-os.com' }}
+
+jobs:
+  admission:
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: ubuntu-latest
+    environment: collaboration-preview-control
+    timeout-minutes: 10
+    permissions: { contents: read, actions: read }
+    outputs:
+      prepared: ${{ steps.prepare.outputs.prepared }}
+      build: ${{ steps.prepare.outputs.build }}
+      version: ${{ steps.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
+          path: controller
+          persist-credentials: false
+      - uses: ./controller/.github/actions/preview-pair-controller
+        with:
+          reviewed_sha: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
+      - name: Record non-authorizing request receipt
+        working-directory: controller
+        run: bun scripts/preview-pair/controller.ts receipt
+      - uses: actions/upload-artifact@v6
+        with:
+          name: preview-pair-controller-request
+          path: ${{ runner.temp }}/pair-request/request.json
+          retention-days: 4
+          if-no-files-found: error
+      - name: Verify current authority and prepare durable intent
+        id: prepare
+        working-directory: controller
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PAIR_OPERATOR_SECRET: ${{ secrets.MATRIX_PREVIEW_PAIR_OPERATOR_SECRET }}
+        run: bun scripts/preview-pair/controller.ts prepare
+
+  platform:
+    needs: [admission]
+    if: ${{ needs.admission.outputs.build == 'true' }}
+    runs-on: ubuntu-latest
+    environment: collaboration-preview-build
+    timeout-minutes: 45
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Build opaque candidate image without publisher credentials
+        working-directory: candidate
+        env:
+          PAIR_SOURCE_SHA: ${{ inputs.source_sha }}
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ fromJSON(needs.admission.outputs.prepared).buildContext.clerkPublishableKey }}
+        run: |
+          set -euo pipefail
+          docker build --file Dockerfile.platform --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY --tag "matrix-preview-pair:$PAIR_SOURCE_SHA" .
+          docker save --output "$RUNNER_TEMP/image.tar" "matrix-preview-pair:$PAIR_SOURCE_SHA"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: preview-pair-image-${{ github.run_id }}
+          path: ${{ runner.temp }}/image.tar
+          retention-days: 4
+          compression-level: 0
+          if-no-files-found: error
+
+  host:
+    needs: [admission]
+    if: ${{ needs.admission.outputs.build == 'true' }}
+    runs-on: ubuntu-latest
+    environment: collaboration-preview-build
+    timeout-minutes: 45
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: candidate/package.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@v2
+      - name: Build isolated test-login host bytes
+        working-directory: candidate
+        env:
+          HOST_BUNDLE_VERSION: ${{ needs.admission.outputs.version }}
+          HOST_BUNDLE_CHANNEL: none
+          MATRIX_BUILD_SHA: ${{ inputs.source_sha }}
+          MATRIX_BUILD_REF: refs/pull/${{ inputs.pr }}/head
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ fromJSON(needs.admission.outputs.prepared).buildContext.clerkPublishableKey }}
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: bash scripts/build-host-bundle.sh
+      - uses: actions/upload-artifact@v6
+        with:
+          name: preview-pair-host-${{ github.run_id }}
+          path: |
+            candidate/dist/host-bundle/manifest.json
+            candidate/dist/host-bundle/release.json
+            candidate/dist/host-bundle/incremental-manifest.json
+            candidate/dist/host-bundle/matrix-host-bundle.tar.gz
+            candidate/dist/host-bundle/matrix-host-bundle.tar.gz.sha256
+            candidate/dist/host-bundle/objects/sha256/*
+          retention-days: 4
+          compression-level: 0
+          if-no-files-found: error
+
+  desktop:
+    needs: [admission]
+    if: ${{ needs.admission.outputs.build == 'true' }}
+    runs-on: ubuntu-latest
+    environment: collaboration-preview-control
+    timeout-minutes: 60
+    permissions: { contents: read, actions: write }
+    outputs:
+      artifacts: ${{ steps.desktop.outputs.artifacts }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
+          path: controller
+          persist-credentials: false
+      - uses: ./controller/.github/actions/preview-pair-controller
+        with:
+          reviewed_sha: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
+      - name: Dispatch and verify exact unsigned desktop artifacts
+        id: desktop
+        working-directory: controller
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bun scripts/preview-pair/controller.ts desktop
+
+  publish:
+    needs: [admission, platform, host, desktop]
+    if: ${{ needs.admission.outputs.build == 'true' }}
+    runs-on: ubuntu-latest
+    environment: collaboration-preview-control
+    timeout-minutes: 45
+    permissions: { contents: read, actions: read, id-token: write }
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
+          path: controller
+          persist-credentials: false
+      - uses: ./controller/.github/actions/preview-pair-controller
+        with:
+          reviewed_sha: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
+      - name: Authenticate dedicated Preview registry publisher
+        id: registry
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.MATRIX_PREVIEW_PAIR_WIF_PROVIDER }}
+          service_account: ${{ vars.MATRIX_PREVIEW_PAIR_PUBLISHER_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_lifetime: 3600s
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Validate opaque bytes and publish only the requested pair
+        working-directory: controller
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PAIR_OPERATOR_SECRET: ${{ secrets.MATRIX_PREVIEW_PAIR_OPERATOR_SECRET }}
+          PAIR_REGISTRY_TOKEN: ${{ steps.registry.outputs.access_token }}
+          PAIR_PREPARED: ${{ needs.admission.outputs.prepared }}
+          PAIR_DESKTOP_ARTIFACTS: ${{ needs.desktop.outputs.artifacts }}
+          PAIR_BUNDLES_ENDPOINT: ${{ vars.MATRIX_PREVIEW_PAIR_BUNDLES_ENDPOINT }}
+          PAIR_BUNDLES_BUCKET: ${{ vars.MATRIX_PREVIEW_PAIR_BUNDLES_BUCKET }}
+          PAIR_BUNDLES_ACCESS_KEY_ID: ${{ secrets.MATRIX_PREVIEW_PAIR_BUNDLES_ACCESS_KEY_ID }}
+          PAIR_BUNDLES_SECRET_ACCESS_KEY: ${{ secrets.MATRIX_PREVIEW_PAIR_BUNDLES_SECRET_ACCESS_KEY }}
+          PAIR_RELEASE_REGISTRATION_SECRET: ${{ secrets.MATRIX_PREVIEW_PAIR_RELEASE_REGISTRATION_SECRET }}
+        run: bun scripts/preview-pair/controller.ts publish
+
+  cleanup:
+    needs: [admission, platform, host, desktop, publish]
+    if: ${{ always() && github.run_attempt == 1 && (failure() || cancelled()) }}
+    runs-on: ubuntu-latest
+    environment: collaboration-preview-control
+    timeout-minutes: 10
+    permissions: { contents: read, actions: read }
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
+          path: controller
+          persist-credentials: false
+      - uses: ./controller/.github/actions/preview-pair-controller
+        with:
+          reviewed_sha: ${{ vars.MATRIX_PREVIEW_PAIR_CONTROLLER_SHA }}
+      - name: Retire only this controller's owned intent or generation
+        working-directory: controller
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PAIR_OPERATOR_SECRET: ${{ secrets.MATRIX_PREVIEW_PAIR_OPERATOR_SECRET }}
+        run: bun scripts/preview-pair/controller.ts cleanup
