@@ -1608,6 +1608,7 @@ export async function createGateway(config: GatewayConfig) {
       toolOutputKey, homePath, repository: chatRepository, agents: chatAgents, executionRoots: canonicalChatExecutionRoots,
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}),
       runtimeOwnerId: terminalRuntimeOwnerId, computerId: internalHandle, nativeProfileGuard: nativeProviderProfileGuard,
+      configuredOwnerIds: [process.env.MATRIX_USER_ID, process.env.MATRIX_CLERK_USER_ID].filter((ownerId): ownerId is string => Boolean(ownerId)),
       providers: aiProviderService,
       ...(matrixAnthropicRuntime.service ? { matrixAnthropic: matrixAnthropicRuntime.service } : {}),
       ...(jevInboxRuntime ? { jev: jevInboxRuntime.botWorkflow } : {}),

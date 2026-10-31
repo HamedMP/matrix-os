@@ -1,3 +1,4 @@
+import { createRoutineCliDestinationRoutes } from "../bots/routine-cli-destination-routes.js";
 import { createBrowserGrantRoutes } from "../chat/browser-grant-routes.js";
 import type { BrowserApprovalControl } from "../chat/browser-approval-control.js";
 /** Mount canonical Chat, provider and collaboration routes after startup. */
@@ -112,6 +113,7 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
+  app.route("/", createRoutineCliDestinationRoutes({ targets: botServices?.routineDestination ?? null, getPrincipal: requireRequestPrincipal }));
   app.route("/", createBotRoutes({
     ...(botServices ? {
       recipes: botServices.recipes,

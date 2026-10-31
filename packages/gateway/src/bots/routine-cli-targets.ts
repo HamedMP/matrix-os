@@ -1,3 +1,4 @@
+import { RoutineDestinationViewSchema, type RoutineDestinationView } from "@matrix-os/contracts/routine-destination";
 import { sql, type Kysely, type Transaction } from "kysely";
 import { z } from "zod/v4";
 import {
@@ -167,6 +168,24 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
         const saved = await preferences.get(configured, trx);
         if (saved?.target) await validateTarget(trx, configured, saved.target, "read");
         return project(saved);
+      });
+    }),
+    /** Stored reference and live availability share one locked revision. Only an invalid target is
+     * recoverable metadata; missing configuration, owner denial and database failures remain errors. */
+    getOwnerView: (principal: RequestPrincipal): Promise<RoutineDestinationView> => routineCliBoundary(async () => {
+      const configured = requireOwner(principal);
+      return deps.db.transaction().execute(async trx => {
+        await lockRoutineCliPreference(trx, configured);
+        const preference = project(await preferences.get(configured, trx));
+        let availability: RoutineDestinationView["availability"] = preference.target ? "available" : "unset";
+        if (preference.target) {
+          try { await validateTarget(trx, configured, preference.target, "read"); }
+          catch (error: unknown) {
+            if (!(error instanceof RoutineCliError) || error.code !== "target_unavailable") throw error;
+            availability = "unavailable";
+          }
+        }
+        return RoutineDestinationViewSchema.parse({ preference, availability });
       });
     }),
     /** Owner-only stored navigation metadata for recovery; never proves live target/action access.

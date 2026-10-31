@@ -45,7 +45,7 @@ export async function requestFixture(db: Kysely<OwnerBotDatabase>) {
   const service = (overrides: Partial<RoutineCliRequestDependencies> = {}) => createRoutineCliRequestService({ db, scope, sources, targets, transact,
     now: () => new Date(state.clock), authorizeTarget: async () => state.targetAllowed, admitMutation, ...overrides });
   const token = async (operation: RoutineCliOperation, registered = source) => (await sources.issue(registered, { invocationId: invocation(nextInvocation++), operation })).takeToken();
-  return { db, state, chats, agents, sources, targets, source, principal, transact, service, token, admitMutation,
+  return { home, db, state, chats, agents, sources, targets, source, principal, transact, service, token, admitMutation,
     execute: async (operation: RoutineCliOperation, overrides: Partial<RoutineCliRequestDependencies> = {}) => service(overrides).execute({ token: await token(operation), operation }),
     switchDefault: async () => { const current = await targets.getStoredPreference(principal); await targets.remember(principal, { ...TARGET_B, baseRevision: current.revision }); },
     close: async () => { await agents.close(); await chats.release(); await rm(home, { recursive: true, force: true }); },

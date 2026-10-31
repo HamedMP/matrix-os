@@ -53,7 +53,9 @@ Consumes approved request wire schema and v1 output; produces fixed actual CLI v
 Files: shared packages/ui Bot/private Chat chooser/default control and existing shell integrations; relevant presentation tests.
 Consumes authenticated owner route and current target/permission DTOs. Initial owner choice can persist; valid defaults do not prompt again. Display target and permit explicit switch in same interaction; existing generated proposals require replacement+fresh approval.
 Task4a owns default routing UI. Task4b owns the approved exact one-operation action controller, owner proof/submit path and shared Chat/Terminal approval UI (routine-action-policy-design.md). No blanket implementation approval is pending. Terminal uses real session/incarnation/launch and no synthetic Chat/run; Chat preserves/verifies actionDigest end-to-end. Full-access-only is an intermediate state. Native Bash/read-only restrictions, plan/review/shared/org/unsupported ceilings and all actual-account/deploy permission limits remain unchanged.
-- [ ] Fail persistence across harness switch, no repeated picker, invalid default blocked, separate action approval tests first.
+- [x] Task4a: failure-first owner HTTP/real target CAS+recovery, shared web/native current-Chat destination, stale async/auth scope and no-grant tests.
+- [x] Task4a independent review and fresh parent checks: 198 Vitest, 48 Native Mobile Jest, 9 native PostgreSQL; scoped types pass. Full Native Mobile types remain blocked at 59 baseline/current diagnostics with zero added/removed.
+- [ ] Task4b: fail separate exact action approval/controller tests first.
 - [ ] Wire common Web Canvas/Web Desktop/Electron behavior and applicable mobile review boundary; scoped tests/review/commit. Do not occupy A's GUI.
 
 ### Task 5: Claude/Codex/Hermes ordinary Chat and offered delegated Claude

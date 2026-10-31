@@ -131,7 +131,7 @@ export function BotChatPanel({ children, chatId, client, refreshKey, directBotId
       if (selectionSequence.current === sequence) setError("Could not change the bot model. Refresh and try again.");
     } finally { if (selectionSequence.current === sequence) setModelPending(false); }
   };
-  const details = shown && agentId && chatId && bots && showAuthority ? <BotDetailsPanel agent={agent} agentId={agentId} authority={authority} bots={bots} catalog={catalog} catalogLoading={catalogLoading} pending={modelPending}
+  const details = shown && agentId && chatId && bots && showAuthority ? <BotDetailsPanel chatId={chatId} agent={agent} agentId={agentId} authority={authority} bots={bots} catalog={catalog} catalogLoading={catalogLoading} pending={modelPending}
     tasks={tasks} onSetup={onSetup} onRefreshCatalog={onRefreshCatalog} hosted={Boolean(detailsContainer)} onModelChange={selection => { void changeModel(selection); }} onClose={() => setShowAuthority(false)} onEdit={() => setShowEdit(true)} onChanged={() => setTick(value => value + 1)}/> : null;
   const identity = shown && agentId && chatId && bots ? <div className="matrix-bot-identity-bar flex min-w-0 items-center gap-3 px-3 py-1" data-hosted={headerContainer ? "true" : undefined}>
       {headerLeading}

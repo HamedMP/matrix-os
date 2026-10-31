@@ -19,7 +19,8 @@
     "./onboarding-widget.css": "./src/onboarding-widget/onboarding-widget.css",
     "./get-started.css": "./src/get-started/get-started.css",
     "./onboarding-support-dock.css": "./src/onboarding-widget/support-dock.css",
-    "./chat-import.css": "./src/chat-import/chat-import.css"
+    "./chat-import.css": "./src/chat-import/chat-import.css",
+    "./routine-destination": "./src/routine-destination/index.ts"
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",
