@@ -121,3 +121,11 @@ describe("bot broker client", () => {
     expect(JSON.stringify(frames[1]).length).toBeGreaterThan(256 * 1024);
   });
 });
+
+it("selects live framing only for strict routine calls, retaining ordinary tool framing/deadlines", async () => {
+  const { socketPath, frames } = broker(() => JSON.stringify({ version: 1, requestId: REQUEST_ID, ok: true, result: { ok: true, content: [{ type: "text", text: "observed" }] } }));
+  await client(socketPath).tool({ capability: "routine.cli", toolCallId: "call_routine", args: { operation: "list" } });
+  await client(socketPath).tool({ capability: "artifact.read", toolCallId: "call_artifact", args: { relPath: "fixture.txt" } });
+  expect(frames[0]).toMatchObject({ action: "bot.tool", transport: "live", tool: { capability: "routine.cli", args: { operation: "list" } } });
+  expect(frames[1]).not.toHaveProperty("transport");
+});
