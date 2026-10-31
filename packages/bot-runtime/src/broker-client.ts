@@ -12,6 +12,7 @@ import {
   BotSessionSaveResultSchema,
   BotSessionSnapshotSchema,
   BotToolResultSchema,
+  type BotBrokerRequest,
   type BotEvent,
   type BotImageChunk,
   type BotImageChunkRequest,
@@ -59,10 +60,12 @@ export interface BotBrokerClientOptions {
   timeoutMs?: number;
   connectFn?: (path: string) => Socket;
   requestIdFactory?: () => string;
+  signal?: AbortSignal;
 }
 
 /** One request per connection, newline-delimited JSON, mirroring the existing worker bridge. */
-function exchange(options: BotBrokerClientOptions, frame: unknown, signal?: AbortSignal, absoluteDeadline = false): Promise<unknown> {
+function exchange(options: BotBrokerClientOptions, frame: BotBrokerRequest, callSignal?: AbortSignal, absoluteDeadline = false): Promise<unknown> {
+  const signal = callSignal && options.signal ? AbortSignal.any([callSignal, options.signal]) : callSignal ?? options.signal;
   if (signal?.aborted) return Promise.reject(new BotBrokerError("stale_generation"));
   const connectFn = options.connectFn ?? ((path: string) => connect({ path }));
   return new Promise((resolve, reject) => {
@@ -88,8 +91,12 @@ function exchange(options: BotBrokerClientOptions, frame: unknown, signal?: Abor
       deadlineTimer = setTimeout(() => finish(new BotBrokerError("timeout")), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
       deadlineTimer.unref();
     }
-    // The broker handles one frame after EOF, then replies on the half-open socket.
-    socket.once("connect", () => socket.end(`${JSON.stringify(frame)}\n`));
+    // Live routine requests keep the write direction open so the host can observe cancellation.
+    socket.once("connect", () => {
+      const text = `${JSON.stringify(frame)}\n`;
+      if (frame.action === "bot.tool" && frame.transport === "live") socket.write(text);
+      else socket.end(text);
+    });
     socket.on("data", (chunk: Buffer) => {
       reply = Buffer.concat([reply, chunk]);
       if (reply.length > MAX_REPLY_BYTES) {
@@ -123,18 +130,22 @@ export function createBotBrokerClient(options: BotBrokerClientOptions): BotWorke
       executionGeneration: options.executionGeneration,
       runId: options.runId,
       ...action,
+      ...(action.action === "bot.tool" && typeof action.tool === "object" && action.tool !== null
+        && "capability" in action.tool && action.tool.capability === "routine.cli" ? { transport: "live" } : {}),
     });
     if (!frame.success) throw new BotBrokerError("invalid_arguments");
     const tool = frame.data.action === "bot.tool" ? frame.data.tool : undefined;
     const waitsForApproval = tool?.capability === "integration.call" || tool?.capability === "mcp.call";
     // Jev's paid classification and confirmed label readback use the gateway's bounded long-operation deadline.
     const longJevOperation = tool?.capability === "jev.inbox" && ["evaluate", "batch_next"].includes(tool.args.operation);
+    const routine = tool?.capability === "routine.cli";
     const browserPause = tool?.capability === "browser.action";
     const githubDeveloper = tool?.capability === "github.developer";
     const nativeTask = tool?.capability === "agent.task";
-    const raw = await exchange(options.timeoutMs === undefined && (waitsForApproval || longJevOperation || browserPause || githubDeveloper || nativeTask)
+    const raw = await exchange(options.timeoutMs === undefined && (waitsForApproval || longJevOperation || browserPause || githubDeveloper || routine || nativeTask)
       ? { ...options, timeoutMs: githubDeveloper ? GITHUB_DEVELOPER_TIMEOUT_MS
         : nativeTask ? NATIVE_TASK_REPLY_TIMEOUT_MS
+        : routine ? 125_000
         : browserPause ? SHARED_BROWSER_ACTION_DEADLINE_MS + 30_000 : 10 * 60_000 + 35_000 }
       : options, frame.data, signal, githubDeveloper);
     const reply = BotBrokerResponseSchema.safeParse(raw);

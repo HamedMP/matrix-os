@@ -43,7 +43,7 @@ const RecipeSchema = z.object({
   name: z.string().min(1).max(80),
   description: z.string().min(1).max(400),
   instructions: z.string().min(1).max(8_000),
-  capabilities: z.array(BotToolCapabilitySchema).min(1).max(16)
+  capabilities: z.array(BotToolCapabilitySchema.exclude(["routine.cli"])).min(1).max(16)
     .refine((capabilities) => new Set(capabilities).size === capabilities.length),
   integrations: z.array(z.object({
     service: BotIntegrationServiceSchema,
