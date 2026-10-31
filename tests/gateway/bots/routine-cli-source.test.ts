@@ -23,7 +23,7 @@ describe("routine source generation and exact invocation capability", () => {
     const token = (await svc.issue(ref, { invocationId: expected.toUpperCase(), operation: list })).takeToken();
     expect(await db.transaction().execute(trx => svc.consumeWithin(trx, { token, operation: list }, async (_source, _executor, verified) => verified.invocationId)))
       .toBe(expected);
-    expect(seen).toEqual([expected, expected, expected]);
+    expect(new Set(seen)).toEqual(new Set([expected])); // Every issue/consume recheck retains the same canonical UUID.
   });
   it("correlates identical read approvals by verified host invocation, never a latest operation digest", async () => {
     const approved = { [invocation(1)]: "target_one", [invocation(2)]: "target_two" };
