@@ -88,13 +88,13 @@ jobs:
       actions: write
     steps:
       - name: Checkout reviewed origin verifier
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           persist-credentials: false
           sparse-checkout: scripts/ci
       - name: Dispatch isolated preview once
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           MATRIX_CI_CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
         with:
@@ -137,14 +137,14 @@ jobs:
     steps:
       - name: Checkout reviewed origin verifier
         if: github.event_name != 'pull_request' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true'
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           persist-credentials: false
           sparse-checkout: scripts/ci
       - name: Verify actual workflow origin before preview credentials
         id: verify
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
           MATRIX_CI_CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
@@ -343,13 +343,13 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.gate.outputs.head_sha }}
 
       - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -438,13 +438,13 @@ jobs:
     steps:
       - name: Checkout preview source
         if: needs.gate.outputs.action == 'deploy'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.gate.outputs.head_sha }}
 
       - name: Checkout trusted workflow helpers
         if: needs.gate.outputs.action == 'deploy_existing'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.execution_origin.outputs.trusted_ref }}
 
@@ -834,7 +834,7 @@ jobs:
           chmod 600 preview-runtime-route.json
 
       - name: Publish exact-head preview runtime route
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: preview-runtime-access-${{ needs.gate.outputs.pr }}
           path: preview-runtime-route.json
@@ -889,7 +889,7 @@ jobs:
       # The release scripts come from main, so a PR branch cannot change how its
       # own provenance is registered and older branches still get provenance.
       - name: Checkout trusted release scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.execution_origin.outputs.trusted_ref }}
 

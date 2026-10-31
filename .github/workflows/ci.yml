@@ -53,7 +53,7 @@ jobs:
     outputs:
       routed: ${{ steps.isolate.outputs.routed }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           persist-credentials: false
@@ -61,7 +61,7 @@ jobs:
       - name: Route exact PR source without executing candidate code
         if: github.ref == 'refs/heads/main'
         id: isolate
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
@@ -101,7 +101,7 @@ jobs:
       - name: Authenticate isolated refresh workflow origin
         id: origin
         if: needs.redirect.outputs.routed != 'true' && github.event_name == 'workflow_dispatch' && inputs.pr_number != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
@@ -127,7 +127,7 @@ jobs:
             core.setOutput('execution_origin',JSON.stringify({schemaVersion:1,controllerSha:pin,controllerRef:'refs/heads/main',executionRef:ref,executionSha:context.sha,executionWorkflowSha:context.sha,workflowPath:path,treeSha:child.tree.sha}));
       - name: Checkout trusted main refresh helpers
         if: needs.redirect.outputs.routed != 'true' && (github.event_name == 'workflow_dispatch' && inputs.pr_number != '')
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.origin.outputs.helper_sha }}
           persist-credentials: false
@@ -135,7 +135,7 @@ jobs:
       - name: Resolve trusted exact-source refresh
         id: refresh
         if: needs.redirect.outputs.routed != 'true' && (github.event_name == 'workflow_dispatch' && inputs.pr_number != '')
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CI_WORKFLOW_REF: ${{ github.workflow_ref }}
           CI_WORKFLOW_SHA: ${{ github.workflow_sha }}
@@ -201,7 +201,7 @@ jobs:
       - name: Skip superseded PR heads
         id: superseded
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const pull=context.payload.pull_request;
@@ -265,7 +265,7 @@ jobs:
         run: node scripts/ci/main-ci-decision.mjs
       - name: Upload exact main coverage decision
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: main-ci-decision-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/main-ci-decision/receipt.json
@@ -293,7 +293,7 @@ jobs:
     steps:
       - name: Authenticate isolated backend before helper checkout
         id: origin
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
@@ -317,14 +317,14 @@ jobs:
             core.setOutput('helper_sha',pin);
             core.setOutput('execution_origin',JSON.stringify({schemaVersion:1,controllerSha:pin,controllerRef:'refs/heads/main',executionRef:ref,executionSha:context.sha,executionWorkflowSha:context.sha,workflowPath:path,treeSha:child.tree.sha}));
       - name: Checkout proved isolated backend helpers
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.origin.outputs.helper_sha }}
           persist-credentials: false
           sparse-checkout: scripts/ci
       - name: Qualify and verify current isolated backend
         id: backend
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           DEDICATED_ELIGIBLE: ${{ needs.changes.outputs.dedicated_eligible }}
           REFRESH_SNAPSHOT: ${{ needs.changes.outputs.snapshot }}
@@ -364,7 +364,7 @@ jobs:
       provider: ${{ steps.isolated.outputs.provider || steps.backend.outputs.provider }}
       infrastructure_fallback: ${{ steps.isolated.outputs.infrastructure_fallback || steps.backend.outputs.infrastructure_fallback }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.changes.outputs.dedicated_eligible == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA))
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
@@ -373,7 +373,7 @@ jobs:
       - name: Pass through verified isolated backend
         id: isolated
         if: github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA)
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           ISOLATED_BACKEND_RESULT: ${{ needs.isolated-ci-backend.result }}
           ISOLATED_BACKEND_ATTEMPT: ${{ needs.isolated-ci-backend.outputs.attempt }}
@@ -389,7 +389,7 @@ jobs:
       - name: Decide exact-source execution backend
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.pr_number != '' && vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && github.ref == format('refs/heads/ci-execution/{0}', vars.MATRIX_CI_CONTROLLER_SHA)) }}
         id: backend
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           DEDICATED_ELIGIBLE: ${{ needs.changes.outputs.dedicated_eligible }}
           REFRESH_SNAPSHOT: ${{ needs.changes.outputs.snapshot }}
@@ -419,7 +419,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping typecheck."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
@@ -432,7 +432,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -456,7 +456,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping shell production build."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
@@ -469,7 +469,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -480,7 +480,7 @@ jobs:
 
       - name: Restore Next incremental compilation
         id: next-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: shell/.next/cache
           key: next-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
@@ -502,7 +502,7 @@ jobs:
 
       - name: Save Next incremental compilation
         if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'true' && steps.next-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: shell/.next/cache
           key: next-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
@@ -518,7 +518,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping pattern scan."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
@@ -576,13 +576,13 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping React audit."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
           fetch-depth: 0
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -646,7 +646,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping sync-client checks."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
@@ -654,7 +654,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 20
@@ -687,7 +687,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping Agent SDK compatibility."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
@@ -695,7 +695,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -735,7 +735,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping unit shard."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
@@ -748,7 +748,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -815,7 +815,7 @@ jobs:
 
       - name: Upload controller regression evidence
         if: always() && matrix.shard == 4 && needs.changes.outputs.should_run == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: controller-regression
           path: output/ci/controller-regression.json
@@ -829,7 +829,7 @@ jobs:
 
       - name: Upload unit profiling
         if: always() && needs.changes.outputs.should_run == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: unit-profile-${{ matrix.shard }}
           path: output/ci/unit-${{ matrix.shard }}.json
@@ -862,14 +862,14 @@ jobs:
       # Disposable service only; never use owner or production database secrets.
       MATRIX_TEST_POSTGRES_URL: postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_test
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.3"
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
@@ -913,7 +913,7 @@ jobs:
 
       - name: Upload remaining PostgreSQL qualification
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: remaining-postgres-qualification
           path: output/ci/remaining-postgres/*.json
@@ -946,14 +946,14 @@ jobs:
       # Disposable service only; never use owner or production database secrets.
       MATRIX_TEST_POSTGRES_URL: postgresql://matrix_test:matrix_test@127.0.0.1:5432/matrix_test
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.3"
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
@@ -965,7 +965,7 @@ jobs:
 
       - name: Upload collaboration PostgreSQL qualification
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: collaboration-postgres-qualification
           path: output/ci/collaboration-postgres/*.json
@@ -983,7 +983,7 @@ jobs:
         if: needs.changes.outputs.docs_contract_tests != 'true' && needs.ci-backend.outputs.infrastructure_fallback != 'true'
         run: echo "No docs-only changes detected; skipping docs contract tests."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
@@ -991,7 +991,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         with:
           node-version: 24
@@ -1015,7 +1015,7 @@ jobs:
         if: needs.changes.outputs.os_view_parity_tests != 'true' && needs.ci-backend.outputs.infrastructure_fallback != 'true'
         run: echo "No shared OS-view surface changes detected; skipping parity tests."
 
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
@@ -1023,7 +1023,7 @@ jobs:
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
         with:
           node-version: 24
@@ -1065,7 +1065,7 @@ jobs:
         if: needs.changes.outputs.should_run != 'true'
         run: echo "No CI-relevant source changes detected; skipping e2e tests."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
         if: needs.changes.outputs.should_run == 'true'
@@ -1078,7 +1078,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         if: needs.changes.outputs.should_run == 'true'
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.should_run == 'true'
         with:
           node-version: 24
@@ -1098,7 +1098,7 @@ jobs:
 
       - name: Restore Playwright browser revisions
         id: playwright-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}
@@ -1113,7 +1113,7 @@ jobs:
 
       - name: Save Playwright browser revisions
         if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ runner.arch }}-node24-pnpm10.33.4-${{ hashFiles('pnpm-lock.yaml') }}
@@ -1130,7 +1130,7 @@ jobs:
 
       - name: Upload terminal presentation evidence
         if: always() && needs.changes.outputs.should_run == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: terminal-soft-resize-evidence-${{ matrix.lane }}
           path: output/playwright/terminal-soft-resize
@@ -1233,7 +1233,7 @@ jobs:
 
       - name: Upload Desktop terminal snapshot evidence
         if: always() && needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: desktop-terminal-snapshot-evidence
           path: output/playwright/terminal-snapshot/restored.png
@@ -1254,7 +1254,7 @@ jobs:
 
       - name: Upload Desktop Chat title evidence
         if: always() && needs.changes.outputs.should_run == 'true' && matrix.lane == 'electron'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: desktop-chat-title-evidence
           path: output/mat524/
@@ -1287,7 +1287,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.source_sha }}
           persist-credentials: false
@@ -1330,12 +1330,12 @@ jobs:
       checks: read
       contents: read
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Verify exact merge revision Linux outcome
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           REFRESH_SNAPSHOT: ${{ needs.changes.outputs.snapshot }}
           REQUESTING_ATTEMPT: ${{ github.run_attempt }}
@@ -1380,7 +1380,7 @@ jobs:
       - name: Authenticate isolated CI handoff before helper checkout
         id: origin
         if: github.ref != 'refs/heads/main'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
@@ -1404,14 +1404,14 @@ jobs:
             core.setOutput('helper_sha',pin);
             core.setOutput('execution_origin',JSON.stringify({schemaVersion:1,controllerSha:pin,controllerRef:'refs/heads/main',executionRef:ref,executionSha:context.sha,executionWorkflowSha:context.sha,workflowPath:path,treeSha:child.tree.sha}));
       - name: Checkout reviewed completion handoff helpers
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.origin.outputs.helper_sha }}
           persist-credentials: false
           sparse-checkout: scripts/ci
       - name: Request isolated CI completion reconciliation
         id: handoff
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           CONTROLLER_SHA: ${{ vars.MATRIX_CI_CONTROLLER_SHA }}
           ISOLATED_EXECUTION: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION }}
@@ -1448,14 +1448,14 @@ jobs:
     steps:
       - name: Checkout metadata verification helpers
         if: github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
           sparse-checkout: scripts/ci
       - name: Verify exact-source coverage after metadata edit
         if: github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           EXECUTION_CONTROLLER_SHA: ${{ vars.MATRIX_CI_ISOLATED_EXECUTION == 'true' && vars.MATRIX_CI_CONTROLLER_SHA || '' }}
         with:
