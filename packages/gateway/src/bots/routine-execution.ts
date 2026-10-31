@@ -15,6 +15,7 @@ import type { BotTurnResult } from "./task-orchestrator.js";
 import { effectOf } from "./integration-tools.js";
 import { createBotRoutineCanonicalRunner, botRoutineRequestId } from "./continuations.js";
 import { createBotRoutineScheduler } from "./routine-scheduler.js";
+import { assertCurrentRoutinePhase } from "./routine-phase.js";
 import { createBotStateTransactions, type BotStateTransactions } from "./events.js";
 import { ChatRepository } from "../chat/repository.js";
 import type { ChatDatabase } from "../chat/database.js";
@@ -349,6 +350,10 @@ export function createBotRoutineExecution(deps: {
       if (finalized?.status === "failed" && humanActionRequired) return { status: "failed" };
     },
     assertBinding,
+    async assertOccurrencePhase(binding: BotRuntimeBinding) {
+      const routine = await assertBinding(binding);
+      await assertCurrentRoutinePhase(deps.db, binding, routine, now);
+    },
     async assertTool(binding: BotRuntimeBinding, request: BotToolRequest) {
       const routine = await assertBinding(binding);
       const effect = request.capability === "integration.call" ? effectOf(request.args.service, request.args.action) : ["artifact.read", "memory.search", "integration.inventory", "integration.describe"].includes(request.capability) ? "read" : ["artifact.write", "memory.propose", "interaction.create"].includes(request.capability) ? "write" : undefined;

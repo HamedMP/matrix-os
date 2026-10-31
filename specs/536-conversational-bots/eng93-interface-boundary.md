@@ -4,6 +4,30 @@ Ticket: [ENG-93](https://linear.app/matrix-os/issue/ENG-93/enable-and-validate-r
 This is the backend handoff for the separate CLI entry-point work. It adds no
 CLI or MCP implementation and does not authorize cross-harness execution.
 
+## Routine execution context follow-up
+
+The local follow-up to native-consent head `e43ca794` adds no public request,
+response, broker or worker schema. At `bot.run.load`, the private Bot orchestrator
+uses the server-injected routine service's `assertOccurrencePhase` to check the
+current running task, dispatched fire, unexpired lease, active routine, standing
+approval, definition and source revisions before appending an occurrence-phase
+section to the model's system prompt. It rechecks cancellation after the async
+lookup and refuses prompts exceeding the existing token budget. The checker
+performs a fresh joined durable snapshot after asynchronous source validation,
+and evaluates lease expiry after the database returns. It holds no database lock
+across external I/O. Changes after this checked snapshot still meet the existing
+inference and effect revalidation; the phase is not a reusable authorization.
+
+The phase is information, not authority: inference/effect revalidation remains
+in place. It is never inferred from a user or model's activation text. Ordinary
+interactive/manual tasks, shared runs and managed Pi/harness paths receive no
+phase section. The saved conversation and current approved request are retained.
+This does not change the ordinary approval-continuation path. It addresses a
+confirmed context gap; it does not establish the cause or resolution of a live
+model's stale pending-approval answer. A matching backend build and bounded live
+retest are still needed. The existing Desktop protocol does not need rebuilding
+for this internal gateway change; existing artifacts do not include it.
+
 ## Baselines and ownership
 
 - Existing backend contract: `3db08492b9074606eac2213b9d86c0f58581d685`,
