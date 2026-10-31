@@ -4,12 +4,23 @@ import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
 const dockerfile = readFileSync(join(root, "Dockerfile.platform"), "utf8");
+const dockerignore = readFileSync(join(root, ".dockerignore"), "utf8");
 const gateway = JSON.parse(readFileSync(join(root, "packages/gateway/package.json"), "utf8"));
 const workspaces = readdirSync(join(root, "packages"), { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && existsSync(join(root, "packages", entry.name, "package.json")))
   .map((entry) => ({ path: `packages/${entry.name}`, manifest: JSON.parse(readFileSync(join(root, "packages", entry.name, "package.json"), "utf8")) }));
 
 describe("Platform image workspace closure", () => {
+  it("keeps shell E2E sources out of the production image build context", () => {
+    const ignoredPaths = dockerignore
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"));
+
+    expect(ignoredPaths).toContain("tests");
+    expect(ignoredPaths).toContain("shell/e2e");
+  });
+
   it("makes every Gateway workspace dependency resolvable before frozen installation", () => {
     const base = dockerfile.split("FROM base AS deps")[0];
     for (const [name, version] of Object.entries(gateway.dependencies)) {
