@@ -4,6 +4,7 @@ import { completeRemotePaths } from "../file-transfer-client.js";
 import { resolveCliProfile } from "../profiles.js";
 
 const COMMANDS = [
+  "routines",
   "login",
   "logout",
   "sync",
@@ -26,6 +27,8 @@ const COMMANDS = [
   "update",
   "completion",
 ];
+
+const ROUTINE_COMMANDS = ["list", "show", "request", "propose", "pause", "resume", "archive"];
 
 const SHELL_COMMANDS = [
   "list",
@@ -77,6 +80,11 @@ _matrix_completion() {
 
   if [[ "$COMP_CWORD" -eq 1 ]]; then
     COMPREPLY=( $(compgen -W "${COMMANDS.join(" ")}" -- "$cur") )
+    return 0
+  fi
+
+  if [[ "$command" == "routines" ]]; then
+    if [[ "$COMP_CWORD" -eq 2 ]]; then COMPREPLY=( $(compgen -W "${ROUTINE_COMMANDS.join(" ")}" -- "$cur") ); fi
     return 0
   fi
 
@@ -151,13 +159,19 @@ _matrix_transfer_position() {
 }
 
 _matrix() {
-  local -a commands shell_commands shell_sessions
+  local -a commands shell_commands shell_sessions routine_commands
   local REPLY
   commands=(${COMMANDS.map((command) => `'${command}:${command}'`).join(" ")})
   shell_commands=(${SHELL_COMMANDS.map((command) => `'${command}:${command}'`).join(" ")})
 
   if (( CURRENT == 2 )); then
     _describe 'matrix command' commands
+    return
+  fi
+
+  if [[ "\${words[2]}" == "routines" ]]; then
+    routine_commands=(${ROUTINE_COMMANDS.map(command => `'${command}:${command}'`).join(" ")})
+    if (( CURRENT == 3 )); then _describe 'matrix routines command' routine_commands; fi
     return
   fi
 
@@ -228,6 +242,7 @@ function __matrix_transfer_position
 end
 
 complete -c matrix -f -n '__fish_use_subcommand' -a '${commandList}'
+complete -c matrix -f -n '__fish_seen_subcommand_from routines; and not __fish_seen_subcommand_from ${ROUTINE_COMMANDS.join(" ")}' -a '${ROUTINE_COMMANDS.join(" ")}'
 complete -c matrix -f -n '__fish_seen_subcommand_from shell sh; and not __fish_seen_subcommand_from ${SHELL_COMMANDS.join(" ")}' -a '${shellCommandList}'
 complete -c matrix -f -n '__fish_seen_subcommand_from shell sh; and __fish_seen_subcommand_from connect attach rm' -a '(matrix shell list --json 2>/dev/null | tr "," "\\n" | sed -n "s/.*\\"name\\"[[:space:]]*:[[:space:]]*\\"\\\\([^\\"]*\\\\)\\".*/\\\\1/p")'
 complete -c matrix -F -n '__fish_seen_subcommand_from upload; and test (__matrix_transfer_position) -eq 0'

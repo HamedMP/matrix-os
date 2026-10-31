@@ -1,3 +1,4 @@
+import { ROUTINE_CLI_EXECUTION_PATH } from "@matrix-os/contracts/routine-cli";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Context, MiddlewareHandler } from "hono";
 import {
@@ -305,6 +306,17 @@ export function authMiddleware(
     if (normalizedPath.startsWith(COLLABORATION_HTTP_PREFIX)
       || COLLABORATION_WEBSOCKET_PATH.test(normalizedPath)) {
       return nextWithReady(c, next);
+    }
+
+    // Exact raw POST is owned by the source-capability consumer. No owner principal is created.
+    // Never widen to encoded aliases, query bearers, other methods or an API prefix.
+    if (c.req.method === "POST" && normalizedPath === ROUTINE_CLI_EXECUTION_PATH
+      && new URL(c.req.raw.url).pathname === ROUTINE_CLI_EXECUTION_PATH) {
+      const url = new URL(c.req.raw.url);
+      if (url.search || ["x-platform-user-id", "x-platform-verified", "x-matrix-clerk-user-id", "x-matrix-user-id", "x-clerk-user-id"].some(name => c.req.raw.headers.has(name))) return unauthorized(c);
+      if (!webhookRateLimiter.check(getTrustedProxyClientIp(c))) return tooManyRequests(c);
+      // Keep configured-owner/dev principal fallback unavailable in source-only context.
+      return next();
     }
 
     if (ROUTE_SCOPED_BEARER_PATHS.some((p) => normalizedPath === p)) {
