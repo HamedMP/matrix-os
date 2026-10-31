@@ -8,6 +8,7 @@ import {
   GettingStartedAppProgressSchema,
   deriveGettingStartedAppTasks,
   deriveGettingStartedSnapshot,
+  gettingStartedAppKnownTaskIds,
   gettingStartedAppNextTask,
   gettingStartedAppTaskPoints,
   type GettingStartedResults,
@@ -163,6 +164,27 @@ describe("Getting started app schemas", () => {
 
   it("never accepts points from the client", () => {
     expect(GettingStartedAppAwardRequestSchema.safeParse({ taskId: "slack", silent: false, points: 1000 }).success).toBe(false);
+  });
+
+  it("lets an older client read progress from a newer computer", () => {
+    const newer = (taskId: string) => ({ taskId, points: 20, awardedAt: "2026-10-29T10:00:00.000Z", kind: "future-field" });
+    const parsed = GettingStartedAppProgressSchema.safeParse({
+      // More tasks than this build knows, with ids and fields it has never seen.
+      awards: Array.from({ length: GETTING_STARTED_APP_TASK_IDS.length + 5 }, (_, index) => newer(`future-task-${index}`)),
+      total: 340,
+      streak: 3,
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.total).toBe(340);
+    expect(GettingStartedAppAwardResponseSchema.safeParse({ awarded: true, points: 20, total: 20, badge: "new" }).success).toBe(true);
+    expect(gettingStartedAppKnownTaskIds([{ taskId: "slack" }, { taskId: "future-task-0" }])).toEqual(["slack"]);
+  });
+
+  it("still rejects malformed or oversized progress", () => {
+    const award = (taskId: string) => ({ taskId, points: 20, awardedAt: "2026-10-29T10:00:00.000Z" });
+    expect(GettingStartedAppProgressSchema.safeParse({ awards: [award("<script>")], total: 20 }).success).toBe(false);
+    expect(GettingStartedAppProgressSchema.safeParse({ awards: [award("x".repeat(33))], total: 20 }).success).toBe(false);
+    expect(GettingStartedAppProgressSchema.safeParse({ awards: Array.from({ length: 65 }, () => award("slack")), total: 20 }).success).toBe(false);
   });
 
   it("bounds the progress and award responses", () => {

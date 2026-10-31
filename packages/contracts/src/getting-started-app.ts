@@ -113,37 +113,52 @@ export type GettingStartedAppAwardRequest = z.infer<typeof GettingStartedAppAwar
 
 const PointsSchema = z.number().int().min(0).max(100_000);
 
+/**
+ * Responses can come from a newer computer than this client: Electron updates apart from the
+ * gateway. Ids this build does not know and added fields must not reject the whole response, so
+ * the task id is only checked for shape here (matching the table's CHECK) and clients keep the
+ * ids they know with `gettingStartedAppKnownTaskIds`. Requests stay strict.
+ */
+const StoredTaskIdSchema = z.string().regex(/^[a-z][a-z0-9-]{1,31}$/);
+const MAX_PROGRESS_AWARDS = 64;
+
 export const GettingStartedAppAwardSchema = z.object({
-  taskId: AwardableTaskIdSchema,
+  taskId: StoredTaskIdSchema,
   points: PointsSchema,
   awardedAt: z.string().datetime(),
-}).strict();
+});
 
 export type GettingStartedAppAward = z.infer<typeof GettingStartedAppAwardSchema>;
 
 export const GettingStartedAppProgressSchema = z.object({
-  awards: z.array(GettingStartedAppAwardSchema).max(GETTING_STARTED_APP_TASK_IDS.length),
+  awards: z.array(GettingStartedAppAwardSchema).max(MAX_PROGRESS_AWARDS),
   total: PointsSchema,
-}).strict();
+});
 
 export type GettingStartedAppProgress = z.infer<typeof GettingStartedAppProgressSchema>;
+
+/** The awarded tasks this build knows; a newer computer's other tasks still count in `total`. */
+export function gettingStartedAppKnownTaskIds(awards: readonly { taskId: string }[]): GettingStartedAppTaskId[] {
+  const known = new Set<string>(GETTING_STARTED_APP_TASK_IDS);
+  return awards.flatMap(({ taskId }) => (known.has(taskId) ? [taskId as GettingStartedAppTaskId] : []));
+}
 
 export const GettingStartedAppAwardResponseSchema = z.object({
   awarded: z.boolean(),
   points: PointsSchema,
   total: PointsSchema,
-}).strict();
+});
 
 export type GettingStartedAppAwardResponse = z.infer<typeof GettingStartedAppAwardResponseSchema>;
 
 export const GettingStartedAppAutoOpenResponseSchema = z.object({
   open: z.boolean(),
-}).strict();
+});
 
 export type GettingStartedAppAutoOpenResponse = z.infer<typeof GettingStartedAppAutoOpenResponseSchema>;
 
 export const GettingStartedAppDesktopIconResponseSchema = z.object({
   placed: z.boolean(),
-}).strict();
+});
 
 export type GettingStartedAppDesktopIconResponse = z.infer<typeof GettingStartedAppDesktopIconResponseSchema>;
