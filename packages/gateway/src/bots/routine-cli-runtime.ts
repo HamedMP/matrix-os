@@ -1,3 +1,5 @@
+import { createDelegatedRoutineSourceProducer } from "./routine-cli-delegated-source.js";
+import { createChatRoutineSourceProducer } from "../chat/routine-chat-source.js";
 import { createHash } from "node:crypto";
 import type { Kysely } from "kysely";
 import type { OwnerBotDatabase } from "./database.js";
@@ -74,6 +76,18 @@ export function createRoutineCliRuntime(options: {
       if (canonical || closed || typeof value.admitTurn !== "function" || typeof value.enqueueQueuedTurn !== "function") throw new Error("Routine canonical dependency unavailable"); canonical = value;
     },
     register(producer: RoutineSourceProducer) { requireCanonical(); return forOwner(producer.source.ownerId).controller.register(producer); },
+    async registerChat(input: Omit<Parameters<typeof createChatRoutineSourceProducer>[0], "computerId">) {
+      requireCanonical(); const actual = createChatRoutineSourceProducer({ ...input, computerId: options.computerId });
+      const ports = await forOwner(actual.producer.source.ownerId).controller.register(actual.producer);
+      if (input.signal.aborted || !input.current()) { await ports.revoke(); throw new RoutineCliError("permission_denied"); }
+      return { ...ports, narrowNativeMode: actual.narrowNativeMode };
+    },
+    async registerBotChild(input: Omit<Parameters<typeof createDelegatedRoutineSourceProducer>[0], "computerId" | "registry">) {
+      requireCanonical(); const actual = createDelegatedRoutineSourceProducer({ ...input, computerId: options.computerId, registry: options.registry });
+      const ports = await forOwner(actual.source.ownerId).controller.register(actual, { botId: input.binding.botId, chatId: input.binding.chatId });
+      if (input.signal.aborted || !input.current()) { await ports.revoke(); throw new RoutineCliError("permission_denied"); }
+      return ports;
+    },
     get: (principal: RequestPrincipal, id: string) => forOwner(principal.userId).controller.get(principal, id),
     list: (principal: RequestPrincipal) => forOwner(principal.userId).controller.list(principal),
     submit: (...args: Parameters<ReturnType<typeof createRoutineCliActionController>["submit"]>) => forOwner(args[0].userId).controller.submit(...args),

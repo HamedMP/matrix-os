@@ -19,7 +19,7 @@ import { requestFixture, proposal, TARGET_A, scope } from "./routine-cli-request
 import { OWNER, BOT, NOW } from "./bot-state-support.js";
 /** Real canonical admission/task/private admission/registry/approval/outbox. Only host runtime calls,
  * source policy and bounded external background-authority snapshot are fixtures, never account execution. */
-export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: <Args extends unknown[], Result>(fn: (...args: Args) => Result) => (...args: Args) => Result = fn => fn) {
+export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: <Args extends unknown[], Result>(fn: (...args: Args) => Result) => (...args: Args) => Result = fn => fn, extra?: { adapters: import("../../../packages/gateway/src/chat/provider-adapter.js").CanonicalChatProviderAdapter[]; catalog: import("@matrix-os/contracts").CanonicalProviderCatalog }) {
   const f = await requestFixture(db), registry = new BotRuntimeRegistry();
   const hooks: { transact?: BotStateTransactions; authorizeTarget?: RoutineCliProposalDependencies["authorizeTarget"]; sources?: RoutineCliProposalDependencies["sources"]; targets?: RoutineCliProposalDependencies["targets"] } = {};
   const proposalTransactions: BotStateTransactions = (owner, work) => (hooks.transact ?? f.transact)(owner, work);
@@ -41,7 +41,7 @@ export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: 
       validateClaimedTargetWithin: (...args) => (hooks.targets ?? f.targets).validateClaimedTargetWithin(...args) },
     authorizeTarget: async (...args) => hooks.authorizeTarget ? hooks.authorizeTarget(...args) : f.state.targetAllowed, approvals, registry,
     canonical: { repository: f.chats, orchestrator: transport }, now: () => new Date(f.state.clock) });
-  const runBot = instrument(async (input: { command: { kind: string; runId: string } }): Promise<{ ok: true; reply: Record<string, unknown> }> => {
+  const runBot = instrument(async (input: { runtimeHandle: string; executionGeneration: string; command: { kind: string; runId: string } }): Promise<{ ok: true; reply: Record<string, unknown> }> => {
     if (input.command.kind === "bot.run") throw new Error("Trusted intent reached worker/model inference");
     return { ok: true, reply: {} }; // Cancellation transport ACK is explicitly not worker exit.
   });
@@ -56,8 +56,8 @@ export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: 
     } };
   const tasks = createBotTaskOrchestrator(taskDependencies);
   const adapter = createMatrixBotChatProviderAdapter({ orchestrator: tasks, stopRuntime: async handle => { await admission.release(handle); }, proposals } as Parameters<typeof createMatrixBotChatProviderAdapter>[0]);
-  canonical = new CanonicalChatOrchestrator({ repository: f.chats, adapters: new CanonicalChatProviderRegistry([adapter]),
-    catalog: withBotProviderInstance({ getCatalog: async () => ({ revision: "fixture", drivers: [], instances: [] }) }),
+  canonical = new CanonicalChatOrchestrator({ repository: f.chats, adapters: new CanonicalChatProviderRegistry([adapter, ...(extra?.adapters ?? [])]),
+    catalog: withBotProviderInstance({ getCatalog: async () => (extra?.catalog ?? { revision: "fixture", drivers: [], instances: [] }) }),
     agentContext: new ChatAgentContext({ repository: f.chats, agents: f.agents, enabled: () => true,
       botChats: { directBot: async (owner, chat) => owner.type === "personal" ? await createBotBindingsRepository(db).directChatId({ ownerId: owner.ownerId, botId: BOT }).then(id => id === chat ? BOT : null) : null } }),
     now: () => new Date(f.state.clock) });

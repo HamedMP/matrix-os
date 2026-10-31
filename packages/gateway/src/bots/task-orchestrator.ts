@@ -60,6 +60,7 @@ const SERVED_CAPABILITIES: readonly BotToolCapability[] = [
 ];
 
 export type BotTurnEvent =
+  | { kind: "routine_action"; event: import("../chat/provider-adapter.js").CanonicalProviderRunEvent }
   | { kind: "event"; event: BotEvent["event"] }
   | { kind: "state"; state: BotChatRunState };
 
@@ -494,6 +495,7 @@ export function createBotTaskOrchestrator(deps: {
       if (run.stopping === "lease_lost" || reply === null) return await settle(task, "failed");
       const outcome = reply.ok ? BotRunOutcomeSchema.safeParse(reply.reply) : undefined;
       if (!outcome?.success || outcome.data.runId !== input.runId) return await settle(task, "failed");
+      if (await deps.routineProposals?.recover({ ownerId: task.ownerId, taskId: task.taskId, chatId: task.chatId, runId: input.runId })) return { status: "waiting_person" };
       return await settle(task, outcome.data.status, outcome.data.blockedReason);
     } catch (error: unknown) {
       if (!run.stopping) console.warn("[bots] bot run failed:", error instanceof Error ? error.name : "UnknownError");
@@ -541,6 +543,13 @@ export function createBotTaskOrchestrator(deps: {
   return {
     runSource,
     eventSink,
+    publishRoutineAction(binding: import("./runtime-registry.js").BotRuntimeBinding, event: import("../chat/provider-adapter.js").CanonicalProviderRunEvent) {
+      const run = active.get(binding.runId);
+      if (!run || run.stopping || run.finished || run.ownerId !== binding.ownerId || run.chatId !== binding.chatId
+        || run.runtime?.runtimeHandle !== binding.runtimeHandle || run.runtime.executionGeneration !== binding.executionGeneration
+        || !["approval.requested", "approval.resolved"].includes(event.type)) throw new BotBrokerActionError("stale_generation");
+      run.queue.push({ kind: "routine_action", event });
+    },
     directBot,
     async readSubmittedArtifact(binding: import("./runtime-registry.js").PiRuntimeBinding, args: Extract<import("@matrix-os/contracts").BotToolRequest, { capability: "artifact.read" }>["args"]) {
       const run = active.get(binding.runId);

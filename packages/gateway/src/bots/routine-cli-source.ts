@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 import { RoutineCliOperationSchema, type RoutineCliAction, type RoutineCliOperation } from "@matrix-os/contracts";
 import type { OwnerBotDatabase } from "./database.js";
 import { RoutineCliError, routineCliBoundary } from "./routine-cli-errors.js";
+import { lockRoutineCliControl } from "./routine-cli-lock-order.js";
 import { RoutineCliSourceContextSchema, type RoutineCliSourceContext } from "./routine-cli-source-context.js";
 import { RoutineCliScopeSchema, type RoutineCliScope } from "./repositories/routine-cli-preferences.js";
 import { createRoutineCliSourcesRepository, lockRoutineCliSourceAdmission, lockRoutineCliSourceGeneration } from "./repositories/routine-cli-sources.js";
@@ -21,6 +22,7 @@ const LimitsSchema = z.object({
   cleanupBatchSize: z.number().int().min(1).max(1000).default(100),
 }).strict();
 type SourceRecord = Selectable<OwnerBotDatabase["routine_cli_sources"]>;
+type CapabilityRecord = Selectable<OwnerBotDatabase["routine_cli_capabilities"]>;
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const sameHash = (left: string, right: string) => /^[a-f0-9]{64}$/.test(left) && /^[a-f0-9]{64}$/.test(right)
   && timingSafeEqual(Buffer.from(left, "hex"), Buffer.from(right, "hex"));
@@ -56,7 +58,7 @@ export interface RoutineCliSourceDependencies {
   limits?: Partial<z.infer<typeof LimitsSchema>>;
   /** Host-owned lifecycle facts. This callback is an integration seam, not source admission.
    * It must check exact current native turn/launch incarnation/generation, personal private policy and current action ceilings. */
-  validateLifecycle?: (source: RoutineCliSourceContext, trx: Transaction<OwnerBotDatabase>, requiredAction?: RoutineCliAction) => Promise<boolean>;
+  validateLifecycle?: (source: RoutineCliSourceContext, trx: Transaction<OwnerBotDatabase>, requiredAction?: RoutineCliAction, invocation?: RoutineCliVerifiedInvocation) => Promise<boolean>;
   /** Exact current owner/action policy, including verified operation approval where required.
    * A remembered target, generic owner principal, harness label or injected actions list never suffices.
    * Retain required policy/lifecycle row gates through this transaction in the documented lock order.
@@ -67,8 +69,9 @@ export interface RoutineCliSourceDependencies {
 }
 
 /** Internal registry only. No endpoint or native lifecycle/action-approval implementation is installed here.
- * Lock order: optional scope admission gate -> source lifecycle/generation gate -> source row -> capability row
- * -> caller's target preference/definition/Chat/binding locks. Revocation takes the same source gate.
+ * Lock order: control routine (consume/accepted work) -> optional scope admission gate -> source generation gate -> source row
+ * -> capability row -> actual host policy preference/owner gates -> producer Chat/Run/Task -> target locks.
+ * Revocation takes only the source gate; it never requests the earlier control or later policy gates.
  * Register/issue must never run inside a callback that already owns downstream target locks. */
 export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies) {
   const repo = createRoutineCliSourcesRepository(deps.db);
@@ -93,9 +96,9 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
     requireTime(source);
     return source;
   };
-  const requireLifecycle = async (source: RoutineCliSourceContext, trx: Transaction<OwnerBotDatabase>, action?: RoutineCliAction) => {
+  const requireLifecycle = async (source: RoutineCliSourceContext, trx: Transaction<OwnerBotDatabase>, action?: RoutineCliAction, invocation?: RoutineCliVerifiedInvocation) => {
     requireTime(source);
-    if (await deps.validateLifecycle!(source, trx, action) !== true) throw new RoutineCliError("permission_denied");
+    if (await deps.validateLifecycle!(source, trx, action, invocation) !== true) throw new RoutineCliError("permission_denied");
     requireTime(source);
   };
   const liveRecord = async (record: SourceRecord | undefined, trx: Transaction<OwnerBotDatabase>, action?: RoutineCliAction,
@@ -105,7 +108,7 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
     if (sourceId(source) !== record.source_id || sourceKey(source) !== record.source_key || !sameHash(contextHash(source), record.context_hash))
       throw new RoutineCliError("permission_denied");
     if (action && !source.actions.includes(action)) throw new RoutineCliError("permission_denied");
-    await requireLifecycle(source, trx, action);
+    await requireLifecycle(source, trx, action, invocation);
     if (operation) {
       if (!invocation) throw new RoutineCliError("unavailable");
       if (await deps.authorizeOperation!(source, operation, trx, invocation) !== true) throw new RoutineCliError("permission_denied");
@@ -177,6 +180,7 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
     validateAcceptedWithin: <T>(trx: Transaction<OwnerBotDatabase>, input: { source: RoutineCliSourceContext; invocation: RoutineCliVerifiedInvocation; operation: RoutineCliOperation }, work: () => Promise<T>): Promise<T> => routineCliBoundary(async () => {
       const source = scopedContext(input.source), operation = RoutineCliOperationSchema.parse(input.operation);
       const reference = RefSchema.parse({ sourceId: input.invocation.sourceId });
+      await lockRoutineCliControl(trx, configured().scope, operation);
       const record = await lockReference(trx, reference), digest = hash(JSON.stringify(operation));
       if (sourceId(source) !== reference.sourceId || !sameHash(contextHash(source), record.context_hash)
         || !sameHash(input.invocation.operationDigest, digest)) throw new RoutineCliError("permission_denied");
@@ -229,23 +233,26 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
       const input = ConsumeSchema.parse(value), { scope } = configured();
       if (input.token === undefined) throw new RoutineCliError("source_context_required");
       if (!/^rcli_[A-Za-z0-9_-]{43}$/.test(input.token)) throw new RoutineCliError("permission_denied");
-      const tokenHash = hash(input.token), found = await repo.capability(scope, tokenHash, trx);
-      if (!found) throw new RoutineCliError("permission_denied");
-      const record = await lockReference(trx, { sourceId: found.source_id });
-      const cap = await repo.capability(scope, tokenHash, trx, true), operation = input.operation, action = actionFor(operation);
-      const requireCapability = () => {
+      const operation = input.operation, action = actionFor(operation), tokenHash = hash(input.token);
+      const requireCapability = (cap: CapabilityRecord | undefined) => {
         if (!cap || !cap.token_hash || cap.consumed_at !== null || new Date(cap.expires_at).getTime() <= now().getTime()
           || !sameHash(tokenHash, cap.token_hash) || !sameHash(cap.operation_digest, hash(JSON.stringify(operation))))
           throw new RoutineCliError("permission_denied");
       };
-      requireCapability();
+      const found = await repo.capability(scope, tokenHash, trx);
+      requireCapability(found); // Reject invalid/replayed/mismatched bearers before requesting any routine lock.
+      if (!found) throw new RoutineCliError("permission_denied");
+      await lockRoutineCliControl(trx, scope, operation);
+      const record = await lockReference(trx, { sourceId: found.source_id });
+      const cap = await repo.capability(scope, tokenHash, trx, true);
+      requireCapability(cap); // Recheck under the original source-generation/capability locks.
       if (!cap) throw new RoutineCliError("permission_denied");
       const verified = Object.freeze({ sourceId: record.source_id, invocationId: cap.invocation_id, operationDigest: cap.operation_digest });
       const source = await liveRecord(record, trx, action, operation, verified);
       await repo.consume(scope, tokenHash, now().toISOString(), trx);
       const result = await work(source, trx, verified);
       // Validate again around awaited local admission work, including action policy and expiry.
-      requireCapability();
+      requireCapability(cap);
       await liveRecord(record, trx, action, operation, verified);
       return result;
     }),

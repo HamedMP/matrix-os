@@ -1,3 +1,5 @@
+import { recoverExistingRoutineProposal } from "./routine-cli-existing-recovery.js";
+import { proposeWithinExistingRoutineBinding } from "./routine-cli-existing-binding.js";
 import type { Kysely, Transaction } from "kysely";
 import type { OwnerBotDatabase } from "./database.js";
 import type { BotStateTransaction, BotStateTransactions } from "./events.js";
@@ -69,7 +71,8 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
   const recover: RoutineCliProposalRuntime["recover"] = async input => deps.transact(input.ownerId, async tx => {
     const row = await tx.db.selectFrom("routine_cli_proposals").selectAll().where("owner_id", "=", input.ownerId).where("computer_id", "=", scope.computerId)
       .where("task_id", "=", input.taskId).executeTakeFirst();
-    if (!row || row.stage !== "pending_approval" || !row.interaction_id || input.runId && row.run_id !== input.runId) return false;
+    if (!row) return recoverExistingRoutineProposal(tx, scope, input);
+    if (row.stage !== "pending_approval" || !row.interaction_id || input.runId && row.run_id !== input.runId) return false;
     const receipt = await requireReceipt(row.client_request_id, tx);
     if (input.chatId && receipt.target.chatId !== input.chatId) return false;
     const interaction = await tx.db.selectFrom("bot_interactions as i").innerJoin("bot_approvals as a", "a.approval_id", "i.interaction_id")
@@ -84,14 +87,14 @@ export function createRoutineCliProposals(deps: RoutineCliProposalDependencies) 
   });
   const admitMutation: RoutineCliMutationAdmission = async ({ transaction, source, target, operation }) => {
     if (operation.operation !== "propose") throw new RoutineCliError("unavailable");
-    // The still-unwired delegated path must never queue behind its own live target run.
-    if (source.identity.kind === "bot_child" || source.identity.kind === "chat_run" && source.identity.chatId === target.chatId) throw new RoutineCliError("permission_denied");
+    if (source.identity.kind === "bot_child") return proposeWithinExistingRoutineBinding({ registry: deps.registry, approvals: deps.approvals, transaction, source, target, operation, now: now() });
+    if (source.identity.kind === "chat_run" && source.identity.chatId === target.chatId) throw new RoutineCliError("permission_denied");
     await dispatches.reserve({ scope, requestId: operation.requestId, canonicalRequestId: newRoutineCliCanonicalRequestId(),
       requestHash: routineCliProposalInput({ operation }).hash, now: now() }, transaction.db);
     return { disposition: "queued" };
   };
-  const afterMutationCommit: RoutineCliAfterMutationCommit = async ({ operation }) => {
-    if (operation.operation !== "propose") return;
+  const afterMutationCommit: RoutineCliAfterMutationCommit = async ({ operation, admission }) => {
+    if (operation.operation !== "propose" || admission.disposition === "pending_approval") return;
     const selected = await deps.transact(scope.ownerId, async tx => {
       await lockRoutineCliRequest(tx.db as Transaction<OwnerBotDatabase>, scope, operation.requestId);
       const receipt = await requireReceipt(operation.requestId, tx), dispatch = await dispatches.get(scope, operation.requestId, tx.db, true);

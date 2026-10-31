@@ -154,6 +154,7 @@ export function createMatrixBotChatProviderAdapter(options: {
       let resultUnconfirmed = false;
       try {
         for await (const item of handle.events) {
+          if (item.kind === "routine_action") { yield CanonicalProviderRunEventSchema.parse(item.event); continue; }
           if (item.kind === "state") {
             if(scheduled && item.state.taskId===scheduled.backgroundTaskId) ownsScheduledTask=true;
             yield CanonicalProviderRunEventSchema.parse({ type: "state.updated", state: BotChatStateSchema.parse(item.state) });
