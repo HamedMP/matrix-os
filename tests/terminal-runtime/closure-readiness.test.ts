@@ -1,0 +1,20 @@
+import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { afterEach, expect, it } from "vitest";
+import { terminalClosureFixture } from "../helpers/terminal-closure.js";
+import { loadInstalledTerminalRuntimeGeneration } from "../../packages/terminal-runtime/src/user-systemd-controller.js";
+const roots: string[] = [];
+afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
+it("installed readiness validates the whole new closure and never treats a removed manifest as a legacy generation", async () => {
+  const root = await mkdtemp("/tmp/t7ready-"); roots.push(root); const closure = await terminalClosureFixture(); roots.push(closure.dir);
+  const terminalRuntimeRoot = join(root, "runtime"), generationDir = join(terminalRuntimeRoot, "generations", closure.generation), app = join(root, "app"), userUnitRoot = join(root, "units");
+  await mkdir(join(generationDir, ".."), { recursive: true }); await rename(closure.dir, generationDir); await mkdir(app); await mkdir(userUnitRoot);
+  await writeFile(join(app, "TERMINAL_RUNTIME_GENERATION"), closure.generation + "\n");
+  await symlink(join("generations", closure.generation), join(terminalRuntimeRoot, "current"));
+  for (const name of ["matrix-zellij@.service", "matrix-terminal.slice"]) await writeFile(join(userUnitRoot, name), "unit\n");
+  expect(await loadInstalledTerminalRuntimeGeneration(app, { terminalRuntimeRoot, userUnitRoot })).toBe(closure.generation);
+  await writeFile(join(generationDir, "terminal-writer.node"), "tampered");
+  await expect(loadInstalledTerminalRuntimeGeneration(app, { terminalRuntimeRoot, userUnitRoot })).rejects.toThrow("Terminal runtime unavailable");
+  await rm(join(generationDir, "closure.json"));
+  await expect(loadInstalledTerminalRuntimeGeneration(app, { terminalRuntimeRoot, userUnitRoot })).rejects.toThrow("Terminal runtime unavailable");
+});

@@ -13,7 +13,7 @@
   "scripts": {
     "dev": "pnpm run build:native && tsx watch src/main.ts",
     "build": "pnpm --dir ../.. --filter '@matrix-os/observability' build && pnpm run build:native && pnpm --dir ../.. --filter '@matrix-os/terminal-runtime' build && tsc && cp src/coding-agents/*.mjs dist/coding-agents/ && cp src/chat/hermes-routine-tool.py dist/chat/",
-    "build:native": "node native/build.mjs"
+    "build:native": "node native/build.mjs && node native/build-terminal-writer.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.0",

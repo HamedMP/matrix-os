@@ -84,7 +84,7 @@ Own server-managed launch/session/incarnation, safe nonserialized capability cha
 - [ ] Fail five launch cases, secret argv/startup/history exposure, restore/reincarnation and revoked-source use.
 - [ ] Implement existing-launch integration, test/review/commit.
 - [x] Task7a: OS per-writer proof, PTY/broker and CLI client foundation reviewed;53 targeted tests/types/lint pass and actual Linux component probes pass. Two minor cap/cleanup and client coverage findings are mandatory first work in7b. Production Terminal source remains unavailable; component evidence is distinct from authority/systemd/package qualification.
-- [ ] Task7b: retained hosted launch/private protocol, I/O attach/resize and immutable full runtime closure with backward-compatible generation/GC.
+- [x] Task7b: retained host/private protocol, actual I/O attach/resize and immutable full runtime closure/generation compatibility implemented. M1/M2 fixed; independent review I1 final-output drain repaired and scoped rereview clean. Actual Linux direct-process18 observations pass; required real manager/Zellij gate fails explicitly.7c authenticated admission/five launchers and source/backend availability remain open.
 - [ ] Task7c: authenticated canonical Terminal admission, five real launchers/readiness and actual source/CLI/backend authority integration.
 
 ### Task 8: Integration evidence, Draft publication and docs

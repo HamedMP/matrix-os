@@ -7,4 +7,4 @@ interface ManagedWrapperChild {
   disconnect?(): void;
 }
 /** Uses the actual service-owned anonymous host pipes and exact held child IPC. */
-export function attachManagedLaunchWrapper(child: ManagedWrapperChild, digest: string, transport?: { input: Readable; output: Writable }): { close(): void };
+export function attachManagedLaunchWrapper(child: ManagedWrapperChild, digest: string, transport?: { input: Readable; output: Writable }, protocol?: "codex" | "terminal"): { close(): void };
