@@ -1,3 +1,4 @@
+import type { CollaborationRuntimeWriteAdmission } from "./runtime-write-admission.js";
 import { createHash, randomUUID } from "node:crypto";
 import { sql, type Kysely, type Transaction } from "kysely";
 import type { CollaborationDirectoryKind, CollaborationPlatformDatabase } from "./database.js";
@@ -90,22 +91,25 @@ async function requireProjectChatParent(
 
 export class PlatformCollaborationRepository {
   private readonly now: () => Date;
+  private readonly admitRuntimeWrite?: CollaborationRuntimeWriteAdmission;
 
   constructor(
     public readonly db: Kysely<CollaborationPlatformDatabase>,
-    options: { now?: () => Date } = {},
+    options: { now?: () => Date; admitRuntimeWrite?: CollaborationRuntimeWriteAdmission } = {},
   ) {
     this.now = options.now ?? (() => new Date());
+    this.admitRuntimeWrite = options.admitRuntimeWrite;
   }
 
   async applyDirectoryEvent(input: DirectoryEventInput): Promise<void> {
     const now = this.now().toISOString();
     await this.db.transaction().execute(async (trx) => {
+      await this.admitRuntimeWrite?.(trx, input);
       // A person-to-person event is legacy ingestion: it must not commit inside
       // the cutover's final inventory-to-activation interval, so it takes the
-      // shared ingestion lock first. Organization events skip it and stay
-      // parallel. The lock is always taken before any row lock, so the two
-      // paths cannot deadlock.
+      // shared ingestion lock after runtime admission but before directory
+      // locks. Organization events skip it and stay parallel. Retirement uses
+      // the same machine-before-directory lock order.
       if (!input.organizationId) await lockLegacyDirectoryIngestion(trx);
       const existing = await trx.selectFrom("collaboration_directory")
         .selectAll()
@@ -477,6 +481,18 @@ export class PlatformCollaborationRepository {
     }
     const now = nowDate.toISOString();
     return this.db.transaction().execute(async (trx) => {
+      if (this.admitRuntimeWrite) {
+        const route = await trx.selectFrom("collaboration_directory").select(["runtime_id", "owner_id"])
+          .where("scope_id", "=", input.scopeId).executeTakeFirst();
+        if (!route) throw new PlatformCollaborationRepositoryError("invalid_ticket", "Ticket scope is unavailable");
+        await this.admitRuntimeWrite(trx, { runtimeId: route.runtime_id, ownerId: route.owner_id });
+        // Retirement may have committed between the unlocked route read and machine lock.
+        const current = await trx.selectFrom("collaboration_directory").select(["runtime_id", "owner_id"])
+          .where("scope_id", "=", input.scopeId).forShare().executeTakeFirst();
+        if (!current || current.runtime_id !== route.runtime_id || current.owner_id !== route.owner_id) {
+          throw new PlatformCollaborationRepositoryError("invalid_ticket", "Ticket scope is unavailable");
+        }
+      }
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${input.actorId}, 0))`.execute(trx);
       await trx.deleteFrom("collaboration_connection_tickets")
         .where("expires_at", "<=", now)
