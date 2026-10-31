@@ -2,7 +2,7 @@
 
 ## Implementation boundary
 
-The source/target/request/control/proposal domain ports, capability HTTP route factory and actual published CLI transport below are implemented. Owner destination routes/startup and the shared web/native details flow are also implemented below. The bounded exact action controller and capability/request/canonical composition are implemented in Task4b. Trusted harness producers remain Tasks5/6; the actual Terminal launch proof producer remains Task7. An injected source/runtime fixture is not an integrated harness.
+The source/target/request/control/proposal domain ports, capability HTTP route factory and actual published CLI transport below are implemented. Owner destination routes/startup and the shared web/native details flow are also implemented below. The bounded exact action controller and capability/request/canonical composition are implemented in Task4b. Task5a implements the actual ordinary and delegated Claude source producers described in [claude-sources.md](./claude-sources.md). Other harness producers remain separate required work; the actual Terminal launch proof producer remains Task7. An injected source/runtime fixture is not an integrated harness.
 
 Integrated ENG-93 dependency remains #3041 `e43ca79412df8562b9e12fb3a5fac3134c522170`. Future #3054 `d9e783116108d3789973cbd16fbf6795850f21a7` is not integrated. Current PR descriptions pin each B increment separately.
 
@@ -61,7 +61,7 @@ sequenceDiagram
 
 Reserved/queued alone does not preserve origin authority forever. Revocation/expiry winning before real task/run claim prevents handoff. After that exact one-purpose claim, normal origin completion does not erase accepted target work; actual target binding/capability/signal and ENG-93 source checks remain current.
 
-Existing Bot-child/same-source-target reuse is an explicit unfinished adapter boundary in this increment. It fails closed instead of queuing behind itself or fabricating another binding.
+Task5a permits existing Bot-child/same-source-target reuse only for the actual live parent registry/task/run/runtime/generation/private capability match. The existing `A.proposeWithin`, exact task waiting transition, outbox and immutable pending receipt share one transaction. A committed direct pending receipt does not resubmit a canonical turn. Current progress explicitly identifies `existingBinding: true` and observes real approval/routine state without inventing a dispatch revision. Missing or mismatched parents remain denied.
 
 ## Result semantics
 
@@ -149,3 +149,12 @@ Limits: registry<=256 sources, source lifetime<=30min with recurring expiry and 
 Task4b review tightened the shared owner-card callback boundary: every decision callback captures its rendered owner/session/Computer/challenge scope and current displayed read. Retained callbacks cannot borrow a later scope, including same-owner Clerk session replacement; unmount and scope cleanup abort token waits and browser opens. Electron Chat uses a focused scoped opener shared with the actual owner-browser helper. Opening remains navigation only, never a decision.
 
 The shared action HTTP adapter uses portable AbortController events with a cleaned ten-second request timer covering token acquisition, fetch and bounded response reads. React Native's installed AbortSignal lacks throwIfAborted even with Expo's any/timeout patch, so this adapter does not rely on those modern helpers. Native Mobile continues to inject Expo streaming fetch and secure random request IDs. Feature-masked actual card tests and scoped token-wait tests verify this code path; they do not qualify a native device/account/provider session.
+
+
+## Actual Claude source lifetime and lock ordering
+
+The ordinary adapter execution closure and existing delegated native task service supply the admitted source identity, current generation and immutable delegated Bot/Chat ceiling. A changed default or exact owner decision cannot widen that ceiling. Native/model IDs remain correlation only.
+
+The delegated executor invokes its host-only `onEnd` synchronously and once at first terminal result, process exit or relevant failure. Open stdio does not retain source authority. Executor completion, buffered result assembly, durable native session persistence and profile lease release still wait for actual `close`. A normal tool or CLI return does not end the actual source.
+
+Control consumption/accepted work locks the existing routine row before source generation/source/capability gates. Consumption first rejects an invalid/replayed/expired/operation-mismatched capability, then rechecks under its original locks. All actual controller source validation acquires preference → owner gates before retained producer Chat → Run → Task locks, followed by target Chat/bindings. Remember uses preference → owner → Chat; existing canonical controls retain routine → owner/Chat. Preparation, freshness and issue do not later acquire a routine. Current-policy locks remain through commit, while owner proof/UI waits remain outside transactions. Existing canonical authorization, revision, scope and final source checks are unchanged.

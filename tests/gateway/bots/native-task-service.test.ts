@@ -49,3 +49,13 @@ describe('official Claude Bot task service', () => {
   });
 
 });
+it('an unsupported routine parent disables new routines while its unrelated native task still completes', async () => {
+  const f = fixture();
+  const service = createNativeBotTasks({ homePath: '/owner', connections: { admit: f.admit, saveSession: f.saveSession }, registry: { lookupRun: () => binding }, profileGuard: { acquire: f.acquire }, lifetime: f.lifetime.signal,
+    routineCli: { runtime: { registerBotChild: async () => { throw new Error('Unsupported parent'); } }, binPath: '/unavailable/matrix.mjs', endpoint: 'http://127.0.0.1:1234/api/routine-cli/execute' }, publishRoutineAction: () => {}, callTool: f.callTool,
+    runTask: async input => { await input.onStart?.(); const result = await fetch(input.mcpUrl, { method: 'POST', signal: AbortSignal.timeout(5000), headers: { authorization: `Bearer ${input.mcpToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'call', tool: { capability: 'artifact.read', args: { relPath: 'result.txt' } } }) });
+      expect((await result.json()).content[0].text).toBe('artifact'); input.onEnd?.(); return { text: 'finished unrelated task', sessionId: 'fixture_session' }; },
+  });
+  try { expect(await service.execute(binding, 'read', '/owner', new AbortController().signal)).toMatchObject({ ok: true }); expect(f.release).toHaveBeenCalledOnce(); }
+  finally { await service.close(); }
+});

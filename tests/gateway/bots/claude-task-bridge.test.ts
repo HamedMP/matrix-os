@@ -32,3 +32,16 @@ describe('bounded native task MCP protocol', () => {
     expect((await exit)[0]).toBe(1);
   });
 });
+it('requires explicit durable mutation UUID independently of random native tool correlation', async () => {
+  const call = vi.fn<Parameters<typeof openClaudeBotBridge>[0]['call']>(async () => ({ ok: true as const, content: [{ type: 'text' as const, text: 'receipt' }] }));
+  const bridge = await openClaudeBotBridge({ capabilities: ['routine.propose'], signal: new AbortController().signal, authorize: async () => {}, call });
+  const args = { name: 'Fixture', prompt: 'Read', schedule: { kind: 'interval', everyMs: 60000 }, selection: { instanceId: 'matrix_chatgpt_plan', model: 'fixture' }, authorizedEffects: ['read'] };
+  const send = (requestId?: string) => fetch(bridge.url, { method: 'POST', signal: AbortSignal.timeout(5000), headers: { authorization: `Bearer ${bridge.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'call', tool: { capability: 'routine.propose', args, ...(requestId ? { requestId } : {}) } }) });
+  try {
+    expect((await send()).status).toBe(403); expect(call).not.toHaveBeenCalled();
+    const requestId = 'de000000-0000-4000-8000-000000000701'; expect((await send(requestId)).status).toBe(200); expect((await send(requestId)).status).toBe(200);
+    expect(call.mock.calls.map(([request]) => "routineRequestId" in request ? request.routineRequestId : undefined)).toEqual([requestId, requestId]);
+    expect(call.mock.calls[0]![0].toolCallId).not.toBe(call.mock.calls[1]![0].toolCallId);
+  } finally { await bridge.close(); }
+});
