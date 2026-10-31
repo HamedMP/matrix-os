@@ -62,7 +62,8 @@ export const RoutineCliResultSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("show"), routine: RoutineCliRoutineViewSchema,
     history: z.object({ fires: z.array(RoutineCliObservedFireSchema).max(20), truncated: z.boolean() }).strict() }).strict(),
   z.object({ kind: z.literal("receipt"), receipt: RoutineCliReceiptSchema, current: RoutineCliRoutineViewSchema.nullable(),
-    approval: z.enum(["pending", "resolved", "expired", "cancelled"]).nullable() }).strict(),
+    approval: z.enum(["pending", "resolved", "expired", "cancelled"]).nullable(),
+    execution: z.object({ stop: z.literal("unconfirmed") }).strict().optional() }).strict(),
   z.object({ kind: z.literal("not_observed"), requestId, mayStillArrive: z.literal(true) }).strict(),
   z.object({ kind: z.literal("unknown"), requestId, disposition: z.literal("unknown"), reconcile: z.literal(true) }).strict(),
 ]);
