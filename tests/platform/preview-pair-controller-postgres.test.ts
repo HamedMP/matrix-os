@@ -1,5 +1,4 @@
 import {createPreviewPairSources} from "../../packages/platform/src/preview-pair/sources.js";
-import {promoteHostBundleChannel} from "../../packages/platform/src/db.js";
 import {verifyPreviewPairCandidate} from "../../packages/platform/src/preview-pair/provenance.js";
 import {previewPairProvenanceFixture} from "./preview-pair-provenance-fixture.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -28,7 +27,9 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("durable reviewed-control
     const proof=previewPairProvenanceFixture();proof.input.hostBundleSha256=f.candidate.hostBundleSha256;
     const source=createPreviewPairSources(f.db,proof.source,proof.source.authority);
     await expect(verifyPreviewPairCandidate(proof.input,proof.expected,source,f.config,PAIR_NOW)).resolves.toMatchObject({sourceSha:f.candidate.sourceSha});
-    await promoteHostBundleChannel(f.db,"dev",f.candidate.hostBundleVersion,new Date(PAIR_NOW).toISOString());
+    // Retained history could predate the promotion guard. Inject only that old
+    // canonical fact; candidate verification must still consult the real DB.
+    await f.db.executor.insertInto("host_bundle_release_channels").values({channel:"dev",version:f.candidate.hostBundleVersion,promoted_at:new Date(PAIR_NOW).toISOString()}).execute();
     await expect(verifyPreviewPairCandidate(proof.input,proof.expected,source,f.config,PAIR_NOW)).rejects.toThrow("unavailable");
   });
   it("stages the new controller run atomically with an explicit clean reset",async () => {

@@ -11,6 +11,17 @@ describe("pair candidate source is checked against independent canonical records
     expect(f.source.buildSource).toHaveBeenCalledWith(123, 456);
   });
 
+  it.each(["ordinary", "wrong pair", "wrong generation", "wrong source"])("rejects a %s bundle identity even when canonical release metadata matches", async fault => {
+    const f = fixture();
+    const pairId = fault === "wrong pair" ? "99999999-9999-4999-8999-999999999999" : f.expected.pairId;
+    const generation = fault === "wrong generation" ? 2 : f.expected.generation;
+    const source = fault === "wrong source" ? "b".repeat(40) : f.expected.sourceSha;
+    const version = fault === "ordinary" ? "v2026.10.31-pr3022-ordinary" : `v0.0.0-collabpair-${pairId}-g${generation}-${source}`;
+    f.input.hostBundleVersion = version; f.release.version = version;
+    await expect(verifyPreviewPairCandidate(f.input, f.expected, f.source, f.config, PAIR_NOW)).rejects.toThrow("unavailable");
+    expect(f.source.authority).not.toHaveBeenCalled();
+  });
+
   it("requires the configured source profile fingerprint before any provider reads", async () => {
     const f = fixture(), config = { ...f.config, sourceProfileFingerprint: "a".repeat(64) };
     await expect(verifyPreviewPairCandidate(f.input, f.expected, f.source, config, PAIR_NOW)).rejects.toThrow("unavailable");

@@ -7,5 +7,5 @@ export function mountHostBundleRoutes(app:Hono<any>,options:Parameters<typeof cr
  const hostBundleRoutes=createHostBundleRoutes(options);
  app.route("/system-bundles",hostBundleRoutes);
  app.route("/private-preview-updates",createPrivatePreviewUpdateRoutes({db:options.db,hostBundleRoutes,logRouteError:options.logRouteError}));
- app.route("/preview-pair-updates",createPreviewPairUpdateRoutes({db:options.db,hostBundleRoutes,logRouteError:options.logRouteError}));
+ app.route("/preview-pair-updates",createPreviewPairUpdateRoutes({db:options.db,hostBundleRoutes:createHostBundleRoutes({...options,allowPreviewPairMetadata:true}),logRouteError:options.logRouteError}));
 }

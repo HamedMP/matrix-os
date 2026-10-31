@@ -21,7 +21,7 @@ const {
 
 function usage() {
   console.error(
-    "usage: publish-release-r2.mjs <version> [--channel <name>] [--severity <level>] [--changelog <text>] [--source-pr <n>] [--source-author <login>] [--dry-run]",
+    "usage: publish-release-r2.mjs <version> [--channel <name>] [--severity <level>] [--changelog <text>] [--source-pr <n>] [--source-author <login>] [--include-incremental-objects] [--dry-run]",
   );
 }
 
@@ -32,6 +32,7 @@ let changelog = "";
 let sourcePr;
 let sourceAuthor;
 let dryRun = false;
+let includeIncrementalObjects = false;
 
 for (let i = 2; i < process.argv.length; i += 1) {
   const arg = process.argv[i];
@@ -50,6 +51,9 @@ for (let i = 2; i < process.argv.length; i += 1) {
       break;
     case "--source-author":
       sourceAuthor = process.argv[++i] ?? "";
+      break;
+    case "--include-incremental-objects":
+      includeIncrementalObjects = true;
       break;
     case "--dry-run":
       dryRun = true;
@@ -234,7 +238,7 @@ const incrementalManifestSha256 = await sha256(incrementalManifestPath);
 const release = await readJson(releasePath);
 const manifest = await readJson(manifestPath);
 const incrementalManifest = await readJson(incrementalManifestPath);
-const incrementalObjects = incrementalRequiresFullBundle(incrementalManifest)
+const incrementalObjects = incrementalRequiresFullBundle(incrementalManifest) && !includeIncrementalObjects
   ? []
   : incrementalObjectEntries(incrementalManifest);
 
@@ -264,7 +268,7 @@ if (dryRun) {
   console.log("=== DRY RUN ===");
   console.log(`Would upload ${bundlePath} to s3://${bucket}/${bundleKey}`);
   console.log(`Would upload checksum to s3://${bucket}/${checksumKey}`);
-  if (incrementalRequiresFullBundle(incrementalManifest)) {
+  if (incrementalRequiresFullBundle(incrementalManifest) && !includeIncrementalObjects) {
     console.log("Incremental manifest requires full bundle; skipping incremental file object uploads.");
   } else {
     console.log(`Would upload ${incrementalObjects.length} incremental file objects`);
@@ -300,7 +304,7 @@ if (!(await verifyExistingChecksum(s3, checksumKey, checksum))) {
   await uploadImmutable(s3, checksumPath, checksumKey, "text/plain; charset=utf-8", checksum, checksumStat.size);
 }
 
-if (incrementalRequiresFullBundle(incrementalManifest)) {
+if (incrementalRequiresFullBundle(incrementalManifest) && !includeIncrementalObjects) {
   console.log("  Incremental manifest requires full bundle; skipping incremental file object uploads.");
 } else {
   console.log(`  Uploading ${incrementalObjects.length} incremental file objects...`);

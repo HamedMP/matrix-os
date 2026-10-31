@@ -1,0 +1,32 @@
+name: Verify reviewed pair controller
+description: Check immutable non-Main execution before installing reviewed dependencies or using privileged credentials.
+inputs:
+  reviewed_sha:
+    required: true
+    description: Reviewed protected controller commit.
+runs:
+  using: composite
+  steps:
+    - name: Prove actual immutable execution origin
+      uses: actions/github-script@v8
+      env:
+        PAIR_CONTROLLER_SHA: ${{ inputs.reviewed_sha }}
+      with:
+        script: |
+          const {verifyPreviewPairControlOrigin} = await import(`${process.env.GITHUB_WORKSPACE}/controller/scripts/preview-pair/control-origin.mjs`);
+          const proof = await verifyPreviewPairControlOrigin(github, {...context,
+            workflowSha: process.env.GITHUB_WORKFLOW_SHA, workflowRef: process.env.GITHUB_WORKFLOW_REF,
+            runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT)}, process.env.PAIR_CONTROLLER_SHA);
+          const fs = await import('node:fs/promises');
+          await fs.writeFile(`${process.env.RUNNER_TEMP}/pair-control-origin.json`, JSON.stringify(proof), {flag:'wx', mode:0o600});
+    - uses: pnpm/action-setup@v6
+      with:
+        package_json_file: controller/package.json
+    - uses: actions/setup-node@v6
+      with:
+        node-version: 24
+    - uses: oven-sh/setup-bun@v2
+    - name: Install reviewed dependencies
+      shell: bash
+      working-directory: controller
+      run: pnpm install --frozen-lockfile --ignore-scripts
