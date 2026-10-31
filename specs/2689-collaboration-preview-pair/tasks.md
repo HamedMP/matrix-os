@@ -135,8 +135,9 @@ Use official `gh stack init/add/rebase/submit`; never hand-retarget or flatten.
 | 3l1 | Durable pre-publication request, early identity/isolation gate and atomic adoption (part of T016/T033) | `codex/eng-418-preview-pair-cloud-intents` | Layer3k2 |
 | 3l2 | Claimed pre-admission recovery, exact cloud operation discovery and configured source retirement (part of T016/T033) | `codex/eng-418-preview-pair-automation` | Layer3l1 |
 | 3l3 | Source-owned single-effect publisher and safe pre-admission reports (part of T016/T033) | `codex/eng-418-preview-pair-publisher` | Layer3l2 |
-| 3l4 | Protected build/publish workflow and controller CLI (complete T016/T033) | `codex/eng-418-preview-pair-control` | Layer3l3 |
-| 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3l4 |
+| 3l4a | Authenticated control transport, existing-pair reuse, fenced adoption/stop, controller completion recovery and bounded artifact reader (part of T016/T033) | `codex/eng-418-preview-pair-control` | Layer3l3 |
+| 3l4b | Pair-only host bundle namespace, protected build/publish workflow and user command (complete T016/T033) | `codex/eng-418-preview-pair-control-workflow` | Layer3l4a |
+| 4 | Electron pinning, local launcher and badge (T018–T025, T035) | `codex/eng-418-preview-pair-desktop` | Layer3l4b |
 | 5 if needed | Evidence runner, acceptance and internal docs (T026–T029, T036–T042) | `codex/eng-418-preview-pair-qualification` | Layer4 |
 
 Target <1000 additions/<20 files where practical; split a layer before exceeding

@@ -246,3 +246,37 @@ The protected automation layer must record a durable request intent before
 publishing a revision. The existing post-candidate admission endpoint alone cannot
 recover cancellation before admission; T016/T033 stay open until the trusted
 orphan path proves exact resource retirement without fixture/member shortcuts.
+
+## Protected control and artifact handoff
+
+The normal authenticated control profile reads a maintainer-only setup descriptor;
+the server supplies the verified requester and reviewed execution ref. It carries
+no operator credential. The workflow's private status route is bound to its
+recorded run and effective generation, including the target during reset. Ordinary
+user reports remain separate. A current control maintainer can explicitly stop a
+generation with the existing revision fence; Preview identities cannot do so.
+
+An update selected before a long protected build binds the immutable parent
+generation/source. After current controller, membership, publication and candidate
+verification, adoption locks that parent, reads its current progress revision and
+uses the existing revision-conditional transactional writer. Exact adopted replay
+returns the same transition. It cannot replace another generation or refill grants.
+
+The trusted execution branch is `preview-pair-controller/<reviewed SHA>`. Verify
+the actual workflow/run/ref/attempt/actor and current branch before credentials;
+require its pin not to be an ancestor of Main so auxiliary checks never attach to
+a Main commit. Review and protect this distinct execution commit during setup;
+this implementation does not create or activate that branch.
+
+The shared artifact reader authenticates exact run/name/ID/digest/size, follows
+only bounded provider-signed storage without a bearer, and writes quarantined
+regular files with bounded streaming/backpressure. Verify the complete ZIP and
+ZIP64 directory and archive digest before use. Every failure and completed caller
+must dispose only its owned temporary directory.
+
+Pair host bundles bake a test identity. The following workflow layer must reserve
+their version namespace and exclude it from ordinary PR preview selection,
+promotion and installation paths before publication is usable. Existing
+`getLatestHostBundleReleaseForPr` selects every newest matching PR release;
+publishing test-identity bytes into that undifferentiated catalog would regress
+ordinary Private Previews. Namespace is a classification, never authorization.

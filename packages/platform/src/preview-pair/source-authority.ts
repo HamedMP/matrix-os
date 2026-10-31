@@ -33,8 +33,33 @@ export function createPreviewPairSourceAuthority(options: PreviewPairSourceAutho
       const raw = await github.pullRequest(input.pr), result = Pull.safeParse(raw);
       signal.throwIfAborted();
       if (!result.success || result.data.number !== input.pr) throw new PreviewPairUpstreamError();
-      return { open: result.data.state === "open", requested: result.data.labels.some(label => label.name === PREVIEW_PAIR_REQUEST_LABEL),
+      const request = { open: result.data.state === "open", requested: result.data.labels.some(label => label.name === PREVIEW_PAIR_REQUEST_LABEL),
         sourceSha: result.data.head.sha };
+      if (!request.open || !request.requested) return request;
+      const intent = await db.executor.selectFrom("preview_pair_cloud_intents").select(["controller_run_id", "source_sha", "state"])
+        .where("pair_id", "=", input.pairId).where("generation", "=", input.generation).where("pr", "=", input.pr)
+        .where("state", "=", "prepared").executeTakeFirst();
+      // Superseded unadmitted source is already sufficient for cleanup. Do not
+      // turn an unavailable controller lookup into a reason to retain it.
+      if (intent && intent.source_sha !== request.sourceSha) return request;
+      const generation = intent ? undefined : await db.executor.selectFrom("preview_pair_generations as generation")
+        .innerJoin("preview_pairs as pair", "pair.pair_id", "generation.pair_id").select("generation.controller_run_id")
+        .where("pair.pair_id", "=", input.pairId).where("pair.pr", "=", input.pr)
+        .where("generation.generation", "=", sql<number>`CASE WHEN pair.state = 'updating' AND pair.generation = ${input.generation}
+          THEN pair.generation + 1 ELSE ${input.generation} END`).executeTakeFirst();
+      const runId = intent?.controller_run_id ?? generation?.controller_run_id;
+      if (!runId) return request; // Retained legacy generations have no controller receipt.
+      const id = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER).safeParse(runId);
+      if (!id.success) throw new PreviewPairUpstreamError();
+      const run = await github.reviewedRun(id.data,
+        ".github/workflows/preview-collaboration-pair.yml");
+      signal.throwIfAborted();
+      const status = z.object({ status: z.enum(["queued", "requested", "waiting", "pending", "in_progress", "completed"]),
+        conclusion: z.enum(["success", "failure", "cancelled", "skipped", "timed_out", "action_required", "neutral", "stale", "startup_failure"]).nullable() })
+        .refine(value => value.status === "completed" ? value.conclusion !== null : value.conclusion === null).safeParse(run);
+      if (!status.success) throw new PreviewPairUpstreamError();
+      if (status.data.status === "completed" && (intent || status.data.conclusion !== "success")) request.requested = false;
+      return request;
     },
     async authority(raw, signal) {
       signal.throwIfAborted(); const candidate = PreviewPairCandidateSchema.parse(raw);
