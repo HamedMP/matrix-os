@@ -26,6 +26,10 @@ export type RoutineCliMutationAdmission = (input: {
   transaction: BotStateTransaction; source: RoutineCliSourceContext; invocation: RoutineCliVerifiedInvocation;
   target: RoutineCliResolvedTarget; operation: RoutineCliMutationOperation;
 }) => Promise<RoutineCliAdmission>;
+export type RoutineCliAfterMutationCommit = (input: Readonly<{
+  source: RoutineCliSourceContext; invocation: RoutineCliVerifiedInvocation; target: RoutineCliResolvedTarget;
+  operation: RoutineCliMutationOperation; admission: RoutineCliAdmission;
+}>) => Promise<void>;
 type TargetIntent = { source: RoutineCliSourceContext; invocation: RoutineCliVerifiedInvocation; target: RoutineCliResolvedTarget; operation: RoutineCliOperation };
 export interface RoutineCliRequestDependencies {
   db: Kysely<OwnerBotDatabase>; scope: RoutineCliScope;
@@ -40,6 +44,9 @@ export interface RoutineCliRequestDependencies {
   /** Atomic DB admission only; real canonical control/proposal wiring is a separate increment.
    * No external model/network/cancellation work, no fabricated task/run/binding or successful default. */
   admitMutation?: RoutineCliMutationAdmission;
+  /** External effects only after confirmed owning commit for a NEW admission. No executor is retained.
+   * Failure cannot undo the durable receipt. Duplicates/unknown commits never redrive this hook. */
+  afterMutationCommit?: RoutineCliAfterMutationCommit;
 }
 const ExecuteSchema = z.object({ token: z.string().max(128).optional(), operation: RoutineCliOperationSchema }).strict();
 const mutation = (operation: RoutineCliOperation): operation is RoutineCliMutationOperation => !["list", "show", "request"].includes(operation.operation);
@@ -99,6 +106,7 @@ export function createRoutineCliRequestService(deps: RoutineCliRequestDependenci
         || (mutating && !deps.admitMutation)) throw new RoutineCliError("unavailable");
       const scope = configured.data;
       let admissionStarted = false;
+      let committedIntent: Parameters<RoutineCliAfterMutationCommit>[0] | undefined;
       try {
         const result = await deps.transact(scope.ownerId, async transaction => {
           if (!transaction.db.isTransaction) throw new RoutineCliError("unavailable");
@@ -135,10 +143,18 @@ export function createRoutineCliRequestService(deps: RoutineCliRequestDependenci
             const admission = await validateAdmission(admitted!, target, operation, trx);
             const record = await ledger.insert(scope, { requestId: operation.requestId, operationDigest: invocation.operationDigest,
               operation, source, invocation, target, admission, createdAt: (deps.now?.() ?? new Date()).toISOString() }, trx);
+            committedIntent = freezeIntent({ source, invocation, target, operation, admission });
             return views.receipt(record);
           });
         });
-        return RoutineCliResultSchema.parse(result);
+        const safeResult = RoutineCliResultSchema.parse(result);
+        if (committedIntent && deps.afterMutationCommit) {
+          try { await deps.afterMutationCommit(committedIntent); }
+          catch (error: unknown) {
+            console.warn("[routine-cli-requests] Post-commit execution unconfirmed", error instanceof Error ? error.name : "UnknownError");
+          }
+        }
+        return safeResult;
       } catch (error: unknown) {
         if (error instanceof InvalidAdmissionResult) throw new RoutineCliError("unavailable");
         if (error instanceof RoutineCliError && (error.code !== "unavailable" || !admissionStarted)) throw error;

@@ -48,6 +48,8 @@ Native constraints remain: Codex per-turn app-server scope; Hermes actual comman
 
 Integrated backend target: Draft #3041 e43ca79412df8562b9e12fb3a5fac3134c522170 over #3019 ea76546f23349d1869a7554d812825999b778e47. Initial B baseline 3db08492b9074606eac2213b9d86c0f58581d685 is historical. Old source tests/media do not qualify new B code. A owns its GUI window; do not use it. Native real-account tests/permissions/background execution require specific further authorization.
 
+Future dependency reported by A: local e22d5a19d7173d961a7aca9385d0ac2e8b77ad66 over e43ca794 adds server routine-stage evidence and pause/cancel/lease race guards. It is not integrated here and no new PR is assumed. Its reported 196 tests do not replace its pending native PostgreSQL/CI/Greptile/live verification. Unchanged clients do not make old 3db Host live evidence valid for this new backend. Review the final fixed diff before any future integration, especially routine-execution/task-orchestrator/stage/cancellation seams; do not automatically change B's base.
+
 Reference T3 at 80a2351fcb909034e65a512dfabeb3cdfd367762: internal target inheritance is separate from live caller and write ceilings. Do not import its local full-access assumptions or MCP execution transport. Matrix's five-harness/remote-owner security remains its own requirement.
 
 ## Draft split
