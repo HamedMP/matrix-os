@@ -52,8 +52,9 @@ const OpenCodeResumeStateSchema = z.object({
   c: z.string().min(1).max(400).startsWith("/"),
 }).strict();
 
-interface SpawnOptions { cwd: string; env: Record<string, string> }
+interface SpawnOptions { cwd: string; env: Record<string, string>; stdio?: readonly ["ignore", "pipe", "pipe", "pipe"] }
 export interface OpenCodeProcess {
+  stdio?: ReadonlyArray<unknown>;
   stdout: {
     on(event: "data", listener: (chunk: Buffer) => void): void;
     once(event: "end" | "close", listener: () => void): void;
