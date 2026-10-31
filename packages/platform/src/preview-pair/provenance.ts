@@ -5,7 +5,7 @@ import { PreviewPairDesktopArtifactSchema, PreviewPairDigestSchema, PreviewPairG
 import type { EnabledPreviewPairConfig } from "./config.js";
 
 export const PreviewPairCandidateSchema = z.strictObject({
-  sourceSha: PreviewPairShaSchema,
+  sourceSha: PreviewPairShaSchema, sourceProfileFingerprint: PreviewPairDigestSchema.optional(),
   hostBundleVersion: z.string().min(1).max(128).regex(/^[A-Za-z0-9._-]+$/),
   hostBundleSha256: PreviewPairDigestSchema,
   desktopArtifacts: z.array(PreviewPairDesktopArtifactSchema).min(1).max(8),
@@ -68,6 +68,7 @@ export async function verifyPreviewPairCandidate(input: unknown, expectedInput: 
   source: PreviewPairProvenanceSource, config: EnabledPreviewPairConfig, now: number): Promise<PreviewPairCandidate> {
   const candidate = parse(PreviewPairCandidateSchema, input), expected = parse(Expected, expectedInput);
   requireProof(candidate.sourceSha === expected.sourceSha && Number.isFinite(now));
+  requireProof(!config.sourceProfileFingerprint || candidate.sourceProfileFingerprint === config.sourceProfileFingerprint);
   requireProof(candidate.identityIssuer === config.identityIssuer && candidate.browserOrigin !== candidate.apiOrigin);
   for (const kind of ["ui", "api"] as const) {
     const origin = kind === "ui" ? candidate.browserOrigin : candidate.apiOrigin;

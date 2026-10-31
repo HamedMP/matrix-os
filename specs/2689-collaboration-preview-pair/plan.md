@@ -215,3 +215,34 @@ The2057-line sync agent's passive polling function is extracted unchanged into
 the existing focused `matrix-update-manifest` library before adding paired-host
 policy there. Explicit update preparation/apply remain in their current paths;
 retained Bash trust tests exercise them after the extraction.
+
+## Source startup extraction and profile fencing
+
+The1200-line Platform startup entrypoint keeps only composition/lifetime calls.
+Extract the existing customer dependency/store assembly into
+`customer-vps-startup-deps.ts` before mounting the focused Preview startup module.
+The private pair context chooses required provider/template ports explicitly;
+it does not inherit customer billing or automatic Preview activation callbacks.
+Register primary/target pool owners before subsequent startup can fail. Stop and
+drain the scoped worker before closing its target and then the primary database.
+
+Source configuration pins six immutable Secret Manager versions and test identity,
+cloud resource and storage boundaries. A non-authorizing public profile digest is
+required in each admitted candidate and retained in its canonical generation.
+An unexpected profile cannot make a404 from a different cloud boundary release
+an old lease. Restore the recorded reviewed profile to retire a generation before
+changing its resource boundary. Operator credential rotation does not change it.
+The current tagged-origin contract supports `matrix-platform-preview`; reject an
+unsupported service family during setup rather than producing unusable origins.
+
+Target connections do not run migrations or require liveness at construction.
+Admission/activation verify actual database/role/grant isolation and prepared
+schema before writes. Provider/cloud retirement can still run when the target is
+offline; projection failure preserves the lease. Numeric secret references and
+service-account names are not evidence of effective IAM: reviewed protected setup
+and actual-target isolation remain activation prerequisites.
+
+The protected automation layer must record a durable request intent before
+publishing a revision. The existing post-candidate admission endpoint alone cannot
+recover cancellation before admission; T016/T033 stay open until the trusted
+orphan path proves exact resource retirement without fixture/member shortcuts.

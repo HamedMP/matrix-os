@@ -2,6 +2,7 @@ import {z} from "zod/v4";
 import {PreviewPairOriginSchema,PreviewPairShaSchema,PreviewPairIdSchema,PreviewPairGenerationSchema,previewPairTag} from "@matrix-os/contracts/preview-pair";
 import type {EnabledPreviewPairConfig} from "./config.js";
 import {PreviewPairUpstreamError,readPreviewPairJson} from "./http.js";
+import {PreviewPairSecretBindingSchema,type PreviewPairSecretBinding} from "./source-profile.js";
 import {previewPairCloudResource,previewPairRevisionName} from "./cloud-resource.js";
 const Slug=z.string().max(80).regex(/^[a-z][a-z0-9-]+$/);
 const Env=z.object({name:z.string().max(128),value:z.string().max(16384).optional(),
@@ -15,9 +16,12 @@ const Service=z.object({name:z.string(),reconciling:z.literal(false).optional(),
 })).max(128)});
 /** IAM-authenticated immutable revision data; candidate HTTP is never evidence of its own isolation. */
 export function createPreviewPairCloudAuthority(options:{config:EnabledPreviewPairConfig;project:string;region:string;service:string;
-  approvedSecretRefs:string[];accessToken:()=>Promise<string>;fetchImpl?:typeof fetch;now?:()=>number}) {
+  approvedSecretRefs:string[];expectedSecretBindings?:Record<string,PreviewPairSecretBinding>;accessToken:()=>Promise<string>;fetchImpl?:typeof fetch;now?:()=>number}) {
   const {config}=options,project=Slug.parse(options.project),region=Slug.parse(options.region),service=Slug.parse(options.service);
   const allowed=z.array(z.string().max(96).regex(/^[a-z][a-z0-9-]+$/).refine(value=>value.includes("preview"))).min(3).max(16).parse(options.approvedSecretRefs);
+  const required=["CLERK_SECRET_KEY","PLATFORM_DATABASE_URL","MATRIX_COLLABORATION_TICKET_KEYS","PLATFORM_SECRET","PLATFORM_JWT_SECRET","EDGE_ROUTER_SECRET"];
+  const pinned=options.expectedSecretBindings===undefined?undefined:z.record(z.string().max(128),PreviewPairSecretBindingSchema).parse(options.expectedSecretBindings);
+  if(pinned&&(Object.keys(pinned).length!==required.length||required.some(name=>!pinned[name])))throw new PreviewPairUpstreamError();
   const resource=previewPairCloudResource(project,region,service),fetchImpl=options.fetchImpl??fetch;
   return async (browserOrigin:string,apiOrigin:string)=>{
     try {
@@ -42,6 +46,12 @@ export function createPreviewPairCloudAuthority(options:{config:EnabledPreviewPa
       // Revision parsing caps entries at128; this transient set dies with the read.
       if(new Set(entries.map(entry=>entry.name)).size!==entries.length)throw new PreviewPairUpstreamError();
       for(const entry of entries){
+        const expected=pinned?.[entry.name];
+        if(expected){
+          const actual=entry.valueSource?.secretKeyRef;
+          if(entry.value!==undefined||!actual||actual.version!==expected.version
+            ||![expected.ref,`projects/${project}/secrets/${expected.ref}`].includes(actual.secret))throw new PreviewPairUpstreamError();
+        }
         if(/^(HETZNER_API_TOKEN|GITHUB_TOKEN|GH_TOKEN|GITHUB_APP_PRIVATE_KEY|GOOGLE_APPLICATION_CREDENTIALS|MATRIX_PREVIEW_PAIR_OPERATOR_SECRET|GOLDEN_SNAPSHOT_OPERATOR_SECRET|MATRIX_PREVIEW_RUNTIME_SECRET|AI_FUNDED_CREDENTIAL_HASH_SECRET|AI_FUNDED_RELAY_CONTROL_TOKEN)$/.test(entry.name))throw new PreviewPairUpstreamError();
         if(entry.valueSource){
           if(entry.value!==undefined)throw new PreviewPairUpstreamError();
