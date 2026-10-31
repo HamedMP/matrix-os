@@ -1,10 +1,10 @@
 #!/opt/matrix/runtime/node/bin/node
 // matrix-terminal-readiness: invocation-v1
 import { spawn } from "node:child_process";
-import { constants, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { constants, existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { open } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const MAX_DESCRIPTOR_BYTES = 64 * 1024;
 const SESSION_START_TIMEOUT_MS = 10_000;
@@ -89,9 +89,16 @@ const pinnedKeeperPath = join(
 );
 try {
   const currentKeeper = realpathSync(fileURLToPath(import.meta.url));
-  const pinnedKeeper = realpathSync(pinnedKeeperPath);
-  if (currentKeeper !== pinnedKeeper) {
-    const pinned = spawn("/opt/matrix/runtime/node/bin/node", [pinnedKeeper, runtimeId], {
+  const pinnedKeeper = realpathSync(pinnedKeeperPath), generationRoot = dirname(pinnedKeeperPath);
+  let pinnedNode = "/opt/matrix/runtime/node/bin/node";
+  const closure = existsSync(join(generationRoot, "closure.json")) || existsSync(join(generationRoot, "node"));
+  if (closure) {
+    const { validateTerminalClosure } = await import(pathToFileURL(join(generationRoot, "generation-closure.mjs")).href);
+    await validateTerminalClosure(generationRoot, descriptor.generation);
+    pinnedNode = join(generationRoot, "node");
+  }
+  if (currentKeeper !== pinnedKeeper || closure && realpathSync(process.execPath) !== realpathSync(pinnedNode)) {
+    const pinned = spawn(pinnedNode, [pinnedKeeper, runtimeId], {
       env: process.env,
       stdio: "inherit",
     });

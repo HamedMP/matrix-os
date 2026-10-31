@@ -1,10 +1,14 @@
+import { TerminalHostFrameSchema, TerminalShimFrameSchema } from "./terminal-launch-protocol.mjs";
 import { randomUUID } from "node:crypto";
 import { close as closeDescriptor } from "node:fs";
 import { Socket } from "node:net";
 import { StringDecoder } from "node:string_decoder";
 import { ManagedHostFrameSchema, ManagedShimFrameSchema, parseManagedFrame, MANAGED_FRAME_BYTES } from "./managed-launch-protocol.mjs";
 /** Only called for a digest-bound exact owned shim. Anonymous host pipes and child IPC never reach native Codex. */
-export function attachManagedLaunchWrapper(child, digest, transport) {
+export function attachManagedLaunchWrapper(child, digest, transport, protocol = "codex") {
+  if (!["codex", "terminal"].includes(protocol)) throw new Error("Private protocol unavailable");
+  const hostSchema = protocol === "terminal" ? TerminalHostFrameSchema : ManagedHostFrameSchema;
+  const shimSchema = protocol === "terminal" ? TerminalShimFrameSchema : ManagedShimFrameSchema;
   // Avoid process.stdout's protected teardown. Close this owned stream AND inherited
   // FD1 (Node may duplicate low stdio FDs); neither belongs to native stdio/logging.
   const input = transport?.input ?? process.stdin;
@@ -47,7 +51,7 @@ export function attachManagedLaunchWrapper(child, digest, transport) {
     while ((newline = bytes.indexOf("\n")) >= 0 && !closed) {
       const line = bytes.slice(0, newline); bytes = bytes.slice(newline + 1);
       let frame;
-      try { frame = parseManagedFrame(ManagedHostFrameSchema, JSON.parse(line)); }
+      try { frame = parseManagedFrame(hostSchema, JSON.parse(line)); }
       catch (error) { if (!(error instanceof SyntaxError)) console.warn("[managed-launch] Invalid frame", error instanceof Error ? error.name : "UnknownError"); }
       if (!frame) { close(); return; }
       if (!ready) {
@@ -59,7 +63,7 @@ export function attachManagedLaunchWrapper(child, digest, transport) {
     }
   }
   child.on("message", (raw, handle) => {
-    const frame = parseManagedFrame(ManagedShimFrameSchema, raw);
+    const frame = parseManagedFrame(shimSchema, raw);
     if (closed) return;
     if (handle || !frame) { close(); return; }
     if (!shim) {
