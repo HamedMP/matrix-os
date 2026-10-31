@@ -118,3 +118,11 @@ export async function migratePreviewPairPublication(db: PlatformMigrationExecuto
     END IF;
   END $$`.execute(db);
 }
+
+export async function migratePreviewPairPublisher(db: PlatformMigrationExecutor): Promise<void> {
+  await migratePreviewPairPublication(db);
+  // Legacy pending journals remain retireable; admission requires a new pinned
+  // image receipt, never a guessed backfill for an earlier ambiguous effect.
+  await sql`ALTER TABLE preview_pair_cloud_intents ADD COLUMN IF NOT EXISTS image_sha256 TEXT
+    CHECK (image_sha256 ~ '^[a-f0-9]{64}$')`.execute(db);
+}

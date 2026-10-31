@@ -79,7 +79,7 @@ export function createPreviewPairCloudAuthority(options:{config:EnabledPreviewPa
         ||literal("MATRIX_FUNDED_AI_RUNTIME_ENABLED")!=="false"||literal("MATRIX_PREVIEW_RUNTIME_ACCESS_ENABLED")!=="false"
         ||!browserOrigin.startsWith(`https://${previewPairTag(pairId,generation,"ui")}---`)
         ||!apiOrigin.startsWith(`https://${previewPairTag(pairId,generation,"api")}---`))throw new PreviewPairUpstreamError();
-      return {pairId,generation,browserOrigin,apiOrigin,identityIssuer:config.identityIssuer,sourceSha:PreviewPairShaSchema.parse(literal("MATRIX_BUILD_SHA")),
+      return {pairId,generation,browserOrigin,apiOrigin,identityIssuer:config.identityIssuer,sourceSha:PreviewPairShaSchema.parse(literal("MATRIX_BUILD_SHA")),image:revision.containers[0]!.image,
         serviceAccount:revision.serviceAccount,clerkSecretRef:secret("CLERK_SECRET_KEY",config.clerkSecretRef),
         databaseSecretRef:secret("PLATFORM_DATABASE_URL",config.databaseSecretRef),ticketKeysSecretRef:secret("MATRIX_COLLABORATION_TICKET_KEYS",config.ticketKeysSecretRef),
         appDomainHosts:hosts,browserRevision:bindings[0],apiRevision:bindings[1],observedAt:new Date(options.now?.()??Date.now()).toISOString()};

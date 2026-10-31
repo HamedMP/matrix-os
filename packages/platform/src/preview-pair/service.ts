@@ -2,7 +2,8 @@ import { z } from "zod/v4";
 import { sql, type Selectable } from "kysely";
 import { PreviewPairActorSchema, PreviewPairIdSchema, PreviewPairPrSchema, PreviewPairShaSchema, PreviewPairGenerationSchema } from "@matrix-os/contracts/preview-pair";
 import { PreviewPairActionSchema, PreviewPairListSchema, PreviewPairReconcileSchema, PreviewPairStartSchema,
-  PreviewPairPrepareRequestSchema, PreviewPairRequestStopSchema } from "./api-contracts.js";
+  PreviewPairPrepareRequestSchema, PreviewPairRequestStopSchema, PreviewPairPublishSchema } from "./api-contracts.js";
+import { PreviewPairPublicationResultSchema, type PreviewPairPublisher } from "./publication-contract.js";
 import { preparePreviewPairCloudIntent, stopPreviewPairCloudIntent } from "./cloud-intents.js";
 import { createPreviewPairIntentRecovery, type PreviewPairIntentRetirement } from "./intent-recovery.js";
 import { PreviewPairConflictError, readPreviewPair, recordPreviewPairCurrency } from "./repository.js";
@@ -12,6 +13,7 @@ import { requestPreviewPairStop, claimPreviewPair } from "./lifecycle.js";
 import { requestPreviewPairUpdate } from "./update.js";
 import { refreshPreviewPairReadiness } from "./readiness.js";
 import { readPreviewPairReport } from "./reports.js";
+import { readPreviewPairRequestReport } from "./request-reports.js";
 import { verifiedPreviewPairReader, authorizePreviewPairReader, PreviewPairAccessError, type PreviewPairReader, type PreviewPairMaintainerCheck } from "./readers.js";
 import { createPreviewPairReconciler, type PreviewPairReconcilerDeps } from "./reconciler.js";
 import { previewPairOperation } from "./operation.js";
@@ -26,6 +28,7 @@ export interface PreviewPairServiceDeps extends PreviewPairReconcilerDeps {
   resolveController(input: { runId: number; pairId: string; pr: number; generation: number; sourceSha: string }, signal: AbortSignal): Promise<unknown>;
   isMaintainer: PreviewPairMaintainerCheck;
   retireCloudIntent?: PreviewPairIntentRetirement;
+  publication?: PreviewPairPublisher;
 }
 export function previewPairSummary(pair: Selectable<PreviewPairsTable>) {
   return { pairId: pair.pair_id, generation: pair.generation, revision: pair.revision, pr: pair.pr,
@@ -66,8 +69,8 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
       checked += 1;
       try { await reconciler.run(pair.pair_id, pair.generation, pair.revision); }
       catch (error: unknown) { failed += 1; console.warn("[preview-pair] reconcile deferred", error instanceof Error ? error.name : "UnknownError"); }
-  }
-  return { checked, failed };
+    }
+    return { checked, failed };
   }
   return {
     async prepareRequest(raw: unknown) {
@@ -85,12 +88,31 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
         pr: input.pr, requesterId, sourceSha: input.sourceSha, controllerRunId: input.controllerRunId,
         profileFingerprint: config.sourceProfileFingerprint }, now());
       return { pairId: row.pair_id, generation: row.generation, state: row.state, expiresAt: row.expires_at,
-        profileFingerprint: row.profile_fingerprint };
+        profileFingerprint: row.profile_fingerprint, buildContext: deps.publication?.context };
     },
     async stopRequest(pairId: string, raw: unknown) {
       const input = PreviewPairRequestStopSchema.parse(raw);
       const row = await stopPreviewPairCloudIntent(db, pairId, input.generation, input.controllerRunId, now());
       return { pairId: row.pair_id, generation: row.generation, state: row.state, expiresAt: row.expires_at };
+    },
+    async publishRequest(pairId: string, raw: unknown) {
+      if (!config.admissionEnabled || !config.sourceProfileFingerprint || !deps.publication) throw new PreviewPairAccessError(503);
+      PreviewPairIdSchema.parse(pairId); const input = PreviewPairPublishSchema.parse(raw);
+      const row = await db.executor.selectFrom("preview_pair_cloud_intents").selectAll().where("pair_id", "=", pairId)
+        .where("generation", "=", input.generation).where("controller_run_id", "=", String(input.controllerRunId)).executeTakeFirst();
+      if (!row || row.state !== "prepared" || Date.parse(row.expires_at) <= now()
+        || row.profile_fingerprint !== config.sourceProfileFingerprint) throw new PreviewPairConflictError();
+      const requesterId = await controller({ runId: input.controllerRunId, pairId, generation: input.generation, pr: row.pr, sourceSha: row.source_sha });
+      if (requesterId !== row.requester_id) throw new PreviewPairAccessError(403);
+      if (!await previewPairOperation(signal => deps.verifyFixtures(signal))) throw new PreviewPairAccessError(503);
+      const current = z.strictObject({ open: z.boolean(), requested: z.boolean(), sourceSha: PreviewPairShaSchema })
+        .parse(await previewPairOperation(signal => deps.inspectRequest({ pairId, generation: input.generation, pr: row.pr }, signal)));
+      if (!current.open || !current.requested || current.sourceSha !== row.source_sha) throw new PreviewPairConflictError();
+      const result = PreviewPairPublicationResultSchema.safeParse(await previewPairOperation(signal => deps.publication!.publish({
+        pairId, generation: input.generation, pr: row.pr, requesterId, sourceSha: row.source_sha, controllerRunId: input.controllerRunId,
+        profileFingerprint: row.profile_fingerprint, imageSha256: input.imageSha256 }, signal)));
+      if (!result.success) throw new PreviewPairAccessError(503);
+      return result.data;
     },
     async start(raw: unknown) {
       if (!config.admissionEnabled) throw new PreviewPairAccessError(503);
@@ -98,6 +120,9 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
       const requesterId = await controller({ runId: input.controllerRunId, pairId: input.pairId,
         pr: input.pr, generation: 1, sourceSha: input.sourceSha });
       if (!await previewPairOperation(signal => deps.verifyFixtures(signal))) throw new PreviewPairAccessError(503);
+      if (config.sourceProfileFingerprint && (!deps.publication || !await previewPairOperation(signal => deps.publication!.ready({
+        pairId: input.pairId, generation: 1, pr: input.pr, requesterId, sourceSha: input.sourceSha,
+        controllerRunId: input.controllerRunId, profileFingerprint: config.sourceProfileFingerprint! }, signal)))) throw new PreviewPairAccessError(503);
       const candidate = await verifyPreviewPairCandidate(input.candidate, { pairId: input.pairId, generation: 1,
         pr: input.pr, sourceSha: input.sourceSha }, deps.source, config, now());
       const pair = await admitPreviewPair(db, config, { pairId: input.pairId, pr: input.pr,
@@ -115,12 +140,21 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
       if (!config.admissionEnabled) throw new PreviewPairAccessError(503);
       const requesterId = await controller({ runId: input.controllerRunId, pairId, pr: pair.pr, generation: input.generation + 1, sourceSha: input.candidate.sourceSha });
       if (!await previewPairOperation(signal => deps.verifyFixtures(signal))) throw new PreviewPairAccessError(503);
+      if (config.sourceProfileFingerprint && (!deps.publication || !await previewPairOperation(signal => deps.publication!.ready({
+        pairId, generation: input.generation + 1, pr: pair.pr, requesterId, sourceSha: input.candidate.sourceSha,
+        controllerRunId: input.controllerRunId, profileFingerprint: config.sourceProfileFingerprint! }, signal)))) throw new PreviewPairAccessError(503);
       const candidate = await verifyPreviewPairCandidate(input.candidate, { pairId, generation: input.generation + 1,
         pr: pair.pr, sourceSha: input.candidate.sourceSha }, deps.source, config, now());
       return previewPairSummary(await requestPreviewPairUpdate(db, pairId, input.generation, input.revision, candidate, now(), input.controllerRunId, requesterId));
     },
     async report(pairId: string, reader: PreviewPairReader) {
+      // Choose by canonical existence, not by catching an authorization failure.
+      // An unauthorized pair read must never fall through to another resource.
+      if (!await readPreviewPair(db, pairId)) return readPreviewPairRequestReport(db, pairId, undefined, reader, maintainer, now());
       return readPreviewPairReport(db, pairId, reader, maintainer, now());
+    },
+    async requestReport(pairId: string, generation: number, reader: PreviewPairReader) {
+      return readPreviewPairRequestReport(db, pairId, generation, reader, maintainer, now());
     },
     async manifest(pairId: string, reader: PreviewPairReader) {
       let pair = await authorizePreviewPairReader(db, pairId, reader, maintainer, now());

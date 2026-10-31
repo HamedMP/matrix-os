@@ -6,6 +6,7 @@ import { createCustomerVpsProvisioningDispatcher } from "../customer-vps-provisi
 import type { EnabledPreviewPairConfig } from "./config.js";
 import type { PreviewPairServiceDeps } from "./service.js";
 import type { PreviewPairIntentRetirement } from "./intent-recovery.js";
+import type { PreviewPairPublisher } from "./publication-contract.js";
 import { createPreviewPairService } from "./service.js";
 import type { PreviewPairReadinessAdapters } from "./readiness.js";
 import type { PreviewPairAiActivationOptions } from "./activate-ai.js";
@@ -33,6 +34,7 @@ export interface PreviewPairRuntimeOptions {
   funding: Pick<PreviewPairAiActivationOptions, "config" | "relayOrigin"> & { repository?: PreviewPairAiActivationOptions["repository"] };
   retireCloud: Parameters<typeof createPreviewPairCleanup>[0]["retireCloud"];
   retireCloudIntent?: PreviewPairIntentRetirement;
+  publication?: PreviewPairPublisher;
 }
 
 /** Internal composition only: callers supply independently verified Preview
@@ -72,6 +74,7 @@ export function createPreviewPairRuntime(options: PreviewPairRuntimeOptions): { 
     mirror: async (_input, claim, signal) => { signal.throwIfAborted(); await reconcilePreviewPairProjection(db, target, claim, now); },
   });
   const service = createPreviewPairService({ db, config, ...options.authority, prepare, now, retireCloudIntent: options.retireCloudIntent,
+    publication: options.publication,
     verifyFixtures: async signal => { if (!ai) return false; await isolated(); signal.throwIfAborted(); return options.authority.verifyFixtures(signal); },
     async activate(input, claim, signal) {
       if (!config.admissionEnabled || !ai) return false;
