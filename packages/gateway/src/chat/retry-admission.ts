@@ -41,6 +41,11 @@ export async function admitCanonicalRetry(deps: RetryAdmissionOptions, principal
     if (!context) {
       throw new CanonicalChatOrchestrationError(safeError("run_not_found", "Run not found."), 404);
     }
+    if (context.latestRun.driverKind === "matrix_bot" && context.turn.clientRequestId.startsWith("req_routine_")) {
+      throw new CanonicalChatOrchestrationError(
+        safeError("run_unavailable", "Review this routine's status before requesting new work.", false, []), 409,
+      );
+    }
     try { await deps.agentContext?.revalidate(owner, chatId, context.latestRun.context); }
     catch (error: unknown) { return mapRepositoryError(error); }
     const catalog = await deps.catalog.getCatalog(principal, context.latestRun.selection);

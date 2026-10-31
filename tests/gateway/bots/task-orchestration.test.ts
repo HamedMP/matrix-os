@@ -24,7 +24,7 @@ import type { CanonicalProviderRunEvent } from "../../../packages/gateway/src/ch
 import { BOT, OWNER, createBotStateDatabase, insertChat } from "./bot-state-support.js";
 
 // Reset must release fixture closures instead of restoring an original implementation.
-const fixtureMock = <T extends (...args: never[]) => unknown>(implementation: T) => vi.fn<T>().mockImplementation(implementation);
+const fixtureMock = <Args extends unknown[], Result>(implementation: (...args: Args) => Result) => vi.fn<(...args: Args) => Result>().mockImplementation(implementation);
 
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -54,6 +54,7 @@ afterEach(async () => { vi.unstubAllEnvs(); try { await destroy(); } finally { v
 
 function setup(options: {
   homePath?: string;
+  routineTools?: boolean;
   inputHistory?: Parameters<typeof createBotTaskOrchestrator>[0]["inputHistory"];
   resolveGroupRoute?: Parameters<typeof createBotTaskOrchestrator>[0]["resolveGroupRoute"];
   worker?: (input: RunBotInput, context: { publish(seq: number, event: Record<string, unknown>): Promise<void> }) => Promise<unknown>;
@@ -112,7 +113,7 @@ function setup(options: {
   const transact = options.transact?.(baseTransact) ?? baseTransact;
   const interactions = createBotInteractionService({ transact });
   orchestrator = createBotTaskOrchestrator({
-    homePath: options.homePath, expectedOwnerId: OWNER,
+    homePath: options.homePath, expectedOwnerId: OWNER, routineTools: options.routineTools,
     assertSource: options.assertSource,
     inputHistory: options.inputHistory,
     bindings: createBotBindingsRepository(db),
@@ -210,14 +211,14 @@ describe("bot turns through the matrix_bot adapter", () => {
       return { route: ROUTE, accessSourceId: "owner_anthropic_key" as const, anthropicApi };
     });
     const { forwardBotInference } = await import("../../../packages/gateway/src/bots/broker-inference.js");
-    const fetcher = fixtureMock<typeof fetch>(async () => new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } }));
+    const fetcher = fixtureMock<Parameters<typeof fetch>, ReturnType<typeof fetch>>(async () => new Response("data: {}\n\n", { headers: { "content-type": "text/event-stream" } }));
     const authority = { observe: vi.fn(), resolve: vi.fn(), credential: fixtureMock(async () => "synthetic-owner-key"), revalidate: fixtureMock(async () => true) };
     const { adapter, admission, registry } = setup({ agent: { ...AGENT, selection }, resolveRoute, worker: async input => {
       const binding = registry.lookupRun({ ...input, runId: input.command.runId })!;
       expect(binding.anthropicApi).toEqual(anthropicApi);
       for (let frame = 0; frame < 2; frame++) {
         const result = await forwardBotInference({ version: 1, requestId: crypto.randomUUID(), runtimeHandle: RUNTIME,
-          executionGeneration: "3", action: "inference.messages", path: "/v1/messages", method: "POST", headers: {},
+          executionGeneration: "3", action: "inference.messages", path: "/v1/messages?beta=true", method: "POST", headers: {},
           body: JSON.stringify({ model: ROUTE.modelId, stream: true, messages: [] }) }, binding,
           modelId => registry.authorize({ ...binding, modelId, action: "inference.messages" }),
           { homePath: "/unused", matrixAnthropic: authority, fetchImpl: fetcher, lifetime: new AbortController().signal,
@@ -1036,7 +1037,7 @@ describe("group Pi run isolation", () => {
     const admitted = vi.fn(async () => ["PRIVATE OWNER FACT"]);
     const executorReady = vi.fn(async () => true);
     let orchestrator: ReturnType<typeof createBotTaskOrchestrator>;
-    const service = setup({ admitted, executorReady,
+    const service = setup({ admitted, executorReady, routineTools: true,
       authorizeGroup: async () => ({ scopeId: "scope-company", actorId: "user_member", ownerId: OWNER, resourceId: "chat_company1", resourceKind: "chat", organizationId: "org_company", membershipScopeId: "scope-company", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime", capability: "request_ai", role: "editor" }),
       resolveGroupRun: async () => ({ scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project", projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" }),
       worker: async (input) => {
@@ -1064,4 +1065,89 @@ describe("group Pi run isolation", () => {
     expect(events.at(-1)).toMatchObject({ type: "run.completed", outcome: "failed" });
     expect(service.admission.admit).not.toHaveBeenCalled();
   });
+});
+
+it("runs a scheduled turn on its claimed task with background inference admission",async()=>{
+  const existing=await createBotTasksRepository(db).create({ownerId:OWNER,botId:BOT,chatId:CHAT,now:AGENT.createdAt});
+  const selection={instanceId:"matrix_chatgpt_plan" as const,model:"fixture-scheduled",options:[{id:"accountId",value:"fixture-account"},{id:"grantRevision",value:"3"}]};
+  const subscription={accountId:"fixture-account",computerId:"fixture-computer",grantRevision:3,peerId:"f2b7ba8f-009b-4603-8967-c3e6bdfb276e"};
+  const resolveRoute=vi.fn(async()=>({accessSourceId:"matrix_chatgpt_plan" as const,subscription,route:{...ROUTE,api:"openai-responses" as const,modelId:selection.model}}));
+  const {orchestrator,admission}=setup({agent:{...AGENT,selection},resolveRoute});
+  const handle=orchestrator.start({ownerId:OWNER,chatId:CHAT,runId:"run_scheduled_fixture",text:"approved fixture",selection,signal:new AbortController().signal,backgroundTaskId:existing.taskId});
+  expect(await handle.result).toEqual({status:"completed"});
+  expect(await tasks()).toEqual([expect.objectContaining({run_id:"run_scheduled_fixture",status:"completed"})]);
+  expect(resolveRoute).toHaveBeenCalledWith(selection,"background");
+  expect(admission.admit).toHaveBeenCalledWith(expect.objectContaining({taskId:existing.taskId,requestClass:"background"}));
+});
+
+it.each(["completed","uncertain"] as const)("replaces a routine's canonical input and projects durable %s outcome",async(outcome)=>{
+ const task=await createBotTasksRepository(db).create({ownerId:OWNER,botId:BOT,chatId:CHAT,now:AGENT.createdAt});
+ const selection={instanceId:"matrix_chatgpt_plan" as const,model:"fixture-scheduled",options:[{id:"accountId",value:"fixture-account"},{id:"grantRevision",value:"3"}]};
+ const subscription={accountId:"fixture-account",computerId:"fixture-computer",grantRevision:3,peerId:"f2b7ba8f-009b-4603-8967-c3e6bdfb276e"};
+ const completeRun=vi.fn(async()=>outcome==="uncertain"?{status:"uncertain" as const}:undefined),prepareRun=vi.fn(async()=>({backgroundTaskId:task.taskId,text:"exact approved fixture",selection}));
+ const context=setup({agent:{...AGENT,selection},resolveRoute:async()=>({accessSourceId:"matrix_chatgpt_plan",subscription,route:{...ROUTE,api:"openai-responses",modelId:selection.model}}),worker:async input=>{
+  const spec=await context.orchestrator.runSource.loadRunSpec(context.registry.lookupRun({...input,runId:input.command.runId})!);expect(spec.turn).toMatchObject({text:"exact approved fixture"});return {runId:input.command.runId,status:"completed",toolActions:0,sessionRevision:1};
+ }});
+ const adapter=createMatrixBotChatProviderAdapter({orchestrator:context.orchestrator,stopRuntime:async()=>{},routines:{prepareRun,completeRun}});
+ const projected=(await collect(adapter.start(turn(undefined,"run_approved_fixture","unapproved forged text")))).at(-1);
+ if(outcome==="completed")expect(projected).toEqual({type:"run.completed",outcome:"completed"});
+ else expect(projected).toMatchObject({type:"run.completed",outcome:"failed",error:{retryable:false,recoveryActions:[]}});
+ expect(completeRun).toHaveBeenCalledWith(expect.objectContaining({runId:"run_approved_fixture"}),{status:"completed"});
+
+
+});
+
+it("reports an owned scheduled capacity refusal before starting a worker and reuses only that blocked task",async()=>{
+ const existing=await createBotTasksRepository(db).create({ownerId:OWNER,botId:BOT,chatId:CHAT,now:AGENT.createdAt});
+ const selection={instanceId:"matrix_chatgpt_plan" as const,model:"fixture-scheduled",options:[{id:"accountId",value:"fixture-account"},{id:"grantRevision",value:"3"}]};
+ const subscription={accountId:"fixture-account",computerId:"fixture-computer",grantRevision:3,peerId:"f2b7ba8f-009b-4603-8967-c3e6bdfb276e"};
+ const x=setup({agent:{...AGENT,selection},resolveRoute:async()=>({accessSourceId:"matrix_chatgpt_plan",subscription,route:{...ROUTE,api:"openai-responses",modelId:selection.model}}),admit:async()=>{throw new BotAdmissionError("capacity_exceeded");}});
+ const completeRun=vi.fn(async()=>{}),adapter=createMatrixBotChatProviderAdapter({orchestrator:x.orchestrator,stopRuntime:async()=>{},routines:{prepareRun:async()=>({backgroundTaskId:existing.taskId,selection,text:"approved"}),completeRun}});
+ await collect(adapter.start(turn(undefined,"run_capacity_first","approved")));
+ expect(completeRun).toHaveBeenCalledWith(expect.anything(),{status:"blocked",blockedReason:"capacity_unavailable",retryableBeforeDispatch:true});
+ expect(x.commands).toEqual([]);
+ const y=setup({agent:{...AGENT,selection},resolveRoute:async()=>({accessSourceId:"matrix_chatgpt_plan",subscription,route:{...ROUTE,api:"openai-responses",modelId:selection.model}})});
+ const handle=y.orchestrator.start({ownerId:OWNER,chatId:CHAT,runId:"run_capacity_second",text:"approved",selection,backgroundTaskId:existing.taskId,signal:new AbortController().signal});
+ expect(await handle.result).toEqual({status:"completed"});
+ expect(await tasks()).toEqual([expect.objectContaining({run_id:"run_capacity_second",status:"completed"})]);
+ expect((await createBotTasksRepository(db).get({ownerId:OWNER,taskId:existing.taskId}))?.status).toBe("completed");
+});
+
+
+it.each([false, true])("exposes routine tools only on personal interactive runs; background=%s", async background => {
+  const selection = { instanceId: "matrix_chatgpt_plan", model: "fixture-scheduled", options: [{ id: "accountId", value: "fixture-account" }, { id: "grantRevision", value: "3" }] };
+  const subscription = { accountId: "fixture-account", computerId: "fixture-computer", grantRevision: 3, peerId: "f2b7ba8f-009b-4603-8967-c3e6bdfb276e" };
+  const task = background ? await createBotTasksRepository(db).create({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: AGENT.createdAt }) : undefined;
+  const context = setup({ routineTools: true, agent: { ...AGENT, selection },
+    resolveRoute: async () => ({ accessSourceId: "matrix_chatgpt_plan", subscription, route: { ...ROUTE, api: "openai-responses", modelId: selection.model } }),
+    worker: async input => {
+      const binding = context.registry.lookupRun({ ...input, runId: input.command.runId })!;
+      const spec = await context.orchestrator.runSource.loadRunSpec(binding);
+      expect(spec.capabilities.includes("routine.propose")).toBe(!background);
+      expect(spec.capabilities.includes("routine.control")).toBe(!background);
+      return { runId: input.command.runId, status: "completed", toolActions: 0, sessionRevision: 1 };
+    },
+  });
+  const handle = context.orchestrator.start({ ownerId: OWNER, chatId: CHAT, runId: `run_combo_${background}`, text: "Synthetic exact fixture",
+    selection, signal: new AbortController().signal, ...(task ? { backgroundTaskId: task.taskId } : {}) });
+  expect(await handle.result).toEqual({ status: "completed" });
+});
+
+it("refuses a group background task before authority routing, task mutation or worker admission", async () => {
+  const chatId = "chat_group_background";
+  await insertChat(db, chatId);
+  await db.insertInto("bot_chat_bindings").values({ owner_id: OWNER, bot_id: BOT, chat_id: chatId, kind: "group", created_at: AGENT.createdAt, removed_at: null }).execute();
+  const task = await createBotTasksRepository(db).create({ ownerId: OWNER, botId: BOT, chatId, now: AGENT.createdAt });
+  const before = await db.selectFrom("bot_tasks").selectAll().orderBy("task_id").execute();
+  const resolveGroupRun = vi.fn(async () => ({ scopeId: "scope-company", actorId: "user_member", executionRoot: { kind: "project", projectId: "project_company" }, executionRootFingerprint: "f".repeat(64), sessionGeneration: "1" }));
+  const context = setup({ routineTools: true, resolveGroupRun,
+    authorizeGroup: async () => ({ scopeId: "scope-company", actorId: "user_member", ownerId: OWNER, resourceId: chatId, resourceKind: "chat", organizationId: "org_company", membershipScopeId: "scope-company", authEpoch: 4, authorityGeneration: 1, authorityRuntimeId: "owner-runtime", capability: "request_ai", role: "editor" }),
+  });
+  const handle = context.orchestrator.start({ ownerId: OWNER, chatId, runId: "run_group_background", text: "Synthetic denied background request",
+    signal: new AbortController().signal, backgroundTaskId: task.taskId });
+  expect(await handle.result).toEqual({ status: "failed" });
+  expect(resolveGroupRun).not.toHaveBeenCalled();
+  expect(context.admission.admit).not.toHaveBeenCalled();
+  expect(context.commands).toEqual([]);
+  expect(await db.selectFrom("bot_tasks").selectAll().orderBy("task_id").execute()).toEqual(before);
 });
