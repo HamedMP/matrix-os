@@ -1,3 +1,4 @@
+import { nativeCodexRoutineAdmission } from "./chat/codex-routine-source.js";
 import { nativeBrowserExecution } from "./chat/native-browser-execution-context.js";
 import { createSessionStartGuard, SessionStartBusyError, type CleanSessionStartFailure, type SessionStartScope } from "./session-start-guard.js";
 import { markSessionStartClean, markSessionStopConfirmed } from "./coding-agents/session-start-cleanup-proof.js";
@@ -455,6 +456,7 @@ export function createAgentSessionManager(options: {
       let launch;
       try {
         const browser = request.agent === "codex" ? nativeBrowserExecution(request.ownerId ?? "") : undefined;
+        const routineSource = request.agent === "codex" && request.runtimePreference === "background" ? nativeCodexRoutineAdmission(request.ownerId ?? "") : undefined;
         launch = request.kind === "agent"
           ? options.agentLauncher.buildLaunch({
             agent: request.agent!,
@@ -469,7 +471,8 @@ export function createAgentSessionManager(options: {
             approvalPolicy: toAgentApprovalPolicy(request.approvalPolicy),
             ...(request.agent === "codex"
               ? { providerEventPath: codexProviderEventPath(homePath, sessionId),
-                ...(browser ? { codexBrowserAttemptId: browser.attemptId } : {}) }
+                ...(browser ? { codexBrowserAttemptId: browser.attemptId } : {}),
+                ...(routineSource ? { codexRoutinePrivate: true } : {}) }
               : {}),
           })
           : { command: "bash", args: [], cwd, env: {} };
@@ -505,6 +508,7 @@ export function createAgentSessionManager(options: {
       if (request.runtimePreference === "background") {
         const started = await startBackgroundSession({
           runtime: lockedRuntime ?? options.backgroundRuntime!, session, launch,
+          ...(request.agent === "codex" && nativeCodexRoutineAdmission(request.ownerId ?? "") ? { privateControl: nativeCodexRoutineAdmission(request.ownerId ?? "")!.launch(sessionId) } : {}),
           persist: (value) => writeSession(homePath, value),
         });
         if (started.ok) return { ok: true, status: 201, session: decorateSession(started.session) };
