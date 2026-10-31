@@ -69,7 +69,7 @@ export function createTerminalRoutineSource(options: {
   }
   function end() {
     if (controller.signal.aborted) return;
-    controller.abort(); clearInterval(monitor); clearTimeout(expiry); options.signal.removeEventListener("abort", end);
+    controller.abort(); invocations.clear(); clearInterval(monitor); clearTimeout(expiry); options.signal.removeEventListener("abort", end);
     if (registration) observe(registration.then(port => port.revoke()));
     for (const invoker of invokers) observe(invoker.close());
   }
@@ -97,6 +97,8 @@ export function createTerminalRoutineSource(options: {
         if (!live() || actionSignal.aborted) return unavailable(operation);
         invoker = createFixedNativeRoutineCliInvoker({ binPath: options.binPath, endpoint: options.endpoint, cwd: options.homePath, homePath: options.homePath, timeoutMs: 120000,
           authorize(input) {
+            // Recheck synchronously at insertion: concurrent process/registration awaits must not overbook.
+            if (!live() || actionSignal.aborted || invocations.size >= 256) return Promise.resolve(false);
             invocationId = input.invocationId; invocations.set(invocationId, { digest: routineActionHash(input.operation), writer: observed, signal: actionSignal });
             return port.authorize(input);
           }, issue: port.issue, cancel: port.cancel });
