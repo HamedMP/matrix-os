@@ -52,7 +52,7 @@ const ExecuteSchema = z.object({ token: z.string().max(128).optional(), operatio
 const mutation = (operation: RoutineCliOperation): operation is RoutineCliMutationOperation => !["list", "show", "request"].includes(operation.operation);
 const actionFor = (operation: RoutineCliOperation): RoutineCliAction => operation.operation === "propose" ? "propose" : mutation(operation) ? "control" : "read";
 /** Only strict bounded JSON intent is traversed, never transactions/repositories or caller resources. */
-function freezeIntent<T>(value: T): T {
+export function freezeIntent<T>(value: T): T {
   if (value !== null && typeof value === "object") {
     for (const child of Object.values(value)) freezeIntent(child);
     Object.freeze(value);

@@ -141,6 +141,17 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
   });
   return {
     validatePinnedWithin,
+    /** Private accepted-task port: caller must prove the immutable task/run claim first. This validates
+     * current owner/target policy only; it neither revives the origin nor authorizes an unclaimed intent. */
+    validateClaimedTargetWithin: (trx: Transaction<OwnerBotDatabase>, snapshot: RoutineCliResolvedTarget): Promise<RoutineCliResolvedTarget> => routineCliBoundary(async () => {
+      if (!trx.isTransaction) throw new RoutineCliError("unavailable");
+      const configured = scope(), target = RoutineCliScopeSchema.extend({ botId: RoutineCliRememberTargetSchema.shape.botId,
+        chatId: RoutineCliRememberTargetSchema.shape.chatId, bindingCreatedAt: z.iso.datetime({ offset: true }),
+        preferenceRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict().parse(snapshot);
+      if (target.ownerId !== configured.ownerId || target.computerId !== configured.computerId) throw new RoutineCliError("permission_denied");
+      const live = await validateTarget(trx, configured, target, "propose");
+      return { ...configured, ...live, preferenceRevision: target.preferenceRevision };
+    }),
     remember: (principal: RequestPrincipal, value: z.infer<typeof RoutineCliRememberTargetSchema>): Promise<RoutineCliTargetPreference> => routineCliBoundary(async () => {
       const configured = requireOwner(principal), input = RoutineCliRememberTargetSchema.parse(value);
       return deps.db.transaction().execute(async trx => {

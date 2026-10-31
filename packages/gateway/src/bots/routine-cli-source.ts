@@ -158,6 +158,25 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
     }
   });
   return {
+    /** Private handoff check against an ALREADY consumed host invocation, not token reuse/issuance.
+     * Token expiry/cleanup is irrelevant; original source expiry/revoke/action policy still fences claim.
+     * Retain this gate through the real task/run claim and propagate rejection out of its transaction. */
+    validateAcceptedWithin: <T>(trx: Transaction<OwnerBotDatabase>, input: { source: RoutineCliSourceContext; invocation: RoutineCliVerifiedInvocation; operation: RoutineCliOperation }, work: () => Promise<T>): Promise<T> => routineCliBoundary(async () => {
+      const source = scopedContext(input.source), operation = RoutineCliOperationSchema.parse(input.operation);
+      const reference = RefSchema.parse({ sourceId: input.invocation.sourceId });
+      const record = await lockReference(trx, reference), digest = hash(JSON.stringify(operation));
+      if (sourceId(source) !== reference.sourceId || !sameHash(contextHash(source), record.context_hash)
+        || !sameHash(input.invocation.operationDigest, digest)) throw new RoutineCliError("permission_denied");
+      const cap = await trx.selectFrom("routine_cli_capabilities").selectAll().where("owner_id", "=", source.ownerId)
+        .where("computer_id", "=", source.computerId).where("source_id", "=", reference.sourceId)
+        .where("invocation_id", "=", z.uuid().parse(input.invocation.invocationId)).forUpdate().executeTakeFirst();
+      if (!cap?.consumed_at || !sameHash(cap.operation_digest, digest)) throw new RoutineCliError("permission_denied");
+      const verified = Object.freeze({ sourceId: record.source_id, invocationId: cap.invocation_id, operationDigest: cap.operation_digest });
+      await liveRecord(record, trx, actionFor(operation), operation, verified);
+      const result = await work();
+      await liveRecord(record, trx, actionFor(operation), operation, verified);
+      return result;
+    }),
     registerWithin,
     register: (source: RoutineCliSourceContext) => routineCliBoundary(() => deps.db.transaction().execute(trx => registerWithin(trx, source))),
     revokeWithin,

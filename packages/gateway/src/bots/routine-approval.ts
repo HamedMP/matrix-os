@@ -37,82 +37,85 @@ export function createBotRoutineApprovals(deps: {
       return false;
     }
   }
-  return {
-    async propose(binding: BotRuntimeBinding, raw: unknown) {
-      const proposal = BotRoutineProposalSchema.parse(raw);
-      if (binding.requestClass !== "interactive" || binding.accessSourceId !== "matrix_chatgpt_plan" || !binding.subscription || proposal.selection.model !== binding.route.modelId) throw new BotStateError("invalid_input");
-      const source = RoutineAuthorizationSchema.parse({
-        accountId: binding.subscription.accountId,
-        computerId: binding.subscription.computerId,
-        grantRevision: binding.subscription.grantRevision,
-        definitionRevision: await deps.definitionRevision(binding.ownerId, binding.botId)
-      });
-      if (!(await sourceMatches(binding.ownerId, proposal, source))) throw new BotStateError("invalid_input");
-      const preview = JSON.stringify({
-        proposal,
-        source
-      });
-      if (preview.length > BOT_ROUTINE_APPROVAL_PREVIEW_LIMIT || Buffer.byteLength(preview) > BOT_ROUTINE_APPROVAL_PREVIEW_LIMIT) throw new BotStateError("too_large");
-      const at = now().toISOString(),
-        expiresAt = new Date(Date.parse(at) + 86400000).toISOString();
-      return deps.transact(binding.ownerId, async tx => {
-        if (!(await hasLiveRoutineChat(tx.db, binding.ownerId, binding.botId, binding.chatId))) throw new BotStateError("not_found");
-        const task = await createBotTasksRepository(tx.db).get({
-          ownerId: binding.ownerId,
-          taskId: binding.taskId
-        }, tx.db);
-        if (!task || task.botId !== binding.botId || task.chatId !== binding.chatId || task.runId !== binding.runId || task.status !== "running") throw new BotStateError("not_found");
-        const argsHash = routineApprovalDigest(proposal, source),
-          policyRevision = source.grantRevision;
-        const {
-          interaction
-        } = await createBotInteractionsRepository(tx.db).create({
-          ownerId: binding.ownerId,
-          botId: binding.botId,
-          chatId: binding.chatId,
-          taskId: binding.taskId,
+  async function proposeWithin(tx: BotStateTransaction, binding: BotRuntimeBinding, raw: unknown) {
+    if (!tx.db.isTransaction) throw new BotStateError("invalid_input");
+    const proposal = BotRoutineProposalSchema.parse(raw);
+    if (binding.requestClass !== "interactive" || binding.accessSourceId !== "matrix_chatgpt_plan" || !binding.subscription || proposal.selection.model !== binding.route.modelId) throw new BotStateError("invalid_input");
+    const source = RoutineAuthorizationSchema.parse({
+      accountId: binding.subscription.accountId,
+      computerId: binding.subscription.computerId,
+      grantRevision: binding.subscription.grantRevision,
+      definitionRevision: await deps.definitionRevision(binding.ownerId, binding.botId)
+    });
+    if (!(await sourceMatches(binding.ownerId, proposal, source))) throw new BotStateError("invalid_input");
+    const preview = JSON.stringify({
+      proposal,
+      source
+    });
+    if (preview.length > BOT_ROUTINE_APPROVAL_PREVIEW_LIMIT || Buffer.byteLength(preview) > BOT_ROUTINE_APPROVAL_PREVIEW_LIMIT) throw new BotStateError("too_large");
+    const at = now().toISOString(),
+      expiresAt = new Date(Date.parse(at) + 86400000).toISOString();
+      if (!(await hasLiveRoutineChat(tx.db, binding.ownerId, binding.botId, binding.chatId))) throw new BotStateError("not_found");
+      const task = await createBotTasksRepository(tx.db).get({
+        ownerId: binding.ownerId,
+        taskId: binding.taskId
+      }, tx.db);
+      if (!task || task.botId !== binding.botId || task.chatId !== binding.chatId || task.runId !== binding.runId || task.status !== "running") throw new BotStateError("not_found");
+      const argsHash = routineApprovalDigest(proposal, source),
+        policyRevision = source.grantRevision;
+      const {
+        interaction
+      } = await createBotInteractionsRepository(tx.db).create({
+        ownerId: binding.ownerId,
+        botId: binding.botId,
+        chatId: binding.chatId,
+        taskId: binding.taskId,
+        kind: "approval",
+        payload: {
           kind: "approval",
-          payload: {
-            kind: "approval",
-            tool: "routine.activate",
-            argsDigest: argsHash,
-            audience: "direct",
-            preview,
-            policyRevision
-          },
-          responderActorId: binding.ownerId,
-          blocking: true,
-          expiresAt,
-          now: at
-        }, tx.db);
-        await createBotApprovalsRepository(tx.db).create({
-          ownerId: binding.ownerId,
-          approvalId: interaction.interactionId,
-          botId: binding.botId,
-          taskId: binding.taskId,
-          runId: binding.runId,
           tool: "routine.activate",
-          argsHash,
-          account: source.accountId,
+          argsDigest: argsHash,
           audience: "direct",
-          policyRevision,
-          expiresAt,
-          now: at
-        }, tx.db);
-        await tx.publish(binding.chatId, "interaction.requested", {
-          interactionId: interaction.interactionId,
-          chatId: binding.chatId,
-          agentId: binding.botId,
-          kind: "approval",
-          blocking: true,
-          expiresAt,
-          revision: interaction.revision
-        });
-        return {
-          interactionId: interaction.interactionId,
-          status: "pending" as const
-        };
+          preview,
+          policyRevision
+        },
+        responderActorId: binding.ownerId,
+        blocking: true,
+        sourceRunId: binding.runId,
+        expiresAt,
+        now: at
+      }, tx.db);
+      await createBotApprovalsRepository(tx.db).create({
+        ownerId: binding.ownerId,
+        approvalId: interaction.interactionId,
+        botId: binding.botId,
+        taskId: binding.taskId,
+        runId: binding.runId,
+        tool: "routine.activate",
+        argsHash,
+        account: source.accountId,
+        audience: "direct",
+        policyRevision,
+        expiresAt,
+        now: at
+      }, tx.db);
+      await tx.publish(binding.chatId, "interaction.requested", {
+        interactionId: interaction.interactionId,
+        chatId: binding.chatId,
+        agentId: binding.botId,
+        kind: "approval",
+        blocking: true,
+        expiresAt,
+        revision: interaction.revision
       });
+      if (await deps.definitionRevision(binding.ownerId, binding.botId) !== source.definitionRevision
+        || !await sourceMatches(binding.ownerId, proposal, source)) throw new BotStateError("invalid_input");
+      return { interactionId: interaction.interactionId, status: "pending" as const };
+  }
+  return {
+    proposeWithin,
+    async propose(binding: BotRuntimeBinding, raw: unknown) {
+      return deps.transact(binding.ownerId, tx => proposeWithin(tx, binding, raw));
     },
     async decide(tx: BotStateTransaction, interaction: BotInteractionRecord, decision: "approve" | "deny") {
       const payload = interaction.payload as Record<string, unknown>;
