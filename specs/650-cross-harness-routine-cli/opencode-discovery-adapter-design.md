@@ -1,6 +1,6 @@
 # Proposed OpenCode exclusive custom-tool discovery adapter
 
-Status: **proposed native adaptation, not implemented or qualified**. Task6a's Matrix host/source/CLI path is fixture-qualified; the offered ordinary OpenCode Chat routine path remains unfinished. Production routine bootstrap returns unavailable and preserves ordinary Chat. No native binary build, install, upstream PR, contact, account call or permission change is authorized by this document.
+Status: **deferred by the owner on 2026-11-01; not implemented or qualified**. Continue other entries; do not implement these native API changes under the current task scope. Task6a's Matrix host/source/CLI path is fixture-qualified; the offered ordinary OpenCode Chat routine path remains unfinished. Production routine bootstrap returns unavailable and preserves ordinary Chat. No native binary build, install, upstream PR, contact, account call or permission change is authorized by this document.
 
 ## Concrete incompatibility
 

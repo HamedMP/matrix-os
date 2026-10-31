@@ -70,7 +70,7 @@ Own existing adapter lifecycle seams; per-turn source capability; actual CLI chi
 ### Task 6: OpenCode, native Pi and managed Pi
 
 - [x] Task6aH OpenCode host/source/fixed CLI preparation: actual canonical admission, held descriptor and observed-call correlation to CLI/Hono/PostgreSQL. Initial25PG/53unit/47shared-regression checks and gateway types pass; review then fixed terminal-call authority and FD/SSE ordering. Final15 affected units,34 required PG,5 selected legacy contracts, scoped types/lint pass; scoped rereview is clean. Native bootstrap deliberately remains unavailable.
-- [ ] Task6aN native OpenCode discovery/offline dependency readiness and stable public callID adaptation: minimal design awaits confirmation; actual native API/home/auth/session/result/packaging qualification and user support remain unfinished.
+- [ ] DEFERRED BY OWNER (2026-11-01): Task6aN native OpenCode exclusive discovery/offline dependency readiness and stable public callID adaptation. Do not implement this native API change in the current scope; host preparation remains and native bootstrap stays unavailable. Continue the other entries.
 - [x] Task6b native Pi1.0.0: actual admitted source/held FD/current native-call correlation to shared CLI/Hono/PG;33 PG,64 affected units,18 resource/FD and39 shared regressions pass with strict scoped types. Independent review fixed pre-lease staging failure/orphan cleanup with4 focused cases; scoped rereview clean. Four separate actual native production-extension/API/FD/result/cancel/discovery probes pass with a fixed local model fixture. Combined native-to-Matrix, real account, systemd/platform/build/full gates remain open;0.99.2 routine support is unqualified.
 - [x] Task6c managed Matrix Pi uses its actual canonical run/registry binding and pinned AgentTool consumer through the typed Unix broker/shared CLI, with no invented BotTask. Initial24 PG/64+65 affected regressions pass; review-driven live framing/cancellation repair passes8 selected PG/29 transport-schema/legacy-stream cases and scoped types. Independent scoped rereview is clean. Actual supervisor/compiled worker/profile/account/package/systemd/full gates remain open.
 
@@ -83,6 +83,9 @@ Own native owned-tool extensions and typed worker-host fixed CLI invocation; kee
 Own server-managed launch/session/incarnation, safe nonserialized capability channel and actual Hermes launcher/readiness additions; no agent hint as authentication.
 - [ ] Fail five launch cases, secret argv/startup/history exposure, restore/reincarnation and revoked-source use.
 - [ ] Implement existing-launch integration, test/review/commit.
+- [x] Task7a: OS per-writer proof, PTY/broker and CLI client foundation reviewed;53 targeted tests/types/lint pass and actual Linux component probes pass. Two minor cap/cleanup and client coverage findings are mandatory first work in7b. Production Terminal source remains unavailable; component evidence is distinct from authority/systemd/package qualification.
+- [ ] Task7b: retained hosted launch/private protocol, I/O attach/resize and immutable full runtime closure with backward-compatible generation/GC.
+- [ ] Task7c: authenticated canonical Terminal admission, five real launchers/readiness and actual source/CLI/backend authority integration.
 
 ### Task 8: Integration evidence, Draft publication and docs
 
