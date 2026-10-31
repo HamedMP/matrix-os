@@ -46,6 +46,7 @@ pnpm --filter '@matrix-os/integrations-mcp' build
 pnpm --filter '@matrix-os/scope-runtime' build
 pnpm --filter '@matrix-os/bot-runtime' build
 pnpm --filter '@matrix-os/gateway' build
+test -f "$ROOT_DIR/packages/gateway/dist/chat/hermes-routine-tool.py"
 test -f "$ROOT_DIR/packages/gateway/dist/collaboration/filesystem-identity.node"
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
 cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"

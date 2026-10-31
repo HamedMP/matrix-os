@@ -18,21 +18,22 @@ import { proposalFixture } from "./routine-cli-proposal-support.js";
 import { createRealBotStateDatabase, OWNER } from "./bot-state-support.js";
 import { proposal, scope, TARGET_A } from "./routine-cli-request-support.js";
 import type { CanonicalChatProviderAdapter, CanonicalProviderRunEvent } from "../../../packages/gateway/src/chat/provider-adapter.js";
-export async function claudeFixture(options: { dbPlugin?: KyselyPlugin; sourceDriver?: "claude_code" | "codex" } = {}) {
+export async function claudeFixture(options: { dbPlugin?: KyselyPlugin; sourceDriver?: "claude_code" | "codex" | "hermes" } = {}) {
   const url = process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL; if (!url) throw new Error("MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL required");
   let delegate: ReturnType<typeof createClaudeChatProviderAdapter>;
   let sourceAdapter: CanonicalChatProviderAdapter | undefined;
   const sourceDriver = options.sourceDriver ?? "claude_code", sourceInstance = sourceDriver + "_default";
+  const sourceModel = sourceDriver === "hermes" ? "fixture:fixture-model" : "fixture-model";
   const sourceEvents: CanonicalProviderRunEvent[] = [];
   const data = await createRealBotStateDatabase(url), db = options.dbPlugin ? data.db.withPlugin(options.dbPlugin) : data.db;
   const f = await proposalFixture(db, vi.fn, {
     adapters: [{ driverKind: sourceDriver, stateSchemaVersion: 1, parseState: value => value, serializeState: value => value,
       async *start(input) { for await (const event of (sourceAdapter ?? delegate).start(input)) { sourceEvents.push(event); yield event; } },
       async *resume(input) { const adapter = sourceAdapter ?? delegate; if (!adapter.resume) throw new Error("Fixture resume unsupported"); for await (const event of adapter.resume(input)) { sourceEvents.push(event); yield event; } },
-      cancel: input => (sourceAdapter ?? delegate).cancel!({ owner: input.owner, chatId: input.chatId, runId: input.runId }),
+      cancel: async input => { await (sourceAdapter ?? delegate).cancel?.({ owner: input.owner, chatId: input.chatId, runId: input.runId }); },
     }],
     catalog: { revision: "fixture", drivers: [{ kind: sourceDriver, displayName: "Claude", adapterVersion: "1", capabilityClass: "coding_agent" }], instances: [{ id: sourceInstance, driverKind: sourceDriver, displayName: "Claude", availability: "available", workspaceRequirement: "project_optional", catalogRevision: "fixture",
-      models: [{ id: "fixture-model", displayName: "Fixture", availability: "available", capabilities: ["tools"], supportsVision: false, supportsToolUse: true }], options: [], skills: [], commands: [], setupActions: [],
+      models: [{ id: sourceModel, displayName: "Fixture", availability: "available", capabilities: ["tools"], supportsVision: false, supportsToolUse: true }], options: [], skills: [], commands: [], setupActions: [],
       supports: { rootChat: true, resume: sourceDriver === "codex", cancellation: true, steering: "none", attachments: [], tools: [], approvals: true, userInput: false, worktrees: "none", resources: [], interactionModes: ["default", "review"], permissionModes: ["full_access"] } }] },
   }); f.state.clock = new Date().toISOString();
   const secret = "fixture-platform-claude-consent", handle = "computer-one", machineId = "machine_current";
@@ -71,7 +72,7 @@ export async function claudeFixture(options: { dbPlugin?: KyselyPlugin; sourceDr
     async start(chatId: string, modes = { permission: "full_access", interaction: "default" }) {
       const owner = { type: "personal" as const, ownerId: OWNER };
       await f.chats.create(owner, { id: chatId, clientRequestId: `req_create_${chatId}`, title: "Fixture" });
-      return f.canonical.admitTurn(f.principal, owner, chatId, { clientRequestId: `req_turn_${chatId}`, baseRevision: 0, parts: [{ type: "text", text: "Fixture" }], selection: { instanceId: sourceInstance, model: "fixture-model" }, permissionMode: modes.permission, interactionMode: modes.interaction });
+      return f.canonical.admitTurn(f.principal, owner, chatId, { clientRequestId: `req_turn_${chatId}`, baseRevision: 0, parts: [{ type: "text", text: "Fixture" }], selection: { instanceId: sourceInstance, model: sourceModel }, permissionMode: modes.permission, interactionMode: modes.interaction });
     },
     httpCalls: () => httpCalls,
     setSourceAdapter: (value: CanonicalChatProviderAdapter) => { sourceAdapter = value; },

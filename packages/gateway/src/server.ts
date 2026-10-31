@@ -1638,6 +1638,7 @@ export async function createGateway(config: GatewayConfig) {
           () => Boolean(botServices?.managedAdapter && scopeRuntimeHost?.available)) : sourceCatalog;
     });
     const canonicalAdapters = createInitialChatAdapters({ homePath, dispatcher, toolOutputKey, rpc: openClawRpc,
+      ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
       ...(jevInboxRuntime ? { jev: jevInboxRuntime.launch } : {}),
       ...(sharedBrowserRuntime ? { sharedBrowser: sharedBrowserRuntime.broker } : {}), gatewayPort: port });
     if (codingAgentProviders.some((provider) => provider.providerId === "claude")) {

@@ -9,12 +9,14 @@ import type { SharedBrowserBroker } from "../shared-browser/broker.js";
 export function createInitialChatAdapters(options:{
   homePath:string;dispatcher:Parameters<typeof createKernelChatProviderAdapter>[0]["dispatcher"];toolOutputKey?:Buffer;rpc:OpenClawRpcClient;
   jev?:Parameters<typeof createHermesChatProviderAdapter>[0]["jev"];
+  routineCli?:Parameters<typeof createHermesChatProviderAdapter>[0]["routineCli"];
   sharedBrowser?:SharedBrowserBroker;gatewayPort:number;
 }):CanonicalChatProviderAdapter[] {
   const shared=options.sharedBrowser?{sharedBrowser:options.sharedBrowser,sharedBrowserGatewayPort:options.gatewayPort}:{};
   return[
     createKernelChatProviderAdapter({dispatcher:options.dispatcher}),
     createHermesChatProviderAdapter({homePath:options.homePath,toolOutputKey:options.toolOutputKey,
+      ...(options.routineCli?{routineCli:options.routineCli}:{}),
       ...(options.jev?{jev:options.jev}:{}),...shared}),
     createOpenClawChatProviderAdapter({rpc:options.rpc,homePath:options.homePath,...shared}),
   ];
