@@ -2,6 +2,8 @@ import { createCodingOutputBuffer } from "./coding-output-buffer.js";
 import { codingPreviewOmissionNotice, createCodingPreviewPublisher } from "./coding-preview-publisher.js";
 import { CODING_PREPARATION_TIMEOUT_MS, explicitCodingRunTimeout, remainingCodingRunTimeout } from "./coding-run-lifetime.js";
 import { createPiInputControl } from "./pi-input-control.js";
+import { createPiRoutinePrompt, preparePiRoutineSource } from "./pi-routine-launch.js";
+import type { Duplex } from "node:stream";
 import { createPiOwnedExtension } from "./pi-owned-extension.js";
 import { createPiRunCollector, type PiCollectedRun } from "./pi-run-collector.js";
 import { execFile } from "node:child_process";
@@ -38,8 +40,8 @@ import type {
   CodingAgentProviderEventPublisher,
 } from "./provider-adapter.js";
 
-/** Pi v0.81.0 RPC: stdin prompts and dialog answers preserve the native session.
- * Only the OS-owned ask_user extension is loaded; owner extensions stay disabled.
+/** Native Pi RPC: stdin prompts and dialog answers preserve the native session.
+ * Only explicit OS-owned extensions are loaded; owner extensions stay disabled.
  */
 
 const DEFAULT_KILL_GRACE_MS = 2_000;
@@ -59,12 +61,14 @@ const PiResumeStateSchema = z.object({
 export interface PiSpawnOptions {
   cwd: string;
   env: Record<string, string>;
+  routineFd?: boolean;
 }
 
 export interface PiChildProcess {
   stdin?: { write(line: string): boolean; on?(event: "error", listener: (error: Error) => void): void };
-  stdout: { on(event: "data", listener: (chunk: Buffer) => void): void };
+  stdout: { on(event: "data", listener: (chunk: Buffer) => void): void; on(event: "end" | "close", listener: () => void): void };
   stderr: { on(event: "data", listener: (chunk: Buffer) => void): void };
+  stdio?: readonly unknown[];
   once(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
   once(event: "error", listener: (err: Error) => void): void;
   kill(signal: NodeJS.Signals): void;
@@ -111,7 +115,7 @@ const defaultSpawnFn: PiSpawnFn = (command, args, options) =>
   spawnIsolatedProviderProcess(command, args, {
     cwd: options.cwd,
     env: options.env,
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: options.routineFd ? ["pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
   });
 
 type PiCredentialResolution =
@@ -389,14 +393,17 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
     });
     const remainingRunTimeoutMs = remainingCodingRunTimeout(runDeadline, credentialLaunch?.maxRunMs);
 
-    const extension = await createPiOwnedExtension();
+    const routineSource = await preparePiRoutineSource({ command, cwd: input.cwd, env, runCommand });
+    const extension = await createPiOwnedExtension({ routines: routineSource !== undefined });
+    if (extension.routinePath) { args[args.indexOf("--tools") + 1] = [...PI_READ_ONLY_TOOLS, "matrix_routines"].join(","); args.push("--extension", extension.routinePath); }
     args.push("--extension", extension.path);
     try {
     return await new Promise<PiRunResult>((resolve) => {
       let proc: PiChildProcess;
       try {
-        proc = spawnFn(command, args, { cwd: input.cwd, env });
+        proc = spawnFn(command, args, { cwd: input.cwd, env, ...(routineSource ? { routineFd: true } : {}) });
       } catch (err: unknown) {
+        routineSource?.end();
         logCodingAgentWarning("pi provider spawn failed", err);
         resolve({ events: [], outcome: "failed", sessionId: input.sessionId });
         return;
@@ -440,7 +447,8 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       }
       const inputControl = createPiInputControl({ threadId: input.threadId, now: input.now,
         nextEventId: input.nextEventId, write, emit: queueEvents });
-      const onSteer = (message: string) => write({ type: "steer", message });
+      const routinePrompt = createPiRoutinePrompt({ source: routineSource, fd: proc.stdio?.[3] as Duplex | undefined, sessionId: input.sessionId, cwd: input.cwd, write, prompt: () => write({ type: "prompt", message: input.prompt }) });
+      const onSteer = (message: string) => { routinePrompt.end(); write({ type: "steer", message }); };
       const trackedProcess = trackProcess(input.threadId, onAbort, onSteer, inputControl.submit, inputControl.defer);
       if (input.signal) {
         if (input.signal.aborted) onAbort();
@@ -449,6 +457,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
 
       function settle(result: PiRunResult): void {
         if (settled) return;
+        routinePrompt.end();
         settled = true;
         if (timeoutTimer) clearTimeout(timeoutTimer);
         if (killTimer.current) clearTimeout(killTimer.current);
@@ -484,6 +493,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
       }
 
       function requestTermination(reason: NonNullable<typeof terminationReason>): void {
+        routinePrompt.end();
         if (terminationReason) return;
         if (settled) {
           if (reason === "user_abort") { terminationReason = reason; publisher?.abort(); }
@@ -506,6 +516,7 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
             try { frame = JSON.parse(line); } catch (error: unknown) {
               if (!(error instanceof SyntaxError)) throw error;
             }
+            routinePrompt.receive(frame);
             if (inputControl.receive(frame)) return;
             collector.feedLine(line);
             drainCollector();
@@ -529,11 +540,15 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
           stderrText += chunk.toString("utf-8").slice(0, MAX_STDERR_CHARS - stderrText.length);
         }
       });
+      proc.stdout.on("end", () => routinePrompt.end());
+      proc.stdout.on("close", () => routinePrompt.end());
       proc.once("error", (err: Error) => {
+        routinePrompt.end();
         logCodingAgentWarning("pi provider process error", err);
         settle({ events: [], outcome: "failed", sessionId: input.sessionId });
       });
       proc.once("exit", (code: number | null) => {
+        routinePrompt.end();
         if (killTimer.current) clearTimeout(killTimer.current);
         if (settled) return;
         try {
@@ -572,10 +587,10 @@ export function createPiCodingAgentProvider(options: PiCodingAgentProviderOption
         logCodingAgentWarning("pi input stream failed", error);
         requestTermination("failure");
       });
-      try { write({ type: "prompt", message: input.prompt }); }
+      try { routinePrompt.start(); }
       catch (error: unknown) { logCodingAgentWarning("pi prompt failed", error); requestTermination("failure"); }
     });
-    } finally { await extension.dispose(); }
+    } finally { routineSource?.end(); await extension.dispose(); }
   }
 
   function statusEvent(input: {
