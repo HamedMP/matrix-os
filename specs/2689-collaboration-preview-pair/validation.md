@@ -274,3 +274,57 @@ fixtures. No server creation or pair-readiness claim is made.
 Focused ordinary Preview regression checks: **2/2 selected cases pass** (7 other
 cases excluded by filter), exercising continuing create-action polling and
 expired-lease provider adoption. Focused Platform native TypeScript passes.
+
+### Isolated Preview data projection
+
+**8/8 actual two-database cases pass**, zero skipped, using a separate non-superuser
+role/database per case. The real registration service rejects wrong bootstrap
+tokens and accepts valid ones under a distinct Preview signing secret. Only the
+two leased machine rows and their immutable release metadata are projected; no
+customer inventory or encrypted provisioning jobs are copied. Pair writes share
+one target transaction; a customer collision rolls back the first member.
+
+Intended fault assertions failed before their fixes: retirement before stop or
+with the wrong job, a restricted role with control-ledger SELECT grants, and a
+widened machine access list. Same-database targets are rejected, including separate
+wrappers. Role membership (including SET ROLE) and control-table privileges are
+checked on a shared server. Cleanup tombstones never-projected machines and a
+late snapshot cannot resurrect them. Initial fixture shape/constraint failures
+were corrected to match production and are not regression-red evidence.
+
+Provider IDs/addresses and bootstrap tokens are synthetic test inputs; the actual
+provider, Cloud Run identity/IAM, full directory retirement and runtime workflow
+are not qualified by this suite. It is included in required Postgres CI. Temporary
+roles/databases have explicit idempotent cleanup, including setup compensation.
+Focused Platform native TypeScript passes for the projection implementation.
+
+### Projection second review: connection aliases and cleanup
+
+The address-report regression failed first: a restricted role with a real control
+ledger grant passed when the owned target database reported another address. The
+fixture adjusts only its own reported-address catalog function; it does not claim
+an actual Unix-socket/VPN transport test. Isolation now requires distinct database
+and login-role names and checks control-table grants regardless of addresses.
+`session_user` prevents a login from hiding its broader privileges behind SET ROLE.
+**13/13 actual two-database cases pass**, zero skipped. Test teardown attempts the
+control fixture in finally even if the independent target cleanup reports failure.
+
+### Projection review: observations, tombstones and catalog trust
+
+**12/12 actual two-database cases pass**, zero skipped. Four new intended faults
+were reproduced: registered-address mismatch overwritten before comparison,
+missing projection recreated as already running, retirement timestamp refreshed on
+retry, and Preview-owned catalog-shadowing functions hiding a control-ledger grant.
+Registered fields are preserved in the locked upsert row, so concurrent registration
+cannot be erased between a pre-read and write. Missing rows start provisioning;
+retries retain first deletion time and the higher revocation epoch. System catalogs,
+identity/privilege functions and the access-list array check are explicitly qualified.
+
+One attempted boot-race fixture was rejected by the existing real registration
+provider-ID check; it was not a possible accepted producer result, so it was replaced
+with the actual missing-projection recovery fault. That fixture failure and an
+initial SQL quoting failure are not counted as regression-red evidence. The
+registration guard was not weakened and no retained production protection removed.
+After final catalog qualification/helper naming, all3 selected boundary cases pass
+(9 excluded by filter); the preceding full12-case run also passed without skips.
+Focused Platform native TypeScript passes for the reviewed projection changes.

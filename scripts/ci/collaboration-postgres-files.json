@@ -50,6 +50,7 @@
   "tests/platform/preview-pair-dispatch-postgres.test.ts",
   "tests/platform/preview-pair-lifecycle.test.ts",
   "tests/platform/preview-pair-postgres.test.ts",
+  "tests/platform/preview-pair-projection-postgres.test.ts",
   "tests/platform/preview-pair-provider-cleanup-postgres.test.ts",
   "tests/platform/preview-pair-provisioning-postgres.test.ts",
   "tests/platform/preview-pair-queue-postgres.test.ts",
