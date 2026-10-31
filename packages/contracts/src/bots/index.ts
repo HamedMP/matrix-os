@@ -22,3 +22,4 @@ export * from "#bots/tool-display";
 export * from "#bots/routines";
 export * from "#bots/routine-management";
 export * from "#bots/output-policy";
+export * from "#bots/routine-cli";
