@@ -11,6 +11,7 @@ import { createBotRoutinesRepository } from "../../../packages/gateway/src/bots/
 import { createBotIntegrationTools } from "../../../packages/gateway/src/bots/integration-tools.js";
 import { createBotGrantsRepository } from "../../../packages/gateway/src/bots/repositories/grants.js";
 import { createBotRecipeCatalog } from "../../../packages/gateway/src/bots/recipe-catalog.js";
+import { createBotRoutineExecution } from "../../../packages/gateway/src/bots/routine-execution.js";
 import type { BotToolRequest } from "@matrix-os/contracts";
 import { CanonicalChatOrchestrator } from "../../../packages/gateway/src/chat/orchestrator.js";
 import { CanonicalChatProviderRegistry } from "../../../packages/gateway/src/chat/provider-adapter.js";
@@ -431,5 +432,33 @@ describe.skipIf(!pgEnabled)("old routine binding fencing on pooled PostgreSQL (r
       }
     });
     expect(transports).toBe(0);
+  });
+  it("delivers occurrence phase only for the current approved native-PG binding", async () => {
+    const fixture = f!, fire = await fixture.claim(), run = await fixture.running(fire.fireId);
+    await expect(fixture.execution().assertOccurrencePhase(run.binding)).resolves.toBeUndefined();
+    await expect(fixture.execution().assertOccurrencePhase({ ...run.binding, ownerId: "foreign" })).rejects.toMatchObject({ code: "not_granted" });
+  });
+  it.each(["paused", "archived", "cancelled", "expired_lease", "invalidated_approval"] as const)("fences occurrence phase when %s changes on another PG connection during source validation", async change => {
+    const fixture = f!, fire = await fixture.claim(), run = await fixture.running(fire.fireId);
+    const entered = barrier<number>(), release = barrier<void>();
+    let clock = PG_AT;
+    const execution = createBotRoutineExecution({ db: fixture.db, transact: fixture.transact, now: () => new Date(clock),
+      approvals: { ...fixture.approvals, authorize: (routine) => fixture.db.connection().execute(async source => {
+        const allowed = await fixture.approvals.authorize(routine, source);
+        entered.resolve(await backendPid(source)); await release.promise; return allowed;
+      }) } });
+    const pending = execution.assertOccurrencePhase(run.binding).then(() => ({ ok: true as const }), error => ({ ok: false as const, error }));
+    try {
+      const sourcePid = await bounded(entered.promise);
+      await fixture.db.connection().execute(async writer => {
+        expect(await backendPid(writer)).not.toBe(sourcePid);
+        if (change === "paused" || change === "archived") await createBotRoutinesRepository(writer).control({ ownerId: OWNER,
+          routineId: fixture.routine.routineId, baseRevision: (await fixture.repo.get(OWNER, fixture.routine.routineId))!.revision, status: change, now: PG_AT });
+        else if (change === "cancelled") await createBotRoutinesRepository(writer).finish({ ownerId: OWNER, fireId: fire.fireId, status: "cancelled", now: PG_AT });
+        else if (change === "expired_lease") clock = PG_LATER;
+        else await writer.updateTable("bot_approvals").set({ status: "invalidated" }).where("approval_id", "=", fixture.routine.approvalId!).execute();
+      });
+    } finally { release.resolve(); await pending; }
+    expect(await pending).toMatchObject({ ok: false, error: { code: "not_granted" } });
   });
 });

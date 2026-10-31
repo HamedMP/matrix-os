@@ -94,10 +94,9 @@ describe("funded PostgreSQL CI coverage", () => {
     const result = executeSettlementStep(undefined);
     expect(result, result.diagnostics).toMatchObject({ status: 1, args: [] });
   });
-  it("prepares funded test prerequisites once before all six lanes and stops at a missing database URL", () => {
+  it("prepares prerequisites once before every PostgreSQL lane and stops at a missing database URL", () => {
     const selected = job.steps.filter(step => step.name === "Build test prerequisites once"
       || step.run?.includes("pnpm exec vitest run"));
-    expect(selected).toHaveLength(7);
     const directory = mkdtempSync(join(tmpdir(), "matrix-funded-pg-order-"));
     try {
       const log = join(directory, "commands");
@@ -110,18 +109,19 @@ printf '\\n' >> "$WAIVER_CI_COMMANDS_PATH"
 `);
         chmodSync(executable, 0o700);
       }
-      const execute = (url: string | undefined) => {
+      const execute = (url: string | undefined, processBuild = true) => {
         writeFileSync(log, "");
         const result = spawnSync("bash", ["-eu", "-c", selected.map(step => step.run).join("\n")], {
           encoding: "utf8", timeout: 5_000,
           env: { PATH: `${directory}:${process.env.PATH}`, MATRIX_TEST_POSTGRES_URL: url,
-            WAIVER_CI_COMMANDS_PATH: log },
+            WAIVER_CI_COMMANDS_PATH: log, MATRIX_ROUTINE_PROCESS_BUILD: processBuild ? join(directory, "fixture-process-build") : undefined },
         });
         return { ...result, commands: readFileSync(log, "utf8").trim().split("\n") };
       };
       const valid = execute(job.env.MATRIX_TEST_POSTGRES_URL);
       expect(valid.status, valid.stderr).toBe(0);
-      expect(valid.commands).toHaveLength(7);
+      expect(valid.commands.filter(command => command === "bun run test:prepare")).toHaveLength(1);
+      expect(new Set(valid.commands).size).toBe(valid.commands.length);
       expect(valid.commands[0]).toBe("bun run test:prepare");
       expect(valid.commands.slice(1).every(command => command.startsWith("pnpm exec vitest run "))).toBe(true);
       expect(valid.commands[1]).toContain("tests/platform/ai-funded-model-probes-postgres.test.ts");
@@ -130,16 +130,23 @@ printf '\\n' >> "$WAIVER_CI_COMMANDS_PATH"
       expect(valid.commands[4]).toContain("tests/gateway/bots/funded-inference-timeout.test.ts");
       expect(valid.commands[5]).toContain("tests/platform/preview-drive-postgres-concurrency.test.ts");
       expect(valid.commands[6]).toContain("tests/gateway/browser-approval-repository.test.ts");
+      for (const suite of ["deployed-v9-schema-postgres", "routine-fencing-postgres", "routine-process-postgres"]) {
+        expect(valid.commands.some(command => command.includes(`tests/gateway/bots/${suite}.test.ts`))).toBe(true);
+      }
+      const noBuild = execute(job.env.MATRIX_TEST_POSTGRES_URL, false);
+      expect(noBuild.status).toBe(1);
+      expect(noBuild.stderr).toContain("Exact-source process artifact required");
+      expect(noBuild.commands.some(command => command.includes("routine-process-postgres.test.ts"))).toBe(false);
       const absent = execute(undefined);
       expect(absent.status).toBe(1);
       expect(absent.stderr).toContain("Disposable PostgreSQL test URL required");
       expect(absent.commands).toEqual(["bun run test:prepare"]);
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
-  it("keeps the existing scoped service credentials, trigger and ten-minute limit", () => {
+  it("keeps scoped service credentials and trigger with a measured bounded PG qualification window", () => {
     expect(job.needs).toBe("changes");
     expect(job.if).toBe("always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')");
-    expect(job["timeout-minutes"]).toBe(10);
+    expect(job["timeout-minutes"]).toBe(14);
     expect(job.services.postgres.image).toBe("mirror.gcr.io/library/postgres:16");
     expect(job.services.postgres.env).toEqual({ POSTGRES_USER: "matrix_test",
       POSTGRES_PASSWORD: "matrix_test", POSTGRES_DB: "matrix_test" });
