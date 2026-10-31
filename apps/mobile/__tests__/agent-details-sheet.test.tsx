@@ -11,6 +11,9 @@ import { StatusDot } from "../components/ui/StatusDot";
 
 import { flat } from "./ui-test-utils";
 
+const mockDestinationToken = jest.fn(async () => "fixture-owner");
+jest.mock("@clerk/clerk-expo", () => ({ useAuth: () => ({ getToken: mockDestinationToken, userId: "fixture-owner", isLoaded: true, isSignedIn: true }) }));
+
 let mockSheet: { isPresented: boolean; onDismiss: () => void } = { isPresented: false, onDismiss: () => {} };
 
 // Keeps its content when it is not presented, as the native sheet does while it slides away.
@@ -253,4 +256,13 @@ describe("agent details sheet", () => {
     expect(screen.getAllByRole("header").map((header) => header.props.children)).toEqual(["Account research"]);
     expect(screen.getAllByRole("button").map((button) => button.props.accessibilityLabel)).toEqual(["Archive agent"]);
   });
+});
+
+it("real Native Mobile agent details offers current Chat as routine destination without an access grant", async () => {
+  const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({ ok: true, status: 200, json: async () => ({ preference: { revision: 0, target: null, updatedAt: null }, availability: "unset" }) } as Response);
+  renderSheet({ routineDestination: { chatId: "chat_research", gatewayUrl: "https://fixture.invalid", eligible: true } });
+  expect(await screen.findByText("Routine destination")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Use this Chat" })).toBeTruthy();
+  expect(screen.getByText(/does not authorize routine operations/)).toBeTruthy();
+  fetchMock.mockRestore();
 });
