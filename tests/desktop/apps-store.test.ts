@@ -1,31 +1,34 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it } from "vitest";
-import { appIconUrl, parseApps, preloadAppIcons } from "../../desktop/src/renderer/src/features/apps/apps.api";
+import { appIconUrl, clearPreloadedAppIcons, parseApps, preloadAppIcons } from "../../desktop/src/renderer/src/features/apps/apps.api";
 
 describe("desktop app icon warmup", () => {
   afterEach(() => {
-    for (const link of document.head.querySelectorAll('link[rel="preload"][as="image"]')) link.remove();
+    clearPreloadedAppIcons();
   });
 
-  it("preloads only the first 20 selected-runtime icons", () => {
+  it("warms only the first 20 selected-runtime icons without declaring them immediately required", () => {
     preloadAppIcons("https://platform.test/", "preview", Array.from({ length: 24 }, (_, index) => ({
       slug: `app-${index}`,
       name: `App ${index}`,
     })));
 
-    const links = [...document.head.querySelectorAll('link[rel="preload"][as="image"]')];
+    expect(document.head.querySelectorAll('link[rel="preload"][as="image"]')).toHaveLength(0);
+    const links = [...document.head.querySelectorAll('link[rel="prefetch"][as="image"]')];
     expect(links).toHaveLength(20);
     expect(links[0]?.getAttribute("href")).toBe("https://platform.test/icons/app-0.png?runtime=preview");
     expect(links.at(-1)?.getAttribute("href")).toBe("https://platform.test/icons/app-19.png?runtime=preview");
   });
 
-  it("removes preloads when the runtime changes", () => {
+  it("replaces warmup hints when the runtime changes and clears them on sign-out", () => {
     preloadAppIcons("https://platform.test", "primary", [{ slug: "notes", name: "Notes" }]);
-
-    for (const link of document.head.querySelectorAll('link[rel="preload"][as="image"]')) link.remove();
-
-    expect(document.head.querySelectorAll('link[rel="preload"][as="image"]')).toHaveLength(0);
+    preloadAppIcons("https://platform.test", "preview", [{ slug: "editor", name: "Editor" }]);
+    const links = [...document.head.querySelectorAll('link[rel="prefetch"][as="image"]')];
+    expect(links).toHaveLength(1);
+    expect(links[0]?.getAttribute("href")).toBe("https://platform.test/icons/editor.png?runtime=preview");
+    clearPreloadedAppIcons();
+    expect(document.head.querySelectorAll('link[rel="prefetch"][as="image"]')).toHaveLength(0);
   });
 
   it("preserves the primary-runtime icon URL", () => {

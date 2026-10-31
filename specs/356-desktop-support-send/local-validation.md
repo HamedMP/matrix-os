@@ -5,9 +5,10 @@ Existing fix: [PR #2818](https://github.com/HamedMP/matrix-os/pull/2818).
 
 ## Scope
 
-Revalidate the existing support-client lifecycle repair against current main. Preserve the
-newer onboarding feature-flag integration when replacing the PostHog client. This candidate
-does not claim to fix the separately observed provider rejection.
+Revalidate the existing support-client lifecycle repair against current main, preserve the
+newer onboarding feature-flag integration, and normalize the platform signing configuration
+responsible for the observed provider rejection. The platform change is tested locally but
+has not been deployed or qualified by successful authenticated message submission.
 
 ## Local evidence, 31 October 2026
 
@@ -56,3 +57,5 @@ verification or weaken authorization to make the request succeed.
 
 Recommend review by the Desktop and platform integration owners. No stable release or
 production settings change is part of this local validation record.
+
+Additional local canary console findings and repairs: [console-validation.md](console-validation.md).
