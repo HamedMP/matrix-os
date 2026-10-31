@@ -14,7 +14,9 @@ import {
   type GettingStartedAppAction,
   type GettingStartedAppToast,
 } from "@matrix-os/ui";
+import { usePathname } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { getGatewayUrl } from "@/lib/gateway";
 import { ShellNotificationCard } from "@/components/ShellNotificationCard";
 import { ShellNotificationPortal } from "@/components/ShellNotificationPortal";
 import type { GettingStartedDestination, GettingStartedSettingsSection } from "../onboarding/GettingStartedPopover";
@@ -44,14 +46,7 @@ export function WebGettingStartedAppWindow({ visible = true }: { visible?: boole
   return <GettingStartedAppView onAction={onAction} visible={visible} />;
 }
 
-export function WebGettingStartedAppHost({
-  children,
-  onOpenSettings,
-  onOpenWork,
-  onOpenSupport,
-  onOpenApp,
-  onEnabledChange,
-}: {
+interface WebGettingStartedAppHostProps {
   children: ReactNode;
   onOpenSettings(section: GettingStartedSettingsSection): void;
   onOpenWork(destination?: GettingStartedDestination): void;
@@ -59,7 +54,25 @@ export function WebGettingStartedAppHost({
   /** Opens or focuses the app window. */
   onOpenApp(): void;
   onEnabledChange(enabled: boolean): void;
-}) {
+}
+
+/**
+ * The app's state belongs to one computer. Switching computers reloads the page today; keying by
+ * gateway keeps that true if a route ever reaches another computer without a load.
+ */
+export function WebGettingStartedAppHost(props: WebGettingStartedAppHostProps) {
+  usePathname();
+  return <WebGettingStartedAppHostForComputer key={getGatewayUrl()} {...props} />;
+}
+
+function WebGettingStartedAppHostForComputer({
+  children,
+  onOpenSettings,
+  onOpenWork,
+  onOpenSupport,
+  onOpenApp,
+  onEnabledChange,
+}: WebGettingStartedAppHostProps) {
   const port = useMemo(() => createWebGettingStartedAppPort(), []);
   // Spec 639: the icon goes first on every owner's desktop once, after the saved layout has loaded.
   const desktopIconsLoaded = useDesktopConfigStore((state) => state.desktopIcons !== undefined);

@@ -256,3 +256,6 @@ Team feedback (Oct 30): the app, the corner widget and the Help checklist repeat
 4. The widget's open/minimized state is stored per browser, so the mirror follows the device the owner is on.
 5. **Connect cards sign in where they are.** Gmail, Google Calendar, Slack and GitHub start the app's own sign-in from the card (the onboarding widget's flow) instead of opening Settings › Connect Apps, where an app is easy to lose. The card shows "Connecting…", or "Didn't connect, try again" when the sign-in fails, is blocked or times out; a finished sign-in re-reads progress at once. WhatsApp, a messaging channel, still opens Settings, and so does every card on a computer without an app connection service.
 
+## Version skew
+
+Electron updates apart from the gateway, so a client can read progress from a newer computer. Response schemas check a task id's shape only, cap the award list independently of this build's tasks, and ignore added fields; clients keep the ids they know (`gettingStartedAppKnownTaskIds`), and other tasks still count in the total. Requests stay strict: the server only accepts its own tasks. A newer client on an older gateway gets a generic award failure for a task that gateway does not know and retries on later refreshes, so that card stays unpaid until the gateway updates.

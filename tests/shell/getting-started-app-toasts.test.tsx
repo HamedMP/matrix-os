@@ -4,6 +4,7 @@ import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 type ProviderProps = {
+  port?: unknown;
   onToast?(toast: { title: string; points: number }): void;
   connections?: { connectingService: string | null; failedServices: readonly string[]; changeCount: number };
   children?: React.ReactNode;
@@ -16,6 +17,7 @@ const connections = vi.hoisted(() => ({
   failedServices: new Set<string>(["slack"]) as ReadonlySet<string>,
   appsUnavailable: false,
 }));
+vi.mock("next/navigation", () => ({ usePathname: () => window.location.pathname }));
 vi.mock("../../shell/src/components/onboarding/use-getting-started-connections", () => ({
   useGettingStartedConnections: () => connections,
 }));
@@ -50,6 +52,28 @@ function renderHost(onOpenSettings: (section: string) => void = () => undefined)
     </WebGettingStartedAppHost>,
   );
 }
+
+describe("Web Getting started app across computers", () => {
+  afterEach(() => window.history.pushState({}, "", "/"));
+
+  it("starts clean if the computer changes without a page load", () => {
+    const view = renderHost();
+    const firstPort = providerProps.current?.port;
+    view.rerender(
+      <WebGettingStartedAppHost onOpenSettings={() => undefined} onOpenWork={() => undefined} onOpenSupport={() => undefined} onOpenApp={() => undefined} onEnabledChange={() => undefined}>
+        <WebGettingStartedAppWindow />
+      </WebGettingStartedAppHost>,
+    );
+    expect(providerProps.current?.port).toBe(firstPort);
+    window.history.pushState({}, "", "/vm/pv-other/");
+    view.rerender(
+      <WebGettingStartedAppHost onOpenSettings={() => undefined} onOpenWork={() => undefined} onOpenSupport={() => undefined} onOpenApp={() => undefined} onEnabledChange={() => undefined}>
+        <WebGettingStartedAppWindow />
+      </WebGettingStartedAppHost>,
+    );
+    expect(providerProps.current?.port).not.toBe(firstPort);
+  });
+});
 
 describe("Web Getting started app sign-ins", () => {
   it("starts an app's own sign-in from a card and shares its state with the app", () => {
