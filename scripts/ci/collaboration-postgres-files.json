@@ -47,6 +47,7 @@
   "tests/platform/preview-pair-access-retirement-postgres.test.ts",
   "tests/platform/preview-pair-admission.test.ts",
   "tests/platform/preview-pair-ai-activation-postgres.test.ts",
+  "tests/platform/preview-pair-candidate-runtime-postgres.test.ts",
   "tests/platform/preview-pair-cleanup-composition-postgres.test.ts",
   "tests/platform/preview-pair-cleanup.test.ts",
   "tests/platform/preview-pair-cloud-cleanup-postgres.test.ts",

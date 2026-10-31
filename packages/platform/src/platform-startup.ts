@@ -106,6 +106,7 @@ import { createPreviewRuntimeAccessActivator, type PreviewRuntimeAccessActivator
 import { createConfiguredWhatsAppRuntime } from './whatsapp/startup.js';
 import { createAccountDeletionIntegrationWebhookAdmission } from './account-deletion/integration-webhook.js';
 import { appOrigin } from './origins.js';
+import { createPreviewPairRuntimeOnlyService } from './preview-pair/candidate-runtime.js';
 
 interface GatewayPlatformUser {
   id: string;
@@ -797,7 +798,9 @@ async function startPlatformServerWithCleanup(
     registerCustomMcpStartupCleanup(async () => { sitesObjectStore?.destroy(); });
   }
 
-  let customerVpsService: CustomerVpsService | undefined;
+  // Runtime-only candidates reuse registration/status without provider clients,
+  // paid lifecycle workers, or a second machine/organization source of truth.
+  let customerVpsService: CustomerVpsService | undefined = createPreviewPairRuntimeOnlyService({ db, env: process.env });
   let activateManagedFeatures: ManagedFeatureActivator | undefined;
   let activatePreviewRuntimeAccess: PreviewRuntimeAccessActivator | undefined;
   let goldenSnapshotService: GoldenSnapshotService | undefined;
