@@ -31,6 +31,35 @@ npm install -g @finnaai/matrix
 curl -sL get.matrix-os.com | sh
 ```
 
+## Work with a Chat by ID
+
+```sh
+matrix chats read chat_example --profile cloud --json
+matrix chats read chat_example --profile cloud --cursor chatcur_from_previous_read --json
+matrix chats send chat_example --profile cloud --message "Continue with the next step"
+matrix chats watch chat_example --profile cloud --timeout 60
+matrix chats export chat_example --profile cloud --output ./chat.json
+matrix chats export chat_example --profile cloud --format markdown --output ./chat.md
+```
+
+`get` is an alias for `read`. Use the profile for the computer that owns the
+Chat; `--gateway` preserves `/vm/<handle>` and runtime routing. Read returns
+up to 200 messages and an earlier-history cursor. Watch emits NDJSON events and
+content only for the chosen Chat, reconnects with its cursor, and detaches on
+Ctrl-C without stopping the remote response. `--cursor <event-number>` resumes
+a watch; replay gaps emit a fresh snapshot rather than hiding missing updates.
+
+Send starts a remote response using the model already selected in the Chat.
+The default permission mode is `supervised`; use `--permission` and
+`--interaction` only for modes that model supports. Uncertain admission returns
+a request ID: read the Chat, then reuse `--request-id req_...` if retrying.
+Sending again with a new ID can create a second message.
+
+Export fetches all message pages, including retrieved tool activity in JSON.
+It creates a new mode-0600 file and refuses overwrites. Referenced files and
+private original/provider archives are not downloaded. Exports fail explicitly
+if the Chat changes during pagination or exceeds 10,000 messages / 64 MiB.
+
 ## Update the CLI
 
 ```bash

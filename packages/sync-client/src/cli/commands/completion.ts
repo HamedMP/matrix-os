@@ -38,6 +38,7 @@ const SHELL_COMMANDS = [
   "pane",
   "layout",
 ];
+const CHAT_COMMANDS = ["read", "get", "send", "watch", "export", "discover", "import"];
 
 function bashCompletion(): string {
   return `# Matrix CLI completion for bash
@@ -86,6 +87,11 @@ _matrix_completion() {
       return 0
     fi
     COMPREPLY=( $(compgen -W "${SHELL_COMMANDS.join(" ")}" -- "$cur") )
+    return 0
+  fi
+
+  if [[ "$command" == "chats" && "$COMP_CWORD" -eq 2 ]]; then
+    COMPREPLY=( $(compgen -W "${CHAT_COMMANDS.join(" ")}" -- "$cur") )
     return 0
   fi
 
@@ -171,6 +177,13 @@ _matrix() {
     return
   fi
 
+  if [[ "\${words[2]}" == "chats" ]] && (( CURRENT == 3 )); then
+    local -a chat_commands
+    chat_commands=(${CHAT_COMMANDS.map((command) => `'${command}:${command}'`).join(" ")})
+    _describe 'matrix chat command' chat_commands
+    return
+  fi
+
   if [[ "\${words[2]}" == "upload" ]]; then
     _matrix_transfer_position
     if (( REPLY == 0 )); then
@@ -228,6 +241,7 @@ function __matrix_transfer_position
 end
 
 complete -c matrix -f -n '__fish_use_subcommand' -a '${commandList}'
+complete -c matrix -f -n '__fish_seen_subcommand_from chats; and not __fish_seen_subcommand_from ${CHAT_COMMANDS.join(" ")}' -a '${CHAT_COMMANDS.join(" ")}'
 complete -c matrix -f -n '__fish_seen_subcommand_from shell sh; and not __fish_seen_subcommand_from ${SHELL_COMMANDS.join(" ")}' -a '${shellCommandList}'
 complete -c matrix -f -n '__fish_seen_subcommand_from shell sh; and __fish_seen_subcommand_from connect attach rm' -a '(matrix shell list --json 2>/dev/null | tr "," "\\n" | sed -n "s/.*\\"name\\"[[:space:]]*:[[:space:]]*\\"\\\\([^\\"]*\\\\)\\".*/\\\\1/p")'
 complete -c matrix -F -n '__fish_seen_subcommand_from upload; and test (__matrix_transfer_position) -eq 0'
