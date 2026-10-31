@@ -17,6 +17,9 @@ export const GETTING_STARTED_APP_BRAND_VARS = {
   "--gsa-brand-glow-soft": productScales.green[300],
   "--gsa-brand-fill": productScales.green[500],
   "--gsa-brand-gold": productScales.gold[500],
+  /** Text and marks on the forest and ink panels. */
+  "--gsa-on-brand": productScales.neutral[25],
+  "--gsa-ink": productScales.neutral[800],
   "--gsa-brand-green": productScales.green[500],
   "--gsa-brand-teal": productScales.teal[400],
   "--gsa-tint-gold-bg": productScales.gold[50],
