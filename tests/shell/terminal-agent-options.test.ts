@@ -81,3 +81,10 @@ describe("terminal agent options", () => {
   });
 
 });
+
+it("offers the same five fixed native entries in Web Canvas/Web Desktop and Electron Desktop, including Hermes without a fake npm installer", () => {
+  for (const options of [TERMINAL_AGENT_OPTIONS, DESKTOP_TERMINAL_AGENT_OPTIONS]) {
+    expect(options.map(option => option.id).sort()).toEqual(["claude", "codex", "hermes", "opencode", "pi"]);
+    expect(options.find(option => option.id === "hermes")).toMatchObject({ launchCommand: "hermes", installPackage: null });
+  }
+});
