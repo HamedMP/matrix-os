@@ -208,6 +208,12 @@ export interface BotDatabase {
   };
   managed_pi_sessions: Omit<BotAgentSessionsTable, "bot_id">;
   managed_pi_tool_checkpoints: Omit<BotToolCheckpointsTable, "task_id"> & { chat_id: string };
+  routine_cli_proposals: {
+    owner_id: string; computer_id: string; client_request_id: string; canonical_request_id: string; request_hash: string;
+    stage: import("./repositories/routine-cli-proposals.js").RoutineCliProposalStage;
+    run_id: string | null; task_id: string | null; interaction_id: string | null; runtime_handle: string | null; execution_generation: string | null;
+    revision: Revision; created_at: Timestamp; updated_at: Timestamp;
+  };
   routine_cli_requests: {
     owner_id: string; computer_id: string; client_request_id: string; operation_digest: string;
     operation: Json<import("./routine-cli-requests.js").RoutineCliMutationOperation>;

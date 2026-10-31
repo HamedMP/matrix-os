@@ -119,6 +119,8 @@ export function createBotTaskOrchestrator(deps: {
   routineTools?: boolean;
   /** Server-owned durable checker; no request or model field can provide phase authority. */
   routineExecution?: Pick<import("./routine-execution.js").BotRoutineExecution, "assertOccurrencePhase"> & Partial<Pick<import("./routine-execution.js").BotRoutineExecution, "describeChatPhase" | "approvalReply">>;
+  /** Server-only receipt-backed interactive intent; never supplied by a model/HTTP request. */
+  routineProposals?: import("./routine-cli-proposals.js").RoutineCliProposalRuntime;
   memory?: Pick<BotMemoryService, "admitted">;
   agents: Pick<ChatAgentStore, "get">;
   recipes: BotRecipeCatalog;
@@ -163,7 +165,7 @@ export function createBotTaskOrchestrator(deps: {
    * with this message; otherwise a new task begins.
    */
   async function begin(input: { ownerId: string; botId: string; chatId: string; runId: string; text: string; backgroundTaskId?: string }): Promise<{ task: BotTask; continued: boolean }> {
-    return deps.transact(input.ownerId, tx => beginBotTask(tx, { ...input, now: now() }));
+    return deps.transact(input.ownerId, tx => beginBotTask(tx, { ...input, now: now() }, { beginRoutineProposal: deps.routineProposals?.beginWithin }));
   }
 
   async function settle(task: BotTask, status: BotRunStatus, blockedReason?: BotBlockedReason): Promise<BotTurnResult> {
@@ -498,6 +500,8 @@ export function createBotTaskOrchestrator(deps: {
       if (run.stopping === "lease_lost") return await settle(task, "failed");
       await setup(async () => { await deps.assertSource?.(binding, input.signal); });
       if (input.signal.aborted || run.stopping) return await settle(task, run.stopping === "lease_lost" ? "failed" : "cancelled");
+      const proposal = await deps.routineProposals?.consume(binding, run.signal);
+      if (proposal) return proposal; // Its pending approval/task state committed atomically; never generic settle/inference.
       run.worker = createBotWorkerDrain({ graceMs: cancelGraceMs,
         release: () => releaseRuntime(run, run.runtime!.runtimeHandle),
         onError: error => console.warn("[bots] bot runtime grace release failed:", error instanceof Error ? error.name : "UnknownError"),
@@ -637,6 +641,7 @@ export function createBotTaskOrchestrator(deps: {
     },
     /** A run the previous process lost: its task fails and nothing is replayed. */
     async abandon(input: { ownerId: string; taskId: string }): Promise<void> {
+      if (await deps.routineProposals?.recover(input)) return;
       const task = await deps.transact(input.ownerId, (tx) => createBotTasksRepository(tx.db).get({ ownerId: input.ownerId, taskId: input.taskId }, tx.db));
       if (!task || ["completed", "failed", "cancelled"].includes(task.status)) return;
       await settle(task, "failed");
