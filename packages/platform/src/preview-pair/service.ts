@@ -119,7 +119,7 @@ export function createPreviewPairService(deps: PreviewPairServiceDeps) {
       if (prepared.kind === "pair") return { kind: "pair", ...previewPairSummary(prepared.row), ownedRequest: prepared.ownedRequest };
       const row = prepared.row;
       return { kind: "request", ownedRequest: true, pairId: row.pair_id, generation: row.generation, state: row.state, expiresAt: row.expires_at,
-        profileFingerprint: row.profile_fingerprint, buildContext: deps.publication?.context };
+        profileFingerprint: row.profile_fingerprint, buildContext: deps.publication ? { ...deps.publication.context, identityIssuer: config.identityIssuer } : undefined };
     },
     async controllerStatus(pairId: string, raw: unknown) {
       PreviewPairIdSchema.parse(pairId); const input = PreviewPairControllerStatusSchema.parse(raw);

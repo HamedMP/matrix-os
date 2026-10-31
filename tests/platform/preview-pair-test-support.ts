@@ -1,3 +1,4 @@
+import { previewPairBundleVersion } from "@matrix-os/contracts/preview-pair";
 export const PAIR_NOW = Date.parse("2026-10-30T12:00:00.000Z");
 const SHA = "a".repeat(40);
 export function previewPairManifestFixture() {
@@ -7,7 +8,7 @@ export function previewPairManifestFixture() {
       ? "22222222-2222-4222-8222-222222222222" : "33333333-3333-4333-8333-333333333333",
     handle: `cp-3022-11111111-1-${role === "owner" ? "a" : "b"}`,
     runtimeSlot: `cp-3022-11111111-1-${role === "owner" ? "a" : "b"}`,
-    installedVersion: "v2026.10.30-pr3022-test", runningVersion: "v2026.10.30-pr3022-test",
+    installedVersion: previewPairBundleVersion(pairId, 1, SHA), runningVersion: previewPairBundleVersion(pairId, 1, SHA),
     installedSha: SHA, runningSha: SHA, authorityGeneration: 1,
     lastControlAt: "2026-10-30T11:59:55.000Z",
   });

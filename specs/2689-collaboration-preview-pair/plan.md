@@ -280,3 +280,17 @@ promotion and installation paths before publication is usable. Existing
 `getLatestHostBundleReleaseForPr` selects every newest matching PR release;
 publishing test-identity bytes into that undifferentiated catalog would regress
 ordinary Private Previews. Namespace is a classification, never authorization.
+
+
+### Protected workflow implementation checkpoint
+
+The control-workflow layer implements the normal-profile create/update/report/stop
+commands, reviewed-origin composite action and credential-separated candidate
+build/publisher workflow. Pair-only full-UUID/generation/source bundle identities
+are excluded from ordinary PR selection, channel promotion, fleet deployment,
+ordinary provisioning and generic updater metadata. The projected exact updater
+remains usable. Immutable workflow attempt1 owns provenance and recovery, so later
+reruns cannot invalidate the original reproduction. See
+[control-workflow-validation.md](control-workflow-validation.md) for actual fault
+assertions, fixture boundaries, source-of-truth rules and the required one-time
+protected setup. Electron launch and live acceptance are not complete yet.

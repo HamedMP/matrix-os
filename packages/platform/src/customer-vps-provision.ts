@@ -1,3 +1,4 @@
+import { isPreviewPairBundle } from "@matrix-os/contracts/preview-pair";
 import { withAccountDeletionAdmission } from './account-deletion/admission.js';
 /** Customer VPS provisioning requests, split from customer-vps.ts. */
 import type { PlatformDB, UserMachineProvisioningClass, UserMachineRecord } from './db.js';
@@ -70,6 +71,9 @@ export function createCustomerVpsProvisioner(
     const previewBundleVersion = provisioningClass === 'preview' && 'bundleVersion' in input
       ? input.bundleVersion
       : undefined;
+    if (dispatch !== 'prepare' && [previewBundleVersion, deps.config.imageVersion].some(version => version && isPreviewPairBundle(version))) {
+      throw new CustomerVpsError(409, 'invalid_state', 'Provisioning unavailable');
+    }
     const request = {
       ...input,
       runtimeSlot: input.runtimeSlot ?? 'primary',

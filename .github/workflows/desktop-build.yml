@@ -1,4 +1,5 @@
 name: Desktop Build
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('Preview desktop {0} g{1} {2}', inputs.pair_id, inputs.pair_generation, inputs.candidate_sha) || 'Desktop Build' }}
 
 on:
   workflow_dispatch:
@@ -57,7 +58,7 @@ jobs:
 
   pair_admission:
     name: Verify unsigned pair build request
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha != '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha != '' && github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -87,7 +88,7 @@ jobs:
   pair_artifacts:
     needs: [pair_admission]
     name: Unsigned pair ${{ matrix.platform }} ${{ matrix.arch }}
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha != '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha != '' && github.run_attempt == 1 }}
     environment: collaboration-preview-build
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -136,9 +137,11 @@ jobs:
             pnpm exec electron-builder --mac --dir --"$PAIR_ARCH" --publish never -c.mac.identity=null -c.mac.notarize=false
             app_dir=mac
             if [ "$PAIR_ARCH" = arm64 ]; then app_dir=mac-arm64; fi
+            test -x "dist/$app_dir/Matrix OS.app/Contents/MacOS/Matrix OS"
             tar -czf "$RUNNER_TEMP/preview-pair-app.tar.gz" -C "dist/$app_dir" 'Matrix OS.app'
           else
             pnpm exec electron-builder --linux --dir --x64 --publish never
+            test -x dist/linux-unpacked/desktop
             tar -czf "$RUNNER_TEMP/preview-pair-app.tar.gz" -C dist/linux-unpacked .
           fi
       - uses: actions/upload-artifact@v6
@@ -152,7 +155,7 @@ jobs:
   pair_provenance:
     name: Verify pair artifact provenance on a fresh runner
     needs: [pair_admission, pair_artifacts]
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha != '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha != '' && github.run_attempt == 1 }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

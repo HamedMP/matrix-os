@@ -1,7 +1,7 @@
 # Collaboration preview pair: implementation and qualification guide
 
-Tracking: ENG-418. Status: proposed interface; implementation/activation is not
-claimed by this planning document. Spec PR #3022 is the bottom native stack layer.
+Tracking: ENG-418. Control/workflow components are implemented in the native stack;
+protected activation and the two-app launcher are not qualified yet. Spec PR #3022 is the bottom native stack layer.
 
 ## Prerequisites
 
@@ -36,6 +36,30 @@ activation require the reviewed workflow's normal operator/environment gates.
 6. Sign in normally as the expected owner and member, using separate browser
    sessions if needed. Verify visible role/computer/organization/source in each
    app. A wrong account must fail closed; do not force headers or inject sessions.
+
+## Implemented control commands
+
+After the reviewed Source/controller foundation and protected setup are available,
+use the normal Matrix profile and its linked GitHub identity:
+
+```bash
+bun run preview:pair:create -- --pr <number> --profile cloud
+bun run preview:pair:report -- --pair <uuid> --profile cloud
+bun run preview:pair:update -- --pair <uuid> --profile cloud
+bun run preview:pair:stop -- --pair <uuid> --profile cloud
+```
+
+Create/update returns the exact GitHub workflow and request report. The workflow
+summary reports a canonical pair reused by a concurrent/existing request. A new
+head never replaces an active reproduction until explicit update. Before a
+request is admitted, cancel its recorded workflow; normal stop targets the
+canonical admitted pair. Use `--help` without login/network effects. No command
+merges code or updates customer computers.
+
+The [implementation validation](control-workflow-validation.md) records setup
+requirements and limitations. Do not call the proposed `preview:pair:open` entry
+until the launcher layer exists. Actual runtime and surface acceptance remains
+required after protected setup, not established by local fixtures.
 
 ## Required acceptance
 

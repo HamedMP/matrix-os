@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { execSync, spawnSync } from "node:child_process";
 import { mkdtemp, rm, symlink, writeFile, chmod, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -117,6 +118,20 @@ describe("release PR provenance", () => {
     expect(result.stdout).toContain("aws CLI not found");
     const body = registrationBody(result.stdout, "Would register release:");
     expect(body).toMatchObject({ version, sourcePr: 1907, sourceAuthor: "octo-dev" });
+  });
+
+  it("explicitly publishes full-bundle incremental objects without enabling delta installation", async () => {
+    const dist = await distDir(), bytes = "object-bytes", digest = createHash("sha256").update(bytes).digest("hex");
+    await mkdir(join(dist, "objects", "sha256"), { recursive: true });
+    await writeFile(join(dist, "objects", "sha256", digest), bytes);
+    await writeFile(join(dist, "incremental-manifest.json"), JSON.stringify({ requiresFullBundle: true,
+      files: [{ type: "file", sha256: digest, size: Buffer.byteLength(bytes), url: `system-bundles/objects/sha256/${digest}` }] }));
+    const result = spawnSync(process.execPath, ["scripts/publish-release-r2.mjs", version, ...provenanceArgs, "--include-incremental-objects"], {
+      encoding: "utf8", env: publishEnv(dist, process.env.PATH ?? ""),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Would upload 1 incremental file objects");
+    expect(JSON.parse(await (await import("node:fs/promises")).readFile(join(dist, "incremental-manifest.json"), "utf8")).requiresFullBundle).toBe(true);
   });
 
   it("registers nothing extra without the flags", async () => {
