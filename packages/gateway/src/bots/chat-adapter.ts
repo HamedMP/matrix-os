@@ -112,6 +112,7 @@ function messageText(parts: readonly { type: string; text?: string }[]): string 
 export function createMatrixBotChatProviderAdapter(options: {
   orchestrator: Pick<BotTaskOrchestrator, "start" | "steer" | "cancel" | "abandon">;
   stopRuntime(runtimeHandle: string): Promise<void>;
+  proposals?: Pick<import("./routine-cli-proposals.js").RoutineCliProposalRuntime, "recover">;
   routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"prepareRun"|"completeRun">;
 }): CanonicalChatProviderAdapter<BotChatState> {
   return {
@@ -216,6 +217,7 @@ export function createMatrixBotChatProviderAdapter(options: {
     async recover(input) {
       if (input.owner.type !== "personal") return null;
       if (input.state.runtimeHandle) await options.stopRuntime(input.state.runtimeHandle);
+      if (await options.proposals?.recover({ ownerId: input.owner.ownerId, runId: input.runId, taskId: input.state.taskId })) return { outcome: "completed", messages: [] };
       await options.orchestrator.abandon({ ownerId: input.owner.ownerId, taskId: input.state.taskId });
       return { outcome: "failed", messages: [] };
     },

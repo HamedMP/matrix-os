@@ -31,13 +31,14 @@ Interfaces: createRoutineCliTargetService(deps) with remember/reset/getDefault/r
 
 - [x] Internal source-generation and per-invocation capability foundation: reviewed with 129 scoped tests and 10 native PostgreSQL cases. Lifecycle/exact-action callbacks remain fail-closed integration boundaries.
 - [x] Durable ledger/safe views and actual outer transaction rollback reviewed with167 scoped and17 native PostgreSQL cases. The atomic admission port is still a fixture/integration seam; real canonical adapters and process restart remain pending.
-- [x] Shared canonical control and post-commit cancellation adapter reviewed with118 scoped and24 native PostgreSQL cases; actual control caller rollback and delayed-control revision fencing qualified with explicit external runtime fixtures. Real proposal admission remains pending.
+- [x] Shared canonical control and post-commit cancellation adapter reviewed with118 scoped and24 native PostgreSQL cases; actual control caller rollback and delayed-control revision fencing qualified with explicit external runtime fixtures.
+- [x] Real canonical proposal/task claim/private admission/approval/recovery adapter reviewed with287 scoped and78 native PostgreSQL cases (including2 compiled-process fixtures). Claim metadata is immutable and required dependencies checked at construction. Host/source/model callbacks remain fixtures; no harness/live qualification.
 
 Files: new routine-cli-source.ts/request-service/repository/routes; small startup/bots route registration; corresponding tests.
-Consumes Task1 source/target/action types. Produces authenticated source operations, durable owner+Computer request receipt and real target-admission correlation.
-- [ ] Fail duplicate/lost-response/restart/changed input/stale revision and source revocation/dispatch race cases first.
-- [ ] Wire actual canonical target service hooks, never fabricated runtime/task; preserve A source/model and approval constraints.
-- [ ] Add safe DTO/cancellation unknown tests, Green/review/commit. No source mock pass described as live.
+Consumes Task1 source/target/action types. Produces internal source-capability operations, durable owner+Computer request receipts and real canonical target-admission correlation. Actual HTTP/startup and trusted source producers remain Tasks3/4/5/6/7; existing-target Bot-binding reuse remains Task5.
+- [x] Fail duplicate/lost-response/restart/changed input/stale revision and source revocation/dispatch race cases first.
+- [x] Wire actual internal canonical target service hooks, never fabricated runtime/task; preserve A source/model and approval constraints.
+- [x] Add safe DTO/cancellation unknown tests, Green and independent review. No source mock pass described as live.
 
 ### Task 3: CLI command tree and actual process execution
 
@@ -50,6 +51,7 @@ Consumes approved request wire schema and v1 output; produces fixed actual CLI v
 
 Files: shared packages/ui Bot/private Chat chooser/default control and existing shell integrations; relevant presentation tests.
 Consumes authenticated owner route and current target/permission DTOs. Initial owner choice can persist; valid defaults do not prompt again. Display target and permit explicit switch in same interaction; existing generated proposals require replacement+fresh approval.
+Task4a owns default routing UI. Task4b owns the approved exact one-operation action controller, owner proof/submit path and shared Chat/Terminal approval UI (routine-action-policy-design.md). No blanket implementation approval is pending. Terminal uses real session/incarnation/launch and no synthetic Chat/run; Chat preserves/verifies actionDigest end-to-end. Full-access-only is an intermediate state. Native Bash/read-only restrictions, plan/review/shared/org/unsupported ceilings and all actual-account/deploy permission limits remain unchanged.
 - [ ] Fail persistence across harness switch, no repeated picker, invalid default blocked, separate action approval tests first.
 - [ ] Wire common Web Canvas/Web Desktop/Electron behavior and applicable mobile review boundary; scoped tests/review/commit. Do not occupy A's GUI.
 
