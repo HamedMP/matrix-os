@@ -18,7 +18,7 @@ import { proposalFixture } from "./routine-cli-proposal-support.js";
 import { createRealBotStateDatabase, OWNER } from "./bot-state-support.js";
 import { proposal, scope, TARGET_A } from "./routine-cli-request-support.js";
 import type { CanonicalChatProviderAdapter, CanonicalProviderRunEvent } from "../../../packages/gateway/src/chat/provider-adapter.js";
-export async function claudeFixture(options: { dbPlugin?: KyselyPlugin; sourceDriver?: "claude_code" | "codex" | "hermes" | "opencode" } = {}) {
+export async function claudeFixture(options: { dbPlugin?: KyselyPlugin; sourceDriver?: "claude_code" | "codex" | "hermes" | "opencode" | "pi" } = {}) {
   const url = process.env.MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL; if (!url) throw new Error("MATRIX_ROUTINE_CLI_TEST_POSTGRES_URL required");
   let delegate: ReturnType<typeof createClaudeChatProviderAdapter>;
   let sourceAdapter: CanonicalChatProviderAdapter | undefined;
@@ -27,7 +27,7 @@ export async function claudeFixture(options: { dbPlugin?: KyselyPlugin; sourceDr
   const sourceEvents: CanonicalProviderRunEvent[] = [];
   const data = await createRealBotStateDatabase(url), db = options.dbPlugin ? data.db.withPlugin(options.dbPlugin) : data.db;
   const f = await proposalFixture(db, vi.fn, {
-    actualSourceOnly: sourceDriver === "opencode",
+    actualSourceOnly: sourceDriver === "opencode" || sourceDriver === "pi",
     adapters: [{ driverKind: sourceDriver, stateSchemaVersion: 1, parseState: value => value, serializeState: value => value,
       async *start(input) { for await (const event of (sourceAdapter ?? delegate).start(input)) { sourceEvents.push(event); yield event; } },
       async *resume(input) { const adapter = sourceAdapter ?? delegate; if (!adapter.resume) throw new Error("Fixture resume unsupported"); for await (const event of adapter.resume(input)) { sourceEvents.push(event); yield event; } },
@@ -35,7 +35,7 @@ export async function claudeFixture(options: { dbPlugin?: KyselyPlugin; sourceDr
     }],
     catalog: { revision: "fixture", drivers: [{ kind: sourceDriver, displayName: "Claude", adapterVersion: "1", capabilityClass: "coding_agent" }], instances: [{ id: sourceInstance, driverKind: sourceDriver, displayName: "Claude", availability: "available", workspaceRequirement: "project_optional", catalogRevision: "fixture",
       models: [{ id: sourceModel, displayName: "Fixture", availability: "available", capabilities: ["tools"], supportsVision: false, supportsToolUse: true }], options: [], skills: [], commands: [], setupActions: [],
-      supports: { rootChat: true, resume: sourceDriver === "codex", cancellation: true, steering: "none", attachments: [], tools: [], approvals: true, userInput: false, worktrees: "none", resources: [], interactionModes: ["default", "review"], permissionModes: [sourceDriver === "opencode" ? "supervised" : "full_access"] } }] },
+      supports: { rootChat: true, resume: sourceDriver === "codex", cancellation: true, steering: "none", attachments: [], tools: [], approvals: true, userInput: false, worktrees: "none", resources: [], interactionModes: ["default", "review"], permissionModes: [["opencode", "pi"].includes(sourceDriver) ? "supervised" : "full_access"] } }] },
   }); f.state.clock = new Date().toISOString();
   const secret = "fixture-platform-claude-consent", handle = "computer-one", machineId = "machine_current";
   const machine = { machineId, handle, runtimeSlot: "primary", clerkUserId: OWNER, provisioningClass: "customer" as const };

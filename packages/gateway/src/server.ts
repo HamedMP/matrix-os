@@ -1671,6 +1671,7 @@ export async function createGateway(config: GatewayConfig) {
       if (codingAgentProviders.some((provider) => provider.providerId === "pi")) {
         canonicalAdapters.push(createCanonicalCodingChatProviderAdapter({
           providerId: "pi",
+          ...(botServices?.routineCli ? { routineCli: { runtime: botServices.routineCli, ...routineCliTransport } } : {}),
           threads: codingAgentThreadStore,
           homePath,
           toolOutputKey,
