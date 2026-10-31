@@ -48,7 +48,7 @@ import { BotRouteError, type ResolvedBotRoute } from "./route-resolver.js";
 import { requireGroupBotAuthority, type GroupBotAuthorizer, BOT_RUNTIME_REGISTRY_CAPACITY, isManagedPiBinding, type BotRuntimeRegistry } from "./runtime-registry.js";
 import { readOwnerSoul, OwnerPersonalityError, type OwnerPersonalityConfig } from "./owner-personality.js";
 import { buildBotSystemPrompt, BotSystemPromptError } from "./system-prompt.js";
-import { withApprovedRoutineOccurrence } from "./routine-prompt-context.js";
+import { ROUTINE_OCCURRENCE_CONTEXT_SUFFIX, withApprovedRoutineOccurrence } from "./routine-prompt-context.js";
 import { BotSetupStepError, runBotSetupStep } from "./setup-step.js";
 
 /** How long a worker that took the cancel has to end its run before its runtime is stopped. */
@@ -418,7 +418,7 @@ export function createBotTaskOrchestrator(deps: {
       }
       run.spec = BotRunSpecSchema.parse({
         route: resolved.route,
-        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, ownerSoul, audience: group ? "group" : "personal", now: new Date(now()) }),
+        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, ownerSoul, reservedSuffix: input.backgroundTaskId && !group && deps.routineExecution ? ROUTINE_OCCURRENCE_CONTEXT_SUFFIX : undefined, audience: group ? "group" : "personal", now: new Date(now()) }),
         capabilities,
         limits: isolatedModel ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
         turn: { kind: "prompt", text: run.inputs.prompt(input.text), ...(run.inputs.imageCount ? { imageCount: run.inputs.imageCount } : {}) },

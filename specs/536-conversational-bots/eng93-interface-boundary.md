@@ -14,7 +14,10 @@ approval, definition and source revisions before appending an occurrence-phase
 section to the model's system prompt. It rechecks cancellation after the async
 lookup and refuses prompts exceeding the existing token budget. The checker
 performs a fresh joined durable snapshot after asynchronous source validation,
-and evaluates lease expiry after the database returns. It holds no database lock
+and evaluates lease expiry after the database returns. Prompt construction reserves
+room for the fixed phase section before trimming low-priority confirmed memory;
+reservation does not expose that section before its delivery-time authority check.
+It holds no database lock
 across external I/O. Changes after this checked snapshot still meet the existing
 inference and effect revalidation; the phase is not a reusable authorization.
 
