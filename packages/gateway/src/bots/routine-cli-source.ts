@@ -10,7 +10,8 @@ import { createRoutineCliSourcesRepository, lockRoutineCliSourceAdmission, lockR
 
 const RefSchema = z.object({ sourceId: z.string().regex(/^rsrc_[a-f0-9]{64}$/) }).strict();
 export type RoutineCliSourceReference = z.infer<typeof RefSchema>;
-const IssueSchema = z.object({ invocationId: z.uuid(), operation: RoutineCliOperationSchema }).strict();
+// PostgreSQL UUID storage returns lowercase; policy must see that same host identity at issue and consume.
+const IssueSchema = z.object({ invocationId: z.uuid().transform(value => value.toLowerCase()), operation: RoutineCliOperationSchema }).strict();
 const ConsumeSchema = z.object({ token: z.string().max(128).optional(), operation: RoutineCliOperationSchema }).strict();
 const LimitsSchema = z.object({
   maxActiveSources: z.number().int().min(1).max(256).default(256),
@@ -42,6 +43,12 @@ export class RoutineCliCapabilityDelivery {
   }
   toJSON(): { expiresAt: string } { return { expiresAt: this.expiresAt }; }
 }
+/** Verified host-only identity from issuance input or the locked stored capability; never CLI body data. */
+export interface RoutineCliVerifiedInvocation {
+  readonly sourceId: string;
+  readonly invocationId: string;
+  readonly operationDigest: string;
+}
 export interface RoutineCliSourceDependencies {
   db: Kysely<OwnerBotDatabase>;
   scope: RoutineCliScope;
@@ -54,7 +61,7 @@ export interface RoutineCliSourceDependencies {
    * A remembered target, generic owner principal, harness label or injected actions list never suffices.
    * Retain required policy/lifecycle row gates through this transaction in the documented lock order.
    * Both callbacks must perform only bounded local/DB checks, no network/model/cancellation work. */
-  authorizeOperation?: (source: RoutineCliSourceContext, operation: RoutineCliOperation, trx: Transaction<OwnerBotDatabase>) => Promise<boolean>;
+  authorizeOperation?: (source: RoutineCliSourceContext, operation: RoutineCliOperation, trx: Transaction<OwnerBotDatabase>, invocation: RoutineCliVerifiedInvocation) => Promise<boolean>;
 }
 
 /** Internal registry only. No endpoint or native lifecycle/action-approval implementation is installed here.
@@ -90,14 +97,17 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
     requireTime(source);
   };
   const liveRecord = async (record: SourceRecord | undefined, trx: Transaction<OwnerBotDatabase>, action?: RoutineCliAction,
-    operation?: RoutineCliOperation): Promise<RoutineCliSourceContext> => {
+    operation?: RoutineCliOperation, invocation?: RoutineCliVerifiedInvocation): Promise<RoutineCliSourceContext> => {
     if (!record || record.revoked_at !== null) throw new RoutineCliError("permission_denied");
     const source = scopedContext(record.source_context);
     if (sourceId(source) !== record.source_id || sourceKey(source) !== record.source_key || !sameHash(contextHash(source), record.context_hash))
       throw new RoutineCliError("permission_denied");
     if (action && !source.actions.includes(action)) throw new RoutineCliError("permission_denied");
     await requireLifecycle(source, trx, action);
-    if (operation && await deps.authorizeOperation!(source, operation, trx) !== true) throw new RoutineCliError("permission_denied");
+    if (operation) {
+      if (!invocation) throw new RoutineCliError("unavailable");
+      if (await deps.authorizeOperation!(source, operation, trx, invocation) !== true) throw new RoutineCliError("permission_denied");
+    }
     requireTime(source);
     return source;
   };
@@ -158,14 +168,15 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
       return deps.db.transaction().execute(async trx => {
         await lockRoutineCliSourceAdmission(trx, scope);
         const record = await lockReference(trx, reference);
-        const source = await liveRecord(record, trx, actionFor(operation), operation), current = now();
+        const verified = Object.freeze({ sourceId: record.source_id, invocationId: input.invocationId, operationDigest: hash(JSON.stringify(operation)) });
+        const source = await liveRecord(record, trx, actionFor(operation), operation, verified), current = now();
         if (await repo.activeCapabilities(scope, current.toISOString(), record.source_id, trx) >= limits.maxCapabilitiesPerSource
           || await repo.activeCapabilities(scope, current.toISOString(), undefined, trx) >= limits.maxCapabilitiesPerScope)
           throw new RoutineCliError("unavailable");
         const token = `rcli_${randomBytes(32).toString("base64url")}`;
         const expiresAt = new Date(Math.min(current.getTime() + limits.capabilityTtlMs, Date.parse(source.expiresAt))).toISOString();
         await repo.issue({ source_id: record.source_id, owner_id: scope.ownerId, computer_id: scope.computerId,
-          invocation_id: input.invocationId, operation_digest: hash(JSON.stringify(operation)), token_hash: hash(token),
+          invocation_id: verified.invocationId, operation_digest: verified.operationDigest, token_hash: hash(token),
           issued_at: current.toISOString(), expires_at: expiresAt, consumed_at: null }, trx);
         // Admission-triggered bounded cleanup; SKIP LOCKED never waits for another consumer's capability.
         await repo.cleanup(scope, now().toISOString(), limits.cleanupBatchSize, trx);
@@ -179,7 +190,7 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
      * catching and committing here would retain partial admission. No reusable bearer escapes this gate.
      * Reconciliation uses a fresh host invocation capability and its existing durable request ID. */
     consumeWithin: <T>(trx: Transaction<OwnerBotDatabase>, value: z.infer<typeof ConsumeSchema>,
-      work: (source: RoutineCliSourceContext, executor: Transaction<OwnerBotDatabase>) => Promise<T>): Promise<T> => routineCliBoundary(async () => {
+      work: (source: RoutineCliSourceContext, executor: Transaction<OwnerBotDatabase>, invocation: RoutineCliVerifiedInvocation) => Promise<T>): Promise<T> => routineCliBoundary(async () => {
       if (!trx.isTransaction) throw new RoutineCliError("unavailable");
       const input = ConsumeSchema.parse(value), { scope } = configured();
       if (input.token === undefined) throw new RoutineCliError("source_context_required");
@@ -194,12 +205,14 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
           throw new RoutineCliError("permission_denied");
       };
       requireCapability();
-      const source = await liveRecord(record, trx, action, operation);
+      if (!cap) throw new RoutineCliError("permission_denied");
+      const verified = Object.freeze({ sourceId: record.source_id, invocationId: cap.invocation_id, operationDigest: cap.operation_digest });
+      const source = await liveRecord(record, trx, action, operation, verified);
       await repo.consume(scope, tokenHash, now().toISOString(), trx);
-      const result = await work(source, trx);
+      const result = await work(source, trx, verified);
       // Validate again around awaited local admission work, including action policy and expiry.
       requireCapability();
-      await liveRecord(record, trx, action, operation);
+      await liveRecord(record, trx, action, operation, verified);
       return result;
     }),
     cleanup: () => routineCliBoundary(async () => {

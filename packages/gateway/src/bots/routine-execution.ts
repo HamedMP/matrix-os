@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { sql, type Kysely } from "kysely";
 import type { BotToolRequest, CanonicalOwnerScope } from "@matrix-os/contracts";
-import { BotRoutineControlSchema } from "@matrix-os/contracts";
+import { createBotRoutineControl } from "./routine-control.js";
 import type { OwnerBotDatabase } from "./database.js";
 import type { BotRoutineApprovals } from "./routine-approval.js";
 import { routineSelection } from "./routine-authorization.js";
@@ -248,6 +248,7 @@ export function createBotRoutineExecution(deps: {
       });
     }
   }
+  const controls = createBotRoutineControl({ db: deps.db, approvals: deps.approvals, now, stopFire });
   return {
     connect(value: Canonical) {
       canonical = value;
@@ -366,35 +367,14 @@ export function createBotRoutineExecution(deps: {
           nextFireAt: r.nextFireAt,
           revision: r.revision,
           lastFire: fires.length > 0 ? fires[0] : null,
-          requiresReview: fires.some(fire => fire.status === "uncertain")
+          requiresReview: await repository.hasUncertain(ownerId, r.routineId)
         };
       }));
     },
+    ...controls,
     async control(ownerId: string, botId: string, routineId: string, raw: unknown) {
-      const input = BotRoutineControlSchema.parse(raw),
-        existing = await repository.get(ownerId, routineId);
-      if (!existing || existing.botId !== botId) throw new BotStateError("not_found");
-      if (input.status === "active") {
-        if ((await repository.fires(ownerId, routineId)).some(fire => fire.status === "uncertain")) throw new BotStateError("conflict");
-        if (!(await deps.approvals.authorize({
-          ...existing,
-          status: "active"
-        }))) throw new BotStateError("invalid_input");
-      }
-      const routine = await transact(ownerId, async tx => {
-        const r = await createBotRoutinesRepository(tx.db).control({
-          ownerId,
-          routineId,
-          ...input,
-          now: now()
-        }, tx.db);
-        await tx.publish(r.chatId, "bot.authority.changed", {
-          agentId: botId,
-          revision: r.revision
-        });
-        return r;
-      });
-      if (input.status !== "active") for (const fire of await repository.fires(ownerId, routineId)) if (fire.status === "claimed" || fire.status === "dispatched") await stopFire(ownerId, routine.chatId, fire);
+      const routine = await transact(ownerId, tx => controls.controlWithin(tx, ownerId, botId, routineId, raw));
+      await controls.afterControlCommit(routine);
       return routine;
     }
   };

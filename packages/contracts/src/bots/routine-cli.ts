@@ -1,7 +1,7 @@
 import { z } from "zod/v4";
 import { CanonicalChatIdSchema } from "#canonical-chat";
 import { BotIdSchema } from "#bots/ids";
-import { BotRoutineProposalSchema } from "#bots/routines";
+import { BotRoutineProposalSchema, BotRoutineScheduleSchema } from "#bots/routines";
 
 const revision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1);
 const routineId = z.string().regex(/^rt_[a-f0-9]{24}$/);
@@ -10,7 +10,7 @@ export const RoutineCliActionSchema = z.enum(["read", "propose", "control"]);
 export type RoutineCliAction = z.infer<typeof RoutineCliActionSchema>;
 export const RoutineCliErrorCodeSchema = z.enum([
   "source_context_required", "permission_denied", "target_required", "target_unavailable",
-  "revision_conflict", "unavailable", "invalid_input",
+  "revision_conflict", "request_conflict", "not_found", "unavailable", "invalid_input",
 ]);
 export type RoutineCliErrorCode = z.infer<typeof RoutineCliErrorCodeSchema>;
 
@@ -36,3 +36,37 @@ export const RoutineCliTargetPreferenceSchema = z.object({
   updatedAt: z.iso.datetime({ offset: true }).nullable(),
 }).strict();
 export type RoutineCliTargetPreference = z.infer<typeof RoutineCliTargetPreferenceSchema>;
+
+/** Public observed state only; never internal task/fire/approval/authorization records. */
+export const RoutineCliObservedFireSchema = z.object({
+  status: z.enum(["claimed", "dispatched", "completed", "failed", "cancelled", "uncertain"]),
+  scheduledFor: z.iso.datetime({ offset: true }), updatedAt: z.iso.datetime({ offset: true }),
+}).strict();
+export const RoutineCliRoutineViewSchema = z.object({
+  routineId, name: z.string().min(1).max(120), schedule: BotRoutineScheduleSchema,
+  status: z.enum(["active", "paused", "archived"]), nextFireAt: z.iso.datetime({ offset: true }).nullable(),
+  revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  lastFire: RoutineCliObservedFireSchema.nullable(), requiresReview: z.boolean(),
+}).strict();
+const ReceiptBase = z.object({ requestId, operation: z.enum(["propose", "pause", "resume", "archive"]),
+  revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), createdAt: z.iso.datetime({ offset: true }) });
+const AppliedRoutine = z.object({ routineId, status: z.enum(["active", "paused", "archived"]), revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict();
+export const RoutineCliReceiptSchema = z.discriminatedUnion("disposition", [
+  ReceiptBase.extend({ disposition: z.literal("queued") }).strict(),
+  ReceiptBase.extend({ disposition: z.literal("pending_approval") }).strict(),
+  ReceiptBase.extend({ disposition: z.literal("applied"), routine: AppliedRoutine }).strict(),
+  ReceiptBase.extend({ disposition: z.literal("unknown"), reconcile: z.literal(true) }).strict(),
+]);
+export const RoutineCliResultSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("list"), routines: z.array(RoutineCliRoutineViewSchema).max(32), truncated: z.boolean() }).strict(),
+  z.object({ kind: z.literal("show"), routine: RoutineCliRoutineViewSchema,
+    history: z.object({ fires: z.array(RoutineCliObservedFireSchema).max(20), truncated: z.boolean() }).strict() }).strict(),
+  z.object({ kind: z.literal("receipt"), receipt: RoutineCliReceiptSchema, current: RoutineCliRoutineViewSchema.nullable(),
+    approval: z.enum(["pending", "resolved", "expired", "cancelled"]).nullable(),
+    execution: z.object({ stop: z.literal("unconfirmed") }).strict().optional() }).strict(),
+  z.object({ kind: z.literal("not_observed"), requestId, mayStillArrive: z.literal(true) }).strict(),
+  z.object({ kind: z.literal("unknown"), requestId, disposition: z.literal("unknown"), reconcile: z.literal(true) }).strict(),
+]);
+export type RoutineCliRoutineView = z.infer<typeof RoutineCliRoutineViewSchema>;
+export type RoutineCliReceipt = z.infer<typeof RoutineCliReceiptSchema>;
+export type RoutineCliResult = z.infer<typeof RoutineCliResultSchema>;
