@@ -10,7 +10,7 @@ import { createMockCustomerVpsSystemStore, createMockHetznerClient } from "./cus
 import { createTestConfig } from "./customer-vps-service-test-helper.js";
 import { upsertHostBundleRelease } from "../../packages/platform/src/db.js";
 
-export async function createSeededPreviewPair() {
+export async function createSeededPreviewPair(overrides: Partial<ReturnType<typeof createTestConfig>> = {}) {
   const fixture = await createPreviewPairPostgresFixture();
   try {
     const manifest = previewPairManifestFixture();
@@ -22,7 +22,7 @@ export async function createSeededPreviewPair() {
       sha256: candidate.hostBundleSha256, gitCommit: manifest.sourceSha, sourcePr: manifest.pr,
       buildTime: new Date(PAIR_NOW).toISOString(), bundleKey: "test/bundle.tar.gz", size: 123 });
     const hetzner = createMockHetznerClient();
-    const context = createCustomerVpsContext({ db: fixture.db, config: createTestConfig(), hetzner,
+    const context = createCustomerVpsContext({ db: fixture.db, config: createTestConfig(overrides), hetzner,
       systemStore: createMockCustomerVpsSystemStore(), now: () => new Date(PAIR_NOW) });
     const provisioner = createCustomerVpsProvisioner(context, createCustomerVpsProvisioningDispatcher(context));
     const prepare = (id: string, generation: number, role: "owner" | "member") => preparePreviewPairMember(context, provisioner, id, generation, role);

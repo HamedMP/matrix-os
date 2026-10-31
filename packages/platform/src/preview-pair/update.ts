@@ -8,9 +8,10 @@ import { withPreviewPairClaim, type PreviewPairClaim } from "./lifecycle.js";
 
 /** Candidate provenance is verified independently before this DB-only transition. */
 export async function requestPreviewPairUpdate(db: PlatformDB, pairId: string, generation: number,
-  revision: number, rawCandidate: unknown, now: number) {
+  revision: number, rawCandidate: unknown, now: number, controllerRunId?: number) {
   PreviewPairIdSchema.parse(pairId); PreviewPairGenerationSchema.parse(generation);
   z.number().int().positive().max(Number.MAX_SAFE_INTEGER).parse(revision);
+  if (controllerRunId !== undefined) z.number().int().positive().max(Number.MAX_SAFE_INTEGER).parse(controllerRunId);
   const candidate = PreviewPairCandidateSchema.parse(rawCandidate);
   if (!Number.isFinite(now) || generation >= 999) throw new PreviewPairConflictError();
   for (const kind of ["ui", "api"] as const) {
@@ -25,13 +26,13 @@ export async function requestPreviewPairUpdate(db: PlatformDB, pairId: string, g
       .where("fixture_id", "is not", null).returningAll().executeTakeFirst();
     if (!row) throw new PreviewPairConflictError();
     await trx.executor.insertInto("preview_pair_generations").values({ pair_id: pairId, generation: generation + 1,
-      source_sha: candidate.sourceSha, candidate: JSON.stringify(candidate), created_at: new Date(now).toISOString() })
+      source_sha: candidate.sourceSha, candidate: JSON.stringify(candidate), controller_run_id: controllerRunId ? String(controllerRunId) : null, created_at: new Date(now).toISOString() })
       .onConflict(oc => oc.columns(["pair_id", "generation"]).doNothing()).execute();
     const saved = await trx.executor.selectFrom("preview_pair_generations").selectAll().where("pair_id", "=", pairId)
       .where("generation", "=", generation + 1).executeTakeFirstOrThrow();
     // Schema parsing restores canonical field order after JSONB storage.
     const stored = PreviewPairCandidateSchema.parse(saved.candidate);
-    if (saved.source_sha !== candidate.sourceSha || JSON.stringify(stored) !== JSON.stringify(candidate)) throw new PreviewPairConflictError();
+    if (saved.controller_run_id !== (controllerRunId ? String(controllerRunId) : null) || saved.source_sha !== candidate.sourceSha || JSON.stringify(stored) !== JSON.stringify(candidate)) throw new PreviewPairConflictError();
     return row;
   });
 }

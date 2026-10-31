@@ -1,3 +1,4 @@
+import { markPairCreateIntent, releasePairProvisioningPass, clearRejectedPairCreateIntent } from "./customer-vps-pair-jobs.js";
 import { withAccountDeletionAdmission } from './account-deletion/admission.js';
 import { PAIR_PREVIEW_HANDLE_PATTERN } from '@matrix-os/clerk-sync';
 /** Customer VPS provisioning job dispatch, split from customer-vps.ts. */
@@ -7,6 +8,7 @@ import type { PlatformDB } from './db.js';
 import { getUserMachine, runInPlatformTransaction, updateUserMachine } from './db.js';
 import {
   CustomerVpsError,
+  DefinitiveProviderRejectionError,
   PreviewSnapshotUnavailableError,
   genericProviderError,
   logCustomerVpsError,
@@ -57,11 +59,13 @@ import type { CustomerVpsContext } from './customer-vps-context.js';
 import type { HetznerClient } from './customer-vps-hetzner.js';
 
 /** Claims durable provisioning jobs and creates their provider servers. */
-export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsContext) {
+export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsContext,
+  pair?: { signal: AbortSignal; authorizePair: (machineId: string, jobId: string) => Promise<boolean> }) {
   const { deps, scheduleProvisioningDispatch, now, queueProviderDeletion, enqueueProviderDeletionTx } = context;
 
   async function waitForProvisioningCreateAction(actionId: number): Promise<'success' | 'error' | 'pending'> {
-    for (let attempt = 0; attempt < PROVISIONING_CREATE_ACTION_POLL_ATTEMPTS; attempt += 1) {
+    const attempts = pair ? 1 : PROVISIONING_CREATE_ACTION_POLL_ATTEMPTS;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       let action;
       try {
         action = await deps.hetzner.getAction(actionId);
@@ -71,7 +75,7 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
       }
       if (action?.status === 'success') return 'success';
       if (action?.status === 'error') return 'error';
-      if (attempt + 1 < PROVISIONING_CREATE_ACTION_POLL_ATTEMPTS) {
+      if (attempt + 1 < attempts) {
         await sleep(PROVISIONING_CREATE_ACTION_POLL_INTERVAL_MS);
       }
     }
@@ -87,7 +91,9 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
     const pendingMachine = pendingJob ? await getUserMachine(deps.db, pendingJob.machineId) : undefined;
     // Pair jobs require an isolated, independently verified authority adapter.
     // The ordinary worker must never boot one with customer configuration.
-    if (pendingMachine && PAIR_PREVIEW_HANDLE_PATTERN.test(pendingMachine.handle)) return 'skipped';
+    if (pendingMachine && PAIR_PREVIEW_HANDLE_PATTERN.test(pendingMachine.handle)) {
+      if (!pair || !await pair.authorizePair(pendingMachine.machineId, jobId)) return 'skipped';
+    } else if (pair) return 'skipped';
     if (
       pendingJob?.status === 'running'
       && pendingJob.attempts >= MAX_PROVISIONING_JOB_ATTEMPTS
@@ -156,6 +162,13 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
     const createAdmittedServer = async (input: Parameters<HetznerClient['createServer']>[0]) => {
       let created: Awaited<ReturnType<HetznerClient['createServer']>> | undefined;
       try {
+        if (pair) {
+          await withAccountDeletionAdmission(deps.db, row.clerkUserId, async () => undefined);
+          if (!await pair.authorizePair(row.machineId, job.jobId)) throw new Error('Pair provisioning unavailable');
+          await markPairCreateIntent(deps.db, job, now().toISOString());
+          created = await deps.hetzner.createServer(input);
+          return created;
+        }
         return await withAccountDeletionAdmission(deps.db, row.clerkUserId, async () => {
           created = await deps.hetzner.createServer(input);
           return created;
@@ -340,6 +353,9 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
           ...(imageDecision.imageSource === 'snapshot' ? { image: imageDecision.providerImageId } : {}),
         };
       let server = existingServer;
+      // An interrupted POST may still create a labeled server. Preserve its intent
+      // until adoption/cleanup proves its outcome; absence in one list is no retry permit.
+      if (pair && !server && job.activationStep === 'creating') return 'pending';
       if (!server) {
         await assertMachineProviderMutationAllowed(
           deps,
@@ -404,6 +420,7 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
           }
         } catch (createErr: unknown) {
           if (admissionCommitFailedWithKnownResult) throw createErr;
+          if (pair && createErr instanceof DefinitiveProviderRejectionError) throw createErr;
           if (isAmbiguousProviderCreateError(createErr)) {
             logCustomerVpsError('provision create outcome is ambiguous; awaiting exact-label reconciliation', createErr);
             return 'pending';
@@ -590,6 +607,10 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
       }
       return 'completed';
     } catch (err: unknown) {
+      if (pair?.signal.aborted && !(err instanceof DefinitiveProviderRejectionError)) {
+        logCustomerVpsError('pair provisioning pass interrupted; retaining durable progress', err);
+        return 'pending';
+      }
       const mapped = genericProviderError(err);
       if (serverIdForCompensation !== null) {
         try {
@@ -611,6 +632,7 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
       const failedAt = now().toISOString();
       try {
         await runInPlatformTransaction(deps.db, async (trx) => {
+          if (pair && err instanceof DefinitiveProviderRejectionError) await clearRejectedPairCreateIntent(trx, job, failedAt);
           await updateUserMachine(trx, row.machineId, {
             status: 'failed',
             failureCode: toFailureCode(err),
@@ -631,6 +653,8 @@ export function createCustomerVpsProvisioningDispatcher(context: CustomerVpsCont
       }
       logCustomerVpsError(`provisioning job failed machineId=${row.machineId}`, err);
       return 'failed';
+    } finally {
+      if (pair) await releasePairProvisioningPass(deps.db, job, now().toISOString());
     }
   }
 
