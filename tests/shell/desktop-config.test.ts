@@ -363,6 +363,14 @@ describe("Desktop config", () => {
     expect(useDesktopConfigStore.getState().desktopIconsHydrated).toBe(true);
   });
 
+  it("marks the icons hydrated when a saved write settles before any layout read lands", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ config: {} }) });
+    vi.stubGlobal("fetch", mockFetch);
+    useDesktopConfigStore.setState({ desktopIcons: [{ path: "__chat__", x: 20, y: 20 }], desktopIconsHydrated: false });
+    useDesktopConfigStore.getState().moveDesktopIcon("__chat__", 240, 180);
+    await waitFor(() => expect(useDesktopConfigStore.getState().desktopIconsHydrated).toBe(true));
+  });
+
   it("reports duplicate and full web Desktop placements without persisting", async () => {
     const mockFetch = vi.fn();
     vi.stubGlobal("fetch", mockFetch);

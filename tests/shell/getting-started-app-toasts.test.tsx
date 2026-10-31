@@ -38,7 +38,7 @@ vi.mock("@matrix-os/ui", async (importOriginal) => {
 });
 
 import { WebGettingStartedAppHost, WebGettingStartedAppWindow } from "../../shell/src/components/getting-started-app/web-getting-started-app";
-import { webGettingStartedAppVisible } from "../../shell/src/components/getting-started-app/web-getting-started-app-port";
+import { webGettingStartedAppVisible, webGettingStartedWindowOnScreen } from "../../shell/src/components/getting-started-app/web-getting-started-app-port";
 
 afterEach(() => {
   cleanup();
@@ -156,5 +156,23 @@ describe("Getting started app visibility on Web Desktop and Web Canvas", () => {
 
   it("does not count a window covered by another fullscreen window", () => {
     expect(webGettingStartedAppVisible({ id: "gs", minimized: false }, "terminal")).toBe(false);
+  });
+});
+
+describe("Getting started app on the Web Canvas", () => {
+  const win = { x: 100, y: 100, width: 400, height: 300 };
+  const view = { zoom: 1, panX: 0, panY: 0, viewportWidth: 1000, viewportHeight: 800 };
+
+  it("counts a window in view as on screen, at any zoom", () => {
+    expect(webGettingStartedWindowOnScreen(win, view)).toBe(true);
+    expect(webGettingStartedWindowOnScreen(win, { ...view, panX: -450 })).toBe(true);
+    expect(webGettingStartedWindowOnScreen(win, { ...view, zoom: 0.5, panX: 1500 })).toBe(true);
+  });
+
+  it("does not count a window panned out of view, so awards go to the corner toast", () => {
+    expect(webGettingStartedWindowOnScreen(win, { ...view, panX: -600 })).toBe(false);
+    expect(webGettingStartedWindowOnScreen(win, { ...view, panX: 1000 })).toBe(false);
+    expect(webGettingStartedWindowOnScreen(win, { ...view, panY: -500 })).toBe(false);
+    expect(webGettingStartedWindowOnScreen(win, { ...view, panY: 800 })).toBe(false);
   });
 });

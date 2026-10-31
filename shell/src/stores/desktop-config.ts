@@ -151,6 +151,7 @@ export function scheduleWebDesktopConfigConflictRetry(gatewayUrl: string): void 
       unconfirmedDesktopRollbackIcons = null;
       deferredDesktopHydration = null;
       replayableDesktopHydrationRange = null;
+      useDesktopConfigStore.setState({ desktopIconsHydrated: true });
     }).catch((error: unknown) => {
       console.warn("[desktop-config] OS-view retry failed:", error instanceof Error ? error.name : typeof error);
       if (error instanceof OsViewStateConflictExhaustedError) {
@@ -186,6 +187,8 @@ function applyDesktopIconMutation(
       unconfirmedDesktopRollbackIcons = null;
       deferredDesktopHydration = null;
       replayableDesktopHydrationRange = null;
+      // A saved write establishes the layout even if the read it superseded never lands.
+      set({ desktopIconsHydrated: true });
     }
     return true;
   }).catch((error: unknown) => {

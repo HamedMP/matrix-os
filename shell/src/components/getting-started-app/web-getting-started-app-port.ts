@@ -88,3 +88,15 @@ export function webGettingStartedAppVisible(
 ): boolean {
   return !win.minimized && (fullscreenWindowId === null || fullscreenWindowId === win.id);
 }
+
+/** Whether any part of a Web Canvas window is inside the viewport at the current pan and zoom. */
+export function webGettingStartedWindowOnScreen(
+  win: { x: number; y: number; width: number; height: number },
+  view: { zoom: number; panX: number; panY: number; viewportWidth: number; viewportHeight: number },
+): boolean {
+  const left = (win.x + view.panX) * view.zoom;
+  const top = (win.y + view.panY) * view.zoom;
+  const right = left + win.width * view.zoom;
+  const bottom = top + win.height * view.zoom;
+  return right > 0 && bottom > 0 && left < view.viewportWidth && top < view.viewportHeight;
+}
