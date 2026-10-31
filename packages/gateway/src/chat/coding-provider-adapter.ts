@@ -1,4 +1,5 @@
 import { createCodexRoutineSources } from "./codex-routine-source.js";
+import { createPiRoutineSources } from "./pi-routine-source.js";
 import { createOpenCodeRoutineSources } from "./opencode-routine-source.js";
 import type { NativeRoutineCliPort } from "./claude-routine-execution.js";
 import { createCodexBrowserRunScope } from "./codex-browser-run-scope.js";
@@ -431,6 +432,7 @@ export function createCanonicalCodingChatProviderAdapter(options: {
   const kind = driverKind(options.providerId);
   const routineSources = options.providerId === "opencode"
     ? createOpenCodeRoutineSources(options.routineCli, options.homePath ?? "/home/matrix/home")
+    : options.providerId === "pi" ? createPiRoutineSources(options.routineCli, options.homePath ?? "/home/matrix/home")
     : createCodexRoutineSources(options.providerId === "codex" ? options.routineCli : undefined, options.homePath ?? "/home/matrix/home");
   const browsers = createCodexBrowserRunScope(options.providerId === "codex" && options.sharedBrowser ? { broker: options.sharedBrowser, gatewayPort: options.gatewayPort ?? 4000 } : undefined);
   const activeSteerRuns = new Map<string, {
