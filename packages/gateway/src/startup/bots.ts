@@ -1,4 +1,5 @@
 import { bootstrapCollaborationDatabase } from "../collaboration/database.js";
+import { createRoutineCliDestinationService } from "../bots/routine-cli-destination-service.js";
 import {createBotRoutineApprovals} from "../bots/routine-approval.js";
 import {createBotRoutineExecution,type BotRoutineExecution} from "../bots/routine-execution.js";
 import {BotStateError} from "../bots/repositories/shared.js";
@@ -130,6 +131,7 @@ export async function runConnectionReconciliationPass(
 }
 
 export interface BotServices {
+  routineDestination?: ReturnType<typeof createRoutineCliDestinationService>;
   routines?: BotRoutineExecution;
   providerConnections?: BotProviderConnectionsService;
   chatgptPlanPeers?: ChatGptPlanPeers;
@@ -157,6 +159,8 @@ export interface BotServices {
 export async function startBots(options: {
   toolOutputKey?: Buffer;
   runtimeOwnerId?: string | null;
+  /** Fixed trusted runtime config only; preserve each actual principal's existing owner data. */
+  configuredOwnerIds?: readonly string[];
   computerId?: string | null;
   nativeProfileGuard?: NativeProviderProfileGuard;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
@@ -224,6 +228,7 @@ export async function startBots(options: {
     observeClaude: options.nativeProfileGuard && options.host?.available ? createClaudeTaskObserver({ homePath: options.homePath, providers: options.providers })
       : async () => ({ available: false, reason: 'unsupported_runtime' }),
   });
+  const routineDestination = createRoutineCliDestinationService({ db, agents: options.agents, ownerId: options.runtimeOwnerId, computerId: options.computerId, configuredOwnerIds: options.configuredOwnerIds });
   const bindings = createBotBindingsRepository(db);
   const instantiation = createBotInstantiation({
     db,
@@ -303,7 +308,7 @@ export async function startBots(options: {
   const host = options.host;
   if (!host?.available) {
     return {
-      recipes, instantiation, recovery, interactions, memory, grants, authority, botChats, tasks, startConnectionReconciler, providerConnections, chatgptPlanPeers, routines,
+      recipes, instantiation, recovery, interactions, memory, grants, authority, botChats, tasks, routineDestination, startConnectionReconciler, providerConnections, chatgptPlanPeers, routines,
       async close() {
         await routines.stop();
         chatgptPlanPeers?.close();
@@ -485,6 +490,7 @@ export async function startBots(options: {
     stopRuntime: (runtimeHandle) => admission.release(runtimeHandle),
   });
   return {
+    routineDestination,
     recipes,
     routines,
     instantiation,

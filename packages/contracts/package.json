@@ -25,7 +25,8 @@
     "./preview-pair": "./src/preview-pair.ts",
     "./preview-pair-artifact": "./src/preview-pair-artifact.ts",
     "./preview-pair-control": "./src/preview-pair-control.ts",
-    "./preview-pair-launch": "./src/preview-pair-launch.ts"
+    "./preview-pair-launch": "./src/preview-pair-launch.ts",
+    "./routine-destination": "./src/routine-destination.ts"
   },
   "imports": {
     "#inference-response-limits": "./src/inference-response-limits.ts",

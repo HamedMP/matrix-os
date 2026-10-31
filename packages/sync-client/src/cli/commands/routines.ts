@@ -5,7 +5,7 @@ import { executeRoutineOperation, RoutineClientError } from "../routine-client.j
 import { formatRoutineHuman, routineExitCode } from "../routine-output.js";
 import { formatCliSuccess, formatCliError } from "../output.js";
 export const routinesCommand = defineCommand({
-  meta: { name: "routines", description: "Source-bound routines: list; show <routineId>; request <uuid>; propose --input - --request-id <uuid>; pause/resume/archive <routineId> --revision <integer> --request-id <uuid>. Requires an authorized Matrix source context; owner login/profile is insufficient. Queued is admission history, not pending approval or active. Stop/unknown effects stay unconfirmed; reconcile using request(original UUID). No automatic mutation retry." },
+  meta: { name: "routines", description: "Source-bound routines: list; show <routineId>; request <uuid>; propose --input - --request-id <uuid>; pause/resume/archive <routineId> --revision <integer> --request-id <uuid>. Choose this Computer's destination in a private Bot Chat's Details > Routine destination. Requires an authorized Matrix source context; owner login/profile is insufficient. Queued is admission history, not pending approval or active. Stop/unknown effects stay unconfirmed; reconcile using request(original UUID). No automatic mutation retry." },
   args: { verb: { type: "positional", required: false }, operand: { type: "positional", required: false },
     input: { type: "string", description: "Strict proposal JSON on bounded stdin (- only)" },
     "request-id": { type: "string", description: "Explicit stable mutation UUID; reuse original to reconcile" },
