@@ -22,13 +22,28 @@ does not claim to fix the separately observed provider rejection.
 - React Doctor reports no issues in the changed scope. Pattern scan reports zero violations
   and five existing warnings.
 
-## Remaining live blocker
+## Live send failure and platform repair
 
 A signed-in local Electron file renderer reproduces a real HTTP 403 with the generic body
 `{"error":"Forbidden"}` on the support-message endpoint. The new-ticket request contains
-signed identity fields. This is independent of panel rendering and remains unqualified.
-Inspect the provider and platform signing configuration with approved read-only access.
-Do not remove identity verification or weaken authorization to make the request succeed.
+signed identity fields. This is independent of panel rendering.
+
+Approved read-only configuration diagnosis identified a terminal newline in the configured
+signing secret. The platform used the raw configuration bytes. A synthetic identity verified
+directly against the real provider returned 403 when signed with those exact bytes and 200
+when signed with the trimmed key. Invalid-signature controls returned 403. No customer
+records, messages or settings were changed. The key itself does not need rotation.
+
+The platform candidate trims surrounding configuration whitespace before signing and treats
+a whitespace-only value as unavailable. A focused route module preserves authenticated
+subject binding and configuration-error handling. Three named regressions failed before the
+repair (two mismatched signatures and a blank-key false success); all seven focused route
+checks and 25 related JWT, configuration and Desktop-client checks pass afterward.
+
+The failing local test used a real Electron file renderer and real provider. Successful
+synthetic read verification does not qualify authenticated message submission or reply
+receipt. Production configuration and deployment remain unchanged. Do not remove identity
+verification or weaken authorization to make the request succeed.
 
 ## Completion checks
 
