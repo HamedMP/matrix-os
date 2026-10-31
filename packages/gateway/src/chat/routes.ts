@@ -785,6 +785,7 @@ export function createCanonicalChatRoutes(options: {
       const parsed = CanonicalSubmitChatApprovalRequestSchema.safeParse(await context.req.json());
       if (!parsed.success) return validationError(context);
       const proof = context.req.header("x-matrix-custom-mcp-approval-proof");
+      const routineProof = context.req.header("x-matrix-routine-action-proof");
       const browserProof = context.req.header("x-matrix-browser-approval-proof");
       const result = await options.service.submitApproval(
         ownerFromPrincipal(options.getPrincipal(context)),
@@ -792,7 +793,7 @@ export function createCanonicalChatRoutes(options: {
         runId,
         approvalId,
         parsed.data,
-        { ...(proof ? { platformApprovalProof: proof } : {}), ...(browserProof ? { browserApprovalProof: browserProof } : {}) },
+        { ...(routineProof ? { routineActionProof: routineProof } : {}), ...(proof ? { platformApprovalProof: proof } : {}), ...(browserProof ? { browserApprovalProof: browserProof } : {}) },
       );
       return chatJson(context, CanonicalChatApprovalSubmissionResponseSchema.parse(result));
     } catch (error: unknown) {

@@ -745,7 +745,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
       }
       const approvalProof = await authenticatedApprovalProxyProof({ request: c.req.raw,
         method: c.req.method, path: explicitVmRoute.upstreamPath, handle: machine.handle,
-        identity, platformSecret, machine, browserApprovalsEnabled: appEnv.MATRIX_SUPERVISED_BROWSER_APPROVALS_ENABLED === 'true' });
+        identity, platformSecret, machine, clerkAuth, browserApprovalsEnabled: appEnv.MATRIX_SUPERVISED_BROWSER_APPROVALS_ENABLED === 'true' });
       if (approvalProof && typeof approvalProof === 'object') return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
       const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
         method: c.req.method, path: explicitVmRoute.upstreamPath, machine, identity, platformSecret });
@@ -914,7 +914,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
         return c.json({ error: 'VPS unreachable' }, 502);
       }
       const approvalProof = await authenticatedApprovalProxyProof({ request: c.req.raw,
-        method: c.req.method, path, handle: runningMachine.handle, identity, platformSecret, machine: runningMachine, browserApprovalsEnabled: appEnv.MATRIX_SUPERVISED_BROWSER_APPROVALS_ENABLED === 'true' });
+        method: c.req.method, path, handle: runningMachine.handle, identity, platformSecret, machine: runningMachine, clerkAuth, browserApprovalsEnabled: appEnv.MATRIX_SUPERVISED_BROWSER_APPROVALS_ENABLED === 'true' });
       if (approvalProof && typeof approvalProof === 'object') return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
       const turnProof = await authenticatedPreviewDriveProxyProof({ request: c.req.raw,
         method: c.req.method, path, machine: runningMachine, identity, platformSecret });
@@ -1129,7 +1129,7 @@ export function createSessionRoutingMiddleware(opts: CreateSessionRoutingMiddlew
     const qs = buildForwardedQueryString(c.req.url, APP_ASSET_ROUTE_OMITTED_QUERY_PARAMS);
     const targetPort = isCodeDomain ? codeServerPort : (isGatewayPath || path === '/apps' || path.startsWith('/apps/')) ? 4000 : 3000;
     const approvalProof = await authenticatedApprovalProxyProof({ request: c.req.raw,
-      method: c.req.method, path, handle: record.handle, identity, platformSecret, machine: undefined, browserApprovalsEnabled: false });
+      method: c.req.method, path, handle: record.handle, identity, platformSecret, machine: undefined, clerkAuth, browserApprovalsEnabled: false });
     if (approvalProof && typeof approvalProof === 'object') return c.json({ error: 'Approval request unavailable' }, approvalProof.status);
     const body = ['GET', 'HEAD'].includes(c.req.method) ? undefined : await c.req.blob();
     const headers = isCodeDomain

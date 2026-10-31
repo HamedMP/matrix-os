@@ -1,4 +1,5 @@
 "use client";
+import { TerminalRoutineConfirmations } from "./TerminalRoutineConfirmations";
 
 import { useCallback, useEffect, useEffectEvent, useId, useMemo, useRef, useState, type KeyboardEvent, type SetStateAction } from "react";
 import { getAllPaneIds, type TerminalCompatMode } from "@/stores/terminal-store";
@@ -1234,6 +1235,7 @@ function LocalTerminalApp({ initialCommand, initialLabel, initialClaudeMode = fa
       onKeyDown={handleKeyDown}
     >
       <TerminalAppContext.Provider value={storeApi}>
+        <TerminalRoutineConfirmations/>
         {mobile ? (embeddedChrome ? <TerminalEmbeddedToolbar /> : <TerminalWorkspaceChrome />) : null}
         {terminalDesign && !mobile ? <TerminalDesignTabStrip design={terminalDesign} instanceId={tabStripInstanceId} /> : null}
         <div

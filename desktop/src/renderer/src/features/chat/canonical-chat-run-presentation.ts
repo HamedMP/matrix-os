@@ -1,3 +1,4 @@
+import { RoutineActionIdSchema } from "@matrix-os/contracts";
 import { projectChatSubagent, canonicalChatToolDetail, canonicalChatToolActivityState, canonicalReviewedAgentFailure } from "@matrix-os/contracts";
 import type { CanonicalChatRun, CanonicalChatRunActivity } from "@matrix-os/contracts";
 import { canonicalChatSafeFailureReason } from "@matrix-os/ui";
@@ -203,11 +204,11 @@ export function runPresentation(
         label: activity.title,
         risk: activity.risk,
         timestamp: Date.parse(activity.occurredAt),
-        actions: activity.allowedDecisions.map((decision) => ({
+        actions: activity.allowedDecisions.filter(decision => !RoutineActionIdSchema.safeParse(activity.approvalId).success || decision === "approve").map((decision) => ({
           kind: "approval" as const,
           requestId: activity.approvalId,
           decision,
-          label: decision === "approve_for_session"
+          label: RoutineActionIdSchema.safeParse(activity.approvalId).success ? "Confirm in browser" : decision === "approve_for_session"
             ? "Approve for session"
             : decision === "approve" ? "Approve" : decision === "decline" ? "Decline" : "Cancel",
         })),

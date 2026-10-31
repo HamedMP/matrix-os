@@ -20,7 +20,8 @@
     "./get-started.css": "./src/get-started/get-started.css",
     "./onboarding-support-dock.css": "./src/onboarding-widget/support-dock.css",
     "./chat-import.css": "./src/chat-import/chat-import.css",
-    "./routine-destination": "./src/routine-destination/index.ts"
+    "./routine-destination": "./src/routine-destination/index.ts",
+    "./routine-action": "./src/routine-action/index.ts"
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",

@@ -1,3 +1,6 @@
+import { createRoutineActionOwnerRoutes } from "../bots/routine-action-routes.js";
+import { createRoutineCliExecutionRoutes } from "../bots/routine-cli-routes.js";
+import { RoutineCliError } from "../bots/routine-cli-errors.js";
 import { createRoutineCliDestinationRoutes } from "../bots/routine-cli-destination-routes.js";
 import { createBrowserGrantRoutes } from "../chat/browser-grant-routes.js";
 import type { BrowserApprovalControl } from "../chat/browser-approval-control.js";
@@ -113,6 +116,10 @@ export function registerCollaborationChatRoutes(options: CollaborationChatRouteO
       : createUnavailableCanonicalChatService(),
     getPrincipal: (c) => requireRequestPrincipal(c),
   }));
+  app.route("/", createRoutineActionOwnerRoutes({ actions: botServices?.routineCli ?? null, getPrincipal: requireRequestPrincipal }));
+  app.route("/", createRoutineCliExecutionRoutes({ requests: { execute: input => {
+    if (!botServices?.routineCli) throw new RoutineCliError("unavailable"); return botServices.routineCli.execute(input);
+  } } }));
   app.route("/", createRoutineCliDestinationRoutes({ targets: botServices?.routineDestination ?? null, getPrincipal: requireRequestPrincipal }));
   app.route("/", createBotRoutes({
     ...(botServices ? {

@@ -1,3 +1,4 @@
+import { RoutineActionProofSchema, ROUTINE_ACTION_PROOF_HEADER } from "@matrix-os/contracts";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { BrowserDecisionProofSchema, BrowserDecisionTupleSchema, BrowserGrantRevokeRequestSchema,
   BrowserGrantRevokeTupleSchema, BrowserRevokeProofSchema, CanonicalSubmitChatApprovalRequestSchema,
@@ -73,6 +74,7 @@ export function verifyBrowserRevokeProof(proof: string | undefined, expected: Br
 /** Only classifies a proof just minted by this process; never verifies caller authority. */
 export function browserApprovalProofHeader(proof: string): string {
   try { const value = JSON.parse(Buffer.from(proof.split(".")[0]!, "base64url").toString("utf8"));
+    if (RoutineActionProofSchema.safeParse(value).success) return ROUTINE_ACTION_PROOF_HEADER;
     return BrowserDecisionProofSchema.safeParse(value).success || BrowserRevokeProofSchema.safeParse(value).success
       ? BROWSER_APPROVAL_PROOF_HEADER : "x-matrix-custom-mcp-approval-proof";
   } catch (error: unknown) { if (error instanceof SyntaxError) throw new Error("Approval proof unavailable"); throw error; }
