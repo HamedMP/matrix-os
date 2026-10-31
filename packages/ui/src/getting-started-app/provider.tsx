@@ -332,6 +332,7 @@ export function GettingStartedAppProvider({
     }
   }, [celebrate, markEarned, port, showTotal]);
 
+  const statusRead = useRef(0);
   const refresh = useCallback(async (signal: AbortSignal) => {
     if (!port) return;
     let progress: GettingStartedAppProgress | null | undefined;
@@ -361,8 +362,10 @@ export function GettingStartedAppProvider({
       setPoints((current) => (current.kind === "ready" ? current : { kind: "unavailable" }));
     }
     try {
+      // Polls and connection changes overlap; only the newest read may apply its status.
+      const read = ++statusRead.current;
       const next = await port.loadResults(signal);
-      if (signal.aborted) return;
+      if (signal.aborted || read !== statusRead.current) return;
       setResults(next);
       if (progressKnown.current) awardDone(deriveGettingStartedAppTasks(next));
     } catch (error: unknown) {

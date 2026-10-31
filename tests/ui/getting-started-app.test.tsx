@@ -347,6 +347,30 @@ describe("Getting started app view", () => {
     expect(await screen.findByText("1 of 12 done")).toBeTruthy();
   });
 
+  it("keeps a new connection when an older status read finishes last", async () => {
+    const stale: Array<(value: GettingStartedResults) => void> = [];
+    const port = makePort();
+    const { rerender } = renderApp(port, { refreshMs: 60_000, connections: { connectingService: null, failedServices: [], changeCount: 0 } });
+    await screen.findByText("0 of 12 done");
+    // A poll is in flight with the old status when the sign-in lands and a newer read starts.
+    port.loadResults.mockImplementationOnce(() => new Promise((resolve) => { stale.push(resolve); }));
+    rerender(
+      <GettingStartedAppProvider port={port} refreshMs={60_000} onToast={vi.fn()} connections={{ connectingService: null, failedServices: [], changeCount: 1 }}>
+        <GettingStartedAppView onAction={vi.fn()} />
+      </GettingStartedAppProvider>,
+    );
+    await waitFor(() => expect(stale).toHaveLength(1));
+    port.loadResults.mockImplementationOnce(async () => results({ integrations: fulfilled([{ id: "c4", service: "gmail", status: "active" }]) }));
+    rerender(
+      <GettingStartedAppProvider port={port} refreshMs={60_000} onToast={vi.fn()} connections={{ connectingService: null, failedServices: [], changeCount: 2 }}>
+        <GettingStartedAppView onAction={vi.fn()} />
+      </GettingStartedAppProvider>,
+    );
+    expect(await screen.findByText("1 of 12 done")).toBeTruthy();
+    await act(async () => { stale[0]!(results()); await Promise.resolve(); });
+    expect(screen.getByText("1 of 12 done")).toBeTruthy();
+  });
+
   it("disables Invite friends until referrals exist", async () => {
     renderApp(makePort());
     const invite = await screen.findByRole("button", { name: /Invite friends/ });
