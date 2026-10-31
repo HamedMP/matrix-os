@@ -1,5 +1,7 @@
 # Routine CLI interfaces
 
+Task6a adds the [partial OpenCode source port](./opencode-sources.md). Its actual Matrix/CLI/Postgres lane uses named native fixtures. Production routine exposure remains closed pending the [proposed exclusive native discovery adapter](./opencode-discovery-adapter-design.md); ordinary OpenCode Chat continues unchanged.
+
 ## Implementation boundary
 
 The source/target/request/control/proposal domain ports, capability HTTP route factory and actual published CLI transport below are implemented. Owner destination routes/startup and the shared web/native details flow are also implemented below. The bounded exact action controller and capability/request/canonical composition are implemented in Task4b. Task5a implements the actual ordinary and delegated Claude source producers described in [claude-sources.md](./claude-sources.md). Task5b implements ordinary Codex Chat and the shared private managed-launch bridge described in [codex-sources.md](./codex-sources.md), with actual systemd/native acceptance still pending. Other harness producers remain separate required work; the actual Terminal launch proof producer remains Task7 and must reuse this bridge. An injected source/runtime fixture is not an integrated harness.

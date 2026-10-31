@@ -19,8 +19,8 @@ import { requestFixture, proposal, TARGET_A, scope } from "./routine-cli-request
 import { OWNER, BOT, NOW } from "./bot-state-support.js";
 /** Real canonical admission/task/private admission/registry/approval/outbox. Only host runtime calls,
  * source policy and bounded external background-authority snapshot are fixtures, never account execution. */
-export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: <Args extends unknown[], Result>(fn: (...args: Args) => Result) => (...args: Args) => Result = fn => fn, extra?: { adapters: import("../../../packages/gateway/src/chat/provider-adapter.js").CanonicalChatProviderAdapter[]; catalog: import("@matrix-os/contracts").CanonicalProviderCatalog }) {
-  const f = await requestFixture(db), registry = new BotRuntimeRegistry();
+export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: <Args extends unknown[], Result>(fn: (...args: Args) => Result) => (...args: Args) => Result = fn => fn, extra?: { adapters: import("../../../packages/gateway/src/chat/provider-adapter.js").CanonicalChatProviderAdapter[]; catalog: import("@matrix-os/contracts").CanonicalProviderCatalog; actualSourceOnly?: boolean }) {
+  const f = await requestFixture(db, { actualSourceOnly: extra?.actualSourceOnly }), registry = new BotRuntimeRegistry();
   const hooks: { transact?: BotStateTransactions; authorizeTarget?: RoutineCliProposalDependencies["authorizeTarget"]; sources?: RoutineCliProposalDependencies["sources"]; targets?: RoutineCliProposalDependencies["targets"] } = {};
   const proposalTransactions: BotStateTransactions = (owner, work) => (hooks.transact ?? f.transact)(owner, work);
   const state = { background: true, sourceAllowed: true, stopBeforeProposal: false };
