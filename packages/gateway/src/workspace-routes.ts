@@ -1,3 +1,4 @@
+import { getOptionalRequestPrincipal } from "./request-principal.js";
 import { createProjectFilesLocationService, createProjectMetadataService } from "./project-metadata.js";
 import { registerProjectMetadataRoutes } from "./project-metadata-routes.js";
 import { createProjectDeletionCleanup, type ProjectChatCleanup } from "./project-deletion-cleanup.js";
@@ -238,6 +239,7 @@ export function createWorkspaceRoutes(options: {
   gitLog?: GitLog;
   worktreeManager?: WorktreeManager;
   agentLauncher?: AgentLauncher;
+  terminalHermesStatus?: () => Promise<Awaited<ReturnType<ReturnType<typeof import("./terminal/native-launch.js").createTerminalNativeLauncher>["status"]>>>;
   agentSessionManager?: AgentSessionManager;
   agentSandbox?: AgentSandbox;
   terminalRuntime?: TerminalRuntimeSocketClient;
@@ -842,9 +844,9 @@ export function createWorkspaceRoutes(options: {
           ownerScope,
           projectSlug: body.value.projectSlug,
           kind: "run",
-          operation: () => startSession({ ownerScope, request: body.value }),
+          operation: () => startSession({ ownerScope, principal: getOptionalRequestPrincipal(c, { requireAuthContextReady: false }) ?? undefined, request: body.value }),
         })
-      : { ok: true as const, value: await startSession({ ownerScope, request: body.value }) };
+      : { ok: true as const, value: await startSession({ ownerScope, principal: getOptionalRequestPrincipal(c, { requireAuthContextReady: false }) ?? undefined, request: body.value }) };
     if (!admitted.ok) return c.json(admitted.body, status(admitted.status));
     const result = admitted.value;
     if (!result.ok) {
@@ -937,7 +939,11 @@ export function createWorkspaceRoutes(options: {
     return c.json({ session: result.session });
   });
 
-  app.get("/api/agents", async (c) => c.json(await agentLauncher.detectAgentInstallations()));
+  app.get("/api/agents", async (c) => {
+    const detected = await agentLauncher.detectAgentInstallations();
+    const hermes = options.terminalHermesStatus ? await options.terminalHermesStatus() : undefined;
+    return c.json({ agents: [...detected.agents, ...(hermes ? [hermes] : [])] });
+  });
 
   app.get("/api/agents/sandbox-status", async (c) => c.json(await agentSandbox.status()));
 

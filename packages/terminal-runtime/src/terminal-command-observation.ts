@@ -11,6 +11,8 @@ export async function readTerminalCommandObservation<T>(input: {
 }): Promise<T | undefined> {
   const workspace = await input.store.getRuntimeWorkspace(input.ref.workspaceId);
   const tab = workspace?.tabs[input.ref.tabId];
+  // A Zellij pane observes the I/O helper, never the native harness exit code.
+  if (tab?.nativeHost) return undefined;
   if (!workspace || !tab || tab.zellijTabId === null || tab.zellijPaneId === null) return undefined;
   const incarnation = terminalTabIncarnation(tab);
   if (input.expectedIncarnation && incarnation !== input.expectedIncarnation) return undefined;

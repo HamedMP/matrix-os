@@ -85,7 +85,8 @@ Own server-managed launch/session/incarnation, safe nonserialized capability cha
 - [ ] Implement existing-launch integration, test/review/commit.
 - [x] Task7a: OS per-writer proof, PTY/broker and CLI client foundation reviewed;53 targeted tests/types/lint pass and actual Linux component probes pass. Two minor cap/cleanup and client coverage findings are mandatory first work in7b. Production Terminal source remains unavailable; component evidence is distinct from authority/systemd/package qualification.
 - [x] Task7b: retained host/private protocol, actual I/O attach/resize and immutable full runtime closure/generation compatibility implemented. M1/M2 fixed; independent review I1 final-output drain repaired and scoped rereview clean. Actual Linux direct-process18 observations pass; required real manager/Zellij gate fails explicitly.7c authenticated admission/five launchers and source/backend availability remain open.
-- [ ] Task7c: authenticated canonical Terminal admission, five real launchers/readiness and actual source/CLI/backend authority integration.
+- [x] Task7c: canonical admission, private principal/record/host join, five shared launch producers, CLI/backend integration and native I/O lifecycle implemented. Full review plus two scoped repair rounds clean;47 focused/19 PG cases and11 actual Linux component observations pass. Normal login-shell/inherited native configuration remains source-unavailable pending required7d; real manager/Zellij/x64/account gates remain unqualified.
+- [ ] Task7d: preserve normal existing menu/workspace native configuration through one bounded private launch handoff. Verify actual profile/native-spawn ordering first; keep native permissions/auth/config and I/O semantics, no public secrets or fake wrapper/run binding. This is required implementation, separate from owner-deferred OpenCode native6aN.
 
 ### Task 8: Integration evidence, Draft publication and docs
 

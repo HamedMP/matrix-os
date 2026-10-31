@@ -11,7 +11,7 @@ import { readLinuxProcess, sameProcess, verifyTerminalDescendant, type LinuxProc
 export interface TerminalRoutineAdmission {
   principal: RequestPrincipal; harness: RoutineCliSourceContext["harness"]; sessionId: string; incarnationId: string; launchId: string; generation: string;
   /** Taken ONLY from the actual held host spawn/private bridge, never public restore records. */
-  host: LinuxProcessIdentity; root: LinuxProcessIdentity; policy: RoutineSourcePolicy;
+  supervisor?: LinuxProcessIdentity; host: LinuxProcessIdentity; root: LinuxProcessIdentity; policy: RoutineSourcePolicy;
 }
 function command(operation: RoutineCliOperation) {
   switch (operation.operation) {
@@ -32,7 +32,7 @@ function unavailable(operation: RoutineCliOperation): RoutineCliEnvelope {
  * Never creates a Chat/run/Bot binding or infers policy from CLI --yolo flags. */
 export function createTerminalRoutineSource(options: {
   runtime: Pick<RoutineCliRuntime, "register">; computerId: string; binPath: string; endpoint: string; homePath: string;
-  admission: TerminalRoutineAdmission; signal: AbortSignal; current(): boolean; readProcess?: typeof readLinuxProcess;
+  admission: TerminalRoutineAdmission; signal: AbortSignal; current(): boolean; validateCurrent?(): Promise<boolean>; preflightCurrent?(): Promise<boolean>; readProcess?: typeof readLinuxProcess;
 }) {
   const admission = structuredClone(options.admission), read = options.readProcess ?? readLinuxProcess;
   if (admission.root.ppid !== admission.host.pid || admission.root.uid !== admission.host.uid || admission.root.gid !== admission.host.gid
@@ -53,7 +53,12 @@ export function createTerminalRoutineSource(options: {
     if (!live()) return false;
     try {
       const host = await read(admission.host.pid), root = await read(admission.root.pid);
-      return live() && sameProcess(admission.host, host) && sameProcess(admission.root, root) && root.ppid === host.pid;
+      if (admission.supervisor) {
+        const supervisor = await read(admission.supervisor.pid);
+        if (!sameProcess(admission.supervisor, supervisor) || host.ppid !== supervisor.pid) return false;
+      }
+      return live() && sameProcess(admission.host, host) && sameProcess(admission.root, root) && root.ppid === host.pid
+        && (!options.validateCurrent || await options.validateCurrent()) && live();
     } catch (error) { console.warn("[terminal-routines] Root unavailable", error instanceof Error ? error.name : "UnknownError"); return false; }
   }
   async function current(invocation?: RoutineCliVerifiedInvocation) {
@@ -84,7 +89,8 @@ export function createTerminalRoutineSource(options: {
       activeCalls++;
       try {
       const actionSignal = AbortSignal.any([signal, callSignal, AbortSignal.timeout(120000)]);
-      if (!live() || actionSignal.aborted || invokers.size >= 8 || invocations.size >= 256 || !await actualRoot()) return unavailable(operation);
+      if (!live() || actionSignal.aborted || invokers.size >= 8 || invocations.size >= 256
+        || options.preflightCurrent && !await options.preflightCurrent() || !await actualRoot()) return unavailable(operation);
       const observed = await verifyTerminalDescendant(admission.root, writer, read);
       if (!observed || !sameProcess(writer, observed)) return unavailable(operation);
       let invoker: ReturnType<typeof createFixedNativeRoutineCliInvoker> | undefined, invocationId: string | undefined;
@@ -96,11 +102,13 @@ export function createTerminalRoutineSource(options: {
         const port = await boundedOperation(() => registration!, 10000, actionSignal); sourceId = port.reference.sourceId;
         if (!live() || actionSignal.aborted) return unavailable(operation);
         invoker = createFixedNativeRoutineCliInvoker({ binPath: options.binPath, endpoint: options.endpoint, cwd: options.homePath, homePath: options.homePath, timeoutMs: 120000,
-          authorize(input) {
+          async authorize(input) {
             // Recheck synchronously at insertion: concurrent process/registration awaits must not overbook.
-            if (!live() || actionSignal.aborted || invocations.size >= 256) return Promise.resolve(false);
+            if (!live() || actionSignal.aborted || invocations.size >= 256) return false;
             invocationId = input.invocationId; invocations.set(invocationId, { digest: routineActionHash(input.operation), writer: observed, signal: actionSignal });
-            return port.authorize(input);
+            const allowed = await port.authorize(input);
+            // The controller owner wait/transactions have settled before manager preflight.
+            return allowed && (!options.preflightCurrent || await options.preflightCurrent()) && await actualRoot() && !actionSignal.aborted;
           }, issue: port.issue, cancel: port.cancel });
         invokers.add(invoker);
         return RoutineCliEnvelopeSchema.parse(await invoker.invoke({ ...command(operation), expectedOperation: operation, signal: actionSignal }));
