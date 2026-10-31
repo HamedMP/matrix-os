@@ -1,3 +1,4 @@
+import { listQueuedChatCandidates } from "./queued-chat-candidates.js";
 import {associateAdmittedDriveChat} from "./drive-project-database.js";
 import { releaseTerminalQueuedSteer } from "./queued-steer-cleanup.js";
 import {admittedContextReferenceParts} from "./context-reference-parts.js";
@@ -1187,20 +1188,8 @@ export class ChatQueueRepository {
     });
   }
 
-  async listQueuedChatIds(ownerInput: ChatOwner, limit = MAX_QUEUED_TURNS): Promise<string[]> {
-    const owner = CanonicalOwnerScopeSchema.parse(ownerInput);
-    const boundedLimit = Math.max(1, Math.min(Math.trunc(limit), MAX_QUEUED_TURNS));
-    const rows = await this.kysely.selectFrom("chat_queued_turns as queued")
-      .innerJoin("chats as chat", "chat.id", "queued.chat_id")
-      .select("queued.chat_id")
-      .where("queued.status", "=", "queued")
-      .where("chat.owner_type", "=", owner.type)
-      .where("chat.owner_id", "=", owner.ownerId)
-      .groupBy("queued.chat_id")
-      .orderBy("queued.chat_id")
-      .limit(boundedLimit)
-      .execute();
-    return rows.map((row) => row.chat_id);
+  async listQueuedChatIds(ownerInput: ChatOwner, limit = MAX_QUEUED_TURNS, afterChatId?: string): Promise<string[]> {
+    return listQueuedChatCandidates(this.kysely, ownerInput, limit, afterChatId);
   }
 
   private async queueDepth(executor: Executor, chatId: string): Promise<number> {
