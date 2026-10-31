@@ -1,3 +1,4 @@
+import type { NativeTabAdmission, NativeTabCompletion, NativeTabReservation } from "./native-host-lifecycle.js";
 import { createTerminalOutputHandoff } from "./output-handoff.js";
 import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
@@ -34,6 +35,8 @@ import {
 } from "./socket-protocol.js";
 
 export interface TerminalRuntimeControlApi {
+  prepareNativeTab?(workspaceId: string, input: NativeTabAdmission): Promise<NativeTabReservation>;
+  completeNativeTab?(ref: TerminalRef, input: NativeTabCompletion): Promise<TerminalTab>;
   archiveEndedTab?(ref: TerminalRef, input: TerminalEndedTabArchiveInput): Promise<TerminalTab>;
   getCommandState?(ref: TerminalRef, expectedIncarnation?: string): Promise<TerminalCommandState>;
   getCommandResult?(ref: TerminalRef, expectedIncarnation: string): Promise<TerminalCommandResult>;
@@ -45,6 +48,7 @@ export interface TerminalRuntimeControlApi {
     name: string;
     cwd: string;
     accessScope?: TerminalTab["accessScope"];
+    nativeHost?: import("@matrix-os/contracts").TerminalNativeHostRef;
     command?: string[];
     agent?: TerminalTab["agent"];
   }): Promise<TerminalTab>;
@@ -396,6 +400,14 @@ export class TerminalRuntimeSocketServer {
 
   private async dispatch(request: TerminalRuntimeRequest): Promise<unknown> {
     switch (request.operation) {
+      case "PrepareNativeTab": {
+        if (!this.options.runtime.prepareNativeTab) throw new TerminalRuntimeError("unavailable");
+        return this.options.runtime.prepareNativeTab(request.input.workspaceId, request.input);
+      }
+      case "CompleteNativeTab": {
+        if (!this.options.runtime.completeNativeTab) throw new TerminalRuntimeError("unavailable");
+        return this.options.runtime.completeNativeTab(request.input, request.input);
+      }
       case "ListWorkspaces": return this.options.runtime.listWorkspaces();
       case "EnsureWorkspace": return this.options.runtime.ensureWorkspace(request.input);
       case "CreateTab": return this.options.runtime.createTab(request.input.workspaceId, request.input);
