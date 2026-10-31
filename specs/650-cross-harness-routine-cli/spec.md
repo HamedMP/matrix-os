@@ -57,3 +57,5 @@ Reference T3 at 80a2351fcb909034e65a512dfabeb3cdfd367762: internal target inheri
 B1 remembered target/strict source-action policy/owner route APIs, durable receipts and canonical service adapter. B2 existing CLI/packaging/output. B3 Claude/Codex/Hermes real Chat entry. B4 OpenCode/native+managed Pi restricted real CLI entry. B5 five Terminal launches/credential isolation. Each includes failure-first tests and scoped review. Small public docs Draft in the private site repository is tracked separately; no Nima discovery/skill duplication.
 
 Task 5a execution details and version-bound qualification limits: [Claude source boundary](./claude-sources.md). Other harness cells remain required.
+
+Task 5c execution details and separate native qualification gates: [Hermes source boundary](./hermes-sources.md).
