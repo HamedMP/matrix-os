@@ -1,3 +1,4 @@
+import type { RoutineCliVerifiedInvocation } from "./routine-cli-source.js";
 import type { CanonicalProviderRunEvent } from "../chat/provider-adapter.js";
 import { createHash } from "node:crypto";
 import { z } from "zod/v4";
@@ -27,8 +28,9 @@ export interface RoutineSourceProducer {
   source: RoutineCliSourceContext;
   /** Actual trusted adapter policy/current origin ceiling, never model IDs/modes. Must be bounded local. */
   readPolicy(): RoutineSourcePolicy;
-  /** Actual native run/turn/session/launch generation + DB checks only; no UI/network wait. */
-  validateWithin(source: RoutineCliSourceContext, trx: Transaction<OwnerBotDatabase>, action?: RoutineCliAction): Promise<boolean>;
+  /** Actual native generation + DB checks only; no UI/network wait. Optional invocation is supplied ONLY
+   * by the stored capability consumer for one-purpose final checks, never by a native/model hint. */
+  validateWithin(source: RoutineCliSourceContext, trx: Transaction<OwnerBotDatabase>, action?: RoutineCliAction, invocation?: RoutineCliVerifiedInvocation): Promise<boolean>;
   signal: AbortSignal;
   /** Actual Chat run publisher. Terminal has no synthetic Chat events. */
   publish?: (event: CanonicalProviderRunEvent) => void;
@@ -73,10 +75,10 @@ export function createRoutineActionSourceRegistry(options: { now?: () => number;
     read,
     has(handle: RoutineSourceHandle) { return read(handle.source)?.handle === handle; },
     revoke(handle: RoutineSourceHandle) { if (read(handle.source)?.handle === handle) remove(routineActionHash(RoutineCliSourceContextSchema.parse(handle.source))); },
-    async validateWithin(source: RoutineCliSourceContext, trx: Transaction<OwnerBotDatabase>, action?: RoutineCliAction) {
+    async validateWithin(source: RoutineCliSourceContext, trx: Transaction<OwnerBotDatabase>, action?: RoutineCliAction, invocation?: RoutineCliVerifiedInvocation) {
       const before = read(source);
       if (!before || action && routineActionPolicy(source, before.policy, action) === "deny") return false;
-      if (await before.producer.validateWithin(source, trx, action) !== true) return false;
+      if (await before.producer.validateWithin(source, trx, action, invocation) !== true) return false;
       const after = read(source); return after?.handle === before.handle && after.fingerprint === before.fingerprint;
     },
     close() { closed = true; clearInterval(timer); for (const key of [...entries.keys()]) remove(key); },
