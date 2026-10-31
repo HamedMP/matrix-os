@@ -1,0 +1,43 @@
+# Electron Desktop support validation
+
+Ticket: [ENG-356](https://linear.app/matrix-os/issue/ENG-356/fix-posthog-support-message-sending-in-electron-desktop).
+Existing fix: [PR #2818](https://github.com/HamedMP/matrix-os/pull/2818).
+
+## Scope
+
+Revalidate the existing support-client lifecycle repair against current main. Preserve the
+newer onboarding feature-flag integration when replacing the PostHog client. This candidate
+does not claim to fix the separately observed provider rejection.
+
+## Local evidence, 31 October 2026
+
+- Baseline main: `8de70a4126`; original PR head: `97a66bd179`.
+- The original baseline support/flag suites passed 28 checks. Added lifecycle regressions
+  failed on account sign-out/sign-in and runtime relay replacement before the repair.
+- Added flag regressions failed when gates subscribed to the discarded SDK singleton and
+  retained callbacks from the old account. The candidate binds gates to the live client,
+  detaches old subscriptions and rejects late callbacks; subscriptions are bounded to eight.
+- All 65 focused support, flag, header/CORS, identity and relay checks pass after the repair.
+  Desktop renderer/main TypeScript checks and the Electron production build pass.
+- React Doctor reports no issues in the changed scope. Pattern scan reports zero violations
+  and five existing warnings.
+
+## Remaining live blocker
+
+A signed-in local Electron file renderer reproduces a real HTTP 403 with the generic body
+`{"error":"Forbidden"}` on the support-message endpoint. The new-ticket request contains
+signed identity fields. This is independent of panel rendering and remains unqualified.
+Inspect the provider and platform signing configuration with approved read-only access.
+Do not remove identity verification or weaken authorization to make the request succeed.
+
+## Completion checks
+
+- Confirm the actual provider rejection cause and address it without changing ownership.
+- Observe a real authenticated send and reply receipt from the final candidate.
+- Repeat after sign-out/sign-in and a runtime switch; verify onboarding flags still load.
+- Attach exact-build live captures before claiming review readiness. Local unit tests and
+  the screenshot of an open panel are not successful-send evidence.
+- Complete current-head review/CI and signed release artifact checks before stable promotion.
+
+Recommend review by the Desktop and platform integration owners. No stable release or
+production settings change is part of this local validation record.
