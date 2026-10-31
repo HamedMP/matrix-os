@@ -1,7 +1,9 @@
 # Runtime and client research: on-premises and air-gapped Matrix OS
 
-**Baseline:** `231eff01cf7f67a0c135653848093c30fda3b90d` (`origin/main`, 31 October 2026).  
-**Method:** source inspection of production composition, routing, process launch, credentials, catalogs and clients. No local model was downloaded, no model inference ran, and no runtime/device qualification is implied. Line references refer to this baseline.  
+**Baseline:** `231eff01cf7f67a0c135653848093c30fda3b90d` (`origin/main`, 31 October 2026).
+
+**Method:** source inspection of production composition, routing, process launch, credentials, catalogs and clients. No local model was downloaded, no model inference ran, and no runtime/device qualification is implied. Line references refer to this baseline.
+
 **Status:** engineering research and proposed design; no runtime implementation or license change.
 
 ## Main conclusions
