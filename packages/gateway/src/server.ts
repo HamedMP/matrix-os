@@ -1815,6 +1815,7 @@ export async function createGateway(config: GatewayConfig) {
   registerSettingsRoutes({
     app, homePath, settingsRoutes, botServices,
     getStartedEnabled: process.env.MATRIX_GET_STARTED_ENABLED === "true",
+    gettingStartedAppRepository: ownerDatabaseServices?.gettingStartedAppRepository ?? null,
     getOwnerId: (c) => getOptionalRequestPrincipal(c)?.userId ?? null,
     osViewState: osViewStateRepository ? {
       repository: osViewStateRepository,
