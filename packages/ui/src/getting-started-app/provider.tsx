@@ -75,6 +75,8 @@ export interface GettingStartedAppState {
 
 export const GETTING_STARTED_APP_REFRESH_MS = 15_000;
 const NO_SERVICES: readonly string[] = Object.freeze([]);
+/** With no window showing, read on every fourth tick. */
+const IDLE_REFRESH_EVERY = 4;
 const CELEBRATION_MS = 2_400;
 
 /** What saving the desktop icon did; the same values as the shells' desktop icon stores. */
@@ -381,8 +383,11 @@ export function GettingStartedAppProvider({
     const controller = new AbortController();
     lifecycle.current = controller;
     void refresh(controller.signal);
+    // These reads are heavy, and only an open window needs them at the full rate.
+    let idleTicks = 0;
     const timer = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (showingViews.current === 0 && ++idleTicks % IDLE_REFRESH_EVERY !== 0) return;
       void refresh(controller.signal);
     }, refreshMs);
     return () => {

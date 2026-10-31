@@ -75,6 +75,9 @@ export function DesktopGettingStartedAppWindow({ visible = true }: { visible?: b
   const state = useGettingStartedApp();
   const connect = useContext(ConnectContext);
   const onAction = useCallback((action: GettingStartedAppAction) => runAction(action, connect), [connect]);
+  if (state?.availability === "checking") {
+    return <div role="status" className="flex h-full items-center justify-center p-6 text-sm text-[var(--text-secondary)]">Loading Getting started…</div>;
+  }
   if (state && !state.enabled) {
     return <div className="flex h-full items-center justify-center p-6 text-sm text-[var(--text-secondary)]">Getting started is not available on this computer yet.</div>;
   }

@@ -354,6 +354,15 @@ describe("Desktop config", () => {
     }));
   });
 
+  it("marks the icons hydrated only once the saved layout arrives, not when defaults are primed", () => {
+    useDesktopConfigStore.setState({ desktopIcons: undefined, desktopIconsHydrated: false });
+    useDesktopConfigStore.getState().primeDesktopIcons([{ path: "__chat__", x: 20, y: 20 }]);
+    expect(useDesktopConfigStore.getState().desktopIcons).toBeDefined();
+    expect(useDesktopConfigStore.getState().desktopIconsHydrated).toBe(false);
+    useDesktopConfigStore.getState().setDesktopIcons([{ path: "__terminal__", x: 20, y: 20 }]);
+    expect(useDesktopConfigStore.getState().desktopIconsHydrated).toBe(true);
+  });
+
   it("reports duplicate and full web Desktop placements without persisting", async () => {
     const mockFetch = vi.fn();
     vi.stubGlobal("fetch", mockFetch);

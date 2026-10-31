@@ -548,6 +548,27 @@ describe("Getting started app on a newer computer", () => {
   });
 });
 
+describe("Getting started app polling", () => {
+  it("reads less often while no window is showing, and at full rate when one is", async () => {
+    vi.useFakeTimers();
+    try {
+      const closed = makePort();
+      render(<GettingStartedAppProvider port={closed} refreshMs={100} onToast={vi.fn()} />);
+      await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+      const closedReads = closed.loadResults.mock.calls.length;
+      cleanup();
+      const open = makePort();
+      renderApp(open, { refreshMs: 100 });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+      expect(closedReads).toBe(3);
+      expect(open.loadResults.mock.calls.length).toBe(9);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("Getting started app availability", () => {
   it("reports when the computer serves the app, once per change", async () => {
     const port = makePort();

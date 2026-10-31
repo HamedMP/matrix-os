@@ -10,6 +10,7 @@ type ProviderProps = {
   children?: React.ReactNode;
 };
 const providerProps = vi.hoisted(() => ({ current: null as null | ProviderProps }));
+const appState = vi.hoisted(() => ({ current: null as null | { enabled: boolean; availability: string } }));
 const viewProps = vi.hoisted(() => ({ current: null as null | { onAction(action: unknown): void } }));
 const connections = vi.hoisted(() => ({
   connectApp: vi.fn(),
@@ -17,7 +18,6 @@ const connections = vi.hoisted(() => ({
   failedServices: new Set<string>(["slack"]) as ReadonlySet<string>,
   appsUnavailable: false,
 }));
-vi.mock("next/navigation", () => ({ usePathname: () => window.location.pathname }));
 vi.mock("../../shell/src/components/onboarding/use-getting-started-connections", () => ({
   useGettingStartedConnections: () => connections,
 }));
@@ -29,6 +29,7 @@ vi.mock("@matrix-os/ui", async (importOriginal) => {
       providerProps.current = props;
       return <>{props.children}</>;
     },
+    useGettingStartedApp: () => appState.current,
     GettingStartedAppView: (props: { onAction(action: unknown): void }) => {
       viewProps.current = props;
       return null;
@@ -44,34 +45,56 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function renderHost(onOpenSettings: (section: string) => void = () => undefined) {
+function hostElement(onOpenSettings: (section: string) => void = () => undefined) {
   const noop = () => undefined;
-  return render(
+  return (
     <WebGettingStartedAppHost onOpenSettings={onOpenSettings} onOpenWork={noop} onOpenSupport={noop} onOpenApp={noop} onEnabledChange={noop}>
       <WebGettingStartedAppWindow />
-    </WebGettingStartedAppHost>,
+    </WebGettingStartedAppHost>
   );
 }
 
-describe("Web Getting started app across computers", () => {
-  afterEach(() => window.history.pushState({}, "", "/"));
+function renderHost(onOpenSettings?: (section: string) => void) {
+  return render(hostElement(onOpenSettings));
+}
 
-  it("starts clean if the computer changes without a page load", () => {
+describe("Web Getting started app across navigation", () => {
+  afterEach(() => {
+    window.history.pushState({}, "", "/");
+    vi.unstubAllGlobals();
+    appState.current = null;
+  });
+
+  it("stays on its computer when shared navigation drops the /vm prefix from the URL", async () => {
+    window.history.pushState({}, "", "/vm/pv-one/?runtime=slot-a");
     const view = renderHost();
-    const firstPort = providerProps.current?.port;
-    view.rerender(
-      <WebGettingStartedAppHost onOpenSettings={() => undefined} onOpenWork={() => undefined} onOpenSupport={() => undefined} onOpenApp={() => undefined} onEnabledChange={() => undefined}>
-        <WebGettingStartedAppWindow />
-      </WebGettingStartedAppHost>,
-    );
-    expect(providerProps.current?.port).toBe(firstPort);
-    window.history.pushState({}, "", "/vm/pv-other/");
-    view.rerender(
-      <WebGettingStartedAppHost onOpenSettings={() => undefined} onOpenWork={() => undefined} onOpenSupport={() => undefined} onOpenApp={() => undefined} onEnabledChange={() => undefined}>
-        <WebGettingStartedAppWindow />
-      </WebGettingStartedAppHost>,
-    );
-    expect(providerProps.current?.port).not.toBe(firstPort);
+    const port = providerProps.current?.port as { loadProgress(signal?: AbortSignal): Promise<unknown>; loadResults(signal: AbortSignal): Promise<unknown> };
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ awards: [], total: 0 }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+    window.history.pushState({}, "", "/shared/chat/abc");
+    view.rerender(hostElement());
+    expect(providerProps.current?.port).toBe(port);
+    await port.loadProgress();
+    await port.loadResults(new AbortController().signal);
+    expect(urls.length).toBeGreaterThan(1);
+    for (const url of urls.filter((value) => value.includes("/api/"))) expect(url).toContain("/vm/pv-one/~runtime/slot-a/api/");
+    expect(urls.find((value) => value.includes("/billing/status"))).toContain("runtimeSlot=slot-a");
+  });
+
+  it("does not say the app is unavailable while it is still checking", () => {
+    appState.current = { enabled: false, availability: "checking" };
+    renderHost();
+    expect(screen.queryByText(/not available on this computer/)).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("Loading");
+  });
+
+  it("says the app is unavailable once the computer turns out not to serve it", () => {
+    appState.current = { enabled: false, availability: "unavailable" };
+    renderHost();
+    expect(screen.getByText(/not available on this computer/)).toBeTruthy();
   });
 });
 

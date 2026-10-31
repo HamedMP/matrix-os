@@ -140,7 +140,7 @@ function currentComputerScope(): string {
   return runtimeSlot ? `${window.location.pathname}?runtime=${runtimeSlot}` : window.location.pathname;
 }
 
-function currentRuntimeSlot(): string {
+export function currentRuntimeSlot(): string {
   const runtimeSlot = new URLSearchParams(window.location.search).get("runtime");
   return runtimeSlot && /^[A-Za-z0-9_-]{1,32}$/.test(runtimeSlot) ? runtimeSlot : "primary";
 }
@@ -181,9 +181,10 @@ async function readJson(
 export async function loadWebGettingStartedResults(
   fetcher: GettingStartedFetcher = fetch,
   signal?: AbortSignal,
+  computer: { gatewayUrl: string; runtimeSlot: string } = { gatewayUrl: getGatewayUrl(), runtimeSlot: currentRuntimeSlot() },
 ): Promise<GettingStartedResults> {
-  const gatewayUrl = getGatewayUrl();
-  const billingUrl = `/billing/status?runtimeSlot=${encodeURIComponent(currentRuntimeSlot())}`;
+  const { gatewayUrl } = computer;
+  const billingUrl = `/billing/status?runtimeSlot=${encodeURIComponent(computer.runtimeSlot)}`;
   const [github, integrations, agents, projects, chats, billing, providers] = await Promise.allSettled([
     readJson(fetcher, `${gatewayUrl}/api/github/status`, signal),
     readJson(fetcher, `${gatewayUrl}/api/integrations`, signal),

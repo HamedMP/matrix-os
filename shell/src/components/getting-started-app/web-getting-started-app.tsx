@@ -14,15 +14,13 @@ import {
   type GettingStartedAppAction,
   type GettingStartedAppToast,
 } from "@matrix-os/ui";
-import { usePathname } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { getGatewayUrl } from "@/lib/gateway";
 import { ShellNotificationCard } from "@/components/ShellNotificationCard";
 import { ShellNotificationPortal } from "@/components/ShellNotificationPortal";
 import type { GettingStartedDestination, GettingStartedSettingsSection } from "../onboarding/GettingStartedPopover";
 import { useGettingStartedConnections } from "../onboarding/use-getting-started-connections";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
-import { GETTING_STARTED_APP_PATH, createWebGettingStartedAppPort } from "./web-getting-started-app-port";
+import { GETTING_STARTED_APP_PATH, createWebGettingStartedAppPort, currentWebGettingStartedComputer } from "./web-getting-started-app-port";
 
 const TOAST_MS = 4_000;
 /** Several tasks can finish between polls; each gets its own toast, newest last. */
@@ -40,6 +38,9 @@ export function WebGettingStartedAppWindow({ visible = true }: { visible?: boole
   const onAction = useContext(ActionContext);
   const state = useGettingStartedApp();
   if (!onAction) return null;
+  if (state?.availability === "checking") {
+    return <div role="status" className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">Loading Getting started…</div>;
+  }
   if (state && !state.enabled) {
     return <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">Getting started is not available on this computer yet.</div>;
   }
@@ -56,16 +57,7 @@ interface WebGettingStartedAppHostProps {
   onEnabledChange(enabled: boolean): void;
 }
 
-/**
- * The app's state belongs to one computer. Switching computers reloads the page today; keying by
- * gateway keeps that true if a route ever reaches another computer without a load.
- */
-export function WebGettingStartedAppHost(props: WebGettingStartedAppHostProps) {
-  usePathname();
-  return <WebGettingStartedAppHostForComputer key={getGatewayUrl()} {...props} />;
-}
-
-function WebGettingStartedAppHostForComputer({
+export function WebGettingStartedAppHost({
   children,
   onOpenSettings,
   onOpenWork,
@@ -73,9 +65,12 @@ function WebGettingStartedAppHostForComputer({
   onOpenApp,
   onEnabledChange,
 }: WebGettingStartedAppHostProps) {
-  const port = useMemo(() => createWebGettingStartedAppPort(), []);
+  // Captured once: shared navigation rewrites the URL without the /vm prefix, and real computer
+  // switches reload the document (same as Canonical Chat in ShellHome).
+  const [computer] = useState(currentWebGettingStartedComputer);
+  const port = useMemo(() => createWebGettingStartedAppPort(computer), [computer]);
   // Spec 639: the icon goes first on every owner's desktop once, after the saved layout has loaded.
-  const desktopIconsLoaded = useDesktopConfigStore((state) => state.desktopIcons !== undefined);
+  const desktopIconsLoaded = useDesktopConfigStore((state) => state.desktopIconsHydrated && state.desktopIcons !== undefined);
   const placeDesktopIcon = useCallback(async () => {
     const result = await useDesktopConfigStore.getState().addDesktopIcon(GETTING_STARTED_APP_PATH, undefined, { first: true });
     if (result === "failed" || result === "desktop-full") console.warn("[getting-started-app] desktop icon not placed:", result);

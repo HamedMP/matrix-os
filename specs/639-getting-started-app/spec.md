@@ -259,3 +259,10 @@ Team feedback (Oct 30): the app, the corner widget and the Help checklist repeat
 ## Version skew
 
 Electron updates apart from the gateway, so a client can read progress from a newer computer. Response schemas check a task id's shape only, cap the award list independently of this build's tasks, and ignore added fields; clients keep the ids they know (`gettingStartedAppKnownTaskIds`), and other tasks still count in the total. Requests stay strict: the server only accepts its own tasks. A newer client on an older gateway gets a generic award failure for a task that gateway does not know and retries on later refreshes, so that card stays unpaid until the gateway updates.
+
+## Runtime rules
+
+- The Web host captures its gateway URL and runtime slot once. Shared navigation rewrites the URL without the `/vm` prefix; real computer switches reload the document, and Electron remounts by computer scope.
+- The desktop icon is placed only after the saved layout has hydrated, never on primed defaults, so a customized layout cannot be overwritten.
+- A window restored while availability is unknown shows a loading state, not "not available".
+- Status reads run every 15 seconds while a window is showing and once a minute otherwise.

@@ -9,7 +9,7 @@ import {
 } from "@matrix-os/contracts";
 import type { GettingStartedAppPort } from "@matrix-os/ui";
 import { getGatewayUrl } from "@/lib/gateway";
-import { loadWebGettingStartedResults } from "../onboarding/GettingStartedPopover";
+import { currentRuntimeSlot, loadWebGettingStartedResults } from "../onboarding/GettingStartedPopover";
 
 export const GETTING_STARTED_APP_PATH = "__getting-started__";
 export const GETTING_STARTED_APP_TITLE = "Getting started";
@@ -21,8 +21,17 @@ function withTimeout(signal?: AbortSignal): AbortSignal {
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 }
 
-async function request(path: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
-  return fetch(`${getGatewayUrl()}${path}`, {
+export interface WebGettingStartedComputer {
+  gatewayUrl: string;
+  runtimeSlot: string;
+}
+
+export function currentWebGettingStartedComputer(): WebGettingStartedComputer {
+  return { gatewayUrl: getGatewayUrl(), runtimeSlot: currentRuntimeSlot() };
+}
+
+async function requestFrom(gatewayUrl: string, path: string, init: RequestInit & { signal?: AbortSignal } = {}): Promise<Response> {
+  return fetch(`${gatewayUrl}${path}`, {
     cache: "no-store",
     credentials: "include",
     ...init,
@@ -31,9 +40,10 @@ async function request(path: string, init: RequestInit & { signal?: AbortSignal 
   });
 }
 
-export function createWebGettingStartedAppPort(): GettingStartedAppPort {
+export function createWebGettingStartedAppPort(computer: WebGettingStartedComputer): GettingStartedAppPort {
+  const request = (path: string, init?: RequestInit & { signal?: AbortSignal }) => requestFrom(computer.gatewayUrl, path, init);
   return {
-    loadResults: (signal) => loadWebGettingStartedResults((input, init) => fetch(input, { ...init, signal: withTimeout(signal) }), signal),
+    loadResults: (signal) => loadWebGettingStartedResults((input, init) => fetch(input, { ...init, signal: withTimeout(signal) }), signal, computer),
     async loadProgress(signal) {
       const response = await request("/api/getting-started/progress", { signal });
       if (response.status === 404) return null;

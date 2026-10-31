@@ -41,6 +41,8 @@ interface DesktopConfigStore {
   pinnedApps: string[];
   dockOrder: DockOrder | undefined;
   desktopIcons: DesktopIconPlacement[] | undefined;
+  /** True once the saved layout has arrived; `desktopIcons` can hold primed defaults before that. */
+  desktopIconsHydrated: boolean;
   setDock: (dock: DockConfig) => void;
   setPinnedApps: (apps: string[]) => void;
   setDockOrder: (order: DockOrder | undefined) => void;
@@ -90,7 +92,7 @@ export function resetWebDesktopIconsRuntime(): void {
   clearTimeout(osViewConflictRetryTimer);
   osViewConflictRetryTimer = undefined;
   pendingDesktopAdds.clear();
-  useDesktopConfigStore.setState({ desktopIcons: undefined });
+  useDesktopConfigStore.setState({ desktopIcons: undefined, desktopIconsHydrated: false });
 }
 
 function copyDesktopIcons(icons: readonly DesktopIconPlacement[] | undefined): DesktopIconPlacement[] | undefined {
@@ -204,7 +206,7 @@ function applyDesktopIconMutation(
         deferredDesktopHydration = null;
         replayableDesktopHydrationRange = null;
         desktopIconHydrationRevision += 1;
-        set({ desktopIcons });
+        set({ desktopIcons, desktopIconsHydrated: true });
         restoredPendingHydration = true;
       } else {
         set({ desktopIcons: copyDesktopIcons(unconfirmedDesktopRollbackIcons ?? rollbackIcons) });
@@ -231,6 +233,7 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
   pinnedApps: [...DEFAULT_PINNED_APPS],
   dockOrder: undefined,
   desktopIcons: undefined,
+  desktopIconsHydrated: false,
   setDock: (dock) => set({ dock }),
   setPinnedApps: (pinnedApps) => set({ pinnedApps }),
   setDockOrder: (dockOrder) => set({ dockOrder }),
@@ -262,7 +265,7 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
     unconfirmedDesktopRollbackIcons = null;
     deferredDesktopHydration = null;
     replayableDesktopHydrationRange = null;
-    set({ desktopIcons: copyDesktopIcons(desktopIcons) });
+    set({ desktopIcons: copyDesktopIcons(desktopIcons), desktopIconsHydrated: true });
   },
   moveDesktopIcon: (path, x, y) => {
     const current = get().desktopIcons ?? [];
