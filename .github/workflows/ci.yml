@@ -913,6 +913,25 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/gateway/bots/deployed-v9-schema-postgres.test.ts tests/gateway/bots/routine-migration-postgres.test.ts tests/gateway/bots/v9-dual-history-postgres.test.ts tests/gateway/bots/v9-dual-history-upgrade.test.ts --maxWorkers=1 --no-file-parallelism
 
+      - name: Routine lifecycle PostgreSQL races
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          pnpm exec vitest run tests/gateway/bots/deployed-v9-entry-postgres.test.ts tests/gateway/bots/routine-concurrency-postgres.test.ts tests/gateway/bots/routine-fencing-postgres.test.ts tests/gateway/bots/routine-recovery-postgres.test.ts tests/gateway/bots/thread-guard-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+
+      - name: Routine acceptance capture and preflight contracts
+        run: node --test tests/gateway/bots/routine-acceptance-capture.test.mjs tests/gateway/bots/routine-acceptance-preflight.test.mjs
+
+      - name: Build exact-source routine process qualification artifact
+        run: |
+          node scripts/testing/build-routine-validation.mjs "$RUNNER_TEMP/eng93-routine-validation"
+          echo "MATRIX_ROUTINE_PROCESS_BUILD=$RUNNER_TEMP/eng93-routine-validation" >> "$GITHUB_ENV"
+
+      - name: Routine built-process PostgreSQL qualification
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          : "${MATRIX_ROUTINE_PROCESS_BUILD:?Exact-source process artifact required}"
+          pnpm exec vitest run tests/gateway/bots/routine-process-postgres.test.ts --maxWorkers=1 --no-file-parallelism
+
       - name: Qualify remaining real PostgreSQL suites
         run: node scripts/ci/remaining-postgres.mjs
 
