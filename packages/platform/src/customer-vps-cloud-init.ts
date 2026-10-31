@@ -36,6 +36,8 @@ export interface CustomerHostConfig {
   /** Whole host.env lines for Private Previews only; empty for every other class. */
   updateManifestBaseUrlEnv?: string;
   collaborationDisabledEnv?: string;
+  /** Verified pair browser-origin lines; empty for all other machines. */
+  collaborationPairEnv?: string;
   /** Server-authoritative runtime marker for shared and owner-only PR Preview machines. */
   previewRuntimeEnv?: string;
 }
@@ -64,6 +66,7 @@ export function renderCloudInitTemplate(template: string, input: CustomerHostCon
     snapshotSourceVersion: '',
     updateManifestBaseUrlEnv: '',
     collaborationDisabledEnv: '',
+    collaborationPairEnv: '',
     previewRuntimeEnv: '',
   };
   return template.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (match, rawKey: string) => {

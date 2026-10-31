@@ -408,6 +408,7 @@ write_files:
       {{updateManifestBaseUrlEnv}}
       {{collaborationDisabledEnv}}
       {{previewRuntimeEnv}}
+      {{collaborationPairEnv}}
       UPGRADE_TOKEN={{platformVerificationToken}}
       MATRIX_AUTH_TOKEN={{platformVerificationToken}}
       MATRIX_SYNC_RUNTIME_TOKEN={{syncRuntimeToken}}

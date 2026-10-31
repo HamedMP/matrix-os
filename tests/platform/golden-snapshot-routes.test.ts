@@ -5,6 +5,7 @@ import { insertUserMachine, upsertHostBundleRelease, type PlatformDB } from '../
 import { createGoldenSnapshotRoutes } from '../../packages/platform/src/golden-snapshot-routes.js';
 import { GoldenSnapshotCallbackError } from '../../packages/platform/src/golden-snapshot-service.js';
 import { createApp as createPlatformApp } from '../../packages/platform/src/main.js';
+import { shutdownPlatformApp } from '../../packages/platform/src/shutdown-platform-app.js';
 import type { GoldenSnapshotRuntimeConfig } from '../../packages/platform/src/golden-snapshot-schema.js';
 import { compatibilityKey } from '../../packages/platform/src/golden-snapshot-schema.js';
 import { getGoldenSnapshotRolloutControl } from '../../packages/platform/src/golden-snapshot-repository.js';
@@ -184,7 +185,7 @@ describe('golden snapshot control-plane routes', () => {
     expect(JSON.stringify(body)).not.toContain('gateway failed');
   });
 
-  it('reads the snapshot operator credential from the injected app environment', async () => {
+  it('mounts authenticated snapshot reads ahead of the bundle catch-all with injected operator credentials', async () => {
     const platformApp = createPlatformApp({
       db,
       orchestrator: {} as never,
@@ -194,15 +195,27 @@ describe('golden snapshot control-plane routes', () => {
       env: { GOLDEN_SNAPSHOT_OPERATOR_SECRET: 'injected-operator-secret' },
     });
 
-    const response = await platformApp.request('/system-bundles/snapshot-builds', {
-      method: 'POST',
-      headers: {
-        authorization: 'Bearer injected-operator-secret',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({ bundleVersion: 'v1', testMode: true }),
-    });
-    expect(response.status).toBe(202);
+    try {
+      const response = await platformApp.request('/system-bundles/snapshot-builds', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer injected-operator-secret',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ bundleVersion: 'v1', testMode: true }),
+      });
+      expect(response.status).toBe(202);
+      const { buildId } = await response.json() as { buildId: string };
+      const snapshots = await platformApp.request(`/system-bundles/snapshot-builds/${buildId}`, {
+        headers: { authorization: 'Bearer injected-operator-secret' },
+      });
+      expect(snapshots.status).toBe(200);
+      expect(await snapshots.json()).toMatchObject({ buildId, state: 'candidate', status: 'queued' });
+      const unauthorized = await platformApp.request(`/system-bundles/snapshot-builds/${buildId}`, {
+        headers: { authorization: 'Bearer injected-platform-secret' },
+      });
+      expect(unauthorized.status).toBe(401);
+    } finally { await shutdownPlatformApp(platformApp); }
   });
 
   it('uses the scoped operator credential for snapshot administration', async () => {

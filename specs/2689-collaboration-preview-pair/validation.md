@@ -328,3 +328,47 @@ registration guard was not weakened and no retained production protection remove
 After final catalog qualification/helper naming, all3 selected boundary cases pass
 (9 excluded by filter); the preceding full12-case run also passed without skips.
 Focused Platform native TypeScript passes for the reviewed projection changes.
+
+### Exact host binding and pinned update policy
+
+Three intended assertions failed first: missing candidate update-base pin,
+unmounted public metadata route through the actual Platform app, and an update
+status that probed intentionally absent channels. Final integrated verification:
+**30/30 cases pass across6 files**, zero skipped, with a single test worker. Both
+actual cloud-init producers bind the verified browser/API, and retained ordinary/
+Private Preview behavior and current pair dispatch remain exercised. Registration,
+Platform routes and databases are real; provider responses and signed object-store
+URLs are fixtures. No host boot or product acceptance is claimed.
+
+All **8 native typecheck projects pass** on the integrated source. Pattern scan:
+**0 violations,5 existing warnings**. Bundle/update mounting was extracted from
+`main.ts`; new route logic stays in focused modules. T015/T016/T033 remain open
+until actual observation, funding, complete retirement and protected automation
+are composed. No production shell/Electron build or live evidence claimed here.
+
+### Host CI inventory and bootstrap funding
+
+Host-layer CI identified an unsorted update-base inventory entry, preventing both
+real-Postgres lanes from starting. Two inventory assertions reproduced the failure;
+lexical ordering now passes27 assertions across2 files, with all guards preserved.
+A retained host-bundle test inspected the monolithic updater after extraction.
+It now composes the loaded library while keeping its original version assertions.
+
+Two real-Postgres assertions also reproduced rejection of a disabled funding boot
+and acceptance of pre-enabled funding. Pair bootstrap now requires funding off;
+scoped allowance configuration follows actual registration. The provisioning,
+host-bundle and retained update suites pass **97/97 across4 files**, zero skipped
+or errors. These are fixture/provider and actual Bash/SQL checks, not paid-machine
+or model qualification. Existing financial origin guards remain intact.
+
+### Host updater review: quiet passive polling
+
+The actual Bash poller regression failed first by reaching a channel that paired
+metadata intentionally rejects. Passive polling is extracted from the large sync
+agent into the existing verified-metadata library before adding its pair policy.
+**22/22 actual Bash cases pass across2 files**, zero skipped, including all17
+retained explicit-request/metadata trust assertions. Both shell files pass bash -n.
+Five policy cases cover the verified pair, ordinary Preview, wrong slot, wrong
+generation and missing marker. The extraction retains the harness boundary marker;
+no existing assertion was changed. Initial extraction/harness failures were fixed
+and are not counted as the intended regression. No host restart or live boot claimed.

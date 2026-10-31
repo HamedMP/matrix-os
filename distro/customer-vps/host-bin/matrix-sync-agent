@@ -1337,53 +1337,7 @@ prepare_triggered_update() {
 }
 
 # ── Poll for updates ─────────────────────────────────────────────────
-check_for_update() {
-  # Explicit requests take priority until verified, applied, or replaced.
-  if [ -e "$UPDATE_TRIGGER" ] || [ -L "$UPDATE_TRIGGER" ]; then return 0; fi
-  local url manifest remote_version cur
-  url="$(manifest_url)"
-  if ! manifest="$(curl --fail --silent --show-error --max-time 15 "$url" 2>&1)"; then
-    log "WARN: failed to fetch manifest from $url"; return 1
-  fi
-  remote_version="$(json_field "$manifest" version)"
-  if [ -z "$remote_version" ]; then
-    log "WARN: manifest missing 'version' field"; return 1
-  fi
-  cur="$(current_version)"
-  if [ "$remote_version" = "$cur" ]; then
-    rm -f "$UPDATE_MARKER"
-    return 0
-  fi
-
-  local version_comparison
-  version_comparison="$(compare_host_bundle_versions "$remote_version" "$cur")"
-  if [ "$version_comparison" = "older" ]; then
-    log "Ignoring older channel release: $remote_version (current: $cur)"
-    rm -f "$UPDATE_MARKER" "$UPDATE_ERROR_MARKER"
-    return 0
-  fi
-
-  local severity update_type
-  severity="$(json_field "$manifest" severity)"
-  update_type="$(json_field "$manifest" updateType)"
-
-  log "Update available: $remote_version (current: $cur, severity: ${severity:-normal})"
-  write_prepared_update_marker "$manifest" || return 1
-
-  if [ "$severity" = "security" ] || [ "$update_type" = "auto" ]; then
-    if [ -f "$AUTO_APPLY_FAILED_MARKER" ] && [ "$(cat "$AUTO_APPLY_FAILED_MARKER" 2>/dev/null)" = "$remote_version" ]; then
-      log "Skipping auto-apply for $remote_version — previous attempt failed (use .update-now to retry)"
-    else
-      log "Auto-apply update $remote_version (severity=${severity:-normal}, updateType=${update_type:-manual})"
-      if ! run_apply_update; then
-        echo "$remote_version" > "$AUTO_APPLY_FAILED_MARKER"
-        log "Auto-apply failed — will not retry automatically (use .update-now to force)"
-      else
-        rm -f "$AUTO_APPLY_FAILED_MARKER"
-      fi
-    fi
-  fi
-}
+# check_for_update is sourced from matrix-update-manifest above.
 
 # ── Apply update ─────────────────────────────────────────────────────
 apply_update() {

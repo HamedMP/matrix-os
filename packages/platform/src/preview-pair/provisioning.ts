@@ -34,8 +34,10 @@ export function createPreviewPairProvisioning(options:{db:PlatformDB;controlSecr
   await canonical();
   if(!await options.verifyAuthority(input.candidate,signal))throw new PreviewPairConflictError();
   const context=await options.context(input.candidate),config=context.deps.config;
+  // Collaboration boots against the candidate API. The trusted, capped Preview
+  // bank is configured only after real host registration, never in cloud-init.
   if(context.deps.db!==options.db||new URL(config.platformRegisterUrl).origin!==input.candidate.apiOrigin
-    ||new URL(config.fundedAiRelayUrl).origin!==input.candidate.apiOrigin||config.platformSecret.length<32
+    ||config.fundedAiEnabled!==false||config.platformSecret.length<32
     ||config.platformSecret===options.controlSecret||!config.r2PrefixRoot.includes("preview")||config.goldenSnapshots.enabled)throw new PreviewPairConflictError();
   await canonical();await options.mirror(input,claim,signal);await canonical();
   if(!context.deps.hetzner.withSignal)throw new PreviewPairConflictError();
@@ -45,7 +47,7 @@ export function createPreviewPairProvisioning(options:{db:PlatformDB;controlSecr
    if(!rows.some(row=>request.labels?.machine_id===row.machine_id&&request.labels?.clerk_user_id===row.actor_id&&request.labels?.runtime_slot===row.handle))throw new PreviewPairConflictError();
    return provider.createServer(request);
   }}});
-  const worker=createCustomerVpsProvisioningDispatcher(guarded,{signal,authorizePair:async(machineId:string,jobId:string)=>{await canonical(machineId,jobId);return true;}});
+  const worker=createCustomerVpsProvisioningDispatcher(guarded,{browserOrigin:input.candidate.browserOrigin,signal,authorizePair:async(machineId:string,jobId:string)=>{await canonical(machineId,jobId);return true;}});
   const rows=await canonical();
   if(rows.some(row=>row.job_status==="failed"))throw new PreviewPairConflictError();
   const pending=rows.find(row=>row.job_status!=="completed");
