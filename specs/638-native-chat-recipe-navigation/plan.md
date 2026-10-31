@@ -25,3 +25,9 @@ live recipe, unknown IDs, and absence of recipe instantiation during navigation.
 Alice's separate app source must switch its section action to `{ view: "recipes" }`
 and card actions to `{ view: "recipes", recipeId: <live catalog id> }`, restoring
 the `Set up bot` label after a Desktop build containing this API is available.
+
+Public documentation is a separate required deliverable: open a PR in
+`FinnaAI/matrix-os-site` under `content/docs/` that documents the embedded-app
+`openChat` contract, supported Recipes payload, acknowledgement failures, and
+the no-persistence navigation guarantee. Link that documentation PR to ENG-408
+and this implementation PR before the feature is released.
