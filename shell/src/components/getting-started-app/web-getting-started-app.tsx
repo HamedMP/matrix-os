@@ -18,8 +18,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { ShellNotificationCard } from "@/components/ShellNotificationCard";
 import { ShellNotificationPortal } from "@/components/ShellNotificationPortal";
 import type { GettingStartedDestination, GettingStartedSettingsSection } from "../onboarding/GettingStartedPopover";
+import { useGettingStartedConnections } from "../onboarding/use-getting-started-connections";
 import { useDesktopConfigStore } from "@/stores/desktop-config";
-import { GETTING_STARTED_APP_PATH, createWebGettingStartedAppPort } from "./web-getting-started-app-port";
+import { GETTING_STARTED_APP_PATH, createWebGettingStartedAppPort, currentWebGettingStartedComputer } from "./web-getting-started-app-port";
 
 const TOAST_MS = 4_000;
 /** Several tasks can finish between polls; each gets its own toast, newest last. */
@@ -32,15 +33,28 @@ interface QueuedToast {
 
 const ActionContext = createContext<((action: GettingStartedAppAction) => void) | null>(null);
 
-/** Window body for `__getting-started__` in Web Desktop and Web Canvas. */
-export function WebGettingStartedAppWindow() {
+/** Window body for `__getting-started__` in Web Desktop and Web Canvas; `visible` is false while minimized. */
+export function WebGettingStartedAppWindow({ visible = true }: { visible?: boolean }) {
   const onAction = useContext(ActionContext);
   const state = useGettingStartedApp();
   if (!onAction) return null;
+  if (state?.availability === "checking") {
+    return <div role="status" className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">Loading Getting started…</div>;
+  }
   if (state && !state.enabled) {
     return <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">Getting started is not available on this computer yet.</div>;
   }
-  return <GettingStartedAppView onAction={onAction} />;
+  return <GettingStartedAppView onAction={onAction} visible={visible} />;
+}
+
+interface WebGettingStartedAppHostProps {
+  children: ReactNode;
+  onOpenSettings(section: GettingStartedSettingsSection): void;
+  onOpenWork(destination?: GettingStartedDestination): void;
+  onOpenSupport(): void;
+  /** Opens or focuses the app window. */
+  onOpenApp(): void;
+  onEnabledChange(enabled: boolean): void;
 }
 
 export function WebGettingStartedAppHost({
@@ -50,20 +64,15 @@ export function WebGettingStartedAppHost({
   onOpenSupport,
   onOpenApp,
   onEnabledChange,
-}: {
-  children: ReactNode;
-  onOpenSettings(section: GettingStartedSettingsSection): void;
-  onOpenWork(destination?: GettingStartedDestination): void;
-  onOpenSupport(): void;
-  /** Opens or focuses the app window. */
-  onOpenApp(): void;
-  onEnabledChange(enabled: boolean): void;
-}) {
-  const port = useMemo(() => createWebGettingStartedAppPort(), []);
-  // Spec 639: the icon goes on every owner's desktop once, after the saved layout has loaded.
-  const desktopIconsLoaded = useDesktopConfigStore((state) => state.desktopIcons !== undefined);
+}: WebGettingStartedAppHostProps) {
+  // Captured once: shared navigation rewrites the URL without the /vm prefix, and real computer
+  // switches reload the document (same as Canonical Chat in ShellHome).
+  const [computer] = useState(currentWebGettingStartedComputer);
+  const port = useMemo(() => createWebGettingStartedAppPort(computer), [computer]);
+  // Spec 639: the icon goes first on every owner's desktop once, after the saved layout has loaded.
+  const desktopIconsLoaded = useDesktopConfigStore((state) => state.desktopIconsHydrated && state.desktopIcons !== undefined);
   const placeDesktopIcon = useCallback(async () => {
-    const result = await useDesktopConfigStore.getState().addDesktopIcon(GETTING_STARTED_APP_PATH);
+    const result = await useDesktopConfigStore.getState().addDesktopIcon(GETTING_STARTED_APP_PATH, undefined, { first: true });
     if (result === "failed" || result === "desktop-full") console.warn("[getting-started-app] desktop icon not placed:", result);
     return result;
   }, []);
@@ -96,8 +105,22 @@ export function WebGettingStartedAppHost({
   }, [dismissToast]);
 
 
+  // Cards start each app's own sign-in here (the onboarding widget's flow); a change re-reads progress.
+  const [changeCount, setChangeCount] = useState(0);
+  const onConnectionChanged = useCallback(() => setChangeCount((count) => (count + 1) % 1_000_000), []);
+  const { connectApp, connectingService, failedServices, appsUnavailable } = useGettingStartedConnections(onConnectionChanged);
+  const connections = useMemo(
+    () => ({ connectingService, failedServices: [...failedServices], changeCount }),
+    [changeCount, connectingService, failedServices],
+  );
+
   const onAction = useCallback((action: GettingStartedAppAction) => {
     switch (action.type) {
+      case "connect":
+        // Without an app connection service on this computer, Settings explains what is possible.
+        if (appsUnavailable) onOpenSettings("integrations");
+        else connectApp(action.service);
+        return;
       case "chat":
         onOpenWork(action.prompt ? { kind: "chat", prompt: action.prompt } : { kind: "chat" });
         return;
@@ -114,7 +137,7 @@ export function WebGettingStartedAppHost({
         onOpenSupport();
         return;
     }
-  }, [onOpenSettings, onOpenSupport, onOpenWork]);
+  }, [appsUnavailable, connectApp, onOpenSettings, onOpenSupport, onOpenWork]);
 
   return (
     <GettingStartedAppProvider
@@ -126,6 +149,7 @@ export function WebGettingStartedAppHost({
       desktopIconReady={desktopIconsLoaded}
       onPlaceDesktopIcon={placeDesktopIcon}
       onEnabledChange={onEnabledChange}
+      connections={connections}
     >
       <ActionContext value={onAction}>{children}</ActionContext>
       {toasts.length > 0 ? (

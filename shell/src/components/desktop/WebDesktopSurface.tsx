@@ -148,7 +148,7 @@ function DesktopDestination({
         type="button"
         aria-label={app.name}
         data-selected={selected || undefined}
-        className="group absolute flex w-[76px] touch-none flex-col items-center gap-1.5 rounded-xl px-1 py-1.5 outline-none transition-colors hover:bg-white/10 focus-visible:bg-white/10 data-[selected]:bg-white/15"
+        className="group absolute flex w-[76px] touch-none flex-col items-center gap-1 rounded-xl px-1 py-1.5 outline-none transition-colors hover:bg-white/10 focus-visible:bg-white/10 data-[selected]:bg-white/15"
         style={{ left: placement.x, top: placement.y + 38 }}
         onClick={onSelect}
         onDoubleClick={onOpen}
@@ -185,8 +185,10 @@ function DesktopDestination({
         app={app}
         className="relative size-12 rounded-[14px] transition-transform duration-150 group-hover:-translate-y-0.5"
       />
+      {/* Two lines fit the 92px grid row: 6 + 48 + 4 + 2 × 14 + 6. Long names like "Getting started" wrap. */}
       <span
-        className="max-w-full truncate text-[12px] font-medium text-white"
+        data-desktop-icon-label
+        className="line-clamp-2 max-w-full break-words text-center text-[12px] font-medium leading-[14px] text-white"
         style={{ textShadow: "0 1px 2px rgba(0,0,0,.95), 0 0 3px rgba(0,0,0,.8)" }}
       >
         {app.name}

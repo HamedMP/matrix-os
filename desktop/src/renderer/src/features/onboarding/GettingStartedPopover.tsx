@@ -1,6 +1,6 @@
 import { getStartedAppGalleryLabel, gettingStartedRows, type GettingStartedRow, type GettingStartedStepStatus, type OnboardingWidgetEvent } from "@matrix-os/contracts";
 import {
-  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded, GettingStartedAppSummary,
+  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded, GettingStartedAppOpenButton,
   openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, useGetStartedConnectFailures, gettingStartedRowAction, gettingStartedRowView,
   type GettingStartedRequest, type GettingStartedRowView,
 } from "@matrix-os/ui";
@@ -365,11 +365,14 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
             <h2 style={{ color: BRAND_COLORS.text, fontSize: 16, fontWeight: 400, lineHeight: "normal" }}>
               Getting started
             </h2>
-            <span
-              data-testid="getting-started-counter"
-              style={{ color: BRAND_COLORS.subtleText, fontSize: 11, fontWeight: 500, lineHeight: "normal" }}
-            >
-              {completedCount} of {total}
+            <span className="flex items-center gap-1.5">
+              <span
+                data-testid="getting-started-counter"
+                style={{ color: BRAND_COLORS.subtleText, fontSize: 11, fontWeight: 500, lineHeight: "normal" }}
+              >
+                {completedCount} of {total}
+              </span>
+              <GettingStartedAppOpenButton onOpened={() => setOpen(false)} />
             </span>
           </div>
           <div data-testid="getting-started-progress" className="px-3 pb-4">
@@ -385,7 +388,6 @@ function GettingStartedPopoverContent({ helpMenu }: { helpMenu?: { onSupport(): 
               />
             </div>
           </div>
-          <GettingStartedAppSummary />
           <div className="pb-1">
             {/* A link, not a step: building an app has no completion check. */}
             <button

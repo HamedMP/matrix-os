@@ -7,7 +7,7 @@ import {
 } from "@/lib/os-view-state-client";
 import { DEFAULT_PINNED_APPS } from "@/lib/builtin-apps";
 import {
-  findOpenOsViewDesktopSlot,
+  placeOsViewDesktopIcon,
   normalizeOsViewDesktopIcons,
   type OsViewDesktopAddResult,
   type OsViewDesktopBounds,
@@ -41,6 +41,8 @@ interface DesktopConfigStore {
   pinnedApps: string[];
   dockOrder: DockOrder | undefined;
   desktopIcons: DesktopIconPlacement[] | undefined;
+  /** True once the saved layout has arrived; `desktopIcons` can hold primed defaults before that. */
+  desktopIconsHydrated: boolean;
   setDock: (dock: DockConfig) => void;
   setPinnedApps: (apps: string[]) => void;
   setDockOrder: (order: DockOrder | undefined) => void;
@@ -48,7 +50,8 @@ interface DesktopConfigStore {
   setDesktopIcons: (icons: DesktopIconPlacement[] | undefined, expectedHydrationRevision?: number) => void;
   moveDesktopIcon: (path: string, x: number, y: number) => void;
   removeDesktopIcon: (path: string) => void;
-  addDesktopIcon: (path: string, bounds?: OsViewDesktopBounds) => Promise<OsViewDesktopAddResult>;
+  /** `first` puts the icon in the top-left slot and moves the icons below it down one slot. */
+  addDesktopIcon: (path: string, bounds?: OsViewDesktopBounds, options?: { first?: boolean }) => Promise<OsViewDesktopAddResult>;
   togglePin: (path: string, aliases?: readonly string[]) => void;
   /** Persist a new section ordering. Accepts a partial update so callers
       can reorder one section without touching the other. */
@@ -89,7 +92,7 @@ export function resetWebDesktopIconsRuntime(): void {
   clearTimeout(osViewConflictRetryTimer);
   osViewConflictRetryTimer = undefined;
   pendingDesktopAdds.clear();
-  useDesktopConfigStore.setState({ desktopIcons: undefined });
+  useDesktopConfigStore.setState({ desktopIcons: undefined, desktopIconsHydrated: false });
 }
 
 function copyDesktopIcons(icons: readonly DesktopIconPlacement[] | undefined): DesktopIconPlacement[] | undefined {
@@ -148,6 +151,7 @@ export function scheduleWebDesktopConfigConflictRetry(gatewayUrl: string): void 
       unconfirmedDesktopRollbackIcons = null;
       deferredDesktopHydration = null;
       replayableDesktopHydrationRange = null;
+      useDesktopConfigStore.setState({ desktopIconsHydrated: true });
     }).catch((error: unknown) => {
       console.warn("[desktop-config] OS-view retry failed:", error instanceof Error ? error.name : typeof error);
       if (error instanceof OsViewStateConflictExhaustedError) {
@@ -183,6 +187,8 @@ function applyDesktopIconMutation(
       unconfirmedDesktopRollbackIcons = null;
       deferredDesktopHydration = null;
       replayableDesktopHydrationRange = null;
+      // A saved write establishes the layout even if the read it superseded never lands.
+      set({ desktopIconsHydrated: true });
     }
     return true;
   }).catch((error: unknown) => {
@@ -203,7 +209,7 @@ function applyDesktopIconMutation(
         deferredDesktopHydration = null;
         replayableDesktopHydrationRange = null;
         desktopIconHydrationRevision += 1;
-        set({ desktopIcons });
+        set({ desktopIcons, desktopIconsHydrated: true });
         restoredPendingHydration = true;
       } else {
         set({ desktopIcons: copyDesktopIcons(unconfirmedDesktopRollbackIcons ?? rollbackIcons) });
@@ -230,6 +236,7 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
   pinnedApps: [...DEFAULT_PINNED_APPS],
   dockOrder: undefined,
   desktopIcons: undefined,
+  desktopIconsHydrated: false,
   setDock: (dock) => set({ dock }),
   setPinnedApps: (pinnedApps) => set({ pinnedApps }),
   setDockOrder: (dockOrder) => set({ dockOrder }),
@@ -261,7 +268,7 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
     unconfirmedDesktopRollbackIcons = null;
     deferredDesktopHydration = null;
     replayableDesktopHydrationRange = null;
-    set({ desktopIcons: copyDesktopIcons(desktopIcons) });
+    set({ desktopIcons: copyDesktopIcons(desktopIcons), desktopIconsHydrated: true });
   },
   moveDesktopIcon: (path, x, y) => {
     const current = get().desktopIcons ?? [];
@@ -277,7 +284,7 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
     const next = current.filter((icon) => icon.path !== path);
     applyDesktopIconMutation(current, next, set);
   },
-  addDesktopIcon: (path, bounds = { width: 1280, height: 640 }) => {
+  addDesktopIcon: (path, bounds = { width: 1280, height: 640 }, options = {}) => {
     if (!path || path.length > 2048) return Promise.resolve("failed");
     const pending = pendingDesktopAdds.get(path);
     if (pending) return pending;
@@ -286,9 +293,8 @@ export const useDesktopConfigStore = create<DesktopConfigStore>((set, get) => ({
       const current = get().desktopIcons ?? [];
       if (current.some((icon) => icon.path === path)) return "already-present";
       if (current.length >= MAX_DESKTOP_ICONS) return "desktop-full";
-      const slot = findOpenOsViewDesktopSlot(current, bounds);
-      if (!slot) return "desktop-full";
-      const next = [...current, { path, ...slot }];
+      const next = placeOsViewDesktopIcon(current, path, bounds, options);
+      if (!next) return "desktop-full";
       return await applyDesktopIconMutation(current, next, set, true) ? "added" : "failed";
     })();
     pendingDesktopAdds.set(path, operation);

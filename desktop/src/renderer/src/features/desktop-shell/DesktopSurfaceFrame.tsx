@@ -313,7 +313,7 @@ export default function DesktopSurfaceFrame({
           <TabPane
             tab={tab}
             active={paneActive}
-            visible={tab.kind === "settings" || tab.kind === "app" ? visible && !isDesktopHidden && !isDesktopTransition : visible}
+            visible={tab.kind === "settings" || tab.kind === "app" || tab.kind === "getting-started" ? visible && !isDesktopHidden && !isDesktopTransition : visible}
             layoutRevision={layoutRevision}
             visualScale={presentation === "canvas" ? interactionScale : 1}
             settingsSection={tab.kind === "settings" ? settingsSection : undefined}

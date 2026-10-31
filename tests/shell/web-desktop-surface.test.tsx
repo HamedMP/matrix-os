@@ -135,6 +135,29 @@ describe("WebDesktopSurface", () => {
     expect(onRemoveDesktopIcon).toHaveBeenCalledWith("__chat__");
   });
 
+  it("wraps a long Desktop icon name onto two lines instead of cutting it off", () => {
+    render(
+      <WebDesktopSurface
+        apps={apps}
+        windows={windows}
+        fullscreenWindowId={null}
+        launcherOpen={false}
+        desktopIcons={[{ path: "__chat__", x: 20, y: 58 }]}
+        onOpenApp={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        onOpenSettings={vi.fn()}
+        onActivateWindow={vi.fn()}
+        onCloseWindow={vi.fn()}
+        onShowDesktop={vi.fn()}
+        onToggleFullscreen={vi.fn()}
+      />,
+    );
+
+    const label = screen.getByRole("button", { name: "Chat" }).querySelector<HTMLElement>("[data-desktop-icon-label]");
+    expect(label?.className).toContain("line-clamp-2");
+    expect(label?.className).not.toContain("truncate");
+  });
+
   it("ships the Web Desktop fixture in parity order and deep-links Connect Apps to its Settings section", () => {
     const onOpenSettings = vi.fn();
     const onOpenApp = vi.fn();

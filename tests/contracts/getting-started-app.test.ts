@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   GETTING_STARTED_APP_AWARDABLE_TASK_IDS,
+  GETTING_STARTED_APP_CHECKABLE_TASK_IDS,
   GETTING_STARTED_APP_TASKS,
   GETTING_STARTED_APP_TASK_IDS,
   GettingStartedAppAwardRequestSchema,
@@ -9,6 +10,7 @@ import {
   deriveGettingStartedAppTasks,
   deriveGettingStartedSnapshot,
   gettingStartedAppKnownTaskIds,
+  gettingStartedAppLogos,
   gettingStartedAppNextTask,
   gettingStartedAppTaskPoints,
   type GettingStartedResults,
@@ -39,12 +41,14 @@ function statusOf(tasks: ReturnType<typeof deriveGettingStartedAppTasks>, id: st
 }
 
 describe("Getting started app task table", () => {
-  it("has the ten Figma tasks in grid order with the hero first", () => {
+  it("has the Figma tasks plus email and calendar in grid order with the hero first", () => {
     expect(GETTING_STARTED_APP_TASK_IDS).toEqual([
       "first-prompt",
       "build-app",
       "create-agent",
       "build-memory",
+      "gmail",
+      "google-calendar",
       "slack",
       "whatsapp",
       "github",
@@ -53,20 +57,22 @@ describe("Getting started app task table", () => {
       "invite-friends",
     ]);
     expect(GETTING_STARTED_APP_TASKS.map((task) => task.group)).toEqual([
-      "hero", "build", "build", "build", "connect", "connect", "connect", "connect", "further", "further",
+      "hero", "build", "build", "build", "connect", "connect", "connect", "connect", "connect", "connect", "further", "further",
     ]);
   });
 
-  it("uses the Figma points and adds up to 240 for the awardable tasks", () => {
+  it("uses the Figma points and adds up to 280 for the awardable tasks", () => {
     expect(gettingStartedAppTaskPoints("first-prompt")).toBe(50);
     expect(gettingStartedAppTaskPoints("build-app")).toBe(30);
     expect(gettingStartedAppTaskPoints("slack")).toBe(20);
+    expect(gettingStartedAppTaskPoints("gmail")).toBe(20);
+    expect(gettingStartedAppTaskPoints("google-calendar")).toBe(20);
     expect(gettingStartedAppTaskPoints("invite-friends")).toBe(100);
     const awardable = GETTING_STARTED_APP_AWARDABLE_TASK_IDS.reduce(
       (sum, id) => sum + gettingStartedAppTaskPoints(id),
       0,
     );
-    expect(awardable).toBe(240);
+    expect(awardable).toBe(280);
     expect(GETTING_STARTED_APP_AWARDABLE_TASK_IDS).not.toContain("invite-friends");
   });
 });
@@ -145,13 +151,56 @@ describe("deriveGettingStartedAppTasks", () => {
     }
   });
 
+  it("marks email and calendar done from their own integrations", () => {
+    const none = deriveGettingStartedAppTasks(results());
+    expect(statusOf(none, "gmail")).toBe("incomplete");
+    expect(statusOf(none, "google-calendar")).toBe("incomplete");
+    const tasks = deriveGettingStartedAppTasks(results({
+      integrations: fulfilled([
+        { id: "c4", service: "gmail", status: "active" },
+        { id: "c5", service: "google_calendar", status: "active" },
+      ]),
+    }));
+    expect(statusOf(tasks, "gmail")).toBe("complete");
+    expect(statusOf(tasks, "google-calendar")).toBe("complete");
+  });
+
+  it("lists exactly the tasks Matrix can check, and only those can turn Done from status", () => {
+    expect(GETTING_STARTED_APP_CHECKABLE_TASK_IDS).toEqual(["first-prompt", "gmail", "google-calendar", "slack", "github", "ai-provider"]);
+    const everything = deriveGettingStartedAppTasks(results({
+      integrations: fulfilled(["gmail", "google_calendar", "slack", "whatsapp", "github"].map((service, i) => ({ id: `c${i}`, service, status: "active" }))),
+      github: fulfilled({ authenticated: true }),
+      agents: fulfilled({ agents: [{ agent: "codex", status: "available" }] }),
+      chats: fulfilled({ items: [{ id: "chat_1" }] }),
+    }));
+    for (const task of everything) {
+      expect(task.status).toBe(GETTING_STARTED_APP_CHECKABLE_TASK_IDS.includes(task.id) ? "complete" : "unavailable");
+    }
+  });
+
   it("picks the first incomplete task in grid order as up next", () => {
     const tasks = deriveGettingStartedAppTasks(results({
       chats: fulfilled({ items: [{ id: "chat_1" }] }),
     }));
-    expect(gettingStartedAppNextTask(tasks)?.id).toBe("slack");
+    expect(gettingStartedAppNextTask(tasks)?.id).toBe("gmail");
     const allDone = tasks.map((task) => ({ ...task, status: "complete" as const }));
     expect(gettingStartedAppNextTask(allDone)).toBeNull();
+  });
+});
+
+describe("gettingStartedAppLogos", () => {
+  it("keys catalog logos by task id and skips unrelated entries", () => {
+    expect(gettingStartedAppLogos([
+      { id: "gmail", name: "Gmail", category: "email", logoUrl: "https://logos.example/gmail.svg" },
+      { id: "google_calendar", name: "Google Calendar", category: "calendar", logoUrl: "https://logos.example/gcal.svg" },
+      { id: "slack", name: "Slack", category: "work", logoUrl: "http://logos.example/slack.svg" },
+      { id: "notion", name: "Notion", category: "work", logoUrl: "https://logos.example/notion.svg" },
+    ])).toEqual({
+      gmail: "https://logos.example/gmail.svg",
+      "google-calendar": "https://logos.example/gcal.svg",
+      // The catalog parser falls back to Pipedream's logo when a URL is not https.
+      slack: "https://pipedream.com/s.v0/slack/logo/48",
+    });
   });
 });
 

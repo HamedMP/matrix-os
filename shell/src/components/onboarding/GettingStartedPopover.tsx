@@ -1,7 +1,7 @@
 "use client";
 
 import {
-  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded, GettingStartedAppSummary,
+  useGettingStartedVisibility, useGettingStartedPopoverFocus, DesktopHelpMenu, useGetStartedAnswers, useGetStartedEnded, GettingStartedAppOpenButton,
   openGettingStartedBotChat, retryGettingStartedBots, useGettingStartedBots, gettingStartedRowAction, gettingStartedRowView, type GettingStartedRequest, type GettingStartedRowAction, type GettingStartedRowView,
 } from "@matrix-os/ui";
 import { onboardingChecklist } from "@matrix-os/brand";
@@ -140,7 +140,7 @@ function currentComputerScope(): string {
   return runtimeSlot ? `${window.location.pathname}?runtime=${runtimeSlot}` : window.location.pathname;
 }
 
-function currentRuntimeSlot(): string {
+export function currentRuntimeSlot(): string {
   const runtimeSlot = new URLSearchParams(window.location.search).get("runtime");
   return runtimeSlot && /^[A-Za-z0-9_-]{1,32}$/.test(runtimeSlot) ? runtimeSlot : "primary";
 }
@@ -181,9 +181,10 @@ async function readJson(
 export async function loadWebGettingStartedResults(
   fetcher: GettingStartedFetcher = fetch,
   signal?: AbortSignal,
+  computer: { gatewayUrl: string; runtimeSlot: string } = { gatewayUrl: getGatewayUrl(), runtimeSlot: currentRuntimeSlot() },
 ): Promise<GettingStartedResults> {
-  const gatewayUrl = getGatewayUrl();
-  const billingUrl = `/billing/status?runtimeSlot=${encodeURIComponent(currentRuntimeSlot())}`;
+  const { gatewayUrl } = computer;
+  const billingUrl = `/billing/status?runtimeSlot=${encodeURIComponent(computer.runtimeSlot)}`;
   const [github, integrations, agents, projects, chats, billing, providers] = await Promise.allSettled([
     readJson(fetcher, `${gatewayUrl}/api/github/status`, signal),
     readJson(fetcher, `${gatewayUrl}/api/integrations`, signal),
@@ -503,11 +504,14 @@ function GettingStartedPopoverContent({
             <h2 style={{ color: BRAND_COLORS.text, fontSize: 16, fontWeight: 400, lineHeight: "normal" }}>
               Getting started
             </h2>
-            <span
-              data-testid="getting-started-counter"
-              style={{ color: BRAND_COLORS.subtleText, fontSize: 11, fontWeight: 500, lineHeight: "normal" }}
-            >
-              {completedCount} of {total}
+            <span className="flex items-center gap-1.5">
+              <span
+                data-testid="getting-started-counter"
+                style={{ color: BRAND_COLORS.subtleText, fontSize: 11, fontWeight: 500, lineHeight: "normal" }}
+              >
+                {completedCount} of {total}
+              </span>
+              <GettingStartedAppOpenButton onOpened={() => setOpen(false)} />
             </span>
           </div>
           <div className="px-3 pb-4">
@@ -518,7 +522,6 @@ function GettingStartedPopoverContent({
               />
             </div>
           </div>
-          <GettingStartedAppSummary />
           <div className="pb-1">
             <a
               href={downloadSuggestion.href}

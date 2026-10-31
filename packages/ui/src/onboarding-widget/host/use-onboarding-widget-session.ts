@@ -21,6 +21,8 @@ import { useOnboardingAiConnect, type OnboardingAiConnectPort } from "./use-onbo
 import { useOnboardingAutoBuild } from "./use-onboarding-auto-build.js";
 import { useOnboardingChatHandoff } from "./use-onboarding-chat-handoff.js";
 import { useOnboardingRun } from "./use-onboarding-run.js";
+import { onboardingWidgetStatus, useOnboardingTaskRequests, usePublishOnboardingWidgetStatus } from "../task-requests.js";
+import { connectedServices } from "../helpers.js";
 import { useConsumeGetStartedFinishedNow, useGetStartedAnswers, useGetStartedFinishedNow } from "../../get-started/answers-context.js";
 
 export interface OnboardingAppConnect {
@@ -86,6 +88,12 @@ export function useOnboardingWidgetSession(input: OnboardingWidgetSessionInput):
     if (!connectPanelOpen) abandonSignIn();
   }, [abandonSignIn, connectPanelOpen]);
   const apps = useMemo(() => onboardingApps(available, connections, appConnect.connectingService), [appConnect.connectingService, available, connections]);
+  // Spec 639: the Getting started app starts starter tasks here, in the corner widget, and mirrors this widget.
+  useOnboardingTaskRequests(useCallback((taskId) => {
+    dispatch({ type: "size.changed", size: "corner" });
+    dispatch({ type: "task.selected", taskId, connectedServices: connectedServices(apps) });
+  }, [apps, dispatch]), useCallback(() => dispatch({ type: "size.changed", size: "corner" }), [dispatch]));
+  usePublishOnboardingWidgetStatus(onboardingWidgetStatus(state));
 
   const github = connections.find((connection) => connection.service === "github" && connection.status === "active")
     ?? connections.find((connection) => connection.service === "github");

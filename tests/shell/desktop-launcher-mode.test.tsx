@@ -155,6 +155,7 @@ vi.mock("../../shell/src/components/onboarding/ManualSetupStickers.js", () => ({
 }));
 
 vi.mock("../../shell/src/components/onboarding/GettingStartedPopover.js", () => ({
+  currentRuntimeSlot: () => "primary",
   GettingStartedPopover: () => null,
 }));
 

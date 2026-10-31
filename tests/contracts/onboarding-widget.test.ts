@@ -584,3 +584,21 @@ describe("deriveOnboardingBubble", () => {
     });
   });
 });
+
+describe("starter tasks while a run is active (spec 639)", () => {
+  it("ignores a new starter task while a task is starting or running, keeping its progress", () => {
+    const started = run(fresh(), { type: "task.selected", taskId: "research", connectedServices: [] }, { type: "answer.submitted", text: "AI agent pricing" });
+    expect(started.screen.kind).toBe("run");
+    const again = run(started, { type: "task.selected", taskId: "build-website", connectedServices: [] });
+    expect(again).toBe(started);
+  });
+
+  it("accepts a new starter task once the run has finished", () => {
+    const started = run(fresh(), { type: "task.selected", taskId: "research", connectedServices: [] }, { type: "answer.submitted", text: "AI agent pricing" });
+    const finished = started.screen.kind === "run"
+      ? { ...started, screen: { ...started.screen, phase: "done" as const } }
+      : started;
+    const next = run(finished, { type: "task.selected", taskId: "build-website", connectedServices: [] });
+    expect(next.screen.kind).toBe("question");
+  });
+});
