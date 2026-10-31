@@ -28,6 +28,8 @@ export function createRoutineCliViews(executor: BotExecutor, now: () => Date = (
       return { kind: "list" as const, routines: views, truncated: page.truncated };
     },
     show,
+    /** Observation in the owning DB transaction; later post-commit stop work may change fire state.
+     * Fresh show/request authorization is required to observe those subsequent changes. */
     async receipt(record: RoutineCliRequestRecord): Promise<Extract<RoutineCliResult, { kind: "receipt" }>> {
       const { interactionId: _hidden, ...safeAdmission } = record.admission as typeof record.admission & { interactionId?: string };
       const receipt = RoutineCliReceiptSchema.parse({ requestId: record.requestId, operation: record.operation.operation,
@@ -42,7 +44,9 @@ export function createRoutineCliViews(executor: BotExecutor, now: () => Date = (
         approval = interaction?.status === "pending" && new Date(interaction.expires_at).getTime() <= now().getTime()
           ? "expired" : interaction?.status ?? null;
       }
-      return { kind: "receipt", receipt, current, approval };
+      return { kind: "receipt", receipt, current, approval,
+        ...(receipt.disposition === "applied" && (receipt.operation === "pause" || receipt.operation === "archive")
+          ? { execution: { stop: "unconfirmed" as const } } : {}) };
     },
   };
 }
