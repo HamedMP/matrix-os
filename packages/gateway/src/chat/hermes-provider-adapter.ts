@@ -31,6 +31,9 @@ import {
 } from "./provider-adapter.js";
 import { createCanonicalCliEventQueue } from "./cli-process.js";
 import { startHermesGateway } from "./hermes-startup.js";
+import { createHermesRoutineSource } from "./hermes-routine-source.js";
+import { hermesRoutineBootstrap } from "./hermes-routine-bootstrap.js";
+import type { NativeRoutineCliPort } from "./claude-routine-execution.js";
 import { CHAT_RUN_CLEANUP_UNCONFIRMED_MESSAGE } from "./failure-diagnostic.js";
 import {
   createHermesStdioClient,
@@ -224,6 +227,7 @@ function deferred<T>() {
 
 export function createHermesChatProviderAdapter(options: {
   homePath: string;
+  routineCli?: NativeRoutineCliPort;
   sharedBrowser?: SharedBrowserBroker;
   sharedBrowserGatewayPort?: number;
   toolOutputKey?: Buffer;
@@ -250,6 +254,7 @@ export function createHermesChatProviderAdapter(options: {
     turnId: string;
     client: ReturnType<typeof createHermesStdioClient>;
     liveSessionId: string;
+    endRoutine(): void;
   }>();
 
   async function* execute(
@@ -268,6 +273,7 @@ export function createHermesChatProviderAdapter(options: {
     // Isolated recipe runs never resume an owner-profile native checkpoint.
     if (jevScope) resumeState = undefined;
     const queue = createCanonicalCliEventQueue<CanonicalProviderRunEvent>();
+    let routines: ReturnType<typeof createHermesRoutineSource> | undefined;
     const completion = deferred<HermesCompletionResult>();
     let liveSessionId: string | undefined;
     let durableSessionId: string | undefined;
@@ -415,6 +421,7 @@ export function createHermesChatProviderAdapter(options: {
     };
 
     const handleEvent = (event: HermesGatewayEvent) => {
+      routines?.observe(event);
       browserRun?.observe(event);
       catalogGate?.observe(event);
       selectedRouteGate?.observe(event);
@@ -506,6 +513,7 @@ export function createHermesChatProviderAdapter(options: {
         separatorPending = emittedOutputBytes > 0;
       } else if (event.type === "message.complete") {
         const parsed = HermesCompletionSchema.parse(event.payload);
+        routines?.end();
         completeStatusActivities();
         completionSettled = true;
         completion.resolve({ ok: true, value: parsed });
@@ -626,6 +634,7 @@ export function createHermesChatProviderAdapter(options: {
         // Hermes may publish this untyped advisory after a failed activity while the turn continues.
         // Only its terminal completion frame or process failure can end such a recovered turn.
         if (recoverableActivityFailureObserved) return;
+        routines?.end();
         selectedRouteGate?.fail();
         completionSettled = true;
         nativeErrorObserved = true;
@@ -650,9 +659,13 @@ export function createHermesChatProviderAdapter(options: {
     }
     catch (error) { integrationCapability.revoke(); throw error; }
     const executionCwd = restrictedProfile?.homePath ?? input.executionRoot ?? options.homePath;
+    const nativeArgs = restrictedProfile ? restrictedHermesPythonArguments(hermesRoot, join(restrictedProfile.homePath, "pycache"), python) : browserRun?.args ?? ["-u", "-m", "tui_gateway.entry"];
+    const routineArgs = options.routineCli && !jevScope ? await hermesRoutineBootstrap(hermesRoot, nativeArgs, input.signal) : undefined;
+    if (routineArgs) routines = createHermesRoutineSource({ ...options.routineCli!, input, homePath: options.homePath, publish: event => queue.push(event) });
     const clientOptions = {
       command: python,
-      args: restrictedProfile ? restrictedHermesPythonArguments(hermesRoot, join(restrictedProfile.homePath, "pycache"), python) : browserRun?.args ?? ["-u", "-m", "tui_gateway.entry"],
+      args: routineArgs ?? nativeArgs,
+      ...(routines ? { routines } : {}),
       cwd: executionCwd,
       inheritEnvironment: false,
       env: {
@@ -673,6 +686,7 @@ export function createHermesChatProviderAdapter(options: {
       requestTimeoutMs: options.requestTimeoutMs,
       onEvent: handleEvent,
       onFailure(error: Error) {
+        routines?.end();
         selectedRouteGate?.fail();
         if (!completionSettled) {
           completionSettled = true;
@@ -754,6 +768,7 @@ export function createHermesChatProviderAdapter(options: {
             }));
         const session = HermesSessionSchema.parse(rawSession);
         liveSessionId = session.session_id;
+        routines?.setSession(liveSessionId);
         browserRun?.setSession(liveSessionId);
         catalogGate?.setSession(liveSessionId);
         selectedRouteGate?.setSession(liveSessionId, Boolean(resumeState));
@@ -783,6 +798,7 @@ export function createHermesChatProviderAdapter(options: {
           turnId: input.turnId,
           client,
           liveSessionId,
+          endRoutine: () => routines?.end(),
         };
         activeSteerRuns.set(input.runId, activeSteerRun);
         releaseSteerRun = () => {
@@ -825,6 +841,7 @@ export function createHermesChatProviderAdapter(options: {
         await selectedRouteGate?.ready(startupSignal, Math.min(options.requestTimeoutMs ?? 30_000, 30_000));
         startupSignal.throwIfAborted();
         stage = "prompt";
+        if (routines) await withinRun(routines.beforePrompt());
         HermesPromptResponseSchema.parse(await withinRun(client.request("prompt.submit", {
           session_id: liveSessionId,
           text: input.prompt,
@@ -904,6 +921,8 @@ export function createHermesChatProviderAdapter(options: {
           }),
         };
       } finally {
+        routines?.end();
+        await routines?.close();
         integrationCapability.revoke();
         try { await browserRun?.close(); }
         catch (error: unknown) { console.warn("[chat/hermes] Browser cleanup unavailable", error instanceof Error ? error.name : "UnknownError"); }
@@ -957,6 +976,7 @@ export function createHermesChatProviderAdapter(options: {
         || active.turnId !== input.turnId) {
         throw new Error("Hermes steering Run unavailable");
       }
+      active.endRoutine();
       const response = HermesSteerResponseSchema.parse(await active.client.request("session.steer", {
         session_id: active.liveSessionId,
         text: input.prompt,
