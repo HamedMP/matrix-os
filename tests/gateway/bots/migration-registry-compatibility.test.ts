@@ -9,7 +9,7 @@ import { DEPLOYED_THREADS_V9_SQL } from "./fixtures/provider-schema-v9.js";
 describe("released thread and unpublished routine registry compatibility", () => {
   it("reserves the recorded deployed v9 identity and places unpublished routines after it", () => {
     expect(BOT_MIGRATIONS.map(({ version, name }) => ({ version, name })).slice(8)).toEqual([
-      { version: 9, name: "question_source_run" }, { version: 10, name: "bot_question_threads_bridge" }, { version: 11, name: "bot_routines" }, { version: 12, name: "routine_cli_preferences" },
+      { version: 9, name: "question_source_run" }, { version: 10, name: "bot_question_threads_bridge" }, { version: 11, name: "bot_routines" }, { version: 12, name: "routine_cli_preferences" }, { version: 13, name: "routine_cli_sources" },
     ]);
   });
 
