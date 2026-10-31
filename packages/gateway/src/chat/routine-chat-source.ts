@@ -1,13 +1,14 @@
+import type { RoutineCliVerifiedInvocation } from "../bots/routine-cli-source.js";
 import { randomBytes } from "node:crypto";
 import type { RoutineSourceProducer, RoutineSourcePolicy } from "../bots/routine-action-source-registry.js";
 import { parseCanonicalProviderRunInput, type CanonicalProviderRunInput, type CanonicalProviderRunEvent } from "./provider-adapter.js";
 /** Identity comes exclusively from the admitted execute closure. Native mode can narrow, never expand.
  * Full-access mode does not prove parent/human provenance: all mutations require the exact owner decision. */
 export function createChatRoutineSourceProducer(options: { input: CanonicalProviderRunInput; computerId: string; signal: AbortSignal;
-  publish(event: CanonicalProviderRunEvent): void; current(): boolean; provider?: "claude" | "codex" | "hermes" }) {
+  publish(event: CanonicalProviderRunEvent): void; current(invocation?: RoutineCliVerifiedInvocation): boolean; provider?: "claude" | "codex" | "hermes" | "opencode" }) {
   const input = parseCanonicalProviderRunInput(options.input), generation = `native_${randomBytes(24).toString("hex")}`;
   const provider = options.provider ?? "claude";
-  if (provider !== "claude" && provider !== "codex" && provider !== "hermes") throw new Error("Routine source provider unavailable");
+  if (provider !== "claude" && provider !== "codex" && provider !== "hermes" && provider !== "opencode") throw new Error("Routine source provider unavailable");
   const driver = provider === "claude" ? "claude_code" : provider;
   let narrowed = false;
   const policy: RoutineSourcePolicy = { live: true, scope: input.owner.type === "personal" && !input.sharedScopeId ? "personal" : input.owner.type === "organization" ? "org" : "shared",
@@ -19,8 +20,8 @@ export function createChatRoutineSourceProducer(options: { input: CanonicalProvi
       generation, issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), actions: ["read", "propose", "control"] },
     signal: options.signal, publish: options.publish,
     readPolicy: () => ({ ...policy, live: options.current() && !options.signal.aborted, ...(narrowed ? { interactionMode: "plan" as const, originCeiling: "read" as const } : {}) }),
-    async validateWithin(source, trx) {
-      if (source.generation !== generation || !options.current() || options.signal.aborted || source.identity.kind !== "chat_run") return false;
+    async validateWithin(source, trx, _action, invocation) {
+      if (source.generation !== generation || !options.current(invocation) || options.signal.aborted || source.identity.kind !== "chat_run") return false;
       // Hold current admission rows through issue/consume. Neither runtimeOwnerId nor model/native IDs supply scope.
       // Canonical Chat mutations acquire Chat before Run. Keep that order across this source boundary.
       const chat = await trx.selectFrom("chats").select("id").where("id", "=", input.chatId)
@@ -32,7 +33,7 @@ export function createChatRoutineSourceProducer(options: { input: CanonicalProvi
         .where("driver_kind", "=", driver).where("permission_mode", "=", input.permissionMode)
         .where("interaction_mode", "=", input.interactionMode).where("status", "in", ["accepted", "running", "waiting_for_approval", "waiting_for_input"])
         .forShare().executeTakeFirst();
-      return !!row && options.current() && !options.signal.aborted;
+      return !!row && options.current(invocation) && !options.signal.aborted;
     },
   };
   return { producer, narrowNativeMode(mode?: string) { if (mode === "plan") narrowed = true; } };
