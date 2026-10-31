@@ -79,14 +79,17 @@ export function createWebGettingStartedAppPort(computer: WebGettingStartedComput
 }
 
 /**
- * Whether the Getting started window is on screen in Web Desktop or Web Canvas. A minimized
- * window, or one covered by another fullscreen window, is not, so awards get the corner toast.
+ * Whether the Getting started window is on screen in Web Desktop or Web Canvas. A minimized window,
+ * one covered by another fullscreen window, or one panned out of view is not, so awards get the
+ * corner toast. Fullscreen fills the viewport wherever the window's saved position is.
  */
 export function webGettingStartedAppVisible(
   win: { id: string; minimized?: boolean },
   fullscreenWindowId: string | null,
+  onScreen = true,
 ): boolean {
-  return !win.minimized && (fullscreenWindowId === null || fullscreenWindowId === win.id);
+  if (win.minimized) return false;
+  return fullscreenWindowId === null ? onScreen : fullscreenWindowId === win.id;
 }
 
 /** Whether any part of a Web Canvas window is inside the viewport at the current pan and zoom. */

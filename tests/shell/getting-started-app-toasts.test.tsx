@@ -169,6 +169,13 @@ describe("Getting started app on the Web Canvas", () => {
     expect(webGettingStartedWindowOnScreen(win, { ...view, zoom: 0.5, panX: 1500 })).toBe(true);
   });
 
+  it("counts a fullscreen window as showing wherever its saved position is", () => {
+    expect(webGettingStartedAppVisible({ id: "gs" }, "gs", false)).toBe(true);
+    expect(webGettingStartedAppVisible({ id: "gs" }, null, false)).toBe(false);
+    expect(webGettingStartedAppVisible({ id: "gs" }, "terminal", true)).toBe(false);
+    expect(webGettingStartedAppVisible({ id: "gs", minimized: true }, "gs", true)).toBe(false);
+  });
+
   it("does not count a window panned out of view, so awards go to the corner toast", () => {
     expect(webGettingStartedWindowOnScreen(win, { ...view, panX: -600 })).toBe(false);
     expect(webGettingStartedWindowOnScreen(win, { ...view, panX: 1000 })).toBe(false);

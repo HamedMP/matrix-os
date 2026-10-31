@@ -518,7 +518,7 @@ export function CanvasWindow({ win, iconUrl, hidden = false, deferAppContent = f
       ) : win.path === "__activity-monitor__" ? (
         <ActivityMonitorApp />
       ) : win.path === "__getting-started__" ? (
-        <WebGettingStartedAppWindow visible={!hidden && onScreen && webGettingStartedAppVisible(win, fullscreenWindowId)} />
+        <WebGettingStartedAppWindow visible={!hidden && webGettingStartedAppVisible(win, fullscreenWindowId, onScreen)} />
       ) : deferAppContent ? (
         <div
           className="h-full w-full flex items-center justify-center bg-card"
