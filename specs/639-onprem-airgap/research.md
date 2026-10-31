@@ -63,6 +63,8 @@ The scan ran sequentially because the concurrent worker slots were occupied; no 
 
 Account check: TAC access granted, Daybreak programs not granted on 2026-10-31. Daybreak Blue did not run. [Daybreak access](https://chatgpt.com/cyber) is an outstanding operational prerequisite if that specific review is required. Available independent security review remains a required assurance path; tool enrollment is not proof of security.
 
+Publication also surfaced an existing dependency-advisory backlog, verified through the authenticated GitHub Dependabot API on 2026-10-31. Counts and the private checkpoint are in the chat handoff. Alerts are distinct from confirmed exploitable source findings. T002/T075 now require manifest/version/shipped-artifact/scope/reachability triage and final security disposition, including non-Node dependencies that GitHub's initial inventory may miss.
+
 ## Open gates, rather than hidden assumptions
 
 | Gate | Decision/evidence required | What can proceed meanwhile |
