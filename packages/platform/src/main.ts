@@ -491,7 +491,8 @@ export function createApp(deps: {
   if (deps.whatsappRoutes) app.route('/', deps.whatsappRoutes);
   app.route('/', createPlatformMcpRoutes({ db, env: appEnv }));
   app.route('/', createPreviewPairRoutes({ ...deps.previewPairs,
-    enabled: appEnv.MATRIX_PREVIEW_PAIR_ENABLED === 'true' && deps.previewPairs?.enabled === true }));
+    enabled: (appEnv.MATRIX_PREVIEW_PAIR_ENABLED === 'true' || appEnv.MATRIX_PREVIEW_PAIR_MAINTENANCE_ENABLED === 'true')
+      && deps.previewPairs?.enabled === true }));
   app.route('/', createComputerRoutes({
     db,
     clerkAuth,

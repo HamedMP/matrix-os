@@ -1,3 +1,4 @@
+import { retryCustomerVpsProviderDeletions } from "./customer-vps-provider-deletions.js";
 import type { UserMachineRecord } from './db.js';
 import {
   claimUserMachineDelete,
@@ -7,13 +8,10 @@ import {
   completeUserMachineBillingSuspend,
   getActiveUserMachineByClerkId,
   getUserMachine,
-  listPendingProviderDeletions,
   listAllUserMachines,
   listRunningUserMachines,
   listStaleResizingUserMachines,
   listStaleUserMachines,
-  markProviderDeletionCompleted,
-  markProviderDeletionFailed,
   runInPlatformTransaction,
   claimRunningUserMachineResize,
   completeUserMachineResize,
@@ -35,8 +33,6 @@ import type {
   CustomerVpsServiceDeps,
 } from './customer-vps-types.js';
 import {
-  PROVIDER_DELETION_RETRY_BASE_MS,
-  PROVIDER_DELETION_RETRY_MAX_MS,
   RESIZE_STATUS_POLL_INTERVAL_MS,
   RESIZE_STATUS_POLL_TIMEOUT_MS,
   BILLING_RUNTIME_HEALTH_POLL_INTERVAL_MS,
@@ -149,40 +145,9 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
     }
   }
 
-  async function retryProviderDeletions(): Promise<void> {
-    const pending = await listPendingProviderDeletions(
-      deps.db,
-      now().toISOString(),
-      deps.config.reconciliationBatchSize,
-    );
-    for (const deletion of pending) {
-      try {
-        await deps.hetzner.deleteServer(deletion.providerServerId);
-        if (deletion.reason === 'rejected_snapshot_recovery_clone'
-          && await deps.hetzner.getServer(deletion.providerServerId)) {
-          throw new Error('Provider server deletion has not completed');
-        }
-        await markProviderDeletionCompleted(deps.db, deletion.id, now().toISOString());
-      } catch (err: unknown) {
-        const attempts = deletion.attempts + 1;
-        const delayMs = Math.min(
-          PROVIDER_DELETION_RETRY_BASE_MS * 2 ** Math.min(attempts - 1, 6),
-          PROVIDER_DELETION_RETRY_MAX_MS,
-        );
-        await markProviderDeletionFailed(
-          deps.db,
-          deletion.id,
-          attempts,
-          new Date(now().getTime() + delayMs).toISOString(),
-          err instanceof Error ? err.message : String(err),
-        );
-        logCustomerVpsError(
-          `provider deletion retry failed orphanedHetznerServerId=${deletion.providerServerId} reason=${deletion.reason}`,
-          err,
-        );
-      }
-    }
-  }
+  const retryProviderDeletions = () => retryCustomerVpsProviderDeletions({
+    db: deps.db, provider: deps.hetzner, now, batchSize: deps.config.reconciliationBatchSize,
+  });
 
   async function cleanupUntrackedServersForMachine(row: UserMachineRecord): Promise<void> {
     if (!deps.hetzner.listServersByLabel) {

@@ -32,6 +32,9 @@ export function createPreviewPairReconciler(deps: PreviewPairReconcilerDeps) {
     let pair = await readPreviewPair(db, pairId);
     if (!pair || pair.generation !== generation || pair.revision !== revision) throw new PreviewPairConflictError();
     if (pair.state === "stopped") return pair;
+    if (!deps.config.admissionEnabled && ["queued", "preparing", "updating"].includes(pair.state)) {
+      return requestPreviewPairStop(db, pairId, generation, revision, now());
+    }
     if (pair.state !== "cleanup_pending" && (Date.parse(pair.expires_at) <= now() || pair.state === "failed")) {
       return requestPreviewPairStop(db, pairId, generation, revision, now());
     }
