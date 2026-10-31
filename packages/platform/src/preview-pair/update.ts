@@ -5,10 +5,11 @@ import type { PlatformDB } from "../db.js";
 import { PreviewPairCandidateSchema } from "./provenance.js";
 import { PreviewPairConflictError, prepareLeasedPairMembers, type PreparePairMember } from "./repository.js";
 import { withPreviewPairClaim, type PreviewPairClaim } from "./lifecycle.js";
+import { adoptPreviewPairCloudIntent } from "./cloud-intents.js";
 
 /** Candidate provenance is verified independently before this DB-only transition. */
 export async function requestPreviewPairUpdate(db: PlatformDB, pairId: string, generation: number,
-  revision: number, rawCandidate: unknown, now: number, controllerRunId?: number) {
+  revision: number, rawCandidate: unknown, now: number, controllerRunId?: number, controllerRequesterId?: string) {
   PreviewPairIdSchema.parse(pairId); PreviewPairGenerationSchema.parse(generation);
   z.number().int().positive().max(Number.MAX_SAFE_INTEGER).parse(revision);
   if (controllerRunId !== undefined) z.number().int().positive().max(Number.MAX_SAFE_INTEGER).parse(controllerRunId);
@@ -19,6 +20,16 @@ export async function requestPreviewPairUpdate(db: PlatformDB, pairId: string, g
     if (!origin.startsWith(`https://${previewPairTag(pairId, generation + 1, kind)}---`)) throw new PreviewPairConflictError();
   }
   return db.transaction(async trx => {
+    await sql`SELECT pg_advisory_xact_lock(hashtextextended('preview-pair-admission', 0))`.execute(trx.executor);
+    if (candidate.sourceProfileFingerprint) {
+      if (!controllerRunId || !controllerRequesterId) throw new PreviewPairConflictError();
+      const owner = await trx.executor.selectFrom("preview_pairs").select("pr")
+        .where("pair_id", "=", pairId).executeTakeFirst();
+      if (!owner) throw new PreviewPairConflictError();
+      await adoptPreviewPairCloudIntent(trx, { pairId, generation: generation + 1, pr: owner.pr,
+        requesterId: controllerRequesterId, sourceSha: candidate.sourceSha, controllerRunId,
+        profileFingerprint: candidate.sourceProfileFingerprint }, now);
+    }
     const row = await trx.executor.updateTable("preview_pairs").set({ state: "updating", requested_source_sha: candidate.sourceSha, outdated: false,
       revision: sql`revision + 1`, claim_id: null, claim_expires_at: null, next_attempt_at: new Date(now).toISOString() })
       .where("pair_id", "=", pairId).where("generation", "=", generation).where("revision", "=", revision)

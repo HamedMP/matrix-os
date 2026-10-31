@@ -7,6 +7,11 @@ export const PreviewPairFailureStageSchema = z.enum(["authority", "membership", 
 export type PreviewPairFailureStage = z.infer<typeof PreviewPairFailureStageSchema>;
 
 const Revision = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+export const PreviewPairPrepareRequestSchema = z.strictObject({ repository: z.literal("HamedMP/matrix-os"),
+  pairId: PreviewPairIdSchema, generation: PreviewPairGenerationSchema, pr: PreviewPairPrSchema,
+  sourceSha: PreviewPairShaSchema, controllerRunId: Revision });
+export const PreviewPairRequestStopSchema = z.strictObject({ type: z.literal("stop"),
+  generation: PreviewPairGenerationSchema, controllerRunId: Revision });
 export const PreviewPairStartSchema = z.strictObject({ repository: z.literal("HamedMP/matrix-os"),
   pairId: PreviewPairIdSchema, pr: PreviewPairPrSchema, sourceSha: PreviewPairShaSchema,
   controllerRunId: Revision, candidate: PreviewPairCandidateSchema });

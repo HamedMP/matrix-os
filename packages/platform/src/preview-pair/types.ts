@@ -59,3 +59,19 @@ export interface PreviewPairMembersTable {
   retired_at: Generated<string | null>;
   provider_absent_at: Generated<string | null>;
 }
+
+/** Source-owned before any unmerged revision is published; no fixture lease. */
+export interface PreviewPairCloudIntentsTable {
+  pair_id: string;
+  generation: number;
+  pr: number;
+  requester_id: string;
+  source_sha: string;
+  controller_run_id: string;
+  profile_fingerprint: string;
+  state: Generated<"prepared" | "adopted" | "cleanup_pending" | "stopped">;
+  revision: Generated<number>;
+  created_at: string;
+  expires_at: string;
+  stopped_at: Generated<string | null>;
+}
