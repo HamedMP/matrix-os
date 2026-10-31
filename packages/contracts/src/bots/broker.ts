@@ -1,3 +1,4 @@
+import { RoutineCliOperationSchema } from "#bots/routine-cli";
 import { BotToolDisplaySchema } from "#bots/tool-display";
 import {BotRoutineProposalSchema,BotRoutineToolControlSchema} from "#bots/routines";
 import { z } from "zod/v4";
@@ -27,6 +28,7 @@ const textEncoder = new TextEncoder();
 
 /** M1 capabilities. Later milestones add handoffs and computer actions. */
 export const BotToolCapabilitySchema = z.enum([
+  "routine.cli",
   "routine.propose",
   "routine.control",
   "agent.task",
@@ -53,6 +55,7 @@ const capability = <Name extends z.infer<typeof BotToolCapabilitySchema>, Args e
 
 const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
   capability("browser.action", SharedBrowserActionSchema),
+  capability("routine.cli", RoutineCliOperationSchema),
   capability("routine.propose",BotRoutineProposalSchema).extend({ routineRequestId: z.uuid().optional() }),
   capability("routine.control",BotRoutineToolControlSchema).extend({ routineRequestId: z.uuid().optional() }),
   capability("agent.task", z.object({ prompt: canonicalBoundedText(16 * 1024, 32 * 1024) }).strict()),
@@ -201,9 +204,14 @@ export const BotBrokerRequestSchema = z.discriminatedUnion("action", [
   z.object({ ...BrokerEnvelope, action: z.literal("bot.input.image"), image: BotImageChunkRequestSchema }).strict(),
   z.object({ ...BrokerEnvelope, action: z.literal("bot.session.load") }).strict(),
   z.object({ ...BrokerEnvelope, action: z.literal("bot.session.save"), session: BotSessionSaveRequestSchema }).strict(),
-  z.object({ ...BrokerEnvelope, action: z.literal("bot.tool"), tool: BotToolRequestSchema }).strict(),
+  z.object({ ...BrokerEnvelope, action: z.literal("bot.tool"), tool: BotToolRequestSchema,
+    /** New routine tools require newline dispatch with a retained cancellable write direction. */
+    transport: z.literal("live").optional(),
+  }).strict(),
   z.object({ ...BrokerEnvelope, action: z.literal("bot.event"), event: BotEventSchema }).strict(),
-]).refine((request) => canonicalEncodedByteLength(request) <= BOT_BROKER_MAX_FRAME_BYTES, { message: "Broker request is too large" });
+]).refine(request => request.action !== "bot.tool" || (request.tool.capability === "routine.cli" ? request.transport === "live" : request.transport === undefined),
+  { message: "Routine CLI calls require their live transport" })
+  .refine((request) => canonicalEncodedByteLength(request) <= BOT_BROKER_MAX_FRAME_BYTES, { message: "Broker request is too large" });
 
 export const BotSessionSnapshotSchema = z.object({
   /** Required so a worker cannot silently reuse summaries when invalidation metadata is missing. */

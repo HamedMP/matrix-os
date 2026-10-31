@@ -1,3 +1,4 @@
+import { createManagedPiRoutineSource, type ManagedPiRoutineSource, type ManagedRoutineCliPort } from "./managed-pi-routine-source.js";
 import type { BotInputHistoryReader } from "../bots/historical-input.js";
 import { createBotWorkerDrain } from "../bots/worker-drain.js";
 import { BOT_ATTACHMENT_UNAVAILABLE_MESSAGE, BOT_FUNDED_IMAGE_TOTAL_MAX_BYTES } from "@matrix-os/contracts";
@@ -44,6 +45,7 @@ interface Active {
   stopping: boolean; stopCause?: "cancelled" | "lease_lost"; finished: boolean;
   worker?: ReturnType<typeof createBotWorkerDrain>;
   renewal?: { stop(): Promise<void> };
+  routineSource?: ManagedPiRoutineSource;
   renewalStopped?: Promise<void>;
   fundedFailure?: FundedChatFailureReason;
   isolated: boolean;
@@ -56,6 +58,8 @@ interface Active {
 /** Two policies use one pinned worker/broker. Ordinary Chat has no recipe or bot grants. */
 export function createManagedPiRuntime(deps: {
   toolOutputKey?: Buffer;
+  routineCli?: ManagedRoutineCliPort;
+  routineSignal?(binding: ManagedPiRuntimeBinding): AbortSignal | null;
   homePath?: string; expectedOwnerId?: string | null; inputHistory?: BotInputHistoryReader;
   chatgptPlan?: import("../bots/chatgpt-plan.js").ChatGptPlanAuthority;
   matrixAnthropic?: import("../bots/matrix-anthropic-api.js").MatrixAnthropicAuthority;
@@ -67,6 +71,7 @@ export function createManagedPiRuntime(deps: {
   forgetRun(runId: string): void;
   cancelInference(binding: ManagedPiRuntimeBinding): void;
 }) {
+  if (deps.routineCli && (!deps.homePath || typeof deps.routineSignal !== "function" || typeof deps.routineCli.runtime?.registerManagedChat !== "function")) throw new Error("Routine source dependencies unavailable");
   const systemPrompt = createManagedPiSystemPrompt(deps.personality);
   const limits = readTrustedBotRunLimits();
   const active = new Map<string, Active>(); // capacity/terminal eviction below; renewal failure stops busy runs.
@@ -84,6 +89,7 @@ export function createManagedPiRuntime(deps: {
   async function stop(runId: string, cause: "cancelled" | "lease_lost" = "cancelled"): Promise<void> {
     const run = active.get(runId); if (!run || run.finished || run.stopping) return;
     run.stopping = true; run.stopCause = cause;
+    run.routineSource?.end();
     if (cause === "cancelled") run.worker?.stop();
     else if (run.worker) void run.worker.release().catch((error: unknown) => {
       console.warn("[managed-pi] revoked runtime release failed", diagnosticErrorName(error));
@@ -138,6 +144,13 @@ export function createManagedPiRuntime(deps: {
           console.warn("[managed-pi] lease loss cleanup failed", diagnosticErrorName(stopError)));
       });
       run.inputs.bind(run.binding);
+      if (!run.isolated && deps.routineCli && run.binding.capabilities.includes("routine.cli")) {
+        const binding = run.binding, bindingSignal = deps.routineSignal!(run.binding);
+        if (!bindingSignal || bindingSignal.aborted) throw new BotBrokerActionError("stale_generation");
+        run.routineSource = createManagedPiRoutineSource({ ...deps.routineCli, input, binding, signal: AbortSignal.any([signal, bindingSignal]), homePath: deps.homePath!,
+          current: () => active.get(input.runId) === run && !run.stopping && !run.finished && !signal.aborted,
+          publish: event => run.queue.push({ kind: "canonical", event }) });
+      }
       const isolatedTurn = await cancellation.wait(async () => deps.isolatedChat?.claim(run.binding!));
       stage = "tool_setup";
       if (!run.isolated) await cancellation.wait(async () => deps.ownerTools?.open(run.binding!, event => run.queue.push({ kind: "canonical", event })), async () => deps.ownerTools?.closeRun(input.runId));
@@ -183,12 +196,14 @@ export function createManagedPiRuntime(deps: {
         retryable: true, recoveryActions: ["retry"],
       } };
     } finally {
+      run.routineSource?.end();
       run.inputs?.dispose();
       run.finished = true; signal.removeEventListener("abort", onAbort);
       await stopRenewal(run);
       if (run.stopping && run.worker) run.worker.stop();
       // closeRun revokes local approvals synchronously; do not let remote revocation delay runtime stop.
       await awaitManagedPiCleanup(async () => Promise.all([
+        run.routineSource?.close(),
         deps.ownerTools?.closeRun(input.runId),
         ...(!run.stopping || !run.worker ? [run.worker?.release() ?? release(run)] : []),
       ]));
@@ -219,6 +234,7 @@ export function createManagedPiRuntime(deps: {
         || run.ownerId !== binding.ownerId || run.chatId !== binding.chatId
         || run.binding?.runtimeHandle !== binding.runtimeHandle
         || run.binding.executionGeneration !== binding.executionGeneration) throw new BotBrokerActionError("stale_generation");
+      run.routineSource?.observe(event.event);
       run.queue.push({ kind: "worker", event: event.event });
     },
   };
@@ -290,6 +306,7 @@ export function createManagedPiRuntime(deps: {
         || run.chatId !== input.chatId || run.stopping || run.finished || run.signal?.aborted) throw new Error("Matrix AI run unavailable");
       if (!run.inputs) throw new Error("Matrix AI steering unavailable");
       const binding = run.binding;
+      run.routineSource?.end();
       const accepted = await run.inputs.steer(binding, input.parts, input.prompt, async payload => {
         await deps.assertSource?.(binding, run.signal!);
         run.inputs!.assertAuthorized(binding);
@@ -301,6 +318,12 @@ export function createManagedPiRuntime(deps: {
     async recover(input) { await deps.ownerTools?.closeRun(input.runId); await deps.admission.release(input.state.runtimeHandle); return { outcome: "failed", messages: [] }; },
   };
   return { adapter, runs, events,
+    async executeRoutine(binding: PiRuntimeBinding, operation: import("@matrix-os/contracts").RoutineCliOperation, toolCallId: string, signal: AbortSignal) {
+      const run = active.get(binding.runId);
+      if (!isManagedPiBinding(binding) || !run?.routineSource || run.stopping || run.finished) throw new BotBrokerActionError("stale_generation");
+      await deps.assertSource?.(binding, signal);
+      return run.routineSource.execute(binding, operation, toolCallId, signal);
+    },
     async readSubmittedArtifact(binding: PiRuntimeBinding, args: Extract<import("@matrix-os/contracts").BotToolRequest, { capability: "artifact.read" }>["args"]) {
       const run = active.get(binding.runId);
       if (!isManagedPiBinding(binding) || !run?.inputs) throw new BotBrokerActionError("stale_generation");
