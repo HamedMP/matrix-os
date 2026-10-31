@@ -23,7 +23,9 @@ export function preloadAppIcons(platformHost: string, runtimeSlot: string, apps:
     const url = appIconUrl(platformHost, app, runtimeSlot);
     if (!url) continue;
     const link = document.createElement("link");
-    link.rel = "preload";
+    // Catalog icons may only appear when Apps opens later. Warm the cache without
+    // promising Chromium that every icon is required by the current view.
+    link.rel = "prefetch";
     link.setAttribute("as", "image");
     link.setAttribute("fetchpriority", "low");
     link.href = url;

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
+import { PostHog } from "posthog-js/dist/module.no-external";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DesktopModeControls from "@desktop/renderer/src/features/desktop-shell/DesktopModeControls";
@@ -59,7 +60,10 @@ const runtimeApi = vi.hoisted(() => ({
 }));
 
 vi.mock("posthog-js/dist/conversations", () => ({}));
-vi.mock("posthog-js/dist/module.no-external", () => ({ default: posthogClient }));
+vi.mock("posthog-js/dist/module.no-external", () => ({
+  default: posthogClient,
+  PostHog: vi.fn(function () { return posthogClient; }),
+}));
 vi.mock("@desktop/renderer/src/lib/operator", () => operatorClient);
 vi.mock("@desktop/renderer/src/features/runtime/RuntimeComputerMenu", () => ({
   default: () => <button type="button">Main computer</button>,
@@ -505,6 +509,15 @@ describe("Desktop support widget", () => {
       version: "v2026.09.02-installed",
       runningVersion: "v2026.09.03-preview",
     });
+    const replacement = {
+      ...posthogClient,
+      init: vi.fn(),
+      identify: vi.fn(),
+      register: vi.fn(),
+    };
+    vi.mocked(PostHog).mockImplementationOnce(function () {
+      return replacement as unknown as PostHog;
+    });
 
     act(() => {
       useConnection.setState({
@@ -514,24 +527,75 @@ describe("Desktop support widget", () => {
     });
 
     await waitFor(() => {
-      expect(posthogClient.set_config).toHaveBeenCalledWith({
-        api_host: "https://preview.matrix-os.com/relay",
-      });
+      expect(replacement.init).toHaveBeenCalledWith(
+        "phc_desktop_test",
+        expect.objectContaining({ api_host: "https://preview.matrix-os.com/relay" }),
+      );
     });
+    expect(posthogClient.init).toHaveBeenCalledTimes(1);
+    expect(posthogClient.set_config).not.toHaveBeenCalled();
     expect(posthogClient.reset).toHaveBeenCalledTimes(1);
-    expect(posthogClient.identify).toHaveBeenLastCalledWith("user_2abcDEF", {
+    expect(replacement.identify).toHaveBeenCalledWith("user_2abcDEF", {
       $name: "Neo",
       email: "neo@example.com",
       matrix_client: "desktop",
       matrix_bundle_version: "v2026.09.03-preview",
       matrix_desktop_version: "1.4.0-canary.2",
     });
-    expect(posthogClient.register).toHaveBeenLastCalledWith({
+    expect(replacement.register).toHaveBeenCalledWith({
       matrix_client: "desktop",
       platform: "desktop",
       matrix_bundle_version: "v2026.09.03-preview",
       matrix_desktop_version: "1.4.0-canary.2",
     });
+  });
+
+  it("reinitializes Conversations after sign-out and sign-in", async () => {
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalledTimes(1));
+    const replacement = {
+      ...posthogClient,
+      init: vi.fn(),
+      identify: vi.fn(),
+      conversations: {
+        ...posthogClient.conversations,
+        isAvailable: vi.fn(() => true),
+        show: vi.fn(renderPostHogLauncher),
+      },
+    };
+    vi.mocked(PostHog).mockImplementationOnce(function () {
+      return replacement as unknown as PostHog;
+    });
+
+    act(() => {
+      useConnection.setState({
+        status: "signed-out",
+        handle: null,
+        userId: null,
+        displayName: null,
+        email: null,
+        api: null,
+      });
+    });
+    await waitFor(() => expect(posthogClient.reset).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      useConnection.setState({
+        status: "signed-in",
+        handle: "neo",
+        userId: "user_2abcDEF",
+        displayName: "Neo",
+        email: "neo@example.com",
+        authGeneration: 2,
+        api: runtimeApi as never,
+      });
+    });
+
+    await waitFor(() => expect(replacement.identify).toHaveBeenCalledTimes(1));
+    expect(replacement.init).toHaveBeenCalledTimes(1);
+    expect(posthogClient.identify).toHaveBeenCalledTimes(1);
+    await expect(openDesktopSupport()).resolves.toBe(true);
+    expect(replacement.conversations.show).toHaveBeenCalled();
   });
 
   it("updates person metadata without resetting the same Clerk identity", async () => {

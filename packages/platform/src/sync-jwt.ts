@@ -85,6 +85,13 @@ export async function issueSyncJwt(opts: IssueOpts): Promise<IssuedJwt> {
   return { token, expiresAt: exp * 1000, claims };
 }
 
+export function isSyncJwtConfigError(err: unknown): boolean {
+  return err instanceof Error && (
+    err.message === 'verifySyncJwt requires either secret or publicKey' ||
+    err.message.includes('PLATFORM_JWT_SECRET must be at least 32 characters')
+  );
+}
+
 export async function verifySyncJwt(
   token: string,
   opts: VerifyOpts,
