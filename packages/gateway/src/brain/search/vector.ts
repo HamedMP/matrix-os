@@ -147,16 +147,17 @@ export function brainEmbedChunks(title: string, body: string, statements: string
   return chunks;
 }
 
+/** A vector candidate: its document at the (incarnation, revision) the matched vector was built from. */
+export type BrainVectorCandidate = Omit<BrainVectorMatch, "distance">;
+
 /** The document order of vector matches: each document once, at its best chunk. */
-export function rankBrainVectorDocuments(
-  matches: readonly BrainVectorMatch[],
-): { readonly documentId: string; readonly chunkIndex: number }[] {
+export function rankBrainVectorDocuments(matches: readonly BrainVectorMatch[]): BrainVectorCandidate[] {
   const seen = new Set<string>();
-  const ranked: { documentId: string; chunkIndex: number }[] = [];
-  for (const match of matches) {
-    if (seen.has(match.documentId)) continue;
-    seen.add(match.documentId);
-    ranked.push({ documentId: match.documentId, chunkIndex: match.chunkIndex });
+  const ranked: BrainVectorCandidate[] = [];
+  for (const { documentId, incarnation, revision, chunkIndex } of matches) {
+    if (seen.has(documentId)) continue;
+    seen.add(documentId);
+    ranked.push({ documentId, incarnation, revision, chunkIndex });
   }
   return ranked;
 }

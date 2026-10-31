@@ -143,7 +143,11 @@ export const BRAIN_SEARCH_CHUNK = { maxChars: 2_000, overlapChars: 200, perDocum
 export const BRAIN_SEARCH_CHUNKS_TABLE = "brain_search_chunks";
 export const BRAIN_SEARCH_VECTORS_TABLE = "brain_search_vectors";
 
-export interface BrainVectorMatch { readonly documentId: string; readonly chunkIndex: number; readonly distance: number }
+/** A nearest chunk and the (incarnation, revision) its vector was built from. */
+export interface BrainVectorMatch {
+  readonly documentId: string; readonly incarnation: string; readonly revision: number; readonly chunkIndex: number;
+  readonly distance: number;
+}
 
 export interface BrainVectorStore {
   /**
@@ -156,7 +160,10 @@ export interface BrainVectorStore {
     readonly providerId: string;
     readonly chunks: readonly { readonly spanStart: number; readonly spanEnd: number; readonly vector: readonly number[] }[];
   }): Promise<void>;
-  /** Nearest live-document chunks, best first, at most `limit` (<= BRAIN_SEARCH_CANDIDATES_MAX). */
+  /**
+   * Nearest live-document chunks, best first, at most `limit` (<= BRAIN_SEARCH_CANDIDATES_MAX), each with the
+   * (incarnation, revision) it was built from, so a search can drop a document that changed after this read.
+   */
   nearest(scope: BrainScopeKey, vector: readonly number[], limit: number, providerId: string):
     Promise<readonly BrainVectorMatch[]>;
 }
