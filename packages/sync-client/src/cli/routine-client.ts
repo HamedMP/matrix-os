@@ -1,6 +1,8 @@
+import { RoutineClientError } from "./routine-client-error.js";
+export { RoutineClientError } from "./routine-client-error.js";
+import { executeTerminalRoutineOperation } from "./routine-terminal-client.js";
 import { RoutineCliEnvelopeSchema, RoutineCliHostFrameSchema, ROUTINE_CLI_AUTH_SCHEME, ROUTINE_CLI_FRAME_BYTES,
-  ROUTINE_CLI_OUTPUT_BYTES, ROUTINE_CLI_SAFE_ERRORS, ROUTINE_CLI_HTTP_STATUS, routineCliResultMatchesOperation, type RoutineCliErrorCode, type RoutineCliOperation, type RoutineCliResult } from "@matrix-os/contracts/routine-cli";
-export class RoutineClientError extends Error { constructor(readonly code: RoutineCliErrorCode) { super(ROUTINE_CLI_SAFE_ERRORS[code]); } }
+  ROUTINE_CLI_OUTPUT_BYTES, ROUTINE_CLI_HTTP_STATUS, routineCliResultMatchesOperation, type RoutineCliOperation, type RoutineCliResult } from "@matrix-os/contracts/routine-cli";
 export const routineMutation = (operation: RoutineCliOperation): operation is Extract<RoutineCliOperation, { requestId: string; operation: "propose" | "pause" | "resume" | "archive" }> => ["propose", "pause", "resume", "archive"].includes(operation.operation);
 const unknown = (operation: Extract<RoutineCliOperation, { requestId: string }>): RoutineCliResult => ({ kind: "unknown", requestId: operation.requestId, disposition: "unknown", reconcile: true });
 async function readResponse(response: Response): Promise<unknown> {
@@ -15,7 +17,9 @@ async function readResponse(response: Response): Promise<unknown> {
 }
 /** Actual parent IPC only. Neither a profile nor an environment hint supplies source authority. */
 export async function executeRoutineOperation(operation: RoutineCliOperation, signal: AbortSignal): Promise<RoutineCliResult> {
-  if (typeof process.send !== "function" || !process.connected) throw new RoutineClientError("source_context_required");
+  if (typeof process.send !== "function") return executeTerminalRoutineOperation(operation, signal, process.env.MATRIX_TERMINAL_ROUTINE_SOCKET);
+  // Once private IPC exists, disconnection/uncertainty never falls back to a broker.
+  if (!process.connected) throw new RoutineClientError("unavailable");
   // AbortSignal.any only arrived in Node20.3; this published client supports all Node>=20.
   // One invocation controller/deadline covers both the private handoff and HTTP response.
   const controller = new AbortController(), combined = controller.signal;
