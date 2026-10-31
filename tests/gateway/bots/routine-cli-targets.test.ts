@@ -114,6 +114,21 @@ describe("remembered routine target with current source authority", () => {
     await expect(svc.resolve(source(), "read")).rejects.toMatchObject({ code: "target_required" });
     await expect(svc.remember(principal, { ...target, baseRevision: 1 })).rejects.toMatchObject({ code: "revision_conflict" });
   });
+  it.each(["deleted Chat", "shared Chat", "ACL revoked"])("lets a fresh owner recover a %s default with its stored revision only", async change => {
+    await service().remember(principal, target);
+    if (change === "deleted Chat") await db.deleteFrom("chats").where("id", "=", target.chatId).execute();
+    if (change === "shared Chat") await db.updateTable("chats").set({ collaboration: { shared: true } }).where("id", "=", target.chatId).execute();
+    if (change === "ACL revoked") access = false;
+    const fresh = service();
+    await expect(fresh.getDefault(principal)).rejects.toMatchObject({ code: "target_unavailable" });
+    await expect(fresh.resolve(source(), "read")).rejects.toMatchObject({ code: "target_unavailable" });
+    const stored = await fresh.getStoredPreference(principal);
+    expect(stored).toMatchObject({ revision: 1, target: { botId: BOT, chatId: target.chatId, bindingCreatedAt: NOW } });
+    await expect(fresh.getStoredPreference({ ...principal, userId: OTHER_OWNER })).rejects.toMatchObject({ code: "permission_denied" });
+    await expect(fresh.reset(principal, { baseRevision: stored.revision - 1 })).rejects.toMatchObject({ code: "revision_conflict" });
+    expect(await fresh.reset(principal, { baseRevision: stored.revision })).toMatchObject({ revision: 2, target: null });
+    await expect(fresh.resolve(source(), "read")).rejects.toMatchObject({ code: "target_required" });
+  });
   it("can pin and revalidate in dispatch's transaction, rejecting changed preference revision", async () => {
     const svc = service(); await svc.remember(principal, target);
     const pinned = await svc.resolve(source(), "read");

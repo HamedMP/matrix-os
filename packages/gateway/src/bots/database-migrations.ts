@@ -9,6 +9,7 @@
  * route and broker boundaries.
  */
 import { sql, type Transaction } from "kysely";
+import { migrateRoutineCliSourcesV13 } from "./routine-cli-source-migration.js";
 import { migrateRoutineCliPreferencesV12 } from "./routine-cli-preference-migration.js";
 import { migrateBotRoutinesV11 } from "./routine-migration.js";
 import { migrateBotQuestionSourceV9, migrateBotQuestionThreadsV10 } from "./v9-compatibility.js";
@@ -363,4 +364,5 @@ export const BOT_MIGRATIONS: readonly BotMigration[] = [
   { version: 10, name: "bot_question_threads_bridge", up: migrateBotQuestionThreadsV10 },
   { version: 11, name: "bot_routines", up: migrateBotRoutinesV11 },
   { version: 12, name: "routine_cli_preferences", up: migrateRoutineCliPreferencesV12 },
+  { version: 13, name: "routine_cli_sources", up: migrateRoutineCliSourcesV13 },
 ];
