@@ -347,7 +347,7 @@ describe("pi provider adapter — spawn contract", () => {
       "--tools", "read,ask_user",
       "--no-approve",
       "--session-id", expect.stringMatching(/^[0-9a-f-]{36}$/),
-      "--extension", expect.stringMatching(/matrix-pi-extension-.*ask-user\.ts$/),
+      "--extension", expect.stringMatching(/matrix-pi-extensions-.*run-[A-Za-z0-9]{6}.*ask-user\.ts$/),
     ]);
     expect(call.prompt).toBe("Say hi");
   });

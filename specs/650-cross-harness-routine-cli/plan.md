@@ -71,7 +71,7 @@ Own existing adapter lifecycle seams; per-turn source capability; actual CLI chi
 
 - [x] Task6aH OpenCode host/source/fixed CLI preparation: actual canonical admission, held descriptor and observed-call correlation to CLI/Hono/PostgreSQL. Initial25PG/53unit/47shared-regression checks and gateway types pass; review then fixed terminal-call authority and FD/SSE ordering. Final15 affected units,34 required PG,5 selected legacy contracts, scoped types/lint pass; scoped rereview is clean. Native bootstrap deliberately remains unavailable.
 - [ ] Task6aN native OpenCode discovery/offline dependency readiness and stable public callID adaptation: minimal design awaits confirmation; actual native API/home/auth/session/result/packaging qualification and user support remain unfinished.
-- [ ] Task6b native Pi uses the same CLI; cached1.0.0 native API prerequisite/probe observations are separate from production source integration.
+- [x] Task6b native Pi1.0.0: actual admitted source/held FD/current native-call correlation to shared CLI/Hono/PG;33 PG,64 affected units,18 resource/FD and39 shared regressions pass with strict scoped types. Independent review fixed pre-lease staging failure/orphan cleanup with4 focused cases; scoped rereview clean. Four separate actual native production-extension/API/FD/result/cancel/discovery probes pass with a fixed local model fixture. Combined native-to-Matrix, real account, systemd/platform/build/full gates remain open;0.99.2 routine support is unqualified.
 - [ ] Task6c managed Matrix Pi has its own real managed binding and no invented BotTask.
 
 Own native owned-tool extensions and typed worker-host fixed CLI invocation; keep native read-only/pure policy.
