@@ -19,7 +19,7 @@ import {
   hasPaneId,
 } from "./terminal-layout";
 import {
-  terminalAgentVisibleInstallCommand,
+  terminalAgentCreateOptions,
   type TerminalAgentMenuAction,
   type TerminalAgentOption,
 } from "./terminal-agent-options";
@@ -762,14 +762,7 @@ export function LocalTerminalSidebar({
     const cwd = ctx.sidebarSelectedPath ?? DEFAULT_CWD;
     try {
       const label = action === "launch" ? option.label : `Install ${option.label}`;
-      const cmd = action === "launch"
-        ? option.launchCommand ?? (option.claudeMode ? "claude" : undefined)
-        : terminalAgentVisibleInstallCommand(option);
-      const name = await ctx.createShellSessionTab(label, cwd, {
-        cmd,
-        ...(action === "launch" ? { agent: option.id } : {}),
-        ...(action === "launch" && option.id === "codex" ? { compatMode: "codex-tui" } : {}),
-      });
+      const name = await ctx.createShellSessionTab(label, cwd, terminalAgentCreateOptions(option, action));
       if (name) {
         await fetchShells({ silent: true });
       } else {
