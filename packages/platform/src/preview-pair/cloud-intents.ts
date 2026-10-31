@@ -83,7 +83,8 @@ export async function stopPreviewPairCloudIntent(db: PlatformDB, pairId: string,
       .where("generation", "=", generation).where("controller_run_id", "=", String(controllerRunId)).forUpdate().executeTakeFirst();
     if (!row) throw new PreviewPairConflictError();
     if (row.state !== "prepared") return row;
-    return trx.executor.updateTable("preview_pair_cloud_intents").set({ state: "cleanup_pending", revision: sql`revision + 1` })
+    return trx.executor.updateTable("preview_pair_cloud_intents").set({ state: "cleanup_pending", revision: sql`revision + 1`,
+      claim_id: null, claim_expires_at: null, next_attempt_at: new Date(now).toISOString() })
       .where("pair_id", "=", pairId).where("generation", "=", generation).where("revision", "=", row.revision)
       .where("state", "=", "prepared").returningAll().executeTakeFirstOrThrow();
   });
