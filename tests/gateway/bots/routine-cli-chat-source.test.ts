@@ -25,3 +25,8 @@ it("retains the existing Claude default and synchronous source lifetime fence", 
   live = false;
   expect(actual.producer.readPolicy().live).toBe(false);
 });
+it("keeps the actual Hermes admission distinct and never treats native full access as human provenance", () => {
+  const actual = createChatRoutineSourceProducer({ input, provider: "hermes", computerId: "computer_one", signal: input.signal, current: () => true, publish: () => {} });
+  expect(actual.producer.source.harness).toBe("hermes");
+  expect(actual.producer.readPolicy()).toMatchObject({ live: true, originCeiling: "exact" });
+});
