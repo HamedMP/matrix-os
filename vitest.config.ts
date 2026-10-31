@@ -42,6 +42,7 @@ export default defineConfig({
     conditions: ["node"],
     alias: {
       "@matrix-os/brand/themes": path.resolve(__dirname, "packages/brand/src/themes"),
+      "@matrix-os/ui/routine-action": path.resolve(__dirname, "packages/ui/src/routine-action/index.ts"),
       "@matrix-os/ui/appearance": path.resolve(__dirname, "packages/ui/src/appearance/index.ts"),
       "@matrix-os/brand/boot-screen": path.resolve(__dirname, "packages/brand/src/boot-screen.ts"),
       "vitest-environment-gateway-renderer": path.resolve(__dirname, "tests/helpers/gateway-renderer-environment.ts"),
