@@ -49,6 +49,12 @@ const { router, shell, bot, state, sheet, managed, approval, snapshot, customSta
 type AlertButton = { text?: string; style?: string; onPress?: () => void };
 
 describe("agent chat route: details and archiving", () => {
+  it("wires the actual current Chat and Computer into native routine destination details", async () => {
+    mockRoute.reset(); render(<AgentChatRoute/>);
+    fireEvent.press(screen.getByRole("button", { name: "Agent details" }));
+    expect(await screen.findByText("Routine destination")).toBeTruthy();
+    expect(screen.getByText(/does not authorize routine operations/)).toBeTruthy();
+  });
   let alert: jest.SpyInstance;
   let warn: jest.SpyInstance;
 

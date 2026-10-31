@@ -91,6 +91,7 @@ export default function AgentChatRoute() {
         composer={thread.composer}
       />
       <AgentDetailsSheet
+        routineDestination={chat.chatId && thread.gatewayUrl ? { chatId: chat.chatId, gatewayUrl: thread.gatewayUrl, eligible: fromTemplate && !shown?.archived } : undefined}
         visible={detailsOpen}
         onClose={() => setDetailsOpen(false)}
         agent={{ id: agentId, name, description: shown?.description }}

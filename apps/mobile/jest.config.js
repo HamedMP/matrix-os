@@ -22,6 +22,8 @@ module.exports = {
   setupFilesAfterEnv: ["./jest.after-env.js"],
   testMatch: ["**/__tests__/**/*.test.[jt]s?(x)"],
   moduleNameMapper: {
+    "^\\./use-routine-destination\\.js$": "<rootDir>/../../packages/ui/src/routine-destination/use-routine-destination.ts",
+    "^\\.\\./chat-agents/safe-http-status\\.js$": "<rootDir>/../../packages/ui/src/chat-agents/safe-http-status.ts",
     "^\\./canonical-chat-api\\.js$": "<rootDir>/../../packages/contracts/src/canonical-chat-api.ts",
     "^\\./canonical-chat-inputs\\.js$": "<rootDir>/../../packages/contracts/src/canonical-chat-inputs.ts",
     // The shared speech hook (@matrix-os/ui/speech) imports its siblings by their built names.

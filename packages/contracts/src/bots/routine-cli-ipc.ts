@@ -8,7 +8,7 @@ export const ROUTINE_CLI_OUTPUT_BYTES = 128 * 1024;
 export const ROUTINE_CLI_SAFE_ERRORS = {
   source_context_required: "An authorized Matrix source context is required.",
   permission_denied: "This routine operation is not permitted.",
-  target_required: "Choose an eligible routine destination in Matrix Settings.",
+  target_required: "Choose a routine destination in a private Bot Chat's Details.",
   target_unavailable: "The routine destination is unavailable.",
   revision_conflict: "The routine changed. Read its current revision.",
   request_conflict: "This request ID belongs to a different routine intent.",

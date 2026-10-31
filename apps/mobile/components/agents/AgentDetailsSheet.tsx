@@ -1,3 +1,4 @@
+import { RoutineDestinationSection } from "./RoutineDestinationSection";
 import { ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -12,6 +13,7 @@ const MASCOT_SIZE = 48;
 const LOCK_ICON_SIZE = 16;
 
 export interface AgentDetailsSheetProps extends AgentAccessSectionsProps {
+  routineDestination?: { chatId: string; gatewayUrl: string; eligible: boolean };
   visible: boolean;
   onClose: () => void;
   agent: {
@@ -29,7 +31,7 @@ export interface AgentDetailsSheetProps extends AgentAccessSectionsProps {
 }
 
 /** The sheet over an agent's chat: its apps, what it runs on, and archiving it. */
-export function AgentDetailsSheet({ visible, onClose, agent, runsOn, archiving, onArchive, ...access }: AgentDetailsSheetProps) {
+export function AgentDetailsSheet({ routineDestination, visible, onClose, agent, runsOn, archiving, onArchive, ...access }: AgentDetailsSheetProps) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
@@ -73,6 +75,7 @@ export function AgentDetailsSheet({ visible, onClose, agent, runsOn, archiving, 
               <Text style={[styles.fill, styles.runsOnText]}>{runsOn}</Text>
             </View>
           ) : null}
+          {visible && routineDestination ? <RoutineDestinationSection {...routineDestination} botId={agent.id}/> : null}
           <AgentAccessSections {...access} />
           {onArchive ? (
             <Button variant="outline" fullWidth label="Archive agent" loading={archiving} onPress={onArchive} />

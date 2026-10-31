@@ -117,6 +117,7 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
   return {
     /** The agent's status and the actions on it. Its `snapshot` is null for an agent with no status to read. */
     botChat,
+    gatewayUrl,
     catalog,
     messages,
     renderRequest,
