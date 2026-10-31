@@ -47,6 +47,8 @@ export class RoutineCliCapabilityDelivery {
 }
 /** Verified host-only identity from issuance input or the locked stored capability; never CLI body data. */
 export interface RoutineCliVerifiedInvocation {
+  /** Reconstructed ONLY by validateAcceptedWithin after consumed-capability checks; never issue/consume or public/native input. */
+  readonly accepted?: true;
   readonly sourceId: string;
   readonly invocationId: string;
   readonly operationDigest: string;
@@ -188,7 +190,7 @@ export function createRoutineCliSourceService(deps: RoutineCliSourceDependencies
         .where("computer_id", "=", source.computerId).where("source_id", "=", reference.sourceId)
         .where("invocation_id", "=", z.uuid().parse(input.invocation.invocationId)).forUpdate().executeTakeFirst();
       if (!cap?.consumed_at || !sameHash(cap.operation_digest, digest)) throw new RoutineCliError("permission_denied");
-      const verified = Object.freeze({ sourceId: record.source_id, invocationId: cap.invocation_id, operationDigest: cap.operation_digest });
+      const verified = Object.freeze({ sourceId: record.source_id, invocationId: cap.invocation_id, operationDigest: cap.operation_digest, accepted: true as const });
       await liveRecord(record, trx, actionFor(operation), operation, verified);
       const result = await work();
       await liveRecord(record, trx, actionFor(operation), operation, verified);
