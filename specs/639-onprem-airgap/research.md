@@ -68,7 +68,7 @@ Account check: TAC access granted, Daybreak programs not granted on 2026-10-31. 
 | Gate | Decision/evidence required | What can proceed meanwhile |
 | --- | --- | --- |
 | Reference environment | Supported distro/version, topology, DB deployment, model/harness, hardware and workload/performance thresholds | Documentation, dependency inventory, contract review |
-| Commercial licensing | A/B/C choice, licensor and rights inventory, counsel review, component redistribution rights | Shared core work and fully AGPL option |
+| Commercial licensing | Hamed selected B (AGPL core + public commercial EE); licensor/rights inventory, counsel review and component redistribution rights remain pending | Shared AGPL core work; no restricted EE publication until rights clearance |
 | Internal organization authority | IdP/issuer/trust mapping, runtime enrollment, collaboration topology and revocation contract | Single-owner core demonstrator; contract tests |
 | Network/transport | Trusted endpoint registry, DNS/redirect/TLS credential binding and process/client enforcement | Negative tests and local read-only spike under blocked egress |
 | Full runtime qualification | Exact produced artifacts/model, app writes/background/App AI/Bots, lifecycle and restore | Source-backed implementation tasks |

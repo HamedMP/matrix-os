@@ -8,7 +8,7 @@ Tracking: [ENG-423](https://linear.app/matrix-os/issue/ENG-423/plan-secure-on-pr
 
 Run Matrix on customer-controlled infrastructure, including a network without internet connectivity, while continuing hosted Matrix development in the same repository. Reuse the same owner runtime, data model, clients and security controls. An optional enterprise layer may add administration and commercial capabilities after its legal boundary is approved.
 
-“In tandem” means shared mainline development and parallel qualification, not divergent runtime implementations. “Open source” and “commercial source available” have different meanings; see licensing.md. This plan does not adopt new license terms.
+“In tandem” means shared mainline development and parallel qualification, not divergent runtime implementations. Hamed selected AGPL core plus public commercial EE, like PostHog, during this planning chat. The EE part is source available rather than fully open source; see licensing.md. The direction is selected, but rights/legal clearance and actual license adoption remain pending.
 
 ## Deployment profiles
 
@@ -62,12 +62,12 @@ Independent test: authorized non-production threat scenarios in security-plan.md
 ## Requirements
 
 - FR01: Preserve owner-controlled Postgres/Kysely, inspectable identity/config/export files and existing protected-home rules; no alternative database/ORM or second OS runtime.
-- FR02: Administrator-approved inference endpoints use a trusted policy separate from user-provided web URLs. No global private-IP/SSRF bypass; execution-time redirect/DNS/credential-origin controls remain enforced.
+- FR02: Installation operators own the global destination/CA/egress ceiling. Org admins may grant only a permitted subset within their own org; members/apps/models cannot broaden it. Approved inference endpoints use a trusted policy separate from user-provided web URLs. No global private-IP/SSRF bypass; execution-time redirect/DNS/credential-origin controls remain enforced.
 - FR03: Every required AI path preserves principal/source/model/session binding, tools, approvals, cancellation and bounded resource use. No external failure fallback in air-gap mode.
 - FR04: Server capabilities declare unavailable internet services before execution. Public Gmail/Slack/WhatsApp/search require internal equivalents, imported data or explicit exclusion in strict air-gap deployments.
 - FR05: Egress policy covers gateway, agents, tools, app builds, browser, MCP, installers/updater, telemetry and client devices. A fetch wrapper or server-only firewall is insufficient.
 - FR06: Offline media includes declared runtime/transitive/OS dependencies, models/tokenizers/templates, provenance, source/notices and authenticated manifests. No lazy downloads on boot or first use.
-- FR07: Internal auth, OIDC/JWKS, certificate trust, device approval, routing/discovery and collaboration cannot depend on public services in the air-gap profile.
+- FR07: Internal auth, OIDC/JWKS, certificate trust, device approval, routing/discovery and collaboration cannot depend on public services in the air-gap profile. Immutable internal identities map installation plus exact issuer plus subject, never email/raw subject alone. Single-owner-to-org ownership migration and restore are explicit, audited operations; no configured-owner fallback in multiuser mode.
 - FR08: Local releases, backups, restore, observability and optional entitlement checks function without online activation, billing or callbacks.
 - FR09: License expiry never destroys owner data or blocks core login/export/backup/restore. Offline time/revocation limitations and degraded management behavior are explicit.
 - FR10: Core does not import EE implementation; EE composes public core interfaces. Community source/build/run with EE physically absent is a required lane.

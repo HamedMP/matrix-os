@@ -17,7 +17,9 @@ Verified Matrix sources:
 
 AGPL sections 5, 7 and 13 address combined works, additional permissions and modified network use respectively (existing LICENSE:205-235 and 543-560). Relocating existing contributions to ee/, declaring a package, or using dependency injection does not establish alternative rights or resolve combined-work questions. Internal networking does not itself remove network-source considerations. A process boundary is useful engineering isolation, not an automatic legal safe harbor.
 
-## Options for decision
+## Options and recorded decision
+
+Hamed selected option B in this chat: AGPL core plus public commercial EE, like PostHog, subject to the AGPL rights review. This records product direction, not a representation that commercial combination/distribution rights are already established. Do not ask for the same preference again unless scope or terms change materially.
 
 | Option | Source/license posture | Commercial offering | Decision required |
 | --- | --- | --- | --- |
@@ -25,7 +27,7 @@ AGPL sections 5, 7 and 13 address combined works, additional permissions and mod
 | B — AGPL core plus restricted EE | Open-source core; source-visible enterprise modules | Licensed enterprise capabilities/support | Needs lawful distribution/combination strategy; enterprise part is not fully open source |
 | C — Additional commercial grant for a defined distribution | Rights-cleared code available under AGPL and separately agreed terms | Alternative commercial license | Requires sufficient rights over every included contribution/component |
 
-Recommendation: retain existing grants, place reusable capability/security work in core, and reserve an optional EE composition seam. Choose A or legally cleared B/C before publishing restricted enterprise implementation. This planning ticket does not select a new license or retract existing valid grants.
+Follow the selected B direction: retain existing grants, place reusable capability/security work in core, and reserve an optional EE composition seam. Establish lawful commercial combination/distribution rights before publishing restricted enterprise implementation; if those rights cannot be established, return with concrete alternatives rather than silently relicensing contributions. This planning ticket does not adopt new license text or retract existing valid grants.
 
 ## Proposed capability ownership
 
@@ -42,11 +44,11 @@ Core must remain usable and secure without EE. Paid entitlement is never an auth
 
 ## Proposed dependency direction
 
-Pure shared contracts stay in packages/contracts/src/deployment/; owning behavior stays in existing core packages. Hosted adapters stay in packages/platform/. Proposed ee/packages/admin and ee/packages/deployment compose public core interfaces and shared brand/UI primitives; no deep imports from private internals. These EE paths are proposed, not present.
+Pure shared contracts use packages/contracts/src/deployment-profile.ts, execution-backend.ts and offline-release.ts; owning behavior stays in existing core packages. Hosted adapters stay in packages/platform/. Proposed ee/server/composition.ts composes ee/identity/, ee/admin/ and ee/license/offline-entitlement.ts through public core interfaces and shared brand/UI primitives; no deep imports from private internals. These EE paths are proposed, not present.
 
 Core entrypoints do not probe or statically import ee/. An explicit EE entrypoint injects typed implementations into shared composition. Community builds must resolve, build and run with ee/ physically absent. CI checks import graph, dependency closure and artifacts; hiding UI is insufficient.
 
-pnpm-workspace.yaml currently lists packages/*, apps/*, shell and desktop, not ee/packages/*. Any approved enterprise addition needs intentional workspace/build inclusion and a reproducible community source export/filter. Keep the frozen lockfile invariant; deleting EE sources is not a reason to bypass dependency verification.
+pnpm-workspace.yaml currently lists packages/*, apps/*, shell and desktop, with no EE entry. The proposed optional ee/package.json workspace needs intentional inclusion and a reproducible community source export/filter. Keep the frozen lockfile invariant; deleting EE sources is not a reason to bypass dependency verification.
 
 ## Offline entitlement contract
 
@@ -57,7 +59,7 @@ Clock rollback, stale revocation information, cloned installations and delayed r
 ## Required rights and distribution work
 
 1. Identify legal licensor; verify employee/contractor/contributor rights and imported-code provenance for the exact candidate files. Obtain evidence of existing private agreements.
-2. Decide A/B/C with rightsholders and counsel, including AGPL combination/exceptions, future contribution terms, trademarks and corresponding-source obligations.
+2. Validate the selected B direction with rightsholders and counsel, including lawful AGPL combination/exceptions, future contribution terms, trademarks and corresponding-source obligations. Return concrete alternatives only if the required clearance cannot be established.
 3. Draft Matrix-specific enterprise terms only after that decision. Do not copy PostHog's company/subscription/modification-assignment language.
 4. If approved, add a clear root licensing map, ee/LICENSE, file/package metadata and artifact notices. Do not alter the AGPL license text itself or imply third-party rights changed.
 5. Include required corresponding source/notices on offline media and make them accessible to internal users of modified deployments.

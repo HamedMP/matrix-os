@@ -92,7 +92,7 @@ Restore records destination identity, source digest, dry-run compatibility, excl
 
 Selected direction is AGPL core plus public commercial/source-available EE; legal rights/combination review precedes terms/adoption. Proposed optional implementation: `ee/license/offline-entitlement.ts`.
 
-Store a bounded locally signed document: licensor/key ID, installation/org binding, optional features/seat limits, validity/grace and version. Verification uses installed public keys, independent from release/identity/gateway keys. No online activation, telemetry or renewal callback. Define time skew/rollback, imported revocation/key rollover and recovery limitations honestly.
+Store a bounded local document signed off-installation by the licensor: licensor/key ID, installation/org binding, optional features/seat limits, validity/grace and version. Verification uses installed public keys, independent from release/identity/gateway keys; the runtime never holds a private entitlement signing key. No online activation, telemetry or renewal callback. Define time skew/rollback, imported revocation/key rollover and recovery limitations honestly.
 
 Invalid/expired entitlement affects only defined commercial administration behavior. It cannot create admin roles, broaden endpoints, corrupt data, disable security or block core login/export/backup/restore. A seat check cannot interrupt a data migration without a specified safe completion/recovery path.
 
