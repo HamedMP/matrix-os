@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod/v4';
+import { ordinaryProvisioningJobPredicate } from './customer-vps-ordinary-machines.js';
 import type { PlatformDB } from './db.js';
 
 const MAX_PROVISIONING_JOBS = 100;
@@ -396,17 +397,19 @@ export async function listDispatchableProvisioningJobs(
   db: PlatformDB,
   now: string,
   limit: number,
+  options: { ordinaryOnly?: boolean } = {},
 ): Promise<ProvisioningJobRecord[]> {
   await db.ready;
   const boundedLimit = Math.max(1, Math.min(MAX_PROVISIONING_JOBS, Math.trunc(limit)));
-  const rows = await db.executor
+  let query = db.executor
     .selectFrom('provisioning_jobs')
     .selectAll()
     .where((eb) => eb.or([
       eb.and([eb('status', '=', 'queued'), eb('available_at', '<=', now)]),
       eb.and([eb('status', '=', 'running'), eb('lease_expires_at', '<=', now)]),
-    ]))
-    .orderBy('available_at', 'asc')
+    ]));
+  if (options.ordinaryOnly) query = query.where(ordinaryProvisioningJobPredicate);
+  const rows = await query.orderBy('available_at', 'asc')
     .limit(boundedLimit)
     .execute();
   return rows.map(mapProvisioningJob);

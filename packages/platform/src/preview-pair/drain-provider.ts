@@ -15,7 +15,7 @@ export function createPreviewPairProviderDrain(options: { db: PlatformDB; provid
     async function canonical(deletion: ProviderDeletionQueueRecord) {
       signal.throwIfAborted();
       if (!Number.isSafeInteger(deletion.providerServerId) || deletion.providerServerId <= 0
-        || deletion.reason !== "preview_pair_retire" || deletion.machineId !== member.machineId || deletion.handle !== member.handle
+        || deletion.machineId !== member.machineId || deletion.handle !== member.handle
         || member.pairId !== claim.pairId || member.generation > claim.generation) throw new PreviewPairConflictError();
       await withPreviewPairClaim(db, claim, options.now(), async trx => {
         const row = await trx.executor.selectFrom("provider_deletion_queue as deletion")
@@ -23,7 +23,7 @@ export function createPreviewPairProviderDrain(options: { db: PlatformDB; provid
           .innerJoin("user_machines as machine", "machine.machine_id", "member.machine_id")
           .innerJoin("preview_pairs as pair", "pair.pair_id", "member.pair_id")
           .select("deletion.id").where("deletion.id", "=", deletion.id)
-          .where("deletion.provider_server_id", "=", deletion.providerServerId).where("deletion.reason", "=", "preview_pair_retire")
+          .where("deletion.provider_server_id", "=", deletion.providerServerId)
           .where("deletion.handle", "=", member.handle).where("member.pair_id", "=", claim.pairId)
           .where("member.generation", "=", member.generation).where("member.job_id", "=", member.jobId)
           .where("member.actor_id", "=", member.actorId).where("member.handle", "=", member.handle).where("member.retired_at", "is not", null)
@@ -45,7 +45,7 @@ export function createPreviewPairProviderDrain(options: { db: PlatformDB; provid
     await retryCustomerVpsProviderDeletions({ db, provider, now: () => new Date(options.now()), batchSize: 1,
       confirmAbsence: true, signal, authorize: canonical,
       select: async () => (await db.executor.selectFrom("provider_deletion_queue").selectAll()
-        .where("machine_id", "=", member.machineId).where("handle", "=", member.handle).where("reason", "=", "preview_pair_retire")
+        .where("machine_id", "=", member.machineId).where("handle", "=", member.handle)
         .where("completed_at", "is", null).where("next_attempt_at", "<=", new Date(options.now()).toISOString())
         .orderBy("next_attempt_at").orderBy("id").limit(1).execute()).map(mapProviderDeletion),
     });

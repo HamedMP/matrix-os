@@ -181,7 +181,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
   }
 
   async function retryRunningMachineMetadata(): Promise<void> {
-    const rows = await listRunningUserMachines(deps.db, deps.config.reconciliationBatchSize);
+    const rows = await listRunningUserMachines(deps.db, deps.config.reconciliationBatchSize, { ordinaryOnly: true });
     for (const row of rows) {
       try {
         await deps.systemStore.writeVpsMeta(buildVpsMeta(row, row.lastSeenAt ?? now().toISOString()));
@@ -618,6 +618,7 @@ export function createCustomerVpsService(deps: CustomerVpsServiceDeps): Customer
         ['provisioning', 'recovering'],
         staleBefore,
         deps.config.reconciliationBatchSize,
+        { ordinaryOnly: true },
       );
       const resizingRows = await listStaleResizingUserMachines(
         deps.db,

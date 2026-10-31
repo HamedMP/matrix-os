@@ -1,4 +1,5 @@
 import { sql } from 'kysely';
+import { ordinaryMachinePredicate } from '../customer-vps-ordinary-machines.js';
 import type { NewUserMachine, PlatformDB, UserMachineRecord } from '../db.js';
 import {
   mapUserMachine,
@@ -307,6 +308,7 @@ export async function listRunningUserMachines(
     handle?: string;
     provisioningClass?: UserMachineProvisioningClass;
     activationState?: UserMachineRecord['activationState'];
+    ordinaryOnly?: boolean;
   } = {},
 ): Promise<UserMachineRecord[]> {
   await db.ready;
@@ -324,6 +326,7 @@ export async function listRunningUserMachines(
   if (filters.activationState !== undefined) {
     query = query.where('activation_state', '=', filters.activationState);
   }
+  if (filters.ordinaryOnly) query = query.where(ordinaryMachinePredicate);
   const rows = await query
     .orderBy('last_seen_at', 'desc')
     .limit(limit)
@@ -386,16 +389,18 @@ export async function listStaleUserMachines(
   statuses: string[],
   olderThanIso: string,
   limit: number,
+  options: { ordinaryOnly?: boolean } = {},
 ): Promise<UserMachineRecord[]> {
   await db.ready;
   if (statuses.length === 0) return [];
-  const rows = await db.executor
+  let query = db.executor
     .selectFrom('user_machines')
     .selectAll()
     .where('status', 'in', statuses)
     .where('provisioned_at', '<', olderThanIso)
-    .where('deleted_at', 'is', null)
-    .orderBy('provisioned_at')
+    .where('deleted_at', 'is', null);
+  if (options.ordinaryOnly) query = query.where(ordinaryMachinePredicate);
+  const rows = await query.orderBy('provisioned_at')
     .limit(limit)
     .execute();
   return rows.map(mapUserMachine);

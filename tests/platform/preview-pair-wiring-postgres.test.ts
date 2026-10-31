@@ -122,6 +122,13 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("paired runtime productio
     await insertProviderDeletion(source.db, { id: customerDeletion, providerServerId: 999,
       reason: "rejected_snapshot_recovery_clone", machineId: "unrelated-customer", handle: "customer",
       nextAttemptAt: new Date(PAIR_NOW - 1_000).toISOString(), createdAt: new Date(PAIR_NOW).toISOString() });
+    const owner = await source.db.executor.selectFrom("preview_pair_members").selectAll().where("role", "=", "owner").executeTakeFirstOrThrow();
+    // An earlier failed create may already own the unique active server intent.
+    // Retirement must authorize its actual ownership, regardless of reason.
+    const ownerMachine = await source.db.executor.selectFrom("user_machines").select("hetzner_server_id").where("machine_id", "=", owner.machine_id).executeTakeFirstOrThrow();
+    await insertProviderDeletion(source.db, { id: "88888888-8888-4888-8888-888888888888", providerServerId: Number(ownerMachine.hetzner_server_id),
+      machineId: owner.machine_id, handle: owner.handle, reason: "provision_create_compensation",
+      nextAttemptAt: new Date(PAIR_NOW - 1_000).toISOString(), createdAt: new Date(PAIR_NOW).toISOString() });
     const pair = await source.db.executor.selectFrom("preview_pairs").selectAll().where("pair_id", "=", started.pairId).executeTakeFirstOrThrow();
     const pending = await s.service.action(pair.pair_id, { type: "stop", generation: 1, revision: pair.revision });
     expect(await s.service.action(pair.pair_id, { type: "reconcile", generation: 1, revision: pending.revision }))

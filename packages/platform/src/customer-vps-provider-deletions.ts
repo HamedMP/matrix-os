@@ -5,7 +5,7 @@ import { logCustomerVpsError } from "./customer-vps-errors.js";
 import { PROVIDER_DELETION_RETRY_BASE_MS, PROVIDER_DELETION_RETRY_MAX_MS } from "./customer-vps-support.js";
 
 /** Shared durable queue consumer. Pair callers supply a strictly bounded owned
- * selection and canonical authorization; ordinary reconciliation stays unchanged. */
+ * selection and canonical authorization; ordinary reconciliation excludes pair-owned intents. */
 export async function retryCustomerVpsProviderDeletions(options: {
   db: PlatformDB; provider: HetznerClient; now: () => Date; batchSize: number;
   select?: () => Promise<ProviderDeletionQueueRecord[]>;
@@ -13,7 +13,7 @@ export async function retryCustomerVpsProviderDeletions(options: {
   confirmAbsence?: boolean; signal?: AbortSignal;
 }): Promise<void> {
   const { db, provider, now } = options;
-  const pending = options.select ? await options.select() : await listPendingProviderDeletions(db, now().toISOString(), options.batchSize);
+  const pending = options.select ? await options.select() : await listPendingProviderDeletions(db, now().toISOString(), options.batchSize, { ordinaryOnly: true });
   if (pending.length > options.batchSize) throw new Error("Provider deletion batch exceeds its bound");
   for (const deletion of pending) {
     try {
