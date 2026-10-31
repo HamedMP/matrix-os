@@ -208,6 +208,10 @@ export interface BotDatabase {
   };
   managed_pi_sessions: Omit<BotAgentSessionsTable, "bot_id">;
   managed_pi_tool_checkpoints: Omit<BotToolCheckpointsTable, "task_id"> & { chat_id: string };
+  routine_cli_preferences: {
+    owner_id: string; computer_id: string; bot_id: string | null; chat_id: string | null;
+    binding_created_at: NullableTimestamp; revision: Revision; updated_at: Timestamp;
+  };
   bot_schema_migrations: BotSchemaMigrationsTable;
   bot_operations: BotOperationsTable;
   bot_chat_bindings: BotChatBindingsTable;
