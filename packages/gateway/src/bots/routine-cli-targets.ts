@@ -15,20 +15,8 @@ import {
   routineCliBindingTimestamp, type RoutineCliScope, type RoutineCliStoredPreference,
 } from "./repositories/routine-cli-preferences.js";
 
-const ref = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
-const SourceIdentitySchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("chat_run"), chatId: ref, runId: ref, nativeTurnId: ref.optional(), route: z.enum(["native", "managed"]) }).strict(),
-  z.object({ kind: z.literal("terminal_launch"), sessionId: ref, incarnationId: ref, launchId: ref }).strict(),
-  z.object({ kind: z.literal("bot_child"), taskId: ref, runId: ref, runtimeHandle: ref }).strict(),
-]);
-/** Validation of injected host state only; never exported as a CLI/body parser. */
-const SourceContextSchema = RoutineCliScopeSchema.extend({
-  harness: z.enum(["claude", "codex", "hermes", "opencode", "pi"]),
-  identity: SourceIdentitySchema, generation: ref,
-  issuedAt: z.iso.datetime({ offset: true }), expiresAt: z.iso.datetime({ offset: true }),
-  actions: z.array(RoutineCliActionSchema).max(3).refine(actions => new Set(actions).size === actions.length),
-}).strict();
-export type RoutineCliSourceContext = z.infer<typeof SourceContextSchema>;
+import { RoutineCliSourceContextSchema as SourceContextSchema, type RoutineCliSourceContext } from "./routine-cli-source-context.js";
+export type { RoutineCliSourceContext } from "./routine-cli-source-context.js";
 
 /** Internal dispatch snapshot, never the general-purpose CLI DTO. */
 export interface RoutineCliResolvedTarget extends RoutineCliScope {
@@ -155,6 +143,10 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
         return project(saved);
       });
     }),
+    /** Owner-only stored navigation metadata for recovery; never proves live target/action access.
+     * Task4 must use this read to recover an invalid default, then reset/reselect with revision CAS. */
+    getStoredPreference: (principal: RequestPrincipal): Promise<RoutineCliTargetPreference> => routineCliBoundary(async () =>
+      project(await preferences.get(requireOwner(principal)))),
     reset: (principal: RequestPrincipal, value: z.infer<typeof RoutineCliResetTargetSchema>): Promise<RoutineCliTargetPreference> => routineCliBoundary(async () => {
       const configured = requireOwner(principal), input = RoutineCliResetTargetSchema.parse(value);
       return project(await preferences.reset({ ...configured, ...input, now: now().toISOString() }));
