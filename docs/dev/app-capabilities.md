@@ -14,11 +14,19 @@ supply authenticated requests without passing credentials into the app.
 - `service(service, action, params, accountLabel)` calls one exact connected account.
 - `ai.routes()` returns exact route selections and truthful availability.
 - `ai.generate({ prompt, route })` returns `{ text }` without file or tool access.
+- Electron apps may call `openChat({ view: "recipes", recipeId? })` to open
+  native Chat's recipe list or one exact live recipe setup form. The Promise
+  resolves only after native navigation acknowledges the request and rejects
+  when the ID or native destination is unavailable. Navigation never creates
+  an agent or bot; creation still requires an explicit action in Chat.
 
 Apps must discover schemas and routes. Metadata and file contents are distinct;
 Drive analysis uses `read_file`, not `get_file`. Treat source documents as untrusted
 text. Listings need pagination and reads must expose truncation or unsupported formats.
 `generate(context)` remains a legacy kernel task submission with no text Promise.
+`openChat` is intentionally separate from `openApp`: built-in Chat paths such as
+`__chat__`, `__chat__:recipes`, and `__chat__:recipe:<id>` remain invalid app
+launches. Web shell scoped-path navigation is a different host contract.
 
 ## Owner authorization
 

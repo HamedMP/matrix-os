@@ -150,6 +150,8 @@ type ChatAgentsPanelProps = {
   headerLeading?: ReactNode;
   client: ChatAgentClient; view?: "library" | "recipes"; onClose(): void; onSetup?: () => void;
   onStartChat?: StartAgentChat; onOpenBotChat?: (chatId: string) => void;
+  requestedRecipeId?: string;
+  onRequestedRecipeResult?: (result: { ok: true } | { ok: false; error: "recipe_unavailable" | "navigation_unavailable" }) => void;
   providerCatalog?: AgentProviderCatalogSource;
 };
 
@@ -166,7 +168,8 @@ export function ChatAgentsPanel(props: ChatAgentsPanelProps) {
   return <ChatAgentsPanelBody key={current.key} {...props}/>;
 }
 
-function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onStartChat, onOpenBotChat, hostedChrome = false, headerLeading, onTitleChange, providerCatalog }: ChatAgentsPanelProps) {
+function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onStartChat, onOpenBotChat, hostedChrome = false, onTitleChange,
+  headerLeading, requestedRecipeId, onRequestedRecipeResult, providerCatalog }: ChatAgentsPanelProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   const scratchTrigger = useRef<HTMLButtonElement | null>(null);
   const [creationView, setCreationView] = useState(view === "recipes");
@@ -456,6 +459,7 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
     </div> : null}
     <div hidden={setupPaused} className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
     {recipes ? <div hidden={Boolean(state.editing)} inert={Boolean(state.editing)}><AgentRecipesPanel
+      requestedRecipeId={requestedRecipeId} onRequestedRecipeResult={onRequestedRecipeResult}
       onStartFromScratch={trigger => { scratchTrigger.current = trigger; edit("new"); }}
       scratchDisabled={scratchBlocked || !state.catalog} scratchRetryDisabled={scratchBlocked} catalogError={modelCatalog.error}
       onRefreshCatalog={modelCatalog.refresh} onSetup={onSetup} botClient={client.bots} onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}

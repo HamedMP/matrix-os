@@ -79,6 +79,7 @@ import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/
 import { createNativeAppCapabilityRequester, createNativeAppAiRoutesRequester } from "./embeds/native-app-capabilities";
 import { createNativeAppOpenResolver } from "./embeds/native-app-open";
 import { installBrowserProductSessionCookie } from "./embeds/browser-product-session";
+import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc } from "./embeds/native-app-chat-navigation";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const DESKTOP_APP_NAME = "Matrix OS";
@@ -108,6 +109,7 @@ let drainingPlan = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let fileDownloads: ReturnType<typeof createFileDownloadService> | null = null;
 let localChatImports:ReturnType<typeof createNativeChatImportService>|null=null;
+let nativeAppChatNavigation: ReturnType<typeof createNativeAppChatNavigationBroker> | null = null;
 let importsDrained=false;
 let drainingImports=false;
 let organizationDriveTransfers: ReturnType<typeof createOrganizationDriveTransferService> | null = null;
@@ -262,6 +264,7 @@ if (!gotLock) {
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
           invalidateAppCapabilities?.();
+          nativeAppChatNavigation?.cancelAll();
           navigationCache?.observe(status);
           chatgptPlan?.cancelAll();
           chatgptPlan?.resume();
@@ -332,6 +335,18 @@ if (!gotLock) {
         (detail) => sendEvent("analytics:capture", detail),
       );
 
+      nativeAppChatNavigation = createNativeAppChatNavigationBroker({
+        emit: (event) => sendEvent("app:open-chat", event),
+        cancel: (event) => sendEvent("app:open-chat-cancel", event),
+      });
+      registerNativeAppChatCompletionIpc(ipcMain, nativeAppChatNavigation, rawEvent => {
+        const event = rawEvent as IpcMainInvokeEvent;
+        const contents = mainWindow?.webContents;
+        const rendererUrl = desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
+        return !!contents && !contents.isDestroyed() && event.sender === contents
+          && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
+      });
+
       const nativeAppBridge = new NativeAppBridge({
         getSenderLifecycle: (senderId) => webContents.fromId(senderId) ?? undefined,
         resolveApp: createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() }),
@@ -339,6 +354,17 @@ if (!gotLock) {
           const status = auth.getStatus();
           if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App launch is unavailable");
           sendEvent("app:open", { ...app, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
+        },
+        openChat: async (request, signal) => {
+          const status = auth.getStatus();
+          if (!status.signedIn || !mainWindow || mainWindow.isDestroyed() || !nativeAppChatNavigation) {
+            throw new Error("Chat navigation is unavailable");
+          }
+          focusMainWindow();
+          await nativeAppChatNavigation.request(request, {
+            runtimeSlot: status.runtimeSlot,
+            authGeneration: status.authGeneration,
+          }, signal);
         },
         authGeneration: () => auth.getStatus().authGeneration,
         generate: (app, context) => {
@@ -524,6 +550,7 @@ if (!gotLock) {
           downloads.cancelAll();
           driveTransfers.cancelAll();
           localChatImports?.cancelAll();
+          nativeAppChatNavigation?.cancelAll();
           // Switching runtime invalidates embed cookies/tokens; tear them down so
           // they re-handshake against the new slot (Integration Wiring rule).
           embeds.closeAll();
@@ -629,6 +656,7 @@ if (!gotLock) {
           if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
           embeds.closeAll();
           codingAgentThreadEvents.closeAll();
+          nativeAppChatNavigation?.cancelAll();
           mainWindow = null;
         });
       };
@@ -659,6 +687,7 @@ if (!gotLock) {
 
   app.on("before-quit", (event) => {
     organizationDriveTransfers?.cancelAll();
+    nativeAppChatNavigation?.cancelAll();
     if (handleAnalyticsBeforeQuit?.(event)) return;
     if (!navigationCacheDrained && navigationCache) {
       event.preventDefault();

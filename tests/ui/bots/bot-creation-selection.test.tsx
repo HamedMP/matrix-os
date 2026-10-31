@@ -15,6 +15,7 @@ afterEach(cleanup);
 HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
 HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
 const recipe = { recipeId: "writing-bot", version: "2026-09-27.1", name: "Writing Bot", description: "Writes drafts", output: "A draft" };
+const companyBrain = { ...recipe, recipeId: "company-brain", name: "Company Brain" };
 const dailyRecipe = { ...recipe, recipeId: "personal-daily-brief", name: "Daily Brief" };
 function catalog(ready = true): CanonicalProviderCatalog {
   const value = createCanonicalProviderCatalogFixture();
@@ -35,6 +36,29 @@ function submitCreate() {
   fireEvent.submit(button.closest("form")!);
   return button;
 }
+
+it.each([companyBrain, recipe])("opens the requested live-catalog $name setup without creating a bot", async requested => {
+  const create = vi.fn();
+  const selected = vi.fn();
+  render(<AgentRecipesPanel requestedRecipeId={requested.recipeId} onRequestedRecipeResult={selected}
+    botRecipeStatus="ready" botRecipes={[companyBrain, recipe]} matrixModels={models} catalog={ready}
+    onInstantiateBot={create} onOpenBotChat={vi.fn()} />);
+  expect((await screen.findByRole("dialog")).textContent).toContain(requested.name);
+  expect(selected).toHaveBeenCalledWith({ ok: true });
+  expect(create).not.toHaveBeenCalled();
+});
+
+it("rejects an unknown requested recipe visibly without creating a bot", async () => {
+  const create = vi.fn();
+  const selected = vi.fn();
+  render(<AgentRecipesPanel requestedRecipeId="unknown-recipe" onRequestedRecipeResult={selected}
+    botRecipeStatus="ready" botRecipes={[companyBrain, recipe]} matrixModels={models} catalog={ready}
+    onInstantiateBot={create} onOpenBotChat={vi.fn()} />);
+  expect((await screen.findByRole("alert")).textContent).toContain("recipe is unavailable");
+  expect(selected).toHaveBeenCalledWith({ ok: false, error: "recipe_unavailable" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(create).not.toHaveBeenCalled();
+});
 
 it.each([
   { name: "empty catalog", models: [], catalog: { ...ready, instances: [] }, loading: false },
