@@ -14,10 +14,6 @@ class StubbornCli extends EventEmitter implements CanonicalCliProcess {
   readonly stderr = new FakeStream();
   readonly signals: NodeJS.Signals[] = [];
 
-  override once(event: "exit" | "error", listener: (...args: never[]) => void): this {
-    return super.once(event, listener);
-  }
-
   kill(signal: NodeJS.Signals): void {
     this.signals.push(signal);
     if (signal === "SIGKILL") this.emit("exit", null, "SIGKILL");
@@ -208,4 +204,11 @@ describe("canonical provider CLI lifecycle", () => {
     });
     expect(Buffer.concat(stderrChunks).toString("utf8")).toBe("12345678");
   });
+});
+it("fences source authority synchronously at process settlement before promise observers can claim work", async () => {
+  const child = new StubbornCli(); let live = true, observed = false, afterLive: boolean | undefined;
+  const running = runCanonicalCli({ command: "fixture", args: [], cwd: "/tmp", env: {}, signal: new AbortController().signal, maxStdoutBytes: 1024, spawnFn: () => child,
+    onStdout: () => {}, onSettled: () => { live = false; } });
+  const result = running.then(() => { observed = true; afterLive = live; });
+  child.emit("exit", 0, null); expect(live).toBe(false); expect(observed).toBe(false); await result; expect(afterLive).toBe(false);
 });

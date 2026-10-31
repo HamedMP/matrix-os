@@ -18,10 +18,14 @@ export async function openClaudeBotBridge(input: { capabilities: readonly BotToo
     try {
       await input.authorize();
       const request = z.discriminatedUnion('action', [z.object({ action: z.literal('list') }).strict(),
-        z.object({ action: z.literal('call'), tool: z.object({ capability: z.string(), args: z.unknown() }).strict() }).strict()]).parse(await c.req.json());
+        z.object({ action: z.literal('call'), tool: z.object({ capability: z.string(), args: z.unknown(), requestId: z.uuid().optional() }).strict() }).strict()]).parse(await c.req.json());
       if (request.action === 'list') return c.json({ tools: [{ name: 'call', description: 'Call one tool granted to this Bot. Owner approvals are enforced by Matrix.',
-        inputSchema: { type: 'object', properties: { capability: { type: 'string', enum: capabilities }, args: { type: 'object' } }, required: ['capability', 'args'], additionalProperties: false } }] });
-      const tool = BotToolRequestSchema.parse({ ...request.tool, toolCallId: `native_${randomUUID()}` });
+        inputSchema: { type: 'object', properties: { capability: { type: 'string', enum: capabilities }, args: { type: 'object' }, requestId: { type: 'string', format: 'uuid', description: 'Required durable UUID for routine mutations; preserve it for reconciliation and retries. Never use native tool IDs as mutation identity.' } }, required: ['capability', 'args'], additionalProperties: false } }] });
+      const { requestId, ...intent } = request.tool;
+      const routine = intent.capability === 'routine.propose' || intent.capability === 'routine.control';
+      const read = intent.capability === 'routine.control' && intent.args && typeof intent.args === 'object' && 'operation' in intent.args && intent.args.operation === 'list';
+      if (routine && !read && !requestId || !routine && requestId) return c.json({ error: 'unavailable' }, 403);
+      const tool = BotToolRequestSchema.parse({ ...intent, ...(routine && requestId ? { routineRequestId: requestId } : {}), toolCallId: `native_${randomUUID()}` });
       if (!capabilities.includes(tool.capability) || ++calls > 20) return c.json({ error: 'unavailable' }, 403);
       const result = await input.call(tool);
       return c.json(result.ok ? { content: result.content } : { isError: true, content: [{ type: 'text', text: 'This task action is unavailable or requires owner approval.' }] });
