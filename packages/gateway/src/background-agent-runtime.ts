@@ -1,5 +1,6 @@
+import { openBackgroundLaunchChannel, validPrivateLaunch, type BackgroundPrivateControl, type ManagedLaunchChannel, type PrivateLaunchSpawn } from "./background-launch-channel.js";
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { lstat, mkdir, opendir, chmod, realpath, open, rm, writeFile } from "node:fs/promises";
 import { join, resolve, relative, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +17,7 @@ export class BackgroundSessionRunningError extends Error {
 }
 
 export interface BackgroundAgentRuntime {
-  start(input: { sessionId: string; launch: AgentLaunchSpec; onPrepared?: (ref: BackgroundAgentRef) => Promise<void> }): Promise<BackgroundAgentRef>;
+  start(input: { sessionId: string; launch: AgentLaunchSpec; onPrepared?: (ref: BackgroundAgentRef) => Promise<void>; privateControl?: BackgroundPrivateControl }): Promise<BackgroundAgentRef>;
   stop(ref: BackgroundAgentRef): Promise<void>;
   isRunning(ref: BackgroundAgentRef): Promise<boolean>;
   withLock?<T>(operation: (locked: BackgroundAgentRuntime) => Promise<T>): Promise<T>;
@@ -35,6 +36,7 @@ export function createBackgroundAgentRuntime(options: {
   homePath: string;
   runCommand?: RunCommand;
   maxJobs?: number;
+  spawnPrivate?: PrivateLaunchSpawn;
   withLock?: typeof withBackgroundRuntimeLock;
 }): BackgroundAgentRuntime & { sweep(): Promise<void>; close(): Promise<void> } {
   const home = resolve(options.homePath);
@@ -46,6 +48,7 @@ export function createBackgroundAgentRuntime(options: {
   let tail: Promise<unknown> = Promise.resolve();
   let waiting = 0;
   let closed = false;
+  const privateChannels = new Set<ManagedLaunchChannel>(); // Bounded by maxJobs, removed on channel/service close and runtime shutdown.
   let sweepTimer: NodeJS.Timeout | undefined;
   const withLock = options.withLock ?? withBackgroundRuntimeLock;
 
@@ -183,14 +186,28 @@ export function createBackgroundAgentRuntime(options: {
       await writeFile(launchPath, payload, { flag: "wx", mode: 0o600 });
       try {
         await input.onPrepared?.(ref);
-        await run("/usr/bin/systemd-run", [
+        const privateControl = input.privateControl && validPrivateLaunch(input.launch) ? input.privateControl : undefined;
+        const serviceArgs = [
           "--user", "--quiet", "--collect", `--unit=${unit(ref)}`,
           "--slice=matrix-terminal.slice", "--service-type=exec",
           "--property=KillMode=control-group", "--property=TimeoutStopSec=10s",
           "--property=MemoryHigh=1G", "--property=MemoryMax=1536M", "--property=TasksMax=1024",
-          "--property=Restart=no", "--property=StandardOutput=null", "--property=StandardError=null",
+          "--property=Restart=no",
+          ...(privateControl ? ["--pipe"] : ["--property=StandardOutput=null", "--property=StandardError=null"]),
           "--", process.execPath, RUNNER_PATH, launchPath,
-        ]);
+          ...(privateControl ? [createHash("sha256").update(payload).digest("hex")] : []),
+        ];
+        if (privateControl) {
+          // --pipe passes inherited anonymous FDs; never place a capability in launch.json or command arguments.
+          try {
+            const channel = await openBackgroundLaunchChannel({ args: serviceArgs, digest: createHash("sha256").update(payload).digest("hex"), env, spawn: options.spawnPrivate });
+            if (closed) channel.close();
+            else {
+              privateChannels.add(channel); channel.subscribe(() => {}, () => privateChannels.delete(channel));
+              try { privateControl.onReady(channel); } catch (error) { channel.close(); throw error; }
+            }
+          } catch (error) { console.warn("[background-agent] Private control unavailable", error instanceof Error ? error.name : "UnknownError"); }
+        } else await run("/usr/bin/systemd-run", serviceArgs);
         if (!await isRunning(ref)) throw new Error("Background runtime exited during startup");
       } catch (error: unknown) {
         // Keep the private descriptor if stop cannot be confirmed, for recovery/admission.
@@ -204,7 +221,7 @@ export function createBackgroundAgentRuntime(options: {
   };
   return {
     sweep,
-    async close() { closed = true; if (sweepTimer) clearInterval(sweepTimer); await tail; },
+    async close() { closed = true; for (const channel of privateChannels) channel.close(); privateChannels.clear(); if (sweepTimer) clearInterval(sweepTimer); await tail; for (const channel of privateChannels) channel.close(); privateChannels.clear(); },
     withLock: (operation) => serial(() => operation(locked)),
     isRunning: (ref) => serial(() => isRunning(ref)),
     stop: (ref) => serial(() => stop(ref)),

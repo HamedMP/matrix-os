@@ -1,3 +1,4 @@
+import type { BackgroundPrivateControl } from "./background-launch-channel.js";
 import type { AgentLaunchSpec } from "./agent-launcher.js";
 import type { WorkspaceSession } from "./agent-session-manager.js";
 import { BackgroundSessionRunningError, type BackgroundAgentRuntime } from "./background-agent-runtime.js";
@@ -7,6 +8,7 @@ export async function startBackgroundSession(options: {
   runtime: BackgroundAgentRuntime;
   session: WorkspaceSession;
   launch: AgentLaunchSpec;
+  privateControl?: BackgroundPrivateControl;
   persist: (session: WorkspaceSession) => Promise<void>;
 }) {
   let prepared: WorkspaceSession | undefined;
@@ -15,6 +17,7 @@ export async function startBackgroundSession(options: {
     const ref = await options.runtime.start({
       sessionId: options.session.id,
       launch: options.launch,
+      ...(options.privateControl ? { privateControl: options.privateControl } : {}),
       onPrepared: async (backgroundRef) => {
         prepared = { ...options.session, backgroundRef, runtime: { ...options.session.runtime, status: "starting" } };
         await options.persist(prepared);

@@ -1,4 +1,7 @@
-import { CodexBrowserBindSchema, CodexBrowserStartSchema, createCodexBrowserBootstrap, codexBrowserThreadConfig, codexBrowserChildEnvironment, CODEX_BROWSER_INSTRUCTIONS } from "./codex-browser-bootstrap.mjs";
+import { createCodexRoutineChannel, CODEX_ROUTINE_TOOL } from "./codex-routine-channel.mjs";
+import { NativeReferenceSchema, ApprovalRequestSchema, InputRequestSchema, ToolLifecycleTypeSchema, ItemLifecycleSchema, RpcResponseSchema, RpcErrorSchema, ToolOutputDeltaSchema, AgentDeltaSchema, TokenUsageUpdatedSchema, TurnCompletedSchema } from "./codex-app-server-protocol.mjs";
+import { CodexControlSchema as ControlSchema } from "./codex-control-protocol.mjs";
+import { createCodexBrowserBootstrap, codexBrowserThreadConfig, codexBrowserChildEnvironment, CODEX_BROWSER_INSTRUCTIONS } from "./codex-browser-bootstrap.mjs";
 import { startCodexNativeProviderSession } from "./codex-native-provider-session.mjs";
 import { RunnerConfigSchema, ModelOptionSchema, PendingTurnSchema, EffortSchema, ServiceTierSchema } from "./codex-runner-config.mjs";
 import { createNativeCodexExecutionProof, assertNativeCodexThreadProvider, verifyNativeCodexHumanControl } from "./native-codex-execution-proof.mjs";
@@ -8,7 +11,7 @@ import { extractCodexArtifactRecords } from "./codex-artifact-events.mjs";
 import { codexCommandPreview } from "./codex-command-preview.mjs";
 import { tryLoadToolOutputKey } from "./protected-tool-output.mjs";
 import { codexToolHasPrivateContext, codexToolOutput } from "./codex-tool-output.mjs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, realpath, rm } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -19,8 +22,8 @@ import { z } from "zod/v4";
 import { assertCodexProviderVersion } from "./codex-provider-version-check.mjs";
 import { createCodexSessionApprovalGrants } from "./codex-session-approvals.mjs";
 import { createCodexExecutionWatchdog } from "./codex-execution-watchdog.mjs";
-import { CodexHibernateControlSchema, CodexExecutionIdleControlSchema, createCodexIdleHibernation, createCodexExecutionObservation } from "./codex-idle-hibernation.mjs";
-import { CodexDeferredInputControlSchema, deferCodexNativeInput } from "./codex-deferred-input.mjs";
+import { createCodexIdleHibernation, createCodexExecutionObservation } from "./codex-idle-hibernation.mjs";
+import { deferCodexNativeInput } from "./codex-deferred-input.mjs";
 import { createCodexMcpElicitations, rejectCodexServerRequest } from "./codex-mcp-elicitations.mjs";
 import { ProviderStartupCleanupUnconfirmed, signalCodexProviderChild } from "./codex-provider-startup.mjs";
 import { MATRIX_INTEGRATIONS_INSTRUCTIONS } from "./codex-matrix-integration-instructions.mjs";
@@ -35,7 +38,6 @@ process.on("unhandledRejection", () => {
 });
 
 const MAX_LINE_BYTES = 64 * 1024;
-const MAX_PROVIDER_LINE_BYTES = 1024 * 1024;
 const MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024;
 const MAX_PENDING_REQUESTS = 20;
 const MAX_COMPLETED_REQUESTS = 100;
@@ -55,173 +57,6 @@ const MAX_CAPTURED_ARTIFACT_BYTES = 10 * 1024 * 1024;
 const TURN_FRAME_V1_PREFIX = "matrix-turn-v1:";
 const TURN_FRAME_V2_PREFIX = "matrix-turn-v2:";
 const UNSAFE_DISPLAY_TEXT = /(stack trace|\/home\/|\/tmp\/|\/var\/|\.ssh\/|id_rsa|bearer\s+[A-Za-z0-9._-]+|sk-[A-Za-z0-9_-]+)/i;
-const NativeRequestIdSchema = z.union([z.string().min(1).max(128), z.number().int().safe()]);
-const NativeReferenceSchema = z.string().min(1).max(512);
-const ApprovalMethodSchema = z.enum([
-  "item/commandExecution/requestApproval",
-  "item/fileChange/requestApproval",
-  "item/permissions/requestApproval",
-]);
-const ApprovalDecisionSchema = z.enum(["approve", "approve_for_session", "decline", "cancel"]);
-const NativeApprovalDecisionSchema = z.union([
-  z.enum(["accept", "acceptForSession", "decline", "cancel"]),
-  z.object({
-    acceptWithExecpolicyAmendment: z.object({
-      execpolicy_amendment: z.array(z.string().max(4000)).max(128),
-    }).strict(),
-  }).strict(),
-  z.object({
-    applyNetworkPolicyAmendment: z.object({
-      network_policy_amendment: z.object({
-        action: z.enum(["allow", "deny"]),
-        host: z.string().min(1).max(255),
-      }).strict(),
-    }).strict(),
-  }).strict(),
-]);
-const NativeApprovalDecisionListSchema = z.array(z.unknown()).max(16).transform((decisions) =>
-  decisions.flatMap((decision) => {
-    const parsed = NativeApprovalDecisionSchema.safeParse(decision);
-    return parsed.success ? [parsed.data] : [];
-  }));
-const ApprovalRequestSchema = z.object({
-  id: NativeRequestIdSchema,
-  method: ApprovalMethodSchema,
-  params: z.object({
-    threadId: NativeReferenceSchema,
-    turnId: NativeReferenceSchema,
-    itemId: NativeReferenceSchema,
-    availableDecisions: NativeApprovalDecisionListSchema.nullable().optional(),
-  }).passthrough(),
-}).passthrough();
-const DisplayTextSchema = z.string()
-  .refine((value) => !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value));
-const NativeQuestionSchema = z.object({
-  id: z.string().min(1).max(128),
-  header: DisplayTextSchema.min(1).max(160),
-  question: DisplayTextSchema.min(1).max(2400),
-  options: z.array(z.object({
-    label: DisplayTextSchema.min(1).max(160),
-    description: DisplayTextSchema.min(1).max(1200),
-  }).passthrough()).min(1).max(10).nullable().optional(),
-  isOther: z.boolean().default(false),
-  isSecret: z.boolean().default(false),
-}).passthrough();
-const InputRequestSchema = z.object({
-  id: NativeRequestIdSchema,
-  method: z.literal("item/tool/requestUserInput"),
-  params: z.object({
-    threadId: NativeReferenceSchema,
-    turnId: NativeReferenceSchema,
-    itemId: NativeReferenceSchema,
-    autoResolutionMs: z.number().int().min(0).max(240_000).nullable().optional(),
-    questions: z.array(NativeQuestionSchema).min(1).max(8),
-  }).passthrough(),
-}).passthrough();
-const AgentDeltaSchema = z.object({
-  method: z.literal("item/agentMessage/delta"),
-  params: z.object({
-    turnId: NativeReferenceSchema,
-    itemId: NativeReferenceSchema,
-    delta: z.string().max(MAX_LINE_BYTES),
-  }).passthrough(),
-}).passthrough();
-const ToolOutputDeltaSchema = z.object({
-  method: z.enum([
-    "item/commandExecution/outputDelta",
-    "item/fileChange/outputDelta",
-    "item/mcpToolCall/progress",
-    "item/dynamicToolCall/outputDelta",
-  ]),
-  params: z.object({
-    turnId: NativeReferenceSchema,
-    itemId: NativeReferenceSchema,
-  }).passthrough(),
-}).passthrough();
-const MessagePhaseSchema = z.enum(["commentary", "partial_answer", "final_answer"]);
-const ToolLifecycleTypeSchema = z.enum([
-  "commandExecution",
-  "fileChange",
-  "mcpToolCall",
-  "dynamicToolCall",
-  "collabAgentToolCall",
-  "webSearch",
-  "plan",
-  "reasoning",
-  "imageGeneration",
-]);
-const AgentMessageLifecycleItemSchema = z.object({
-  id: NativeReferenceSchema,
-  type: z.literal("agentMessage"),
-  text: z.string().max(MAX_PROVIDER_LINE_BYTES),
-  phase: MessagePhaseSchema.nullable().optional(),
-}).passthrough();
-const ToolLifecycleItemSchema = z.object({
-  id: NativeReferenceSchema,
-  type: ToolLifecycleTypeSchema,
-  server: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/).optional(),
-  tool: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/).optional(),
-  status: z.string().max(80).optional(),
-  command: z.string().max(MAX_PROVIDER_LINE_BYTES).optional(),
-  cwd: z.string().max(4_096).optional(),
-  changes: z.array(z.object({
-    path: z.string().min(1).max(4_096),
-  }).passthrough()).max(200).optional(),
-  aggregatedOutput: z.string().max(MAX_PROVIDER_LINE_BYTES).nullable().optional(),
-  result: z.unknown().nullable().optional(),
-  error: z.unknown().nullable().optional(),
-}).passthrough();
-const IgnoredLifecycleItemSchema = z.object({
-  id: NativeReferenceSchema,
-  type: z.string().min(1).max(80).refine((type) => (
-    type !== "agentMessage" && !ToolLifecycleTypeSchema.options.includes(type)
-  )),
-}).passthrough();
-const LifecycleItemSchema = z.union([
-  AgentMessageLifecycleItemSchema,
-  ToolLifecycleItemSchema,
-  IgnoredLifecycleItemSchema,
-]);
-const ItemLifecycleSchema = z.object({
-  method: z.enum(["item/started", "item/completed"]),
-  params: z.object({
-    turnId: NativeReferenceSchema,
-    item: LifecycleItemSchema,
-  }).passthrough(),
-}).passthrough();
-const TurnCompletedSchema = z.object({
-  method: z.literal("turn/completed"),
-  params: z.object({
-    turn: z.object({
-      status: z.enum(["completed", "interrupted", "failed", "inProgress"]),
-    }).passthrough(),
-  }).passthrough(),
-}).passthrough();
-const TokenUsageBreakdownSchema = z.object({
-  inputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  outputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  cachedInputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  reasoningOutputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-}).passthrough();
-const TokenUsageUpdatedSchema = z.object({
-  method: z.literal("thread/tokenUsage/updated"),
-  params: z.object({
-    threadId: NativeReferenceSchema,
-    turnId: NativeReferenceSchema,
-    tokenUsage: z.object({
-      last: TokenUsageBreakdownSchema,
-    }).passthrough(),
-  }).passthrough(),
-}).passthrough();
-const RpcResponseSchema = z.object({
-  id: NativeRequestIdSchema,
-  result: z.unknown().optional(),
-  error: z.unknown().optional(),
-}).passthrough();
-const RpcErrorSchema = z.object({
-  code: z.number().int(),
-  message: z.string().max(512),
-}).passthrough();
 
 class ProviderRpcError extends Error {
   constructor(reason = "rejected", failureReason) {
@@ -243,51 +78,6 @@ function providerRpcError(raw) {
     codexTerminalFailureReason(raw),
   );
 }
-const ApprovalControlSchema = z.object({
-  type: z.literal("approval"),
-  approvalId: z.string().regex(/^appr_codex_[a-f0-9]{32}$/),
-  decision: ApprovalDecisionSchema,
-  clientRequestId: z.string().min(1).max(128).regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/),
-}).strict();
-const MatrixQuestionIdSchema = z.string().regex(/^question_codex_[a-f0-9]{24}$/);
-const InputControlSchema = z.object({
-  type: z.literal("input"),
-  requestId: z.string().regex(/^req_codex_[a-f0-9]{32}$/),
-  structuredAnswers: z.record(
-    MatrixQuestionIdSchema,
-    z.array(z.string().min(1).max(400).refine((value) => Buffer.byteLength(value, "utf8") <= 700))
-      .min(1).max(4),
-  ).superRefine((answers, context) => {
-    const count = Object.keys(answers).length;
-    if (count < 1 || count > 8) context.addIssue({ code: "custom", message: "Invalid answer count" });
-  }),
-  clientRequestId: ApprovalControlSchema.shape.clientRequestId,
-}).strict();
-const TurnControlSchema = PendingTurnSchema.extend({
-  type: z.literal("turn"),
-  clientRequestId: ApprovalControlSchema.shape.clientRequestId,
-}).strict();
-const InterruptControlSchema = z.object({
-  type: z.literal("interrupt"),
-  clientRequestId: ApprovalControlSchema.shape.clientRequestId,
-}).strict();
-const SteerControlSchema = z.object({
-  type: z.literal("steer"),
-  prompt: PendingTurnSchema.shape.prompt,
-  clientRequestId: ApprovalControlSchema.shape.clientRequestId,
-}).strict();
-const ControlSchema = z.discriminatedUnion("type", [
-  CodexExecutionIdleControlSchema,
-  CodexHibernateControlSchema,
-  CodexBrowserBindSchema,
-  CodexBrowserStartSchema,
-  TurnControlSchema,
-  SteerControlSchema,
-  InterruptControlSchema,
-  ApprovalControlSchema,
-  InputControlSchema,
-  CodexDeferredInputControlSchema,
-]);
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -327,6 +117,11 @@ const toolOutputKey = process.env.MATRIX_HOME ? await tryLoadToolOutputKey(proce
 const browserBootstrap = createCodexBrowserBootstrap(config.browserAttemptId);
 let currentBrowserLease;
 let nativeSession;
+let nativeGeneration, routineFeatureThread = false;
+const routines = createCodexRoutineChannel({ enabled: config.routinePrivate, initialTurn: () => PendingTurnSchema.parse({ prompt: config.prompt, model: config.model, modelOptions: [
+  ...(config.effort ? [{ id: "effort", value: config.effort }] : []), ...(config.serviceTier ? [{ id: "service_tier", value: config.serviceTier }] : []),
+] }), enqueue: (turn, requestId) => { const accepted = enqueuePendingTurn(turn); if (accepted && requestId) executionObservation.admitted(requestId); return accepted; }, sendNative: value => sendProvider(value),
+  current: binding => activeTurn && !executionExpired && nativeGeneration === binding.nativeGeneration && nativeThreadId === binding.threadId && activeNativeTurnId === binding.turnId });
 const artifactHomePath = resolve(dirname(eventPath), "../../..");
 const artifactStorageDirectory = join(artifactHomePath, "data", "chat-artifacts", "codex", "sha256");
 const artifactSessionId = basename(eventPath, extname(eventPath));
@@ -411,6 +206,7 @@ const executionWatchdog = createCodexExecutionWatchdog({
   waitingForHuman: () => pendingApprovals.size > 0 || pendingInputs.size > 0 || mcpElicitations.size > 0,
   expire: (diagnostic) => {
     if (!activeTurn) return;
+    routines.end();
     executionExpired = true;
     process.stderr.write(`${JSON.stringify({
       event: "coding_execution_expired",
@@ -608,7 +404,7 @@ async function bufferAssistantDelta(messageId, delta) {
 }
 
 function sendProvider(value) {
-  if (!child.stdin.writable) throw new Error("provider_transport_closed");
+  if (!child.stdin.writable || child.stdin.writableLength > 393216) throw new Error("provider_transport_closed");
   child.stdin.write(`${JSON.stringify(value)}\n`);
 }
 
@@ -971,6 +767,7 @@ async function handleProviderMessage(raw) {
     }
     return;
   }
+  if (routines.handle(raw)) return;
   // A deadline settles this execution once. Do not accept late tool results,
   // approvals or a final answer while interruption/shutdown is in flight.
   if (executionExpired || !activeTurn) {
@@ -1121,8 +918,10 @@ async function applyControl(control) {
     if (!enqueuePendingTurn(control)) return { ok: false };
     executionObservation.admitted(control.clientRequestId);
   } else if (control.type === "steer") {
+    routines.end();
     if (!await steerActiveTurn(control)) return { ok: false };
   } else if (control.type === "interrupt") {
+    routines.end();
     if (!nativeThreadId) return { ok: false };
     if (!activeNativeTurnId) {
       if (!renewingNativeTurn) return { ok: false };
@@ -1312,6 +1111,7 @@ input.on("close", () => {
 });
 
 function stop() {
+  routines.end();
   if (stopping) return;
   stopping = true;
   startupController.abort();
@@ -1326,6 +1126,7 @@ function stop() {
 }
 
 async function finishTurn(outcome, failureReason, requiresTerminal = false) {
+  routines.end();
   executionWatchdog.stop();
   await mcpElicitations.drain();
   const hasUnsettledItems = assistantItemsWithDelta.size > 0 ||
@@ -1390,7 +1191,9 @@ async function runTurn(threadId, turn) {
     activeNativeTurnId = z.object({
       turn: z.object({ id: NativeReferenceSchema }).passthrough(),
     }).passthrough().parse(started).turn.id;
+    routines.bind(turn, nativeGeneration, threadId, activeNativeTurnId, routineFeatureThread);
   } catch (error) {
+    routines.end();
     activeTurn = false;
     activeNativeTurnId = undefined;
     activeTurnTokenUsage = undefined;
@@ -1432,7 +1235,7 @@ async function startNativeSession(lease) {
   const resumeId = nativeThreadId ?? config.providerThreadId;
   nativeSession = await startCodexNativeProviderSession({ command, args: commandArgs,
     cwd: process.cwd(), env: codexBrowserChildEnvironment(process.env, lease), signal: startupController.signal,
-    onChild(value) { child = value; },
+    onChild(value) { routines.end(); nativeGeneration = randomUUID(); child = value; value.once("exit", () => routines.end()); },
     onClosed() { if (stopTimer) clearTimeout(stopTimer); for (const pending of pendingRpc.values()) { clearTimeout(pending.timeout); pending.reject(new Error("provider_stopped")); } pendingRpc.clear(); },
     onMessage: handleProviderMessage,
     onFailure(error) {
@@ -1449,7 +1252,7 @@ async function startNativeSession(lease) {
   startupController.signal.throwIfAborted(); sendProvider({ method: "initialized", params: {} });
   await verifyNativeSubscription?.(request);
   const started = await request(resumeId ? "thread/resume" : "thread/start", {
-    ...(resumeId ? { threadId: resumeId, excludeTurns: true } : {}), model: config.model,
+    ...(resumeId ? { threadId: resumeId, excludeTurns: true } : routines.canRegister() ? { dynamicTools: [CODEX_ROUTINE_TOOL] } : {}), model: config.model,
     ...(config.nativeSubscription ? { modelProvider: "openai" } : {}),
     developerInstructions: MATRIX_INTEGRATIONS_INSTRUCTIONS + (lease ? "\n\n" + CODEX_BROWSER_INSTRUCTIONS : ""),
     serviceTier: config.serviceTier, cwd: process.cwd(), approvalPolicy: config.approvalPolicy,
@@ -1459,6 +1262,7 @@ async function startNativeSession(lease) {
   if (config.nativeSubscription) assertNativeCodexThreadProvider(started);
   const identity = z.object({ thread: z.object({ id: NativeReferenceSchema }).passthrough() }).passthrough().parse(started).thread.id;
   if (resumeId && identity !== resumeId) throw new Error("provider_resume_identity_mismatch");
+  if (!resumeId) routineFeatureThread = routines.canRegister();
   nativeThreadId = identity;
   if (lease) {
     const catalog = await request("mcpServerStatus/list", { threadId: identity, serverName: "matrix_shared_browser", limit: 10 });
@@ -1475,11 +1279,12 @@ let verifyNativeSubscription;
 let pendingAdmittedTurn = false;
 try {
   if (config.nativeSubscription) verifyNativeSubscription = await createNativeCodexExecutionProof(config.expectedNativePrincipal, process.env, config.expectedNativeConsent);
+  const initialRoutineTurn = await routines.initial(startupController.signal);
   const initialBrowser = await browserBootstrap.waitLease(startupController.signal);
   await startNativeSession(initialBrowser);
   browserBootstrap.markReady();
   await browserBootstrap.waitRelease(startupController.signal);
-  let turn = PendingTurnSchema.parse({
+  let turn = initialRoutineTurn ?? PendingTurnSchema.parse({
     prompt: config.prompt,
     model: config.model,
     modelOptions: [
@@ -1555,6 +1360,7 @@ try {
   stop();
   await Promise.allSettled([childExit, providerOutput, providerErrors]);
 } finally {
+  routines.close();
   executionWatchdog.stop();
   input.close();
   clearInterval(cleanupTimer);

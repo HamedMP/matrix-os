@@ -174,7 +174,8 @@
     "item/fileChange/requestApproval",
     "item/tool/requestUserInput",
     "item/permissions/requestApproval",
-    "mcpServer/elicitation/request"
+    "mcpServer/elicitation/request",
+    "item/tool/call"
   ],
   "requiredServerNotifications": [
     "item/started",
@@ -200,6 +201,35 @@
     "item/agentMessage/delta": "427d58ea4e1b0fd7afce1035cefd40df96d7dc48b82cbe293a2f69ed4e803bf9",
     "item/commandExecution/outputDelta": "aa94a86bcbf20ceca1672b7c476c3472ef5e507b831ceb26561c2785a97a5dc4",
     "thread/tokenUsage/updated": "5dbf1e2a382453af89a44bf72660aade96c8a549068d5bb55ca56951a30505d7",
-    "turn/completed": "d775b4d4e65c194a34726c88625fd88f71e5ffc00cd5ba5a6bc64ac913a90055"
+    "turn/completed": "d775b4d4e65c194a34726c88625fd88f71e5ffc00cd5ba5a6bc64ac913a90055",
+    "item/tool/call": "931064a4a120a47dc72bfcefa4c1ce3edb737b7faaf99a317bb4a6bc82dade19"
+  },
+  "routineProtocolsByVersion": {
+    "0.162.1": {
+      "client": {
+        "initialize": "b53f725235c5d7990268cd0886ce43c5179ad8ab0b3208c97afbb44bd40cd30b",
+        "thread/start": "917c855203b99d22430e036eda91d35f3aeeb34e6de718dc061bfeb900d1ffc2",
+        "thread/resume": "03df893808cb376a17c251e8ed6ba144c3189323f9330c2762e8d846d85019f1",
+        "turn/start": "adbbcb0780c523a73d4b54999c52b3dd0076c92365c0c06b4aa6880ceef60307"
+      },
+      "definitions": {
+        "DynamicToolCallParams": "e3856594c61af1d302b95c415a8bbd81c1090e80d14fd0460ecbed1ae9748a10",
+        "DynamicToolCallResponse": "3ca40200e1fb7a98a18dc252e7693ba9a2d7715ec4c490276db5a9839a3e8814",
+        "v2/DynamicToolSpec": "3930e6381aa52ec55b108af765ec38fedde2b80c721779bb983b337f6bc62585"
+      }
+    },
+    "0.165.0": {
+      "client": {
+        "initialize": "b53f725235c5d7990268cd0886ce43c5179ad8ab0b3208c97afbb44bd40cd30b",
+        "thread/start": "917c855203b99d22430e036eda91d35f3aeeb34e6de718dc061bfeb900d1ffc2",
+        "thread/resume": "017e211e9dd761aeca249d0d1075637abf81a9f1c3b1b087460d19c79768c03c",
+        "turn/start": "364c856d8568ec54e4f3219f3ee691c631d402427f4e6cd88d4fde9a04383ddd"
+      },
+      "definitions": {
+        "DynamicToolCallParams": "e3856594c61af1d302b95c415a8bbd81c1090e80d14fd0460ecbed1ae9748a10",
+        "DynamicToolCallResponse": "3ca40200e1fb7a98a18dc252e7693ba9a2d7715ec4c490276db5a9839a3e8814",
+        "v2/DynamicToolSpec": "3930e6381aa52ec55b108af765ec38fedde2b80c721779bb983b337f6bc62585"
+      }
+    }
   }
 }
