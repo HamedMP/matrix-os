@@ -63,9 +63,9 @@ Task4a owns default routing UI. Task4b owns the approved exact one-operation act
 Own existing adapter lifecycle seams; per-turn source capability; actual CLI child/tool invocation. Hermes child channel and Codex native resumed-turn evidence gates must be primary-source verified.
 - [x] Task5a ordinary Claude and offered delegated Claude: actual admitted source → published CLI/private IPC → HTTP/PG/canonical path; real existing-binding reuse and immutable target ceiling. Independent review closed pre-close authority and cross-entrypoint lock-order defects; 128 PostgreSQL/221 related tests before fixes, then 59 affected PostgreSQL/83 affected unit tests and strict scoped types pass after original-fault restoration. Native/model/auth fixtures and separate pinned Linux ARM64 protocol observations do not establish a combined live run.
 - [x] Task5b Codex ordinary Chat source and named native turn/resume fixtures: actual admitted registry/workspace/manager, retained anonymous service-wrapper/shim bridge, dynamic callback to the same CLI/HTTP/PG; exact per-turn/queued authority and unknown-ACK no-retry. Independent review closed receiver EOF, overflow recursion, late shutdown handshake and missing renewal/resume cases; scoped second review closed host revocation under overflow. Final 16 real PostgreSQL cases and 6 affected tests pass, earlier wider lanes and fault restoration retained. Actual systemd/native/account qualification remains explicitly open; required real-manager lane fails missing prerequisites.
-- [ ] Task5c Hermes ordinary Chat source and native plugin/worker-context qualification.
-- [ ] Add failure-first source isolation/revocation/actual CLI process tests.
-- [ ] Implement scoped hooks without broad shell authority; review/commit.
+- [x] Task5c Hermes ordinary Chat: actual admitted adapter/held-FD native fixture → published CLI/HTTP/PostgreSQL source path,115 scoped tests/17 PostgreSQL cases and strict types pass. Actual pinned public core API/genuine CLI selection and9 callbacks pass; an observed native result-contract defect drove bounded JSON-text serialization and4 covering tests. Refined fault injection verifies native middleware skip/independent handler denial. Scoped fix review is clean. Full TUI/native worker/installed dependencies/provider/account/combined acceptance remain open.
+- [x] Add failure-first source isolation/revocation/actual CLI process tests.
+- [x] Implement scoped hooks without broad shell authority; review/commit.
 
 ### Task 6: OpenCode, native Pi and managed Pi
 
