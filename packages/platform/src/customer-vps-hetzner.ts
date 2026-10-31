@@ -79,6 +79,7 @@ export interface HetznerClient {
   resizeServer(serverId: number, input: ResizeHetznerServerInput): Promise<void>;
   deleteServer(serverId: number): Promise<void>;
   listServersByLabel?(labelSelector: string): Promise<HetznerServer[]>;
+  inspectServersByLabel?(labelSelector: string): Promise<{ servers: HetznerServer[]; complete: boolean }>;
   createSnapshot(serverId: number, input: CreateHetznerSnapshotInput): Promise<{ image: HetznerImage; action: HetznerAction }>;
   getImage(imageId: number): Promise<HetznerImage | null>;
   listImagesByLabel(labelSelector: string): Promise<HetznerImage[]>;
@@ -392,6 +393,19 @@ export function createHetznerClient(
         throw new CustomerVpsError(500, 'provider_unavailable', 'Provisioning provider unavailable');
       }
       return parseServers(await parseJson(res));
+    },
+
+    async inspectServersByLabel(labelSelector) {
+      const selector = z.string().min(1).max(512).regex(/^[a-zA-Z0-9._=,!-]+$/).parse(labelSelector);
+      const res = await request(`/servers?label_selector=${encodeURIComponent(selector)}&per_page=50&page=1`);
+      if (!res.ok) throw providerUnavailable();
+      const body = await parseJson(res);
+      const metadata = z.object({ meta: z.object({ pagination: z.object({ page: z.literal(1),
+        next_page: z.number().int().positive().nullable() }) }) }).safeParse(body);
+      if (!metadata.success) throw providerUnavailable();
+      const servers = parseServers(body);
+      if (servers.length > 50) throw providerUnavailable();
+      return { servers, complete: metadata.data.meta.pagination.next_page === null };
     },
 
     async createSnapshot(serverId, input) {
