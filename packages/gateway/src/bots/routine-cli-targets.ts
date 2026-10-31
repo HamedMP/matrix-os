@@ -125,7 +125,22 @@ export function createRoutineCliTargetService(deps: RoutineCliTargetDependencies
     await sourceLive(trx, source, action);
     return { ...configured, ...target, preferenceRevision: saved.revision };
   });
+  /** Already accepted receipt/task target; current default preference cannot redirect this snapshot. */
+  const validatePinnedWithin = (trx: Transaction<OwnerBotDatabase>, value: RoutineCliSourceContext | undefined,
+    action: RoutineCliAction, snapshot: RoutineCliResolvedTarget): Promise<RoutineCliResolvedTarget> => routineCliBoundary(async () => {
+    if (!trx.isTransaction) throw new RoutineCliError("unavailable");
+    const source = requireSource(value, action), configured = scope();
+    const target = RoutineCliScopeSchema.extend({ botId: RoutineCliRememberTargetSchema.shape.botId,
+      chatId: RoutineCliRememberTargetSchema.shape.chatId, bindingCreatedAt: z.iso.datetime({ offset: true }),
+      preferenceRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict().parse(snapshot);
+    if (target.ownerId !== configured.ownerId || target.computerId !== configured.computerId) throw new RoutineCliError("permission_denied");
+    await sourceLive(trx, source, action);
+    const live = await validateTarget(trx, configured, target, action);
+    await sourceLive(trx, source, action);
+    return { ...configured, ...live, preferenceRevision: target.preferenceRevision };
+  });
   return {
+    validatePinnedWithin,
     remember: (principal: RequestPrincipal, value: z.infer<typeof RoutineCliRememberTargetSchema>): Promise<RoutineCliTargetPreference> => routineCliBoundary(async () => {
       const configured = requireOwner(principal), input = RoutineCliRememberTargetSchema.parse(value);
       return deps.db.transaction().execute(async trx => {

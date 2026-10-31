@@ -30,6 +30,7 @@ Interfaces: createRoutineCliTargetService(deps) with remember/reset/getDefault/r
 ### Task 2: Source request/receipt and canonical service adapter
 
 - [x] Internal source-generation and per-invocation capability foundation: reviewed with 129 scoped tests and 10 native PostgreSQL cases. Lifecycle/exact-action callbacks remain fail-closed integration boundaries.
+- [x] Durable ledger/safe views and actual outer transaction rollback reviewed with167 scoped and17 native PostgreSQL cases. The atomic admission port is still a fixture/integration seam; real canonical adapters and process restart remain pending.
 
 Files: new routine-cli-source.ts/request-service/repository/routes; small startup/bots route registration; corresponding tests.
 Consumes Task1 source/target/action types. Produces authenticated source operations, durable owner+Computer request receipt and real target-admission correlation.

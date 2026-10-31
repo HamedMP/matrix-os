@@ -153,6 +153,31 @@ export function createBotRoutinesRepository(db: BotExecutor) {
     async list(ownerId: string, botId: string, ex: BotExecutor = db) {
       return (await ex.selectFrom("bot_routines").selectAll().where("owner_id", "=", ownerId).where("bot_id", "=", botId).orderBy(sql`CASE WHEN status = 'archived' THEN 1 ELSE 0 END`).orderBy("created_at", "desc").orderBy("routine_id").limit(MAX_ROUTINES).execute()).map(routine);
     },
+    /** Exact CLI destination scope is applied before pagination; retain bounded archived history. */
+    async listForChat(input: { ownerId: string; botId: string; chatId: string }, ex: BotExecutor = db) {
+      const rows = await ex.selectFrom("bot_routines").selectAll().where("owner_id", "=", input.ownerId)
+        .where("bot_id", "=", input.botId).where("chat_id", "=", input.chatId)
+        .orderBy(sql`CASE WHEN status = 'archived' THEN 1 ELSE 0 END`).orderBy("created_at", "desc").orderBy("routine_id")
+        .limit(MAX_ROUTINES + 1).execute();
+      return { routines: rows.slice(0, MAX_ROUTINES).map(routine), truncated: rows.length > MAX_ROUTINES };
+    },
+    async getForChat(input: { ownerId: string; botId: string; chatId: string; routineId: string }, ex: BotExecutor = db) {
+      const row = await ex.selectFrom("bot_routines").selectAll().where("owner_id", "=", input.ownerId)
+        .where("bot_id", "=", input.botId).where("chat_id", "=", input.chatId).where("routine_id", "=", input.routineId).executeTakeFirst();
+      return row ? routine(row) : undefined;
+    },
+    /** Match canonical control/scheduler routine -> Chat lock order before target validation. */
+    async lock(ownerId: string, routineId: string, ex: BotExecutor = db) {
+      const row = await ex.selectFrom("bot_routines").selectAll().where("owner_id", "=", ownerId).where("routine_id", "=", routineId).forUpdate().executeTakeFirst();
+      return row ? routine(row) : undefined;
+    },
+    async fireHistory(ownerId: string, routineId: string, ex: BotExecutor = db) {
+      const rows = await ex.selectFrom("bot_routine_fires").selectAll().where("owner_id", "=", ownerId).where("routine_id", "=", routineId)
+        .orderBy("scheduled_for", "desc").orderBy("fire_id").limit(21).execute();
+      const uncertain = await ex.selectFrom("bot_routine_fires").select("fire_id").where("owner_id", "=", ownerId)
+        .where("routine_id", "=", routineId).where("status", "=", "uncertain").limit(1).executeTakeFirst();
+      return { fires: rows.slice(0, 20).map(fire), truncated: rows.length > 20, requiresReview: Boolean(uncertain) };
+    },
     async due(now: string) {
       return (await db.selectFrom("bot_routines").selectAll().where("status", "=", "active").where("next_fire_at", "<=", now).where(LIVE_ROUTINE).where(NO_UNFINISHED_FIRE).orderBy("next_fire_at").limit(32).execute()).map(routine);
     },
