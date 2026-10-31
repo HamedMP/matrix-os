@@ -116,12 +116,14 @@ export function NewSessionMenu({
           installState,
           agentStatusesChecking,
           agentStatusesUnavailable,
+          option.installPackage !== null,
         );
         return (
           <NewSessionMenuItem
             key={option.id}
             label={option.label}
             statusLabel={menuState.statusLabel}
+            disabled={menuState.statusLabel === "Not installed"}
             icon={<TerminalAgentLogo agent={option.id} />}
             onClick={() => onCreateAgent(option, menuState.action)}
           />
@@ -136,18 +138,21 @@ function NewSessionMenuItem({
   icon,
   active = false,
   statusLabel = null,
+  disabled = false,
   onClick,
 }: {
   label: string;
   icon: ReactNode;
   active?: boolean;
-  statusLabel?: "Install" | "Checking…" | "Status unavailable" | null;
+  statusLabel?: "Install" | "Checking…" | "Status unavailable" | "Not installed" | null;
+  disabled?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       role="menuitem"
+      disabled={disabled}
       onClick={onClick}
       style={{
         alignItems: "center",

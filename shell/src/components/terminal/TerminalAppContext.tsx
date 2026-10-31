@@ -22,7 +22,8 @@ export interface TerminalWindowDragHandleProps {
 export interface CreateShellSessionTabOptions {
   tabId?: string;
   cmd?: string;
-  agent?: "claude" | "codex" | "opencode" | "pi";
+  managedAgent?: import("@matrix-os/ui/terminal-launch").TerminalAgentId;
+  agent?: "claude" | "codex" | "hermes" | "opencode" | "pi";
   compatMode?: TerminalCompatMode;
 }
 

@@ -72,9 +72,9 @@ export function DesktopNewSessionControl({
             <SessionMenuItem label="Shell" icon={<SquareTerminal size={14} />} onSelect={onCreateShell} />
             {TERMINAL_AGENT_OPTIONS.map((option) => {
               const state = agentStatuses[option.id];
-              const action = terminalAgentAction(state);
+              const action = terminalAgentAction(state, option.installPackage !== null);
               const status = state === "missing"
-                ? "Install"
+                ? option.installPackage ? "Install" : "Not installed"
                 : state === "unknown"
                   ? checkingAgentStatuses ? "Checking…" : "Unavailable"
                   : null;
