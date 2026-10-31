@@ -5,7 +5,8 @@ import { PreviewPairIdSchema } from "@matrix-os/contracts/preview-pair";
 import { bearerTokenMatches } from "../customer-vps-auth.js";
 import { CustomerVpsError } from "../customer-vps-errors.js";
 import { PreviewPairActionSchema, PreviewPairListSchema, PreviewPairReconcileSchema, PreviewPairStartSchema,
-  PreviewPairPrepareRequestSchema, PreviewPairRequestStopSchema, PreviewPairGenerationPathSchema, PreviewPairPublishSchema,
+  PreviewPairPrepareRequestSchema, PreviewPairRequestStopSchema, PreviewPairGenerationPathSchema, PreviewPairPublishSchema, PreviewPairControllerStatusSchema,
+  PreviewPairReaderStopSchema, PreviewPairUpdateAdoptionSchema,
   type PreviewPairStartRequest, type PreviewPairActionRequest } from "./api-contracts.js";
 import { verifiedPreviewPairReader, PreviewPairAccessError, type PreviewPairReader } from "./readers.js";
 import { PreviewPairConflictError } from "./repository.js";
@@ -16,6 +17,10 @@ export interface PreviewPairHttpService {
   prepareRequest?(input: z.infer<typeof PreviewPairPrepareRequestSchema>): Promise<unknown>;
   stopRequest?(pairId: string, input: z.infer<typeof PreviewPairRequestStopSchema>): Promise<unknown>;
   publishRequest?(pairId: string, input: z.infer<typeof PreviewPairPublishSchema>): Promise<unknown>;
+  controllerStatus?(pairId: string, input: z.infer<typeof PreviewPairControllerStatusSchema>): Promise<unknown>;
+  setup?(reader: PreviewPairReader): Promise<unknown>;
+  readerStop?(pairId: string, input: z.infer<typeof PreviewPairReaderStopSchema>, reader: PreviewPairReader): Promise<unknown>;
+  adoptUpdate?(pairId: string, input: z.infer<typeof PreviewPairUpdateAdoptionSchema>): Promise<unknown>;
   start(input: PreviewPairStartRequest): Promise<unknown>;
   action(pairId: string, input: PreviewPairActionRequest): Promise<unknown>;
   reconcile(input: { limit: number }): Promise<unknown>;
@@ -81,6 +86,16 @@ export function createPreviewPairRoutes(deps: PreviewPairRoutesDeps) {
       PreviewPairPublishSchema.parse(await c.req.json())), 202);
   });
   operator.post("/reconcile", async c => c.json(await deps.service!.reconcile(PreviewPairReconcileSchema.parse(await c.req.json()))));
+  operator.post("/:pairId/status", async c => {
+    if (!deps.service!.controllerStatus) throw new PreviewPairAccessError(503);
+    return c.json(await deps.service!.controllerStatus(PreviewPairIdSchema.parse(c.req.param("pairId")),
+      PreviewPairControllerStatusSchema.parse(await c.req.json())));
+  });
+  operator.post("/:pairId/adoption", async c => {
+    if (!deps.service!.adoptUpdate) throw new PreviewPairAccessError(503);
+    return c.json(await deps.service!.adoptUpdate(PreviewPairIdSchema.parse(c.req.param("pairId")),
+      PreviewPairUpdateAdoptionSchema.parse(await c.req.json())), 202);
+  });
   operator.post("/:pairId/actions", async c => c.json(await deps.service!.action(
     PreviewPairIdSchema.parse(c.req.param("pairId")), PreviewPairActionSchema.parse(await c.req.json()))));
   reader.use("*", async (c, next) => {
@@ -93,6 +108,20 @@ export function createPreviewPairRoutes(deps: PreviewPairRoutesDeps) {
     if (Object.values(query).some(values => values.length !== 1)) return c.json({ error: "Invalid request" }, 400);
     const parsed = PreviewPairListSchema.parse(c.req.query());
     return c.json(await deps.service!.list(parsed, c.get("principal")));
+  });
+  reader.get("/setup", async c => {
+    z.strictObject({}).parse(c.req.query());
+    if (!deps.service!.setup) throw new PreviewPairAccessError(503);
+    return c.json(await deps.service!.setup(c.get("principal")));
+  });
+  reader.post("/:pairId/stop", async (c, next) => {
+    const headers = new Headers(c.req.raw.headers); headers.delete("Content-Length");
+    c.req.raw = new Request(c.req.raw, { headers }); await next();
+  }, bodyLimit({ maxSize: 16 * 1024, onError: c => c.json({ error: "Request body too large" }, 413) }), async c => {
+    if ((c.req.header("Content-Type") ?? "").split(";")[0]!.trim().toLowerCase() !== "application/json") return c.json({ error: "Invalid request" }, 415);
+    if (!deps.service!.readerStop) throw new PreviewPairAccessError(503);
+    return c.json(await deps.service!.readerStop(PreviewPairIdSchema.parse(c.req.param("pairId")),
+      PreviewPairReaderStopSchema.parse(await c.req.json()), c.get("principal")));
   });
   reader.get("/:pairId/manifest", async c => c.json(await deps.service!.manifest(PreviewPairIdSchema.parse(c.req.param("pairId")), c.get("principal"))));
   reader.get("/:pairId/requests/:generation", async c => {
