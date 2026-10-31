@@ -1,0 +1,3 @@
+import type { TerminalClosureManifest } from "../packages/terminal-runtime/src/generation-closure.mjs";
+export function bundleTerminalHostAssets(root: string, output: string): Promise<{ inputs: string[]; outputs: { imports: { path: string; external?: boolean }[] }[] }>;
+export function stageTerminalGeneration(options: { root?: string; outputRoot: string; nodePath: string; zellijPath: string; nodePtyRoot?: string; nodeAddonApiRoot?: string; writerPath?: string; ptyNativePath?: string; assetsDirectory?: string }): Promise<{ generation: string; directory: string; manifest: TerminalClosureManifest }>;

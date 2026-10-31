@@ -41,6 +41,8 @@ export default defineConfig({
   resolve: {
     conditions: ["node"],
     alias: {
+      "@matrix-os/terminal-runtime/generation-closure": path.resolve(__dirname, "packages/terminal-runtime/src/generation-closure.mjs"),
+      "@matrix-os/terminal-runtime/generation-lock": path.resolve(__dirname, "packages/terminal-runtime/src/generation-lock.ts"),
       "@matrix-os/brand/themes": path.resolve(__dirname, "packages/brand/src/themes"),
       "@matrix-os/ui/routine-action": path.resolve(__dirname, "packages/ui/src/routine-action/index.ts"),
       "@matrix-os/ui/appearance": path.resolve(__dirname, "packages/ui/src/appearance/index.ts"),

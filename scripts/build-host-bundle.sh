@@ -49,6 +49,7 @@ pnpm --filter '@matrix-os/gateway' build
 test -f "$ROOT_DIR/packages/gateway/dist/chat/hermes-routine-tool.py"
 test -f "$ROOT_DIR/packages/gateway/dist/coding-agents/opencode-routine-tool.mjs"
 test -f "$ROOT_DIR/packages/gateway/dist/collaboration/filesystem-identity.node"
+test -f "$ROOT_DIR/packages/gateway/dist/terminal/terminal-writer.node"
 mkdir -p "$ROOT_DIR/packages/gateway/dist/app-runtime"
 cp -a "$ROOT_DIR/packages/gateway/src/app-runtime/"*.html "$ROOT_DIR/packages/gateway/dist/app-runtime/"
 node --import=tsx "$ROOT_DIR/scripts/smoke-gateway-production-loader.mjs"
@@ -100,22 +101,14 @@ ZELLIJ_ACTUAL_VERSION="$("$STAGE_DIR/bin/zellij" --version)"
 timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-host-query.mjs" "$STAGE_DIR/bin/zellij"
 timeout --signal=KILL 15s node "$ROOT_DIR/scripts/smoke-zellij-watcher-sizing.mjs" "$STAGE_DIR/bin/zellij"
 node --import tsx "$ROOT_DIR/scripts/smoke-zellij-session-config.ts" "$STAGE_DIR/bin/zellij"
-TERMINAL_RUNTIME_GENERATION="$(
-  "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-generation-id" \
-    "$STAGE_DIR/bin/zellij" \
-    "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-user-keeper.mjs" \
-    "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-attach.mjs"
-)"
+# Package pinned Node + complete native/JS/protocol closure before selecting a generation.
+TERMINAL_RUNTIME_GENERATION="$(node "$ROOT_DIR/scripts/build-terminal-generation.mjs" \
+  "$STAGE_DIR/runtime/node/bin/node" "$STAGE_DIR/bin/zellij" "$STAGE_DIR/terminal-runtime")"
 TERMINAL_RUNTIME_GENERATION_DIR="$STAGE_DIR/terminal-runtime/generations/$TERMINAL_RUNTIME_GENERATION"
-mkdir -p "$TERMINAL_RUNTIME_GENERATION_DIR"
-install -m 0755 "$STAGE_DIR/bin/zellij" "$TERMINAL_RUNTIME_GENERATION_DIR/zellij"
-install -m 0755 \
-  "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-user-keeper.mjs" \
-  "$TERMINAL_RUNTIME_GENERATION_DIR/matrix-terminal-user-keeper.mjs"
-install -m 0755 \
-  "$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-attach.mjs" \
-  "$TERMINAL_RUNTIME_GENERATION_DIR/matrix-terminal-attach.mjs"
-printf '%s\n' "$TERMINAL_RUNTIME_GENERATION" > "$TERMINAL_RUNTIME_GENERATION_DIR/GENERATION"
+[ "$("$ROOT_DIR/distro/customer-vps/host-bin/matrix-terminal-generation-id" \
+  "$TERMINAL_RUNTIME_GENERATION_DIR/zellij" \
+  "$TERMINAL_RUNTIME_GENERATION_DIR/matrix-terminal-user-keeper.mjs" \
+  "$TERMINAL_RUNTIME_GENERATION_DIR/matrix-terminal-attach.mjs")" = "$TERMINAL_RUNTIME_GENERATION" ]
 ln -s "generations/$TERMINAL_RUNTIME_GENERATION" "$STAGE_DIR/terminal-runtime/current"
 curl --fail --location --max-time 180 "$GH_URL" -o "$DIST_DIR/$GH_ARCHIVE"
 tar -xzf "$DIST_DIR/$GH_ARCHIVE" -C "$DIST_DIR"

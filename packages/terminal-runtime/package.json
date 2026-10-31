@@ -4,6 +4,16 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./generation-closure": {
+      "types": "./src/generation-closure.d.mts",
+      "development": "./src/generation-closure.mjs",
+      "default": "./dist/generation-closure.mjs"
+    },
+    "./generation-lock": {
+      "types": "./src/generation-lock.ts",
+      "development": "./src/generation-lock.ts",
+      "default": "./dist/generation-lock.js"
+    },
     ".": {
       "types": "./src/index.ts",
       "development": "./src/index.ts",
@@ -31,7 +41,7 @@
     }
   },
   "scripts": {
-    "build": "tsc"
+    "build": "tsc && cp src/*.mjs dist/"
   },
   "dependencies": {
     "@matrix-os/contracts": "workspace:*",
