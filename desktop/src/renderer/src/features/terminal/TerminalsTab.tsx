@@ -24,7 +24,7 @@ import { TerminalSidebarLayout } from "./TerminalSidebarLayout";
 import { useTerminalAppearance } from "../../stores/terminal-appearance";
 import {
   parseTerminalAgentStatuses,
-  terminalAgentVisibleInstallCommand,
+  terminalAgentCreateOptions,
   UNKNOWN_TERMINAL_AGENT_STATUSES,
   type TerminalAgentMenuAction,
   type TerminalAgentOption,
@@ -243,10 +243,7 @@ export default function TerminalsTab({
 
   const createAgentSession = async (option: TerminalAgentOption, action: TerminalAgentMenuAction) => {
     if (!api || creating) return;
-    const created = await create(api, {
-      cmd: action === "launch" ? option.launchCommand : terminalAgentVisibleInstallCommand(option),
-      ...(action === "launch" ? { agent: option.id } : {}),
-    });
+    const created = await create(api, terminalAgentCreateOptions(option, action));
     if (created) showShellDetail(created);
   };
 

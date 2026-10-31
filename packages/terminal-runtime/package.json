@@ -38,6 +38,21 @@
       "types": "./src/user-systemd-controller.ts",
       "development": "./src/user-systemd-controller.ts",
       "default": "./dist/user-systemd-controller.js"
+    },
+    "./native-host-descriptor": {
+      "types": "./src/native-host-descriptor.ts",
+      "development": "./src/native-host-descriptor.ts",
+      "default": "./dist/native-host-descriptor.js"
+    },
+    "./native-host-unit": {
+      "types": "./src/native-host-unit.ts",
+      "development": "./src/native-host-unit.ts",
+      "default": "./dist/native-host-unit.js"
+    },
+    "./native-host-lifecycle": {
+      "types": "./src/native-host-lifecycle.ts",
+      "development": "./src/native-host-lifecycle.ts",
+      "default": "./dist/native-host-lifecycle.js"
     }
   },
   "scripts": {

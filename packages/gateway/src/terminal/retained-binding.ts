@@ -13,6 +13,11 @@ export interface TerminalSourcePort {
 export interface RetainedTerminalStartup {
   readonly identity: Readonly<TerminalBoundFrame>; readonly heldGeneration: string; readonly signal: AbortSignal;
   current(): boolean;
+  /** Retire private proof/channel only; never stop native workload or I/O. */
+  retire(): void;
+  /** Slow manager preflight before source admission/issuance, never inside a DB transaction.
+   * Consume/claim compare pinned supervisor/host/root process identities and the current private fence locally. */
+  verifyCurrent(): Promise<boolean>;
 }
 /** Host-only seam. Later authenticated route admission retains its principal in
  * onBound's closure; no descriptor, restored PID or ordinary UDS input can supply it. */
@@ -43,12 +48,19 @@ export function createRetainedTerminalBinding(options: {
     channel.close(); // Private FD closure only. No service/native workload stop is present here.
   }
   const current = () => !controller.signal.aborted && !!identity && channel.generation === heldGeneration;
+  async function verifyCurrent() {
+    if (!current()) return false;
+    try {
+      if (await boundedOperation(() => options.verify(identity!), 10000, controller.signal) && current()) return true;
+    } catch (error) { console.warn("[terminal-host] Held proof unavailable", error instanceof Error ? error.name : "UnknownError"); }
+    fence(); return false;
+  }
   async function bind(frame: TerminalBoundFrame) {
     try {
       if (!await boundedOperation(() => options.verify(frame), 10000, controller.signal) || controller.signal.aborted) { fence(); return; }
       identity = Object.freeze({ ...frame, host: Object.freeze({ ...frame.host }), root: Object.freeze({ ...frame.root }), supervisor: Object.freeze({ ...frame.supervisor }) });
       // Keep the factory's actual settlement observed after an early EOF, so a late registration is revoked.
-      const creating = Promise.resolve().then(() => options.onBound?.({ identity: identity!, heldGeneration, signal: controller.signal, current }));
+      const creating = Promise.resolve().then(() => options.onBound?.({ identity: identity!, heldGeneration, signal: controller.signal, current, verifyCurrent, retire: fence }));
       observe(creating.then(port => { createdSource = port; if (controller.signal.aborted && port) endSource(port); }));
       const port = await boundedOperation(() => creating, 10000, controller.signal);
       if (controller.signal.aborted) return;

@@ -40,3 +40,12 @@ it("rechecks current binding, cancels an exact pending call and rejects replay w
   await Promise.resolve(); await Promise.resolve(); expect(f.sent.some(frame => frame.type === "host.terminal.result")).toBe(false);
   f.receive(frame); expect(f.binding.signal.aborted).toBe(true); expect(port.end).toHaveBeenCalledOnce(); expect(port.invoke).toHaveBeenCalledOnce();
 });
+it("provides an awaited held-supervisor recheck for capability consumption after an owner wait", async () => {
+  let valid = true; let startup: import("../../../packages/gateway/src/terminal/retained-binding.js").RetainedTerminalStartup | undefined;
+  const port = { end: vi.fn(), close: vi.fn(async () => {}), invoke: vi.fn(async () => unavailable) };
+  const f = fixture(async () => valid, async value => { startup = value; return port; });
+  f.receive(f.bound); expect(await f.binding.ready).toBe(true);
+  valid = false;
+  expect(await startup!.verifyCurrent()).toBe(false);
+  expect(startup!.signal.aborted).toBe(true); expect(port.end).toHaveBeenCalledOnce();
+});
