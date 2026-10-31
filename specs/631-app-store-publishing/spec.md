@@ -249,7 +249,7 @@ Clients receive generic messages and stable codes (`not_found`, `conflict`, `for
 
 | Component | Timeouts | Concurrency | Crash recovery |
 | --- | --- | --- | --- |
-| Draft pipeline | Snapshot 30s, scan 30s, agent 10 min, build check 3 min | One active pipeline per draft; max 2 concurrent per owner; at most 5 drafts | `draft.json` written atomically (tmp+rename); on restart, in-flight drafts become `failed` (`interrupted`) and can be retried |
+| Draft pipeline | Snapshot 30s, scan 30s, agent 10 min, local dependency acquisition 5 min and offline build 10 min | One active pipeline per draft; max 2 concurrent per owner; at most 5 drafts | `draft.json` written atomically (tmp+rename); on restart, in-flight drafts become `failed` (`interrupted`) and can be retried |
 | Platform client | 10s APIs, 60s uploads/downloads | — | Upload/finalize idempotent per draft submission key |
 | Finalize | 60s download+scan | CAS `awaiting_upload → scanning` | Sweeper deletes unfinalized versions/objects after 24h |
 | Review decisions | — | CAS on status in the `UPDATE` | Transaction writes status + moderation event |
@@ -284,7 +284,7 @@ A separate public documentation PR in private `FinnaAI/matrix-os-site` under `co
 - **SC-001**: A publisher goes from choosing an app to a submitted version in under 10 minutes for a typical app (< 2 MB source).
 - **SC-002**: In the fixture suite, 100% of planted secrets and owner emails are absent from submitted bundles.
 - **SC-003**: Reviewer decisions take effect in one action; approved source versions appear in the catalog immediately after the approval transaction.
-- **SC-004**: A community install completes in within 10 minutes for a typical 5 MB source bundle on a supported VPS; Gallery reports local build progress.
+- **SC-004**: A community install completes within 10 minutes for a typical 5 MB source bundle on a supported VPS; Gallery reports local build progress.
 - **SC-005**: Downloads and ratings shown on listings exactly match the underlying rows (verified by repository tests under concurrent writes).
 - **SC-006**: A community app cannot reach any gateway endpoint outside its policy (verified separately by Web, Electron, Native Mobile and gateway tests plus live evidence).
 
