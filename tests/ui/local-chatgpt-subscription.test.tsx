@@ -110,7 +110,7 @@ it("polls asynchronous local login until default interactive Bot connection is r
     expect(screen.queryByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeNull();
     await act(async () => vi.advanceTimersByTimeAsync(1500));
     expect(screen.getByText("Available for chats and interactive Matrix Bots on this Computer.")).toBeVisible();
-    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.getByRole("checkbox", { name: /Allow scheduled and background Bot tasks on this Computer/ })).not.toBeChecked();
     expect(native.setGrant).not.toHaveBeenCalled();
     expect(changed).toHaveBeenCalledTimes(2);
   } finally { vi.useRealTimers(); }

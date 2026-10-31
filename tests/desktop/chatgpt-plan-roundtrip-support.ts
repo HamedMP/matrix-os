@@ -19,7 +19,7 @@ export async function fixture(runtimeSlot='primary') {
  const dir=await mkdtemp(join(tmpdir(),'matrix-native-plan-'));
  const vault=createPlanVault({dir,safeStorage:{isEncryptionAvailable:()=>true,encryptString:x=>Buffer.from(x).reverse(),decryptString:x=>Buffer.from(x).reverse().toString()}});
  const localSession={...session,runtimeSlot};
- const authState={...localSession,signedIn:true as const,userId:'owner',handle:'computer'};
+ const authState={...localSession,signedIn:true as const,userId:'owner',handle:'computer',platformHost:'https://matrix.test'};
  let authUrl:URL|undefined;let browserOpens=0;let rejectNonce=false;let expiresIn=300;
  let jwksGate:Promise<void>|null=null;let releaseJwks:()=>void=()=>{};let jwksHeld=false;
  let catalogOverride:{gate:Promise<void>;fail:boolean|401;model:string}|null=null;let responseGate:Promise<void>|null=null;let releaseResponse:()=>void=()=>{};let responseAborted=false;
