@@ -152,6 +152,14 @@ describe("Getting started app view", () => {
     expect(await screen.findByText("Up next")).toBeTruthy();
   });
 
+  it("keeps the owner's name and prompts out of session replay, like the widget it mirrors", async () => {
+    render(<WidgetStub status={{ open: true, activity: { kind: "running", title: "Draft my salary negotiation email" } }} />);
+    const { container } = renderApp(makePort({ results: () => results({ chats: fulfilled({ items: [{ id: "chat_1" }] }) }) }));
+    const title = await screen.findByRole("heading", { name: "Matrix is working on Draft my salary negotiation email" });
+    expect(title.closest(".ph-no-capture")).toBeTruthy();
+    expect(container.querySelector(".mxo-gsa")?.classList.contains("ph-no-capture")).toBe(true);
+  });
+
   it("marks done tasks and moves the hero to the next task", async () => {
     const port = makePort({ results: () => results({ ...slackConnected, chats: fulfilled({ items: [{ id: "chat_1" }] }) }) });
     renderApp(port);

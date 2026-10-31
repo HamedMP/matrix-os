@@ -41,7 +41,8 @@ export function GettingStartedAppView({ onAction, visible = true }: { onAction(a
   const progress = Math.round((doneCount / TOTAL_TASKS) * 100);
 
   return (
-    <div className="mxo-gsa" style={GETTING_STARTED_APP_BRAND_VARS} aria-busy={!loaded}>
+    // `ph-no-capture`: the hero shows the owner's name and mirrors their prompts, as the widget does.
+    <div className="mxo-gsa ph-no-capture" style={GETTING_STARTED_APP_BRAND_VARS} aria-busy={!loaded}>
       <div className="mxo-gsa__inner">
         <header className="mxo-gsa__header">
           <h1 className="mxo-gsa__title">Getting started</h1>
