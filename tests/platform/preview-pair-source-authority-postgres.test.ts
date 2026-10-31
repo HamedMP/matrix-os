@@ -3,6 +3,9 @@ import { createSeededPreviewPair } from "./preview-pair-seeded-postgres.js";
 import { previewPairProvenanceFixture } from "./preview-pair-provenance-fixture.js";
 import { createPreviewPairGitHub } from "../../packages/platform/src/preview-pair/github.js";
 import { createPreviewPairSourceAuthority, PREVIEW_PAIR_REQUEST_LABEL } from "../../packages/platform/src/preview-pair/source-authority.js";
+import { preparePreviewPairCloudIntent } from "../../packages/platform/src/preview-pair/cloud-intents.js";
+import { PAIR_NOW } from "./preview-pair-test-support.js";
+import { requestPreviewPairUpdate } from "../../packages/platform/src/preview-pair/update.js";
 
 describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("source readers bind live proof to the full canonical generation", () => {
   let f: Awaited<ReturnType<typeof createSeededPreviewPair>>;
@@ -45,5 +48,51 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("source readers bind live
     s.pull.state = "closed"; expect(await s.authority.inspectRequest(input, AbortSignal.timeout(5_000))).toMatchObject({ open: false });
     s.fetchImpl.mockResolvedValue(new Response("unavailable", { status: 503 }));
     await expect(s.authority.inspectRequest(input, AbortSignal.timeout(5_000))).rejects.toThrow("unavailable");
+  });
+  it("retires an unadopted request when its reviewed controller exits, even successfully", async () => {
+    const s = await setup(), pairId = "44444444-4444-4444-8444-444444444444";
+    const config = { ...f.config, sourceProfileFingerprint: "f".repeat(64) };
+    await preparePreviewPairCloudIntent(f.db, config, { pairId, generation: 1, pr: 3023, requesterId: "user_requester",
+      sourceSha: f.pair.source_sha, controllerRunId: 42, profileFingerprint: config.sourceProfileFingerprint }, PAIR_NOW);
+    s.pull.number = 3023;
+    const run = { id: 42, event: "workflow_dispatch", status: "completed", conclusion: "success" as string | null,
+      head_sha: f.config.reviewedControllerSha, path: ".github/workflows/preview-collaboration-pair.yml",
+      repository: { full_name: "HamedMP/matrix-os" }, head_repository: { full_name: "HamedMP/matrix-os" } };
+    s.fetchImpl.mockImplementation(async target => Response.json(new URL(String(target)).pathname.endsWith("/42") ? run : s.pull));
+    expect(await s.authority.inspectRequest({ pairId, generation: 1, pr: 3023 }, AbortSignal.timeout(5000)))
+      .toMatchObject({ requested: false, sourceSha: f.pair.source_sha });
+  });
+  it("keeps a successfully adopted controller but retires failed or cancelled canonical generations", async () => {
+    const s = await setup(), input = { pairId: f.pair.pair_id, generation: 1, pr: f.pair.pr };
+    await f.db.executor.updateTable("preview_pair_generations").set({ controller_run_id: "42" }).execute();
+    const run = { id: 42, event: "workflow_dispatch", status: "completed", conclusion: "success" as string | null,
+      head_sha: f.config.reviewedControllerSha, path: ".github/workflows/preview-collaboration-pair.yml",
+      repository: { full_name: "HamedMP/matrix-os" }, head_repository: { full_name: "HamedMP/matrix-os" } };
+    s.fetchImpl.mockImplementation(async target => Response.json(new URL(String(target)).pathname.endsWith("/42") ? run : s.pull));
+    expect(await s.authority.inspectRequest(input, AbortSignal.timeout(5000))).toMatchObject({ requested: true });
+    run.conclusion = "cancelled";
+    expect(await s.authority.inspectRequest(input, AbortSignal.timeout(5000))).toMatchObject({ requested: false });
+    run.head_sha = "e".repeat(40);
+    await expect(s.authority.inspectRequest(input, AbortSignal.timeout(5000))).rejects.toThrow("unavailable");
+    run.head_sha = f.config.reviewedControllerSha; run.conclusion = null;
+    await expect(s.authority.inspectRequest(input, AbortSignal.timeout(5000))).rejects.toThrow("unavailable");
+    s.pull.labels = [];
+    expect(await s.authority.inspectRequest(input, AbortSignal.timeout(5000))).toMatchObject({ requested: false });
+  });
+  it("checks the target controller during an update rather than the previous successful run", async () => {
+    const s = await setup();
+    await f.db.executor.updateTable("preview_pair_generations").set({ controller_run_id: "40" }).execute();
+    await requestPreviewPairUpdate(f.db, f.pair.pair_id, 1, f.pair.revision, { ...f.candidate,
+      browserOrigin: f.candidate.browserOrigin.replace("g1", "g2"), apiOrigin: f.candidate.apiOrigin.replace("g1", "g2") }, PAIR_NOW, 42);
+    const run = (id: number) => ({ id, event: "workflow_dispatch", status: "completed", conclusion: id === 42 ? "cancelled" : "success",
+      head_sha: f.config.reviewedControllerSha, path: ".github/workflows/preview-collaboration-pair.yml",
+      repository: { full_name: "HamedMP/matrix-os" }, head_repository: { full_name: "HamedMP/matrix-os" } });
+    s.fetchImpl.mockImplementation(async target => {
+      const path = new URL(String(target)).pathname;
+      return Response.json(path.includes("/actions/runs/") ? run(Number(path.split("/").at(-1))) : s.pull);
+    });
+    expect(await s.authority.inspectRequest({ pairId: f.pair.pair_id, generation: 1, pr: f.pair.pr }, AbortSignal.timeout(5000)))
+      .toMatchObject({ requested: false });
+    expect(s.fetchImpl.mock.calls.some(([target]) => String(target).endsWith("/actions/runs/42"))).toBe(true);
   });
 });
