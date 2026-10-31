@@ -83,6 +83,7 @@ async function fixture(realIntegrations = false, subscriptionAuthority = false) 
   }
   return { home, root: root.primaryWorkspaceRoot, call, service, binding, transport, db, services,
     dispatcherOptions: dispatcherFactory.mock.calls[0]![0],
+    inference: captured.mock.calls[0]![0].inference,
     holdInventory(wait: Promise<void>) { inventoryWait = wait; }, tools: captured.mock.calls[0]![0].tools };
 }
 const artifact: BotToolRequest = { toolCallId: "call_artifact", capability: "artifact.write", args: { relPath: "result.txt", content: "source fenced", mimeType: "text/plain" } };
@@ -267,4 +268,10 @@ it("rejects ordinary subscription publication revoked during the final workspace
   expect(reads).toBe(2);
   await expect(readFile(join(f.root, "result.txt"))).rejects.toMatchObject({ code: "ENOENT" });
   expect(await readdir(join(f.home, dispatcher.MANAGED_SAVE_STAGING))).toEqual([]);
+});
+
+it.each(["prepare","dispatch","inference"] as const)("fences a background binding without an approved fire at the real startup %s boundary",async boundary=>{
+ const context=await fixture(true),background={...context.binding,requestClass:"background" as const};
+ if(boundary==="inference") expect(await context.inference.revalidateBinding!(background)).toBe(false);
+ else await expect(context.tools[boundary]!(background,artifact,new AbortController().signal)).rejects.toMatchObject({code:"not_granted"});
 });
