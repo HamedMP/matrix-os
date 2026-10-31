@@ -6,13 +6,13 @@ import { createBotTaskOrchestrator } from "../../../packages/gateway/src/bots/ta
 import { createMatrixBotChatProviderAdapter } from "../../../packages/gateway/src/bots/chat-adapter.js";
 import { createRoutinePromptHarness } from "./routine-prompt-context-support.js";
 import { withApprovedRoutineOccurrence } from "../../../packages/gateway/src/bots/routine-prompt-context.js";
-import { BotSystemPromptError } from "../../../packages/gateway/src/bots/system-prompt.js";
+import { BotSystemPromptError, estimatePromptTokens } from "../../../packages/gateway/src/bots/system-prompt.js";
 import { activated, admitFixture, binding, CHAT, data, proposal, subscription } from "./routine-authorization-support.js";
 
 const PHASE = "Current routine phase (verified by Matrix for this run):";
 const STALE = "The routine request is still pending approval.";
 
-async function runFixture(options: { interactive?: boolean; beforeLoad?: (f: Awaited<ReturnType<typeof activated>>) => Promise<void>; cancelDuringCheck?: boolean; expireDuringCheck?: boolean; foreignBinding?: "ownerId" | "chatId" | "botId" | "taskId" } = {}) {
+async function runFixture(options: { instructions?: string; memory?: string[]; interactive?: boolean; beforeLoad?: (f: Awaited<ReturnType<typeof activated>>) => Promise<void>; cancelDuringCheck?: boolean; expireDuringCheck?: boolean; foreignBinding?: "ownerId" | "chatId" | "botId" | "taskId" } = {}) {
   const f = await activated();
   const input = await admitFixture(f.f.fireId, options.interactive ? "req_manual_context_fixture" : undefined);
   let clock = f.at;
@@ -27,7 +27,7 @@ async function runFixture(options: { interactive?: boolean; beforeLoad?: (f: Awa
       return { route: binding.route, accessSourceId: "matrix_chatgpt_plan", subscription };
     });
   },
-    cancelDuringCheck: options.cancelDuringCheck, foreignBinding: options.foreignBinding, messages: [
+    instructions: options.instructions, memory: options.memory, cancelDuringCheck: options.cancelDuringCheck, foreignBinding: options.foreignBinding, messages: [
       { role: "user", content: "Request a routine proposal.", timestamp: 1 },
       fauxAssistantMessage(fauxText(STALE), { timestamp: 2 }),
     ] });
@@ -113,4 +113,18 @@ it("rejects a lease that expires while awaiting source validation", async () => 
   const { contexts, events } = await runFixture({ expireDuringCheck: true });
   expect(contexts).toEqual([]);
   expect(events.at(-1)).toMatchObject({ outcome: "failed" });
+});
+
+// A valid definition plus <=2K admitted memory must leave room for the required phase.
+it.each([false, true])("delivers a budget-filled prompt to the real model (interactive=%s)", async interactive => {
+  const { contexts, events } = await runFixture({ interactive, instructions: "漢".repeat(5100),
+    memory: Array.from({ length: 18 }, (_, index) => `priority-${index}: ${"記".repeat(100)}`) });
+  expect(contexts).toHaveLength(1);
+  const system = text(contexts[0].messages.find(m => m.role === "system")!.content);
+  expect(system.includes(PHASE)).toBe(!interactive);
+  expect(system).toContain("漢".repeat(5100));
+  expect(system).toContain("priority-0:");
+  expect(system).not.toContain("priority-17:");
+  expect(estimatePromptTokens(system)).toBeLessThanOrEqual(7000);
+  expect(events.at(-1)).toMatchObject({ outcome: "completed" });
 });

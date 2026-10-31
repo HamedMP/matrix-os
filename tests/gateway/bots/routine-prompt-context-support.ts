@@ -17,6 +17,7 @@ export async function createRoutinePromptHarness(options: {
   execution: ReturnType<typeof createBotRoutineExecution>; input: Awaited<ReturnType<typeof admitFixture>>;
   f: Awaited<ReturnType<typeof activated>>; provider: ReturnType<typeof fauxProvider>;
   beforeLoad?: (f: Awaited<ReturnType<typeof activated>>) => Promise<void>;
+  instructions?: string; memory?: string[];
   cancelDuringCheck?: boolean; foreignBinding?: "ownerId" | "chatId" | "botId" | "taskId"; messages: AgentMessage[];
 }) {
   const registry = new BotRuntimeRegistry(), controller = new AbortController();
@@ -24,10 +25,11 @@ export async function createRoutinePromptHarness(options: {
   const dependencies = {
     bindings: createBotBindingsRepository(data.db),
     transact: createBotStateTransactions(new ChatRepository(data.db as never)),
-    agents: { get: async () => ({ id: BOT, name: "Fixture Bot", description: "", instructions: "Follow the current request.", archived: false,
+    agents: { get: async () => ({ id: BOT, name: "Fixture Bot", description: "", instructions: options.instructions ?? "Follow the current request.", archived: false,
       selection: { instanceId: "matrix_chatgpt_plan", model: proposal.selection.model, options: [{ id: "accountId", value: subscription.accountId }, { id: "grantRevision", value: "3" }] },
       recipeRef: { recipeId: "writing-bot", version: "2026-09-27.1" }, revision: 1, createdAt: options.f.at, updatedAt: options.f.at }) },
     recipes: createBotRecipeCatalog(), registry,
+    memory: { admitted: async () => options.memory ?? [] },
     resolveRoute: async () => ({ route: { api: "openai-responses", modelId: proposal.selection.model, input: ["text"], contextWindow: 128000, maxOutputTokens: 4096 }, accessSourceId: "matrix_chatgpt_plan", subscription }),
     routineExecution: { assertOccurrencePhase: async (binding: Parameters<typeof options.execution.assertOccurrencePhase>[0]) => {
       if (options.cancelDuringCheck) { controller.abort(); await Promise.resolve(); }
