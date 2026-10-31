@@ -71,6 +71,7 @@ The Get started wizard (spec 635) runs once, before the desktop. This app is wha
 - When a task pays out while the app is on screen, the reward plays in the app (the hero shows it, the total floats "+N") instead of a corner toast. A minimized window or background tab gets the corner toast.
 - Desktop icon names wrap to two lines on Web Desktop and Electron Desktop, so "Getting started" is never cut off.
 - The icon takes the top-left slot. Icons on the slots before the first empty one move down one slot each (filling down, then right), once, when the icon is placed. If a hand-placed icon sits in that run, it goes in the first empty slot instead.
+- When a desktop draws, icons on valid slots keep them first; only then do displaced icons (overlapping or off screen) take open slots, so a displaced icon never pushes Getting started out of the top-left slot.
 - The server decides the amount from its own table; the client only names the task.
 - Points are progress, not money. Before points ever become credit or rewards, completion must be verified by the server or platform (see Risks).
 

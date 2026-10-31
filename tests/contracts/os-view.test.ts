@@ -102,6 +102,28 @@ describe("shared OS-view contract", () => {
     expect(canonical[1]).toEqual({ path: "apps/offscreen/index.html", x: 20, y: 900 });
   });
 
+  it("keeps an icon's valid slot from a displaced icon earlier in the list", () => {
+    // A real saved layout: Whiteboard overlaps Cloud desktop, and Getting started is last in the list.
+    const canonical = [
+      { path: "__chat__", x: 20, y: 112 },
+      { path: "__terminal__", x: 108, y: 20 },
+      { path: "__file-browser__", x: 20, y: 204 },
+      { path: "__editor__", x: 108, y: 112 },
+      { path: "__vscode__", x: 20, y: 296 },
+      { path: "__settings__", x: 108, y: 204 },
+      { path: "__plugins__", x: 20, y: 388 },
+      { path: "__browser__", x: 108, y: 296 },
+      { path: "__cloud-desktop__", x: 20, y: 480 },
+      { path: "apps/notes/index.html", x: 108, y: 388 },
+      { path: "apps/whiteboard/index.html", x: 104, y: 481 },
+      { path: "__getting-started__", x: 20, y: 20 },
+    ];
+    const fitted = fitOsViewDesktopIconsToViewport(canonical, { width: 1280, height: 640 });
+    expect(fitted.map((icon) => icon.path)).toEqual(canonical.map((icon) => icon.path));
+    expect(fitted.find((icon) => icon.path === "__getting-started__")).toEqual({ path: "__getting-started__", x: 20, y: 20 });
+    expect(fitted.find((icon) => icon.path === "apps/whiteboard/index.html")).toEqual({ path: "apps/whiteboard/index.html", x: 20, y: 572 });
+  });
+
   it("preserves every icon in an overflow column when a short viewport cannot fit them all", () => {
     const canonical = Array.from({ length: 5 }, (_, index) => ({
       path: `apps/app-${index}/index.html`,

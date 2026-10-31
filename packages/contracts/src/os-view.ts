@@ -321,16 +321,24 @@ export function fitOsViewDesktopIconsToViewport(
   bounds: OsViewDesktopBounds,
 ): OsViewDesktopIcon[] {
   const placed: OsViewDesktopIcon[] = [];
-  for (const icon of icons) {
-    if (validDesktopSlot(icon.x, icon.y, bounds)
-      && !placed.some((candidate) => desktopSlotsCollide(candidate, icon))) {
-      placed.push({ ...icon });
-      continue;
-    }
+  const fitted: Array<OsViewDesktopIcon | undefined> = icons.map(() => undefined);
+  // Every icon on a valid slot keeps it first, so a displaced icon earlier in
+  // the list cannot take a slot that a later icon rightly holds.
+  icons.forEach((icon, index) => {
+    if (!validDesktopSlot(icon.x, icon.y, bounds)
+      || placed.some((candidate) => desktopSlotsCollide(candidate, icon))) return;
+    const kept = { ...icon };
+    placed.push(kept);
+    fitted[index] = kept;
+  });
+  icons.forEach((icon, index) => {
+    if (fitted[index]) return;
     const slot = findOpenOsViewDesktopSlot(placed, bounds);
     if (slot) {
-      placed.push({ ...icon, ...slot });
-      continue;
+      const moved = { ...icon, ...slot };
+      placed.push(moved);
+      fitted[index] = moved;
+      return;
     }
     // When the viewport is too small for every icon, keep the full catalog
     // reachable in overflow columns. Renderers expose this overflow by
@@ -348,13 +356,15 @@ export function fitOsViewDesktopIconsToViewport(
       (furthest, existing) => Math.max(furthest, existing.x),
       firstOverflowX - DEFAULT_DESKTOP_GRID.columnWidth,
     );
-    placed.push({
+    const overflow = {
       ...icon,
       x: Math.max(firstOverflowX, furthestPlacedX + DEFAULT_DESKTOP_GRID.columnWidth),
       y: displayY,
-    });
-  }
-  return placed;
+    };
+    placed.push(overflow);
+    fitted[index] = overflow;
+  });
+  return fitted.filter((icon): icon is OsViewDesktopIcon => icon !== undefined);
 }
 
 export function normalizeOsViewMode(value: unknown): OsViewMode {
