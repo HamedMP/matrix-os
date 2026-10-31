@@ -67,17 +67,19 @@ it("restores Bot startup from exact deployed v6 while preserving every trust pin
   const before=await Promise.all(tables.map(rows));
   const file=join(home,"agents/custom/chat-bots",createHash("sha256").update(`personal:${OWNER}`).digest("hex"),`${BOT}.md`), definition=await readFile(file);
   services=await startBots({homePath:home,repository,agents,executionRoots:{resolve:vi.fn()},providers:{getSnapshot:vi.fn()}});
-  const app=new Hono().route("/",createBotRoutes({...(services?{botChats:services.botChats,recipes:services.recipes}:{}),getPrincipal:()=>({userId:OWNER,handle:"fixture-owner"})}));
+  const app=new Hono().route("/",createBotRoutes({...(services?{botChats:services.botChats,recipes:services.recipes}:{}),getPrincipal:()=>({userId:OWNER,source:"jwt",handle:"fixture-owner"})}));
   const response=await app.request(`/api/chat-agents/${BOT}/direct-chat`);
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual({chatId:"chat_existing_v6"});
   expect((await app.request("/api/chats/chat_existing_v6/bot")).status).toBe(200);
   await expect(bootstrapBotDatabase(db)).resolves.toEqual({applied:[]});
-  expect(await Promise.all(tables.map(rows))).toEqual(before);
+  const expected = before.map((snapshot, index) => tables[index] === "bot_chat_bindings"
+    ? snapshot.map(row => Object.assign({}, row, { project_id: null })) : snapshot);
+  expect(await Promise.all(tables.map(rows))).toEqual(expected);
   expect(await readFile(file)).toEqual(definition);
 });
 
-it.each([[6,"wrong_device_feature","invalid_migrations"],[10,"unknown_future","newer_schema"]] as const)("rejects recorded version %i named %s before any pending DDL", async (version,name,code) => {
+it.each([[6,"wrong_device_feature","invalid_migrations"],[12,"unknown_future","newer_schema"]] as const)("rejects recorded version %i named %s before any pending DDL", async (version,name,code) => {
   await bootstrapBotDatabase(db,[BOT_MIGRATIONS[0]!]);
   await sql`INSERT INTO bot_schema_migrations (version,name) VALUES (${version},${name})`.execute(db);
   const before=await rows("bot_schema_migrations");
@@ -88,7 +90,7 @@ it.each([[6,"wrong_device_feature","invalid_migrations"],[10,"unknown_future","n
 });
 
 it("applies released v6 on a fresh owner and preserves its device constraints on repeated startup", async () => {
-  await expect(bootstrapBotDatabase(db)).resolves.toEqual({applied:[1,2,3,4,5,6,7,8,9]});
+  await expect(bootstrapBotDatabase(db)).resolves.toEqual({applied:[1,2,3,4,5,6,7,8,9,10,11]});
   await expect(bootstrapBotDatabase(db)).resolves.toEqual({applied:[]});
   await sql`INSERT INTO bot_chatgpt_plan_devices VALUES (${OWNER}, 'computer_new', ${"d".repeat(64)}, ${"valid-public-key".repeat(3)})`.execute(db);
   await expect(sql`INSERT INTO bot_chatgpt_plan_devices VALUES (${OWNER}, 'computer_bad', 'INVALID_DEVICE', ${"valid-public-key".repeat(3)})`.execute(db)).rejects.toThrow();

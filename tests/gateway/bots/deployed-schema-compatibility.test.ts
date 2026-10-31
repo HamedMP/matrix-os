@@ -54,7 +54,7 @@ it("serves the same bound Bot Chat after the deployed v5 schema returns to main"
   services = await startBots({ homePath: home, repository, agents, executionRoots: { resolve: vi.fn() }, providers: { getSnapshot: vi.fn() } });
   const app = new Hono().route("/", createBotRoutes({
     ...(services ? { botChats: services.botChats, recipes: services.recipes } : {}),
-    getPrincipal: () => ({ userId: OWNER, handle: "test-owner" }),
+    getPrincipal: () => ({ userId: OWNER, source:"jwt", handle: "test-owner" }),
   }));
   const response = await app.request(`/api/chat-agents/${BOT}/direct-chat`);
   expect(response.status).toBe(200);
@@ -81,7 +81,7 @@ it("rejects a renamed released version before executing later migrations", async
 
 it("keeps unknown future schemas unavailable without applying missing current migrations", async () => {
   await bootstrapBotDatabase(db, [BOT_MIGRATIONS[0]!]);
-  await sql`INSERT INTO bot_schema_migrations (version, name) VALUES (10, 'unknown_future')`.execute(db);
+  await sql`INSERT INTO bot_schema_migrations (version, name) VALUES (12, 'unknown_future')`.execute(db);
   await expect(bootstrapBotDatabase(db)).rejects.toEqual(new BotSchemaError("newer_schema"));
-  expect(await db.selectFrom("bot_schema_migrations").select("version").orderBy("version").execute()).toEqual([{ version: 1 }, { version: 10 }]);
+  expect(await db.selectFrom("bot_schema_migrations").select("version").orderBy("version").execute()).toEqual([{ version: 1 }, { version: 12 }]);
 });
