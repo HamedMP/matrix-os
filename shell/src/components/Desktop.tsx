@@ -47,7 +47,7 @@ import {
   buildWebDesktopLauncherApps,
   buildWebDesktopIconApps,
   webShellIconUrlForApp,
-  webGalleryLauncherIconUrl,
+  webAppLauncherIconUrl,
   resolveWebDesktopBuiltInLaunch,
 } from "@/lib/web-desktop-app-launch";
 import {
@@ -1107,6 +1107,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
                       <button
                         type="button"
                         data-testid="dock-tasks"
+                        aria-label={taskBoardOpen ? "Close App Launcher" : "Open App Launcher"}
                         onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); }}
                         className={`flex items-center justify-center rounded-xl border shadow-sm hover:shadow-md hover:scale-105 active:scale-95 transition-all ${
                           taskBoardOpen
@@ -1115,7 +1116,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
                         }`}
                         style={{ width: dock.iconSize, height: dock.iconSize }}
                       >
-                        <img src={webGalleryLauncherIconUrl(apps)} alt="" className="size-full object-contain" />
+                        <img src={webAppLauncherIconUrl()} alt="" className="size-full object-contain" />
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side={tooltipSide} sideOffset={8}>
@@ -1207,6 +1208,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
             {(
               <button
                 type="button"
+                aria-label={taskBoardOpen ? "Close App Launcher" : "Open App Launcher"}
                 onClick={() => { setTaskBoardOpen((prev) => !prev); setSettingsOpen(false); }}
                 className={`flex shrink-0 size-9 items-center justify-center rounded-lg border transition-all active:scale-95 ${
                   taskBoardOpen
@@ -1214,7 +1216,7 @@ export function Desktop({ launchAppPath, sharedTerminalScopeId, onOpenCommandPal
                     : "bg-card border-border/60"
                 }`}
               >
-                <img src={webGalleryLauncherIconUrl(apps)} alt="" className="size-full object-contain" />
+                <img src={webAppLauncherIconUrl()} alt="" className="size-full object-contain" />
               </button>
             )}            <button
               type="button"

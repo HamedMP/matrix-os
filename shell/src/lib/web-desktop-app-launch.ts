@@ -116,7 +116,7 @@ export function webShellIconUrlForApp(app: { path: string; iconUrl?: string; ico
   return osViewIconUrlForApp(app, getGatewayUrl()) ?? iconUrlForSlug(app.icon ?? app.slug);
 }
 
-export function webGalleryLauncherIconUrl(apps: readonly { path: string; iconUrl?: string }[] = []): string {
-  const gallery = apps.filter(app => app.path === "matrix-app:app-gallery" || /^apps\/app-gallery\/(?:dist\/)?index\.html$/.test(app.path));
-  return gallery.length === 1 && gallery[0]?.iconUrl ? gallery[0].iconUrl : gatewayAssetUrl("/icons/v3-app-gallery.png")!;
+/** Shell navigation has its own identity, independent of the Gallery app or owner artwork. */
+export function webAppLauncherIconUrl(): string {
+  return gatewayAssetUrl("/icons/v3-launcher.svg")!;
 }

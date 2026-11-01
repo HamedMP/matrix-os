@@ -3,7 +3,7 @@
   "description": "Social network: feed, profiles, follows, posts",
   "runtime": "vite",
   "category": "social",
-  "icon": "social",
+  "icon": "v3-social",
   "author": "system",
   "version": "2.0.0",
   "permissions": [
