@@ -362,6 +362,10 @@ export const INVOKE_CHANNELS = {
     response: ZoomFactorResultSchema,
   },
   "window:toggle-maximize": { request: Empty, response: Ok },
+  "window:set-titlebar-overlay": {
+    request: z.strictObject({ color: z.string().regex(/^#[\da-f]{6}$/i), symbolColor: z.string().regex(/^#[\da-f]{6}$/i) }),
+    response: Ok,
+  },
   "state:get": {
     request: z.object({ key: z.enum(STATE_KEYS) }).strict(),
     response: z.object({ value: z.unknown() }).strict(),

@@ -15,6 +15,12 @@ function render(ui: React.ReactElement) {
 }
 
 describe("Desktop navigation header", () => {
+  const originalPlatform = Object.getOwnPropertyDescriptor(navigator, "platform");
+
+  function setPlatform(platform: string) {
+    Object.defineProperty(navigator, "platform", { configurable: true, value: platform });
+  }
+
   beforeEach(() => {
     useTabs.setState(useTabs.getInitialState(), true);
     useTabs.getState().ensureNavigationScope("runtime-a");
@@ -29,14 +35,26 @@ describe("Desktop navigation header", () => {
   afterEach(() => {
     cleanup();
     delete (window as { operator?: unknown }).operator;
+    if (originalPlatform) Object.defineProperty(navigator, "platform", originalPlatform);
   });
 
   it("removes sidebar-only chrome for the native desktop shell", () => {
+    setPlatform("MacIntel");
     render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
 
     expect(screen.queryByRole("button", { name: "Collapse sidebar" })).toBeNull();
     expect(screen.getByRole("banner").style.gridTemplateColumns)
       .toBe("96px minmax(0, 1fr)");
+  });
+
+  it("starts Windows tabs at the left edge of the safe title bar area", () => {
+    setPlatform("Win32");
+    render(<Tooltip.Provider><NavigationHeader /></Tooltip.Provider>);
+
+    expect(screen.getByRole("banner").style.gridTemplateColumns).toBe("minmax(0, 1fr)");
+    expect(screen.getByRole("banner").style.background).toBe("var(--bg-sunken)");
+    expect(screen.getByRole("tab", { name: "Sidebar" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open account menu" })).toBeTruthy();
   });
 
   it("uses permanent workspace tabs instead of Browser breadcrumbs or actions in native desktop", () => {

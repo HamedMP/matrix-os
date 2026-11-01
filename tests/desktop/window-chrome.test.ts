@@ -13,8 +13,8 @@ describe("windowChromeOptions", () => {
     expect(windowChromeOptions("win32")).toEqual({
       titleBarStyle: "hidden",
       titleBarOverlay: {
-        color: "#0e0e13",
-        symbolColor: "#f9f7f1",
+        color: "#fafafa",
+        symbolColor: "#242323",
         height: 38,
       },
     });

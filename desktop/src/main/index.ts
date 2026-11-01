@@ -70,7 +70,7 @@ import {
   type FittedWindowBounds,
   type WindowBounds,
 } from "./platform/window-bounds";
-import { windowChromeOptions } from "./platform/window-chrome";
+import { WINDOWS_TITLEBAR_HEIGHT, windowChromeOptions } from "./platform/window-chrome";
 import { createUpdater } from "./updates";
 import { createUpdateAwareBeforeQuit } from "./update-quit";
 import { safeExternalHttpUrl, safeChatgptAuthorizationUrl } from "./external-url";
@@ -567,6 +567,10 @@ if (!gotLock) {
           if (!mainWindow || mainWindow.isDestroyed()) return;
           if (mainWindow.isMaximized()) mainWindow.unmaximize();
           else mainWindow.maximize();
+        },
+        setTitlebarOverlay: (colors) => {
+          if (process.platform !== "win32" || !mainWindow || mainWindow.isDestroyed()) return;
+          mainWindow.setTitleBarOverlay({ ...colors, height: WINDOWS_TITLEBAR_HEIGHT });
         },
         getWhatsNew: async () => {
           const stored = await store.get("desktopUpdateRelease");
