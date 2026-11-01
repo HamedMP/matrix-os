@@ -260,7 +260,7 @@ describe.skipIf(!databaseUrl)("usage admission on independent PostgreSQL connect
         ...row, reservation_id: `duplicate_${row.execution_recovery_slot}`, request_id: `duplicate_${row.execution_recovery_slot}`,
       }).execute()).rejects.toMatchObject({ code: "23505", constraint: "idx_ai_funded_unknown_admission_owner" });
     }
-    for (const invalid of [null, -1, 2]) {
+    for (const invalid of [null, -1]) {
       await expect(admin.query(`INSERT INTO "${schema}".ai_funded_usage_reservations
         SELECT (jsonb_populate_record(NULL::"${schema}".ai_funded_usage_reservations,
           to_jsonb(r) || jsonb_build_object('reservation_id', $1::text, 'request_id', $1::text,

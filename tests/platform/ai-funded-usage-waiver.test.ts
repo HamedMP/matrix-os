@@ -223,7 +223,7 @@ for (const postgres of [false, true]) describe.skipIf(postgres && !databaseUrl)(
       expect(after.ledger).toEqual(before.ledger);
       expect(await repo.getFundingSummary(identity)).toMatchObject({ reservedMicrousd: 0, remainingBalanceMicrousd: 2_000 });
       await migrateAiFunded(db.executor);
-      // Existing two-slot recovery remains bounded but waived liabilities have a distinct inventory.
+      // Recovery remains liability-bounded but waived liabilities have a distinct inventory.
       credential = (await repo.issueRuntimeCredential(identity)).credential;
       await appendRequest("new-recovery");
       await recover(3);

@@ -41,7 +41,7 @@ nonterminal owner request may remain outside the reviewed batch.
 The input accepts at most ten unique records and 50,000,000 microusd total
 provider liability. Reviewed released and liability totals must equal the
 individual captures. These are independent operator-risk bounds, not changes
-to normal model, spending or two-slot admission-recovery limits. The owner's
+to normal model, spending or admission-recovery liability limits. The owner's
 previously waived, still-unknown Matrix liabilities count toward the same
 ten-record and 50,000,000 microusd inventory, validated in bounded reads. A partial
 owner index matches `status = 'waived' OR (charge_waiver IS NOT NULL AND
