@@ -47,6 +47,7 @@ wait_for_auth_shell() {
 
 if [ "${AUTH_SHELL_ENABLED:-true}" = "true" ]; then
   HOSTNAME=127.0.0.1 \
+  MATRIX_SHELL_SURFACE=platform \
     node node_modules/next/dist/bin/next start shell -p "$auth_shell_port" -H 127.0.0.1 &
   auth_shell_pid="$!"
 
