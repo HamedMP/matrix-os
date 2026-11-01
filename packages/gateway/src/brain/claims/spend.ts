@@ -6,8 +6,8 @@
  * that total on its row with each document's write, so a run that never closes still counts. One model run per owner
  * runs at a time in a process (job.ts), so the read is not stale within one gateway; two gateways of one owner could
  * each spend at most one run's budget past the cap. Before each model call the remaining budget must cover the worst
- * case of that call. A call that timed out or was aborted after it was sent is charged at that worst case, since no
- * usage comes back; only the call in flight when a run is lost (a crash) goes uncounted.
+ * case of that call. A call that timed out, was aborted after it was sent or lost its answer is charged at that worst
+ * case, since no usage comes back; only the call in flight when a run is lost (a crash) goes uncounted.
  */
 import type { BrainExecutor } from "../documents.js";
 import type { BrainScopeKey } from "../types.js";
@@ -34,12 +34,17 @@ const INPUT_RATE = Math.max(...prices.flatMap((price) => [price.input, price.cac
 const OUTPUT_RATE = Math.max(...prices.map((price) => price.output));
 
 /**
- * The most one model call can cost, in micro-USD, for a title and body of inputBytes utf8 bytes: a token is at least
- * one byte, every attempt reads the whole prompt and writes max_tokens, and every billed attempt is counted.
+ * The most one SDK attempt can cost, in micro-USD, for a title and body of inputBytes utf8 bytes: a token is at least
+ * one byte, and every hop of its fallback chain reads the whole prompt and writes max_tokens.
  */
-export function brainModelCallWorstCostMicroUsd(inputBytes: number): number {
+export function brainModelAttemptWorstCostMicroUsd(inputBytes: number): number {
   const tenths = (inputBytes + BRAIN_MODEL_PROMPT_OVERHEAD_TOKENS) * INPUT_RATE + BRAIN_MODEL_MAX_TOKENS * OUTPUT_RATE;
-  return BRAIN_MODEL_BILLED_ATTEMPTS_PER_CALL * Math.ceil(tenths / 10);
+  return BRAIN_MODEL_HOPS_PER_ATTEMPT * Math.ceil(tenths / 10);
+}
+
+/** The most one model call can cost: every SDK attempt (the first and its retry) at its worst case. */
+export function brainModelCallWorstCostMicroUsd(inputBytes: number): number {
+  return (1 + BRAIN_MODEL_MAX_RETRIES) * brainModelAttemptWorstCostMicroUsd(inputBytes);
 }
 
 /**
