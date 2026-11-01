@@ -1,5 +1,5 @@
 // Explicit offline build only. No installation or generation/manifest changes.
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, closeSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -17,15 +17,79 @@ if (!statSync(dirname(output)).isDirectory()) throw new Error("Output directory 
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const sourceSha256 = hash(readFileSync(source));
 const compiler = process.env.CC || "cc";
-const compilerVersion = execFileSync(compiler, ["--version"], {
-  timeout: 5000, maxBuffer: 16384, encoding: "utf8",
-}).split("\n")[0].slice(0, 512);
+
+// The compiler owns a fresh Linux session/process group. A timeout must not
+// depend on TERM cooperation, or on inherited output pipes reaching EOF.
+async function executeCompiler(args, timeout, maxBuffer) {
+  return await new Promise((fulfill, reject) => {
+    const child = spawn(compiler, args, { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = [], stderr = [];
+    let outputBytes = 0, errorBytes = 0, failure, exited = false, settled = false, cleanupTimer;
+    let exitCode;
+    function killGroup() {
+      if (!child.pid) return;
+      try { process.kill(-child.pid, "SIGKILL"); }
+      catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) {
+          failure ??= new Error("Compiler process-group cleanup unavailable");
+        }
+      }
+      if (!exited) child.kill("SIGKILL");
+    }
+    function settle(error) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer); clearTimeout(cleanupTimer);
+      if (error) reject(error);
+      else fulfill(Buffer.concat(stdout).toString("utf8"));
+    }
+    function boundCleanup() {
+      cleanupTimer ??= setTimeout(() => {
+        killGroup(); child.stdout.destroy(); child.stderr.destroy();
+        // An exceptional kernel/reaping failure is unknown, never success.
+        // Unref prevents even that condition from blocking tool completion.
+        child.unref();
+        settle(new Error("Compiler termination or pipe cleanup outcome unknown"));
+      }, 1000);
+    }
+    function abort(error) {
+      failure ??= error;
+      killGroup(); child.stdout.destroy(); child.stderr.destroy();
+      boundCleanup();
+    }
+    const timer = setTimeout(() => abort(new Error("Compiler deadline exceeded")), timeout);
+    child.stdout.on("data", bytes => {
+      outputBytes += bytes.length;
+      if (outputBytes > maxBuffer) abort(new Error("Compiler output limit exceeded"));
+      else stdout.push(bytes);
+    });
+    child.stderr.on("data", bytes => {
+      errorBytes += bytes.length;
+      if (errorBytes > maxBuffer) abort(new Error("Compiler output limit exceeded"));
+      else stderr.push(bytes);
+    });
+    child.stdout.on("error", abort); child.stderr.on("error", abort);
+    child.on("error", abort);
+    child.on("exit", code => {
+      exited = true; exitCode = code;
+      // Also kill descendants when their leader exits first, whether they hold
+      // pipes open or have already closed them. The direct child is now reaped.
+      killGroup(); boundCleanup();
+    });
+    child.on("close", () => {
+      if (!failure && (!exited || exitCode !== 0)) failure = new Error("Compiler failed");
+      settle(failure);
+    });
+  });
+}
+
+const compilerVersion = (await executeCompiler(["--version"], 5000, 16384)).split("\n")[0].slice(0, 512);
 const temporaryDirectory = mkdtempSync(join(dirname(output), ".attachment-entry-"));
 const temporary = join(temporaryDirectory, "matrix-terminal-attachment-entry");
 try {
   closeSync(openSync(temporary, "wx", 0o700));
   const compilerArgs = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-static", source, "-o", temporary];
-  execFileSync(compiler, compilerArgs, { timeout: 30000, maxBuffer: 65536 });
+  await executeCompiler(compilerArgs, 30000, 65536);
   if (hash(readFileSync(source)) !== sourceSha256) throw new Error("Source changed during build");
   const info = statSync(temporary);
   if (!info.isFile() || info.size < 64 || info.size > 64 * 1024 * 1024) throw new Error("Invalid ELF size");
