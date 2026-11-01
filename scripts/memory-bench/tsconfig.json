@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "noEmit": true, "rootDir": "../..", "types": ["node"], "declaration": false, "declarationMap": false },
+  "include": ["*.ts", "../../packages/kernel/src/memory-evaluation/*.ts", "../../tests/memory-bench/*.ts"]
+}
