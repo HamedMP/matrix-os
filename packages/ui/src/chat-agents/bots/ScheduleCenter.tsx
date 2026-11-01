@@ -161,7 +161,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
         {onOpenBotChat && detail.routine.targetAvailable ? <button className={chatAgentButtonClass} type="button" disabled={pending} onClick={() => void act(async () => { await onOpenBotChat(detail.routine.chatId); }, onClose, false)}>Open Bot Chat</button> : null}
         {detail.routine.status !== "archived" ? <button type="button" className={chatAgentButtonClass} disabled={pending || !detail.routine.targetAvailable || !detail.routine.sourceAvailable} onClick={() => setEditing(true)}>Edit schedule</button> : null}
       </div>
-      {editing && api ? <ScheduleEditForm key={detail.routine.routineId} routine={detail.routine} api={api} botClient={client.bots!} agentName={names[detail.routine.botId]} pendingReadRevision={listRevision} getPendingReadSequence={() => reads.current} pendingInteractions={data?.pending ?? []} onChanged={() => { setEditing(false); setDetail(null); void load(); }}/>: null}
+      {editing && api ? <ScheduleEditForm key={detail.routine.routineId} routine={detail.routine} api={api} botClient={client.bots!} agentName={names[detail.routine.botId]} pendingReadRevision={listRevision} getPendingReadSequence={() => reads.current} pendingInteractions={data?.pending ?? []} onChanged={() => { detailIntent.current += 1; setEditing(false); setDetail(null); void load(); }}/>: null}
       <h3 className="mt-2 font-semibold">Recent runs</h3>
       {!detail.history.length ? <p className="text-sm">No runs yet.</p> : <ol className="grid gap-2">{detail.history.map(fire => <li key={fire.fireId} className="rounded-lg border p-3 text-sm">
         <p>{timestamp(fire.scheduledFor)} · {fire.status} · {fire.attempts} attempt{fire.attempts === 1 ? "" : "s"}</p>
