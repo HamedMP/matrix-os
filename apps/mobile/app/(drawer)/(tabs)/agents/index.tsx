@@ -91,6 +91,7 @@ export default function AgentsScreen() {
       onRefresh={() => void refresh()}
       onRetry={() => void reload()}
       onNewAgent={() => router.push("/agents/new" as never)}
+      onOpenSchedules={() => router.push("/agents/schedules" as never)}
       onOpenAgent={openAgent}
       onArchiveAgent={archiveAgent}
     />

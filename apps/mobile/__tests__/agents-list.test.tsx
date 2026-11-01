@@ -40,6 +40,13 @@ function renderList(overrides: Partial<AgentsListScreenProps> = {}) {
 }
 
 describe("agents list screen", () => {
+  it("provides a single Schedules destination without opening a Bot", () => {
+    const onOpenSchedules = jest.fn();
+    renderList({ onOpenSchedules });
+    fireEvent.press(screen.getByRole("button", { name: "Schedules" }));
+    expect(onOpenSchedules).toHaveBeenCalledTimes(1);
+  });
+
   afterEach(cleanup);
 
   it("starts below the status bar on the background colour, with no top bar", () => {
