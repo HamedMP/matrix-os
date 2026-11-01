@@ -48,6 +48,8 @@ import { BotRouteError, type ResolvedBotRoute } from "./route-resolver.js";
 import { requireGroupBotAuthority, type GroupBotAuthorizer, BOT_RUNTIME_REGISTRY_CAPACITY, isManagedPiBinding, type BotRuntimeRegistry } from "./runtime-registry.js";
 import { readOwnerSoul, OwnerPersonalityError, type OwnerPersonalityConfig } from "./owner-personality.js";
 import { buildBotSystemPrompt, BotSystemPromptError } from "./system-prompt.js";
+import { ROUTINE_OCCURRENCE_CONTEXT_SUFFIX, withApprovedRoutineOccurrence } from "./routine-prompt-context.js";
+import { ROUTINE_CHAT_CONTEXT_RESERVATION } from "./routine-chat-context.js";
 import { BotSetupStepError, runBotSetupStep } from "./setup-step.js";
 
 /** How long a worker that took the cancel has to end its run before its runtime is stopped. */
@@ -117,11 +119,13 @@ export function createBotTaskOrchestrator(deps: {
   routineTools?: boolean;
   /** Server-only receipt-backed interactive intent; never supplied by a model/HTTP request. */
   routineProposals?: import("./routine-cli-proposals.js").RoutineCliProposalRuntime;
+  /** Server-owned durable checker; no request or model field can provide phase authority. */
+  routineExecution?: Pick<import("./routine-execution.js").BotRoutineExecution, "assertOccurrencePhase"> & Partial<Pick<import("./routine-execution.js").BotRoutineExecution, "describeChatPhase">>;
   memory?: Pick<BotMemoryService, "admitted">;
   agents: Pick<ChatAgentStore, "get">;
   recipes: BotRecipeCatalog;
   resolveProcedure?(ownerId: string, agent: ChatAgent): Promise<import("./recipe-catalog.js").BotRecipe>;
-  resolveRoute(selection?: import("@matrix-os/contracts").CanonicalChatModelSelection, requestClass?: "interactive" | "background"): Promise<ResolvedBotRoute>;
+  resolveRoute(selection?: import("@matrix-os/contracts").CanonicalChatModelSelection, requestClass?: "interactive" | "background" | "routine"): Promise<ResolvedBotRoute>;
   executorReady?(ownerId: string, botId: string): Promise<boolean>;
   /** Exact run-bound owner policy route; groups never consult the personal default resolver. */
   resolveGroupRoute?(input: { ownerId: string; chatId: string; runId: string; group: GroupBotRunRequest }): Promise<ResolvedBotRoute>;
@@ -367,7 +371,7 @@ export function createBotTaskOrchestrator(deps: {
       } else {
         const requested = isolatedModel ? selection : recipeCoordinatorSelection(input.selection, agent.selection);
         if (input.backgroundTaskId && (isolatedModel || requested?.instanceId !== "matrix_chatgpt_plan")) throw new BotRouteError("model_unavailable");
-        resolved = await setup(() => input.backgroundTaskId ? deps.resolveRoute(requested, "background") : deps.resolveRoute(requested));
+        resolved = await setup(() => input.backgroundTaskId ? deps.resolveRoute(requested, "routine") : deps.resolveRoute(requested));
         if (input.backgroundTaskId && (resolved.accessSourceId !== "matrix_chatgpt_plan" || !resolved.subscription)) throw new BotRouteError("model_unavailable");
         if (isolatedModel) {
           if (resolved.accessSourceId !== "matrix_included" || resolved.subscription || resolved.anthropicApi
@@ -418,7 +422,7 @@ export function createBotTaskOrchestrator(deps: {
       }
       run.spec = BotRunSpecSchema.parse({
         route: resolved.route,
-        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, ownerSoul, audience: group ? "group" : "personal", now: new Date(now()) }),
+        systemPrompt: buildBotSystemPrompt({ botName: agent.name, instructions: isManagedCustomBot(agent) ? recipe.instructions : agent.instructions, recipe, memory, ownerSoul, reservedSuffix: !group && deps.routineExecution ? input.backgroundTaskId ? ROUTINE_OCCURRENCE_CONTEXT_SUFFIX : deps.routineExecution.describeChatPhase ? ROUTINE_CHAT_CONTEXT_RESERVATION : undefined : undefined, audience: group ? "group" : "personal", now: new Date(now()) }),
         capabilities,
         limits: isolatedModel ? { maxToolActions: 1, maxInferenceCalls: 1 } : limits,
         turn: { kind: "prompt", text: run.inputs.prompt(input.text), ...(run.inputs.imageCount ? { imageCount: run.inputs.imageCount } : {}) },
@@ -515,6 +519,17 @@ export function createBotTaskOrchestrator(deps: {
       const spec = run?.spec;
       if (!spec || run.stopping || run.finished || run.ownerId !== binding.ownerId || run.chatId !== binding.chatId
         || run.runtime?.runtimeHandle !== binding.runtimeHandle || run.runtime.executionGeneration !== binding.executionGeneration) throw new BotBrokerActionError("stale_generation");
+      if (!isManagedPiBinding(binding) && !binding.group && binding.requestClass === "background" && deps.routineExecution) {
+        // Recheck at delivery, rather than caching a phase from prepareRun before queue/admission.
+        await runBotSetupStep(() => deps.routineExecution!.assertOccurrencePhase(binding), run.signal);
+        if (run.stopping || run.finished || run.signal.aborted || active.get(binding.runId) !== run) throw new BotBrokerActionError("stale_generation");
+        return { ...spec, systemPrompt: withApprovedRoutineOccurrence(spec.systemPrompt) };
+      }
+      if (!isManagedPiBinding(binding) && !binding.group && binding.requestClass === "interactive" && deps.routineExecution?.describeChatPhase) {
+        const phase = await runBotSetupStep(() => deps.routineExecution!.describeChatPhase!(binding), run.signal);
+        if (run.stopping || run.finished || run.signal.aborted || active.get(binding.runId) !== run) throw new BotBrokerActionError("stale_generation");
+        if (phase) return { ...spec, systemPrompt: spec.systemPrompt + phase };
+      }
       return spec;
     },
     async readImageChunk(binding, request) {

@@ -15,6 +15,9 @@ import type { BotTurnResult } from "./task-orchestrator.js";
 import { effectOf } from "./integration-tools.js";
 import { createBotRoutineCanonicalRunner, botRoutineRequestId } from "./continuations.js";
 import { createBotRoutineScheduler } from "./routine-scheduler.js";
+import { assertCurrentRoutinePhase } from "./routine-phase.js";
+import { createBotRoutineManagement } from "./routine-management.js";
+import { describeRoutineChatPhase } from "./routine-chat-context.js";
 import { createBotStateTransactions, type BotStateTransactions } from "./events.js";
 import { ChatRepository } from "../chat/repository.js";
 import type { ChatDatabase } from "../chat/database.js";
@@ -250,9 +253,11 @@ export function createBotRoutineExecution(deps: {
   }
   const controls = createBotRoutineControl({ db: deps.db, approvals: deps.approvals, now, stopFire });
   return {
+    describeChatPhase: (binding: BotRuntimeBinding) => describeRoutineChatPhase(deps.db, deps.approvals, binding, now()),
     connect(value: Canonical) {
       canonical = value;
     },
+    ...createBotRoutineManagement(deps.db, deps.approvals),
     async start(value: Canonical) {
       canonical = value;
       if (scheduler || deps.available?.() === false) return;
@@ -272,6 +277,7 @@ export function createBotRoutineExecution(deps: {
       await scheduler?.stop();
     },
     propose: deps.approvals.propose,
+    requestEdit: deps.approvals.requestEdit,
     async prepareRun(input: RunIdentity) {
       const run = await readRun(input);
       if (!run || !run.client_request_id.startsWith("req_routine_") && !run.original_request_id.startsWith("req_routine_")) return undefined;
@@ -350,6 +356,10 @@ export function createBotRoutineExecution(deps: {
       if (finalized?.status === "failed" && humanActionRequired) return { status: "failed" };
     },
     assertBinding,
+    async assertOccurrencePhase(binding: BotRuntimeBinding) {
+      const routine = await assertBinding(binding);
+      return assertCurrentRoutinePhase(deps.db, binding, routine, now);
+    },
     async assertTool(binding: BotRuntimeBinding, request: BotToolRequest) {
       const routine = await assertBinding(binding);
       const effect = request.capability === "integration.call" ? effectOf(request.args.service, request.args.action) : ["artifact.read", "memory.search", "integration.inventory", "integration.describe"].includes(request.capability) ? "read" : ["artifact.write", "memory.propose", "interaction.create"].includes(request.capability) ? "write" : undefined;

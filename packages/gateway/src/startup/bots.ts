@@ -207,7 +207,14 @@ export async function startBots(options: {
   const resolveProcedure = (ownerId: string, agent: import("@matrix-os/contracts").ChatAgent) => procedures.resolve(ownerId, agent);
 
   const chatgptPlanPeers = options.runtimeOwnerId && options.computerId
-    ? createChatGptPlanPeers({ db, ownerId: options.runtimeOwnerId, computerId: options.computerId }) : undefined;
+    ? createChatGptPlanPeers({ db, ownerId: options.runtimeOwnerId, computerId: options.computerId,
+      authorizeRoutine: async (binding, signal) => {
+        signal.throwIfAborted();
+        if (isManagedPiBinding(binding)) throw new BotBrokerActionError("not_granted");
+        const occurrence = await routines.assertOccurrencePhase(binding);
+        signal.throwIfAborted();
+        return occurrence;
+      } }) : undefined;
   // Prepared tool work must recheck both definition and current native source consent.
   const revalidateNativeSource = createBotSourceRevalidator({ lifetime: lifetime.signal, revalidateDefinition: (binding,executor) => procedures.revalidate(binding,executor),
     ...(chatgptPlanPeers ? { chatgptPlan: chatgptPlanPeers } : {}), ...(options.matrixAnthropic ? { matrixAnthropic: options.matrixAnthropic } : {}) });
@@ -386,6 +393,7 @@ export async function startBots(options: {
     transact,
     interactions,
     routineTools:true,
+    routineExecution:routines,
     memory,
     agents: options.agents,
     recipes,

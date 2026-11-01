@@ -7,8 +7,10 @@ export const RoutineAuthorizationSchema = z.object({
   accountId: ref,
   computerId: ref,
   grantRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  definitionRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
-}).strict();
+  definitionRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  routineId: z.string().regex(/^rt_[a-f0-9]{24}$/).optional(),
+  baseRoutineRevision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+}).strict().refine(source => Boolean(source.routineId) === Boolean(source.baseRoutineRevision));
 export type RoutineAuthorization = z.infer<typeof RoutineAuthorizationSchema>;
 const EnvelopeSchema = z.object({
   proposal: BotRoutineProposalSchema,

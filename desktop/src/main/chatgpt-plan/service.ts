@@ -307,7 +307,8 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             signal.throwIfAborted();
             if (!current(value) || epoch !== generation || !account?.tokens || active()?.id !== request.accountId || request.computerId !== value.computerId || permission.revision !== request.grantRevision || !permission.enabled || !models.some(model => model.id === request.model) || Date.now() - catalogAt > 5 * 60000)
                 throw new Error('source changed');
-            if (request.requestClass === 'background' && !permission.background)
+            if (request.requestClass === 'background' && !permission.background
+                && (!request.approvedRoutine || request.approvedRoutine.ownerId !== value.ownerId || request.approvedRoutine.runId !== request.runId))
                 throw new Error('background not permitted');
         };
         validate();
@@ -348,6 +349,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
     }
     const peer = createPlanNativePeer({
         deliveryVersion: 2,
+        approvedRoutines: true,
         fetchFn, current: currentPeer, infer, inferStream, connected: value => {
             bridgeConnected = value;
             if (!value)
@@ -546,7 +548,7 @@ export function createNativeChatgptPlanService(deps: Dependencies) {
             };
             // A failed downgrade remains an error, but must not let the peer's
             // automatic recovery restore the old in-memory authority.
-            if (existing.enabled && !next.enabled || existing.background && !next.background) {
+            if (existing.enabled && (!next.enabled || !next.background)) {
                 record = nextRecord;
                 unconfirmedRecords.set(value.ownerId, nextRecord);
             }

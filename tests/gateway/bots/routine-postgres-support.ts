@@ -126,7 +126,7 @@ export async function createPgRoutineFixture() {
   // External device/source and file definition are doubles. All routine/approval/task/outbox state is real PG.
   const source = {
     enabled: true,
-    background: true,
+    background: false,
     accountId: "fixture-account",
     computerId: "fixture-computer",
     grantRevision: 3,
@@ -152,7 +152,7 @@ export async function createPgRoutineFixture() {
     definitionRevision: async () => source.definitionRevision,
     source: {
       resolve: async (selection, ownerId, requestClass) => {
-        if (ownerId !== OWNER || requestClass !== "background" || !source.enabled || !source.background || selection?.model !== "fixture-model" || selection.options?.find(o => o.id === "accountId")?.value !== source.accountId || selection.options?.find(o => o.id === "grantRevision")?.value !== String(source.grantRevision)) throw new Error("Fixture source refused");
+        if (ownerId !== OWNER || requestClass !== "routine" || !source.enabled || selection?.model !== "fixture-model" || selection.options?.find(o => o.id === "accountId")?.value !== source.accountId || selection.options?.find(o => o.id === "grantRevision")?.value !== String(source.grantRevision)) throw new Error("Fixture source refused");
         return {
           route,
           accessSourceId: "matrix_chatgpt_plan",
@@ -235,6 +235,7 @@ export async function createPgRoutineFixture() {
       repo,
       tasks,
       approvals,
+      interactions,
       source,
       routine,
       binding,
