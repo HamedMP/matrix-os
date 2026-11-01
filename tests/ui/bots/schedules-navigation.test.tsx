@@ -247,8 +247,8 @@ it("does not reopen old details when their refresh arrives after an edit approva
 
 it("keeps the user's newer detail selection when an earlier editor's approval returns after unmount", async () => {
   const base = clientFixture(), other = {...routine, routineId: "rt_abcdefabcdefabcdefabcdef", proposal: {...routine.proposal, name: "Other saved task"}};
-  let finish!: (value: unknown) => void;
-  const routines = {list: vi.fn(async () => ({items: [routine, other], pending: [], nextCursor: null})),
+  let finish!: (value: unknown) => void, current = routine;
+  const routines = {list: vi.fn(async () => ({items: [current, other], pending: [], nextCursor: null})),
     detail: vi.fn(async (id: string) => ({routine: id === other.routineId ? other : routine, history: []})), control: vi.fn(),
     review: vi.fn(async () => editReview(1, "Pending changed task"))};
   const resolve = vi.fn(() => new Promise(done => {finish = done;}));
@@ -260,6 +260,33 @@ it("keeps the user's newer detail selection when an earlier editor's approval re
   fireEvent.click(screen.getByRole("button", {name: "Close details"}));
   fireEvent.click(screen.getByRole("button", {name: "View Other saved task"}));
   await screen.findByRole("heading", {name: "Other saved task"});
+  current = {...routine, revision: 2, proposal: {...routine.proposal, name: "Approved while away"}};
   await act(async () => finish({interaction: {interactionId: "in_0123456789abcdef01234567", status: "resolved", revision: 2}}));
+  await screen.findByRole("button", {name: "View Approved while away"});
   expect(screen.getByRole("heading", {name: "Other saved task"})).toBeTruthy();
+});
+
+it("cannot roll back an accepted pause with a late committed-result detail refresh", async () => {
+  const base = clientFixture(), staleOther = {...routine, routineId: "rt_abcdefabcdefabcdefabcdef", proposal: {...routine.proposal, name: "Other saved task"}};
+  let other = staleOther, finish!: (value: unknown) => void, finishDetail!: (value: unknown) => void;
+  const routines = {list: vi.fn(async () => ({items: [routine, other], pending: [], nextCursor: null})),
+    detail: vi.fn(async (id: string) => ({routine: id === other.routineId ? other : routine, history: []})),
+    control: vi.fn(async () => {other = {...other, revision: 2, status: "paused"}; return {routineId: other.routineId, revision: 2, status: "paused"};}),
+    review: vi.fn(async () => editReview(1, "Pending changed task"))};
+  const resolve = vi.fn(() => new Promise(done => {finish = done;}));
+  render(<ScheduleCenter client={{...base, bots: {routines, resolve}} as unknown as ChatAgentClient} onClose={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", {name: "View Morning brief"}));
+  fireEvent.click(await screen.findByRole("button", {name: "Edit schedule"}));
+  fireEvent.click(screen.getByRole("button", {name: "Review changes"}));
+  fireEvent.click(await screen.findByRole("button", {name: "Approve changes"}));
+  fireEvent.click(screen.getByRole("button", {name: "Close details"}));
+  fireEvent.click(screen.getByRole("button", {name: "View Other saved task"}));
+  await screen.findByRole("heading", {name: "Other saved task"});
+  routines.detail.mockImplementationOnce(() => new Promise(resolve => {finishDetail = resolve;}));
+  await act(async () => finish({interaction: {interactionId: "in_0123456789abcdef01234567", status: "resolved", revision: 2}}));
+  await waitFor(() => expect(finishDetail).toBeTypeOf("function"));
+  fireEvent.click(screen.getAllByRole("button", {name: "Pause Other saved task"})[0]!);
+  await screen.findAllByRole("button", {name: "Resume Other saved task"});
+  await act(async () => finishDetail({routine: staleOther, history: []}));
+  expect(screen.queryByRole("button", {name: "Pause Other saved task"})).toBeNull();
 });

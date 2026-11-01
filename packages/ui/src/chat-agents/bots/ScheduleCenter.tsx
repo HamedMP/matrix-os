@@ -37,6 +37,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
   const [query, setQuery] = useState<BotRoutineCenterQuery>({});
   const currentQuery = useRef(query);
   const detailIntent = useRef(0);
+  const selectedRoutine = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [detail, setDetail] = useState<BotRoutineDetailResponse | null>(null);
@@ -52,6 +53,10 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
     lifetime.current += 1;
     return () => { lifetime.current += 1; };
   }, [client]);
+  function acceptDetail(result: BotRoutineDetailResponse) {
+    // An older read cannot replace a newer accepted control receipt.
+    setDetail(current => current?.routine.routineId === result.routine.routineId && current.routine.revision > result.routine.revision ? current : result);
+  }
   async function load(next = currentQuery.current) {
     if (!api) { setLoading(false); setError(unavailable); return; }
     const generation = lifetime.current, sequence = ++reads.current;
@@ -103,13 +108,13 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
         if (result.status === "archived" && currentQuery.current.archived !== "true") return [];
         return [{ ...item, status: result.status, revision: result.revision }];
       }) } : current);
-      if (status === "archived" && detail?.routine.routineId === row.routineId) { detailIntent.current += 1; setDetail(null); setEditing(false); }
+      if (status === "archived" && detail?.routine.routineId === row.routineId) { detailIntent.current += 1; selectedRoutine.current = null; setDetail(null); setEditing(false); }
       else setDetail(current => current?.routine.routineId === row.routineId && current.routine.revision === row.revision
         ? { ...current, routine: { ...current.routine, status: result.status, revision: result.revision } } : current);
     },
   );
   function chooseFilter(next: BotRoutineCenterQuery) {
-    currentQuery.current = next; reads.current += 1; detailIntent.current += 1;
+    currentQuery.current = next; reads.current += 1; detailIntent.current += 1; selectedRoutine.current = null;
     setDetail(null); setEditing(false); setData(null); setLoading(true); setQuery(next);
   }
   async function view(row: BotRoutineCenterItem) {
@@ -117,17 +122,15 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
     const intent = ++detailIntent.current, generation = lifetime.current;
     await act(async () => {
       const result = await api.detail(row.routineId);
-      if (current.current === client && lifetime.current === generation && detailIntent.current === intent) { setDetail(result); setEditing(false); }
+      if (current.current === client && lifetime.current === generation && detailIntent.current === intent) { selectedRoutine.current = row.routineId; acceptDetail(result); setEditing(false); }
     });
   }
   async function refreshSelected() {
     if (!api) return;
-    const selected = detail?.routine.routineId, intent = detailIntent.current, generation = lifetime.current;
-    await act(async () => {
-      await Promise.all([load(), selected ? api.detail(selected).then(result => {
-        if (current.current === client && lifetime.current === generation && detailIntent.current === intent) setDetail(result);
-      }) : Promise.resolve()]);
-    }, undefined, false);
+    const selected = selectedRoutine.current, intent = detailIntent.current, generation = lifetime.current;
+    await Promise.all([load(), selected ? api.detail(selected).then(result => {
+      if (current.current === client && lifetime.current === generation && detailIntent.current === intent && selectedRoutine.current === selected) acceptDetail(result);
+    }) : Promise.resolve()]);
   }
   const rowButtons = (row: BotRoutineCenterItem) => row.status !== "archived" ? <div className="flex flex-wrap gap-2">
     <button type="button" className={chatAgentButtonClass} disabled={pending || row.status === "paused" && (!row.sourceAvailable || row.requiresReview || !row.targetAvailable)}
@@ -135,6 +138,14 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
       onClick={() => void control(row, row.status === "active" ? "paused" : "active")}>{row.status === "active" ? "Pause" : "Resume"}</button>
     <button type="button" className={chatAgentButtonClass} disabled={pending} aria-label={`Archive ${row.proposal.name}`} onClick={() => setArchiving(row)}>Archive</button>
   </div> : null;
+  const ownerGeneration = lifetime.current;
+  const refreshCommitted = () => {
+    if (ownerGeneration !== lifetime.current || current.current !== client) return;
+    void refreshSelected().catch((failure: unknown) => {
+      console.warn("[schedules] Saved response refresh unavailable:", failure instanceof Error ? failure.name : "UnknownError");
+      if (ownerGeneration === lifetime.current) setError("Your response was saved. Schedules could not refresh. Try Refresh.");
+    });
+  };
   return <section aria-label="Schedules" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto p-4 sm:p-6">
     <header className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
       <div className="flex min-w-0 items-start gap-2">{headerLeading}<div><h1 className="text-lg font-semibold">Schedules</h1><p className="text-sm" style={chatAgentMutedStyle}>Your tasks on this Computer. Times shown in {Intl.DateTimeFormat().resolvedOptions().timeZone}.</p></div></div>
@@ -143,7 +154,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
     <div className="my-4 flex flex-wrap gap-2">
       <button type="button" className={chatAgentButtonClass} aria-pressed={query.archived !== "true"} onClick={() => chooseFilter({})}>Current</button>
       <button type="button" className={chatAgentButtonClass} aria-pressed={query.archived === "true"} onClick={() => chooseFilter({ archived: "true" })}>Archived</button>
-      <button type="button" className={chatAgentButtonClass} disabled={pending || loading} onClick={() => void refreshSelected()}>Refresh</button>
+      <button type="button" className={chatAgentButtonClass} disabled={pending || loading} onClick={() => void act(refreshSelected, undefined, false)}>Refresh</button>
     </div>
     {error ? <p role="alert" className="mb-3 text-sm">{error}</p> : null}
     {loading ? <p role="status">Loading schedules…</p> : null}
@@ -153,7 +164,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
         <button className={chatAgentButtonClass} type="button" disabled={pending} onClick={() => setArchiving(null)}>Keep schedule</button></div>
     </section> : null}
     {detail ? <section aria-label="Schedule details" className="mb-4 grid min-w-0 gap-3 rounded-xl border p-4">
-      <div className="flex flex-wrap justify-between gap-2"><h2 className="break-words font-semibold">{detail.routine.proposal.name}</h2><button type="button" className={chatAgentButtonClass} onClick={() => { detailIntent.current += 1; setDetail(null); setEditing(false); }}>Close details</button></div>
+      <div className="flex flex-wrap justify-between gap-2"><h2 className="break-words font-semibold">{detail.routine.proposal.name}</h2><button type="button" className={chatAgentButtonClass} onClick={() => { detailIntent.current += 1; selectedRoutine.current = null; setDetail(null); setEditing(false); }}>Close details</button></div>
       <p className="whitespace-pre-wrap break-words text-sm">{detail.routine.proposal.prompt}</p>
       <p className="text-sm">{statusLabel(detail.routine)} · Next run: {nextRun(detail.routine)}</p>
       {rowButtons(detail.routine)}
@@ -161,7 +172,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
         {onOpenBotChat && detail.routine.targetAvailable ? <button className={chatAgentButtonClass} type="button" disabled={pending} onClick={() => void act(async () => { await onOpenBotChat(detail.routine.chatId); }, onClose, false)}>Open Bot Chat</button> : null}
         {detail.routine.status !== "archived" ? <button type="button" className={chatAgentButtonClass} disabled={pending || !detail.routine.targetAvailable || !detail.routine.sourceAvailable} onClick={() => setEditing(true)}>Edit schedule</button> : null}
       </div>
-      {editing && api ? <ScheduleEditForm key={detail.routine.routineId} routine={detail.routine} api={api} botClient={client.bots!} agentName={names[detail.routine.botId]} pendingReadRevision={listRevision} getPendingReadSequence={() => reads.current} pendingInteractions={data?.pending ?? []} onChanged={() => { detailIntent.current += 1; setEditing(false); setDetail(null); void load(); }}/>: null}
+      {editing && api ? <ScheduleEditForm key={detail.routine.routineId} routine={detail.routine} api={api} botClient={client.bots!} agentName={names[detail.routine.botId]} pendingReadRevision={listRevision} getPendingReadSequence={() => reads.current} pendingInteractions={data?.pending ?? []} onRefreshRequired={refreshCommitted} onChanged={() => { detailIntent.current += 1; selectedRoutine.current = null; setEditing(false); setDetail(null); }}/>: null}
       <h3 className="mt-2 font-semibold">Recent runs</h3>
       {!detail.history.length ? <p className="text-sm">No runs yet.</p> : <ol className="grid gap-2">{detail.history.map(fire => <li key={fire.fireId} className="rounded-lg border p-3 text-sm">
         <p>{timestamp(fire.scheduledFor)} · {fire.status} · {fire.attempts} attempt{fire.attempts === 1 ? "" : "s"}</p>

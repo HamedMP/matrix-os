@@ -6,8 +6,8 @@ import { routineScheduleCopy } from "./routine-presentation.js";
 import { InteractionCard } from "./InteractionCard.js";
 import { chatAgentButtonClass, chatAgentInputClass } from "../theme.js";
 
-export function ScheduleEditForm({ routine, api, botClient, agentName, onChanged, pendingReadRevision = 0, pendingInteractions = [], getPendingReadSequence }: {
-  routine: BotRoutineCenterItem; api: BotRoutineClient; botClient: BotClient; agentName?: string; onChanged(): void; pendingReadRevision?: number; getPendingReadSequence?: () => number; pendingInteractions?: readonly BotInteraction[];
+export function ScheduleEditForm({ routine, api, botClient, agentName, onChanged, pendingReadRevision = 0, pendingInteractions = [], getPendingReadSequence, onRefreshRequired }: {
+  routine: BotRoutineCenterItem; api: BotRoutineClient; botClient: BotClient; agentName?: string; onChanged(): void; onRefreshRequired(): void; pendingReadRevision?: number; getPendingReadSequence?: () => number; pendingInteractions?: readonly BotInteraction[];
 }) {
   const liveReadRevision = useRef(pendingReadRevision), reviewedAtRead = useRef(pendingReadRevision);
   useLayoutEffect(() => { liveReadRevision.current = pendingReadRevision; }, [pendingReadRevision]);
@@ -52,7 +52,7 @@ export function ScheduleEditForm({ routine, api, botClient, agentName, onChanged
     {routine.revision !== openedRevision.current ? <div role="status" className="rounded-lg border p-3 text-sm"><p>The saved schedule changed to revision {routine.revision}. Your draft is kept. Check the saved task before reviewing again.</p><p className="mt-2 whitespace-pre-wrap break-words">Current saved task: {routine.proposal.name} — {routine.proposal.prompt}</p><p className="break-words">Saved timing: {routineScheduleCopy(routine.proposal.schedule).frequency} · {routineScheduleCopy(routine.proposal.schedule).timezone}</p></div> : null}
     {interaction && shownInteraction ? <><InteractionCard key={shownInteraction.interactionId} interaction={shownInteraction} actionsAvailable={!reviewUnavailable} agentName={agentName} currentRoutineRevision={routine.revision}
       onResolve={async input => { const result = await botClient.resolve(routine.chatId, interaction.interactionId, input); decision.current = input.kind === "approval" ? input.decision : null; return result; }}
-      onResolved={() => { if (!mounted.current) return; if (decision.current === "deny") { setInteraction(null); setError(""); } else onChanged(); }}/>
+      onResolved={() => { onRefreshRequired(); if (!mounted.current) return; if (decision.current === "deny") { setInteraction(null); setError(""); } else onChanged(); }}/>
       {reviewUnavailable ? <div className="grid gap-2 text-sm"><p>The previous review is no longer available. Your draft is kept.</p><button className={chatAgentButtonClass} type="button" onClick={() => { setInteraction(null); setError(""); }}>Return to draft</button></div> : null}
     </> : <>
       <label className="grid gap-1 text-sm">Task name<input className={inputClass} value={name} maxLength={120} disabled={pending} onChange={event => setName(event.currentTarget.value)}/></label>
