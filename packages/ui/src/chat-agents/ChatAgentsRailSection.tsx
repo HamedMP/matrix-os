@@ -1,4 +1,4 @@
-import { ChevronRight, Plus, Sparkle } from "lucide-react";
+import { ChevronRight, Clock, Plus, Sparkle } from "lucide-react";
 import type { StartAgentChat } from "./client.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ChatAgent } from "@matrix-os/contracts";
@@ -111,6 +111,7 @@ export function ChatAgentsRailSection({ activeChatId, client, summaryClient, isC
         menuZIndex={menuZIndex} current={activeAgentId === agent.id && !navigation.opened} opening={openingBot === agent.id}
         disabled={openingBot !== null || !client.bots || !onOpenBotChat} onOpen={details => { void openAgent(agent, details); }}/>) }
     </div></div></div>
+    {client.bots?.routines ? <button type="button" className="matrix-chat-agents-heading" aria-label="Schedules" aria-pressed={navigation.opened?.client === client && navigation.opened?.view === "schedules"} onClick={event => { if (!(isCurrentAuthority?.() ?? true)) return; onSelectionIntent?.(); navigation.open({ client, view: "schedules" }, event.currentTarget); onOpen?.(); }}><Clock aria-hidden="true" size={15}/><span>Schedules</span></button> : null}
     {openError ? <p role="alert" className="px-2 text-xs">{openError}</p> : null}
   </section>;
 }
