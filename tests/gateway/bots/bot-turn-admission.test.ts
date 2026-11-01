@@ -1,3 +1,4 @@
+import type {ChatProviderCatalogService} from "../../../packages/gateway/src/chat/provider-catalog.js";
 import { createBotContinuationAdmitter } from "../../../packages/gateway/src/bots/continuations.js";
 import { withChatGptPlanProviderInstance } from "../../../packages/gateway/src/bots/chatgpt-plan-provider-instance.js";
 import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
@@ -19,7 +20,7 @@ let repository: ChatRepository;
 let orchestrator: CanonicalChatOrchestrator;
 let finishBlockedRun: (() => void) | undefined;
 let blockedRun: Promise<void> | undefined;
-let getCatalog: ReturnType<typeof vi.fn>;
+let getCatalog: ReturnType<typeof vi.fn<ChatProviderCatalogService["getCatalog"]>>;
 let savedSelection: CanonicalChatModelSelection = { instanceId: "matrix_bot_default", model: "auto" };
 let started: Array<{ selection: unknown; permissionMode: string }>;
 
@@ -250,6 +251,49 @@ it("rejects funded image metadata above the conservative Relay aggregate before 
     parts: [{ type: "attachment_reference", attachmentId: "att_funded_image", kind: "image", label: "photo.png", mimeType: "image/png", sizeBytes: 1024 * 1024 + 1, ownerReference: "temporary/desktop-chat/photo.png" }],
     selection: savedSelection, interactionMode: "default", permissionMode: "default" })).rejects.toMatchObject({ status: 400, safeError: { safeMessage: expect.stringContaining("1 MiB") } });
   expect(started).toEqual([]); expect((await repository.get(owner, BOT_CHAT))?.chat.messageCount).toBe(0);
+});
+
+it("queues a routine through the same canonical Chat and deduplicates its fire request",async()=>{
+  const {createBotRoutineCanonicalRunner}=await import("../../../packages/gateway/src/bots/continuations.js");
+  blockedRun=new Promise(resolve=>{finishBlockedRun=resolve;});
+  await orchestrator.admitTurn(principal,owner,BOT_CHAT,{clientRequestId:"req_foreground_fixture",baseRevision:0,parts:[{type:"text",text:"foreground"}],selection:{instanceId:"matrix_bot_default",model:"auto"},interactionMode:"default",permissionMode:"default"});
+  await vi.waitFor(()=>expect(started).toHaveLength(1));
+  const run=createBotRoutineCanonicalRunner({repository,orchestrator});
+  const routine={ownerId:owner.ownerId,chatId:BOT_CHAT,proposal:{prompt:"approved scheduled fixture"}};
+  const fire={fireId:"fire_0123456789abcdef01234567"};
+  expect(await run(routine,fire,new AbortController().signal)).toEqual({status:"accepted"});
+  expect(await run(routine,fire,new AbortController().signal)).toEqual({status:"accepted"});
+  const queued=await repository.kysely.selectFrom("chat_queued_turns").selectAll().where("chat_id","=",BOT_CHAT).execute();
+  expect(queued).toHaveLength(1);expect(queued[0].client_request_id).toBe("req_routine_"+fire.fireId);
+  await run(routine,{...fire,attempts:2},new AbortController().signal);await run(routine,{...fire,attempts:2},new AbortController().signal);
+  const retries=await repository.kysely.selectFrom("chat_queued_turns").select("client_request_id").where("chat_id","=",BOT_CHAT).execute();
+  expect(retries.map(row=>row.client_request_id).sort()).toEqual(["req_routine_"+fire.fireId,"req_routine_"+fire.fireId+"_a2"]);
+
+  expect(started).toHaveLength(1);
+});
+
+it.each([1,2])("pauses a queued routine attempt %i through canonical queue cancellation without stopping foreground work",async(attempt)=>{
+ const {createBotRoutineCanonicalRunner}=await import("../../../packages/gateway/src/bots/continuations.js"),{createBotRoutineExecution}=await import("../../../packages/gateway/src/bots/routine-execution.js"),{bootstrapBotDatabase}=await import("../../../packages/gateway/src/bots/database.js"),{createBotRoutinesRepository}=await import("../../../packages/gateway/src/bots/repositories/routines.js"),{createBotBindingsRepository}=await import("../../../packages/gateway/src/bots/repositories/bindings.js");
+ const db=repository.kysely as unknown as import("kysely").Kysely<import("../../../packages/gateway/src/bots/database.js").OwnerBotDatabase>;await bootstrapBotDatabase(db);
+ const botId="bot_0123456789abcdef01234567",now=new Date().toISOString(),at=new Date(Date.now()+60000).toISOString();
+ await createBotBindingsRepository(db).bindDirect({ownerId:owner.ownerId,botId,chatId:BOT_CHAT,now});
+ const repo=createBotRoutinesRepository(db),routine=await repo.create({ownerId:owner.ownerId,botId,chatId:BOT_CHAT,proposal:{name:"Fixture",prompt:"Scheduled fixture",schedule:{kind:"interval",everyMs:60000},selection:{instanceId:"matrix_chatgpt_plan",model:"fixture"},authorizedEffects:["read"]},nextFireAt:at,now});
+ let fire=(await repo.claim({ownerId:owner.ownerId,routineId:routine.routineId,scheduledFor:at,nextFireAt:null,now:at}))!;fire=(await repo.dispatch({ownerId:owner.ownerId,fireId:fire.fireId,now:at}))!;
+ if(attempt===2){
+  const {createBotTasksRepository}=await import("../../../packages/gateway/src/bots/repositories/tasks.js"),tasks=createBotTasksRepository(db),task=(await tasks.get({ownerId:owner.ownerId,taskId:fire.taskId}))!;
+  await tasks.transition({ownerId:owner.ownerId,taskId:fire.taskId,baseRevision:task.revision,to:"running",runId:"run_capacity_old",now:at});
+  await tasks.transition({ownerId:owner.ownerId,taskId:fire.taskId,baseRevision:task.revision+1,to:"blocked",blockedReason:"capacity_unavailable",now:at});
+  await repo.defer({ownerId:owner.ownerId,fireId:fire.fireId,retryAfter:at,now:at});fire=(await repo.dispatch({ownerId:owner.ownerId,fireId:fire.fireId,now:at}))!;
+ }
+
+ blockedRun=new Promise(resolve=>{finishBlockedRun=resolve;});
+ const foreground=await orchestrator.admitTurn(principal,owner,BOT_CHAT,{clientRequestId:"req_control_foreground",baseRevision:0,parts:[{type:"text",text:"Foreground fixture"}],selection:{instanceId:"matrix_bot_default",model:"auto"},interactionMode:"default",permissionMode:"default"});await vi.waitFor(()=>expect(started).toHaveLength(1));
+ await createBotRoutineCanonicalRunner({repository,orchestrator})(routine,fire,new AbortController().signal);
+ const execution=createBotRoutineExecution({db,approvals:{} as never});execution.connect({repository,orchestrator});
+ const latest=(await repo.get(owner.ownerId,routine.routineId))!;await execution.control(owner.ownerId,botId,routine.routineId,{baseRevision:latest.revision,status:"paused"});
+ expect((await repo.getFire(owner.ownerId,fire.fireId))?.status).toBe("cancelled");
+ expect((await repository.get(owner,BOT_CHAT))?.activeRun?.runId).toBe(foreground.run.id);
+ const queue=await db.selectFrom("chat_queued_turns").select("status").where("client_request_id","=","req_routine_"+fire.fireId+(attempt>1?"_a2":"")).executeTakeFirst();expect(queue?.status).toBe("cancelled");
 });
 
 it("automatically delivers a blocking answer once, without a manual steer, after the old turn releases", async () => {
