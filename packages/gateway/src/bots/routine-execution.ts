@@ -16,6 +16,8 @@ import { effectOf } from "./integration-tools.js";
 import { createBotRoutineCanonicalRunner, botRoutineRequestId } from "./continuations.js";
 import { createBotRoutineScheduler } from "./routine-scheduler.js";
 import { assertCurrentRoutinePhase } from "./routine-phase.js";
+import { createBotRoutineManagement } from "./routine-management.js";
+import { describeRoutineChatPhase } from "./routine-chat-context.js";
 import { createBotStateTransactions, type BotStateTransactions } from "./events.js";
 import { ChatRepository } from "../chat/repository.js";
 import type { ChatDatabase } from "../chat/database.js";
@@ -250,9 +252,11 @@ export function createBotRoutineExecution(deps: {
     }
   }
   return {
+    describeChatPhase: (binding: BotRuntimeBinding) => describeRoutineChatPhase(deps.db, deps.approvals, binding, now()),
     connect(value: Canonical) {
       canonical = value;
     },
+    ...createBotRoutineManagement(deps.db, deps.approvals),
     async start(value: Canonical) {
       canonical = value;
       if (scheduler || deps.available?.() === false) return;
@@ -272,6 +276,7 @@ export function createBotRoutineExecution(deps: {
       await scheduler?.stop();
     },
     propose: deps.approvals.propose,
+    requestEdit: deps.approvals.requestEdit,
     async prepareRun(input: RunIdentity) {
       const run = await readRun(input);
       if (!run || !run.client_request_id.startsWith("req_routine_") && !run.original_request_id.startsWith("req_routine_")) return undefined;
@@ -352,7 +357,7 @@ export function createBotRoutineExecution(deps: {
     assertBinding,
     async assertOccurrencePhase(binding: BotRuntimeBinding) {
       const routine = await assertBinding(binding);
-      await assertCurrentRoutinePhase(deps.db, binding, routine, now);
+      return assertCurrentRoutinePhase(deps.db, binding, routine, now);
     },
     async assertTool(binding: BotRuntimeBinding, request: BotToolRequest) {
       const routine = await assertBinding(binding);

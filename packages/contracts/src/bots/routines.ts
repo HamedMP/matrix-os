@@ -30,7 +30,7 @@ export const BotRoutineProposalSchema = z.object({
   name: text(120),
   prompt: text(4096),
   schedule: BotRoutineScheduleSchema,
-  // This source already has explicit background authorization. No funded/key fallback.
+  // Matrix binds this source to the exact standing task approval. No funded/key fallback.
   selection: z.object({
     instanceId: z.literal("matrix_chatgpt_plan"),
     model: text(128)

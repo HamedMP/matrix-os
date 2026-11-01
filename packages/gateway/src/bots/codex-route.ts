@@ -16,12 +16,12 @@ export function createBotModelRouteResolver(options: {
   /** Compatibility only; native Codex identity must never fund a Pi coordinator. */
   resolveCodexIdentity?: ResolveCodexOwnerIdentity;
   lifetime?: AbortSignal;
-}): (selection?: CanonicalChatModelSelection, requestClass?: "interactive" | "background") => Promise<ResolvedBotRoute> {
+}): (selection?: CanonicalChatModelSelection, requestClass?: "interactive" | "background" | "routine") => Promise<ResolvedBotRoute> {
   return async (selection, requestClass = "interactive") => {
-    if (requestClass === "background" && selection?.instanceId !== "matrix_chatgpt_plan") throw new BotRouteError("model_unavailable");
+    if (requestClass !== "interactive" && selection?.instanceId !== "matrix_chatgpt_plan") throw new BotRouteError("model_unavailable");
     if (selection?.instanceId === "matrix_anthropic_api") {
       if (!options.matrixAnthropic || !options.ownerId) throw new BotRouteError("model_unavailable");
-      return options.matrixAnthropic.resolve(selection, options.ownerId, requestClass);
+      return options.matrixAnthropic.resolve(selection, options.ownerId, "interactive");
     }
     if (selection?.instanceId === "matrix_chatgpt_plan") {
       if (!options.chatgptPlan || !options.ownerId) throw new BotRouteError("model_unavailable");

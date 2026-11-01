@@ -156,6 +156,13 @@ export function createBotRoutinesRepository(db: BotExecutor) {
     async due(now: string) {
       return (await db.selectFrom("bot_routines").selectAll().where("status", "=", "active").where("next_fire_at", "<=", now).where(LIVE_ROUTINE).where(NO_UNFINISHED_FIRE).orderBy("next_fire_at").limit(32).execute()).map(routine);
     },
+    async listOwner(ownerId: string, input: { before?: string; beforeId?: string; archived?: "true" | "false" }) {
+      let query = db.selectFrom("bot_routines").selectAll().where("owner_id", "=", ownerId);
+      query = input.archived === "true" ? query.where("status", "=", "archived") : query.where("status", "!=", "archived");
+      if (input.before && input.beforeId) query = query.where(eb => eb.or([eb("created_at", "<", input.before!),
+        eb.and([eb("created_at", "=", input.before!), eb("routine_id", "<", input.beforeId!)])]));
+      return (await query.orderBy("created_at", "desc").orderBy("routine_id", "desc").limit(33).execute()).map(routine);
+    },
     async control(input: {
       ownerId: string;
       routineId: string;
@@ -220,6 +227,29 @@ export function createBotRoutinesRepository(db: BotExecutor) {
           updated_at: input.now
         }).where("owner_id", "=", input.ownerId).where("routine_id", "=", input.routineId).execute();
         return fire(row);
+      });
+    },
+    async revise(input: { ownerId: string; botId: string; chatId: string; routineId: string; baseRevision: number;
+      proposal: BotRoutineProposal; authorization: RoutineAuthorization; approvalId: string; nextFireAt: string; now: string }, ex: BotExecutor = db) {
+      const proposal = BotRoutineProposalSchema.parse(input.proposal);
+      if (proposal.schedule.kind === "cron" && !cron.validate(proposal.schedule.expr)) throw new BotStateError("invalid_input");
+      return withTransaction(ex, async tx => {
+        const existing = await tx.selectFrom("bot_routines").selectAll().where("owner_id", "=", input.ownerId)
+          .where("routine_id", "=", input.routineId).forUpdate().executeTakeFirst();
+        if (!existing || existing.bot_id !== input.botId || existing.chat_id !== input.chatId) throw new BotStateError("not_found");
+        if (toSafeInteger(existing.revision) !== input.baseRevision) throw new BotStateError("revision_conflict");
+        if (existing.status === "archived") throw new BotStateError("invalid_transition");
+        if (!(await liveBinding(input.ownerId, input.botId, input.chatId, tx))) throw new BotStateError("not_found");
+        const liveFire = await tx.selectFrom("bot_routine_fires").select("fire_id").where("owner_id", "=", input.ownerId)
+          .where("routine_id", "=", input.routineId).where("status", "in", ["claimed", "dispatched", "uncertain"]).limit(1).executeTakeFirst();
+        if (liveFire) throw new BotStateError("conflict");
+        const row = await tx.updateTable("bot_routines").set({ proposal: JSON.stringify(proposal),
+          approved_source: JSON.stringify(RoutineAuthorizationSchema.parse(input.authorization)), approval_id: input.approvalId,
+          revision: input.baseRevision + 1, next_fire_at: input.nextFireAt, updated_at: input.now })
+          .where("owner_id", "=", input.ownerId).where("routine_id", "=", input.routineId).where("revision", "=", input.baseRevision)
+          .returningAll().executeTakeFirst();
+        if (!row) throw new BotStateError("revision_conflict");
+        return routine(row);
       });
     },
     async getFire(ownerId: string, fireId: string) {

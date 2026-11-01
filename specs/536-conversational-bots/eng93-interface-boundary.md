@@ -4,7 +4,47 @@ Ticket: [ENG-93](https://linear.app/matrix-os/issue/ENG-93/enable-and-validate-r
 This is the backend handoff for the separate CLI entry-point work. It adds no
 CLI or MCP implementation and does not authorize cross-harness execution.
 
-## Routine execution context follow-up
+## Current schedule experience follow-up (2026-11-01)
+
+This unmerged ENG-93 follow-up changes both Gateway and Electron Native; the
+historical baselines below are not published equivalents. The stable proposal
+and control tool names remain unchanged. B/C identity adapters must not change
+their pinned baseline automatically.
+
+- Scheduling no longer requires enabling a general background grant in Settings.
+  Native explicitly asks/receives `approvedRoutines: true` through the existing
+  capability handshake. Strict signed v1 snapshots remain unchanged. Old/new
+  peers retain interactive Chat; default scheduling requires both new sides.
+- `ChatGptPlanAuthority.resolve(..., "routine")` selects an existing enabled
+  account/Computer/model source; it grants nothing. Actual inference calls
+  `assertOccurrencePhase`, derives the exact owner/Bot/Chat/task/run/fire/approval
+  from current durable state, and only then sends the narrow proof to Native.
+  Changed grant/definition, inactive routine, expired lease, lost private target,
+  wrong account/Computer or cancellation still refuse execution.
+- New owner-principal HTTP read/management entry points are GET
+  `/api/bot-routines`, GET `/api/bot-routines/:routineId`, POST
+  `/api/bot-routines/:routineId/control`, and POST
+  `/api/bot-routines/:routineId/review`. Exact DTOs live in
+  `packages/contracts/src/bots/routine-management.ts`. List is bounded/keyset
+  paginated; history is capped at 20. No caller-supplied owner is accepted.
+- Review accepts only `baseRevision`, `name`, `prompt`, `schedule`; it does not
+  immediately edit. Existing owner interaction resolution approves the exact
+  target/source/definition/revision digest. Duplicate identical review requests
+  return the same pending interaction. Changed content/revision conflicts. Model
+  and effects are retained. Approval preserves paused status; archive is final
+  for execution but retains history. Running/uncertain occurrences must settle
+  before instructions change. No new scheduler, CLI or cross-harness executor.
+- Approval previews now project a display-only next-time estimate without
+  changing the stored approval or digest. Actual next time is recomputed on
+  approval. Ordinary personal Chat receives bounded persisted state and, for
+  its matching `req_answer_...` continuation, the resolved owner decision; this
+  is descriptive context only and never execution authority.
+
+See [schedule experience](eng93-schedule-experience.md) for route authority, UX,
+verification and the separate public-documentation follow-up. New matching live
+evidence remains required; older screenshots, CI and G5 do not cover this code.
+
+## Historical occurrence-only context follow-up
 
 The local follow-up to native-consent head `e43ca794` adds no public request,
 response, broker or worker schema. At `bot.run.load`, the private Bot orchestrator
