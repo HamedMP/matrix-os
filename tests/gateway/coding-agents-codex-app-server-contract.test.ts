@@ -89,7 +89,7 @@ describe("Codex app-server contract", () => {
         "item/tool/requestUserInput": expect.stringMatching(/^[a-f0-9]{64}$/),
         "item/permissions/requestApproval": expect.stringMatching(/^[a-f0-9]{64}$/),
         "mcpServer/elicitation/request": expect.stringMatching(/^[a-f0-9]{64}$/),
-        "item/tool/call": expect.stringMatching(/^[a-f0-9]{64}$/),
+        "item/tool/call": "931064a4a120a47dc72bfcefa4c1ce3edb737b7faaf99a317bb4a6bc82dade19",
         "item/started": expect.stringMatching(/^[a-f0-9]{64}$/),
         "item/completed": expect.stringMatching(/^[a-f0-9]{64}$/),
         "item/agentMessage/delta": expect.stringMatching(/^[a-f0-9]{64}$/),
