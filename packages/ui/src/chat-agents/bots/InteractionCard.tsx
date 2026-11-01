@@ -7,8 +7,9 @@ import { RoutineApprovalDetails } from "./RoutineApprovalDetails.js";
 const MAX_STRUCTURED_ANSWER_BYTES = 700;
 const encoder = new TextEncoder();
 
-export function InteractionCard({ interaction, onResolve, onResolved, actionsAvailable = true, agentName }: {
+export function InteractionCard({ interaction, onResolve, onResolved, actionsAvailable = true, agentName, currentRoutineRevision }: {
   agentName?: string;
+  currentRoutineRevision?: number | null;
   interaction: BotInteraction;
   onResolve: (request: ResolveBotInteractionRequest) => Promise<ResolveBotInteractionResponse | void>;
   onResolved?: () => void;
@@ -33,12 +34,15 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
   const card = botInteractionCard(interaction, now);
   const isRoutine = payload?.kind === "approval" && payload.tool === "routine.activate";
   const routine = isRoutine && payload.kind === "approval" ? routineApprovalPreview(payload.preview) : null;
+  const staleRoutine = Boolean(routine?.source.routineId && currentRoutineRevision !== undefined
+    && currentRoutineRevision !== routine.source.baseRoutineRevision);
   const title = routine ? `${routine.source.routineId ? "Update schedule" : "Schedule"} ${routine.proposal.name}` : card.title;
   const recovery = !resolved ? botSavedAnswerRecovery(interaction, now, savedRevision) : null;
   const recoveryOpen = recovery !== null && !recovery.expired;
   const actionable = card.state === "actionable" && !resolved && actionsAvailable && (!isRoutine || routine !== null);
 
   const decide = async (request: ResolveBotInteractionRequest) => {
+    if (request.kind === "approval" && request.decision === "approve" && staleRoutine) return;
     if (pending || (request.kind === "resume" ? !recoveryOpen || !actionsAvailable : !actionable)) return;
     setPending(true);
     setError("");
@@ -91,6 +95,7 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
   return <section aria-label={title} className="matrix-chat-agent-card matrix-bot-interaction-card grid min-w-0 gap-3 rounded-xl border p-4" data-interaction-kind={interaction.kind}>
     <div><h3 className="break-words text-sm font-semibold">{title}</h3>
     {!actionable ? <p role="status" className="mt-1 text-xs" style={chatAgentMutedStyle}>{resolved ? "Resolved" : !actionsAvailable && card.state === "actionable" ? "Status unavailable. Refresh to respond." : card.state === "unavailable" ? "Only the designated person can respond." : card.state}</p> : null}</div>
+    {staleRoutine ? <p role="status" className="text-sm">This schedule changed. Cancel this review, then review your draft against the current revision.</p> : null}
     {access ? <div className="grid gap-1 text-xs" style={chatAgentMutedStyle}>
       <p>Requested access: {access.summary}</p>{access.boundary ? <p>{access.boundary}</p> : null}
     </div> : null}
@@ -150,7 +155,7 @@ export function InteractionCard({ interaction, onResolve, onResolved, actionsAva
         <div><dt style={chatAgentMutedStyle}>Permission</dt><dd>This action only</dd></div>
       </dl></details></> : null}
       <div className="flex flex-wrap gap-2">{(["approve", "deny"] as const).map((decision) => <button key={decision} type="button"
-        className={chatAgentButtonClass} disabled={pending} onClick={() => { void decide({ kind: "approval", baseRevision: interaction.revision, decision }); }}>
+        className={chatAgentButtonClass} disabled={pending || staleRoutine && decision === "approve"} onClick={() => { void decide({ kind: "approval", baseRevision: interaction.revision, decision }); }}>
         {routine ? decision === "approve" ? routine.source.routineId ? "Approve changes" : "Approve schedule" : "Cancel" : decision === "approve" ? "Approve" : "Deny"}</button>)}</div>
     </> : null}
     {isRoutine && !routine ? <p role="alert" className="text-sm">Schedule details are unavailable. Ask the Bot for a new proposal.</p> : null}

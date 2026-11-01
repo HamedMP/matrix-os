@@ -77,3 +77,14 @@ it("presents an edit as changes requiring a new explicit approval, including its
   fireEvent.click(screen.getByRole("button", {name: "Approve changes"}));
   await waitFor(() => expect(resolve).toHaveBeenCalledExactlyOnceWith({kind: "approval", decision: "approve", baseRevision: 7}));
 });
+
+it("shows weekday-list frequency and exposes an exact fallback for an uncommon repeat rule", () => {
+  const payload = interaction.payload! as Extract<NonNullable<BotInteraction["payload"]>, {kind: "approval"}>;
+  const envelope = JSON.parse(payload.preview);
+  envelope.proposal.schedule.expr = "0 9 * * 1,3";
+  const view = render(<InteractionCard interaction={{...interaction, payload: {...payload, preview: JSON.stringify(envelope)}}} onResolve={vi.fn()}/>);
+  expect(screen.getByText("Every Monday and Wednesday at 09:00")).toBeTruthy();
+  envelope.proposal.schedule.expr = "*/17 9-17 * * 1-5";
+  view.rerender(<InteractionCard interaction={{...interaction, payload: {...payload, preview: JSON.stringify(envelope)}}} onResolve={vi.fn()}/>);
+  expect(screen.getByText("Custom repeat rule: */17 9-17 * * 1-5")).toBeTruthy();
+});

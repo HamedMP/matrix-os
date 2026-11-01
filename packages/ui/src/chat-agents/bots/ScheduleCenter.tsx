@@ -3,7 +3,7 @@ import type { BotRoutineCenterResponse, BotRoutineCenterQuery, BotRoutineDetailR
 import type { ChatAgentClient } from "../client.js";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
 import { InteractionCard } from "./InteractionCard.js";
-import { routineScheduleCopy } from "./routine-presentation.js";
+import { routineScheduleCopy, routineApprovalPreview } from "./routine-presentation.js";
 import { ScheduleEditForm } from "./ScheduleEditForm.js";
 
 const unavailable = "Schedules could not be loaded. Refresh and try again.";
@@ -32,6 +32,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
 }) {
   const api = client.bots?.routines;
   const [data, setData] = useState<BotRoutineCenterResponse | null>(null);
+  const [listRevision, setListRevision] = useState(0);
   const [names, setNames] = useState<Record<string, string>>({});
   const [query, setQuery] = useState<BotRoutineCenterQuery>({});
   const currentQuery = useRef(query);
@@ -58,7 +59,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
     try {
       const result = await api.list(next);
       if (generation !== lifetime.current || current.current !== client || sequence !== reads.current) return;
-      setData(result);
+      setData(result); setListRevision(sequence);
     } catch (failure: unknown) {
       console.warn("[schedules] List unavailable:", failure instanceof Error ? failure.name : "UnknownError");
       if (generation === lifetime.current && sequence === reads.current) setError(unavailable);
@@ -76,14 +77,14 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
     });
     return () => { active = false; };
   }, [client]);
-  async function act(operation: () => Promise<unknown>, after?: () => void, refresh = true) {
+  async function act<T>(operation: () => Promise<T>, after?: (result: T) => void, refresh = true) {
     if (busy.current) return;
     const generation = lifetime.current;
     busy.current = true; setPending(true); setError("");
     try {
-      await operation();
+      const result = await operation();
       if (generation !== lifetime.current || current.current !== client) return;
-      after?.();
+      after?.(result);
       if (refresh) await load();
     } catch (failure: unknown) {
       console.warn("[schedules] Action unavailable:", failure instanceof Error ? failure.name : "UnknownError");
@@ -95,7 +96,17 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
   }
   const control = (row: BotRoutineCenterItem, status: "active" | "paused" | "archived") => api && act(
     () => api.control(row.routineId, { status, baseRevision: row.revision }),
-    () => { setArchiving(null); if (detail?.routine.routineId === row.routineId) { setDetail(null); setEditing(false); } },
+    result => {
+      setArchiving(null);
+      setData(current => current ? { ...current, items: current.items.flatMap(item => {
+        if (item.routineId !== row.routineId || item.revision !== row.revision) return [item];
+        if (result.status === "archived" && currentQuery.current.archived !== "true") return [];
+        return [{ ...item, status: result.status, revision: result.revision }];
+      }) } : current);
+      if (status === "archived" && detail?.routine.routineId === row.routineId) { detailIntent.current += 1; setDetail(null); setEditing(false); }
+      else setDetail(current => current?.routine.routineId === row.routineId && current.routine.revision === row.revision
+        ? { ...current, routine: { ...current.routine, status: result.status, revision: result.revision } } : current);
+    },
   );
   function chooseFilter(next: BotRoutineCenterQuery) {
     currentQuery.current = next; reads.current += 1; detailIntent.current += 1;
@@ -108,6 +119,15 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
       const result = await api.detail(row.routineId);
       if (current.current === client && lifetime.current === generation && detailIntent.current === intent) { setDetail(result); setEditing(false); }
     });
+  }
+  async function refreshSelected() {
+    if (!api) return;
+    const selected = detail?.routine.routineId, intent = detailIntent.current, generation = lifetime.current;
+    await act(async () => {
+      await Promise.all([load(), selected ? api.detail(selected).then(result => {
+        if (current.current === client && lifetime.current === generation && detailIntent.current === intent) setDetail(result);
+      }) : Promise.resolve()]);
+    }, undefined, false);
   }
   const rowButtons = (row: BotRoutineCenterItem) => row.status !== "archived" ? <div className="flex flex-wrap gap-2">
     <button type="button" className={chatAgentButtonClass} disabled={pending || row.status === "paused" && (!row.sourceAvailable || row.requiresReview || !row.targetAvailable)}
@@ -123,7 +143,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
     <div className="my-4 flex flex-wrap gap-2">
       <button type="button" className={chatAgentButtonClass} aria-pressed={query.archived !== "true"} onClick={() => chooseFilter({})}>Current</button>
       <button type="button" className={chatAgentButtonClass} aria-pressed={query.archived === "true"} onClick={() => chooseFilter({ archived: "true" })}>Archived</button>
-      <button type="button" className={chatAgentButtonClass} disabled={pending || loading} onClick={() => void load()}>Refresh</button>
+      <button type="button" className={chatAgentButtonClass} disabled={pending || loading} onClick={() => void refreshSelected()}>Refresh</button>
     </div>
     {error ? <p role="alert" className="mb-3 text-sm">{error}</p> : null}
     {loading ? <p role="status">Loading schedules…</p> : null}
@@ -141,7 +161,7 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
         {onOpenBotChat && detail.routine.targetAvailable ? <button className={chatAgentButtonClass} type="button" disabled={pending} onClick={() => void act(async () => { await onOpenBotChat(detail.routine.chatId); }, onClose, false)}>Open Bot Chat</button> : null}
         {detail.routine.status !== "archived" ? <button type="button" className={chatAgentButtonClass} disabled={pending || !detail.routine.targetAvailable || !detail.routine.sourceAvailable} onClick={() => setEditing(true)}>Edit schedule</button> : null}
       </div>
-      {editing && api ? <ScheduleEditForm key={`${detail.routine.routineId}:${detail.routine.revision}`} routine={detail.routine} api={api} botClient={client.bots!} agentName={names[detail.routine.botId]} onChanged={() => { setEditing(false); setDetail(null); void load(); }}/>: null}
+      {editing && api ? <ScheduleEditForm key={detail.routine.routineId} routine={detail.routine} api={api} botClient={client.bots!} agentName={names[detail.routine.botId]} pendingReadRevision={listRevision} getPendingReadSequence={() => reads.current} pendingInteractions={data?.pending ?? []} onChanged={() => { setEditing(false); setDetail(null); void load(); }}/>: null}
       <h3 className="mt-2 font-semibold">Recent runs</h3>
       {!detail.history.length ? <p className="text-sm">No runs yet.</p> : <ol className="grid gap-2">{detail.history.map(fire => <li key={fire.fireId} className="rounded-lg border p-3 text-sm">
         <p>{timestamp(fire.scheduledFor)} · {fire.status} · {fire.attempts} attempt{fire.attempts === 1 ? "" : "s"}</p>
@@ -150,14 +170,19 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, headerLeading }
     </section> : null}
     {data && !loading ? <>
       {query.archived !== "true" && data.pending.length ? <section aria-label="Awaiting your approval" className="mb-4 grid gap-3"><h2 className="font-semibold">Awaiting your approval</h2>
-        {data.pending.map(item => <InteractionCard key={item.interactionId} interaction={item} agentName={names[item.agentId]} actionsAvailable={!pending}
-          onResolve={input => client.bots!.resolve(item.chatId, item.interactionId, input)} onResolved={() => void load()}/>)}</section> : null}
+        {data.pending.map(item => {
+          const preview = item.payload?.kind === "approval" ? routineApprovalPreview(item.payload.preview) : null;
+          const target = preview?.source.routineId ? data.items.find(row => row.routineId === preview.source.routineId) : undefined;
+          const revision = preview?.source.routineId ? target?.targetAvailable && target.sourceAvailable && !target.requiresReview ? target.revision : null : undefined;
+          return <InteractionCard key={item.interactionId} interaction={item} agentName={names[item.agentId]} actionsAvailable={!pending} currentRoutineRevision={revision}
+            onResolve={input => client.bots!.resolve(item.chatId, item.interactionId, input)} onResolved={() => void load()}/>;
+        })}</section> : null}
       {!data.items.length ? <div className="rounded-xl border p-6"><h2 className="font-semibold">{query.archived === "true" ? "No archived schedules" : "No schedules yet"}</h2><p className="mt-2 text-sm" style={chatAgentMutedStyle}>Ask a private Bot Chat to schedule a task, then review and approve it here or in Chat.</p></div> : <ul className="grid min-w-0 gap-3">
         {data.items.map(row => { const copy = routineScheduleCopy(row.proposal.schedule); return <li key={row.routineId} className="grid min-w-0 gap-3 rounded-xl border p-4">
           <div className="flex flex-wrap items-start justify-between gap-2"><button type="button" className="text-left font-semibold" aria-label={`View ${row.proposal.name}`} disabled={pending} onClick={() => void view(row)}>{row.proposal.name}</button><span className="rounded-full border px-2 py-1 text-xs">{statusLabel(row)}</span></div>
           <p className="whitespace-pre-wrap break-words text-sm">{row.proposal.prompt}</p>
-          <p className="break-words text-xs" style={chatAgentMutedStyle}>{names[row.botId] ?? "Bot unavailable"} · {row.computerId ?? "Computer unavailable"}</p>
-          <p className="text-sm">{copy.frequency} · {copy.timezone}</p><p className="text-xs" style={chatAgentMutedStyle}>Next run: {nextRun(row)}{row.lastFire ? ` · Last run: ${row.lastFire.status}` : " · Not run yet"}</p>
+          <p className="break-words text-xs" style={chatAgentMutedStyle}>{names[row.botId] ?? (row.targetAvailable ? "Private Bot" : "Bot unavailable")} · {row.computerId ?? "Computer unavailable"}</p>
+          <p className="break-words text-sm">{copy.frequency} · {copy.timezone}</p><p className="text-xs" style={chatAgentMutedStyle}>Next run: {nextRun(row)}{row.lastFire ? ` · Last run: ${row.lastFire.status}` : " · Not run yet"}</p>
           {rowButtons(row)}
         </li>; })}
       </ul>}

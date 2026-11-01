@@ -29,7 +29,21 @@ export function routineScheduleCopy(schedule: BotRoutineSchedule): { frequency: 
   }).format(new Date(schedule.at)) };
   const [minute, hour, day, month, weekday] = schedule.expr.trim().split(/\s+/);
   const clock = /^\d+$/.test(hour!) && /^\d+$/.test(minute!) ? `${hour!.padStart(2, "0")}:${minute!.padStart(2, "0")}` : null;
-  const frequency = clock && day === "*" && month === "*" && weekday === "*" ? `Every day at ${clock}`
-    : clock && day === "*" && month === "*" && weekday === "1-5" ? `Weekdays at ${clock}` : "Custom recurring schedule";
+  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const join = (values: string[]) => values.length < 3 ? values.join(" and ") : `${values.slice(0, -1).join(", ")}, and ${values.at(-1)}`;
+  let frequency = `Custom repeat rule: ${schedule.expr}`;
+  if (clock && day === "*" && month === "*") {
+    if (weekday === "*") frequency = `Every day at ${clock}`;
+    else if (weekday === "1-5") frequency = `Weekdays at ${clock}`;
+    else if (/^[0-7](?:,[0-7])*$/.test(weekday!)) {
+      const selected = [...new Set(weekday!.split(",").map(value => Number(value) % 7))];
+      frequency = `Every ${join(selected.map(value => days[value]!))} at ${clock}`;
+    }
+  } else if (clock && /^\d+$/.test(day!) && month === "*" && weekday === "*") frequency = `Monthly on day ${day} at ${clock}`;
+  else if (hour === "*" && day === "*" && month === "*" && weekday === "*") {
+    if (minute === "*") frequency = "Every minute";
+    else if (/^\d+$/.test(minute!)) frequency = `Every hour at minute ${minute}`;
+    else if (/^\*\/[1-9]\d?$/.test(minute!) && 60 % Number(minute!.slice(2)) === 0) frequency = `Every ${Number(minute!.slice(2))} minutes`;
+  }
   return { frequency, timezone: schedule.tz, next: "Next matching time after approval" };
 }
