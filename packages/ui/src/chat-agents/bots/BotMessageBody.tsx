@@ -6,6 +6,7 @@ import { BotCurrentTaskStatus, currentBotAttentionTask } from "./BotCurrentTaskS
 export interface BotMessageState {
   chatId: string;
   agentId: string;
+  agentName?: string;
   interactions: readonly BotInteraction[];
   interactionsFresh: boolean;
   tasks: readonly BotTaskSummary[];
@@ -40,6 +41,7 @@ function MessageBody({ runIds, requestIds = [], unassigned = false }: {
   if (!interactions.length && !currentBotAttentionTask(body.tasks) && !error) return null;
   return <div data-bot-message-state className="grid min-w-0 gap-3 py-2">
     {interactions.map(interaction => <InteractionCard key={interaction.interactionId} interaction={interaction}
+      agentName={state.agentName}
       actionsAvailable={state.interactionsFresh} onResolve={input => state.resolve(interaction.interactionId, input)} onResolved={state.refresh}/>)}
     <BotCurrentTaskStatus tasks={body.tasks}/>
     {error ? <p role="alert" className="text-xs">{state.error}</p> : null}
