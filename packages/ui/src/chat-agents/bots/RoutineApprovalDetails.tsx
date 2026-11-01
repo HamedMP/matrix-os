@@ -1,5 +1,5 @@
 import { chatAgentMutedStyle } from "../theme.js";
-import { routineScheduleCopy, type routineApprovalPreview } from "./routine-presentation.js";
+import { routineScheduleCopy, ROUTINE_EXECUTION_IMPACT, type routineApprovalPreview } from "./routine-presentation.js";
 
 export function RoutineApprovalDetails({ approval, agentName, preview }: {
   approval: NonNullable<ReturnType<typeof routineApprovalPreview>>; agentName?: string; preview: string;
@@ -12,7 +12,7 @@ export function RoutineApprovalDetails({ approval, agentName, preview }: {
         ["Time zone", schedule.timezone], [approval.estimatedNextFireAt ? "Estimated next run" : "First run", approval.estimatedNextFireAt ? new Intl.DateTimeFormat("en", {dateStyle: "medium", timeStyle: "short", timeZone: proposal.schedule.kind === "cron" ? proposal.schedule.tz : "UTC"}).format(new Date(approval.estimatedNextFireAt)) + (proposal.schedule.kind === "cron" ? "" : " UTC") : schedule.next], ["Access", proposal.authorizedEffects.map(effect => ({ read: "Read", write: "Create or change content", send: "Send messages" })[effect]).join(", ")]]
         .map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-xs" style={chatAgentMutedStyle}>{label}</dt><dd className="break-words">{value}</dd></div>)}
     </dl>
-    <p className="text-xs leading-5" style={chatAgentMutedStyle}>Runs without a new message using your connected ChatGPT subscription while this device stays connected. Approving allows only this task. Other actions still need their own permission.</p>
+    <p className="text-xs leading-5" style={chatAgentMutedStyle}>{ROUTINE_EXECUTION_IMPACT}</p>
     {approval.estimatedNextFireAt ? <p className="text-xs" style={chatAgentMutedStyle}>Next run is recalculated when you approve.</p> : null}
     <p className="text-xs leading-5" style={chatAgentMutedStyle}>Pause or archive this task in Schedules at any time.</p>
     <details className="min-w-0 text-xs"><summary className="cursor-pointer font-medium">Technical details</summary>

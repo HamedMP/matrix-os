@@ -6,6 +6,7 @@ const source = z.object({ computerId: z.string().min(1).max(128), accountId: z.s
   routineId: z.string().regex(/^rt_[a-f0-9]{24}$/).optional(), baseRoutineRevision: z.number().int().positive().optional(),
 }).strict().refine(value => Boolean(value.routineId) === Boolean(value.baseRoutineRevision));
 const envelope = z.object({ proposal: BotRoutineProposalSchema, source, estimatedNextFireAt: z.iso.datetime({ offset: true }).nullable().optional() }).strict();
+export const ROUTINE_EXECUTION_IMPACT = "Runs without a new message using your connected ChatGPT subscription while the connected desktop stays online. Approving allows only this task. Other actions still need their own permission.";
 
 /** Shared display policy only; persisted service state remains authoritative. */
 export function routineNextRun(row: BotRoutineCenterItem): string {
