@@ -7,6 +7,7 @@
   "exports": {
     "./bot-routine-client": "./src/chat-agents/bots/routine-client.ts",
     "./bot-routine-presentation": "./src/chat-agents/bots/routine-presentation.ts",
+    "./bot-routine-review": "./src/chat-agents/bots/routine-review-clock.ts",
     "./chat-diagram-policy": "./src/chat/diagram-policy.ts",
     ".": "./src/index.ts",
     "./collaboration-direct-client": "./src/collaboration/direct-client.ts",

@@ -11,7 +11,7 @@ const interaction: BotInteraction = {interactionId: "in_abcdefgh", chatId: routi
 function props() {return {routine, api: {list: jest.fn(), detail: jest.fn(), control: jest.fn(), review: jest.fn(async () => ({interaction}))},
   resolve: jest.fn(async () => ({interaction: {...interaction, status: "resolved" as const, revision: 2}})), actionsAvailable: true,
   pending: [] as BotInteraction[], pendingRead: 1, getReadSequence: () => 1, onRefresh: jest.fn(async () => undefined), onDone: jest.fn()};}
-afterEach(cleanup);
+afterEach(() => { cleanup(); jest.useRealTimers(); });
 it("keeps a draft across a saved revision change and explicitly reviews against the new revision", async () => {
   const p = props(); const view = render(<ScheduleEditor {...p} />);
   fireEvent.changeText(screen.getByLabelText("Task name"), "My draft");
@@ -53,4 +53,42 @@ it("rejects invalid timing and ignores duplicate review presses while waiting", 
   fireEvent.press(screen.getByRole("button", {name: "Review changes"}));
   expect(p.api.review).toHaveBeenCalledTimes(1);
   await act(async () => finish({interaction}));
+});
+
+it("returns to a retained draft from an expired review without submitting a new one", async () => {
+  const p = props(); p.api.review.mockResolvedValue({interaction: {...interaction, expiresAt: "2000-01-01T00:00:00.000Z"}});
+  render(<ScheduleEditor {...p} />);
+  fireEvent.changeText(screen.getByLabelText("Task name"), "Keep expired draft");
+  fireEvent.press(screen.getByRole("button", {name: "Review changes"}));
+  fireEvent.press(await screen.findByRole("button", {name: "Return to draft"}));
+  expect(screen.getByLabelText("Task name").props.value).toBe("Keep expired draft");
+  expect(p.api.review).toHaveBeenCalledTimes(1);
+  expect(p.resolve).not.toHaveBeenCalled();
+});
+it("makes a draft recoverable when its visible review expires without another list read", async () => {
+  jest.useFakeTimers();
+  const p = props(); p.api.review.mockResolvedValue({interaction: {...interaction, expiresAt: new Date(Date.now()+1000).toISOString()}});
+  render(<ScheduleEditor {...p} />);
+  await act(async () => fireEvent.press(screen.getByRole("button", {name: "Review changes"})));
+  expect(screen.queryByRole("button", {name: "Return to draft"})).toBeNull();
+  await act(async () => jest.advanceTimersByTime(1001));
+  expect(screen.getByRole("button", {name: "Return to draft"})).toBeTruthy();
+  expect(p.api.review).toHaveBeenCalledTimes(1);
+});
+
+it("keeps Return to draft disabled while an already-submitted decision crosses expiry", async () => {
+  jest.useFakeTimers(); const p = props();
+  p.api.review.mockResolvedValue({interaction: {...interaction, expiresAt: new Date(Date.now()+1000).toISOString()}});
+  let finish!: (value: Awaited<ReturnType<typeof p.resolve>>) => void;
+  p.resolve.mockImplementation(() => new Promise(done => {finish = done;}));
+  render(<ScheduleEditor {...p} />);
+  await act(async () => fireEvent.press(screen.getByRole("button", {name: "Review changes"})));
+  fireEvent.press(screen.getByRole("button", {name: "Approve changes"}));
+  await act(async () => jest.advanceTimersByTime(1001));
+  const back = screen.getByRole("button", {name: "Return to draft"});
+  expect(back.props.accessibilityState.disabled).toBe(true);
+  fireEvent.press(back);
+  expect(screen.queryByLabelText("Task name")).toBeNull();
+  await act(async () => finish({interaction: {...interaction, status: "resolved", revision: 2}}));
+  expect(p.onDone).toHaveBeenCalledTimes(1);
 });

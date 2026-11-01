@@ -3,27 +3,12 @@ import type { BotRoutineCenterResponse, BotRoutineCenterQuery, BotRoutineDetailR
 import type { ChatAgentClient } from "../client.js";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
 import { InteractionCard } from "./InteractionCard.js";
-import { routineScheduleCopy, routineApprovalPreview } from "./routine-presentation.js";
+import { routineScheduleCopy, routineApprovalPreview, routineNextRun as nextRun, routineStatusLabel as statusLabel } from "./routine-presentation.js";
 import { ScheduleEditForm } from "./ScheduleEditForm.js";
 
 const unavailable = "Schedules could not be loaded. Refresh and try again.";
 function timestamp(value: string | null) {
   return value ? new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "None scheduled";
-}
-function nextRun(row: BotRoutineCenterItem) {
-  if (row.status === "archived") return "No future runs · archived";
-  if (row.status === "paused") return "No future runs · paused";
-  if (row.requiresReview || !row.targetAvailable || !row.sourceAvailable) return "Review required before execution";
-  return timestamp(row.nextFireAt);
-}
-function statusLabel(row: BotRoutineCenterItem) {
-  if (row.status === "archived") return "Archived";
-  if (!row.targetAvailable) return "Target unavailable";
-  if (row.requiresReview || !row.sourceAvailable) return "Needs review";
-  if (row.lastFire?.status === "uncertain") return "Execution uncertain";
-  if (row.lastFire && ["claimed", "dispatched"].includes(row.lastFire.status)) return "Running";
-  if (row.status === "paused") return row.lastFire?.status === "failed" ? "Paused after failure" : "Paused";
-  return row.lastFire?.status === "failed" ? "Active · last run failed" : "Active";
 }
 
 /** Owner-scoped API, same retained Chat navigation on every web/Electron shell. */

@@ -3,6 +3,7 @@ import { Text, TextInput, View } from "react-native";
 import { BotRoutineEditRequestSchema, type BotInteraction, type BotRoutineCenterItem, type BotRoutineSchedule } from "@matrix-os/contracts";
 import type { BotRoutineClient } from "@matrix-os/ui/bot-routine-client";
 import { routineScheduleCopy } from "@matrix-os/ui/bot-routine-presentation";
+import { useRoutineReviewClosed } from "@matrix-os/ui/bot-routine-review";
 import { Button, TextField } from "@/components/ui";
 import { PendingInteraction } from "../interactions/PendingInteraction";
 import type { ResolveSchedule } from "./SchedulesScreen";
@@ -41,6 +42,7 @@ export function ScheduleEditor({ routine, api, resolve, actionsAvailable, pendin
   const hasNewRead = review !== null && pendingRead > readBarrier.current;
   const currentReview = hasNewRead ? pending.find(item => item.interactionId === review!.interactionId) : review;
   const missing = hasNewRead && !currentReview;
+  const closedReview = useRoutineReviewClosed(currentReview ?? review);
   return <View style={styles.group}>
     <Text accessibilityRole="header" style={styles.heading}>Review changes before they apply</Text>
     <Text style={styles.note}>The existing task keeps its settings until you approve. Pause it first if you do not want another run.</Text>
@@ -52,15 +54,19 @@ export function ScheduleEditor({ routine, api, resolve, actionsAvailable, pendin
     {review ? <>
       <PendingInteraction key={review.interactionId} interaction={currentReview ?? review} currentRoutineRevision={routine.revision}
         actionsAvailable={actionsAvailable && !missing} onResolve={async (_id, input) => {
-          const result = await resolve(review, input); decision.current = input.kind === "approval" ? input.decision : null; return result;
+          inFlight.current = true; setBusy(true);
+          try { const result = await resolve(review, input); decision.current = input.kind === "approval" ? input.decision : null; return result; }
+          catch (failure: unknown) { inFlight.current = false; if (mounted.current) setBusy(false); throw failure; }
         }} onRefresh={async () => {
           // A committed response must refresh even if the editor has since closed.
-          await onRefresh();
-          if (!mounted.current) return;
-          if (decision.current === "deny") { setReview(null); setError(""); } else onDone();
+          try {
+            await onRefresh();
+            if (!mounted.current) return;
+            if (decision.current === "deny") { setReview(null); setError(""); } else onDone();
+          } finally { inFlight.current = false; if (mounted.current) setBusy(false); }
         }} />
-      {missing ? <><Text style={styles.note}>The previous review is no longer available. Your draft is kept.</Text>
-        <Button label="Return to draft" variant="outline" onPress={() => setReview(null)} /></> : null}
+      {missing || closedReview ? <><Text style={styles.note}>The previous review is no longer available. Your draft is kept.</Text>
+        <Button label="Return to draft" variant="outline" disabled={busy} onPress={() => { if (!inFlight.current) setReview(null); }} /></> : null}
     </> : <>
       <TextField accessibilityLabel="Task name" value={name} onChangeText={setName} maxLength={120} editable={!busy} />
       <TextInput accessibilityLabel="What should happen?" multiline value={prompt} onChangeText={setPrompt} maxLength={4096} editable={!busy} style={styles.input} />

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Alert, ScrollView, Text, View } from "react-native";
 import type { BotInteraction, BotRoutineCenterItem, BotRoutineCenterResponse, BotRoutineDetailResponse, ResolveBotInteractionRequest, ResolveBotInteractionResponse } from "@matrix-os/contracts";
 import type { BotRoutineClient } from "@matrix-os/ui/bot-routine-client";
-import { routineApprovalPreview, routineScheduleCopy } from "@matrix-os/ui/bot-routine-presentation";
+import { routineApprovalPreview, routineScheduleCopy, routineStatusLabel as status, routineNextRun } from "@matrix-os/ui/bot-routine-presentation";
 import { TabScreen } from "@/components/shell/TabScreen";
 import { Button } from "@/components/ui";
 import { PendingInteraction } from "../interactions/PendingInteraction";
@@ -14,15 +14,6 @@ const MAX_VISIBLE = 256;
 const EMPTY: BotRoutineCenterResponse = { items: [], pending: [], nextCursor: null };
 const date = (value: string) => new Date(value).toLocaleString();
 
-function status(item: BotRoutineCenterItem) {
-  if (item.status === "archived") return "Archived";
-  if (!item.targetAvailable) return "Bot unavailable";
-  if (!item.sourceAvailable || item.requiresReview) return "Needs review";
-  if (item.status === "paused") return "Paused";
-  if (item.lastFire?.status === "failed" || item.lastFire?.status === "uncertain") return "Needs attention";
-  if (item.lastFire?.status === "claimed" || item.lastFire?.status === "dispatched") return "Running";
-  return "Active";
-}
 
 /** Keyed by owner + Computer in the route; every read also has a view-generation fence. */
 export function SchedulesScreen({ api, resolve, onBack }: { api: BotRoutineClient; resolve: ResolveSchedule; onBack(): void }) {
@@ -130,7 +121,7 @@ export function SchedulesScreen({ api, resolve, onBack }: { api: BotRoutineClien
         <Text style={styles.note}>{`${status(current)} · Revision ${current.revision}`}</Text>
         <Text style={styles.note}>{`Bot: ${current.botId} · Computer: ${current.computerId ?? "Unavailable"}`}</Text>
         <Text style={styles.text}>{`${routineScheduleCopy(current.proposal.schedule).frequency} · ${routineScheduleCopy(current.proposal.schedule).timezone}`}</Text>
-        <Text style={styles.note}>{current.status === "active" && current.nextFireAt ? `Next run: ${date(current.nextFireAt)}` : "No future run while paused or archived."}</Text>
+        <Text style={styles.note}>{`Next run: ${routineNextRun(current)}`}</Text>
         {current.status !== "archived" ? <View style={styles.row}>
           <Button label={current.status === "active" ? "Pause" : "Resume"} disabled={busy || !fresh || (current.status === "paused" && (!current.targetAvailable || !current.sourceAvailable || current.requiresReview))}
             onPress={() => void control(current, current.status === "active" ? "paused" : "active")} />
@@ -156,7 +147,7 @@ export function SchedulesScreen({ api, resolve, onBack }: { api: BotRoutineClien
         <Button label={item.proposal.name} variant="text" onPress={() => void view(item.routineId)} />
         <Text style={styles.text}>{`${status(item)} · ${routineScheduleCopy(item.proposal.schedule).frequency}`}</Text>
         <Text style={styles.note}>{`${routineScheduleCopy(item.proposal.schedule).timezone} · Bot ${item.botId} · ${item.computerId ?? "Computer unavailable"}`}</Text>
-        <Text style={styles.note}>{item.status === "active" && item.nextFireAt ? `Next run: ${date(item.nextFireAt)}` : "No future run while paused or archived."}</Text>
+        <Text style={styles.note}>{`Next run: ${routineNextRun(item)}`}</Text>
         {item.lastFire ? <Text style={styles.note}>{`Last run: ${item.lastFire.status} · ${date(item.lastFire.scheduledFor)}`}</Text> : null}
       </View>)}
       {data.nextCursor && data.items.length < MAX_VISIBLE ? <Button label="Load more" disabled={loading} onPress={() => void load(data.nextCursor!)} /> : null}
