@@ -21,7 +21,7 @@ it('upgrades an existing question without inventing its source, and keeps repeat
       VALUES (${interaction.interactionId}, ${OWNER}, ${BOT}, 'chat_source_upgrade', ${task.taskId}, 'question',
       ${JSON.stringify(interaction.payload)}::jsonb, ${OWNER}, true, 'pending', NULL,
       '2026-09-28T12:00:00.000Z', ${NOW}, NULL)`.execute(db);
-    expect((await bootstrapBotDatabase(db)).applied).toEqual([9,10,11]);
+    expect((await bootstrapBotDatabase(db)).applied).toEqual([9,10,11,12,13,14,15]);
     const stored = await sql<{ source_run_id: string | null; resolution: unknown; status: string }>`SELECT source_run_id, resolution, status FROM bot_interactions WHERE interaction_id=${interaction.interactionId}`.execute(db);
     expect(stored.rows).toEqual([{ source_run_id: null, resolution: null, status: 'pending' }]);
     await expect(sql`UPDATE bot_interactions SET source_run_id='invalid-source' WHERE interaction_id=${interaction.interactionId}`.execute(db)).rejects.toThrow();

@@ -5,6 +5,7 @@ import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TERMINAL_AGENT_OPTIONS } from "../../shell/src/components/terminal/terminal-agent-options";
 import { ProviderDriverGlyph } from "../../desktop/src/renderer/src/features/chat/ProviderDriverGlyph";
+import hermesProviderIcon from "../../desktop/src/renderer/src/assets/providers/hermes-provider.png";
 
 vi.mock("@renderer/lib/hugeicons", () => ({ Cpu: (props: Record<string, unknown>) => <svg {...props} /> }));
 afterEach(cleanup);
@@ -14,9 +15,18 @@ describe("Desktop Chat provider artwork", () => {
     const kind = option.id === "claude" ? "claude_code" : option.id;
     const { container } = render(<ProviderDriverGlyph kind={kind} size={24} />);
     const glyph = container.querySelector(`[data-provider-glyph="${kind}"]`);
-    expect(glyph).toHaveStyle({ height: "24px", width: "24px", background: option.color });
-    expect(glyph?.querySelector("img")).toHaveAttribute("src", `.${option.logoSrc}`);
-    expect(glyph?.querySelector("img")).toHaveAttribute("alt", "");
+    expect(glyph).toHaveStyle({ height: "24px", width: "24px" });
+    if (kind === "hermes") {
+      expect(glyph?.tagName).toBe("IMG");
+      expect(glyph).toHaveAttribute("src", hermesProviderIcon);
+      expect(glyph).toHaveAttribute("alt", "");
+      expect(glyph).toHaveAttribute("height", "24");
+      expect(glyph).toHaveAttribute("width", "24");
+    } else {
+      expect(glyph).toHaveStyle({ background: option.color });
+      expect(glyph?.querySelector("img")).toHaveAttribute("src", `.${option.logoSrc}`);
+      expect(glyph?.querySelector("img")).toHaveAttribute("alt", "");
+    }
     expect(glyph).toHaveAttribute("aria-hidden", "true");
   });
 

@@ -1,4 +1,4 @@
-import { chmod, copyFile, mkdir, mkdtemp, readFile, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readFile, realpath, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -275,7 +275,7 @@ describe('golden snapshot host scripts', () => {
   });
 
   it('re-certifies a missing host-prerequisites marker without bootstrap work', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'matrix-golden-fast-path-recertify-'));
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'matrix-golden-fast-path-recertify-')));
     const appDir = join(root, 'opt/matrix/app');
     const binDir = join(root, 'opt/matrix/bin');
     const fakeBin = join(root, 'test-bin');
@@ -752,7 +752,7 @@ for i in $(seq 1 45); do printf 'line-%s DATABASE_URL=postgresql://matrix:${secr
   });
 
   it('certifies prerequisite evidence without package or network work', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'matrix-host-prerequisites-'));
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'matrix-host-prerequisites-')));
     const fakeBin = join(root, 'bin');
     await mkdir(fakeBin, { recursive: true });
     // Certification precedes Matrix account activation, independently of the host's NSS.
