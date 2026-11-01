@@ -38,5 +38,7 @@ async function observeRoutineApproval(ex: BotExecutor, receipt: RoutineCliReques
       .where("bot_id", "=", receipt.target.botId).where("chat_id", "=", receipt.target.chatId).where("approval_id", "=", interactionId).executeTakeFirst();
     if (active) routine = { routineId: active.routine_id, status: active.status, revision: toSafeInteger(active.revision) };
   }
-  return { approval, routine };
+  // Content edits replace the standing approval reference. This receipt retains its original
+  // approval history; absence of a current direct link proves nothing about routine lifecycle.
+  return { approval, routine, ...(approval === "approved" && !routine ? { routineLink: "unavailable" as const } : {}) };
 }

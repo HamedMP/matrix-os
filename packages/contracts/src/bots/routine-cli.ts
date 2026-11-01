@@ -66,8 +66,12 @@ export const RoutineCliResultSchema = z.discriminatedUnion("kind", [
     execution: z.object({ stop: z.literal("unconfirmed") }).strict().optional(),
     proposal: z.union([z.object({ handoff: z.enum(["reserved", "submitting", "canonical_queued", "canonical_accepted", "target_task_claimed", "pending_approval", "rejected", "unknown"]),
       revision: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), approval: z.enum(["pending", "approved", "denied", "expired", "cancelled"]).nullable(),
-      routine: AppliedRoutine.nullable() }).strict(), z.object({ handoff: z.literal("pending_approval"), existingBinding: z.literal(true),
-      approval: z.enum(["pending", "approved", "denied", "expired", "cancelled"]).nullable(), routine: AppliedRoutine.nullable() }).strict()]).optional() }).strict(),
+      routine: AppliedRoutine.nullable(), routineLink: z.literal("unavailable").optional() }).strict()
+      .refine(value => !value.routineLink || value.approval === "approved" && value.routine === null),
+      z.object({ handoff: z.literal("pending_approval"), existingBinding: z.literal(true),
+      approval: z.enum(["pending", "approved", "denied", "expired", "cancelled"]).nullable(), routine: AppliedRoutine.nullable(),
+      routineLink: z.literal("unavailable").optional() }).strict()
+      .refine(value => !value.routineLink || value.approval === "approved" && value.routine === null)]).optional() }).strict(),
   z.object({ kind: z.literal("not_observed"), requestId, mayStillArrive: z.literal(true) }).strict(),
   z.object({ kind: z.literal("unknown"), requestId, disposition: z.literal("unknown"), reconcile: z.literal(true) }).strict(),
 ]);
