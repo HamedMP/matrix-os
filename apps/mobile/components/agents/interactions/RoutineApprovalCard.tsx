@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { routineApprovalPreview, routineScheduleCopy } from "@matrix-os/ui/bot-routine-presentation";
+import { routineApprovalPreview, routineScheduleCopy, ROUTINE_EXECUTION_IMPACT } from "@matrix-os/ui/bot-routine-presentation";
 import { Button } from "@/components/ui";
 import { InteractionCard, InteractionNote } from "./InteractionCard";
 
@@ -29,7 +29,7 @@ export function RoutineApprovalCard({ preview, sending, error, stale, closed, on
       <InteractionNote>{timing.frequency}</InteractionNote><InteractionNote>{timing.timezone}</InteractionNote>
       <InteractionNote>{`${approval.estimatedNextFireAt ? "Estimated next run" : "First run"}: ${next}`}</InteractionNote>
       <InteractionNote>{`Access: ${approval.proposal.authorizedEffects.map(effect => ({ read: "Read", write: "Create or change content", send: "Send messages" })[effect]).join(", ")}`}</InteractionNote>
-      <InteractionNote>Runs without a new message using your connected ChatGPT subscription while the connected desktop device stays online. Approving allows only this task. Other actions need their own permission.</InteractionNote>
+      <InteractionNote>{ROUTINE_EXECUTION_IMPACT}</InteractionNote>
       <InteractionNote>Pause or archive this task in Schedules at any time. Next run is recalculated when you approve.</InteractionNote>
     </> : <InteractionNote>Schedule details are unavailable. Cancel this request and ask for a new proposal.</InteractionNote>}
     {closed ? <InteractionNote>{closed}</InteractionNote> : <>

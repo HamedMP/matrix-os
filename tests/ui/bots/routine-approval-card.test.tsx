@@ -22,6 +22,7 @@ it("presents a schedule as an understandable approval and submits only the expli
   expect(screen.getByRole("heading", { name: "Schedule Morning brief" })).toBeTruthy();
   expect(screen.getByText("Write a short private brief.")).toBeTruthy();
   expect(screen.getByText("Asia/Shanghai")).toBeTruthy();
+  expect(screen.getByText(/connected desktop stays online/)).toBeTruthy();
   expect(screen.getByText(/Pause or archive/)).toBeTruthy();
   const details = screen.getByText("Technical details").closest("details")!;
   expect(details.open).toBe(false);
