@@ -167,6 +167,39 @@ static int unprivileged(void) {
   return 1;
 }
 #endif
+/* Private bidirectional control: kind2 reuses Terminal's strict ancillary
+ * receive/send. The separate child role is exposed only for explicit spawn
+ * inheritance, never as a second parent consumer or an identity assertion. */
+static napi_value control_pair(napi_env env, napi_callback_info info) {
+  (void)info;
+#ifdef __linux__
+  int pair[2], enabled = 1;
+  if (!unprivileged() || open_count > max_open - 2 || socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) != 0) return fail(env);
+  int flags = fcntl(pair[0], F_GETFL);
+  /* Both receivers must be credentialled before even a pre-spawn bootstrap
+   * can be queued. The child's endpoint intentionally remains blocking. */
+  if (flags < 0 || fcntl(pair[0], F_SETFL, flags | O_NONBLOCK) != 0
+      || setsockopt(pair[0], SOL_SOCKET, SO_PASSCRED, &enabled, sizeof(enabled)) != 0
+      || setsockopt(pair[1], SOL_SOCKET, SO_PASSCRED, &enabled, sizeof(enabled)) != 0) {
+    close(pair[0]); close(pair[1]); return fail(env);
+  }
+  napi_value result, channel = wrap(env, pair[0], 2);
+  if (!channel) { close(pair[1]); return NULL; }
+  napi_value child = wrap(env, pair[1], 6);
+  if (!child) { close_owned(handle(env, channel, 2)); return NULL; }
+  napi_create_object(env, &result);
+  napi_set_named_property(env, result, "channel", channel); napi_set_named_property(env, result, "child", child);
+  number(env, result, "uid", getuid()); number(env, result, "gid", getgid()); return result;
+#else
+  return fail(env);
+#endif
+}
+static napi_value control_child_fd(napi_env env, napi_callback_info info) {
+  size_t argc = 1; napi_value args[1]; napi_get_cb_info(env, info, &argc, args, NULL, NULL);
+  owned_fd *child = argc == 1 ? handle(env, args[0], 6) : NULL;
+  if (!child) return fail(env);
+  napi_value result; napi_create_int32(env, child->fd, &result); return result;
+}
 static napi_value stdout_pair(napi_env env, napi_callback_info info) {
   (void)info;
 #ifdef __linux__
@@ -241,6 +274,8 @@ static napi_value child_alive(napi_env env, napi_callback_info info) {
 }
 static napi_value init(napi_env env, napi_value exports) {
   napi_property_descriptor methods[] = {
+    {"controlPair", NULL, control_pair, NULL, NULL, NULL, napi_default, NULL},
+    {"controlChildFd", NULL, control_child_fd, NULL, NULL, NULL, napi_default, NULL},
     {"stdoutPair", NULL, stdout_pair, NULL, NULL, NULL, napi_default, NULL},
     {"stdoutWriterFd", NULL, stdout_writer_fd, NULL, NULL, NULL, napi_default, NULL},
     {"stdoutReceive", NULL, stdout_receive, NULL, NULL, NULL, napi_default, NULL},
