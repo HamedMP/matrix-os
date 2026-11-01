@@ -149,13 +149,19 @@ describe.skipIf(!enabled)(`built routine process on ${realPg ? "pooled PostgreSQ
     expect(noReplay.chat!.runs).toHaveLength(1); expect(noReplay.fires).toHaveLength(1); expect(noReplay.providerCalls).toBe(0);
     expect(noReplay.fires[0].fireId).toBe(snap.routines[0].lastFire!.fireId);
   }, 60000);
-  it("keeps pause durable across process restart and executes one catch-up only after owner resume", async () => {
+  it("keeps an elapsed one-time task paused across restart until the owner approves a future time", async () => {
     const first = await launch(), routine = await seed(first);
     await first.ask({ op: "control", routineId: routine.routineId, status: "paused" }); await first.stop();
     const restarted = await launch(); await restarted.ask({ op: "start" });
     await delay(16000);
     const paused = await restarted.ask<Snapshot>({ op: "snapshot" });
     expect(paused.routines[0].status).toBe("paused"); expect(paused.routines[0].lastFire).toBeNull(); expect(paused.chat!.runs).toEqual([]);
+    await expect(restarted.ask({ op: "control", routineId: routine.routineId, status: "active" })).rejects.toThrow();
+    const expired = await restarted.ask<Snapshot>({ op: "snapshot" });
+    expect(expired.routines[0].status).toBe("paused"); expect(expired.fires).toEqual([]); expect(expired.providerCalls).toBe(0);
+    const changed = await restarted.ask<{status: string}>({ op: "approve_future_time", routineId: routine.routineId,
+      at: new Date(Date.now() + 5000).toISOString() });
+    expect(changed.status).toBe("paused");
     await restarted.ask({ op: "control", routineId: routine.routineId, status: "active" });
     const done = await until(restarted, "completed"); expect(done.chat!.runs).toHaveLength(1);
   }, 50000);
