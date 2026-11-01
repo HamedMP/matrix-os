@@ -8,7 +8,7 @@ import {smartSyncTemplate} from '../../packages/kernel/src/boot';
 
 const root = process.cwd();
 const script = join(root, 'distro/customer-vps/host-bin/matrix-sync-bundled-home-assets');
-const legacyBytes = readFileSync(join(root, 'home/system/icons/game-center.png'));
+const legacyBytes = Buffer.from('previously shipped game artwork');
 const uniqueBytes = Buffer.from('new unique game artwork');
 const temporaryRoots: string[] = [];
 const hash = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -250,11 +250,11 @@ fs.openSync = function(path, flags, ...args) {
     expectSelection(f, f.newManifest);
     expect(readFileSync(join(f.home, 'system/icons/game-center.png'), 'utf8')).toBe('owner custom art');
   });
-  it.each(['app-gallery', 'resource-manager'])('ships versioned %s artwork while retaining its legacy filename', (slug) => {
+  it.each(['app-gallery', 'resource-manager'])('ships versioned %s artwork after retiring the legacy PNG', (slug) => {
     const manifest = JSON.parse(readFileSync(join(root, 'home/apps', slug, 'matrix.json'), 'utf8'));
     expect(manifest.icon).toBe(`v3-${slug}`);
     expect(existsSync(join(root, 'home/system/icons', `${manifest.icon}.png`))).toBe(true);
-    expect(existsSync(join(root, 'home/system/icons', `${slug}.png`))).toBe(true);
+    expect(existsSync(join(root, 'home/system/icons', `${slug}.png`))).toBe(false);
     expect(existsSync(join(root, 'home/system/icons', `${slug}-v2.png`))).toBe(false);
   });
   it.each(['app-gallery', 'resource-manager'].flatMap(slug =>
@@ -264,7 +264,8 @@ fs.openSync = function(path, flags, ...args) {
     const relSvg = `system/icons/${slug}.svg`;
     const relPng = `system/icons/${slug}.png`;
     const bundledSvg = readFileSync(join(root, 'home', relSvg));
-    const sculptedPng = readFileSync(join(root, 'home', relPng));
+    // A synthetic legacy-path migration uses current bytes; retired artwork is not a fixture.
+    const sculptedPng = readFileSync(join(root, 'home/system/icons', `v3-${slug}.png`));
     const selectedSvg = artwork === 'custom' || artwork === 'unknown' ? Buffer.from('owner selected SVG artwork') : bundledSvg;
     f.write(f.home, relSvg, selectedSvg);
     f.write(f.template, relPng, sculptedPng);
