@@ -4,6 +4,16 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./held-launch-channel": {
+      "types": "./src/held-launch-channel.ts",
+      "development": "./src/held-launch-channel.ts",
+      "default": "./dist/held-launch-channel.js"
+    },
+    "./workspace-launch-protocol": {
+      "types": "./src/workspace-launch-protocol.ts",
+      "development": "./src/workspace-launch-protocol.ts",
+      "default": "./dist/workspace-launch-protocol.js"
+    },
     "./generation-closure": {
       "types": "./src/generation-closure.d.mts",
       "development": "./src/generation-closure.mjs",
