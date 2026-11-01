@@ -142,7 +142,7 @@ export function BotChatPanel({ children, chatId, client, refreshKey, directBotId
         onClick={() => setShowAuthority(value => !value)}>Details</button>
       {headerActions}
     </div> : null;
-  return <BotMessageStateContext.Provider value={shown && agentId && chatId && bots ? { chatId, agentId, interactions, interactionsFresh, tasks, error,
+  return <BotMessageStateContext.Provider value={shown && agentId && chatId && bots ? { chatId, agentId, agentName: name ?? undefined, interactions, interactionsFresh, tasks, error,
     resolve: (interactionId, input) => bots.resolve(chatId, interactionId, input), refresh: () => setTick(value => value + 1) } : null}>
     {identity ? <section aria-label="Bot controls" className="matrix-bot-chat-header" data-bot-header>
     {headerContainer ? createPortal(identity, headerContainer) : identity}

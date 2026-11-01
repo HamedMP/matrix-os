@@ -21,41 +21,22 @@ function client(): LocalChatgptPlanClient {
   };
 }
 
-it("requires an explicit current-account save after the owner checks background permission", async () => {
-  // A status read or checking the draft alone must never authorize background.
-  // The request identity is part of the UI/native public boundary, not a mock implementation.
+it("makes schedule approval available in Chat without a Settings opt-in or implicit grant write", async () => {
   const native = client();
   render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/>);
-  const checkbox = await screen.findByRole("checkbox", { name: /Allow scheduled and background Bot tasks on this Computer/ });
-  expect(checkbox).not.toBeChecked();
-  const save = screen.getByRole("button", { name: "Save background permission" });
-  expect(save).toBeDisabled();
+  expect(await screen.findByText("Approve schedules in Chat. No Settings switch is required.")).toBeVisible();
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Revoke background access" })).toBeNull();
   expect(native.setGrant).not.toHaveBeenCalled();
-  fireEvent.click(checkbox);
-  expect(native.setGrant).not.toHaveBeenCalled();
-  expect(save).toBeEnabled();
-  fireEvent.click(save);
-  await waitFor(() => expect(native.setGrant).toHaveBeenCalledWith({
-    enabled: true, background: true,
-    accountId: "00000000-0000-4000-8000-000000000001", baseRevision: 1,
-  }, expect.any(AbortSignal)));
-  expect(await screen.findByText("Scheduled and background Bot tasks are allowed on this Computer.")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Save background permission" })).toBeDisabled();
 });
 
-it("never paints an accepted background grant as revoked while synchronizing a draft", async () => {
-  // Observe actual committed DOM before passive effects run. A second effect
-  // cannot repair a false authority presentation that the owner already saw.
+it("shows existing general background access truthfully and only offers revocation", async () => {
   const native = client();
   vi.mocked(native.status).mockResolvedValue({ ...connected, grant: { enabled: true, background: true, revision: 2 } });
-  const painted: boolean[] = [];
-  render(<React.Profiler id="accepted-background" onRender={() => {
-    const checkbox = document.querySelector<HTMLInputElement>('input[type="checkbox"]');
-    if (checkbox) painted.push(checkbox.checked);
-  }}><LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/></React.Profiler>);
-  await screen.findByRole("checkbox", { name: /Allow scheduled and background/ });
-  expect(painted.length).toBeGreaterThan(0);
-  expect(painted.every(Boolean)).toBe(true);
+  render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/>);
+  expect(await screen.findByText("General background access is currently enabled on this Computer.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Revoke background access" })).toBeEnabled();
+  expect(screen.queryByRole("checkbox")).toBeNull();
   expect(native.setGrant).not.toHaveBeenCalled();
 });
 
@@ -66,7 +47,7 @@ it.each([true, false])("restores the native unconfirmed-save warning on a fresh 
   vi.mocked(native.setGrant).mockResolvedValue({ ...connected, grant: { enabled, background: false, revision: 4 } });
   render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/>);
   expect(await screen.findByRole("alert")).toHaveTextContent("Saving could not be confirmed");
-  const save = screen.getByRole("button", { name: "Save background permission" });
+  const save = screen.getByRole("button", { name: "Revoke background access" });
   expect(save).toBeEnabled();
   expect(native.setGrant).not.toHaveBeenCalled();
   fireEvent.click(save);
@@ -75,52 +56,52 @@ it.each([true, false])("restores the native unconfirmed-save warning on a fresh 
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
 });
 
-it.each([false, true])("reconciles background=%s after a failed save acknowledgement without repeating the write", async background => {
+it.each([false, true])("reconciles background=%s after a failed revoke acknowledgement without repeating the write", async background => {
   const native = client();
+  vi.mocked(native.status).mockResolvedValue({ ...connected, grant: { enabled: true, background: true, revision: 2 } });
   render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/>);
-  const checkbox = await screen.findByRole("checkbox", { name: /Allow scheduled and background/ });
-  vi.mocked(native.status).mockResolvedValue({ ...connected, grant: { enabled: true, background, revision: background ? 2 : 1 } });
+  const revoke = await screen.findByRole("button", { name: "Revoke background access" });
+  vi.mocked(native.status).mockResolvedValue({ ...connected, grant: { enabled: true, background, revision: 3 } });
   vi.mocked(native.setGrant).mockRejectedValue(new Error("Private acknowledgement diagnostic"));
-  fireEvent.click(checkbox);
-  fireEvent.click(screen.getByRole("button", { name: "Save background permission" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("ChatGPT connection could not be updated");
+  fireEvent.click(revoke);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Saving could not be confirmed");
   await waitFor(() => expect(native.status).toHaveBeenCalledTimes(2));
-  expect(native.setGrant).toHaveBeenCalledTimes(1);
+  expect(native.setGrant).toHaveBeenCalledExactlyOnceWith({ enabled: true, background: false,
+    accountId: connected.account!.id, baseRevision: 2 }, expect.any(AbortSignal));
   expect(screen.queryByText(/Private acknowledgement/)).toBeNull();
-  if (background) expect(checkbox).toBeChecked(); else expect(checkbox).not.toBeChecked();
-  expect(screen.getByRole("button", { name: "Save background permission" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Revoke background access" })).toBeEnabled();
 });
 
-it("drops an unsaved opt-in when the displayed account or grant revision changes", async () => {
+it("does not inherit background authority when the displayed account or grant revision changes", async () => {
   const native = client();
   const props = { client: native, disabled: false, readOnly: false, onChanged: vi.fn() };
   const view = render(<LocalChatgptSubscription {...props} refreshRevision={0}/>);
-  fireEvent.click(await screen.findByRole("checkbox", { name: /Allow scheduled and background/ }));
+  await screen.findByText("Acceptance account");
   const replacement = { ...connected,
     account: { id: "00000000-0000-4000-8000-000000000002", label: "Replacement account" },
     grant: { enabled: true, background: false, revision: 7 } };
   vi.mocked(native.status).mockResolvedValue(replacement);
   view.rerender(<LocalChatgptSubscription {...props} refreshRevision={1}/>);
   await screen.findByText("Replacement account");
-  expect(screen.getByRole("checkbox", { name: /Allow scheduled and background/ })).not.toBeChecked();
-  expect(screen.getByRole("button", { name: "Save background permission" })).toBeDisabled();
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Revoke background access" })).toBeNull();
   expect(native.setGrant).not.toHaveBeenCalled();
 });
 
 it("ignores an old Computer's late permission receipt after the client changes", async () => {
   let settle!: (value: LocalChatgptPlanStatus) => void;
   const old = client(), next = client(), changed = vi.fn();
+  vi.mocked(old.status).mockResolvedValue({ ...connected, grant: { enabled: true, background: true, revision: 2 } });
   vi.mocked(old.setGrant).mockImplementation(() => new Promise(resolve => { settle = resolve; }));
   vi.mocked(next.status).mockResolvedValue({ ...connected, account: { id: "00000000-0000-4000-8000-000000000002", label: "Other Computer account" } });
   const props = { disabled: false, readOnly: false, onChanged: changed };
   const view = render(<LocalChatgptSubscription {...props} client={old}/>);
-  fireEvent.click(await screen.findByRole("checkbox", { name: /Allow scheduled and background/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Save background permission" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Revoke background access" }));
   view.rerender(<LocalChatgptSubscription {...props} client={next}/>);
   await screen.findByText("Other Computer account");
   await act(async () => settle({ ...connected, grant: { enabled: true, background: true, revision: 2 } }));
-  expect(screen.getByRole("checkbox", { name: /Allow scheduled and background/ })).not.toBeChecked();
-  expect(screen.queryByText("Scheduled and background Bot tasks are allowed on this Computer.")).toBeNull();
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(screen.queryByText("General background access is currently enabled on this Computer.")).toBeNull();
   expect(changed).not.toHaveBeenCalled();
 });
 
@@ -141,16 +122,14 @@ it("keeps failed revocation explicitly unconfirmed and lets the owner retry savi
   const native = client();
   vi.mocked(native.status).mockResolvedValue({ ...connected, grant: { enabled: true, background: true, revision: 2 } });
   render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/>);
-  const checkbox = await screen.findByRole("checkbox", { name: /Allow scheduled and background/ });
-  expect(checkbox).toBeChecked();
+  await screen.findByRole("button", { name: "Revoke background access" });
   vi.mocked(native.status).mockResolvedValue({ ...connected, bridgeConnected: false, grant: { enabled: true, background: false, revision: 3 } });
   vi.mocked(native.setGrant).mockRejectedValueOnce(new Error("Fixture persistence failure"))
     .mockResolvedValue({ ...connected, grant: { enabled: true, background: false, revision: 4 } });
-  fireEvent.click(checkbox);
-  fireEvent.click(screen.getByRole("button", { name: "Save background permission" }));
+  fireEvent.click(screen.getByRole("button", { name: "Revoke background access" }));
   await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/Saving could not be confirmed/));
-  expect(screen.getByRole("checkbox", { name: /Allow scheduled and background/ })).not.toBeChecked();
-  const retry = screen.getByRole("button", { name: "Save background permission" });
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  const retry = screen.getByRole("button", { name: "Revoke background access" });
   expect(retry).toBeEnabled();
   expect(native.setGrant).toHaveBeenCalledTimes(1);
   fireEvent.click(retry);
@@ -158,8 +137,8 @@ it("keeps failed revocation explicitly unconfirmed and lets the owner retry savi
     accountId: "00000000-0000-4000-8000-000000000001", baseRevision: 3 }, expect.any(AbortSignal)));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   expect(native.setGrant).toHaveBeenCalledTimes(2);
-  expect(checkbox).not.toBeChecked();
-  expect(retry).toBeDisabled();
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Revoke background access" })).toBeNull();
 });
 
 it.each(["disconnected-peer", "missing-models"])("allows revocation but no new opt-in for an already granted %s source", async condition => {
@@ -169,15 +148,11 @@ it.each(["disconnected-peer", "missing-models"])("allows revocation but no new o
     grant: { enabled: true, background: true, revision: 2 } });
   vi.mocked(native.setGrant).mockResolvedValue({ ...connected, grant: { enabled: true, background: false, revision: 3 } });
   render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/>);
-  const checkbox = await screen.findByRole("checkbox", { name: /Allow scheduled and background/ });
-  expect(checkbox).toBeChecked();
-  fireEvent.click(checkbox);
-  expect(checkbox).not.toBeChecked();
-  expect(checkbox).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "Save background permission" }));
+  await screen.findByRole("button", { name: "Revoke background access" });
+  fireEvent.click(screen.getByRole("button", { name: "Revoke background access" }));
   await waitFor(() => expect(native.setGrant).toHaveBeenCalledWith({ enabled: true, background: false,
     accountId: "00000000-0000-4000-8000-000000000001", baseRevision: 2 }, expect.any(AbortSignal)));
-  expect(await screen.findByText("Scheduled Bot access is off on this Computer.")).toBeVisible();
+  expect(await screen.findByText("Approve schedules in Chat. No Settings switch is required.")).toBeVisible();
 });
 
 it("retains an unconfirmed revocation across a Settings refresh until the owner explicitly saves it", async () => {
@@ -185,15 +160,15 @@ it("retains an unconfirmed revocation across a Settings refresh until the owner 
   vi.mocked(native.status).mockResolvedValue({ ...connected, grant: { enabled: true, background: true, revision: 2 } });
   const props = { client: native, disabled: false, readOnly: false, onChanged: vi.fn() };
   const view = render(<LocalChatgptSubscription {...props} refreshRevision={0}/>);
-  fireEvent.click(await screen.findByRole("checkbox", { name: /Allow scheduled and background/ }));
+  await screen.findByRole("button", { name: "Revoke background access" });
   vi.mocked(native.setGrant).mockRejectedValue(new Error("Fixture disk failure"));
   vi.mocked(native.status).mockResolvedValue({ ...connected, bridgeConnected: false, grant: { enabled: true, background: false, revision: 3 } });
-  fireEvent.click(screen.getByRole("button", { name: "Save background permission" }));
+  fireEvent.click(screen.getByRole("button", { name: "Revoke background access" }));
   await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/Saving could not be confirmed/));
   view.rerender(<LocalChatgptSubscription {...props} refreshRevision={1}/>);
   await waitFor(() => expect(native.status).toHaveBeenCalledTimes(3));
   expect(screen.getByRole("alert")).toHaveTextContent(/Saving could not be confirmed/);
-  expect(screen.getByRole("button", { name: "Save background permission" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Revoke background access" })).toBeEnabled();
   expect(native.setGrant).toHaveBeenCalledTimes(1);
 });
 
@@ -206,12 +181,11 @@ it.each(["succeeds", "fails"])("keeps unconfirmed revocation separate when unrel
   if (outcome === "succeeds") vi.mocked(native.refreshModels).mockResolvedValue({ ...connected, grant: { enabled: true, background: false, revision: 3 } });
   else vi.mocked(native.refreshModels).mockRejectedValue(new Error("Fixture catalog failure"));
   render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("checkbox", { name: /Allow scheduled and background/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Save background permission" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Revoke background access" }));
   await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/Saving could not be confirmed/));
   fireEvent.click(screen.getByRole("button", { name: "Check subscription models" }));
   await waitFor(() => expect(native.refreshModels).toHaveBeenCalledTimes(1));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Save background permission" })).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Revoke background access" })).toBeEnabled());
   expect(screen.getByRole("alert")).toHaveTextContent(/Saving could not be confirmed/);
   expect(native.setGrant).toHaveBeenCalledTimes(1);
 });
@@ -227,20 +201,19 @@ it.each(["refresh", "poll"])("preserves the explicit revoke retry when a later %
   vi.mocked(native.setGrant).mockRejectedValue(new Error("Fixture persistence failure"));
   const props = { client: native, disabled: false, readOnly: false, onChanged: vi.fn() };
   const view = render(<LocalChatgptSubscription {...props} refreshRevision={0}/>);
-  fireEvent.click(await screen.findByRole("checkbox", { name: /Allow scheduled and background/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Save background permission" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Revoke background access" }));
   await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/Saving could not be confirmed/));
   if (mode === "refresh") view.rerender(<LocalChatgptSubscription {...props} refreshRevision={1}/>);
   await waitFor(() => expect(native.status).toHaveBeenCalledTimes(3), { timeout: 3000 });
   expect(screen.getByRole("alert")).toHaveTextContent(/Saving could not be confirmed/);
-  expect(screen.getByRole("button", { name: "Save background permission" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Revoke background access" })).toBeEnabled();
   expect(native.setGrant).toHaveBeenCalledTimes(1);
   vi.mocked(native.status).mockResolvedValue(stopped);
   view.rerender(<LocalChatgptSubscription {...props} refreshRevision={2}/>);
   await waitFor(() => expect(native.status).toHaveBeenCalledTimes(4));
   expect(screen.getByRole("alert")).toHaveTextContent(/Saving could not be confirmed/);
   vi.mocked(native.setGrant).mockResolvedValue({ ...connected, grant: { enabled: true, background: false, revision: 4 } });
-  fireEvent.click(screen.getByRole("button", { name: "Save background permission" }));
+  fireEvent.click(screen.getByRole("button", { name: "Revoke background access" }));
   await waitFor(() => expect(native.setGrant).toHaveBeenLastCalledWith({ enabled: true, background: false,
     accountId: connected.account!.id, baseRevision: 3 }, expect.any(AbortSignal)));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
@@ -250,14 +223,14 @@ it("does not claim a failed revocation stopped access when authority readback al
   const native = client();
   vi.mocked(native.status).mockResolvedValue({ ...connected, grant: { enabled: true, background: true, revision: 2 } });
   render(<LocalChatgptSubscription client={native} disabled={false} readOnly={false} onChanged={vi.fn()}/>);
-  fireEvent.click(await screen.findByRole("checkbox", { name: /Allow scheduled and background/ }));
+  await screen.findByRole("button", { name: "Revoke background access" });
   vi.mocked(native.setGrant).mockRejectedValue(new Error("Fixture write failure"));
   vi.mocked(native.status).mockRejectedValue(new Error("Fixture read failure"));
-  fireEvent.click(screen.getByRole("button", { name: "Save background permission" }));
+  fireEvent.click(screen.getByRole("button", { name: "Revoke background access" }));
   await waitFor(() => expect(native.status).toHaveBeenCalledTimes(2));
   expect(screen.getByRole("alert")).toHaveTextContent(/Saving could not be confirmed/);
   expect(screen.getByRole("alert")).not.toHaveTextContent(/access is stopped/);
-  expect(screen.getByRole("checkbox", { name: /Allow scheduled and background/ })).not.toBeChecked();
-  expect(screen.getByRole("button", { name: "Save background permission" })).toBeEnabled();
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(screen.getByRole("button", { name: "Revoke background access" })).toBeEnabled();
   expect(native.setGrant).toHaveBeenCalledTimes(1);
 });
