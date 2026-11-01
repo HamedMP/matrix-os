@@ -41,6 +41,8 @@ export default defineConfig({
   resolve: {
     conditions: ["node"],
     alias: {
+      "@matrix-os/terminal-runtime/held-launch-channel": path.resolve(__dirname, "packages/terminal-runtime/src/held-launch-channel.ts"),
+      "@matrix-os/terminal-runtime/workspace-launch-protocol": path.resolve(__dirname, "packages/terminal-runtime/src/workspace-launch-protocol.ts"),
       "@matrix-os/terminal-runtime/generation-closure": path.resolve(__dirname, "packages/terminal-runtime/src/generation-closure.mjs"),
       "@matrix-os/terminal-runtime/native-host-descriptor": path.resolve(__dirname, "packages/terminal-runtime/src/native-host-descriptor.ts"),
       "@matrix-os/terminal-runtime/native-host-unit": path.resolve(__dirname, "packages/terminal-runtime/src/native-host-unit.ts"),
