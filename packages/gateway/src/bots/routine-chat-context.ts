@@ -4,6 +4,7 @@ import { createBotRoutinesRepository } from "./repositories/routines.js";
 import { hasLiveRoutineChat } from "./routine-authorization.js";
 import type { BotRuntimeBinding } from "./runtime-registry.js";
 import type { BotRoutineApprovals } from "./routine-approval.js";
+import { readResolvedRoutineApproval } from "./routine-approval-receipt.js";
 
 const explanation = "\n\nCurrent Chat schedule state (read by Matrix from owner records):\n";
 const limitation = "\nThis describes stored state and does not authorize execution. Historical pending-approval messages are not current state. Do not claim a task still awaits approval unless pending is nonzero. resolvedApproval describes only the owner decision matched to this continuation; never call that approval pending. Active does not mean running now. Use Schedules for exact task details. Current broker permissions remain authoritative.";
@@ -22,20 +23,7 @@ export async function describeRoutineChatPhase(db: BotExecutor, approvals: BotRo
     .where("owner_id", "=", binding.ownerId).where("bot_id", "=", binding.botId).where("chat_id", "=", binding.chatId)
     .where("responder_actor_id", "=", binding.ownerId).where("status", "=", "pending").where("expires_at", ">", now)
     .where(sql<boolean>`payload->>'tool' = 'routine.activate'`).limit(32).execute();
-  const resolved = await db.selectFrom("chat_runs as run")
-    .innerJoin("bot_interactions as interaction", join => join.onRef("interaction.chat_id", "=", "run.chat_id")
-      .on(sql<boolean>`run.client_request_id = 'req_answer_' || interaction.interaction_id`))
-    .innerJoin("bot_approvals as approval", join => join.onRef("approval.owner_id", "=", "interaction.owner_id")
-      .onRef("approval.bot_id", "=", "interaction.bot_id").onRef("approval.approval_id", "=", "interaction.interaction_id")
-      .onRef("approval.task_id", "=", "interaction.task_id"))
-    .select("approval.status").where("run.id", "=", binding.runId).where("run.chat_id", "=", binding.chatId)
-    .where("interaction.owner_id", "=", binding.ownerId).where("interaction.bot_id", "=", binding.botId)
-    .where("interaction.task_id", "=", binding.taskId).where("interaction.responder_actor_id", "=", binding.ownerId)
-    .where("interaction.status", "=", "resolved").where("interaction.kind", "=", "approval")
-    .where("approval.tool", "=", "routine.activate").where("approval.audience", "=", "direct")
-    .where(sql<boolean>`interaction.payload->>'tool' = 'routine.activate' AND
-      ((approval.status = 'approved' AND approval.claimed_at IS NOT NULL AND interaction.resolution->>'decision' = 'approve')
-       OR (approval.status = 'denied' AND interaction.resolution->>'decision' = 'deny'))`).executeTakeFirst();
+  const resolved = await readResolvedRoutineApproval(db, binding, now);
   if (!rows.length && !pending.length && !resolved) return null;
   const counts = { active: 0, paused: 0, needsReview: 0, pending: pending.length,
     resolvedApproval: resolved?.status === "approved" ? "approved" : resolved?.status === "denied" ? "denied" : null };

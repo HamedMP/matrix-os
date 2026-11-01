@@ -17,6 +17,20 @@ describe.skipIf(!pgEnabled)("routine occurrence/control on pooled PostgreSQL (re
   });
 
   // Removing the routine row lock/occurrence gate must permit duplicate task allocation and fail these assertions.
+  it("samples the resume clock after waiting for the routine lock", async () => {
+    const fixture = f!, current = fixture.routine;
+    const paused = await fixture.repo.control({ ownerId: OWNER, routineId: current.routineId,
+      baseRevision: current.revision, status: "paused", now: PG_AT });
+    const later = "2026-09-27T12:16:00.000Z";
+    fixture.setClock(PG_AT);
+    const resumed = await behindRoutineLock(fixture, tx => fixture.executionIn(tx).control(OWNER, BOT, current.routineId, {
+      baseRevision: paused.revision, status: "active",
+    }), async () => { fixture.setClock(later); });
+    expect(resumed.nextFireAt).toBe("2026-09-27T12:17:00.000Z");
+    expect(resumed.updatedAt).toBe(later);
+    expect(await fixture.repo.due(later)).toEqual([]);
+  });
+
   it("a claim blocked behind the winning claim cannot allocate a second fire/task", async () => {
     const fixture = f!;
     let winner: BotRoutineFire | undefined;

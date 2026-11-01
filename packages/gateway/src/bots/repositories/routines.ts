@@ -6,6 +6,7 @@ import { BotRoutineProposalSchema, type BotRoutineProposal, type BotRoutineStatu
 import type { OwnerBotDatabase } from "../database.js";
 import { BotStateError, isoTimestamp, optionalIsoTimestamp, toSafeInteger, withTransaction, type BotExecutor } from "./shared.js";
 import { createBotTasksRepository } from "./tasks.js";
+import { nextBotRoutineFire } from "../routine-schedule.js";
 const id = (prefix: string) => `${prefix}_${randomBytes(12).toString("hex")}`;
 const MAX_ROUTINES = 32;
 // Correlated before LIMIT: dead Chats and held occurrences never monopolize a page.
@@ -60,7 +61,7 @@ export interface RoutineFinishInput {
   leaseExpiredBefore?: string;
   now: string;
 }
-export function createBotRoutinesRepository(db: BotExecutor) {
+export function createBotRoutinesRepository(db: BotExecutor, options: { now?: () => string } = {}) {
   async function get(ownerId: string, routineId: string, ex: BotExecutor = db) {
     const row = await ex.selectFrom("bot_routines").selectAll().where("owner_id", "=", ownerId).where("routine_id", "=", routineId).executeTakeFirst();
     return row ? routine(row) : undefined;
@@ -175,10 +176,16 @@ export function createBotRoutinesRepository(db: BotExecutor) {
         if (!existing) throw new BotStateError("not_found");
         if (toSafeInteger(existing.revision) !== input.baseRevision) throw new BotStateError("revision_conflict");
         if (existing.status === "archived") throw new BotStateError("invalid_transition");
+        const at = options.now?.() ?? input.now;
+        // Resume starts future work, never a backlog from the paused period.
+        const nextFireAt = existing.status === "paused" && input.status === "active"
+          ? nextBotRoutineFire(BotRoutineProposalSchema.parse(existing.proposal).schedule, at) : undefined;
+        if (nextFireAt === null) throw new BotStateError("invalid_input");
         const row = await tx.updateTable("bot_routines").set({
           status: input.status,
+          ...(nextFireAt ? { next_fire_at: nextFireAt } : {}),
           revision: input.baseRevision + 1,
-          updated_at: input.now
+          updated_at: at
         }).where("owner_id", "=", input.ownerId).where("routine_id", "=", input.routineId).returningAll().executeTakeFirstOrThrow();
         return routine(row);
       });

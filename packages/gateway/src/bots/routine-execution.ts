@@ -18,6 +18,7 @@ import { createBotRoutineScheduler } from "./routine-scheduler.js";
 import { assertCurrentRoutinePhase } from "./routine-phase.js";
 import { createBotRoutineManagement } from "./routine-management.js";
 import { describeRoutineChatPhase } from "./routine-chat-context.js";
+import { routineApprovalReply } from "./routine-approval-receipt.js";
 import { createBotStateTransactions, type BotStateTransactions } from "./events.js";
 import { ChatRepository } from "../chat/repository.js";
 import type { ChatDatabase } from "../chat/database.js";
@@ -39,10 +40,10 @@ export function createBotRoutineExecution(deps: {
   available?: () => boolean;
   now?: () => Date;
 }) {
-  const repository = createBotRoutinesRepository(deps.db),
+  const now = () => (deps.now?.() ?? new Date()).toISOString();
+  const repository = createBotRoutinesRepository(deps.db, { now }),
     tasks = createBotTasksRepository(deps.db);
   const transact = deps.transact ?? createBotStateTransactions(new ChatRepository(deps.db as unknown as Kysely<ChatDatabase>));
-  const now = () => (deps.now?.() ?? new Date()).toISOString();
   const readRun = (input: RunIdentity) => deps.db.selectFrom("chat_runs as run")
     .innerJoin("chat_turns as turn", join => join.onRef("turn.id", "=", "run.turn_id").onRef("turn.chat_id", "=", "run.chat_id"))
     .select(["run.client_request_id", "run.driver_kind", "run.attempt", "turn.client_request_id as original_request_id"])
@@ -253,6 +254,7 @@ export function createBotRoutineExecution(deps: {
   }
   return {
     describeChatPhase: (binding: BotRuntimeBinding) => describeRoutineChatPhase(deps.db, deps.approvals, binding, now()),
+    approvalReply: (scope: Parameters<typeof routineApprovalReply>[1]) => routineApprovalReply(deps.db, scope, now()),
     connect(value: Canonical) {
       canonical = value;
     },
@@ -392,7 +394,7 @@ export function createBotRoutineExecution(deps: {
         }))) throw new BotStateError("invalid_input");
       }
       const routine = await transact(ownerId, async tx => {
-        const r = await createBotRoutinesRepository(tx.db).control({
+        const r = await repository.control({
           ownerId,
           routineId,
           ...input,
