@@ -16,7 +16,9 @@ export function formatRoutineHuman(result: RoutineCliResult): string {
     if (proposal?.routine) return `Routine ${proposal.routine.routineId}: ${proposal.routine.status}, revision ${proposal.routine.revision}. ${reconcile}`;
     const approval = proposal?.approval;
     if (approval === "pending" || !proposal && result.approval === "pending") return `Pending human approval. ${reconcile}`;
-    if (approval === "approved") return `Approved; no standing routine is confirmed. ${reconcile}`;
+    if (approval === "approved") return proposal?.routineLink === "unavailable"
+      ? `Approved; current routine link unavailable. The routine may have changed; inspect routines list or routines show. ${reconcile}`
+      : `Approved; no standing routine is confirmed. ${reconcile}`;
     if (approval === "denied") return `Declined; no standing routine is confirmed. ${reconcile}`;
     if (approval === "expired" || approval === "cancelled") return `Approval ${approval}; no standing routine is confirmed. ${reconcile}`;
     if (proposal?.handoff === "rejected") return `Handoff rejected after admission. ${reconcile}`;

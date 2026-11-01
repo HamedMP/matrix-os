@@ -17,6 +17,11 @@ it("actual activated routine and immutable admission remain distinct", () => {
   const text = formatRoutineHuman({ ...base, proposal: { ...base.proposal!, approval: "approved", routine: { routineId: id, status: "active", revision: 1 } } });
   expect(text).toContain(": active"); expect(text).not.toContain("Pending human"); expect(base.receipt.disposition).toBe("queued");
 });
+it("reports unavailable current linkage after an approved edit without claiming no standing routine", () => {
+  const text = formatRoutineHuman({ ...base, proposal: { ...base.proposal!, approval: "approved", routine: null, routineLink: "unavailable" } });
+  expect(text).toContain("Approved; current routine link unavailable");
+  expect(text).not.toContain("no standing routine");
+});
 it("terminal labels escape controls/bidi and desired-state commits never assert stopped", () => {
   expect(formatRoutineHuman({ kind: "list", routines: [{ routineId: id, name: "name\u001b[31m\u202efake", status: "active", revision: 1, schedule: { kind: "interval", everyMs: 60000 }, nextFireAt: null, lastFire: null, requiresReview: true }], truncated: false })).toContain("name\\u001b[31m\\u202efake");
   for (const operation of ["pause", "archive"] as const) expect(formatRoutineHuman({ ...base, proposal: undefined, receipt: { ...base.receipt, operation, disposition: "applied", routine: { routineId: id, status: operation === "pause" ? "paused" : "archived", revision: 2 } } })).toContain("Worker/effect stop remains unconfirmed");
