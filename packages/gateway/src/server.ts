@@ -1876,7 +1876,7 @@ export async function createGateway(config: GatewayConfig) {
 
   loadedPlugins = await startGatewayPlugins({ app, homePath, pluginsConfig, pluginRegistry, hookRunner, port });
 
-  const server = serve({ fetch: app.fetch, port });
+  const server = serve({ fetch: app.fetch, hostname: process.env.MATRIX_BIND_HOST, port });
   injectWebSocket(server);
   const chatAttachmentCleanup = createChatAttachmentCleanupLifecycle({
     homePath,

@@ -1,8 +1,51 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 
 describe('start-platform-cloud-run.sh', () => {
+  it('preserves production Clerk credentials in both children without local overrides', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'matrix-production-startup-'));
+    const bin = join(fixture, 'bin');
+    const log = join(fixture, 'children.jsonl');
+    mkdirSync(bin);
+    try {
+      writeFileSync(join(bin, 'node'), `#!${process.execPath}
+const fs = require('node:fs');
+const authShell = process.argv.includes('node_modules/next/dist/bin/next');
+fs.appendFileSync(process.env.FIXTURE_LOG, JSON.stringify({
+  child: authShell ? 'auth-shell' : 'platform',
+  secret: process.env.CLERK_SECRET_KEY,
+  jwtKey: process.env.CLERK_JWT_KEY ?? null,
+  bindHost: process.env.MATRIX_BIND_HOST ?? null,
+  parityBuild: process.env.MATRIX_LOCAL_PARITY_BUILD ?? null,
+}) + '\\n');
+if (authShell) setInterval(() => {}, 1000);
+else process.exit(7);
+`);
+      writeFileSync(join(bin, 'curl'), '#!/bin/sh\nexit 0\n');
+      chmodSync(join(bin, 'node'), 0o755);
+      chmodSync(join(bin, 'curl'), 0o755);
+      const result = spawnSync('sh', [join(process.cwd(), 'scripts/start-platform-cloud-run.sh')], {
+        encoding: 'utf8', timeout: 10_000,
+        env: {
+          ...process.env, PATH: `${bin}:${process.env.PATH}`, FIXTURE_LOG: log,
+          CLERK_SECRET_KEY: 'fixture-production-key', AUTH_SHELL_ENABLED: 'true',
+          AUTH_SHELL_CLERK_SECRET_KEY: undefined, CLERK_JWT_KEY: undefined,
+          MATRIX_BIND_HOST: undefined, MATRIX_LOCAL_PARITY_BUILD: undefined,
+        },
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(7);
+      const children = readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      expect(children).toEqual([
+        { child: 'auth-shell', secret: 'fixture-production-key', jwtKey: null, bindHost: null, parityBuild: null },
+        { child: 'platform', secret: 'fixture-production-key', jwtKey: null, bindHost: null, parityBuild: null },
+      ]);
+    } finally { rmSync(fixture, { recursive: true, force: true }); }
+  });
+
   it('waits for the auth shell before starting the platform server', () => {
     const root = process.cwd();
     const script = readFileSync(join(root, 'scripts/start-platform-cloud-run.sh'), 'utf8');
@@ -20,6 +63,15 @@ describe('start-platform-cloud-run.sh', () => {
     expect(authStartIndex).toBeGreaterThanOrEqual(0);
     expect(readinessIndex).toBeGreaterThan(authStartIndex);
     expect(platformStartIndex).toBeGreaterThan(readinessIndex);
+  });
+
+  it('can scope a local Clerk credential to the bundled auth shell', () => {
+    const root = process.cwd();
+    const script = readFileSync(join(root, 'scripts/start-platform-cloud-run.sh'), 'utf8');
+
+    expect(script).toContain('CLERK_SECRET_KEY="${AUTH_SHELL_CLERK_SECRET_KEY:-${CLERK_SECRET_KEY:-}}"');
+    expect(script).toContain('if [ -n "${AUTH_SHELL_CLERK_SECRET_KEY:-}" ]; then');
+    expect(script).toContain('unset CLERK_SECRET_KEY');
   });
 
   it('loads TypeScript workspace exports in the production platform process', () => {
