@@ -18,7 +18,7 @@
 #include <linux/capability.h>
 #endif
 
-typedef struct { int fd; int kind; } owned_fd;
+typedef struct { int fd; int kind; int private_control; } owned_fd;
 static unsigned int open_count = 0;
 static const unsigned int max_open = 128;
 static napi_value fail(napi_env env) { napi_throw_error(env, NULL, "Terminal native proof unavailable"); return NULL; }
@@ -166,6 +166,14 @@ static int unprivileged(void) {
   for (int i = 0; i < 2; i++) if (caps[i].effective || caps[i].permitted || caps[i].inheritable) return 0;
   return 1;
 }
+/* Same zero-timeout kernel birth check used by childAlive and the handoff.
+ * -1 is observation failure, 0 is no longer live, 1 is currently live. */
+static int birth_state(const owned_fd *birth) {
+  struct pollfd descriptor = { .fd = birth->fd, .events = POLLIN };
+  int ready = poll(&descriptor, 1, 0);
+  if (ready < 0) return -1;
+  return ready == 0 && descriptor.revents == 0;
+}
 #endif
 /* Private bidirectional control: kind2 reuses Terminal's strict ancillary
  * receive/send. The separate child role is exposed only for explicit spawn
@@ -185,6 +193,7 @@ static napi_value control_pair(napi_env env, napi_callback_info info) {
   }
   napi_value result, channel = wrap(env, pair[0], 2);
   if (!channel) { close(pair[1]); return NULL; }
+  handle(env, channel, 2)->private_control = 1; /* Never set on accepted Terminal sockets. */
   napi_value child = wrap(env, pair[1], 6);
   if (!child) { close_owned(handle(env, channel, 2)); return NULL; }
   napi_create_object(env, &result);
@@ -264,16 +273,47 @@ static napi_value child_alive(napi_env env, napi_callback_info info) {
   size_t argc = 1; napi_value args[1]; napi_get_cb_info(env, info, &argc, args, NULL, NULL);
   owned_fd *birth = argc == 1 ? handle(env, args[0], 5) : NULL;
   if (!birth || !unprivileged()) return fail(env);
-  struct pollfd descriptor = { .fd = birth->fd, .events = POLLIN };
-  int ready = poll(&descriptor, 1, 0);
-  if (ready < 0) return fail(env);
-  napi_value result; napi_get_boolean(env, ready == 0 && descriptor.revents == 0, &result); return result;
+  int state = birth_state(birth);
+  if (state < 0) return fail(env);
+  napi_value result; napi_get_boolean(env, state, &result); return result;
+#else
+  (void)info; return fail(env);
+#endif
+}
+/* One retained birth copy, not an arbitrary descriptor list or source grant.
+ * Positive bytes remain physical fact even if the child exits immediately
+ * afterward. Caller owns the original deadline and any remaining byte writes. */
+static napi_value control_send_child_birth(napi_env env, napi_callback_info info) {
+#ifdef __linux__
+  size_t argc = 3, length; napi_value args[3]; void *bytes; bool is_buffer;
+  napi_get_cb_info(env, info, &argc, args, NULL, NULL);
+  owned_fd *channel = argc == 3 ? handle(env, args[0], 2) : NULL;
+  owned_fd *birth = argc == 3 ? handle(env, args[2], 5) : NULL;
+  if (!channel || !channel->private_control || !birth || !unprivileged()
+      || napi_is_buffer(env, args[1], &is_buffer) != napi_ok || !is_buffer
+      || napi_get_buffer_info(env, args[1], &bytes, &length) != napi_ok
+      || length < 1 || length > 8192 || birth_state(birth) != 1) return fail(env);
+  union { struct cmsghdr alignment; char data[CMSG_SPACE(sizeof(int))]; } control;
+  memset(&control, 0, sizeof(control));
+  struct iovec vector = {bytes, length}; struct msghdr message = {0};
+  message.msg_iov = &vector; message.msg_iovlen = 1;
+  message.msg_control = control.data; message.msg_controllen = sizeof(control.data);
+  struct cmsghdr *header = CMSG_FIRSTHDR(&message);
+  header->cmsg_level = SOL_SOCKET; header->cmsg_type = SCM_RIGHTS;
+  header->cmsg_len = CMSG_LEN(sizeof(int)); memcpy(CMSG_DATA(header), &birth->fd, sizeof(int));
+  ssize_t written = sendmsg(channel->fd, &message, MSG_DONTWAIT | MSG_NOSIGNAL);
+  if (written < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) written = 0;
+    else { close_owned(channel); return fail(env); }
+  }
+  napi_value result; napi_create_int64(env, written, &result); return result;
 #else
   (void)info; return fail(env);
 #endif
 }
 static napi_value init(napi_env env, napi_value exports) {
   napi_property_descriptor methods[] = {
+    {"controlSendChildBirth", NULL, control_send_child_birth, NULL, NULL, NULL, napi_default, NULL},
     {"controlPair", NULL, control_pair, NULL, NULL, NULL, napi_default, NULL},
     {"controlChildFd", NULL, control_child_fd, NULL, NULL, NULL, napi_default, NULL},
     {"stdoutPair", NULL, stdout_pair, NULL, NULL, NULL, napi_default, NULL},
