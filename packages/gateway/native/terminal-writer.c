@@ -13,6 +13,9 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/syscall.h>
+#include <poll.h>
+#include <linux/capability.h>
 #endif
 
 typedef struct { int fd; int kind; } owned_fd;
@@ -94,10 +97,10 @@ static napi_value accept_socket(napi_env env, napi_callback_info info) {
   (void)info; return fail(env);
 #endif
 }
-static napi_value receive(napi_env env, napi_callback_info info) {
+/* Shared ancillary validator: Terminal rejects by closing; private stdout keeps
+ * usable I/O but returns no writer identity after invalid metadata. */
 #ifdef __linux__
-  size_t argc = 1; napi_value args[1]; napi_get_cb_info(env, info, &argc, args, NULL, NULL);
-  owned_fd *client = argc == 1 ? handle(env, args[0], 2) : NULL; if (!client) return fail(env);
+static napi_value receive_fd(napi_env env, owned_fd *client, int preserve_io) {
   char bytes[8192]; union { struct cmsghdr alignment; char data[CMSG_SPACE(sizeof(struct ucred)) + CMSG_SPACE(256 * sizeof(int))]; } control;
   struct iovec vector = {bytes, sizeof(bytes)};
   struct msghdr message = {0}; message.msg_iov = &vector; message.msg_iovlen = 1; message.msg_control = control.data; message.msg_controllen = sizeof(control.data);
@@ -118,11 +121,23 @@ static napi_value receive(napi_env env, napi_callback_info info) {
       memcpy(&writer, CMSG_DATA(header), sizeof(writer)); credentials++;
     } else invalid = 1;
   }
-  if (invalid || credentials != 1 || writer.pid <= 0) { close_owned(client); return fail(env); }
+  if (invalid || credentials != 1 || writer.pid <= 0) {
+    if (!preserve_io) { close_owned(client); return fail(env); }
+    writer.pid = 0;
+  }
   napi_value result, data, identity; napi_create_object(env, &result); napi_create_object(env, &identity);
   napi_create_buffer_copy(env, (size_t)length, bytes, NULL, &data);
   number(env, identity, "pid", writer.pid); number(env, identity, "uid", writer.uid); number(env, identity, "gid", writer.gid);
-  napi_set_named_property(env, result, "data", data); napi_set_named_property(env, result, "writer", identity); return result;
+  napi_set_named_property(env, result, "data", data);
+  napi_set_named_property(env, result, "writer", writer.pid > 0 ? identity : nothing(env)); return result;
+}
+#endif
+static napi_value receive(napi_env env, napi_callback_info info) {
+#ifdef __linux__
+  size_t argc = 1; napi_value args[1]; napi_get_cb_info(env, info, &argc, args, NULL, NULL);
+  owned_fd *client = argc == 1 ? handle(env, args[0], 2) : NULL;
+  if (!client) return fail(env);
+  return receive_fd(env, client, 0);
 #else
   (void)info; return fail(env);
 #endif
@@ -141,8 +156,96 @@ static napi_value send_bytes(napi_env env, napi_callback_info info) {
   (void)info; return fail(env);
 #endif
 }
+/* These are transport observations, never an executable/source admission. */
+#ifdef __linux__
+static int unprivileged(void) {
+  struct __user_cap_header_struct header = { .version = _LINUX_CAPABILITY_VERSION_3, .pid = 0 };
+  struct __user_cap_data_struct caps[2] = {{0}};
+  if (getuid() == 0 || getuid() != geteuid() || getgid() != getegid()
+      || syscall(SYS_capget, &header, caps) != 0) return 0;
+  for (int i = 0; i < 2; i++) if (caps[i].effective || caps[i].permitted || caps[i].inheritable) return 0;
+  return 1;
+}
+#endif
+static napi_value stdout_pair(napi_env env, napi_callback_info info) {
+  (void)info;
+#ifdef __linux__
+  int pair[2], enabled = 1;
+  if (!unprivileged() || open_count > max_open - 2 || socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) != 0) return fail(env);
+  /* Only the receiver is nonblocking. SO_PASSCRED precedes any possible exec. */
+  int flags = fcntl(pair[0], F_GETFL);
+  if (flags < 0 || fcntl(pair[0], F_SETFL, flags | O_NONBLOCK) != 0
+      || setsockopt(pair[0], SOL_SOCKET, SO_PASSCRED, &enabled, sizeof(enabled)) != 0) {
+    close(pair[0]); close(pair[1]); return fail(env);
+  }
+  napi_value result, receiver = wrap(env, pair[0], 3);
+  if (!receiver) { close(pair[1]); return NULL; }
+  napi_value writer = wrap(env, pair[1], 4);
+  if (!writer) { close_owned(handle(env, receiver, 3)); return NULL; }
+  napi_create_object(env, &result);
+  napi_set_named_property(env, result, "receiver", receiver); napi_set_named_property(env, result, "writer", writer);
+  number(env, result, "uid", getuid()); number(env, result, "gid", getgid()); return result;
+#else
+  return fail(env);
+#endif
+}
+static napi_value stdout_writer_fd(napi_env env, napi_callback_info info) {
+  size_t argc = 1; napi_value args[1]; napi_get_cb_info(env, info, &argc, args, NULL, NULL);
+  owned_fd *writer = argc == 1 ? handle(env, args[0], 4) : NULL;
+  if (!writer) return fail(env);
+  napi_value result; napi_create_int32(env, writer->fd, &result); return result;
+}
+static napi_value stdout_receive(napi_env env, napi_callback_info info) {
+#ifdef __linux__
+  size_t argc = 1; napi_value args[1]; napi_get_cb_info(env, info, &argc, args, NULL, NULL);
+  owned_fd *receiver = argc == 1 ? handle(env, args[0], 3) : NULL;
+  if (!receiver) return fail(env);
+  return receive_fd(env, receiver, 1);
+#else
+  (void)info; return fail(env);
+#endif
+}
+static napi_value retain_child(napi_env env, napi_callback_info info) {
+#ifdef __linux__
+  size_t argc = 1; napi_value args[1]; int64_t pid;
+  napi_get_cb_info(env, info, &argc, args, NULL, NULL);
+  if (argc != 1 || !unprivileged() || open_count >= max_open
+      || napi_get_value_int64(env, args[0], &pid) != napi_ok || pid <= 0 || pid > INT32_MAX) return fail(env);
+  /* Caller must retain the actual spawn return before its child can be reaped.
+   * This primitive alone accepts no source and proves no image continuity. */
+#ifdef SYS_pidfd_open
+  int fd = (int)syscall(SYS_pidfd_open, (pid_t)pid, 0);
+  if (fd < 0) return fail(env);
+  int flags = fcntl(fd, F_GETFD);
+  if (flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) != 0) { close(fd); return fail(env); }
+  return wrap(env, fd, 5);
+#else
+  return fail(env);
+#endif
+#else
+  (void)info; return fail(env);
+#endif
+}
+static napi_value child_alive(napi_env env, napi_callback_info info) {
+#ifdef __linux__
+  size_t argc = 1; napi_value args[1]; napi_get_cb_info(env, info, &argc, args, NULL, NULL);
+  owned_fd *birth = argc == 1 ? handle(env, args[0], 5) : NULL;
+  if (!birth || !unprivileged()) return fail(env);
+  struct pollfd descriptor = { .fd = birth->fd, .events = POLLIN };
+  int ready = poll(&descriptor, 1, 0);
+  if (ready < 0) return fail(env);
+  napi_value result; napi_get_boolean(env, ready == 0 && descriptor.revents == 0, &result); return result;
+#else
+  (void)info; return fail(env);
+#endif
+}
 static napi_value init(napi_env env, napi_value exports) {
   napi_property_descriptor methods[] = {
+    {"stdoutPair", NULL, stdout_pair, NULL, NULL, NULL, napi_default, NULL},
+    {"stdoutWriterFd", NULL, stdout_writer_fd, NULL, NULL, NULL, napi_default, NULL},
+    {"stdoutReceive", NULL, stdout_receive, NULL, NULL, NULL, napi_default, NULL},
+    {"retainChild", NULL, retain_child, NULL, NULL, NULL, napi_default, NULL},
+    {"childAlive", NULL, child_alive, NULL, NULL, NULL, napi_default, NULL},
     {"listen", NULL, listen_socket, NULL, NULL, NULL, napi_default, NULL},
     {"accept", NULL, accept_socket, NULL, NULL, NULL, napi_default, NULL},
     {"receive", NULL, receive, NULL, NULL, NULL, napi_default, NULL},
