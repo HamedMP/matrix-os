@@ -235,3 +235,13 @@ it("reads actual512KiB Drive content through the bounded integration client", as
   expect(response.status).toBe(200);
   expect((await response.json()).data.content).toBe(content);
 });
+
+it("preserves Gmail history recovery without claiming a current app snapshot", async () => {
+  await writeFile(join(home,"system/app-capabilities.json"),JSON.stringify({apps:{"drive-chat":{services:{gmail:["list_history"]}}}}));
+  transport.mockImplementationOnce(async()=>Response.json([{id:"gmail",actions:{list_history:{description:"History",risk:"read",params:{startHistoryId:{type:"string",required:true}}}}}]));
+  transport.mockImplementationOnce(async()=>Response.json([{id:"mail",service:"gmail",account_label:"Work",status:"active"}]));
+  transport.mockImplementationOnce(async()=>Response.json({code:"gmail_history_expired",resync_required:true},{status:409}));
+  const response=await request({kind:"integrations.call",service:"gmail",action:"list_history",params:{startHistoryId:"9007199254740993"}});
+  expect(response.status).toBe(409);
+  expect(await response.json()).toMatchObject({code:"gmail_history_expired",resync_required:true});
+});

@@ -102,6 +102,14 @@ const read = { service: "gmail", action: "list_threads", connectionId: "conn_wor
 const send = { service: "gmail", action: "send_email", connectionId: "conn_work", params: { to: "a@example.com", subject: "Hi", body: "Hello" } };
 
 describe("bot integration tools", () => {
+  it("reports expired Gmail history without pretending the mailbox is current", async () => {
+    await grant(WORK);
+    const call = vi.fn(async () => { throw new BotIntegrationError("resync_required"); });
+    const result = await setup(call).tools.call(binding, { ...read, action: "list_history", params: { startHistoryId: "9007199254740993" } });
+    expect(result).toEqual({ ok: true, content: [{ type: "text", text: expect.stringContaining("bounded resync") }] });
+    expect(JSON.stringify(result)).toContain("Keep the prior checkpoint");
+  });
+
   it.each(["existing", "reconciled"])("grants disclosed Jev labels through a %s multi-account connection choice", async (path) => {
     connected = [];
     const recipe = { ...RECIPE, integrations: [{ service: "gmail", effects: ["read", "label"], required: true }] } as BotRecipe;
