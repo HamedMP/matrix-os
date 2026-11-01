@@ -61,7 +61,7 @@ const subscription = { accountId: "synthetic_account", computerId: "synthetic_co
 const route = { api: "openai-responses" as const, modelId: "fixture-model", input: ["text" as const], contextWindow: 8192, maxOutputTokens: 256 };
 const approvals = createBotRoutineApprovals({ db, transact, definitionRevision: async () => 1, source: {
   resolve: async (selection, ownerId, requestClass) => {
-    if (ownerId !== OWNER || requestClass !== "background" || selection?.model !== route.modelId
+    if (ownerId !== OWNER || requestClass !== "routine" || selection?.model !== route.modelId
       || selection.options?.find(o => o.id === "accountId")?.value !== subscription.accountId
       || selection.options?.find(o => o.id === "grantRevision")?.value !== "1") throw new Error("Synthetic source refused");
     return { route, subscription, accessSourceId: "matrix_chatgpt_plan" as const };
@@ -77,9 +77,10 @@ const socketPath = join(process.env.MATRIX_ROUTINE_PROCESS_HOME, "broker.sock");
 const workers = new Map<string, ReturnType<typeof createBotWorker>>(); // At most 4; release deletes and shutdown drains.
 const taskOrchestrator = createBotTaskOrchestrator({
   expectedOwnerId: OWNER, bindings: createBotBindingsRepository(db), transact,
+  routineExecution: execution,
   agents: { get: async scope => scope.ownerId === OWNER ? agent : null }, recipes: createBotRecipeCatalog(),
   resolveRoute: async (_selection, requestClass) => {
-    if (requestClass !== "background") throw new Error("Only synthetic scheduled execution allowed");
+    if (requestClass !== "routine") throw new Error("Only synthetic scheduled execution allowed");
     return { route, subscription, accessSourceId: "matrix_chatgpt_plan" as const };
   },
   assertSource: async binding => { await execution.assertBinding(binding as BotRuntimeBinding); },
@@ -93,7 +94,12 @@ const taskOrchestrator = createBotTaskOrchestrator({
       const runtimeHandle = `runtime_${randomUUID().replaceAll("-", "")}`, executionGeneration = "1", rootFingerprint = "a".repeat(64);
       const { expectedRootFingerprint: _root, signal: _signal, group: _group, ...binding } = request;
       registry.bind({ ...binding, runtimeHandle, executionGeneration, rootFingerprint });
-      faux.setResponses([fauxAssistantMessage(fauxText(slow ? "pending ".repeat(1000) : "Verified scheduled Pi result."))]);
+      faux.setResponses([context => {
+        const system = context.messages.find(message => message.role === "system");
+        const text = typeof system?.content === "string" ? system.content : system?.content.map(part => part.type === "text" ? part.text : "").join("") ?? "";
+        if (!text.includes("Current routine phase (verified by Matrix for this run):")) throw new Error("Compiled process omitted verified routine phase");
+        return fauxAssistantMessage(fauxText(slow ? "pending ".repeat(1000) : "Verified scheduled Pi result."));
+      }]);
       workers.set(runtimeHandle, createBotWorker({ bridgeOrigin: "http://127.0.0.1:1", route: { provider: faux.provider, model: faux.getModel() },
         brokerFor: runId => createBotBrokerClient({ socketPath, runtimeHandle, executionGeneration, runId }) }));
       return { runtimeHandle, executionGeneration, rootFingerprint };

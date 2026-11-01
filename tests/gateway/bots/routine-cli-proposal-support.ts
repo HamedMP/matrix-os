@@ -17,18 +17,19 @@ import { ChatAgentContext } from "../../../packages/gateway/src/chat/agent-conte
 import { withBotProviderInstance } from "../../../packages/gateway/src/bots/provider-instance.js";
 import { requestFixture, proposal, TARGET_A, scope } from "./routine-cli-request-support.js";
 import { OWNER, BOT, NOW } from "./bot-state-support.js";
+import type { ChatGptPlanAuthority } from "../../../packages/gateway/src/bots/chatgpt-plan.js";
 /** Real canonical admission/task/private admission/registry/approval/outbox. Only host runtime calls,
  * source policy and bounded external background-authority snapshot are fixtures, never account execution. */
 export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: <Args extends unknown[], Result>(fn: (...args: Args) => Result) => (...args: Args) => Result = fn => fn, extra?: { adapters: import("../../../packages/gateway/src/chat/provider-adapter.js").CanonicalChatProviderAdapter[]; catalog: import("@matrix-os/contracts").CanonicalProviderCatalog; actualSourceOnly?: boolean }) {
   const f = await requestFixture(db, { actualSourceOnly: extra?.actualSourceOnly }), registry = new BotRuntimeRegistry();
-  const hooks: { transact?: BotStateTransactions; authorizeTarget?: RoutineCliProposalDependencies["authorizeTarget"]; sources?: RoutineCliProposalDependencies["sources"]; targets?: RoutineCliProposalDependencies["targets"] } = {};
+  const hooks: { transact?: BotStateTransactions; authorizeTarget?: RoutineCliProposalDependencies["authorizeTarget"]; sources?: RoutineCliProposalDependencies["sources"]; targets?: RoutineCliProposalDependencies["targets"]; resolveRoutineSource?: ChatGptPlanAuthority["resolve"] } = {};
   const proposalTransactions: BotStateTransactions = (owner, work) => (hooks.transact ?? f.transact)(owner, work);
   const state = { background: true, sourceAllowed: true, stopBeforeProposal: false };
   const route = { api: "openai-responses" as const, modelId: proposal.selection.model, input: ["text" as const], contextWindow: 8192, maxOutputTokens: 256 };
   const subscription = { accountId: "fixture-account", computerId: scope.computerId, grantRevision: 1, peerId: "de000000-0000-4000-8000-000000000900" };
   const approvals = createBotRoutineApprovals({ db, transact: f.transact, now: () => new Date(f.state.clock),
     definitionRevision: async (owner, bot) => (await f.agents.get({ type: "personal", ownerId: owner }, bot))!.revision,
-    source: { resolve: async () => { if (!state.background) throw new Error("Fixture background disabled"); return { route, accessSourceId: "matrix_chatgpt_plan", subscription }; } } });
+    source: { resolve: async (...args) => { if (hooks.resolveRoutineSource) return hooks.resolveRoutineSource(...args); if (!state.background) throw new Error("Fixture background disabled"); return { route, accessSourceId: "matrix_chatgpt_plan", subscription }; } } });
   const host = { createRuntime: instrument(async () => ({ runtimeHandle: `runtime_${randomBytes(16).toString("hex")}`, executionGeneration: "1" })),
     renewRuntime: instrument(async () => ({})), stopRuntime: instrument(async () => ({})) };
   const roots = { resolve: async () => ({ ref: { kind: "bot_workspace" as const, botId: BOT }, fingerprint: "a".repeat(64), primaryWorkspaceRoot: "/fixture/bot" }) };
@@ -55,13 +56,14 @@ export async function proposalFixture(db: Kysely<OwnerBotDatabase>, instrument: 
       if (!state.sourceAllowed) throw new Error("Fixture target source denied");
     } };
   const tasks = createBotTaskOrchestrator(taskDependencies);
-  const adapter = createMatrixBotChatProviderAdapter({ orchestrator: tasks, stopRuntime: async handle => { await admission.release(handle); }, proposals } as Parameters<typeof createMatrixBotChatProviderAdapter>[0]);
+  const adapterOptions: Parameters<typeof createMatrixBotChatProviderAdapter>[0] = { orchestrator: tasks, stopRuntime: async handle => { await admission.release(handle); }, proposals };
+  const adapter = createMatrixBotChatProviderAdapter(adapterOptions);
   canonical = new CanonicalChatOrchestrator({ repository: f.chats, adapters: new CanonicalChatProviderRegistry([adapter, ...(extra?.adapters ?? [])]),
     catalog: withBotProviderInstance({ getCatalog: async () => (extra?.catalog ?? { revision: "fixture", drivers: [], instances: [] }) }),
     agentContext: new ChatAgentContext({ repository: f.chats, agents: f.agents, enabled: () => true,
       botChats: { directBot: async (owner, chat) => owner.type === "personal" ? await createBotBindingsRepository(db).directChatId({ ownerId: owner.ownerId, botId: BOT }).then(id => id === chat ? BOT : null) : null } }),
     now: () => new Date(f.state.clock) });
-  return { ...f, state: f.state, originState: f.state, hooks, policy: state, proposals, approvals, registry, subscription, taskDependencies, host, admission, tasks, canonical, adapter, runBot, transport, interactions,
+  return { ...f, state: f.state, originState: f.state, hooks, policy: state, proposals, approvals, registry, subscription, taskDependencies, host, admission, tasks, canonical, adapter, adapterOptions, catalog: extra?.catalog, runBot, transport, interactions,
     submit: async (operation = { operation: "propose" as const, requestId: "de000000-0000-4000-8000-000000000100", proposal }) => f.execute(operation, proposals),
     close: async () => { await canonical.drain(); await canonical.close(); await f.close(); } };
 }

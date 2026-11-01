@@ -841,7 +841,8 @@ jobs:
     needs: changes
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Measured run 41180668331 reached remaining PG at 9m29s; retain its 120s runner budget plus artifact/cleanup margin.
+    timeout-minutes: 14
     services:
       postgres:
         # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
@@ -949,7 +950,8 @@ jobs:
     needs: changes
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Measured run 41180668331 finished 49 files at 9m45s; allow evidence upload/cleanup without changing test commands or concurrency.
+    timeout-minutes: 12
     services:
       postgres:
         # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,

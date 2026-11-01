@@ -47,7 +47,7 @@ function errorResponse(context: Context, code: ErrorCode) {
 
 export function createBotRoutes(options: {
   recipes?: Pick<BotRecipeCatalog, "list">;
-  routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"list"|"control">;
+  routines?: Pick<import("./routine-execution.js").BotRoutineExecution,"list"|"control"> & Partial<Pick<import("./routine-execution.js").BotRoutineExecution,"center"|"detail"|"requestEdit">>;
   botChats?: BotChatLookup;
   tasks?: (ownerId: string, chatId: string) => Promise<BotTaskSummary[]>;
   instantiation?: Pick<BotInstantiation, "instantiate"> & Partial<Pick<BotInstantiation, "createCustom">>;
