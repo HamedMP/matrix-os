@@ -26,7 +26,7 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def run(argv, **kwargs):
+def run(argv, timeout=35, **kwargs):
     payload = kwargs.pop("input", b"")
     child = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, start_new_session=True, **kwargs)
@@ -34,7 +34,7 @@ def run(argv, **kwargs):
     try:
         child.stdin.write(payload)
         child.stdin.close()
-        deadline = time.monotonic() + 35
+        deadline = time.monotonic() + timeout
         with selectors.DefaultSelector() as selector:
             for name in streams:
                 stream = getattr(child, name)
@@ -52,9 +52,92 @@ def run(argv, **kwargs):
             child.wait(timeout=max(0.01, deadline - time.monotonic()))
         return subprocess.CompletedProcess(argv, child.returncode, bytes(streams["stdout"]), bytes(streams["stderr"]))
     finally:
-        if child.poll() is None:
+        # The group belongs to this launch even when its leader has exited.
+        try:
             os.killpg(child.pid, signal.SIGKILL)
-            child.wait(timeout=5)
+        except ProcessLookupError:
+            pass
+        try:
+            child.wait(timeout=3)
+            reap_owned_group(child.pid)
+        finally:
+            child.stdout.close()
+            child.stderr.close()
+
+
+def process_identity(pid):
+    try:
+        fields = Path("/proc/" + str(pid) + "/stat").read_text().rsplit(")", 1)[1].split()
+        return {"pid": pid, "start": fields[19], "pgid": int(fields[2])}
+    except FileNotFoundError:
+        return None
+
+
+def identity_present(identity):
+    return process_identity(identity["pid"]) == identity
+
+
+def reap_owned_group(pgid):
+    """Reap our direct/adopted group children with a bounded unknown outcome."""
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        try:
+            pid, _ = os.waitpid(-pgid, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if pid == 0:
+            time.sleep(0.01)
+    raise TimeoutError("owned process-group reaping outcome unknown")
+
+
+def safety_cleanup(groups, identities):
+    for pgid in set(groups):
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        reap_owned_group(pgid)
+    remaining = [item for item in identities if identity_present(item)]
+    assert not remaining, "controlled fixture cleanup left identities: " + repr(remaining)
+
+
+def owned_watchdog(argv, env, seconds, identities_file):
+    """Independent bounded test watchdog around the actual build, also on Red."""
+    child = subprocess.Popen(argv, env=env, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, start_new_session=True)
+    began = time.monotonic()
+    timed_out = False
+    identities = []
+    groups = [child.pid]
+    try:
+        try:
+            stdout, stderr = child.communicate(timeout=seconds)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            if identities_file.exists():
+                identities = json.loads(identities_file.read_text())
+                groups.extend(item["pgid"] for item in identities)
+            for pgid in set(groups):
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            stdout, stderr = child.communicate(timeout=3)
+        assert len(stdout) <= 65536 and len(stderr) <= 65536, "controlled watchdog output bound"
+        if identities_file.exists():
+            identities = json.loads(identities_file.read_text())
+            groups.extend(item["pgid"] for item in identities)
+        # A successfully terminated orphan may now be our adopted zombie. Reap
+        # owned groups before distinguishing a live survivor from that residue.
+        for pgid in set(groups):
+            reap_owned_group(pgid)
+        return {"returncode": child.returncode, "watchdog_expired": timed_out,
+                "elapsed": round(time.monotonic() - began, 3),
+                "identities": identities, "remaining_before_safety_cleanup": [
+                    item for item in identities if identity_present(item)]}
+    finally:
+        safety_cleanup(groups, identities)
+        child.wait(timeout=3)
         child.stdout.close()
         child.stderr.close()
 
@@ -127,6 +210,10 @@ def main():
 
     check("source_and_build_API_present", prerequisite)
     if not results["failures"]:
+        # Process-local ownership of our controlled orphan fixtures; no daemon,
+        # account or runtime permission change. Required for honest zombie reaping.
+        libc = ctypes.CDLL(None, use_errno=True)
+        assert libc.prctl(36, 1, 0, 0, 0) == 0, "fixture subreaper unavailable"
         with tempfile.TemporaryDirectory(prefix="attachment-entry-", dir="/tmp") as temporary:
             root = Path(temporary)
             generation, cwd, home = (root / name for name in ("generation", "cwd", "home"))
@@ -181,8 +268,18 @@ process.exit(7);
 
             def failed_compile():
                 prior = binary.read_bytes()
-                env = dict(os.environ, CC="/bin/false")
+                shim, entered = root / "failing-compiler.py", root / "compile-entered"
+                shim.write_text("#!" + sys.executable + "\n" +
+                                "import pathlib, sys\n" +
+                                "if sys.argv[1:] == ['--version']:\n" +
+                                "    print('controlled compiler version'); sys.exit(0)\n" +
+                                "pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_bytes(b'partial-output')\n" +
+                                "pathlib.Path(" + repr(str(entered)) + ").write_text('compile entered')\n" +
+                                "sys.exit(9)\n")
+                shim.chmod(0o700)
+                env = dict(os.environ, CC=str(shim))
                 result = run([str(node), str(builder), str(binary)], env=env)
+                assert entered.is_file(), "compiler never entered compile phase"
                 assert result.returncode != 0 and binary.read_bytes() == prior
                 assert sorted(p.name for p in generation.iterdir()) == [
                     "matrix-terminal-attachment-entry", "node", "terminal-io-attach.mjs"]
@@ -219,6 +316,102 @@ process.exit(7);
                         "temporary_cleaned": True}
             if binary.exists():
                 check("compiler_produced_dynamic_ELF_rejected_without_replacing_output", dynamic_rejection)
+
+            def compiler_deadline(scenario, seconds):
+                prior = binary.read_bytes()
+                shim = root / (scenario + ".py")
+                identities_file = root / (scenario + "-identities.json")
+                entered = root / (scenario + "-compile-entered")
+                shim.write_text("#!" + sys.executable + "\n" +
+                                "import json, os, pathlib, signal, sys, time\n" +
+                                "def identity(pid):\n" +
+                                "    fields = pathlib.Path('/proc/' + str(pid) + '/stat').read_text().rsplit(')', 1)[1].split()\n" +
+                                "    return {'pid': pid, 'start': fields[19], 'pgid': int(fields[2])}\n" +
+                                "version = sys.argv[1:] == ['--version']\n" +
+                                "scenario = " + repr(scenario) + "\n" +
+                                "if version and scenario != 'version-ignore-term':\n" +
+                                "    print('controlled deadline compiler'); sys.exit(0)\n" +
+                                "if not version:\n" +
+                                "    pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_bytes(b'partial-output')\n" +
+                                "    pathlib.Path(" + repr(str(entered)) + ").write_text('compile entered')\n" +
+                                "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n" +
+                                "identities = [identity(os.getpid())]\n" +
+                                "if not version:\n" +
+                                "    child = os.fork()\n" +
+                                "    if child == 0:\n" +
+                                "        time.sleep(120); os._exit(0)\n" +
+                                "    identities.append(identity(child))\n" +
+                                "pathlib.Path(" + repr(str(identities_file)) + ").write_text(json.dumps(identities))\n" +
+                                "if scenario == 'compile-leader-exits-held-pipes': os._exit(0)\n" +
+                                "time.sleep(120)\n")
+                shim.chmod(0o700)
+                observation = owned_watchdog([str(node), str(builder), str(binary)],
+                                             dict(os.environ, CC=str(shim)), seconds, identities_file)
+                results.setdefault("lifecycle_observations", {})[scenario] = observation
+                try:
+                    assert identities_file.is_file(), "controlled compiler did not start"
+                    if scenario != "version-ignore-term":
+                        assert entered.is_file(), "controlled compiler never entered compile phase"
+                    assert not observation["watchdog_expired"], "actual build exceeded outer watchdog: " + repr(observation)
+                    assert observation["returncode"] != 0, "deadline compiler unexpectedly accepted"
+                    assert observation["elapsed"] < seconds - 0.5, "build did not enforce its own deadline"
+                    assert not observation["remaining_before_safety_cleanup"], "build left owned compiler descendants"
+                    assert binary.read_bytes() == prior, "deadline replaced prior output"
+                    assert not list(generation.glob(".attachment-entry-*")), "deadline left temporary build files"
+                finally:
+                    # Old build is deliberately exercised in Red; its killed Node
+                    # cannot run finally. Test owns this controlled residue cleanup.
+                    for path in generation.glob(".attachment-entry-*"):
+                        shutil.rmtree(path)
+                return observation
+
+            for scenario, seconds in (("version-ignore-term", 8),
+                                      ("compile-ignore-term-with-descendant", 34),
+                                      ("compile-leader-exits-held-pipes", 34)):
+                check("build_deadline_" + scenario, lambda s=scenario, t=seconds: compiler_deadline(s, t))
+
+            def leader_exits_first(held_pipes):
+                script = root / ("leader-first-" + str(held_pipes) + ".py")
+                identities_file = script.with_suffix(".json")
+                script.write_text("import json, os, pathlib, signal, time\n" +
+                                  "def identity(pid):\n" +
+                                  "    fields = pathlib.Path('/proc/' + str(pid) + '/stat').read_text().rsplit(')', 1)[1].split()\n" +
+                                  "    return {'pid': pid, 'start': fields[19], 'pgid': int(fields[2])}\n" +
+                                  "child = os.fork()\n" +
+                                  "if child == 0:\n" +
+                                  "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n" +
+                                  ("    [os.close(fd) for fd in (0, 1, 2)]\n" if not held_pipes else "") +
+                                  "    time.sleep(120); os._exit(0)\n" +
+                                  "pathlib.Path(" + repr(str(identities_file)) + ").write_text(json.dumps([identity(os.getpid()), identity(child)]))\n" +
+                                  "os._exit(0)\n")
+                outcome = None
+                identities = []
+                try:
+                    try:
+                        completed = run([sys.executable, str(script)], timeout=0.5)
+                        outcome = "exit:" + str(completed.returncode)
+                    except AssertionError as error:
+                        assert str(error) == "subprocess deadline", str(error)
+                        outcome = "deadline"
+                    assert identities_file.is_file(), "controlled parent did not start"
+                    identities = json.loads(identities_file.read_text())
+                    remaining = [item for item in identities if identity_present(item)]
+                    observation = {"held_pipes": held_pipes, "run_outcome": outcome,
+                                   "identities": identities, "remaining_after_actual_run": remaining}
+                    results.setdefault("lifecycle_observations", {})["leader-first-" + str(held_pipes)] = observation
+                    assert not remaining, "actual run() left owned descendant after leader exit: " + repr(observation)
+                    try:
+                        os.killpg(identities[0]["pgid"], 0)
+                    except ProcessLookupError:
+                        return observation
+                    raise AssertionError("owned group still exists after actual run() cleanup")
+                finally:
+                    if not identities and identities_file.exists():
+                        identities = json.loads(identities_file.read_text())
+                    safety_cleanup([item["pgid"] for item in identities], identities)
+
+            check("actual_run_cleans_leader_first_descendant_with_held_pipes", lambda: leader_exits_first(True))
+            check("actual_run_cleans_leader_first_descendant_with_closed_pipes", lambda: leader_exits_first(False))
 
             if binary.exists() and not results["failures"]:
                 marker = root / "markers"

@@ -9,6 +9,11 @@ node packages/gateway/native/build-terminal-attachment-entry.mjs /absolute/exist
 
 `CC` selects the compiler executable (default `cc`). Compilation uses C11,
 optimization, warnings as errors and `-static`, with a 30-second deadline.
+The compiler version probe has a five-second deadline. Each invocation runs in
+an owned Linux process group, uses SIGKILL on deadline, kills remaining group
+members even after the compiler leader exits, and awaits direct-child reaping.
+Pipe/reaping cleanup has a separate one-second bound; an exceptional unknown
+cleanup outcome fails the build instead of being reported as success.
 The script checks the actual ELF architecture, interpreter and dependency
 tables before atomically replacing the explicit output. It prints JSON source,
 compiler, target, hash and static-mode evidence. Failed builds preserve an
@@ -43,3 +48,7 @@ JavaScript fixture. That JavaScript is component-only evidence, not acceptance
 of the production generation closure or a native harness. Required prerequisites
 fail instead of being skipped. Temporary test assets and owned children are
 cleaned up; bounded raw JSON evidence remains in the supplied new directory.
+The fixture becomes a process-local Linux child subreaper for its controlled
+orphan tests. It kills owned groups independently of leader state and bounds
+direct/adopted-child reaping. Regression cases cover TERM-resistant compilers,
+descendants holding output pipes, and leader-first exit with held/closed pipes.
