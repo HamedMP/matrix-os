@@ -16,8 +16,9 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
     ["close", "stop", "shutdown", "dispose", "destroy", "release", "waitForIdle", "shutdownAll", "shutdownPostHog"].map(method => [method, vi.fn(async () => { calls.push(`${name}.${method}`); })]),
   );
   const logBestEffortFailure = vi.fn();
+  const terminalLaunchRuntime = service("terminal launch");
   const dependencies = {
-    appAiRuntime, closeAppAiCapabilities, logBestEffortFailure,
+    appAiRuntime, closeAppAiCapabilities, logBestEffortFailure, terminalLaunchRuntime,
     browserLab: service("browser lab"), sharedBrowserRuntime: service("shared browser"),
     supervisedBrowserRuntime: service("browser approvals"),
     managedFeatureRestart: service("managed feature restart"),
@@ -54,7 +55,7 @@ async function shutdownFixture(appAiRuntime: { close(): Promise<void> }) {
   expect(body).not.toBe("");
   const script = ts.transpileModule(`const close = async () => ${body};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const close = new Function(...Object.keys(dependencies), `${script};return close;`)(...Object.values(dependencies)) as () => Promise<void>;
-  return { close, calls, logBestEffortFailure };
+  return { close, calls, logBestEffortFailure, terminalLaunchRuntime };
 }
 
 it("continues the actual gateway shutdown after app AI cleanup rejects", async () => {
@@ -63,6 +64,7 @@ it("continues the actual gateway shutdown after app AI cleanup rejects", async (
   const shutdown = await shutdownFixture(appAiRuntime);
   await expect(shutdown.close()).resolves.toBeUndefined();
   expect(appAiRuntime.close).toHaveBeenCalledOnce();
+  expect(shutdown.terminalLaunchRuntime.close).toHaveBeenCalledOnce();
   expect(shutdown.logBestEffortFailure).toHaveBeenCalledWith("App AI adapter shutdown failed", failure);
   expect(shutdown.calls).toEqual(expect.arrayContaining([
     "anthropic.close", "Slack.close", "chats.close", "bots.close", "company bots.close", "providers.close", "Chat database.release",
@@ -104,6 +106,7 @@ export class ModelRuntime {
     const closing = shutdown.close().then(() => ({ ok: true }), error => ({ ok: false, error }));
     await vi.advanceTimersByTimeAsync(20_100);
     expect(await closing).toEqual({ ok: true });
+    expect(shutdown.terminalLaunchRuntime.close).toHaveBeenCalledOnce();
     expect(await pending).toBeInstanceOf(Error);
     expect(shutdown.logBestEffortFailure).toHaveBeenCalledWith("App AI adapter shutdown failed", expect.any(Error));
     expect(shutdown.calls).toContain("Slack.close");

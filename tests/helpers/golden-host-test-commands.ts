@@ -54,8 +54,25 @@ try {
         const python = stdout.trim();
         if (!isAbsolute(python)) throw new Error("Fixture requires an absolute Python interpreter");
         await access(python, constants.X_OK);
+        // Keep the real GNU deadline and kill-after escalation in the copied
+        // fixture; PATH alone cannot override Ubuntu's absolute timeout path.
+        let timeout: string;
+        try {
+          const resolved = await execFileAsync("/bin/sh", ["-c", "command -v timeout || command -v gtimeout"], {
+            env: { ...process.env, PATH: originalPath }, timeout: 10_000,
+          });
+          timeout = resolved.stdout.trim();
+          if (!isAbsolute(timeout)) throw new Error("Expected an absolute timeout executable");
+          await access(timeout, constants.X_OK);
+          const version = await execFileAsync(timeout, ["--version"], { timeout: 10_000 });
+          if (!/^timeout \(GNU coreutils\)/.test(version.stdout)) throw new Error("Expected GNU coreutils timeout");
+        } catch (error) {
+          throw new Error("Fixture requires an existing GNU timeout with --kill-after on PATH", { cause: error });
+        }
         const script = await readFile(source, "utf8");
-        await writeFile(target, script.replaceAll("/usr/bin/python3", shellQuote(python)), { mode: 0o755 });
+        await writeFile(target, script
+          .replaceAll("/usr/bin/python3", shellQuote(python))
+          .replaceAll("/usr/bin/timeout", shellQuote(timeout)), { mode: 0o755 });
       },
       cleanup: () => rm(directory, { recursive: true, force: true }),
     };

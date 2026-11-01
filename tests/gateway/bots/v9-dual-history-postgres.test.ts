@@ -19,7 +19,7 @@ describe.skipIf(!v9PgEnabled)("pooled dual-v9 bridge",()=>{
   await bootstrapBotDatabase(fixture.db,[...historicalV9Migrations().slice(0,8),questionV9]);
   const before=await fixture.snapshot();
   const results=await Promise.all(Array.from({length:8},()=>bootstrapBotDatabase(fixture!.db)));
-  expect(results.flatMap(r=>r.applied).sort()).toEqual([10,11]);
+  expect(results.flatMap(r=>r.applied).sort()).toEqual([10,11,12,13,14,15]);
   const after=await fixture.snapshot();
   expect(after.history).toEqual(before.history);
   expect(after.rows).toEqual({...before.rows,bot_chat_bindings:before.rows.bot_chat_bindings!.map(r=>Object.assign({},r,{project_id:null}))});
@@ -44,6 +44,6 @@ describe.skipIf(!v9PgEnabled)("pooled dual-v9 bridge",()=>{
   const broken=BOT_MIGRATIONS.map(m=>m.version===10?{...m,up:async(db:Parameters<typeof m.up>[0])=>{await m.up(db);throw Error("synthetic bridge fault");}}:m);
   await expect(bootstrapBotDatabase(fixture.db,broken)).rejects.toThrow("synthetic bridge fault");
   expect(await columns()).toHaveLength(0);expect(await fixture.snapshot()).toEqual(before);
-  expect(await bootstrapBotDatabase(fixture.db)).toEqual({applied:[10,11]});
+  expect(await bootstrapBotDatabase(fixture.db)).toEqual({applied:[10,11,12,13,14,15]});
  });
 });

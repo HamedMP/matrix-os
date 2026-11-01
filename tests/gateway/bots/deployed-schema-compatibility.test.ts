@@ -81,7 +81,8 @@ it("rejects a renamed released version before executing later migrations", async
 
 it("keeps unknown future schemas unavailable without applying missing current migrations", async () => {
   await bootstrapBotDatabase(db, [BOT_MIGRATIONS[0]!]);
-  await sql`INSERT INTO bot_schema_migrations (version, name) VALUES (12, 'unknown_future')`.execute(db);
+  // The current CLI schema ends at v15; v16 remains genuinely unavailable.
+  await sql`INSERT INTO bot_schema_migrations (version, name) VALUES (16, 'unknown_future')`.execute(db);
   await expect(bootstrapBotDatabase(db)).rejects.toEqual(new BotSchemaError("newer_schema"));
-  expect(await db.selectFrom("bot_schema_migrations").select("version").orderBy("version").execute()).toEqual([{ version: 1 }, { version: 12 }]);
+  expect(await db.selectFrom("bot_schema_migrations").select("version").orderBy("version").execute()).toEqual([{ version: 1 }, { version: 16 }]);
 });

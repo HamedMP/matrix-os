@@ -14,7 +14,7 @@ async function legacy() {
 it("upgrades genuine frozen thread-v9 without relabeling any historical row", async () => {
   const db = await legacy();
   const before = await db.selectFrom("bot_schema_migrations").selectAll().orderBy("version").execute();
-  expect(await bootstrapBotDatabase(db)).toEqual({ applied: [10,11] });
+  expect(await bootstrapBotDatabase(db)).toEqual({ applied: [10,11,12,13,14,15] });
   expect(await db.selectFrom("bot_schema_migrations").selectAll().where("version","<=",9).orderBy("version").execute()).toEqual(before);
   expect((await sql`SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='bot_interactions' AND column_name='source_run_id'`.execute(db)).rows).toHaveLength(1);
   expect(await bootstrapBotDatabase(db)).toEqual({ applied: [] });
@@ -23,7 +23,7 @@ it("bridges canonical question-v9 additively into thread support then routines",
   data = await createBotStateDatabase({ migrate:false });
   await bootstrapBotDatabase(data.db,BOT_MIGRATIONS.slice(0,9));
   const before = await data.db.selectFrom("bot_schema_migrations").selectAll().orderBy("version").execute();
-  expect(await bootstrapBotDatabase(data.db)).toEqual({ applied:[10,11] });
+  expect(await bootstrapBotDatabase(data.db)).toEqual({ applied:[10,11,12,13,14,15] });
   expect(await data.db.selectFrom("bot_schema_migrations").selectAll().where("version","<=",9).orderBy("version").execute()).toEqual(before);
   expect((await sql`SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='bot_chat_bindings' AND column_name='project_id'`.execute(data.db)).rows).toHaveLength(1);
 });
