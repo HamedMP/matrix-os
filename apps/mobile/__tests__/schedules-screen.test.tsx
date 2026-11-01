@@ -117,3 +117,10 @@ it("does not submit an archive confirmation after its owner/Computer screen unmo
   await act(async () => confirm());
   expect(client.control).not.toHaveBeenCalled();
 });
+
+it("shows a completed one-time schedule as having no next run, without calling it paused or archived", async () => {
+  const client = api(); client.list.mockResolvedValue({items: [{...routine, nextFireAt: null, proposal: {...routine.proposal, schedule: {kind: "once", at: "2026-10-31T00:00:00.000Z"}}}], pending: [], nextCursor: null});
+  draw(client);
+  expect(await screen.findByText("Next run: None scheduled")).toBeTruthy();
+  expect(screen.queryByText(/No future run while paused or archived/)).toBeNull();
+});

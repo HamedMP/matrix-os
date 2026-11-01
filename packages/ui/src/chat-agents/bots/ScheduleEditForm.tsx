@@ -3,6 +3,7 @@ import { BotRoutineEditRequestSchema, type BotInteraction, type BotRoutineSchedu
 import type { BotRoutineClient } from "./routine-client.js";
 import type { BotClient } from "./client.js";
 import { routineScheduleCopy } from "./routine-presentation.js";
+import { useRoutineReviewClosed } from "./routine-review-clock.js";
 import { InteractionCard } from "./InteractionCard.js";
 import { chatAgentButtonClass, chatAgentInputClass } from "../theme.js";
 
@@ -45,15 +46,23 @@ export function ScheduleEditForm({ routine, api, botClient, agentName, onChanged
   const readback = freshRead ? pendingInteractions.find(item => item.interactionId === interaction!.interactionId) : interaction;
   const reviewUnavailable = freshRead && !readback;
   const shownInteraction = readback ?? interaction;
+  const closedReview = useRoutineReviewClosed(shownInteraction);
   const inputClass = chatAgentInputClass;
   return <section aria-label="Edit schedule" className="grid min-w-0 gap-3 border-t pt-4">
     <h3 className="font-semibold">Review changes before they apply</h3>
     <p className="text-sm">The existing schedule keeps its current settings until you approve these changes. Pause it first if you do not want another run.</p>
     {routine.revision !== openedRevision.current ? <div role="status" className="rounded-lg border p-3 text-sm"><p>The saved schedule changed to revision {routine.revision}. Your draft is kept. Check the saved task before reviewing again.</p><p className="mt-2 whitespace-pre-wrap break-words">Current saved task: {routine.proposal.name} — {routine.proposal.prompt}</p><p className="break-words">Saved timing: {routineScheduleCopy(routine.proposal.schedule).frequency} · {routineScheduleCopy(routine.proposal.schedule).timezone}</p></div> : null}
     {interaction && shownInteraction ? <><InteractionCard key={shownInteraction.interactionId} interaction={shownInteraction} actionsAvailable={!reviewUnavailable} agentName={agentName} currentRoutineRevision={routine.revision}
-      onResolve={async input => { const result = await botClient.resolve(routine.chatId, interaction.interactionId, input); decision.current = input.kind === "approval" ? input.decision : null; return result; }}
-      onResolved={() => { onRefreshRequired(); if (!mounted.current) return; if (decision.current === "deny") { setInteraction(null); setError(""); } else onChanged(); }}/>
-      {reviewUnavailable ? <div className="grid gap-2 text-sm"><p>The previous review is no longer available. Your draft is kept.</p><button className={chatAgentButtonClass} type="button" onClick={() => { setInteraction(null); setError(""); }}>Return to draft</button></div> : null}
+      onResolve={async input => {
+        busy.current = true; setPending(true);
+        try { const result = await botClient.resolve(routine.chatId, interaction.interactionId, input); decision.current = input.kind === "approval" ? input.decision : null; return result; }
+        catch (failure: unknown) { busy.current = false; if (mounted.current) setPending(false); throw failure; }
+      }}
+      onResolved={() => {
+        try { onRefreshRequired(); if (!mounted.current) return; if (decision.current === "deny") { setInteraction(null); setError(""); } else onChanged(); }
+        finally { busy.current = false; if (mounted.current) setPending(false); }
+      }}/>
+      {reviewUnavailable || closedReview ? <div className="grid gap-2 text-sm"><p>The previous review is no longer available. Your draft is kept.</p><button className={chatAgentButtonClass} type="button" disabled={pending} onClick={() => { if (busy.current) return; setInteraction(null); setError(""); }}>Return to draft</button></div> : null}
     </> : <>
       <label className="grid gap-1 text-sm">Task name<input className={inputClass} value={name} maxLength={120} disabled={pending} onChange={event => setName(event.currentTarget.value)}/></label>
       <label className="grid gap-1 text-sm">What should happen?<textarea className={inputClass} value={prompt} maxLength={4096} rows={3} disabled={pending} onChange={event => setPrompt(event.currentTarget.value)}/></label>
