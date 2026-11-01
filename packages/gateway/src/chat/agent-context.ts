@@ -216,11 +216,11 @@ export class ChatAgentContext {
   }
 
   async revalidate(owner: ChatOwner, chatId: string, context?: ChatRunContext): Promise<void> {
+    const boundId = await this.options.botChats?.directBot(owner, chatId);
     if (!context) return;
     if ((context.agent || context.chats.length || context.drives?.length) && !this.options.enabled()) throw new ChatAgentContextError("feature_disabled");
     if (context.agent) {
       const currentAgent = await this.agent(owner, context.agent.id);
-      const boundId = await this.options.botChats?.directBot(owner, chatId);
       if (boundId && (boundId !== context.agent.id || currentAgent.revision !== context.agent.revision || currentAgent.recipeRef)) {
         throw new ChatAgentContextError("context_unavailable");
       }

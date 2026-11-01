@@ -48,7 +48,7 @@ it("resolves a concrete Bot managed model without unrelated native discovery", a
 });
 
 describe("explicit shared Pi policy route", () => {
-  const decision = { policyRevision: "4", harness: "codex" as const, providerInstanceId: "codex_default", accessSourceId: null, allowedModelIds: ["gpt-5.6-luna"], effectiveSubmitMode: "members" as const };
+  const decision = { modelId: "gpt-5.6-luna", policyRevision: "4", harness: "codex" as const, providerInstanceId: "codex_default", accessSourceId: null, allowedModelIds: ["gpt-5.6-luna"], effectiveSubmitMode: "members" as const };
   it("keeps native Codex credentials out of the shared Pi coordinator", async () => {
     const getSnapshot = vi.fn();
     const resolveCodexIdentity = vi.fn(async () => ({ url, headers: {} }));
@@ -66,10 +66,26 @@ describe("explicit shared Pi policy route", () => {
     }) as never);
     const resolveCodexIdentity = vi.fn();
     const resolve = createSharedBotModelRouteResolver({ providers: { getSnapshot }, resolveCodexIdentity, lifetime: new AbortController().signal });
-    const policy = { ...decision, harness: "claude_code" as const, providerInstanceId: "claude_code_default", accessSourceId: "owner_anthropic_key", allowedModelIds: [modelId] };
+    const policy = { ...decision, modelId, harness: "claude_code" as const, providerInstanceId: "claude_code_default", accessSourceId: "owner_anthropic_key" as const, allowedModelIds: [modelId] };
     expect(await resolve(policy, modelId)).toMatchObject({ accessSourceId: "owner_anthropic_key", route: { api: "anthropic-messages", modelId } });
     await expect(resolve(policy, "claude-other")).rejects.toBeInstanceOf(BotRouteError);
     expect(getSnapshot).toHaveBeenCalledTimes(1);
     expect(resolveCodexIdentity).not.toHaveBeenCalled();
   });
+});
+
+// ENG93: background class is server-owned and has no credential/funding fallback.
+it("uses exact subscription background consent for a scheduled coordinator", async () => {
+  const selection={instanceId:"matrix_chatgpt_plan",model:"fixture",options:[{id:"accountId",value:"fixture-account"},{id:"grantRevision",value:"3"}]};
+  const source=vi.fn(async()=>({route:{api:"openai-responses",modelId:"fixture",input:["text"],contextWindow:1000,maxOutputTokens:100}} as never));
+  const resolve=createBotModelRouteResolver({ownerId:"fixture-owner",providers:{getSnapshot:vi.fn()},chatgptPlan:{resolve:source} as never});
+  await resolve(selection,"background");
+  expect(source).toHaveBeenCalledWith(selection,"fixture-owner","background");
+});
+it("never funds a background routine through another source", async () => {
+  const getSnapshot=vi.fn(),other=vi.fn();
+  const resolve=createBotModelRouteResolver({ownerId:"fixture-owner",providers:{getSnapshot},matrixAnthropic:{resolve:other} as never});
+  await expect(resolve(undefined,"background")).rejects.toBeInstanceOf(BotRouteError);
+  await expect(resolve({instanceId:"matrix_anthropic_api",model:"fixture"},"background")).rejects.toBeInstanceOf(BotRouteError);
+  expect(getSnapshot).not.toHaveBeenCalled();expect(other).not.toHaveBeenCalled();
 });

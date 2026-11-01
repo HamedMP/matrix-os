@@ -1,3 +1,4 @@
+import {createBotRoutinesRepository} from "./repositories/routines.js";
 /**
  * The authoritative view of what a bot may do (spec 536,
  * `GET /api/chat-agents/:agentId/authority`). It is read from server state,
@@ -68,7 +69,8 @@ export function createBotAuthority(deps: {
         console.warn("[bots] recipe unavailable for authority:", error instanceof Error ? error.name : "UnknownError");
       }
       const at = now();
-      const { grants, pending, memory } = await deps.transact(ownerId, async (tx) => ({
+      const { grants, pending, memory, routines } = await deps.transact(ownerId, async (tx) => ({
+        routines: await createBotRoutinesRepository(tx.db).list(ownerId,agentId.data,tx.db),
         grants: await createBotGrantsRepository(tx.db).listLive({ ownerId, botId: agentId.data, audience: AUDIENCE, now: at }, tx.db),
         pending: await tx.db.selectFrom("bot_interactions").select(["interaction_id", "kind", "chat_id", "expires_at"])
           .where("owner_id", "=", ownerId).where("bot_id", "=", agentId.data)
@@ -106,8 +108,7 @@ export function createBotAuthority(deps: {
           effects: grant.effects, audience: grant.audience, expiresAt: grant.expiresAt,
         })),
         connections,
-        // Routines arrive in M2.
-        routines: [],
+        routines: routines.filter(r=>r.status!=="archived").map(r=>({routineId:r.routineId,summary:r.proposal.name,status:r.status,nextFireAt:r.nextFireAt})),
         pendingInteractions: pending.map((row) => ({
           interactionId: row.interaction_id, kind: row.kind, chatId: row.chat_id,
           expiresAt: new Date(row.expires_at).toISOString(),

@@ -157,3 +157,13 @@ describe("bot authority view", () => {
     expect(view).not.toHaveBeenCalled();
   });
 });
+
+it("projects durable active and paused routines and hides archived workflows",async()=>{
+ const {createBotBindingsRepository}=await import("../../../packages/gateway/src/bots/repositories/bindings.js");
+ const {createBotRoutinesRepository}=await import("../../../packages/gateway/src/bots/repositories/routines.js");
+ await createBotBindingsRepository(db).bindDirect({ownerId:OWNER,botId:BOT,chatId:"chat_authority1",now:AT});
+ const repo=createBotRoutinesRepository(db),r=await repo.create({ownerId:OWNER,botId:BOT,chatId:"chat_authority1",proposal:{name:"Fixture status",prompt:"Read fixture",schedule:{kind:"interval",everyMs:60000},selection:{instanceId:"matrix_chatgpt_plan",model:"fixture"},authorizedEffects:["read"]},nextFireAt:"2026-09-28T10:01:00.000Z",now:AT});
+ expect((await authority(async()=>[]).view(OWNER,BOT)).routines).toEqual([{routineId:r.routineId,summary:"Fixture status",status:"active",nextFireAt:r.nextFireAt}]);
+ const paused=await repo.control({ownerId:OWNER,routineId:r.routineId,baseRevision:r.revision,status:"paused",now:AT});expect((await authority(async()=>[]).view(OWNER,BOT)).routines[0].status).toBe("paused");
+ await repo.control({ownerId:OWNER,routineId:r.routineId,baseRevision:paused.revision,status:"archived",now:AT});expect((await authority(async()=>[]).view(OWNER,BOT)).routines).toEqual([]);
+});
