@@ -111,7 +111,9 @@ export function ChatAgentsRailSection({ activeChatId, client, summaryClient, isC
         menuZIndex={menuZIndex} current={activeAgentId === agent.id && !navigation.opened} opening={openingBot === agent.id}
         disabled={openingBot !== null || !client.bots || !onOpenBotChat} onOpen={details => { void openAgent(agent, details); }}/>) }
     </div></div></div>
-    {client.bots?.routines ? <button type="button" className="matrix-chat-agents-heading" aria-label="Schedules" aria-pressed={navigation.opened?.client === client && navigation.opened?.view === "schedules"} onClick={event => { if (!(isCurrentAuthority?.() ?? true)) return; onSelectionIntent?.(); navigation.open({ client, view: "schedules" }, event.currentTarget); onOpen?.(); }}><Clock aria-hidden="true" size={15}/><span>Schedules</span></button> : null}
+    {client.bots?.routines ? <div data-slot="chat-sidebar-section-heading" className="matrix-chat-agents-group-heading">
+      <button type="button" className="matrix-chat-agents-heading w-full" aria-label="Schedules" aria-pressed={navigation.opened?.client === client && navigation.opened?.view === "schedules"} onClick={event => { if (!(isCurrentAuthority?.() ?? true)) return; onSelectionIntent?.(); navigation.open({ client, view: "schedules" }, event.currentTarget); onOpen?.(); }}><Clock aria-hidden="true" size={15} strokeWidth={1.5}/><span>Schedules</span></button>
+    </div> : null}
     {openError ? <p role="alert" className="px-2 text-xs">{openError}</p> : null}
   </section>;
 }
