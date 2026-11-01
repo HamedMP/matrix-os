@@ -17,6 +17,12 @@ const routine: BotRoutineCenterItem = { routineId: "rt_0123456789abcdef01234567"
   computerId: "My Computer", status: "active", revision: 1, nextFireAt: "2099-01-01T10:00:00.000Z",
   targetAvailable: true, sourceAvailable: true, requiresReview: false, lastFire: null };
 
+const editReview = (baseRevision: number, name: string) => ({interaction: {interactionId: "in_0123456789abcdef01234567", chatId: routine.chatId,
+    agentId: routine.botId, taskId: "task_fixture", kind: "approval", blocking: false, status: "pending", expiresAt: "2099-01-01T00:00:00.000Z", revision: 1,
+    payload: {kind: "approval", tool: "routine.activate", argsDigest: "a".repeat(64), audience: "direct", policyRevision: 3,
+      preview: JSON.stringify({proposal: {...routine.proposal, name}, source: {accountId: "account_fixture", computerId: "computer_fixture", grantRevision: 3,
+        definitionRevision: 1, routineId: routine.routineId, baseRoutineRevision: baseRevision}})}}});
+
 it("opens an owner schedule center from Chat, manages the exact task revision and preserves the retained chat", async () => {
   const base = clientFixture(); base.list.mockResolvedValue({ enabled: true, agents: [saved] });
   let current = routine;
@@ -87,4 +93,132 @@ it("does not replace Archived results with an old Current refresh when a pending
   expect(routines.list).toHaveBeenLastCalledWith({archived: "true"});
   expect(screen.getByText("No archived schedules")).toBeTruthy();
   expect(screen.queryByRole("button", {name: "View Morning brief"})).toBeNull();
+});
+
+it("refreshes the selected revision without losing a failed edit and requires an explicit review against the new version", async () => {
+  const base = clientFixture();
+  let current = routine;
+  const routines = {list: vi.fn(async () => ({items: [current], pending: [], nextCursor: null})),
+    detail: vi.fn(async () => ({routine: current, history: []})), control: vi.fn(), review: vi.fn().mockRejectedValue({status: 409})};
+  render(<ScheduleCenter client={{...base, bots: {routines}} as unknown as ChatAgentClient} onClose={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", {name: "View Morning brief"}));
+  fireEvent.click(await screen.findByRole("button", {name: "Edit schedule"}));
+  fireEvent.change(screen.getByRole("textbox", {name: "Task name"}), {target: {value: "My retained draft"}});
+  fireEvent.click(screen.getByRole("button", {name: "Review changes"}));
+  await screen.findByRole("alert");
+  current = {...routine, revision: 2, proposal: {...routine.proposal, name: "Other client's saved name"}};
+  fireEvent.click(screen.getByRole("button", {name: "Refresh"}));
+  const review = await screen.findByRole("button", {name: "Review against revision 2"});
+  expect((screen.getByRole("textbox", {name: "Task name"}) as HTMLInputElement).value).toBe("My retained draft");
+  expect(screen.getByText(/Current saved task:/)).toBeTruthy();
+  expect(routines.review).toHaveBeenCalledTimes(1);
+  fireEvent.click(review);
+  await waitFor(() => expect(routines.review).toHaveBeenLastCalledWith(routine.routineId, expect.objectContaining({baseRevision: 2, name: "My retained draft"})));
+});
+
+it("keeps an edit draft when pausing its schedule and reviews against the accepted pause revision", async () => {
+  const base = clientFixture(); let current = routine;
+  const routines = {list: vi.fn(async () => ({items: [current], pending: [], nextCursor: null})),
+    detail: vi.fn(async () => ({routine: current, history: []})), review: vi.fn().mockRejectedValue({status: 409}),
+    control: vi.fn(async () => {current = {...current, revision: 2, status: "paused"}; return {routineId: current.routineId, revision: 2, status: "paused"};})};
+  render(<ScheduleCenter client={{...base, bots: {routines}} as unknown as ChatAgentClient} onClose={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", {name: "View Morning brief"}));
+  fireEvent.click(await screen.findByRole("button", {name: "Edit schedule"}));
+  fireEvent.change(screen.getByRole("textbox", {name: "Task name"}), {target: {value: "Keep on pause"}});
+  fireEvent.click(screen.getAllByRole("button", {name: "Pause Morning brief"})[0]!);
+  const review = await screen.findByRole("button", {name: "Review against revision 2"});
+  expect((screen.getByRole("textbox", {name: "Task name"}) as HTMLInputElement).value).toBe("Keep on pause");
+  fireEvent.click(review);
+  await waitFor(() => expect(routines.review).toHaveBeenCalledWith(routine.routineId, expect.objectContaining({baseRevision: 2, name: "Keep on pause"})));
+});
+
+it("cancels an outdated pending edit, retains its draft and explicitly reviews it at the new pause revision", async () => {
+  const base = clientFixture(); let current = routine, finishReview!: (value: unknown) => void;
+  const makeReview = editReview;
+  const routines = {list: vi.fn(async () => ({items: [current], pending: [], nextCursor: null})), detail: vi.fn(async () => ({routine: current, history: []})),
+    review: vi.fn().mockImplementationOnce(() => new Promise(resolve => {finishReview = resolve;})).mockResolvedValue(makeReview(2, "Retained pending draft")),
+    control: vi.fn(async () => {current = {...current, status: "paused", revision: 2}; return {routineId: current.routineId, status: "paused", revision: 2};})};
+  const resolve = vi.fn(async () => ({interaction: {interactionId: "in_0123456789abcdef01234567", status: "resolved", revision: 2}}));
+  render(<ScheduleCenter client={{...base, bots: {routines, resolve}} as unknown as ChatAgentClient} onClose={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", {name: "View Morning brief"}));
+  fireEvent.click(await screen.findByRole("button", {name: "Edit schedule"}));
+  fireEvent.change(screen.getByRole("textbox", {name: "Task name"}), {target: {value: "Retained pending draft"}});
+  fireEvent.click(screen.getByRole("button", {name: "Review changes"}));
+  fireEvent.click(screen.getAllByRole("button", {name: "Pause Morning brief"})[0]!);
+  await waitFor(() => expect(routines.control).toHaveBeenCalledTimes(1));
+  await act(async () => finishReview(makeReview(1, "Retained pending draft")));
+  const approve = await screen.findByRole("button", {name: "Approve changes"});
+  expect((approve as HTMLButtonElement).disabled).toBe(true);
+  expect(resolve).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", {name: "Cancel"}));
+  const review = await screen.findByRole("button", {name: "Review against revision 2"});
+  expect((screen.getByRole("textbox", {name: "Task name"}) as HTMLInputElement).value).toBe("Retained pending draft");
+  expect(resolve).toHaveBeenCalledExactlyOnceWith(routine.chatId, "in_0123456789abcdef01234567", {kind: "approval", decision: "deny", baseRevision: 1});
+  expect(routines.review).toHaveBeenCalledTimes(1);
+  fireEvent.click(review);
+  await waitFor(() => expect(routines.review).toHaveBeenLastCalledWith(routine.routineId, expect.objectContaining({baseRevision: 2, name: "Retained pending draft"})));
+});
+
+
+it("uses a fresh pending read to recover a review denied in Chat without discarding the draft", async () => {
+  const base = clientFixture();
+  const routines = {list: vi.fn(async () => ({items: [routine], pending: [], nextCursor: null})), detail: vi.fn(async () => ({routine, history: []})),
+    control: vi.fn(), review: vi.fn().mockResolvedValue(editReview(1, "Keep after another Chat denied"))};
+  const resolve = vi.fn();
+  render(<ScheduleCenter client={{...base, bots: {routines, resolve}} as unknown as ChatAgentClient} onClose={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", {name: "View Morning brief"}));
+  fireEvent.click(await screen.findByRole("button", {name: "Edit schedule"}));
+  fireEvent.change(screen.getByRole("textbox", {name: "Task name"}), {target: {value: "Keep after another Chat denied"}});
+  fireEvent.click(screen.getByRole("button", {name: "Review changes"}));
+  await screen.findByRole("button", {name: "Approve changes"});
+  fireEvent.click(screen.getByRole("button", {name: "Refresh"}));
+  fireEvent.click(await screen.findByRole("button", {name: "Return to draft"}));
+  expect((screen.getByRole("textbox", {name: "Task name"}) as HTMLInputElement).value).toBe("Keep after another Chat denied");
+  expect(resolve).not.toHaveBeenCalled();
+  expect(routines.review).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", {name: "Review changes"}));
+  await waitFor(() => expect(routines.review).toHaveBeenCalledTimes(2));
+});
+
+it("does not invalidate a new pending review with a list request started before its acknowledgement", async () => {
+  const base = clientFixture(); let finishReview!: (value: unknown) => void, finishList!: (value: unknown) => void;
+  const page = {items: [routine], pending: [], nextCursor: null};
+  const routines = {list: vi.fn().mockResolvedValue(page), detail: vi.fn(async () => ({routine, history: []})), control: vi.fn(),
+    review: vi.fn(() => new Promise(resolve => {finishReview = resolve;}))};
+  render(<ScheduleCenter client={{...base, bots: {routines, resolve: vi.fn()}} as unknown as ChatAgentClient} onClose={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", {name: "View Morning brief"}));
+  fireEvent.click(await screen.findByRole("button", {name: "Edit schedule"}));
+  fireEvent.click(screen.getByRole("button", {name: "Review changes"}));
+  routines.list.mockImplementationOnce(() => new Promise(resolve => {finishList = resolve;}));
+  fireEvent.click(screen.getByRole("button", {name: "Refresh"}));
+  await waitFor(() => expect(finishList).toBeTypeOf("function"));
+  await act(async () => finishReview(editReview(1, routine.proposal.name)));
+  await screen.findByRole("button", {name: "Approve changes"});
+  await act(async () => finishList(page));
+  expect((screen.getByRole("button", {name: "Approve changes"}) as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.getByRole("button", {name: "Cancel"})).toBeTruthy();
+  expect(screen.queryByRole("button", {name: "Return to draft"})).toBeNull();
+});
+
+it("disables the center's pending-card copy when pausing changes its target revision", async () => {
+  const base = clientFixture(); let current = routine;
+  const routines = {list: vi.fn(async () => ({items: [current], pending: [editReview(1, "Pending changed task").interaction], nextCursor: null})),
+    detail: vi.fn(), review: vi.fn(), control: vi.fn(async () => {current = {...current, status: "paused", revision: 2}; return {routineId: current.routineId, status: "paused", revision: 2};})};
+  render(<ScheduleCenter client={{...base, bots: {routines, resolve: vi.fn()}} as unknown as ChatAgentClient} onClose={vi.fn()}/>);
+  const approve = await screen.findByRole("button", {name: "Approve changes"});
+  expect((approve as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(screen.getByRole("button", {name: "Pause Morning brief"}));
+  await waitFor(() => expect((screen.getByRole("button", {name: "Approve changes"}) as HTMLButtonElement).disabled).toBe(true));
+  expect(screen.getByRole("button", {name: "Cancel"})).toBeTruthy();
+});
+
+it("retains an accepted pause revision when list refresh fails and cannot re-enable its old approval", async () => {
+  const base = clientFixture();
+  const routines = {list: vi.fn().mockResolvedValueOnce({items: [routine], pending: [editReview(1, "Pending changed task").interaction], nextCursor: null}).mockRejectedValue(new Error("Fixture refresh failed")),
+    detail: vi.fn(), review: vi.fn(), control: vi.fn(async () => ({routineId: routine.routineId, status: "paused", revision: 2}))};
+  render(<ScheduleCenter client={{...base, bots: {routines, resolve: vi.fn()}} as unknown as ChatAgentClient} onClose={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", {name: "Pause Morning brief"}));
+  await screen.findByRole("alert");
+  expect(screen.getByRole("button", {name: "Resume Morning brief"})).toBeTruthy();
+  expect((screen.getByRole("button", {name: "Approve changes"}) as HTMLButtonElement).disabled).toBe(true);
 });
