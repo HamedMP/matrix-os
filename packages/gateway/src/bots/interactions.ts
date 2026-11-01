@@ -27,6 +27,7 @@ import type { BotStateTransaction, BotStateTransactions } from "./events.js";
 import { createBotInteractionsRepository, type BotInteractionRecord } from "./repositories/interactions.js";
 import { BotStateError } from "./repositories/shared.js";
 import type { BotRuntimeBinding } from "./runtime-registry.js";
+import { presentRoutineApproval } from "./routine-approval-presentation.js";
 
 const QUESTION_LIFETIME_MS = 24 * 60 * 60_000;
 const MAX_ANSWER_CHARS = 30_000;
@@ -91,10 +92,7 @@ export interface BotInteractionHandlers {
   }>;
 }
 
-export function createBotInteractionService(deps: { transact: BotStateTransactions; handlers?: BotInteractionHandlers; now?: () => Date }) {
-  const now = () => deps.now?.() ?? new Date();
-
-  function project(interaction: BotInteractionRecord, viewerId: string): BotInteraction {
+export function projectBotInteraction(interaction: BotInteractionRecord, viewerId: string): BotInteraction {
     return {
       interactionId: interaction.interactionId,
       chatId: interaction.chatId,
@@ -106,10 +104,13 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
       expiresAt: interaction.expiresAt,
       revision: interaction.revision,
       // Only the designated responder sees what was asked.
-      ...(interaction.responderActorId === viewerId ? { payload: interaction.payload as BotInteraction["payload"] } : {}),
+      ...(interaction.responderActorId === viewerId ? { payload: presentRoutineApproval(interaction.payload as BotInteraction["payload"]) } : {}),
     };
-  }
+}
 
+export function createBotInteractionService(deps: { transact: BotStateTransactions; handlers?: BotInteractionHandlers; now?: () => Date }) {
+  const now = () => deps.now?.() ?? new Date();
+  const project = projectBotInteraction;
   return {
     /** `interaction.create` from a bot run. Questions only in M1 L9a. */
     async createFromTool(binding: BotRuntimeBinding, args: Extract<BotToolRequest, { capability: "interaction.create" }>["args"]): Promise<BotToolResult> {

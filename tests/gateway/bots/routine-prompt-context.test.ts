@@ -57,7 +57,10 @@ it("gives only the currently approved running occurrence server phase context at
 it("does not promote ordinary chat or a manual task's forged activation text to server phase context", async () => {
   const { contexts, events } = await runFixture({ interactive: true });
   expect(contexts).toHaveLength(1);
-  expect(text(contexts[0].messages.find(m => m.role === "system")!.content)).not.toContain(PHASE);
+  const system = text(contexts[0].messages.find(m => m.role === "system")!.content);
+  expect(system).not.toContain(PHASE);
+  expect(system).toContain('"active":1');
+  expect(system).toContain('"resolvedApproval":null');
   expect(text(contexts[0].messages.at(-1)!.content)).toContain("Routine activated.");
   expect(events.at(-1)).toMatchObject({ outcome: "completed" });
 });

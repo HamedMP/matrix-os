@@ -61,7 +61,7 @@ const subscription = { accountId: "synthetic_account", computerId: "synthetic_co
 const route = { api: "openai-responses" as const, modelId: "fixture-model", input: ["text" as const], contextWindow: 8192, maxOutputTokens: 256 };
 const approvals = createBotRoutineApprovals({ db, transact, definitionRevision: async () => 1, source: {
   resolve: async (selection, ownerId, requestClass) => {
-    if (ownerId !== OWNER || requestClass !== "background" || selection?.model !== route.modelId
+    if (ownerId !== OWNER || requestClass !== "routine" || selection?.model !== route.modelId
       || selection.options?.find(o => o.id === "accountId")?.value !== subscription.accountId
       || selection.options?.find(o => o.id === "grantRevision")?.value !== "1") throw new Error("Synthetic source refused");
     return { route, subscription, accessSourceId: "matrix_chatgpt_plan" as const };
@@ -80,7 +80,7 @@ const taskOrchestrator = createBotTaskOrchestrator({
   routineExecution: execution,
   agents: { get: async scope => scope.ownerId === OWNER ? agent : null }, recipes: createBotRecipeCatalog(),
   resolveRoute: async (_selection, requestClass) => {
-    if (requestClass !== "background") throw new Error("Only synthetic scheduled execution allowed");
+    if (requestClass !== "routine") throw new Error("Only synthetic scheduled execution allowed");
     return { route, subscription, accessSourceId: "matrix_chatgpt_plan" as const };
   },
   assertSource: async binding => { await execution.assertBinding(binding as BotRuntimeBinding); },

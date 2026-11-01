@@ -15,7 +15,7 @@ async function tokens(clientId:string,nonce:string|undefined,subject='subject',e
  const id=await new SignJWT({...(nonce?{nonce}:{}),email:'user@example.test'}).setProtectedHeader({alg:'RS256',kid:'test'}).setIssuer('https://auth.openai.com').setAudience(clientId).setSubject(subject).setExpirationTime('1h').sign(pair.privateKey);
  return {access_token:access,refresh_token:'fixture-refresh',id_token:id,token_type:'Bearer',scope,expires_in:expiresIn};
 }
-export async function fixture(runtimeSlot='primary') {
+export async function fixture(runtimeSlot='primary', approvedRoutines=false) {
  const dir=await mkdtemp(join(tmpdir(),'matrix-native-plan-'));
  const vault=createPlanVault({dir,safeStorage:{isEncryptionAvailable:()=>true,encryptString:x=>Buffer.from(x).reverse(),decryptString:x=>Buffer.from(x).reverse().toString()}});
  const localSession={...session,runtimeSlot};
@@ -70,7 +70,7 @@ export async function fixture(runtimeSlot='primary') {
    }
    return json({version:1,sessionId:'00000000-0000-4000-8000-000000000001'});
   }
-  if(url.pathname==='/api/chatgpt-plan/device/capabilities')return json({version:1,sessionId:'00000000-0000-4000-8000-000000000001',pollDeliveryVersion:2});
+  if(url.pathname==='/api/chatgpt-plan/device/capabilities')return json({version:1,sessionId:'00000000-0000-4000-8000-000000000001',pollDeliveryVersion:2,...(approvedRoutines&&url.searchParams.get('includeApprovedRoutines')==='true'?{approvedRoutines:true}:{})});
   if(url.pathname==='/api/chatgpt-plan/device/poll-v2'){
    const receipt=JSON.parse(String(init?.body));
    expect(receipt.version).toBe(2);expect(receipt.sessionId).toBe('00000000-0000-4000-8000-000000000001');

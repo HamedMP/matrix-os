@@ -1,3 +1,6 @@
+import { generateKeyPairSync, createHash, sign } from "node:crypto";
+import { chatGptPlanPeerProof } from "@matrix-os/contracts";
+import { createChatGptPlanPeers } from "../../../packages/gateway/src/bots/chatgpt-plan-peers.js";
 /** Real-PG persisted fencing tests, NOT a real device/worker/model qualification.
  * External subscription/file authority is a controlled double; DB policy/approval/fire/task is real.
  * This suite has not been run in the database-free preparation phase.
@@ -285,13 +288,66 @@ describe.skipIf(!pgEnabled)("old routine binding fencing on pooled PostgreSQL (r
     });
     expect((await fixture.repo.getFire(OWNER, fire.fireId))?.status).toBe("dispatched");
   });
+  it("uses real durable proof with background off, then refuses a revoked source and a peer replaced during the DB wait", async () => {
+    const fixture = f!, fire = await fixture.claim(), run = await fixture.running(fire.fireId), execution = fixture.execution();
+    expect(fixture.source.background).toBe(false);
+    const keys = generateKeyPairSync("ed25519"), der = keys.publicKey.export({type: "spki", format: "der"});
+    let gate: Promise<void> | undefined, entered!: () => void;
+    const peers = createChatGptPlanPeers({db: fixture.db, ownerId: OWNER, computerId: fixture.source.computerId,
+      authorizeRoutine: async binding => { const proof = await execution.assertOccurrencePhase(binding); entered?.(); if (gate) await gate; return proof; }});
+    async function connect() {
+      const challenge = peers.challenge(OWNER), snapshot = {deviceId: createHash("sha256").update(der).digest("hex"),
+        accountId: fixture.source.accountId, grantRevision: fixture.source.grantRevision, enabled: true, background: false,
+        models: [{id: "fixture-model", displayName: "Fixture", input: ["text" as const], contextWindow: 8192, maxOutputTokens: 256}]};
+      return peers.connect(OWNER, {version: 1, challenge: challenge.challenge, snapshot, publicKey: der.toString("base64url"),
+        signature: sign(null, Buffer.from(chatGptPlanPeerProof({...challenge, snapshot})), keys.privateKey).toString("base64url")});
+    }
+    try {
+      const session = await connect();
+      expect(peers.capabilities(OWNER, session)).not.toHaveProperty("approvedRoutines");
+      peers.capabilities(OWNER, session, false, false, true);
+      const bound = {...run.binding, subscription: {...run.binding.subscription!, peerId: session.sessionId}};
+      expect(await peers.revalidate(bound, new AbortController().signal)).toBe(true);
+      const inference = peers.infer(bound, "{}", new AbortController().signal);
+      const delivery = await peers.poll(OWNER, session);
+      expect(delivery.requests[0]).toMatchObject({action: "infer", requestClass: "background", approvedRoutine: {
+        ownerId: OWNER, taskId: fire.taskId, routineId: fixture.routine.routineId, fireId: fire.fireId,
+        approvalId: fixture.routine.approvalId, runId: bound.runId }});
+      peers.reply(OWNER, {...session, id: delivery.requests[0]!.id, ok: true, status: 200, headers: {"content-type": "text/event-stream"}, body: "fixture"});
+      await expect(inference).resolves.toMatchObject({body: "fixture"});
+      fixture.source.grantRevision++;
+      expect(await peers.revalidate(bound, new AbortController().signal)).toBe(false);
+      fixture.source.grantRevision--;
+      let release!: () => void;
+      gate = new Promise<void>(resolve => { release = resolve; });
+      const waiting = new Promise<void>(resolve => { entered = resolve; });
+      const checking = peers.infer(bound, "{}", new AbortController().signal);
+      const refused = expect(checking).rejects.toThrow("unavailable");
+      await waiting;
+      await connect();
+      release();
+      await refused;
+    } finally { peers.close(); }
+  });
+  it("deduplicates simultaneous edit reviews and refuses approval after a concurrent pause without changing the old definition", async () => {
+    const fixture = f!, execution = fixture.execution();
+    const input = {baseRevision: fixture.routine.revision, name: "Revised PG fixture", prompt: "Only revised fixture text", schedule: {kind: "interval", everyMs: 120000}};
+    const [a, b] = await Promise.all([execution.requestEdit(OWNER, fixture.routine.routineId, input), execution.requestEdit(OWNER, fixture.routine.routineId, input)]);
+    expect(a.interaction.interactionId).toBe(b.interaction.interactionId);
+    expect((await fixture.repo.get(OWNER, fixture.routine.routineId))?.proposal).toEqual(fixture.routine.proposal);
+    await execution.control(OWNER, BOT, fixture.routine.routineId, {status: "paused", baseRevision: fixture.routine.revision});
+    await expect(fixture.interactions.resolve(OWNER, PG_CHAT, a.interaction.interactionId, {kind: "approval", decision: "approve", baseRevision: a.interaction.revision})).rejects.toThrow();
+    const retained = await fixture.repo.get(OWNER, fixture.routine.routineId);
+    expect(retained).toMatchObject({status: "paused", proposal: fixture.routine.proposal});
+    expect(retained?.approvalId).toBe(fixture.routine.approvalId);
+  });
   it.each(["background", "grant", "account", "computer", "definition"] as const)("external authority fixture change %s cannot retain the old persisted approval", async change => {
     const fixture = f!,
       fire = await fixture.claim(),
       run = await fixture.running(fire.fireId),
       execution = fixture.execution();
     await execution.assertBinding(run.binding);
-    if (change === "background") fixture.source.background = false;else if (change === "grant") fixture.source.grantRevision++;else if (change === "account") fixture.source.accountId = "different-fixture-account";else if (change === "computer") fixture.source.computerId = "different-fixture-computer";else fixture.source.definitionRevision++;
+    if (change === "background") { fixture.source.background = false; fixture.source.grantRevision++; }else if (change === "grant") fixture.source.grantRevision++;else if (change === "account") fixture.source.accountId = "different-fixture-account";else if (change === "computer") fixture.source.computerId = "different-fixture-computer";else fixture.source.definitionRevision++;
     await expect(execution.assertBinding(run.binding)).rejects.toMatchObject({
       code: "not_granted"
     });
@@ -435,7 +491,7 @@ describe.skipIf(!pgEnabled)("old routine binding fencing on pooled PostgreSQL (r
   });
   it("delivers occurrence phase only for the current approved native-PG binding", async () => {
     const fixture = f!, fire = await fixture.claim(), run = await fixture.running(fire.fireId);
-    await expect(fixture.execution().assertOccurrencePhase(run.binding)).resolves.toBeUndefined();
+    await expect(fixture.execution().assertOccurrencePhase(run.binding)).resolves.toMatchObject({ownerId: OWNER, routineId: fixture.routine.routineId, fireId: fire.fireId, taskId: fire.taskId, runId: run.binding.runId});
     await expect(fixture.execution().assertOccurrencePhase({ ...run.binding, ownerId: "foreign" })).rejects.toMatchObject({ code: "not_granted" });
   });
   it.each(["paused", "archived", "cancelled", "expired_lease", "invalidated_approval"] as const)("fences occurrence phase when %s changes on another PG connection during source validation", async change => {
