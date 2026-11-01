@@ -222,3 +222,44 @@ it("retains an accepted pause revision when list refresh fails and cannot re-ena
   expect(screen.getByRole("button", {name: "Resume Morning brief"})).toBeTruthy();
   expect((screen.getByRole("button", {name: "Approve changes"}) as HTMLButtonElement).disabled).toBe(true);
 });
+
+it("does not reopen old details when their refresh arrives after an edit approval", async () => {
+  const base = clientFixture(); let current = routine, finishDetail!: (value: unknown) => void;
+  let pending: unknown[] = [];
+  const routines = {list: vi.fn(async () => ({items: [current], pending, nextCursor: null})), detail: vi.fn(async () => ({routine: current, history: []})), control: vi.fn(),
+    review: vi.fn(async () => {const value = editReview(1, "Approved changed task"); pending = [value.interaction]; return value;})};
+  const resolve = vi.fn(async () => {current = {...current, revision: 2, proposal: {...current.proposal, name: "Approved changed task"}}; pending = [];
+    return {interaction: {interactionId: "in_0123456789abcdef01234567", status: "resolved", revision: 2}};});
+  render(<ScheduleCenter client={{...base, bots: {routines, resolve}} as unknown as ChatAgentClient} onClose={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", {name: "View Morning brief"}));
+  fireEvent.click(await screen.findByRole("button", {name: "Edit schedule"}));
+  fireEvent.click(screen.getByRole("button", {name: "Review changes"}));
+  await screen.findByRole("button", {name: "Approve changes"});
+  routines.detail.mockImplementationOnce(() => new Promise(resolve => {finishDetail = resolve;}));
+  fireEvent.click(screen.getByRole("button", {name: "Refresh"}));
+  await waitFor(() => expect(finishDetail).toBeTypeOf("function"));
+  const approve = screen.getAllByRole("button", {name: "Approve changes"})[0]!;
+  fireEvent.click(approve);
+  await waitFor(() => expect(screen.queryByRole("region", {name: "Schedule details"})).toBeNull());
+  await act(async () => finishDetail({routine, history: []}));
+  expect(screen.queryByRole("region", {name: "Schedule details"})).toBeNull();
+});
+
+it("keeps the user's newer detail selection when an earlier editor's approval returns after unmount", async () => {
+  const base = clientFixture(), other = {...routine, routineId: "rt_abcdefabcdefabcdefabcdef", proposal: {...routine.proposal, name: "Other saved task"}};
+  let finish!: (value: unknown) => void;
+  const routines = {list: vi.fn(async () => ({items: [routine, other], pending: [], nextCursor: null})),
+    detail: vi.fn(async (id: string) => ({routine: id === other.routineId ? other : routine, history: []})), control: vi.fn(),
+    review: vi.fn(async () => editReview(1, "Pending changed task"))};
+  const resolve = vi.fn(() => new Promise(done => {finish = done;}));
+  render(<ScheduleCenter client={{...base, bots: {routines, resolve}} as unknown as ChatAgentClient} onClose={vi.fn()}/>);
+  fireEvent.click(await screen.findByRole("button", {name: "View Morning brief"}));
+  fireEvent.click(await screen.findByRole("button", {name: "Edit schedule"}));
+  fireEvent.click(screen.getByRole("button", {name: "Review changes"}));
+  fireEvent.click(await screen.findByRole("button", {name: "Approve changes"}));
+  fireEvent.click(screen.getByRole("button", {name: "Close details"}));
+  fireEvent.click(screen.getByRole("button", {name: "View Other saved task"}));
+  await screen.findByRole("heading", {name: "Other saved task"});
+  await act(async () => finish({interaction: {interactionId: "in_0123456789abcdef01234567", status: "resolved", revision: 2}}));
+  expect(screen.getByRole("heading", {name: "Other saved task"})).toBeTruthy();
+});
