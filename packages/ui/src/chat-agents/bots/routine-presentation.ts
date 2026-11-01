@@ -6,15 +6,16 @@ const source = z.object({ computerId: z.string().min(1).max(128), accountId: z.s
   routineId: z.string().regex(/^rt_[a-f0-9]{24}$/).optional(), baseRoutineRevision: z.number().int().positive().optional(),
 }).strict().refine(value => Boolean(value.routineId) === Boolean(value.baseRoutineRevision));
 const envelope = z.object({ proposal: BotRoutineProposalSchema, source, estimatedNextFireAt: z.iso.datetime({ offset: true }).nullable().optional() }).strict();
-const nextRunFormatter = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" });
-const nextRunTimezone = nextRunFormatter.resolvedOptions().timeZone;
 
 /** Shared display policy only; persisted service state remains authoritative. */
 export function routineNextRun(row: BotRoutineCenterItem): string {
   if (row.status === "archived") return "No future runs · archived";
   if (row.status === "paused") return "No future runs · paused";
   if (row.requiresReview || !row.targetAvailable || !row.sourceAvailable) return "Review required before execution";
-  return row.nextFireAt ? `${nextRunFormatter.format(new Date(row.nextFireAt))} (${nextRunTimezone})` : "None scheduled";
+  if (!row.nextFireAt) return "None scheduled";
+  // The device zone can change while a retained Chat remains mounted.
+  const formatter = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" });
+  return `${formatter.format(new Date(row.nextFireAt))} (${formatter.resolvedOptions().timeZone})`;
 }
 
 export function routineStatusLabel(row: BotRoutineCenterItem): string {
