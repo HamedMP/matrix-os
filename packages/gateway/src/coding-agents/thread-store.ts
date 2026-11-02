@@ -736,7 +736,7 @@ export function createCodingAgentThreadStore(
     threadId: string;
     turnId?: string;
     batch: CodingAgentProviderEventBatch;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const parsed = parseCodingAgentProviderEventBatch(input.batch, input.threadId);
     if (parsed.events.some((event) =>
       event.type === "thread.error" ||
@@ -745,14 +745,14 @@ export function createCodingAgentThreadStore(
     )) {
       throw new Error("Provider streamed a terminal event");
     }
-    const result = await mutate(async (state) => {
+    const result = await mutate<AgentThreadEvent[] | null>(async (state) => {
       const thread = state.threads.find((candidate) =>
         candidate.ownerId === input.ownerId &&
         candidate.id === input.threadId &&
         (input.turnId === undefined || candidate.activeTurnId === input.turnId)
       );
       if (!thread || terminalThread(thread)) {
-        return { state, result: [] as AgentThreadEvent[] };
+        return { state, result: null };
       }
       const existingEventIds = new Set(
         state.events
@@ -792,7 +792,9 @@ export function createCodingAgentThreadStore(
         result: events,
       };
     });
+    if (result === null) return false;
     publish(input.ownerId, input.threadId, result);
+    return true;
   }
 
   function turnStatusEvent(

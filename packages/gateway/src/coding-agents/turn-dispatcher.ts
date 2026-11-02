@@ -32,7 +32,7 @@ export interface CodingAgentTurnDispatcherOptions {
     threadId: string;
     turnId: string;
     batch: CodingAgentProviderEventBatch;
-  }): Promise<void>;
+  }): Promise<void | boolean>;
   finish(input: {
     ownerId: string;
     threadId: string;
