@@ -14,19 +14,26 @@ const index = process.argv.indexOf("--addon"); assert.ok(index >= 0 && process.a
 const addonPath = resolve(process.argv[index + 1]);
 const setterIndex = process.argv.indexOf("--pidfd-setter"); assert.ok(setterIndex >= 0 && process.argv[setterIndex + 1]);
 const setterPath = resolve(process.argv[setterIndex + 1]);
+const supervisorIndex = process.argv.indexOf("--creator-supervisor"); assert.ok(supervisorIndex >= 0 && process.argv[supervisorIndex + 1]);
+const supervisorPath = resolve(process.argv[supervisorIndex + 1]);
+const failureIndex = process.argv.indexOf("--creator-supervisor-failure"); assert.ok(failureIndex >= 0 && process.argv[failureIndex + 1]);
+const failurePath = resolve(process.argv[failureIndex + 1]);
+const failureSourcePath = fileURLToPath(new URL("./native-inherited-control-fixtures/creator-retain-failure.c", import.meta.url));
 const relayPath = fileURLToPath(new URL("./native-inherited-control-fixtures/relay.mjs", import.meta.url));
 const servicePath = fileURLToPath(new URL("./native-inherited-control-fixtures/service.mjs", import.meta.url));
 const writerPath = fileURLToPath(new URL("./native-inherited-control-fixtures/copied-writer.mjs", import.meta.url));
 const guardPath = fileURLToPath(new URL("./native-inherited-control-fixtures/guard-service.mjs", import.meta.url));
 const workerPath = fileURLToPath(new URL("./native-inherited-control-fixtures/adoption-worker.mjs", import.meta.url));
+const deathServicePath = fileURLToPath(new URL("./native-inherited-control-fixtures/creator-death-service.mjs", import.meta.url));
+const supervisorSourcePath = fileURLToPath(new URL("./native-inherited-control-fixtures/creator-supervisor.c", import.meta.url));
 const results = [], evidence = [], cleanups = new Set(); let native;
 async function until(predicate, label) {
   const end = process.hrtime.bigint() + 3_000_000_000n;
   while (!predicate()) { assert.ok(process.hrtime.bigint() < end, `${label} original deadline`); await delay(2); }
 }
-async function bounded(promise, label) {
+async function bounded(promise, label, ms = 3000) {
   let timer;
-  try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} deadline`)), 3000); })]); }
+  try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} deadline`)), ms); })]); }
   finally { clearTimeout(timer); }
 }
 async function check(name, run) {
@@ -296,9 +303,98 @@ try {
       assert.equal(exit.code, 0); assert.equal(exit.retainedServiceAlive, false); await f.cleanup();
     });
   }
+  if (results[0]?.ok) await check("actual creator death fences genuine queued bytes while a retained opposite endpoint prevents HUP", async () => {
+    let actor, birth, exited, output = "", stderrBytes = 0, outputFault, spawnError;
+    const cleanup = async () => {
+      let forced = false;
+      if (actor?.pid && actor.exitCode === null && actor.signalCode === null) {
+        forced = true;
+        try { process.kill(-actor.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+      }
+      if (exited) await bounded(exited, "actual supervisor cleanup");
+      if (birth) { assert.equal(native.childAlive(birth), false); native.close(birth); }
+      cleanups.delete(cleanup);
+      assert.equal(forced, false, "forced fixture-group cleanup is failure, not descendant wait evidence");
+    };
+    cleanups.add(cleanup);
+    actor = spawn(supervisorPath, [process.execPath, deathServicePath, addonPath], { stdio: ["ignore", "pipe", "pipe"], detached: true, env: process.env });
+    exited = new Promise(resolveExit => { actor.once("error", error => { spawnError = error.code; }); actor.once("close", (code, signal) => resolveExit({ code, signal })); });
+    assert.ok(actor.pid > 1, "required actual compiled supervisor spawn"); birth = native.retainChild(actor.pid);
+    const capFailure = label => {
+      outputFault = new Error(label);
+      try { process.kill(-actor.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") outputFault = error; }
+    };
+    actor.stdout.on("data", chunk => {
+      if (outputFault) return;
+      if (Buffer.byteLength(output) + chunk.length > 32768) capFailure("supervisor output cap"); else output += chunk;
+    });
+    actor.stderr.on("data", chunk => { stderrBytes += chunk.length; if (!outputFault && stderrBytes > 16384) capFailure("supervisor stderr cap"); });
+    const exit = await bounded(exited, "bounded actual creator hierarchy", 20000);
+    if (outputFault) throw outputFault;
+    assert.equal(spawnError, undefined); assert.equal(exit.code, 0); assert.equal(exit.signal, null); assert.equal(native.childAlive(birth), false);
+    const observed = JSON.parse(output.trim()); evidence.push({ case: "actual-creator-death", ...observed });
+    assert.equal(observed.transportComplete, true); assert.equal(observed.genuineBytesQueued, true);
+    assert.equal(observed.creatorWaited, true); assert.equal(observed.creatorExitCode, 0); assert.equal(observed.creatorPidfdDead, true);
+    assert.equal(observed.oppositeEndpointNoHupBeforeCheck, true, "copied opposite endpoint must prevent socket-loss masking");
+    assert.equal(observed.relayLiveBeforeCheck, true); assert.equal(observed.serviceLiveBeforeCheck, true);
+    assert.equal(observed.ready.serviceBirthLive, true); assert.equal(observed.ready.payload.current, true);
+    assert.equal(observed.ping.serviceBirthLive, true); assert.equal(observed.ping.payload.event, "service-pong");
+    assert.equal(observed.observation.serviceBirthLive, true);
+    assert.equal(observed.observation.payload.current, false, "held original creator birth is dead despite a connected socket and queued genuine bytes");
+    assert.equal(observed.observation.payload.debugProbeAttempted, false); assert.equal(observed.observation.payload.queuedNativeBytesFetched, null);
+    assert.equal(observed.observation.payload.receiveClosedError, true); assert.equal(observed.observation.payload.sendClosedError, true); assert.equal(observed.observation.payload.readoptionRefused, true);
+    assert.equal(observed.serviceExit.serviceWaited, true); assert.equal(observed.serviceExit.serviceExitCode, 0); assert.equal(observed.serviceExit.serviceBirthDead, true);
+    assert.equal(observed.relayWaited, true); assert.equal(observed.relayExitCode, 0); assert.equal(observed.allBirthsDead, true); assert.equal(observed.allChildrenActuallyReaped, true);
+    await cleanup();
+  });
+  if (results[0]?.ok) await check("supervisor refuses creator-retain EMFILE only after actually reaping its known gated child", async () => {
+    let actor, birth, exited, output = "", stderrBytes = 0, outputFault, spawnError;
+    const cleanup = async () => {
+      let forced = false;
+      if (actor?.pid && actor.exitCode === null && actor.signalCode === null) {
+        forced = true;
+        try { process.kill(-actor.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+      }
+      if (exited) await bounded(exited, "failure-wrapper actual cleanup");
+      if (birth) { assert.equal(native.childAlive(birth), false); native.close(birth); }
+      cleanups.delete(cleanup);
+      assert.equal(forced, false, "forced live wrapper-group cleanup cannot qualify fixture cleanup");
+    };
+    cleanups.add(cleanup);
+    actor = spawn(failurePath, [process.execPath, deathServicePath, addonPath], { stdio: ["ignore", "pipe", "pipe"], detached: true, env: process.env });
+    exited = new Promise(resolveExit => { actor.once("error", error => { spawnError = error.code; }); actor.once("close", (code, signal) => resolveExit({ code, signal })); });
+    assert.ok(actor.pid > 1); birth = native.retainChild(actor.pid);
+    const capFailure = label => {
+      outputFault = new Error(label);
+      // Never signal a group after its known leader has exited.
+      if (actor.exitCode === null && actor.signalCode === null) {
+        try { process.kill(-actor.pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") outputFault = error; }
+      }
+    };
+    actor.stdout.on("data", chunk => {
+      if (outputFault) return;
+      if (Buffer.byteLength(output) + chunk.length > 16384) capFailure("failure-wrapper output cap"); else output += chunk;
+    });
+    actor.stderr.on("data", chunk => { stderrBytes += chunk.length; if (!outputFault && stderrBytes > 8192) capFailure("failure-wrapper stderr cap"); });
+    const exit = await bounded(exited, "actual acquisition-fault wrapper", 20000);
+    if (outputFault) throw outputFault;
+    assert.equal(spawnError, undefined); assert.equal(exit.signal, null); assert.equal(native.childAlive(birth), false);
+    const lines = output.trim().split("\n"); assert.equal(lines.length, 2, "original report followed by separate safety report");
+    const [original, safety] = lines.map(line => JSON.parse(line));
+    evidence.push({ case: "supervisor-creator-retain-EMFILE", original, safety, actualExit: exit });
+    assert.equal(safety.event, "wrapper-safety"); assert.equal(safety.injectedCalls, 1); assert.equal(safety.forcedEMFILE, true);
+    assert.ok(safety.actualForkReturnedCreatorPID > 1); assert.equal(original.actualCreatorPID, safety.actualForkReturnedCreatorPID);
+    assert.ok(safety.originalExitCode > 0, "actual setup refusal remains nonzero"); assert.equal(exit.code, safety.originalExitCode);
+    assert.equal(original.transportComplete, false); assert.equal(original.phase, "prerequisite");
+    assert.equal(safety.safetyComplete, true, "external safety wrapper prevents the old failure from leaking a child"); assert.equal(safety.safetyError, 0);
+    assert.equal(original.allChildrenActuallyReaped, true, "original supervisor must close held channels before draining its actual gated child");
+    assert.equal(safety.safetyCleanupUsed, false, "wrapper rescue cannot count as original cleanup success");
+    assert.equal(safety.safetyKillAttempted, false); assert.equal(safety.safetyWaitReaped, false); assert.equal(safety.safetyNoChild, true);
+    await cleanup();
+  });
 } catch (error) { results.push({ name: "setup", ok: false, error: String(error.stack ?? error) }); }
 finally { for (const cleanup of [...cleanups]) { try { await cleanup(); } catch (error) { results.push({ name: "cleanup", ok: false, error: String(error) }); } } }
-const paths = [addonPath, setterPath, fileURLToPath(import.meta.url), relayPath, servicePath, writerPath, guardPath, workerPath, fileURLToPath(new URL("./native-inherited-control-fixtures/enable-pidfd.c", import.meta.url))];
+const paths = [addonPath, setterPath, supervisorPath, failurePath, failureSourcePath, fileURLToPath(import.meta.url), relayPath, servicePath, writerPath, guardPath, workerPath, deathServicePath, supervisorSourcePath, fileURLToPath(new URL("./native-inherited-control-fixtures/enable-pidfd.c", import.meta.url))];
 const artifacts = await Promise.all(paths.map(async path => ({ path, sha256: createHash("sha256").update(await readFile(path)).digest("hex") })));
 console.log(JSON.stringify({ platform: process.platform, arch: process.arch, node: process.version, scope: "actual inherited-control transport slices; fixture IPC is not product proof", sourceEnabled: false, accountQualified: false, artifacts, results, evidence, cleanupPending: cleanups.size, passed: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length }, null, 2));
 process.exitCode = results.some(r => !r.ok) || cleanups.size ? 1 : 0;
