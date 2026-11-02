@@ -17,7 +17,7 @@ const root = resolve(__dirname, "../../.."), main = join(root, "desktop/out/main
 /** Required lane: never skip. Real Electron/main/preload/renderer/AuthService and
  * owned sessions, explicit synthetic Source/provider transport. No live Clerk,
  * provisioning, model call or real collaboration acceptance is implied. */
-it("isolates normal/Owner/Member Electron sessions and preserves the peer when Owner signs out", async () => {
+it("isolates sessions, restores a closed preview window on reopen and preserves the peer at sign-out", async () => {
   await readFile(main); // Missing production build is a required-lane failure.
   const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", timeout: 10_000 }).trim();
   const home = await mkdtemp(join(tmpdir(), "eng418-native-pair-")), applications: ElectronApplication[] = [];
@@ -95,9 +95,27 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
     await writeFile(wrapper, "#!/bin/sh\nexec " + quote(electron) + " " + quote(bootstrap) + "\n"); await chmod(wrapper, 0o755);
     const again = issuePreviewPairLaunch({ manifest, role: "owner", platform: process.platform as "linux", arch: process.arch as "x64", sourceOrigin: "https://app.matrix-os.com" }, secret, Date.now());
     const paths = await createPreviewPairProfile(again.context, home);
+    // macOS naturally leaves the app alive after its last window closes. On
+    // other fixture hosts, remove only that quit policy to exercise the actual
+    // production second-instance, Source verification and BrowserWindow path.
+    if (process.platform !== "darwin") await opened.owner.app.evaluate(({ app }) => {
+      app.removeAllListeners("window-all-closed");
+      // Electron quits by default when there is no subscriber. This fixture
+      // subscriber deliberately keeps the process alive, matching macOS policy.
+      app.on("window-all-closed", () => undefined);
+    });
+    await opened.owner.page.close();
+    const replacement = opened.owner.app.waitForEvent("window", { timeout: 10_000 })
+      .then(page => ({ page }), () => ({ page: null }));
     const reused = await startPreviewDesktop({ executable: wrapper, proof: again, userData: paths.userData });
     expect(reused.reused).toBe(true); expect(reused.pid).toBe(opened.owner.app.process().pid);
     await reused.stop(); // Never kills the existing app or peer.
+    const restored = await replacement;
+    expect(restored.page, "Verified reopen must create a missing preview window before acknowledging success").not.toBeNull();
+    if (!restored.page) throw new Error("Preview window did not reopen");
+    opened.owner.page = restored.page;
+    await restored.page.getByRole("status").filter({ hasText: "Collaboration preview · Owner" }).waitFor();
+    expect(await restored.page.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: manifest.members.owner.actorId });
     await opened.owner.page.evaluate(() => window.operator.invoke("auth:sign-out", {}));
     expect(await opened.member.page.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: manifest.members.member.actorId });
     expect(await normalPage.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: "user_normal_fixture", runtimeSlot: "primary" });
