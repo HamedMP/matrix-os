@@ -438,6 +438,10 @@ jobs:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
+      - name: Restore dependencies for read-only PR refresh
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
+        uses: ./.github/actions/restore-pnpm-store
+
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
@@ -474,6 +478,10 @@ jobs:
         with:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
+
+      - name: Restore dependencies for read-only PR refresh
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
+        uses: ./.github/actions/restore-pnpm-store
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -660,6 +668,10 @@ jobs:
           node-version: 20
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
+      - name: Restore dependencies for read-only PR refresh
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
+        uses: ./.github/actions/restore-pnpm-store
+
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
 
@@ -700,6 +712,10 @@ jobs:
         with:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
+
+      - name: Restore dependencies for read-only PR refresh
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
+        uses: ./.github/actions/restore-pnpm-store
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -753,6 +769,10 @@ jobs:
         with:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
+
+      - name: Restore dependencies for read-only PR refresh
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
+        uses: ./.github/actions/restore-pnpm-store
 
       - name: Configure git for tests
         if: needs.changes.outputs.should_run == 'true'
@@ -873,6 +893,10 @@ jobs:
         with:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
+
+      - name: Restore dependencies for read-only PR refresh
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
+        uses: ./.github/actions/restore-pnpm-store
       - run: pnpm install --frozen-lockfile
       - name: Build test prerequisites once
         run: bun run test:prepare
@@ -957,6 +981,10 @@ jobs:
         with:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
+
+      - name: Restore dependencies for read-only PR refresh
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
+        uses: ./.github/actions/restore-pnpm-store
       - run: pnpm install --frozen-lockfile
       - name: Build test prerequisites once
         run: bun run test:prepare
@@ -997,6 +1025,10 @@ jobs:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
+      - name: Restore dependencies for read-only PR refresh
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
+        uses: ./.github/actions/restore-pnpm-store
+
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
 
@@ -1028,6 +1060,10 @@ jobs:
         with:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
+
+      - name: Restore dependencies for read-only PR refresh
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
+        uses: ./.github/actions/restore-pnpm-store
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
@@ -1083,6 +1119,10 @@ jobs:
         with:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
+
+      - name: Restore dependencies for read-only PR refresh
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
+        uses: ./.github/actions/restore-pnpm-store
 
       - name: Configure git for tests
         if: needs.changes.outputs.should_run == 'true'

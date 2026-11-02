@@ -162,6 +162,23 @@ existing authenticated coverage still applies.
 
 ## Measuring Linux against hosted CI
 
+### Proposed hosted dependency-cache reuse
+
+The [ENG-240 cache follow-up](../../specs/605-priority-linux-ci/article-assessment.md)
+adds an independent main-only pnpm store seed on pushes and a daily schedule.
+It uses pinned pnpm, a frozen lockfile and disabled lifecycle scripts; a cache
+hit skips the seed install. It does not run or qualify tests.
+
+Hosted exact-source PR refreshes restore package-store bytes with setup-node's
+OS, Node architecture and lockfile key while retaining the ban on shared-cache
+writes. Every test/build lane still runs its frozen install, including native
+build scripts. Missing or evicted caches download normally. Before reporting a
+speedup, verify a main seed and refresh hit, then compare same-source setup
+durations including restore overhead and unchanged qualification. No routing
+or controller-pin activation is required for these workflow changes.
+
+### Comparison protocol
+
 Compare the exact merge SHA, ordered parents and frozen lockfile, not unrelated
 successful PRs. Record the controller/harness/image pins, suite inventories,
 requesting/controller run IDs and attempts, and every failure or retry. Linux
