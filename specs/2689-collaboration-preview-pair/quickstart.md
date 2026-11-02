@@ -57,8 +57,8 @@ canonical admitted pair. Use `--help` without login/network effects. No command
 merges code or updates customer computers.
 
 The [implementation validation](control-workflow-validation.md) records setup
-requirements and limitations. Do not call the proposed `preview:pair:open` entry
-until the launcher layer exists. Actual runtime and surface acceptance remains
+requirements and limitations. The launcher layer adds `preview:pair:open`; see
+[the command guide](../../docs/dev/collaboration-preview-pairs.md). Actual runtime and surface acceptance remains
 required after protected setup, not established by local fixtures.
 
 ## Required acceptance

@@ -1,3 +1,4 @@
+import { DesktopPreviewSummarySchema } from "./preview-pair";
 // Single source of truth for the renderer ↔ trusted-core IPC contract
 // (specs/094-electron-macos-shell/contracts/ipc-contract.md). Both main and
 // preload import this module; every channel is validated on both sides
@@ -165,6 +166,7 @@ export const INVOKE_CHANNELS = {
     response: z
       .object({
         status: z.enum(["pending", "authorized", "expired"]),
+        reason: z.literal("preview_account_mismatch").optional(),
         profile: ProfileSchema.optional(),
       })
       .strict(),
@@ -355,6 +357,7 @@ export const INVOKE_CHANNELS = {
   // App-wide UI zoom: the renderer owns the persisted factor; main applies it
   // to the sender's webContents and reports menu-driven steps back via the
   // app:zoom-changed event.
+  "app:get-preview": { request: Empty, response: DesktopPreviewSummarySchema.nullable() },
   "app:get-version": { request: Empty, response: NativeAppVersionResultSchema },
   "app:get-zoom": { request: Empty, response: ZoomFactorResultSchema },
   "app:set-zoom": {

@@ -1,6 +1,9 @@
+import { claimPreviewProfile } from "./preview-pair-profile-lease";
+import { acknowledgePreviewDesktop } from "./preview-pair-ready";
+import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
 import { initializeDesktopPreview } from "./preview-pair-startup";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { createFileDownloadService } from "./files/file-download-service";
 import { createOrganizationDriveTransferService } from "./files/organization-drive-transfer";
 import { readDriveUploadFile, saveDriveDownloadFile } from "./files/organization-drive-file-io";
@@ -186,6 +189,10 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   installMainRendererMediaPermissions(win.webContents.session, win.webContents, trustedRendererUrl);
 
   win.once("ready-to-show", () => win.show());
+  if (previewContext) win.webContents.once("did-finish-load", () => {
+    void acknowledgePreviewDesktop(previewContext, process.env.MATRIX_PREVIEW_PAIR_READY_PORT)
+      .catch((error: unknown) => { logMainError("preview launcher acknowledgement failed", error); app.quit(); });
+  });
 
   // window.open / target=_blank from the renderer goes to the system browser only.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -215,11 +222,22 @@ function logMainError(label: string, err: unknown): void {
 }
 
 // Single instance: second launches focus the existing window (FR-092).
-const gotLock = app.requestSingleInstanceLock();
+const gotLock = app.requestSingleInstanceLock(previewContext ? {
+  previewPair: { proof: process.env.MATRIX_PREVIEW_PAIR_CONTEXT, port: process.env.MATRIX_PREVIEW_PAIR_READY_PORT },
+} : undefined);
+const previewLease = previewContext && gotLock ? await claimPreviewProfile(dirname(app.getPath("userData"))).catch((error: unknown) => {
+  logMainError("preview profile unavailable", error); app.exit(1); throw new Error("Preview profile is unavailable");
+}) : null;
+if (previewLease) app.once("will-quit", () => { void previewLease.release().catch((error: unknown) => logMainError("preview profile release failed", error)); });
 if (!gotLock) {
   app.quit();
 } else {
-  app.on("second-instance", (_event, argv) => {
+  app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
+    if (previewContext) {
+      void acknowledgeReopenedPreview(previewContext, additionalData && typeof additionalData === "object" && "previewPair" in additionalData ? additionalData.previewPair : null, readDesktopBuildSource())
+        .then(() => focusMainWindow()).catch((error: unknown) => logMainError("preview reopen refused", error));
+      return;
+    }
     const deepLink = argv.find(isMatrixOsDeepLink);
     if (deepLink) {
       handleDeepLink(deepLink);
@@ -591,6 +609,8 @@ if (!gotLock) {
           if (version !== app.getVersion()) return;
           await store.acknowledgeDesktopUpdateRelease(version);
         },
+        getPreviewContext: () => previewContext ? { role: previewContext.role, pr: previewContext.pr,
+          sourceSha: previewContext.sourceSha, handle: previewContext.handle, organizationId: previewContext.organizationId } : null,
         getAppVersion: () => app.getVersion(),
         buildSource: readDesktopBuildSource(),
         completeAnalyticsFlush: () => {

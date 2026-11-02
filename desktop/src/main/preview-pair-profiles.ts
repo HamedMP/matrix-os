@@ -1,5 +1,7 @@
+import { claimPreviewProfile } from "./preview-pair-profile-lease.js";
+import { PreviewPairIdSchema, PreviewPairGenerationSchema, PreviewPairRoleSchema } from "@matrix-os/contracts/preview-pair";
 import { constants } from "node:fs";
-import { link, lstat, mkdir, open, realpath, unlink } from "node:fs/promises";
+import { link, lstat, mkdir, open, realpath, unlink, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -11,7 +13,7 @@ const Marker = Identity.extend({ schemaVersion: z.literal(1), kind: z.literal("m
   ownerUid: z.number().int().nonnegative() });
 const unavailable = () => new Error("Preview profile is unavailable");
 const missing = (error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT";
-async function layout(context: PreviewPairLaunchContext, home: string) {
+async function layout(context: z.input<typeof Identity>, home: string) {
   const identity = Identity.strip().parse(context), canonicalHome = await realpath(home);
   const matrix = join(canonicalHome, ".matrixos"), base = join(matrix, "preview-pairs"), pair = join(base, identity.pairId), generation = join(pair, `g${identity.generation}`);
   const root = join(generation, identity.role), userData = join(root, "user-data"), sessionData = join(root, "session-data");
@@ -78,4 +80,20 @@ export async function verifyPreviewPairProfile(context: PreviewPairLaunchContext
     await safeDirectory(value.paths.userData, true); await safeDirectory(value.paths.sessionData, true);
     return value.paths;
   } catch (error: unknown) { console.warn("[preview-pair] profile selection unavailable", error instanceof Error ? error.name : "UnknownError"); throw unavailable(); }
+}
+
+/** Explicit local-only removal; a live or unknown process owner blocks cleanup.
+ * Stopped cloud pairs remain cleanable without a fresh Source descriptor. */
+export async function removePreviewPairProfile(id: string, generation: number, role: "owner" | "member", home = homedir()) {
+  const selected = { pairId: PreviewPairIdSchema.parse(id), generation: PreviewPairGenerationSchema.parse(generation), role: PreviewPairRoleSchema.parse(role) };
+  const canonical = await realpath(home), matrix = join(canonical, ".matrixos"), base = join(matrix, "preview-pairs");
+  const pair = join(base, selected.pairId), gen = join(pair, `g${selected.generation}`), root = join(gen, selected.role);
+  // react-doctor-disable-next-line react-doctor/async-await-in-loop -- each owned parent must be checked before traversing its child.
+  for (const [index, path] of [matrix, base, pair, gen, root].entries()) await safeDirectory(path, index !== 0);
+  const marker = await readMarker(root), value = await layout(marker, home);
+  if (value.paths.root !== root) throw unavailable();
+  sameMarker(marker, value.expected);
+  const lease = await claimPreviewProfile(root);
+  try { await rm(root, { recursive: true, force: false }); }
+  finally { await lease.release(); }
 }

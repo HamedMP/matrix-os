@@ -53,6 +53,7 @@ export type AuthStatus =
 
 export type PollResult = {
   status: "pending" | "authorized" | "expired";
+  reason?: "preview_account_mismatch";
   profile?: { handle: string; userId: string };
 };
 
@@ -109,6 +110,7 @@ export class AuthService {
   private profile: ConnectionProfile | null = null;
   private flowState: "idle" | "pending" | "authorized" | "expired" = "idle";
   private flowNonce = 0;
+  private flowFailureReason: "preview_account_mismatch" | undefined;
   private persistenceTail: Promise<void> = Promise.resolve();
   private pendingDeviceCode: Pick<DeviceCodeResponse, "userCode" | "verificationUri" | "expiresIn"> | null = null;
   private readonly deps: AuthServiceDeps;
@@ -218,6 +220,7 @@ export class AuthService {
     const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
     const baseUrl = this.getGatewayOrigin();
     const nonce = ++this.flowNonce;
+    this.flowFailureReason = undefined;
     let code: DeviceCodeResponse;
     try {
       code = await requestDeviceCode({ fetchFn, baseUrl, ...(this.deps.previewContext ? { nativeRedirect: false } : {}) });
@@ -323,6 +326,7 @@ export class AuthService {
       })
       .catch((err: unknown) => {
         if (nonce !== this.flowNonce) return;
+        if (err instanceof PreviewPairAuthMismatch) this.flowFailureReason = "preview_account_mismatch";
         if (err instanceof DeviceFlowError) {
           this.flowState = "expired";
           this.pendingDeviceCode = null;
@@ -350,7 +354,7 @@ export class AuthService {
         profile: { handle: this.profile.handle, userId: this.profile.userId },
       };
     }
-    if (this.flowState === "expired") return { status: "expired" };
+    if (this.flowState === "expired") return { status: "expired", ...(this.flowFailureReason ? { reason: this.flowFailureReason } : {}) };
     return { status: "pending" };
   }
 
@@ -407,6 +411,7 @@ export class AuthService {
       throw new Error(RUNTIME_SELECTION_ERROR);
     }
     const nonce = ++this.flowNonce;
+    this.flowFailureReason = undefined;
     const isCurrentSelection = () => (
       nonce === this.flowNonce
       && this.credential === currentCredential
