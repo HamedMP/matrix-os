@@ -895,7 +895,7 @@ jobs:
             --project "$GCP_PROJECT_ID" \
             --region "$GCP_REGION" \
             --config cloudbuild.platform.yaml \
-            --substitutions "_IMAGE=$image,_CACHE_IMAGE=$cache_image,_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$next_public_clerk_publishable_key,_NEXT_PUBLIC_POSTHOG_KEY=$next_public_posthog_key,_NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=$next_public_posthog_project_token,_NEXT_PUBLIC_POSTHOG_HOST=$POSTHOG_PUBLIC_HOST,_NEXT_PUBLIC_POSTHOG_API_HOST=$POSTHOG_PUBLIC_API_HOST,_NEXT_PUBLIC_MATRIX_APP_URL=$MATRIX_APP_URL" \
+            --substitutions "_IMAGE=$image,_CACHE_IMAGE=$cache_image,_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$next_public_clerk_publishable_key,_NEXT_PUBLIC_POSTHOG_KEY=$next_public_posthog_key,_NEXT_PUBLIC_POSTHOG_PROJECT_TOKEN=$next_public_posthog_project_token,_NEXT_PUBLIC_POSTHOG_HOST=$POSTHOG_PUBLIC_HOST,_NEXT_PUBLIC_POSTHOG_API_HOST=$POSTHOG_PUBLIC_API_HOST,_NEXT_PUBLIC_MATRIX_APP_URL=$MATRIX_APP_URL,_MATRIX_BUILD_SHA=$GITHUB_SHA" \
             --async \
             --format 'value(metadata.build.id)' \
             --timeout=1200s)
