@@ -109,10 +109,10 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("pair admission at the ac
     const { prepare } = setup();
     // Existing production quota is reused, not replaced with a pair-only counter.
     const context = createCustomerVpsContext({ db: fixture.db, config: createTestConfig({ previewProvisioningLimit: 0 }),
-      hetzner: createMockHetznerClient(), systemStore: createMockCustomerVpsSystemStore() });
+      hetzner: createMockHetznerClient(), systemStore: createMockCustomerVpsSystemStore(), now: () => new Date(PAIR_NOW) });
     const provisioner = createCustomerVpsProvisioner(context, createCustomerVpsProvisioningDispatcher(context));
     await expect(admitPreviewPair(fixture.db, config, input(), (id, gen, role) =>
-      role === "owner" ? prepare(id, gen, role) : preparePreviewPairMember(context, provisioner, id, gen, role), PAIR_NOW)).rejects.toThrow("capacity");
+      role === "owner" ? prepare(id, gen, role) : preparePreviewPairMember(context, provisioner, id, gen, role), PAIR_NOW)).rejects.toMatchObject({ status: 429, code: "quota_exceeded" });
     expect(await fixture.db.executor.selectFrom("user_machines").selectAll().execute()).toHaveLength(0);
     expect((await sql<{ count: string }>`SELECT count(*) FROM preview_pairs`.execute(fixture.db.executor)).rows[0]!.count).toBe("0");
   });
