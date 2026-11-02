@@ -20,6 +20,7 @@ on:
       - "scripts/ci/platform-slack-env.sh"
       - "scripts/render-platform-worker-service.mjs"
       - "scripts/select-legacy-platform-worker-tags.mjs"
+      - "scripts/ci/remove-legacy-platform-worker-tags.mjs"
       - "Dockerfile.platform"
       - "cloudbuild.platform.yaml"
   workflow_dispatch:
@@ -1657,34 +1658,4 @@ jobs:
 
       - name: Remove legacy worker tags
         if: ${{ github.event_name == 'push' || inputs.promote }}
-        run: |
-          set -euo pipefail
-          service_file="$(mktemp)"
-          revisions_file="$(mktemp)"
-          trap 'rm -f "$service_file" "$revisions_file"' EXIT
-          gcloud run services describe "$CLOUD_RUN_SERVICE" \
-            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$service_file"
-          gcloud run revisions list --service "$CLOUD_RUN_SERVICE" \
-            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$revisions_file"
-          legacy_tags="$(jq -n --slurpfile service "$service_file" --slurpfile revisions "$revisions_file" \
-            '{service: $service[0], revisions: $revisions[0]}' \
-            | node scripts/select-legacy-platform-worker-tags.mjs)"
-          if [ -n "$legacy_tags" ]; then
-            gcloud run services update-traffic "$CLOUD_RUN_SERVICE" \
-              --project "$GCP_PROJECT_ID" --region "$GCP_REGION" \
-              --remove-tags "$legacy_tags"
-          fi
-          gcloud run services describe "$CLOUD_RUN_SERVICE" \
-            --project "$GCP_PROJECT_ID" --region "$GCP_REGION" --format=json > "$service_file"
-          remaining_tags="$(jq -n --slurpfile service "$service_file" --slurpfile revisions "$revisions_file" \
-            '{service: $service[0], revisions: $revisions[0]}' \
-            | node scripts/select-legacy-platform-worker-tags.mjs)"
-          if [ -n "$remaining_tags" ]; then
-            echo "Warm legacy worker revisions remain tagged: $remaining_tags" >&2
-            exit 1
-          fi
-          production_percent="$(jq -r '(.status.traffic[]? | select(.revisionName == env.PRODUCTION_REVISION) | .percent) // empty' "$service_file" | head -1)"
-          if [ "$production_percent" != "100" ]; then
-            echo "Legacy tag cleanup changed production traffic." >&2
-            exit 1
-          fi
+        run: node scripts/ci/remove-legacy-platform-worker-tags.mjs
