@@ -1097,9 +1097,7 @@ jobs:
 
       - name: Build node-pty for E2E runtime
         if: needs.changes.outputs.should_run == 'true'
-        env:
-          npm_config_build_from_source: "true"
-        run: pnpm rebuild node-pty
+        run: node scripts/build-node-pty.mjs
 
       - name: Build test prerequisites once
         run: bun run test:prepare

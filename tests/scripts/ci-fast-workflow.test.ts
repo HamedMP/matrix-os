@@ -99,12 +99,16 @@ describe('fast CI preserves validation while removing serialized work', () => {
   it('builds node-pty from source before E2E prerequisites', () => {
     const steps = workflow.jobs.e2e.steps;
     const install = steps.findIndex(step => step.run === 'pnpm install --frozen-lockfile');
-    const rebuild = steps.findIndex(step => step.run === 'pnpm rebuild node-pty');
+    const rebuild = steps.findIndex(step => step.run === 'node scripts/build-node-pty.mjs');
     const prepare = steps.findIndex(step => step.run === 'bun run test:prepare');
 
     expect(rebuild).toBeGreaterThan(install);
     expect(rebuild).toBeLessThan(prepare);
-    expect(steps[rebuild]?.env?.npm_config_build_from_source).toBe('true');
+
+    const builder = readFileSync(join(process.cwd(), 'scripts/build-node-pty.mjs'), 'utf8');
+    expect(builder).toContain("require.resolve('node-gyp/bin/node-gyp.js'");
+    expect(builder).toContain("join(nodePtyRoot, 'build', 'Release', 'pty.node')");
+    expect(builder).toContain("require('node-pty')");
   });
 
   it('retains frozen installs and keyed Next and browser caches', () => {
