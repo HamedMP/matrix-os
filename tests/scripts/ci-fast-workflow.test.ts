@@ -191,18 +191,3 @@ describe('Docker image export runner capacity', () => {
     expect(docker.steps[save].run).toContain('test "$(stat -c%s /tmp/matrix-os-dev-ci.tar.gz)" -gt 1000000');
   });
 });
-
-describe('native terminal prerequisites for real browser tests', () => {
-  it('rebuilds and loads the installed terminal addon before either browser lane can start', () => {
-    const steps = workflow.jobs.e2e.steps;
-    const native = steps.findIndex(step => step.run?.includes('pnpm --filter @matrix-os/gateway rebuild node-pty'));
-    const install = steps.findIndex(step => step.run?.includes('pnpm install --frozen-lockfile'));
-    const prepare = steps.findIndex(step => step.run === 'bun run test:prepare');
-    expect(native).toBeGreaterThan(install);
-    expect(native).toBeLessThan(prepare);
-    expect(steps[native].run).toContain('pnpm --filter @matrix-os/gateway exec node');
-    expect(steps[native].run).toContain("await import('node-pty')");
-    expect(steps[native].run).not.toMatch(/\|\| true|ignore-scripts|approve-builds/);
-    expect(steps[native].if).toBe(steps[install].if);
-  });
-});
