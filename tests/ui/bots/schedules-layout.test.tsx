@@ -70,6 +70,15 @@ it("keeps read-only Chat navigation available when its Bot execution target is u
   expect(screen.getByRole("button", {name: "Open task Chat"})).toBeTruthy();
 });
 
+it("places Schedules above the Agents heading in the shared Chat sidebar", async () => {
+  const {client} = setup();
+  render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client}/></ChatAgentsWorkspace>);
+  const schedules = await screen.findByRole("button", {name: "Schedules"});
+  const agents = screen.getByRole("button", {name: "Agents"});
+  expect(schedules.compareDocumentPosition(agents) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(schedules.classList.contains("matrix-chat-agents-heading")).toBe(true);
+});
+
 it("routes New schedule through existing Bot selection and does not turn ordinary Agents into a schedule wizard", async () => {
   const {client, routines} = setup();
   render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client}/><ChatAgentsContent client={client} scopeKey="owner"><p>Retained transcript</p></ChatAgentsContent></ChatAgentsWorkspace>);
