@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHostBundleRoutes } from "../../packages/platform/src/host-bundle-routes.js";
+import type { CustomerVpsObjectStore } from "../../packages/platform/src/customer-vps-r2.js";
 import { selectCustomerVpsDeployMachines } from "../../packages/platform/src/customer-vps-deploy-selection.js";
 import { createCustomerVpsContext } from "../../packages/platform/src/customer-vps-context.js";
 import { createCustomerVpsProvisioner } from "../../packages/platform/src/customer-vps-provision.js";
@@ -18,6 +20,24 @@ describe("pair test-login bundles stay outside ordinary preview/release selectio
   const release = (version: string, createdAt = "2026-10-31T00:00:00Z") => ({ version, sourcePr: 3022,
     gitCommit: "a".repeat(40), buildTime: "2026-10-31T00:00:00Z", createdAt,
     bundleKey: `system-bundles/${version}/matrix-host-bundle.tar.gz`, sha256: "b".repeat(64), size: 42 });
+  it.each(["release.json", "manifest.json", "canonical"])("hides pair %s metadata on the ordinary router while retaining scoped update downloads", async alias => {
+    await upsertHostBundleRelease(f.db, release(pairVersion));
+    await upsertHostBundleRelease(f.db, release(ordinaryVersion));
+    const sign = vi.fn(async () => "https://bundles.example/signed"), log = vi.fn();
+    const router = (allowPreviewPairMetadata: boolean) => createHostBundleRoutes({ db: f.db,
+      allowPreviewPairMetadata, platformSecret: "test-only-secret", adminBodyLimit: 16_384,
+      getHostBundleObjectStore: () => ({ getPresignedGetUrl: sign }) as unknown as CustomerVpsObjectStore,
+      capturePlatformEvent: vi.fn(), logRouteError: log });
+    const path = (version: string) => alias === "canonical" ? `/releases/${version}.json` : `/${version}/${alias}`;
+    const ordinary = router(false);
+    const denied = await ordinary.request(path(pairVersion));
+    expect(denied.status).toBe(404); expect(sign).not.toHaveBeenCalled();
+    const scoped = await router(true).request(path(pairVersion));
+    expect(scoped.status).toBe(200); expect(await scoped.json()).toMatchObject({ version: pairVersion });
+    expect((await ordinary.request(path(ordinaryVersion))).status).toBe(200);
+    expect((await ordinary.request(`/${pairVersion}/matrix-host-bundle.tar.gz`)).status).toBe(302);
+    expect(log).not.toHaveBeenCalled();
+  });
   it("selects the ordinary PR bundle even when its pair's test-login bundle is newer", async () => {
     await upsertHostBundleRelease(f.db, release(ordinaryVersion, "2026-10-30T00:00:00Z"));
     await upsertHostBundleRelease(f.db, release(pairVersion));

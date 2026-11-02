@@ -540,6 +540,9 @@ export function createHostBundleRoutes(opts: {
     }
 
     if (file.endsWith('.json')) {
+      if (isPreviewPairBundle(release.version) && !opts.allowPreviewPairMetadata) {
+        return c.json({ error: 'Not found' }, 404);
+      }
       try {
         const url = await getSignedBundleUrl(release);
         return c.json(hostBundleReleaseResponse(
