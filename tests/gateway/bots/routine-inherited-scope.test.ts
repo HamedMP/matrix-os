@@ -1,3 +1,4 @@
+import { ChatConflictError } from "../../../packages/gateway/src/chat/errors.js";
 /** Reproduces private routine authority crossing a real Project assignment. No models or accounts. */
 import { beforeEach, expect, it } from "vitest";
 import { bootstrapCollaborationDatabase, type OwnerCollaborationDatabase } from "../../../packages/gateway/src/collaboration/database.js";
@@ -190,4 +191,50 @@ it("blocks late output of a foreground run that consumed a private routine throu
   await historicalSharedScope();
   await expect(repository.appendAssistantDelta(owner, { chatId: CHAT, runId: input.runId, messageId: "msg_steered_scope",
     delta: "private routine result", createdAt: NOW })).rejects.toThrow();
+});
+
+async function steeredForegroundRetry() {
+  const { f } = await activated();
+  const { repository, input } = await beginRoutineSteering(f.fireId);
+  await repository.beginQueuedTurnSteer(owner, input);
+  await repository.acceptQueuedTurnSteer(owner, { ...input, acceptedAt: NOW });
+  await repository.finishRun(owner, { chatId: CHAT, runId: input.runId, outcome: "failed", completedAt: NOW });
+  const exported = (await repository.exportChat(owner, CHAT))!;
+  const { outcome: _outcome, completedAt: _completedAt, startedAt: _startedAt, ...first } = exported.runs[0];
+  const retry = () => repository.admitRetry(owner, { chatId: CHAT, turnId: first.turnId,
+    clientRequestId: "req_scope_foreground_retry", baseRevision: exported.chat.chat.revision,
+    run: { ...first, id: "run_scope_foreground_retry", attempt: 2, status: "accepted" } });
+  return { repository, retry };
+}
+
+it("does not lose private routine origin when a steered foreground turn is retried", async () => {
+  const { retry } = await steeredForegroundRetry();
+  await historicalSharedScope();
+  await expect(retry()).rejects.toBeInstanceOf(ChatConflictError);
+  expect(await data.db.selectFrom("chat_runs").select("id").where("id", "=", "run_scope_foreground_retry").execute()).toEqual([]);
+});
+
+it("blocks late output of a retry whose original foreground turn consumed private routine input", async () => {
+  const { repository, retry } = await steeredForegroundRetry();
+  await retry(); await historicalSharedScope();
+  await expect(repository.appendAssistantDelta(owner, { chatId: CHAT, runId: "run_scope_foreground_retry",
+    messageId: "msg_scope_retry_output", delta: "private retry result", createdAt: NOW })).rejects.toThrow();
+});
+
+it("keeps a steered turn private through Retry and releases the publication fence when it finishes", async () => {
+  const { repository, retry } = await steeredForegroundRetry();
+  await collaborationDb().updateTable("collaboration_scopes").set({ lifecycle: "preparing" }).where("id", "=", projectScopeId).execute();
+  await createProjectInheritanceResolver({ db: collaborationDb() }).bindOwnedResource({
+    projectScopeId, ownerId: OWNER, kind: "chat", resourceId: CHAT,
+    authorityRuntimeId: "vps:routine_scope_test", authorityGeneration: 1, revision: 1, readiness: "ready",
+  });
+  await retry();
+  const publish = () => collaborationDb().transaction().execute(tx => reconcileProjectMembershipAtPublication(tx, {
+    projectScopeId, ownerType: "personal", ownerId: OWNER, requestedBy: OWNER,
+    destinationAuthorityRuntimeId: "vps:routine_scope_test", destinationAuthorityGeneration: 1,
+    now: new Date(NOW), createEventId: () => "60000000-0000-4000-8000-000000000b93",
+  }));
+  await expect(publish()).rejects.toThrow();
+  await repository.finishRun(owner, { chatId: CHAT, runId: "run_scope_foreground_retry", outcome: "completed", completedAt: NOW });
+  await expect(publish()).resolves.toBeDefined();
 });
