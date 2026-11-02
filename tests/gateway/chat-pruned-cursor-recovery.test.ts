@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -10,6 +10,34 @@ import { recoverOrphanedRun } from "../../packages/gateway/src/chat/orphaned-run
 const principal = { userId: "owner", source: "jwt" as const };
 
 describe("canonical Chat recovery after thread event retention", () => {
+  it("retains the latest request identity after its turn record is trimmed globally", async () => {
+    const homePath = await mkdtemp(join(tmpdir(), "chat-trimmed-turn-"));
+    const provider = { providerId: "codex", abortThread: vi.fn(),
+      startThread: ({ thread }: { thread: { id: string } }) => ({
+        events: [{ type: "thread.completed", threadId: thread.id, eventId: `evt_done_${thread.id}`,
+          occurredAt: "2026-11-02T17:18:34.000Z", outcome: "completed" }],
+        resumeState: { conversationId: `sess_${thread.id.slice(7)}` },
+      }),
+      resumeTurn: vi.fn().mockResolvedValue({ events: [], outcome: "delivered" }),
+    };
+    const store = createCodingAgentThreadStore({ homePath, providers: [provider as never] });
+    try {
+      const target = await store.createThread(principal, { providerId: "codex", prompt: "first", clientRequestId: "req_target_first" });
+      const targetId = target.snapshot.thread.id;
+      await store.acceptTurn(principal, targetId, { message: "resumed", clientRequestId: "req_target_latest" });
+      for (let index = 0; index < 101; index += 1) {
+        const other = await store.createThread(principal, { providerId: "codex", prompt: "other", clientRequestId: `req_other_first_${index}` });
+        await store.acceptTurn(principal, other.snapshot.thread.id,
+          { message: "other turn", clientRequestId: `req_other_latest_${index}` });
+      }
+      const raw = JSON.parse(await readFile(join(homePath, "system", "coding-agents", "threads.json"), "utf8")) as {
+        turns: Array<{ threadId: string }>;
+      };
+      expect(raw.turns.some((turn) => turn.threadId === targetId)).toBe(false);
+      expect(await store.latestTurnRequestId(principal, targetId)).toBe("req_target_latest");
+    } finally { await store.shutdownTurns(); await rm(homePath, { recursive: true, force: true }); }
+  });
+
   it("recovers the latest exact run after its replay cursor is evicted", async () => {
     const homePath = await mkdtemp(join(tmpdir(), "chat-pruned-cursor-"));
     const provider = { providerId: "codex", abortThread: vi.fn(), startThread: vi.fn(({ thread }: { thread: { id: string } }) => ({

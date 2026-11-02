@@ -109,6 +109,7 @@ const WorkspaceSessionIdSchema = z.string().min(1).max(160).regex(/^sess_[A-Za-z
 const StoredThreadSchema = AgentThreadSummarySchema.extend({
   ownerId: OwnerIdSchema,
   clientRequestId: RequestIdSchema,
+  latestTurnClientRequestId: RequestIdSchema.optional(),
   abortClientRequestIds: z.array(RequestIdSchema).max(MAX_ABORT_REQUEST_IDS).default([]),
   approvalDecisionClientRequestIds: z.array(RequestIdSchema).max(MAX_APPROVAL_DECISION_REQUEST_IDS).default([]),
   inputAnswerClientRequestIds: z.array(RequestIdSchema).max(MAX_INPUT_ANSWER_REQUEST_IDS).default([]),
@@ -224,7 +225,7 @@ export interface CodingAgentThreadStore {
   ): Promise<CodingAgentProjectThreadProjection>;
   getThread(principal: RequestPrincipal, threadId: string, cursor?: string): Promise<AgentThreadSnapshot>;
   /** Owner-scoped proof that a retained tail still belongs to the requested latest turn. */
-  latestTurnRequestId(principal: RequestPrincipal, threadId: string): Promise<string>;
+  latestTurnRequestId(principal: RequestPrincipal, threadId: string): Promise<string | undefined>;
   retainedProviderSessions(): Promise<string[]>;
   removeUnreferencedProviderTranscript(sessionId: string, remove: () => Promise<boolean>): Promise<boolean>;
   prepareProviderObservation(principal: RequestPrincipal, threadId: string, sessionId: string, resume: ProviderObservationResume): Promise<{ offset: number; generation: string } | undefined>;
@@ -460,6 +461,7 @@ function stripOwner(thread: StoredThread): AgentThreadSummary {
   const {
     ownerId: _ownerId,
     clientRequestId: _clientRequestId,
+    latestTurnClientRequestId: _latestTurnClientRequestId,
     abortClientRequestIds: _abortClientRequestIds,
     approvalDecisionClientRequestIds: _approvalDecisionClientRequestIds,
     inputAnswerClientRequestIds: _inputAnswerClientRequestIds,
@@ -1153,6 +1155,7 @@ export function createCodingAgentThreadStore(
         id: nextThreadId(),
         ownerId: principal.userId,
         clientRequestId: request.clientRequestId,
+        latestTurnClientRequestId: request.clientRequestId,
         abortClientRequestIds: [],
         approvalDecisionClientRequestIds: [],
         inputAnswerClientRequestIds: [],
@@ -1386,6 +1389,7 @@ export function createCodingAgentThreadStore(
           const acceptedEvents = [acceptedEvent, userMessageEvent];
           const nextThread: StoredThread = {
             ...thread,
+            latestTurnClientRequestId: request.clientRequestId,
             ...(interrupted ? { providerResumeState: { ...thread.providerResumeState!, eventStreamInterrupted: true } } : {}),
             activeTurnId: turnId,
             deliveredTurnId: undefined,
@@ -1581,8 +1585,8 @@ export function createCodingAgentThreadStore(
       return inspect((state) => {
         const thread = state.threads.find((candidate) => candidate.ownerId === principal.userId && candidate.id === threadId);
         if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
-        return state.turns.findLast((turn) => turn.ownerId === principal.userId && turn.threadId === threadId)?.clientRequestId
-          ?? thread.clientRequestId;
+        return thread.latestTurnClientRequestId
+          ?? state.turns.findLast((turn) => turn.ownerId === principal.userId && turn.threadId === threadId)?.clientRequestId;
       });
     },
     async retainedProviderSessions() { return retainedProviderSessions(await readState(options.homePath)); },

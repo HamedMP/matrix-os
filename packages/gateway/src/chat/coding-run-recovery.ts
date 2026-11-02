@@ -41,7 +41,7 @@ export async function recoverCodingRun(input: {
   signal: AbortSignal;
   includePending?: boolean;
   read: (cursor?: string) => Promise<AgentThreadSnapshot>;
-  latestRequestId?: () => Promise<string>;
+  latestRequestId?: () => Promise<string | undefined>;
 }) {
   // Old clients/states remain valid. Recover only when a durable exact-run
   // boundary exists; never attach another turn's final answer to this run.
