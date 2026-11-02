@@ -5,7 +5,7 @@ import { createChatGptPlanPeers } from "../../../packages/gateway/src/bots/chatg
 import { createBotStateDatabase } from "./bot-state-support.js";
 
 it("offers schedule proposals after capability negotiation without granting arbitrary background inference", async () => {
-  const database = await createBotStateDatabase(), keys = generateKeyPairSync("ed25519"), der = keys.publicKey.export({ type: "spki", format: "der" });
+  const database = await createBotStateDatabase({ routineAuthority: true }), keys = generateKeyPairSync("ed25519"), der = keys.publicKey.export({ type: "spki", format: "der" });
   const authorizeRoutine = vi.fn(async () => { throw new Error("No approved occurrence"); });
   const peers = createChatGptPlanPeers({ db: database.db, ownerId: "owner", computerId: "computer", authorizeRoutine });
   const snapshot = { deviceId: createHash("sha256").update(der).digest("hex"), accountId: "account", grantRevision: 3,
