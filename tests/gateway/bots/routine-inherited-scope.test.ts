@@ -176,7 +176,7 @@ it("does not expose a historical shared routine queue to the steering adapter", 
 it("rechecks a pending steering replay and ACK before writing private queued input", async () => {
   const { f } = await activated();
   const { repository, input } = await beginRoutineSteering(f.fireId);
-  await expect(repository.beginQueuedTurnSteer(owner, input)).resolves.toMatchObject({ status: "pending" });
+  await seedLegacyPendingSteer(input);
   await historicalSharedScope();
   await expect(repository.beginQueuedTurnSteer(owner, input)).rejects.toThrow();
   await expect(repository.acceptQueuedTurnSteer(owner, { ...input, acceptedAt: NOW })).rejects.toThrow();
@@ -186,8 +186,7 @@ it("rechecks a pending steering replay and ACK before writing private queued inp
 it("blocks late output of a foreground run that consumed a private routine through steering", async () => {
   const { f } = await activated();
   const { repository, input } = await beginRoutineSteering(f.fireId);
-  await repository.beginQueuedTurnSteer(owner, input);
-  await repository.acceptQueuedTurnSteer(owner, { ...input, acceptedAt: NOW });
+  await seedLegacyConsumedRoutine(input);
   await historicalSharedScope();
   await expect(repository.appendAssistantDelta(owner, { chatId: CHAT, runId: input.runId, messageId: "msg_steered_scope",
     delta: "private routine result", createdAt: NOW })).rejects.toThrow();
@@ -196,8 +195,7 @@ it("blocks late output of a foreground run that consumed a private routine throu
 async function steeredForegroundRetry() {
   const { f } = await activated();
   const { repository, input } = await beginRoutineSteering(f.fireId);
-  await repository.beginQueuedTurnSteer(owner, input);
-  await repository.acceptQueuedTurnSteer(owner, { ...input, acceptedAt: NOW });
+  await seedLegacyConsumedRoutine(input);
   await repository.finishRun(owner, { chatId: CHAT, runId: input.runId, outcome: "failed", completedAt: NOW });
   const exported = (await repository.exportChat(owner, CHAT))!;
   const { outcome: _outcome, completedAt: _completedAt, startedAt: _startedAt, ...first } = exported.runs[0];
@@ -238,3 +236,46 @@ it("keeps a steered turn private through Retry and releases the publication fenc
   await repository.finishRun(owner, { chatId: CHAT, runId: "run_scope_foreground_retry", outcome: "completed", completedAt: NOW });
   await expect(publish()).resolves.toBeDefined();
 });
+
+it("keeps a private routine queued for its own canonical run instead of steering into an ordinary task", async () => {
+  const { f } = await activated();
+  const { repository, input } = await beginRoutineSteering(f.fireId);
+  await expect(repository.beginQueuedTurnSteer(owner, input)).rejects.toBeInstanceOf(ChatConflictError);
+  expect(await data.db.selectFrom("chat_run_steers").select("id").execute()).toEqual([]);
+  expect(await data.db.selectFrom("chat_queued_turns").select("status").where("id", "=", input.queuedTurnId).executeTakeFirst()).toMatchObject({ status: "queued" });
+  await repository.finishRun(owner, { chatId: CHAT, runId: input.runId, outcome: "completed", completedAt: NOW });
+  const admitted = await repository.claimNextQueuedTurn(owner, { chatId: CHAT, runId: "run_own_routine",
+    turnId: "cturn_own_routine", messageId: "msg_own_routine", claimedAt: NOW });
+  expect(admitted?.turn.clientRequestId).toBe(`req_routine_${f.fireId}`);
+});
+
+it("rejects replay of a historical pending routine steer before returning adapter input", async () => {
+  const { f } = await activated();
+  const { repository, input } = await beginRoutineSteering(f.fireId);
+  await seedLegacyPendingSteer(input);
+  await expect(repository.beginQueuedTurnSteer(owner, input)).rejects.toBeInstanceOf(ChatConflictError);
+});
+
+it("rejects a historical routine steering ACK while allowing failure cleanup and retaining its queue", async () => {
+  const { f } = await activated();
+  const { repository, input } = await beginRoutineSteering(f.fireId);
+  await seedLegacyPendingSteer(input);
+  await expect(repository.acceptQueuedTurnSteer(owner, { ...input, acceptedAt: NOW })).rejects.toBeInstanceOf(ChatConflictError);
+  expect(await data.db.selectFrom("chat_messages").select("id").where("search_text", "=", "private scheduled input").execute()).toEqual([]);
+  await repository.failQueuedTurnSteer(owner, { ...input, acceptedAt: NOW });
+  expect(await data.db.selectFrom("chat_queued_turns").select("status").where("id", "=", input.queuedTurnId).executeTakeFirst()).toMatchObject({ status: "queued" });
+});
+
+async function seedLegacyPendingSteer(input: Awaited<ReturnType<typeof beginRoutineSteering>>["input"]) {
+  const queued = await data.db.selectFrom("chat_queued_turns").select("parts").where("id", "=", input.queuedTurnId).executeTakeFirstOrThrow();
+  await data.db.insertInto("chat_run_steers").values({ id: input.steerId, chat_id: CHAT, run_id: input.runId,
+    turn_id: input.expectedTurnId, client_request_id: input.clientRequestId, message_id: input.messageId,
+    queued_turn_id: input.queuedTurnId, parts: typeof queued.parts === "string" ? queued.parts : JSON.stringify(queued.parts),
+    status: "pending", created_at: NOW, updated_at: NOW }).execute();
+}
+
+/** Legacy versions could consume a routine into a foreground Turn. Preserve its persisted origin for recovery tests. */
+async function seedLegacyConsumedRoutine(input: Awaited<ReturnType<typeof beginRoutineSteering>>["input"]) {
+  await data.db.updateTable("chat_queued_turns").set({ status: "claimed", claimed_turn_id: input.expectedTurnId,
+    claimed_run_id: input.runId, updated_at: NOW }).where("id", "=", input.queuedTurnId).execute();
+}
