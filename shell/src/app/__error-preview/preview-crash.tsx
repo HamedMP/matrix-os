@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandCard, palette } from "@matrix-os/brand";
 import { useSyncExternalStore } from "react";
 import { STALE_BUNDLE_RECOVERY_STORAGE_KEY } from "../../lib/stale-bundle-recovery";
 
@@ -13,15 +14,18 @@ export default function ErrorPreviewCrash({ kind }: { kind: "generic" | "stale-b
   if (kind === "stale-bundle") {
     if (hasRecoveredFixture()) {
       return (
-        <main className="flex min-h-screen items-center justify-center bg-[#f6f4ec] px-6 text-deep">
-          <section className="w-full max-w-md rounded-[28px] border border-forest/12 bg-white/80 p-8 text-center shadow-[0_24px_80px_rgba(67,78,63,0.16)]">
+        <main
+          className="flex min-h-screen items-center justify-center px-6 text-deep"
+          style={{ backgroundColor: palette.pageBg }}
+        >
+          <BrandCard className="w-full max-w-md p-8 text-center" style={{ borderRadius: 28 }}>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-forest/55">Matrix OS</p>
             <h1 className="mt-3 text-3xl font-semibold tracking-tight">Stale bundle recovered</h1>
             <p className="mt-3 text-sm leading-6 text-forest/65">
               Web Desktop reloaded once and moved this tab onto the latest shell.
             </p>
             <p className="mt-5 font-mono text-xs text-forest/60">{FIXTURE_RUNTIME}</p>
-          </section>
+          </BrandCard>
         </main>
       );
     }

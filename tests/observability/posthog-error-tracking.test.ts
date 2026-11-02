@@ -594,9 +594,10 @@ describe("PostHog error tracking", () => {
     expect(shellClient).toContain("initializeShellPostHog");
 
     const shellPostHogClient = await readFile("shell/src/lib/posthog-client.ts", "utf8");
+    const clientErrorReport = await readFile("shell/src/lib/client-error-report.ts", "utf8");
     expect(shellPostHogClient).toContain("same-origin PostHog proxy at /relay");
     expect(shellPostHogClient).toContain('NEXT_PUBLIC_POSTHOG_API_HOST ?? "/relay"');
-    expect(shellPostHogClient).toContain("staleBundleFingerprint");
+    expect(clientErrorReport).toContain("staleBundleFingerprint");
     expect(shellPostHogClient).not.toContain("buildPostHogCookieConsentInitOptions");
     expect(shellPostHogClient).not.toContain("__loaded");
 
@@ -625,6 +626,9 @@ describe("PostHog error tracking", () => {
     expect(crashSource).toContain("ChunkLoadError");
     expect(crashSource).toContain("Stale bundle recovered");
     expect(crashSource).toContain("STALE_BUNDLE_RECOVERY_STORAGE_KEY");
+    expect(crashSource).toContain('from "@matrix-os/brand"');
+    expect(crashSource).toContain("<BrandCard");
+    expect(crashSource).not.toContain("bg-[#f6f4ec]");
   });
 
   it("captures shell error-boundary exceptions with copyable error IDs", async () => {

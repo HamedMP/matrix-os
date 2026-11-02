@@ -45,11 +45,11 @@ export function recoverFromStaleBundleError(
   const browserWindow = typeof window === "undefined" ? undefined : window;
   if (!dependencies.storage && !browserWindow) return false;
 
-  const storage = dependencies.storage ?? browserWindow!.sessionStorage;
   const reload = dependencies.reload ?? (() => browserWindow!.location.reload());
   const now = dependencies.now ?? Date.now;
 
   try {
+    const storage = dependencies.storage ?? browserWindow!.sessionStorage;
     const stored = storage.getItem(STALE_BUNDLE_RECOVERY_STORAGE_KEY);
     if (stored) {
       const claim = parseRecoveryClaim(stored);

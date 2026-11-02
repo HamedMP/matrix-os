@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   classifyStaleBundleError,
   recoverFromStaleBundleError,
@@ -19,6 +19,10 @@ function memoryStorage(initialValue?: string): Storage {
 }
 
 describe("stale shell bundle recovery", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("recognizes the production webpack ChunkLoadError and fingerprints its runtime", () => {
     const error = Object.assign(
       new Error("Loading chunk 4913 failed. (timeout: https://app.matrix-os.com/__platform-shell/_next/static/chunks/4913-33f6c7c99102b8d7.js)"),
@@ -101,6 +105,21 @@ describe("stale shell bundle recovery", () => {
 
     expect(recoverFromStaleBundleError(error, { now: () => 1_000, reload, storage: throwingStorage })).toBe(false);
     expect(recoverFromStaleBundleError(error, { now: () => 1_000, reload, storage: memoryStorage("not json") })).toBe(false);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("does not throw when browser policy blocks the sessionStorage getter", () => {
+    const reload = vi.fn();
+    const error = Object.assign(new Error("Loading chunk 9 failed. (/_next/static/chunks/9.js)"), {
+      name: "ChunkLoadError",
+    });
+    const blockedWindow = Object.defineProperty({}, "sessionStorage", {
+      get: () => { throw new DOMException("denied", "SecurityError"); },
+    });
+    vi.stubGlobal("window", blockedWindow);
+
+    expect(() => recoverFromStaleBundleError(error, { reload })).not.toThrow();
+    expect(recoverFromStaleBundleError(error, { reload })).toBe(false);
     expect(reload).not.toHaveBeenCalled();
   });
 });
