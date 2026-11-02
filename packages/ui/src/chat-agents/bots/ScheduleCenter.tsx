@@ -153,15 +153,13 @@ export function ScheduleCenter({ client, onClose, onOpenBotChat, onNewSchedule, 
         <div><dt style={chatAgentMutedStyle}>Status</dt><dd>{statusLabel(detail.routine)}</dd></div>
         <div><dt style={chatAgentMutedStyle}>Next run</dt><dd className="break-words">{nextRun(detail.routine)}</dd></div>
         <div><dt style={chatAgentMutedStyle}>Schedule</dt><dd>{routineScheduleCopy(detail.routine.proposal.schedule).frequency}</dd><dd>{routineScheduleCopy(detail.routine.proposal.schedule).timezone}</dd></div>
-        <div><dt style={chatAgentMutedStyle}>Runs in</dt><dd className="break-words">{names[detail.routine.botId] ?? "Private Bot"} · {detail.routine.computerId ?? "Computer unavailable"}</dd></div>
+        <div><dt style={chatAgentMutedStyle}>Runs in</dt><dd className="break-words">{onOpenBotChat?<button type="button" className="underline underline-offset-2" aria-label="Open task Chat" disabled={pending} onClick={()=>void act(async()=>{await onOpenBotChat(detail.routine.chatId);},onClose,false)}>{names[detail.routine.botId]??"Private Bot"}</button>:names[detail.routine.botId]??"Private Bot"} · {detail.routine.computerId ?? "Computer unavailable"}</dd></div>
       </dl>
       {rowButtons(detail.routine)}
       <div className="flex flex-wrap gap-2">
-        {onOpenBotChat ? <button className={chatAgentButtonClass} type="button" disabled={pending} onClick={() => void act(async () => { await onOpenBotChat(detail.routine.chatId); }, onClose, false)}>View history in Chat</button> : null}
         {detail.routine.status !== "archived" ? <button type="button" className={chatAgentButtonClass} disabled={pending || !detail.routine.targetAvailable || !detail.routine.sourceAvailable} onClick={() => setEditing(true)}>Edit schedule</button> : null}
       </div>
       {editing && api ? <ScheduleEditForm key={detail.routine.routineId} routine={detail.routine} api={api} botClient={client.bots!} agentName={names[detail.routine.botId]} pendingReadRevision={listRevision} getPendingReadSequence={() => reads.current} pendingInteractions={data?.pending ?? []} onRefreshRequired={refreshCommitted} onChanged={() => { detailIntent.current += 1; selectedRoutine.current = null; setEditing(false); setDetail(null); }}/>: null}
-      <p className="text-sm" style={chatAgentMutedStyle}>Results and run history stay in this task’s Chat.</p>
     </section> : null}
     {data && !loading && !detail ? <>
       {!data.items.length ? <div className="rounded-xl border p-6"><h2 className="font-semibold">{query.archived === "true" ? "No archived schedules" : "No schedules yet"}</h2><p className="mt-2 text-sm" style={chatAgentMutedStyle}>Ask a private Bot Chat to schedule a task, then review and approve it in Chat.</p></div> : <ul className="grid min-w-0 gap-3">

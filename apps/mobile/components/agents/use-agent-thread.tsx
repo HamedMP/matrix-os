@@ -24,7 +24,10 @@ import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { useChatComposer } from "@/lib/use-chat-composer";
 import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
 
-import { NativeRoutineChatHistory } from "./schedules/RoutineChatHistory";
+import {useNativeRoutineMessages} from "./schedules/use-routine-messages";
+import {NativeRoutineMessageReadNotice} from "./schedules/RoutineMessage";
+import {routineMessageTimeline,routineOccurrenceOutcome} from "@matrix-os/ui/bot-routine-transcript";
+import type {TranscriptMessage} from "@/lib/canonical-chat-transcript";
 import { PendingInteractions } from "./interactions/PendingInteractions";
 import { useAgentChatSync } from "./use-agent-chat-sync";
 
@@ -89,7 +92,7 @@ export function useAgentThread({ agent, chatId, showRoutineHistory = false, read
     disabled: readOnly || chatId === null || !detail || activeChatRun(detail) !== undefined,
   });
 
-  const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
+  const { messages:threadMessages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
     chatId,
     detail,
     gatewayUrl,
@@ -97,6 +100,13 @@ export function useAgentThread({ agent, chatId, showRoutineHistory = false, read
     optimisticMessages,
     sentAttachments,
   });
+  const routineMessages=useNativeRoutineMessages(chatId,Boolean(showRoutineHistory||agent?.recipeRef));
+  const messages=useMemo(()=>routineMessageTimeline(threadMessages,routineMessages.occurrences,
+    message=>message.role==="user"?detail?.turns.find(turn=>turn.inputMessageId===message.id)?.clientRequestId:undefined,
+    message=>message.createdAt,true).map((row):TranscriptMessage=>row.kind==="message"?{...row.value,...(row.occurrence?{scheduled:row.occurrence}:{})}:{
+      id:`scheduled:${row.occurrence.fire.fireId}`,role:"user",text:routineOccurrenceOutcome(row.occurrence),
+      toolCalls:[],activities:[],isRunning:false,createdAt:Date.parse(row.occurrence.fire.scheduledFor),scheduled:row.occurrence,scheduleEvent:true,
+    }),[threadMessages,routineMessages.occurrences,detail]);
   const busy = isSending || running;
   const signedIn = Boolean(isSignedIn);
   const unsentActions = useMemo(() => ({ onRetry: retrySend, onEdit: editUnsent }), [retrySend, editUnsent]);
@@ -130,7 +140,7 @@ export function useAgentThread({ agent, chatId, showRoutineHistory = false, read
     /** What a message that was not sent offers. */
     unsentActions,
     /** What the agent is waiting on the person for, drawn after the newest message. */
-    footer: interactions.length > 0 || chatId && (showRoutineHistory || agent?.recipeRef) ? <> {interactions.length > 0 ? (
+    footer: interactions.length > 0 || routineMessages.failed || routineMessages.incomplete ? <> {interactions.length > 0 ? (
       <PendingInteractions
         interactions={interactions}
         actionsAvailable={!botChat.isError}
@@ -138,7 +148,7 @@ export function useAgentThread({ agent, chatId, showRoutineHistory = false, read
         onRefresh={botChat.refresh}
         onConnectUrl={openConsentPage}
       />
-    ) : null}{chatId && (showRoutineHistory || agent?.recipeRef) ? <NativeRoutineChatHistory chatId={chatId}/> : null}</> : null,
+    ) : null}<NativeRoutineMessageReadNotice failed={routineMessages.failed} incomplete={routineMessages.incomplete} loading={routineMessages.loading} retry={routineMessages.retry}/></> : null,
     composer: {
       draft,
       onChangeDraft: handleDraftChange,

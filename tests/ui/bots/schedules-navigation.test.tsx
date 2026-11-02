@@ -41,7 +41,8 @@ it("opens an owner schedule center from Chat, manages the exact task revision an
   await waitFor(() => expect(routines.control).toHaveBeenCalledExactlyOnceWith(routine.routineId, { status: "paused", baseRevision: 1 }));
   expect(await screen.findByRole("button", { name: "Resume Morning brief" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "View Morning brief" }));
-  expect(await screen.findByText("Results and run history stay in this task’s Chat.")).toBeTruthy();
+  expect(await screen.findByRole("region",{name:"Schedule details"})).toBeTruthy();
+  expect(screen.queryByText("View history in Chat")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Close schedules" }));
   expect(screen.getByText("Retained private chat")).toBeTruthy();
 });

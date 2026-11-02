@@ -128,6 +128,7 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
         <Text accessibilityRole="header" style={styles.heading}>{current.proposal.name}</Text>
         <Text style={styles.text}>{current.proposal.prompt}</Text>
         <Text style={styles.note}>{`${status(current)} · Revision ${current.revision}`}</Text>
+        {onOpenChat?<Button label="Open task Chat" variant="text" disabled={busy} onPress={()=>{void openHistory(current.chatId,current.botId);}}/>:null}
         <Text style={styles.note}>{`Bot: ${current.botId} · Computer: ${current.computerId ?? "Unavailable"}`}</Text>
         <Text style={styles.text}>{`${routineScheduleCopy(current.proposal.schedule).frequency} · ${routineScheduleCopy(current.proposal.schedule).timezone}`}</Text>
         <Text style={styles.note}>{`Next run: ${routineNextRun(current)}`}</Text>
@@ -142,8 +143,6 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
         {editing && current.status !== "archived" ? <ScheduleEditor key={current.routineId} routine={current} api={api} resolve={resolve}
           actionsAvailable={fresh && !busy} pending={data.pending} pendingRead={pendingRead} getReadSequence={() => listRead.current}
           onRefresh={refreshAll} onDone={() => { if (alive.current) setEditing(false); }} /> : null}
-        <Text style={styles.note}>Results and run history stay in this task’s Chat.</Text>
-        {onOpenChat ? <Button label="View history in Chat" disabled={busy} onPress={() => { void openHistory(current.chatId, current.botId); }} /> : null}
       </View> : null}
     </> : <>
       {loading ? <Text style={styles.note}>Loading schedules…</Text> : null}

@@ -164,6 +164,7 @@ export function sheetModule() {
 
 export function expoRouterModule() {
   return {
+    useIsFocused:()=>true,
     useLocalSearchParams: () => ({ agentId: state.agentId, ...state.scheduleParams }),
     useRouter: () => router,
   };

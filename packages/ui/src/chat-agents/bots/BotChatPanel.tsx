@@ -5,7 +5,8 @@ import { useBotDetailsHost } from "./use-bot-details-host.js";
 import type { ChatAgentClient } from "../client.js";
 import { AgentAvatar } from "../AgentAvatar.js";
 import { chatAgentButtonClass, chatAgentMutedStyle } from "../theme.js";
-import { RoutineChatHistory } from "./RoutineChatHistory.js";
+import { RoutineMessageContext } from "./RoutineMessage.js";
+import { useRoutineMessages } from "./use-routine-messages.js";
 import { BotEditDialog } from "./BotEditDialog.js";
 import { BotDetailsPanel } from "./BotDetailsPanel.js";
 import { BotMessageStateContext, BotUnassignedMessageBody } from "./BotMessageBody.js";
@@ -39,6 +40,7 @@ export function BotChatPanel({ children, chatId, client, refreshKey, directBotId
   const shown = visible && navigation?.opened?.client !== client;
   const bots = client?.bots;
   const agentId = useDirectBotChat(chatId, client, directBotId);
+  const routineMessages = useRoutineMessages(bots?.routines, chatId, Boolean(shown && agentId));
   const [agent, setAgent] = useState<ChatAgent | null>(null);
   const [modelPending, setModelPending] = useState(false);
   const selectionSequence = useRef(0);
@@ -150,7 +152,8 @@ export function BotChatPanel({ children, chatId, client, refreshKey, directBotId
       {details && detailsContainer ? createPortal(details, detailsContainer) : details}
       {showEdit && agent && client ? <BotEditDialog key={agent.id} agent={agent} client={client} catalog={catalog} catalogLoading={catalogLoading} authority={authority} onClose={() => setShowEdit(false)} onSaved={updated => { latestRevision.current = updated.revision; setAgent(updated); setName(updated.name); }}/>:null}
     </section> : null}
-    {shown && agentId && chatId && bots?.routines ? <RoutineChatHistory key={chatId} api={bots.routines} chatId={chatId}/> : null}
-    {children ?? (shown && agentId && chatId && bots ? <BotUnassignedMessageBody runIds={[]}/> : null)}
+    <RoutineMessageContext.Provider value={shown && agentId ? routineMessages : null}>
+      {children ?? (shown && agentId && chatId && bots ? <BotUnassignedMessageBody runIds={[]}/> : null)}
+    </RoutineMessageContext.Provider>
   </BotMessageStateContext.Provider>;
 }

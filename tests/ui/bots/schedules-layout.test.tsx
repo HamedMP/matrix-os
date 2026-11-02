@@ -41,7 +41,7 @@ it("keeps execution history out of Schedules and opens the exact owning Chat", a
   await screen.findByRole("region", {name: "Schedule details"});
   expect(screen.queryByText("Recent runs")).toBeNull();
   expect(screen.queryByText(/1 attempt/)).toBeNull();
-  fireEvent.click(screen.getByRole("button", {name: "View history in Chat"}));
+  fireEvent.click(screen.getByRole("button", {name: "Open task Chat"}));
   await waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith("chat_exact_owner"));
   expect(close).toHaveBeenCalledTimes(1);
 });
@@ -57,7 +57,7 @@ it("retains details and shows a safe error if opening the saved Chat fails", asy
   const {client} = setup(), close = vi.fn();
   render(<ScheduleCenter client={client} onClose={close} onOpenBotChat={vi.fn().mockRejectedValue(new Error("secret /home/private"))}/>);
   fireEvent.click(await screen.findByRole("button", {name: "View Morning brief"}));
-  fireEvent.click(await screen.findByRole("button", {name: "View history in Chat"}));
+  fireEvent.click(await screen.findByRole("button", {name: "Open task Chat"}));
   expect((await screen.findByRole("alert")).textContent).not.toMatch(/secret|home/);
   expect(screen.getByRole("region", {name: "Schedule details"})).toBeTruthy();
   expect(close).not.toHaveBeenCalled();
@@ -67,7 +67,7 @@ it("keeps read-only Chat navigation available when its Bot execution target is u
   render(<ScheduleCenter client={client} onClose={vi.fn()} onOpenBotChat={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", {name: "View Morning brief"}));
   await screen.findByRole("region", {name: "Schedule details"});
-  expect(screen.getByRole("button", {name: "View history in Chat"})).toBeTruthy();
+  expect(screen.getByRole("button", {name: "Open task Chat"})).toBeTruthy();
 });
 
 it("routes New schedule through existing Bot selection and does not turn ordinary Agents into a schedule wizard", async () => {

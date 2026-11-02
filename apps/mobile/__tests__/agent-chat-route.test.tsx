@@ -1,5 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react-native";
-import { Linking } from "react-native";
+import { AppState,Linking } from "react-native";
+import type {BotRoutineCenterQuery} from "@matrix-os/contracts";
+import {routineMessageFixture} from "../../../tests/helpers/routine-message-fixture";
 
 import * as mockRoute from "./agent-chat-route-test-utils";
 import AgentChatRoute from "../app/(drawer)/(tabs)/agents/[agentId]";
@@ -21,6 +23,8 @@ jest.mock("@/components/agents/use-agent-chat-sync", () => ({
   useAgentChatSync: (chatId: string | null) => mockRoute.shell.sync(chatId),
 }));
 const mockGatewaySession = async () => ({token: "fixture", gatewayUrl: "https://preview.test"});
+const mockRoutineApi={list:jest.fn(async(_query?:BotRoutineCenterQuery)=>({items:[] as ReturnType<typeof routineMessageFixture>["routine"][],pending:[],nextCursor:null})),detail:jest.fn(async(_id:string)=>routineMessageFixture("chat_research","a",{botId:"bot_research1"})),control:jest.fn(),review:jest.fn()};
+jest.mock("@/lib/requests/routines",()=>({createNativeRoutineClient:()=>mockRoutineApi}));
 jest.mock("@/lib/queries/use-active-gateway", () => ({
   useActiveGateway: () => ({ ready: true, isComputerError: false, userId: "user_a", computerKey: "preview", session: mockGatewaySession }),
 }));
@@ -275,11 +279,16 @@ describe("agent chat route", () => {
 
 it("retains read-only scheduled history when its Bot definition is unavailable", async () => {
   mockRoute.reset();
+  const original=AppState.currentState;AppState.currentState="active";
+  const saved=routineMessageFixture("chat_research","a",{botId:"bot_research1"});
+  mockRoutineApi.list.mockImplementation(async(query)=>({items:query?.archived==="true"?[saved.routine]:[],pending:[],nextCursor:null}));
   state.scheduleParams = {scheduleChatId: "chat_research", scheduleScope: "user_a:preview"};
   state.agents = []; state.statuses = {};
   render(<AgentChatRoute/>);
-  expect(await screen.findByRole("button", {name: "Scheduled task history"})).toBeTruthy();
+  expect(await screen.findByText("Scheduled task did not run")).toBeTruthy();
+  expect(screen.queryByRole("button",{name:"Scheduled task history"})).toBeNull();
   expect(shell.ensure).not.toHaveBeenCalled();
   expect(screen.getByLabelText("Message Matrix").props.editable).toBe(false);
   cleanup();
+  AppState.currentState=original;
 });

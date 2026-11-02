@@ -133,7 +133,7 @@ it("keeps run history in the exact owning Chat rather than a second Schedules ti
   fireEvent.press(await screen.findByRole("button", {name: "Private ping"}));
   await screen.findByText("Return FIXED TEXT");
   expect(screen.queryByText("Recent runs")).toBeNull();
-  fireEvent.press(screen.getByRole("button", {name: "View history in Chat"}));
+  fireEvent.press(screen.getByRole("button", {name: "Open task Chat"}));
   expect(open).toHaveBeenCalledTimes(1);
   expect(open).toHaveBeenCalledWith(routine.chatId, routine.botId);
 });
@@ -150,7 +150,7 @@ it("keeps the saved details visible if history navigation fails", async () => {
   const client = api();
   render(<SchedulesScreen api={client} resolve={jest.fn()} onBack={jest.fn()} onOpenChat={jest.fn().mockRejectedValue(new Error("secret /home/path"))}/>);
   fireEvent.press(await screen.findByRole("button", {name: "Private ping"}));
-  fireEvent.press(await screen.findByRole("button", {name: "View history in Chat"}));
+  fireEvent.press(await screen.findByRole("button", {name: "Open task Chat"}));
   await screen.findByText("This task’s Chat could not be opened. Try again.");
   expect(screen.getByText("Return FIXED TEXT")).toBeTruthy();
   expect(screen.queryByText("secret /home/path")).toBeNull();
