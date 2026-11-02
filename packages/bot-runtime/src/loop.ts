@@ -132,7 +132,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
       systemPrompt: command.systemPrompt,
       model,
       thinkingLevel: "off",
-      tools: isolated ? [] : createBotTools({ capabilities: command.capabilities, broker, state: tools }),
+      tools: isolated ? [] : createBotTools({ capabilities: command.capabilities, broker, state: tools, routineModel: command.route.modelId }),
       messages: history,
     },
     streamFn: (streamModel, context, options) => {

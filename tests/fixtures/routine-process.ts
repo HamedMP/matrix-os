@@ -155,6 +155,16 @@ async function handle(value: { op: string; at?: string; routineId?: string; stat
     const current = await routinesRepo.get(OWNER, value.routineId!);
     return execution.control(value.foreign ? "user_other_process" : OWNER, BOT, value.routineId!, { baseRevision: current!.revision, status: value.status! });
   }
+  if (value.op === "approve_future_time") {
+    if (value.foreign || !value.at) throw new Error("Owner future time required");
+    const current = (await routinesRepo.get(OWNER, value.routineId!))!;
+    const pending = await execution.requestEdit(OWNER, current.routineId, { baseRevision: current.revision,
+      name: current.proposal.name, prompt: current.proposal.prompt, schedule: { kind: "once", at: value.at } });
+    const interactions = createBotInteractionService({ transact, handlers: { chooseAccount: async () => { throw new Error("No external account"); }, decideApproval: approvals.decide } });
+    await interactions.resolve(OWNER, CHAT, pending.interaction.interactionId,
+      { kind: "approval", decision: "approve", baseRevision: pending.interaction.revision });
+    return (await execution.list(OWNER, BOT))[0];
+  }
   if (value.op === "snapshot") {
     const ownerId = value.foreign ? "user_other_process" : OWNER;
     const ids = await db.selectFrom("bot_tasks").select("task_id").where("chat_id", "=", CHAT).execute();

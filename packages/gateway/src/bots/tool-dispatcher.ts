@@ -318,9 +318,17 @@ export function createBotToolDispatcher(deps: {
     }
   }
 
+  function validateRoutineProposal(binding: PiRuntimeBinding, request: BotToolRequest) {
+    if (request.capability !== "routine.propose") return;
+    if (!deps.routines || binding.group || isManagedPiBinding(binding) || binding.requestClass !== "interactive"
+      || binding.accessSourceId !== "matrix_chatgpt_plan" || !binding.subscription) throw new BotBrokerActionError("not_granted");
+    if (request.args.selection.model !== binding.route.modelId) throw new BotBrokerActionError("invalid_arguments");
+  }
   return {
     effectClass: (request) => request.capability === "routine.cli" ? (["list", "show", "request"].includes(request.args.operation) ? "read" : "write") : request.capability === "routine.control" && request.args.operation === "list" ? "read" : request.capability === "jev.inbox" && ["discover", "select", "batch_status"].includes(request.args.operation) ? "read" : request.capability === "integration.call" && getAction(request.args.service, request.args.action)?.risk === "read" ? "read" : EFFECTS[request.capability],
     async prepare(binding, request, signal) {
+      // Pure proposal validation also precedes the delegated native CLI path.
+      validateRoutineProposal(binding, request);
       if (request.capability === "routine.cli") {
         if (!isManagedPiBinding(binding) || !deps.managedRoutine) throw new BotBrokerActionError("not_granted");
         return;
@@ -335,6 +343,7 @@ export function createBotToolDispatcher(deps: {
       }
     },
     async dispatch(binding, request, signal) {
+      validateRoutineProposal(binding, request);
       if (request.capability === "routine.cli") {
         if (!isManagedPiBinding(binding) || !deps.managedRoutine) throw new BotBrokerActionError("not_granted");
         return { result: await deps.managedRoutine.execute(binding, request.args, request.toolCallId, signal) };

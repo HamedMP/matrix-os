@@ -31,7 +31,7 @@ export async function createRoutinePromptHarness(options: {
     recipes: createBotRecipeCatalog(), registry,
     memory: { admitted: async () => options.memory ?? [] },
     resolveRoute: async () => ({ route: { api: "openai-responses", modelId: proposal.selection.model, input: ["text"], contextWindow: 128000, maxOutputTokens: 4096 }, accessSourceId: "matrix_chatgpt_plan", subscription }),
-    routineExecution: { describeChatPhase: options.execution.describeChatPhase, assertOccurrencePhase: async (binding: Parameters<typeof options.execution.assertOccurrencePhase>[0]) => {
+    routineExecution: { approvalReply: options.execution.approvalReply, describeChatPhase: options.execution.describeChatPhase, assertOccurrencePhase: async (binding: Parameters<typeof options.execution.assertOccurrencePhase>[0]) => {
       if (options.cancelDuringCheck) { controller.abort(); await Promise.resolve(); }
       return options.execution.assertOccurrencePhase(binding);
     } },
