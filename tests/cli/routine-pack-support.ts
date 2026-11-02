@@ -9,12 +9,11 @@ const run = promisify(execFile);
 export async function cachedRoutinePack() {
   const root = await mkdtemp(join(tmpdir(), "routine-cli-pack-")), source = resolve("packages/sync-client");
   try {
-    const corepack = join(dirname(process.execPath), "corepack");
     const options = { cwd: source, timeout: 30000, maxBuffer: 4 * 1024 * 1024,
       env: { ...process.env, COREPACK_ENABLE_NETWORK: "0", MATRIX_NO_TELEMETRY: "1", PATH: `${dirname(process.execPath)}:${process.env.PATH ?? ""}` } };
-    const version = await run(process.execPath, [corepack, "pnpm", "--version"], options);
+    const version = await run("pnpm", ["--version"], options);
     if (version.stdout.trim() !== "10.33.4") throw new Error("Pinned cached pnpm 10.33.4 required");
-    const result = await run(process.execPath, [corepack, "pnpm", "pack", "--config.node-linker=hoisted", "--pack-destination", root, "--json"], options);
+    const result = await run("pnpm", ["pack", "--config.node-linker=hoisted", "--pack-destination", root, "--json"], options);
     const metadata = JSON.parse(result.stdout), tarball = resolve(root, metadata.filename);
     await run("tar", ["-xzf", tarball, "-C", root], { timeout: 10000, maxBuffer: 1024 * 1024 });
     const pkg = join(root, "package"), manifest = JSON.parse(await readFile(join(pkg, "package.json"), "utf8"));

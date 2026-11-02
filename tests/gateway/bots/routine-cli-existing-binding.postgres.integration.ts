@@ -144,6 +144,7 @@ it("actual delegated executor exit fences an in-flight broker/CLI proposal befor
   const { createNativeBotTasks } = await import("../../../packages/gateway/src/bots/native-task-service.js");
   const { runClaudeBotTask } = await import("../../../packages/gateway/src/bots/claude-task-executor.js");
   const { createBotToolDispatcher } = await import("../../../packages/gateway/src/bots/tool-dispatcher.js");
+  const { createBotRoutineExecution } = await import("../../../packages/gateway/src/bots/routine-execution.js");
   const { createBotBrokerActions } = await import("../../../packages/gateway/src/bots/broker-actions.js");
   const { createBotCheckpointsRepository } = await import("../../../packages/gateway/src/bots/repositories/checkpoints.js");
   const { createBotSessionsRepository } = await import("../../../packages/gateway/src/bots/repositories/sessions.js");
@@ -161,7 +162,8 @@ it("actual delegated executor exit fences an in-flight broker/CLI proposal befor
     callTool: (parent, request, signal) => broker.callTool(parent, request, signal),
     runTask: input => { spawned = input; return runClaudeBotTask({ ...input, spawn: () => child }); },
   });
-  const tools = createBotToolDispatcher({ homePath: f.f.home, nativeTask: service });
+  const routines = createBotRoutineExecution({ db: f.data.db, transact: f.f.transact, approvals: f.f.approvals, now: () => new Date(f.f.state.clock) });
+  const tools = createBotToolDispatcher({ homePath: f.f.home, nativeTask: service, routines });
   const broker = createBotBrokerActions({ db: f.data.db, registry: f.f.registry, sessions: createBotSessionsRepository(f.data.db), checkpoints: createBotCheckpointsRepository(f.data.db), tools,
     runs: f.f.tasks.runSource, events: f.f.tasks.eventSink, inference: { lifetime: new AbortController().signal } as never });
   let settled = false;
