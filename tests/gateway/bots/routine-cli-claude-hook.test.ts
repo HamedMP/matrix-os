@@ -19,32 +19,54 @@ it("writes display-only bounded exclusive artifacts and cleans TTL/count/symlink
   await store.write({ v: 1, ok: true, data: { kind: "list", routines: [], truncated: false } });
   await expect(store.write({ v: 1, ok: true, data: { kind: "list", routines: [], truncated: false } })).rejects.toThrow();
 });
-const init = (id: string, applied = true) => ({ type: "control_response", response: { subtype: "success", request_id: id, response: { hooks_applied: applied } } });
+// Observed native initialize envelope; IDs still come from this actual router.
+const init = (id: string, applied = true) => ({ type: "control_response", response: { subtype: "success", request_id: id,
+  response: { hooks_applied: applied, current_permission_mode: "bypassPermissions" }, pending_permission_requests: [], pending_user_dialog_requests: [] } });
 const system = { type: "system", subtype: "init", claude_code_version: "2.1.240", tools: ["Bash"], permissionMode: "bypassPermissions" };
+const partial = () => ({ type: "stream_event", event: { type: "content_block_start", index: 0,
+  content_block: { type: "tool_use", name: "Bash", id: "tool-one", input: {} } } });
 function callback(cb: string, id = "request-one", tool = "tool-one", command = "matrix routines list") { return { type: "control_request", request_id: id, request: { subtype: "hook_callback", callback_id: cb, tool_use_id: tool,
   input: { hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: tool, tool_input: { command, run_in_background: true }, permission_mode: "bypassPermissions" } } }; }
-it("ACK before input; only matching current tool can rewrite; cancellation pump stays live and never sends a late allow", async () => {
-  const frames: WrittenFrame[] = []; let prompts = 0, executions = 0, cancelled = false;
+it.each(["2.1.240", "2.1.280"])("%s ACK before input; matching partial tool executes once and cancellation never sends a late allow", async version => {
+  const frames: WrittenFrame[] = []; let prompts = 0, executions = 0, cancelled = false, nativeMode: string | undefined;
   let complete!: (command: string) => void;
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async frame => { frames.push(JSON.parse(frame)); },
     startInput: async () => { prompts++; }, fail: () => { throw new Error("unexpected failure"); },
-    execute: async (_command, signal) => { executions++; signal.addEventListener("abort", () => { cancelled = true; }); return new Promise(resolve => { complete = resolve; }); } });
+    execute: async (_command, signal, mode) => { executions++; nativeMode = mode; signal.addEventListener("abort", () => { cancelled = true; }); return new Promise(resolve => { complete = resolve; }); } });
   closers.push(hook.close); await hook.start(); expect(prompts).toBe(0);
   const initialize = frames[0]; const cb = initialize.request.hooks.PreToolUse[0].hookCallbackIds[0];
   expect(cb).not.toBe("routine-hook"); hook.handle(init(initialize.request_id)); await Promise.resolve(); expect(prompts).toBe(1);
-  hook.handle(system); hook.handle({ type: "stream_event", event: { type: "content_block_start", content_block: { type: "tool_use", name: "Bash", id: "tool-one" } } });
+  hook.handle({ ...system, claude_code_version: version }); hook.handle(partial());
   hook.handle(callback("wrong", "wrong-request")); await Promise.resolve(); expect(executions).toBe(0);
-  hook.handle(callback(cb)); await Promise.resolve(); expect(executions).toBe(1);
+  hook.handle(callback(cb)); await Promise.resolve(); expect(executions).toBe(1); expect(nativeMode).toBe("bypassPermissions");
   hook.handle({ type: "control_cancel_request", request_id: "request-one" }); expect(cancelled).toBe(true);
   complete("/bin/cat -- '/tmp/safe-result'"); await new Promise(resolve => setTimeout(resolve, 0));
   expect(frames.filter(frame => frame.response?.response?.hookSpecificOutput?.permissionDecision === "allow")).toEqual([]);
 });
-it("disabled hooks or unknown versions deny new routine calls while unrelated Bash remains available", async () => {
+it.each(["2.1.279", "2.1.281", "9.0.0"])("unsupported exact version %s denies routines while unrelated Bash remains native", async version => {
   const frames: WrittenFrame[] = []; let executions = 0;
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async frame => { frames.push(JSON.parse(frame)); }, startInput: async () => {}, fail: () => {}, execute: async () => { executions++; return "unsafe"; } });
   closers.push(hook.close); await hook.start(); const request = frames[0]; const cb = request.request.hooks.PreToolUse[0].hookCallbackIds[0];
-  hook.handle(init(request.request_id, false)); hook.handle({ ...system, claude_code_version: "9.0.0" }); hook.handle(callback(cb));
+  hook.handle(init(request.request_id)); hook.handle({ ...system, claude_code_version: version }); hook.handle(partial()); hook.handle(callback(cb));
   await Promise.resolve(); expect(executions).toBe(0); expect(frames.at(-1)!.response.response.hookSpecificOutput.permissionDecision).toBe("deny");
+  hook.handle(callback(cb, "unrelated-unknown-version", "git-tool", "git status")); await Promise.resolve();
+  expect(frames.at(-1)!.response.response).toEqual({}); expect(executions).toBe(0);
+});
+
+it.each(["missing-ack", "negative-ack", "subagent", "tool-mismatch", "missing-partial"])("2.1.280 %s cannot bypass current hook proof", async fault => {
+  const frames: WrittenFrame[] = []; let executions = 0;
+  const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async frame => { frames.push(JSON.parse(frame)); },
+    startInput: async () => {}, fail: () => { throw new Error("unexpected control failure"); }, execute: async () => { executions++; return "/bin/cat -- '/tmp/display'"; } });
+  closers.push(hook.close); await hook.start(); const initialize = frames[0], cb = initialize.request.hooks.PreToolUse[0].hookCallbackIds[0];
+  if (fault !== "missing-ack") hook.handle(init(initialize.request_id, fault !== "negative-ack"));
+  hook.handle({ ...system, claude_code_version: "2.1.280" }); if (fault !== "missing-partial") hook.handle(partial());
+  const message = callback(cb);
+  if (fault === "subagent") Object.assign(message.request.input, { agent_id: "native-child-agent" });
+  if (fault === "tool-mismatch") message.request.input.tool_use_id = "other-native-tool";
+  hook.handle(message); await Promise.resolve();
+  expect(executions).toBe(0); expect(frames.at(-1)!).toMatchObject({ response: { request_id: "request-one",
+    response: { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny" } } } });
+  expect(frames.at(-1)!.response.response.hookSpecificOutput.updatedInput).toBeUndefined();
 });
 
 it("cleans only expired owned crash directories and never traverses an abandoned symlink", async () => {
@@ -55,14 +77,18 @@ it("cleans only expired owned crash directories and never traverses an abandoned
   await symlink(external, join(abandoned, "a".repeat(48) + ".json")); await store.sweep(); expect((await stat(external)).isDirectory()).toBe(true); expect((await stat(abandoned)).isDirectory()).toBe(true);
   await rm(join(abandoned, "a".repeat(48) + ".json")); await store.sweep(); await expect(stat(abandoned)).rejects.toMatchObject({ code: "ENOENT" });
 });
-it("unrelated Bash returns no-op and preserves native permission/safety checks; duplicate tool callback cannot execute twice", async () => {
+it.each(["2.1.240", "2.1.280"])("%s literal rewrite preserves unrelated native Bash and cannot repeat a callback/tool effect", async version => {
   const frames: WrittenFrame[] = []; let executions = 0;
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async frame => { frames.push(JSON.parse(frame)); }, startInput: async () => {}, fail: () => {}, execute: async () => { executions++; return "/bin/cat -- '/tmp/display'"; } });
   closers.push(hook.close); await hook.start(); const initialize = frames[0], cb = initialize.request.hooks.PreToolUse[0].hookCallbackIds[0];
-  hook.handle(init(initialize.request_id)); hook.handle(system);
+  hook.handle(init(initialize.request_id)); hook.handle({ ...system, claude_code_version: version });
   hook.handle(callback(cb, "unrelated", "git-tool", "git status")); await Promise.resolve(); expect(frames.at(-1)!.response.response).toEqual({}); expect(executions).toBe(0);
-  hook.handle({ type: "stream_event", event: { type: "content_block_start", content_block: { type: "tool_use", name: "Bash", id: "tool-one" } } });
+  hook.handle(partial());
   hook.handle(callback(cb)); await new Promise(resolve => setTimeout(resolve, 0));
+  expect(executions).toBe(1); expect(frames.at(-1)!).toMatchObject({ type: "control_response", response: { subtype: "success", request_id: "request-one",
+    response: { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: {
+      command: "/bin/cat -- '/tmp/display'", description: "Read routine request display", timeout: 1000 } } } } });
+  const responses = frames.length; hook.handle(callback(cb)); await Promise.resolve(); expect(frames).toHaveLength(responses); expect(executions).toBe(1);
   hook.handle(callback(cb, "duplicate-new-request")); await Promise.resolve(); expect(executions).toBe(1); expect(frames.at(-1)!.response.response.hookSpecificOutput.permissionDecision).toBe("deny");
 });
 it("matching initialization error sends the original input only once and never advertises routine support", async () => {
