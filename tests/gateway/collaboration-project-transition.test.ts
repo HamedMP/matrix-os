@@ -19,6 +19,7 @@ import {
   collaborationExecutionEligibility,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
+import { createQueryResultPause } from "./collaboration-capability-race-support.js";
 
 const SCOPE_ID = "10000000-0000-4000-8000-000000000051";
 const TRANSITION_ID = "20000000-0000-4000-8000-000000000051";
@@ -248,16 +249,16 @@ describe("project collaboration transition journal", () => {
       .executeTakeFirstOrThrow()).toEqual({ count: 1 });
   });
 
-  it("activates inherited Chats with the current owner-runtime execution capability", async () => {
-    const executionEligibility = collaborationExecutionEligibility();
-    const chatScope = new CollaborationChatScopeService(fixture.db, {
+  it("serializes inherited Chat activation with capability reconciliation", async () => {
+    const queryPause = createQueryResultPause();
+    const chatScope = new CollaborationChatScopeService(fixture.db.withPlugin(queryPause.plugin), {
       runtimeId: DESTINATION_RUNTIME,
       preflightSecret: "0123456789abcdef0123456789abcdef",
       now: () => NOW,
     });
     await chatScope.reconcileExecutionEligibility({
       executionGeneration: 9,
-      eligibility: executionEligibility,
+      eligibility: collaborationExecutionEligibility(),
     });
     const transitions = createProjectTransitionJournal({
       db: fixture.db,
@@ -314,7 +315,16 @@ describe("project collaboration transition journal", () => {
     await transitions.beginCommit(TRANSITION_ID);
     await transitions.recordPublication(TRANSITION_ID, "publication_11111111111111111111111111111111");
 
-    await transitions.activate(TRANSITION_ID);
+    const overlap = queryPause.arm();
+    const executionEligibility = collaborationExecutionEligibility({ adapters: ["claude-code", "codex"] });
+    const reconciling = chatScope.reconcileExecutionEligibility({
+      executionGeneration: 10,
+      eligibility: executionEligibility,
+    });
+    await overlap.paused;
+    const activating = transitions.activate(TRANSITION_ID);
+    overlap.release();
+    await Promise.all([reconciling, activating]);
 
     const child = await fixture.db.selectFrom("collaboration_scopes")
       .select(["execution_generation", "execution_eligibility"])
@@ -324,7 +334,7 @@ describe("project collaboration transition journal", () => {
       executionGeneration: Number(child.execution_generation),
       executionEligibility: child.execution_eligibility,
     }).toEqual({
-      executionGeneration: 9,
+      executionGeneration: 10,
       executionEligibility,
     });
   });
