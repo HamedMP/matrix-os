@@ -1,5 +1,5 @@
 import type { CanonicalProviderCatalog, CanonicalProviderDriverKind, CanonicalProviderInstanceDescriptor } from "@matrix-os/contracts";
-import { canonicalProviderFundingState, isLegacyMatrixSdkProvider, isChatgptPlanBotRoute, isChatgptPlanChatRoute, isMatrixAnthropicBotRoute, isMatrixAnthropicChatRoute, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
+import { canonicalProviderModelCanBeSelected, canonicalProviderFundingState, isLegacyMatrixSdkProvider, isChatgptPlanBotRoute, isChatgptPlanChatRoute, isMatrixAnthropicBotRoute, isMatrixAnthropicChatRoute, MATRIX_PI_CHATGPT_PLAN_INSTANCE_ID } from "@matrix-os/contracts";
 import { canonicalChatSubscriptionSelectionMatches, canonicalProviderAvailabilityLabel, orderCanonicalProviderInstancesForDefault, type CanonicalProviderChoice } from "./canonical-provider-choice.js";
 
 export interface ChatPickerEntry {
@@ -53,7 +53,7 @@ export interface ChatPickerModelRow {
   harnessLabel: string;
   connectionLabel?: string;
   driverKind: CanonicalProviderDriverKind;
-  /** Only an existing executable choice may be selected. Discovery is display-only. */
+  /** Selection intent is catalog-backed; execution readiness is checked separately. */
   choice?: CanonicalProviderChoice;
 }
 
@@ -62,7 +62,7 @@ export function deriveChatPickerModelRows(
   choices: readonly CanonicalProviderChoice[],
 ): ChatPickerModelRow[] {
   return orderCanonicalProviderInstancesForDefault(catalog.instances.filter(instance => !isLegacyMatrixSdkProvider(instance))).flatMap(instance => instance.models.flatMap(model => {
-    const choice = instance.availability === "available" && model.availability === "available"
+    const choice = canonicalProviderModelCanBeSelected(instance, model.id)
       ? choices.find(candidate => candidate.instanceId === instance.id && candidate.driverKind === instance.driverKind && candidate.modelId === model.id
         && canonicalChatSubscriptionSelectionMatches(instance, candidate.selectedOptions))
       : undefined;

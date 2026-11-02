@@ -44,6 +44,15 @@ export function matrixInstance(models: ModelSpec[] = [[SONNET.model, "Sonnet 5"]
   return engineInstance(SONNET.instanceId, "matrix_pi", "Pi", models, { connectionLabel: "Matrix AI", ...overrides });
 }
 
+/** Policy-discovered models while the managed runtime's readiness probe is unavailable. */
+export function unavailableMatrixInstance(): Instance {
+  return matrixInstance([[SONNET.model, "Sonnet 5", "unavailable"], [GLM.model, "GLM Flash", "unavailable"]], {
+    availability: "unavailable",
+    connectionState: "unavailable",
+    unavailabilityReason: "runtime_unavailable",
+  });
+}
+
 export function codexInstance(models: ModelSpec[] = [[GPT.model, "GPT-5.6-Sol"]], overrides: Partial<Instance> = {}): Instance {
   return engineInstance(GPT.instanceId, "codex", "Codex", models, overrides);
 }

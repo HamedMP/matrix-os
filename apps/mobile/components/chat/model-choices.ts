@@ -1,6 +1,7 @@
 import {
   canonicalProviderAvailabilityReasonLabel,
   canonicalProviderFundingState,
+  canonicalProviderModelCanBeSelected,
   canonicalProviderModelRouteLabel,
   type CanonicalChatModelSelection,
   type CanonicalProviderCatalog,
@@ -37,7 +38,10 @@ export interface ModelChoice {
   detail: string;
   logo: Provider;
   selected: boolean;
+  /** Execution readiness, independent of explicit selection intent. */
   available: boolean;
+  /** Explicit choice is permitted even when execution readiness is unavailable. */
+  selectable: boolean;
 }
 
 export interface ModelEngine {
@@ -102,11 +106,14 @@ function savedSelection(catalog: Catalog, selection: Selection) {
   // A model that runs through the person's own account runs only for a
   // selection that names the account the route runs through now.
   const available = runnable && selection !== null && selectionBindingCurrent(instance, selection);
+  const selectable = listed && canonicalProviderModelCanBeSelected(instance, model.id)
+    && selection !== null && selectionBindingCurrent(instance, selection);
   return {
     key: selection ? modelKey(selection.instanceId, selection.model) : null,
     instance,
     model,
     available,
+    selectable,
     /** The model can run, but not as saved: choosing it again names the account it runs through now. */
     rebind: runnable && !available,
     modelLabel: model?.displayName ?? selection?.model ?? "Models unavailable",
@@ -129,6 +136,7 @@ function lostChoice(saved: ReturnType<typeof savedSelection>, engineId: string, 
     logo: ENGINE_LOGO[saved.instance.driverKind],
     selected: true,
     available: false,
+    selectable: false,
   }];
 }
 
@@ -153,6 +161,7 @@ export function modelEngines(catalog: Catalog, selection: Selection): ModelEngin
         logo: ENGINE_LOGO[instance.driverKind],
         selected: key === saved.key,
         available: reason === null,
+        selectable: canonicalProviderModelCanBeSelected(instance, model.id),
       };
     }));
     const models = [...lostChoice(saved, id, listed), ...listed];
@@ -188,7 +197,7 @@ export function modelTrigger(catalog: Catalog, selection: Selection, catalogLoad
     label: selection
       ? joined(routeName(saved.instance, saved.modelLabel), saved.modelLabel, saved.state)
       : catalogLoading ? "Checking models…" : "Choose a model",
-    canChoose: offered(catalog).some((instance) => instance.models.some((model) => canRun(instance, model))),
+    canChoose: offered(catalog).some((instance) => instance.models.some((model) => canonicalProviderModelCanBeSelected(instance, model.id))),
   };
 }
 
@@ -223,7 +232,7 @@ export function modelNotices(catalog: Catalog, selection: Selection, catalogLoad
 }
 
 /**
- * The selection a tap on a model makes, or null when that model cannot run.
+ * The selection a tap on a model makes, or null when that model cannot be chosen.
  * It carries the values the engine names for its options, among them the
  * account a model run through the person's own subscription is bound to.
  */
@@ -234,7 +243,12 @@ export function chosenSelection(catalog: Catalog, key: string): CanonicalChatMod
   const modelId = key.slice(index + MODEL_VALUE_SEPARATOR.length);
   const instance = offered(catalog).find((candidate) => candidate.id === instanceId);
   const model = instance?.models.find((candidate) => candidate.id === modelId);
-  return instance && model && canRun(instance, model) ? catalogSelection(instance, model.id) : null;
+  return instance && model && canonicalProviderModelCanBeSelected(instance, model.id) ? catalogSelection(instance, model.id) : null;
+}
+
+/** The saved choice remains selectable with its current account binding. */
+export function selectionCanBeChosen(catalog: Catalog, selection: Selection): boolean {
+  return savedSelection(catalog, selection).selectable;
 }
 
 /** The catalog can run the saved selection as it stands. */

@@ -356,7 +356,7 @@ function ChatAppContent({
   const botIdentityUnknown = botBinding.status === "loading" || botBinding.status === "error" || botExecution.loading || Boolean(botExecution.error);
   const slashInstance = !botIdentityUnknown && !directBotId ? providerState.activeInstance ?? undefined : undefined;
   const slashCatalogLoading = botBinding.loading || providerState.loading;
-  const providerReady = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : Boolean(!providerState.loading && providerState.selected));
+  const providerReady = !botIdentityUnknown && (directBotId ? Boolean(botPresentation?.available) : Boolean(!providerState.loading && providerState.selectionAvailable));
   // Comfortable ≥44px touch targets on mobile; unchanged on desktop.
   const touchIcon = mobile ? "size-9" : "size-8";
   const grouped = groupMessages(messages);
@@ -392,7 +392,7 @@ function ChatAppContent({
         ...(mentionOptions?.onAccepted ? { onAccepted: mentionOptions.onAccepted } : {}),
       });
     }
-    if (!providerState.selected) return Promise.resolve(false);
+    if (!providerState.selected || !providerState.selectionAvailable) return Promise.resolve(false);
     const usesChannels = providerState.selected.driverKind === "hermes";
     const promptText = usesChannels ? createChannelConfiguredPrompt(text, selectedChannels) : text;
     return onSubmit(text, files, {
