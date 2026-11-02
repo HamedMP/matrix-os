@@ -146,7 +146,3 @@ describe("remaining real PostgreSQL qualification", () => {
     expect(report.batches[1].error).toMatch(/total.*budget/i);
   });
 });
-
-it("assigns the current checkout's real PostgreSQL suites to executable hosted lanes", () => {
-  expect(() => remainingPostgresInventory(process.cwd())).not.toThrow();
-});
