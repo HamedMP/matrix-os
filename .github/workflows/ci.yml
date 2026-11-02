@@ -443,7 +443,7 @@ jobs:
       - &refresh-pnpm-store
         name: Locate pnpm store for read-only refresh
         id: refresh-store
-        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
+        if: needs.changes.outputs.cache_write == 'false'
         shell: bash
         run: |
           echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
@@ -451,7 +451,7 @@ jobs:
 
       - &restore-pnpm-store
         name: Restore exact dependency cache
-        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
+        if: needs.changes.outputs.cache_write == 'false'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ steps.refresh-store.outputs.path }}
@@ -754,6 +754,25 @@ jobs:
     # bounded 40-minute window for runner variance and cleanup; split the shards if
     # normal runs approach this ceiling too.
     timeout-minutes: 40
+    # Each matrix job owns its database. Only already-migrated fixture suites
+    # opt in; separate hosted race suites retain MATRIX_TEST_POSTGRES_URL.
+    env:
+      MATRIX_PLATFORM_FIXTURE_POSTGRES_URL: postgresql://matrix_ci_fixture:matrix_fixture@127.0.0.1:5432/matrix_ci_platform_fixture_admin
+    services:
+      postgres:
+        # Match the mirror used by the other hosted PostgreSQL qualification jobs.
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: matrix_ci_fixture
+          POSTGRES_PASSWORD: matrix_fixture
+          POSTGRES_DB: matrix_ci_platform_fixture_admin
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U matrix_ci_fixture -d matrix_ci_platform_fixture_admin"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     strategy:
       fail-fast: false
       matrix:
@@ -797,6 +816,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
+
+      - name: Verify native fixture parity and cleanup
+        if: needs.changes.outputs.should_run == 'true'
+        timeout-minutes: 3
+        run: |
+          : "${MATRIX_PLATFORM_FIXTURE_POSTGRES_URL:?Disposable native fixture required}"
+          pnpm exec vitest run tests/platform/native-platform-db-test-helper.test.ts --maxWorkers=1
 
       - name: Check controller regressions before the full suite
         if: matrix.shard == 4 && needs.changes.outputs.should_run == 'true'
@@ -1094,7 +1120,7 @@ jobs:
     name: E2E Tests (${{ matrix.lane }})
     needs: [changes, ci-backend]
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       LANG: C.UTF-8

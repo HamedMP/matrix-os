@@ -5,9 +5,11 @@ Source: [Owen Gretzinger's CI article](https://x.com/owengretzinger/status/21162
 
 ## Decision
 
-Adopt dependency-cache seeding and restore-only refresh reads. Preserve the
-current compilers, test inventory, isolation, runner selection and qualification
-rules. Engineering-owner review of the cache trust boundary is recommended.
+Adopt dependency-cache seeding, restore-only refresh reads and the measured
+native platform-fixture opt-in for hosted shards. Preserve compiler choices,
+existing test coverage/isolation, Linux/hosted admission and qualification rules. Pin the
+E2E host version for compatibility. Engineering-owner review of the cache and
+fixture trust boundaries is recommended.
 
 | Article idea | Matrix assessment |
 | --- | --- |
@@ -29,7 +31,7 @@ Main inspected: `231eff01cf7f67a0c135653848093c30fda3b90d`.
 was a **failed** PR refresh, not a successful qualification. Its frozen installs
 took 38–111 seconds across the 12 installed job instances. Unit test commands
 took 1,244–1,739 seconds; three unit shards and both E2E lanes failed. Setup is
-an opportunity, but the dominant unit runtime/failures need separate profiling.
+an opportunity; the dominant unit runtime motivated the profiling below.
 These are step durations, not summed end-to-end savings.
 
 At inspection, the cache API returned one `node-cache-*` entry, scoped to a PR
@@ -37,6 +39,44 @@ merge ref, and none on main. Cache eviction can remove seeds; seeding cannot
 guarantee a hit or establish a speedup without a matched hosted measurement.
 
 ## Implementation and trust boundary
+
+### Combined profiling follow-up
+
+The requester authorized profiling and shipping the improvements together on
+ENG-240. Baseline JSON profiles attribute 5,769 seconds of 7,610 summed file
+time to gateway/platform suites; these overlapping durations are diagnostic,
+not wall-clock savings. Benchmark the existing native platform-fixture opt-in
+against PGlite with identical source, file inventory and two workers. If the
+same assertions pass faster, supply each hosted unit shard its own disposable
+PostgreSQL 16 service and only `MATRIX_PLATFORM_FIXTURE_POSTGRES_URL`; preserve
+the separate real-race collection gate `MATRIX_TEST_POSTGRES_URL` unset.
+Require the existing native-fixture lifecycle/parity contracts and full hosted
+qualification before adopting the change. Keep test isolation and assertions.
+
+The local six-file/two-worker comparison passed the same 410 assertion identities
+in all four reports. PGlite runs measured 112.12 / 103.04 seconds; native runs
+83.48 / 92.33 seconds (median 107.58 versus 87.91, about 18% lower). These are
+wall spans from Vitest start to the last file result on the same macOS arm64
+host and Node 24.13.1. Local PostgreSQL was 17.10; hosted adoption uses the
+existing PostgreSQL 16 mirror and requires its own green parity/full-suite
+evidence. The first fallback run used the filesystem sandbox; its repeat and
+both native runs had socket access. Report these limits rather than claiming
+a production or full-CI gain. Sample files: `proxy-routing`, `billing-routes`,
+`slack-app`, `customer-funded-paid-recovery`, `ai-funded-policy-routes`, and
+`golden-snapshot-recovery`, all under `tests/platform/`. No measured file changed.
+
+The hosted profile is incomplete/failed diagnostic evidence. Preserve the
+checked-in duration manifest until complete passing reports exist. The 921
+unprofiled files in the old manifest account for about 1,887 summed seconds;
+do not train balancing on a failed run or silently omit those files.
+
+Current hosted CI also exposes two setup/contract defects to repair: the pinned
+Playwright rejects Ubuntu 26.04 selected by `ubuntu-latest`, and the backend
+fallback contract treats optional restore-only cache steps as mandatory checks.
+Pin the E2E job to supported Ubuntu 24.04, preserve every fallback validation
+step, and permit optional read-only caching whenever its admitted job runs.
+
+### Package cache
 
 - Seed on main pushes and a daily main schedule, independently of Linux routing.
   Use a ten-minute deadline, read-only repository permissions and checkout
@@ -57,7 +97,8 @@ guarantee a hit or establish a speedup without a matched hosted measurement.
   No production endpoint, database or credential grant. After merge and green
   main, isolated refreshes need the existing reviewed-controller upgrade and
   tree-identical execution-ref procedure before the new workflow takes effect;
-  until then only main seeding is active. Operator activation is deferred.
+  that includes cache reads, native fixtures and the E2E host pin. Until then
+  only main seeding is active. Operator activation follows merge and green main.
 
 ## Acceptance and documentation
 

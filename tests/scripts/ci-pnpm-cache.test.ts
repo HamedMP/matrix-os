@@ -20,12 +20,20 @@ describe('pnpm cache reuse without refresh writes', () => {
       const install = job.steps.findIndex(s => s.run === 'pnpm install --frozen-lockfile');
       expect(restore).toBeGreaterThan(setup);
       expect(restore).toBeLessThan(install);
-      expect(job.steps[restore].if).toBe("needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'");
+      expect(job.steps[restore].if).toBe("needs.changes.outputs.cache_write == 'false'");
       expect(job.steps[restore].uses).toBe('actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830');
       expect(job.steps[restore - 1].name).toBe('Locate pnpm store for read-only refresh');
       expect(job.steps[restore - 1].if).toBe(job.steps[restore].if);
       expect(job.steps[setup].with?.cache).toBe("${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}");
     }
+  });
+
+  it.each(['docs-contract', 'os-view-parity'])('restores %s dependencies when source lanes are intentionally skipped', id => {
+    const steps = ci.jobs[id].steps as Step[];
+    const restore = steps.find(s => s.name === 'Restore exact dependency cache')!;
+    const needs = { changes: { outputs: { should_run: 'false', cache_write: 'false' } } };
+    // Execute the real workflow guard; this job already owns docs/fallback admission.
+    expect(Function('needs', `return (${restore.if});`)(needs)).toBe(true);
   });
 
   it('uses setup-node compatible exact keys and a restore-only action', () => {

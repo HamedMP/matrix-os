@@ -19,6 +19,11 @@ it('keeps fixed main-only privileged helpers and exposes complete signed source 
  expect(job.concurrency).toBeUndefined();expect(job.steps.find((s:any)=>s.id==='admit').with.script).toContain('source_kind');
  expect(job.steps.find((s:any)=>s.id==='dispatch').with.script).toContain('sourceKind');expect(job.steps.find((s:any)=>s.id==='dispatch').with.script).toContain('infrastructure_proof');
 });
-it('forces every step in docs/parity lanes to run for authenticated infrastructure fallback',()=>{
- const w=ci();for(const name of ['docs-contract','os-view-parity'])for(const step of w.jobs[name].steps){if(step.if)expect(step.if).toContain('infrastructure_fallback');}
+it('preserves fallback validation while optional dependency caches remain read-only',()=>{
+ const w=ci();for(const name of ['docs-contract','os-view-parity'])for(const step of w.jobs[name].steps){
+  if(['Locate pnpm store for read-only refresh','Restore exact dependency cache'].includes(step.name)){
+   expect(step.if).toBe("needs.changes.outputs.cache_write == 'false'");
+   if(step.uses)expect(step.uses).toMatch(/^actions\/cache\/restore@/);
+  }else if(step.if)expect(step.if).toContain('infrastructure_fallback');
+ }
 });

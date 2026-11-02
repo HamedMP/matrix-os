@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 
 type Step = { name?: string; run?: string; uses?: string; if?: string; env?: Record<string, unknown>; with?: Record<string, unknown> };
-type Job = { 'timeout-minutes'?: number; needs?: string | string[]; 'runs-on': string; strategy?: { matrix?: Record<string, unknown> }; steps: Step[] };
+type Job = { 'timeout-minutes'?: number; needs?: string | string[]; 'runs-on': string; env?: Record<string, string>; services?: Record<string, any>; strategy?: { matrix?: Record<string, unknown> }; steps: Step[] };
 const source = readFileSync(join(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
 const workflow = parse(source) as { concurrency: Record<string, unknown>; jobs: Record<string, Job> };
 const scripts = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')).scripts;
@@ -32,6 +32,23 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(scanner).toBeLessThan(test);
     expect(steps[scanner]?.if).toBe(steps[test]?.if);
     expect(workflow.jobs.unit.strategy?.matrix?.shard).toEqual([1, 2, 3, 4]);
+  });
+
+  it('gives each hosted shard a disposable native fixture without enabling unrelated race suites', () => {
+    const unit = workflow.jobs.unit;
+    const pg = unit.services?.postgres;
+    expect(pg?.image).toBe('mirror.gcr.io/library/postgres:16');
+    expect(pg?.env).toEqual({ POSTGRES_USER: 'matrix_ci_fixture', POSTGRES_PASSWORD: 'matrix_fixture', POSTGRES_DB: 'matrix_ci_platform_fixture_admin' });
+    expect(pg?.ports).toEqual(['5432:5432']);
+    expect(pg?.options).toContain('pg_isready -U matrix_ci_fixture -d matrix_ci_platform_fixture_admin');
+    expect(unit.env?.MATRIX_PLATFORM_FIXTURE_POSTGRES_URL).toBe('postgresql://matrix_ci_fixture:matrix_fixture@127.0.0.1:5432/matrix_ci_platform_fixture_admin');
+    expect(unit.env?.MATRIX_TEST_POSTGRES_URL).toBeUndefined();
+    expect(unit.strategy?.matrix?.shard).toEqual([1, 2, 3, 4]);
+    const proof = unit.steps.find(step => step.name === 'Verify native fixture parity and cleanup');
+    expect(proof?.run).toContain(': "${MATRIX_PLATFORM_FIXTURE_POSTGRES_URL:?Disposable native fixture required}"');
+    expect(proof?.run).toContain('tests/platform/native-platform-db-test-helper.test.ts');
+    expect(proof?.run).toContain('--maxWorkers=1');
+    expect(proof?.if).not.toContain('matrix.shard');
   });
 
   it('starts independent hosted lanes after backend selection while sync starts after classification', () => {
@@ -88,6 +105,8 @@ describe('fast CI preserves validation while removing serialized work', () => {
     // The current lane exhausted its old 15-minute budget after over 11 minutes
     // of browser setup, cancelling tests about 2.5 minutes into their execution.
     expect(workflow.jobs.e2e['timeout-minutes']).toBe(30);
+    // ubuntu-latest moved to 26.04; pinned Playwright 1.60 rejects that host.
+    expect(workflow.jobs.e2e['runs-on']).toBe('ubuntu-24.04');
   });
 
   it('retains frozen installs and keyed Next and browser caches', () => {
