@@ -65,7 +65,7 @@ A broken candidate records the failed product step while its healthy pair remain
 available. No auth or private-directory shortcut may substitute for the real path.
 
 - [x] T026 [US3] Add strict scenario-result and build-binding cases in `tests/platform/preview-pair-evidence.test.ts`, then implement bounded evidence/report handling in `packages/platform/src/preview-pair/evidence.ts`.
-- [x] T027 [US3] Add deterministic first-party journey coverage and required scenario collection in `tests/e2e/desktop/preview-pair-collaboration.e2e.test.ts`, preserving real client/relay/owner routing and marking synthetic provider boundaries.
+- [x] T027 [US3] Collect the eight retained first-party component/client/relay/owner authorization suites through `scripts/preview-pair/qualify-fixtures.ts` and its collector tests, including inherited Chat prompt execution; explicitly mark fixture boundaries.
 - [x] T028 [US3] Implement the protected normal-login live acceptance entry in `scripts/preview-pair/qualify.ts`, covering fresh creation opt-in, separate first later Share, member Chat prompt/reopen and outsider denial; no generated peer sessions.
 - [ ] T029 [US3] Capture equivalent Web Desktop and Electron Desktop observations using `specs/2689-collaboration-preview-pair/quickstart.md`; attach exact-build captures outside Git and record failed/not-run cases truthfully.
 
@@ -165,19 +165,17 @@ checks, documentation and review work first.
 - No cloud setup, deployment, user grant/membership mutation or external Slack post
   occurred during planning/task generation.
 
-- Protected control workflow (T016/T033): implemented in the control-workflow
-  layer with named red/green assertions, immutable first-attempt provenance,
-  pair-only bundle boundaries and Source-owned recovery. See
-  `control-workflow-validation.md`. Actual protected activation/live acceptance
-  remains T041; Electron launch remains T018–T025. Full gateway typecheck timed out
-  without a diagnostic; seven other repository projects passed and T037 stays open.
-
-Launcher implementation checkpoint: T021–T024/T035 code and focused tests are present; see `launcher-validation.md`. T025 passed its actual Linux three-process fixture lane (production build8e0fd84fb0); protected real-provider and native macOS acceptance remain T041. Public docs PR, protected live collaboration and review gates are separate open deliverables.
-
-Guided evidence export implementation: T026/T028 implemented with 24 focused tests across three suites; actual fixture-producer qualification remains pending for T027. Public docs draft: https://github.com/FinnaAI/matrix-os-site/pull/322 (responsive rendering unqualified). See `qualification-validation.md`; no live/review/Linear completion is implied.
-
-Actual exact-checkout fixture producer: 70 passed assertions across eight retained first-party suites, receipt always fixture/productAcceptance:not_run. T027 complete for deterministic boundaries; protected normal-Clerk/two-VPS/model acceptance remains T041.
-
-Final automated build gates: official `bun run typecheck` passed all eight repository projects after its normal prerequisite builds; canonical production shell build passed with all9 static pages. Parent Electron production/native fixture checks remain recorded at their exact build, with Linux Playwright --no-sandbox limitation; no live/native-macOS qualification is implied.
-
-Final documentation/tracking: public docs #322 hosted test check passed; existing Vercel preview at exact0a005b282c02cd1e4c6feedd0b7eb9370a9df224 passed375/768/1280 document-overflow checks with screenshots/recordings outside Git. ENG-418 reverified and updated through the connected Linear app with final PR/validation links; remains assigned to Nima/In Progress. Remaining T029/T040/T041 are live collaboration/evidence and review gates.
+- Protected control workflow T016/T033 and Electron T018–T025 are implemented;
+  their focused validation notes describe real and synthetic boundaries.
+- Qualification exports and actual fixture collection passed: 24 focused tests
+  across three suites, plus 70 assertions across eight retained suites. The
+  exact-checkout receipt remains fixture/productAcceptance:not_run.
+- All eight official typechecks, canonical production shell build, parent
+  Electron production build/native fixture journey and React audit passed.
+- Public docs #322 passed hosted tests and 375/768/1280 responsive checks at
+  `0a005b282c02cd1e4c6feedd0b7eb9370a9df224`; captures remain outside Git.
+- ENG-418 is verified, assigned to Nima and updated with the final PR links.
+  It remains In Progress.
+- See `qualification-validation.md` for exact results, builds and limitations.
+  Remaining T029/T040/T041 require live collaboration/evidence and review; no
+  fixture result implies real-Clerk/two-VPS/model or native macOS acceptance.
