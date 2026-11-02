@@ -76,7 +76,7 @@ The Docker image has Clerk baked in at build time, so you don't need Clerk keys 
 
 | Key | Where to get it | Used by |
 |-----|-----------------|---------|
-| `GEMINI_API_KEY` | [aistudio.google.dev](https://aistudio.google.dev) | Image generation |
+| `GEMINI_API_KEY` | [ai.google.dev](https://ai.google.dev) | Image generation |
 | `TELEGRAM_BOT_TOKEN` | [@BotFather](https://t.me/BotFather) on Telegram | Telegram channel testing |
 | `DISCORD_BOT_TOKEN` | [discord.com/developers](https://discord.com/developers) | Discord channel testing |
 
