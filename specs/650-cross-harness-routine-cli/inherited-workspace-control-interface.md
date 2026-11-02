@@ -103,7 +103,30 @@ reclamation/alias fencing and wrong-role/getter rejection. Four corresponding
 faults isolate failed-call burn, Worker burn, two-slot reservation and GC
 shutdown, each with one intended failure.
 
-Constructor-domain/stdio variants, creator death with copied endpoints,
-allocation failures, cross-Worker capacity races and protected module/image
+The creator-death case retains a copied opposite endpoint, queues genuine bytes,
+waits for the actual creator to exit, and checks currentness while relay/service
+remain alive and no socket HUP is observable. Ignoring only the creator birth
+poll result must fail that assertion. Socket loss cannot substitute for this case.
+
+The fixture also injects EMFILE at the creator's post-fork birth retention.
+Its original supervisor must close held start channels before draining actual
+children. A separate safety wrapper reports any rescue and never rewrites the
+original cleanup result; a rescue cannot qualify success. The wrapper signals
+only a known direct child after waitpid returns zero, never an ECHILD or a PID
+received in a payload. This is test cleanup, not a production identity mechanism.
+
+The Linux runtime now requires `--creator-supervisor` and
+`--creator-supervisor-failure` alongside `--addon` and `--pidfd-setter`. Build
+the former from `native-inherited-control-fixtures/creator-supervisor.c`.
+For the latter, make a disposable copy of that source replacing only
+`creator = retain(actual_creator)` with
+`creator = fixture_fail_creator_retain(actual_creator)` and compile
+`creator-retain-failure.c` with `CREATOR_SUPERVISOR_FAULT_SOURCE` naming that
+copy as a quoted C include path. Use C11 and `-Wall -Wextra -Werror`; never
+change the cleanup body in the injected copy. All fixtures require owned
+processes, nonroot/cap0 Linux and bounded cleanup.
+
+Constructor-domain/stdio variants, other allocation failures,
+cross-Worker capacity races and protected module/image
 continuity remain separate qualification gates. Privileged/foreign-UID mutation
 coverage must never be inferred from cap0-only tests.
