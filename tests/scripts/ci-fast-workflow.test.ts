@@ -173,3 +173,21 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(upload?.with?.['retention-days']).toBe(7);
   });
 });
+
+describe('Docker image export runner capacity', () => {
+  it('frees unused hosted tools before building the image and retains artifact integrity checks', () => {
+    const docker = parse(readFileSync('.github/workflows/docker-test.yml', 'utf8')).jobs['docker-build'];
+    const cleanup = docker.steps.findIndex((step: {name?: string}) => step.name === 'Free runner disk before Docker build');
+    const build = docker.steps.findIndex((step: {uses?: string}) => step.uses?.startsWith('docker/build-push-action@'));
+    const save = docker.steps.findIndex((step: {name?: string}) => step.name === 'Save Docker image artifact');
+    expect(cleanup).toBeGreaterThanOrEqual(0);
+    expect(cleanup).toBeLessThan(build);
+    expect(build).toBeLessThan(save);
+    expect(docker.steps[cleanup].if).toBe(docker.if);
+    expect(docker.steps[cleanup].run).toContain('sudo rm -rf ');
+    expect(docker.steps[cleanup].run).not.toMatch(/\/tmp\/matrix-os|hostedtoolcache\/node|docker system prune/);
+    expect(docker.steps[build].with.outputs).toBe('type=docker,dest=/tmp/matrix-os-dev-ci.tar');
+    expect(docker.steps[save].run).toContain('gzip -t /tmp/matrix-os-dev-ci.tar.gz');
+    expect(docker.steps[save].run).toContain('test "$(stat -c%s /tmp/matrix-os-dev-ci.tar.gz)" -gt 1000000');
+  });
+});
