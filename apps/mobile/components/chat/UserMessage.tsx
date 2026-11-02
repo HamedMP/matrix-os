@@ -9,8 +9,6 @@ import type { TranscriptAttachment } from "@/lib/chat-attachments";
 
 import { MessageAttachments, type MessageAttachmentsProps } from "./MessageAttachments";
 import { Spinner } from "./Spinner";
-import {NativeRoutineMessageMeta} from "@/components/agents/schedules/RoutineMessage";
-import {routineOccurrenceOutcome,type RoutineOccurrence} from "@matrix-os/ui/bot-routine-transcript";
 
 // A send that is in by then says nothing, so a quick one never flickers a note.
 const SENDING_NOTE_DELAY_MS = 1_000;
@@ -20,8 +18,6 @@ const SENDING_SPINNER_SIZE = 12;
 const ACTION_HIT_SLOP = { top: 12, bottom: 12, left: 8, right: 8 } as const;
 
 export interface UserMessageProps extends Pick<MessageAttachmentsProps, "renderComputerPhoto"> {
-  scheduled?:RoutineOccurrence;
-  scheduleEvent?:boolean;
   text: string;
   /** The photos and files sent with it, shown above the text. */
   attachments?: readonly TranscriptAttachment[];
@@ -51,32 +47,26 @@ export function UserMessage({
   onRetry,
   onEdit,
   retryDisabled = false,
-  scheduled,
-  scheduleEvent,
 }: UserMessageProps) {
-  const displayText=scheduled&&scheduleEvent?routineOccurrenceOutcome(scheduled):text;
-  const content = !attachments || attachments.length === 0 ? <Bubble text={displayText} chatId={chatId} collapsible={Boolean(scheduled)}/> : (
+  const content = !attachments || attachments.length === 0 ? <Bubble text={text} chatId={chatId} /> : (
     <View testID="user-message-with-attachments" style={styles.group}>
       <MessageAttachments attachments={attachments} renderComputerPhoto={renderComputerPhoto} />
       {text ? <Bubble text={text} chatId={chatId} /> : null}
     </View>
   );
-  if (!delivery&&!scheduled) return content;
+  if (!delivery) return content;
   return (
     <View style={styles.group}>
-      {scheduled?<NativeRoutineMessageMeta occurrence={scheduled} sent={!scheduleEvent}/>:null}
       {content}
       {delivery === "failed"
         ? <UnsentStatus onRetry={onRetry} onEdit={onEdit} retryDisabled={retryDisabled} />
-        : delivery?<SendingStatus />:null}
+        : <SendingStatus />}
     </View>
   );
 }
 
-function Bubble({ text, chatId,collapsible=false }: { text: string; chatId?: string | null;collapsible?:boolean }) {
+function Bubble({ text, chatId }: { text: string; chatId?: string | null }) {
   const { theme } = useUnistyles();
-  const [expanded,setExpanded]=useState(false);
-  const long=collapsible&&(text.length>200||text.split("\n").length>3);
 
   return (
     // A long press lifts the bubble alone, with its own corners.
@@ -87,8 +77,7 @@ function Bubble({ text, chatId,collapsible=false }: { text: string; chatId?: str
       cornerRadius={theme.v2.radius.bubble}
     >
       <Pressable accessible={false} testID="user-message" style={styles.bubble}>
-        <Text style={styles.text} numberOfLines={long&&!expanded?3:undefined}>{text}</Text>
-        {long?<Pressable accessibilityRole="button" accessibilityLabel={expanded?"Show less":"Show more"} accessibilityState={{expanded}} onPress={()=>setExpanded(value=>!value)}><Text style={styles.actionText}>{expanded?"Show less":"Show more"}</Text></Pressable>:null}
+        <Text style={styles.text}>{text}</Text>
       </Pressable>
     </ChatContextMenu>
   );

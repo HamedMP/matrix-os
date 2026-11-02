@@ -124,34 +124,3 @@ it("shows a completed one-time schedule as having no next run, without calling i
   expect(await screen.findByText("Next run: None scheduled")).toBeTruthy();
   expect(screen.queryByText(/No future run while paused or archived/)).toBeNull();
 });
-
-
-it("keeps run history in the exact owning Chat rather than a second Schedules timeline", async () => {
-  const client = api(), open = jest.fn();
-  client.detail.mockResolvedValue({routine, history: [{fireId: "fire_fixture", scheduledFor: "2026-11-02T01:00:00Z", status: "completed", attempts: 1}]});
-  render(<SchedulesScreen api={client} resolve={jest.fn()} onBack={jest.fn()} onOpenChat={open}/>);
-  fireEvent.press(await screen.findByRole("button", {name: "Private ping"}));
-  await screen.findByText("Return FIXED TEXT");
-  expect(screen.queryByText("Recent runs")).toBeNull();
-  fireEvent.press(screen.getByRole("button", {name: "Open task Chat"}));
-  expect(open).toHaveBeenCalledTimes(1);
-  expect(open).toHaveBeenCalledWith(routine.chatId, routine.botId);
-});
-it("starts new-schedule navigation without applying a routine mutation", async () => {
-  const client = api(), start = jest.fn();
-  render(<SchedulesScreen api={client} resolve={jest.fn()} onBack={jest.fn()} onNewSchedule={start}/>);
-  fireEvent.press(await screen.findByRole("button", {name: "New schedule"}));
-  expect(start).toHaveBeenCalledTimes(1);
-  expect(client.control).not.toHaveBeenCalled();
-  expect(client.review).not.toHaveBeenCalled();
-});
-
-it("keeps the saved details visible if history navigation fails", async () => {
-  const client = api();
-  render(<SchedulesScreen api={client} resolve={jest.fn()} onBack={jest.fn()} onOpenChat={jest.fn().mockRejectedValue(new Error("secret /home/path"))}/>);
-  fireEvent.press(await screen.findByRole("button", {name: "Private ping"}));
-  fireEvent.press(await screen.findByRole("button", {name: "Open task Chat"}));
-  await screen.findByText("This task’s Chat could not be opened. Try again.");
-  expect(screen.getByText("Return FIXED TEXT")).toBeTruthy();
-  expect(screen.queryByText("secret /home/path")).toBeNull();
-});

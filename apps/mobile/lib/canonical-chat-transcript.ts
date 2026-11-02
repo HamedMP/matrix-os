@@ -1,5 +1,4 @@
 import { canonicalChatToolActivities, canonicalReviewedAgentFailure, canonicalAssistantOutputMessages, type CanonicalToolActivity } from "@matrix-os/contracts";
-import type {RoutineOccurrence} from "@matrix-os/ui/bot-routine-transcript";
 import { canonicalChatInputs, type CanonicalChatInputView, canonicalChatApprovals, canonicalChatTerminalNotices, type CanonicalChatApprovalView } from "@matrix-os/contracts";
 import type {
   CanonicalChatDetailResponse,
@@ -36,9 +35,6 @@ export interface TranscriptNotice {
 }
 
 export interface TranscriptMessage {
-  /** Read-only durable schedule metadata, bound to this input by its canonical request. */
-  scheduled?: RoutineOccurrence;
-  scheduleEvent?: boolean;
   input?: CanonicalChatInputView;
   approval?: CanonicalChatApprovalView;
   /** Set on the line that says how a turn ended when it did not finish. */

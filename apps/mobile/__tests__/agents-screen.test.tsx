@@ -16,13 +16,11 @@ const mockRefetchAgents = jest.fn(() => Promise.resolve());
 const mockRefetchStatuses = jest.fn(() => Promise.resolve());
 const mockUseAgents = jest.fn();
 const mockUseAgentStatuses = jest.fn();
-let mockScheduleMode = false;
 let mockChats: unknown[] = [];
 let mockGainFocus: () => void = () => {};
 
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: mockPush }),
-  useLocalSearchParams: () => ({schedule: mockScheduleMode ? "1" : undefined}),
   useFocusEffect: (effect: () => void) => {
     const mockReact = jest.requireActual("react") as typeof import("react");
     mockReact.useEffect(() => {
@@ -75,7 +73,6 @@ describe("agents tab root", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockScheduleMode = false;
     alert = jest.spyOn(Alert, "alert").mockImplementation(() => {});
     mockUseAgents.mockReturnValue(agentsResult());
     mockUseAgentStatuses.mockReturnValue({ statuses, waitingCount: 1, isPending: false, refetch: mockRefetchStatuses });
@@ -87,14 +84,6 @@ describe("agents tab root", () => {
   afterEach(() => {
     cleanup();
     alert.mockRestore();
-  });
-
-  it("offers only scheduling-capable Bots in New schedule mode", () => {
-    mockScheduleMode = true;
-    mockUseAgents.mockReturnValue(agentsResult({agents: [{...research, recipeRef: {recipeId: "writer", version: "1"}}, inbox]}));
-    render(<AgentsScreen/>);
-    expect(screen.queryByText("My inbox")).toBeNull();
-    expect(screen.getByText("Account research")).toBeTruthy();
   });
 
   it("reads the statuses of the saved agents", () => {
