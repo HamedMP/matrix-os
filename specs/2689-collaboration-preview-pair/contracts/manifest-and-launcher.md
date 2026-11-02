@@ -29,15 +29,13 @@ role keys. A manifest-supplied checksum cannot establish its own provenance.
 
 `bun run preview:pair:open -- --pair <uuid> --profile <trusted-control-profile>`
 
-Optional local manifest input is merely a selector/cache; the launcher still reads
-the canonical active generation through the configured first-party authenticated
-CLI profile. Profile selection uses existing normal auth providers in memory;
-credentials never enter argv, context files or logs. A supplied manifest origin
-cannot redirect that bearer. Unsupported targets fail before executable launch.
-
-An explicit artifact path may point to bytes already obtained through the trusted
-GitHub run download. It is validated against the canonical artifact/run/source and
-digest exactly like a fresh download; it cannot silently use the installed app.
+V1 accepts only the pair selector and existing normal control profile. It reads
+the canonical active generation through a fixed first-party authenticated origin;
+credentials stay in memory and never enter argv, descriptor files or logs. No
+local manifest, arbitrary artifact path, supplied origin or installed app can
+replace the canonical artifact. Unsupported targets fail before execution.
+The command remains running to own app resources until its newly opened apps
+close; reused processes and normal apps belong to their existing owners.
 
 ## Launch lifecycle
 

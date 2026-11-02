@@ -75,3 +75,38 @@ Partial launch: one additional real local-child test passed; Member exit5 stops
 the newly opened Owner and disposes this launch's artifact. Artifact/provider
 preparation is mocked explicitly in that orchestration case; the separate real
 reader cohort covers that boundary. No live cloud or collaboration result follows.
+
+## Native execution checkpoint
+
+Production build **8e0fd84fb093** (full commit recorded by Git) passed with
+RAYON_NUM_THREADS=1 and a1536MiB Node heap. Actual Electron41.10.7/Xvfb required
+lane passed **1 test / 1 suite**,18.42s. Three real Electron processes exercised
+production main/preload/renderer/AuthService, separate userData/sessionData,
+matching actor/non-primary slot, organization hydration, existing-process reopen,
+and Owner sign-out leaving Member signed in and normal app signed out.
+
+The first native run exposed omitted XAUTHORITY in the whitelist. A failing
+launcher environment assertion preceded the fix; **67 / 4** focused tests passed.
+Playwright interception produced status0/aborted membership responses in this
+Electron fixture. Only the corrected per-session Electron protocol provider
+fixture is qualified for organization hydration. It preserves the actual shared
+membership client, normal auth handlers, profile storage, IPC and CSP/CORS path;
+Source signature verification is real, Source/provider state is explicitly
+synthetic. No product protocol interception or auth bypass was introduced.
+
+Actual local PNG/WebM captures are under
+`/tmp/eng418-launcher-native-evidence/`, outside Git. Only the two08:42 recordings
+and refreshed owner/member PNGs show the fully passing organization scenario;
+earlier fixture failures are not visual qualification. These local fixture
+captures do not satisfy the reviewed live-runtime visual gate or native macOS.
+No accessible uploaded capture or Slack permalink is claimed.
+
+The stock pattern scanner omits Desktop/scripts. An ephemeral copy extending
+its scan paths found inherited catches and one new ignored promise handler; the
+changed-boundary repairs now produce **0 violations / 3 reviewed warnings**.
+Warnings: fixed constant IPC allowlist, validated/owned paths and validated
+identity headers. React base comparison completed with **zero new diagnostics**;
+the full changed-file audit includes inherited warnings. No all-repository-green
+claim is made.
+
+Platform qualification: **515 tests / 63 preview-pair suites passed**,485.85s, serial against the task-owned Postgres16 instance. No skipped test was reported. Logical transaction/authority qualification only; disposable database fsync remains off and does not qualify power-loss behavior.

@@ -35,13 +35,14 @@ it("isolates normal/Owner/Member Electron sessions and preserves the peer when O
     const parts: Buffer[] = []; let length = 0;
     for await (const part of req) { length += part.length; if (length > 16_384) { res.writeHead(413).end(); return; } parts.push(part); }
     const body = parts.length ? JSON.parse(Buffer.concat(parts).toString("utf8")) : {};
-    const send = (value: unknown, status = 200) => { res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(value)); };
+    const send = (value: unknown, status = 200) => { res.writeHead(status, { "content-type": "application/json", "access-control-allow-origin": "null", "access-control-allow-credentials": "true" }).end(JSON.stringify(value)); };
     if (req.url === "/source") { send({ valid: true }, verifyPreviewPairLaunch(body, secret, Date.now()) ? 200 : 404); return; }
-    const role = req.url?.startsWith("/member/") ? "member" : "owner", member = manifest.members[role];
+    const role = req.url?.startsWith("/member/") ? "member" : req.url?.startsWith("/owner/") ? "owner" : "normal";
+    const member = role === "normal" ? { actorId: "user_normal_fixture", handle: "normal-fixture", runtimeSlot: "primary" } : manifest.members[role];
     if (req.url?.endsWith("/api/auth/device/code")) { send({ deviceCode: "fixture-device", userCode: "TEST-CODE", verificationUri: `${manifest.browserOrigin}/device`, expiresIn: 600, interval: 1 }); return; }
     if (req.url?.endsWith("/api/auth/device/token")) { send({ accessToken: `test-only-${role}-credential`, expiresAt: now + 3_600_000,
       userId: member.actorId, handle: member.handle, runtimeSlot: member.runtimeSlot }); return; }
-    if (req.url?.endsWith("/api/organizations")) { send({ complete: true, organizations: [{ organizationId: manifest.organizationId, name: "Preview test organization" }] }); return; }
+    if (req.url?.endsWith("/api/organizations")) { send({ complete: true, organizations: role === "normal" ? [] : [{ organizationId: manifest.organizationId, name: "Preview test organization" }] }); return; }
     send({ error: "Fixture endpoint unavailable" }, 503);
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -52,31 +53,38 @@ it("isolates normal/Owner/Member Electron sessions and preserves the peer when O
     // Test-only bootstrap changes transport, never production auth handlers or
     // credential stores. Exact Source signature verification remains real.
     const bootstrap = join(home, "fixture-bootstrap.mjs");
-    await writeFile(bootstrap, `const actualFetch=globalThis.fetch;
+    await writeFile(bootstrap, `import {app,session} from 'electron';
+const actualFetch=globalThis.fetch;
+app.once('ready',()=>session.defaultSession.protocol.handle('https',async request=>{
+ const u=new URL(request.url),c=JSON.parse(process.env.MATRIX_PREVIEW_PAIR_CONTEXT).context;
+ if(u.origin!==c.apiOrigin)return new Response(null,{status:503});
+ const r=await actualFetch(${JSON.stringify(base)}+'/'+c.role+u.pathname+u.search,{method:request.method,signal:AbortSignal.timeout(5000),redirect:'error'});
+ return new Response(await r.arrayBuffer(),{status:r.status,headers:{'content-type':'application/json'}});
+}));
 globalThis.fetch=(raw,init)=>{const u=new URL(String(raw)); const c=JSON.parse(process.env.MATRIX_PREVIEW_PAIR_CONTEXT).context;
 if(u.href===c.sourceOrigin+'/api/preview-pairs/launch/verify')return actualFetch(${JSON.stringify(base + "/source")},init);
 if(u.origin===c.apiOrigin)return actualFetch(${JSON.stringify(base)}+'/'+c.role+u.pathname+u.search,init);
 return Promise.reject(new Error('Explicit native fixture endpoint unavailable'));};
 await import(${JSON.stringify(pathToFileURL(main).href)});`);
-    const normal = await _electron.launch({ executablePath: electron, args: [main], env: { HOME: home, PATH: process.env.PATH ?? "/usr/bin:/bin", DISPLAY: process.env.DISPLAY ?? "", XAUTHORITY: process.env.XAUTHORITY ?? "", OPERATOR_USER_DATA_DIR: join(home, "normal") } }); applications.push(normal);
+    const normal = await _electron.launch({ executablePath: electron, args: [main], env: { HOME: home, PATH: process.env.PATH ?? "/usr/bin:/bin", DISPLAY: process.env.DISPLAY ?? "", XAUTHORITY: process.env.XAUTHORITY ?? "", OPERATOR_GATEWAY_URL: base, OPERATOR_USER_DATA_DIR: join(home, "normal") } }); applications.push(normal);
     const normalPage = await normal.firstWindow(); await normalPage.getByRole("button", { name: "Sign in", exact: true }).waitFor();
     expect(await normalPage.locator('[role="status"]').filter({ hasText: "Collaboration preview" }).count()).toBe(0);
+    await normalPage.evaluate(() => window.operator.invoke("auth:start-device-flow", { intent: "sign-in" }));
+    await expect.poll(async () => normalPage.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: "user_normal_fixture", runtimeSlot: "primary" });
     const opened: Record<string, { app: ElectronApplication; page: Awaited<ReturnType<ElectronApplication["firstWindow"]>> }> = {};
     for (const role of ["owner", "member"] as const) {
       const proof = issuePreviewPairLaunch({ manifest, role, platform: process.platform as "linux", arch: process.arch as "x64", sourceOrigin: "https://app.matrix-os.com" }, secret, Date.now());
       const paths = await createPreviewPairProfile(proof.context, home), ready = await previewDesktopReady(proof.context);
       try {
         const app = await _electron.launch({ executablePath: electron, args: [bootstrap], ...(process.env.MATRIX_PREVIEW_PAIR_EVIDENCE_DIR ? { recordVideo: { dir: process.env.MATRIX_PREVIEW_PAIR_EVIDENCE_DIR, size: { width: 1280, height: 800 } } } : {}), env: previewDesktopEnvironment(proof, paths.userData, ready.port) }); applications.push(app);
-        const page = await app.firstWindow(); await page.getByRole("status").filter({ hasText: `Collaboration preview · ${role === "owner" ? "Owner" : "Member"}` }).waitFor();
+        const page = await app.firstWindow();
+        await page.getByRole("status").filter({ hasText: `Collaboration preview · ${role === "owner" ? "Owner" : "Member"}` }).waitFor();
         expect(await ready.ready).toBe(app.process().pid);
-        await page.route(`${manifest.apiOrigin}/**`, async route => {
-          const url = new URL(route.request().url());
-          await route.fulfill({ response: await route.fetch({ url: base + "/" + role + url.pathname + url.search }) });
-        });
         const actual = await app.evaluate(({ app }) => ({ userData: app.getPath("userData"), sessionData: app.getPath("sessionData") }));
         expect(actual).toEqual({ userData: paths.userData, sessionData: paths.sessionData });
         await page.evaluate(() => window.operator.invoke("auth:start-device-flow", { intent: "sign-in" }));
         await expect.poll(async () => page.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: manifest.members[role].actorId, runtimeSlot: manifest.members[role].runtimeSlot });
+        await page.getByRole("status").filter({ hasText: "Preview test organization" }).waitFor();
         opened[role] = { app, page };
         const evidence = process.env.MATRIX_PREVIEW_PAIR_EVIDENCE_DIR;
         if (evidence) await page.screenshot({ path: join(evidence, `${role}.png`) });
@@ -92,7 +100,7 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
     await reused.stop(); // Never kills the existing app or peer.
     await opened.owner.page.evaluate(() => window.operator.invoke("auth:sign-out", {}));
     expect(await opened.member.page.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: manifest.members.member.actorId });
-    expect(await normalPage.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: false });
+    expect(await normalPage.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: "user_normal_fixture", runtimeSlot: "primary" });
     expect(await opened.owner.page.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: false });
   } finally {
     for (const app of applications.reverse()) await app.close();

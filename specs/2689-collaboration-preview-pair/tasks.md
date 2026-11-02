@@ -55,7 +55,7 @@ sign-out/relaunch/callback handling does not affect the other two sessions.
 - [x] T022 [US2] Add failing traversal/symlink, repeated launch, partial startup and safe child-cleanup cases in `tests/scripts/preview-pair-profiles.test.ts`; implement owned profiles/processes in `desktop/src/main/preview-pair-profiles.ts`, `preview-pair-profile-lease.ts` and `scripts/preview-pair/desktop-process.ts`.
 - [x] T023 [US2] Implement the thin dual-app command in `scripts/preview-pair/launch.ts` and the `preview:pair:open` package script using existing normal profile authentication; no token persistence or arbitrary target fallback.
 - [x] T024 [US2] Add actual state-driven role/source/computer/org banner tests, then implement `desktop/src/renderer/src/features/preview/PreviewPairBanner.tsx` with bounded IPC and existing connection/organization stores; run React audit.
-- [ ] T025 [US2] Integrate minimal main-process/profile/IPC startup wiring and verify normal plus two candidate processes through `tests/e2e/desktop/preview-pair.e2e.test.ts`; missing artifacts/display must fail the required lane.
+- [x] T025 [US2] Integrate minimal main-process/profile/IPC startup wiring and verify normal plus two candidate processes through `tests/e2e/desktop/preview-pair.e2e.test.ts`; missing artifacts/display must fail the required lane.
 
 ## Phase 5: US3 — Observe the real collaboration journey (P1)
 
@@ -84,9 +84,9 @@ retains leases and capacity until exact provider absence is proved.
 
 ## Phase 7: Qualification, documentation and review
 
-- [ ] T036 Run focused real-boundary and independent Postgres qualification for `tests/platform/preview-pair-*.test.ts`; record exact results, rollback/race faults and every actual/synthetic boundary in `specs/2689-collaboration-preview-pair/validation.md`.
+- [x] T036 Run focused real-boundary and independent Postgres qualification for `tests/platform/preview-pair-*.test.ts`; record exact results, rollback/race faults and every actual/synthetic boundary in `specs/2689-collaboration-preview-pair/validation.md`.
 - [ ] T037 Run applicable full typecheck, patterns, production shell, Electron production build/E2E and React audit; retain ordinary provisioning/auth/collaboration coverage and record results in `specs/2689-collaboration-preview-pair/validation.md`.
-- [ ] T038 [P] Update `docs/dev/collaboration-preview-pairs.md` and links from `docs/dev/preview-environments.md` with implemented commands, setup gates, login, reset, diagnosis, expiry and cleanup.
+- [x] T038 [P] Update `docs/dev/collaboration-preview-pairs.md` and links from `docs/dev/preview-environments.md` with implemented commands, setup gates, login, reset, diagnosis, expiry and cleanup.
 - [ ] T039 Prepare and validate the separate `FinnaAI/matrix-os-site/content/docs/` documentation PR sharing ENG-418 and the native stack reference; do not publish private identities or committed captures.
 - [ ] T040 Publish native stack layers, refresh their concise descriptions, request current-head Greptile once, resolve findings and monitor applicable CI through `docs/dev/stacked-prs.md`; do not merge.
 - [ ] T041 Perform the reviewed scoped live pair/actual-target acceptance from `specs/2689-collaboration-preview-pair/quickstart.md` when approved isolation/fixtures/funding and local OS access exist; missing prerequisites remain explicit blockers, never completed tasks.
@@ -172,4 +172,4 @@ checks, documentation and review work first.
   remains T041; Electron launch remains T018–T025. Full gateway typecheck timed out
   without a diagnostic; seven other repository projects passed and T037 stays open.
 
-Launcher implementation checkpoint: T021–T024/T035 code and focused tests are present; see `launcher-validation.md`. T025 remains open until exact-build native qualification completes. Public docs PR, protected live collaboration and review gates are separate open deliverables.
+Launcher implementation checkpoint: T021–T024/T035 code and focused tests are present; see `launcher-validation.md`. T025 passed its actual Linux three-process fixture lane (production build8e0fd84fb0); protected real-provider and native macOS acceptance remain T041. Public docs PR, protected live collaboration and review gates are separate open deliverables.
