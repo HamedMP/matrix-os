@@ -145,8 +145,14 @@ attached there never leaves the phone.
 
 - The model sheet shows the Matrix credit balance and no control to buy
   credit. See [Store Purchase Policy](#store-purchase-policy).
-- Agents have no schedule, pause, "always allow" or edit controls, because the
-  server has nothing behind them.
+- Private Bot schedules use the existing owner-scoped routine service. The Agents
+  tab has a Schedules entry for the selected Computer, with history, pause/resume,
+  edit review and confirmed archive. Each new or changed task requires explicit
+  owner approval. A matching Gateway and connected Electron Desktop with approved
+  routine capability are required; Native Mobile renders the controls and does
+  not become a background inference peer. Old Computers show unavailable state
+  rather than silently granting authority. There is no general "always allow"
+  permission or Settings schedule prerequisite.
 - Projects and agents can be archived, not deleted.
 
 ## Local Dev Build

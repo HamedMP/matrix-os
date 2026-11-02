@@ -29,6 +29,7 @@ export interface AgentsListScreenProps {
   onRefresh: () => void;
   onRetry: () => void;
   onNewAgent: () => void;
+  onOpenSchedules?: () => void;
   onOpenAgent: (agentId: string) => void;
   /** Archive from a long press on the agent's row. */
   onArchiveAgent?: (agentId: string) => void;
@@ -42,6 +43,7 @@ export function AgentsListScreen({
   onRefresh,
   onRetry,
   onNewAgent,
+  onOpenSchedules,
   onOpenAgent,
   onArchiveAgent,
 }: AgentsListScreenProps) {
@@ -56,6 +58,7 @@ export function AgentsListScreen({
         <Text accessibilityRole="header" style={styles.title}>Agents</Text>
         <Button testID="agents-new" variant="secondary" icon={AddIcon} label="New agent" onPress={onNewAgent} />
       </View>
+      {onOpenSchedules ? <View style={styles.inset}><Button label="Schedules" variant="outline" fullWidth onPress={onOpenSchedules} /></View> : null}
       {state === "loading" ? (
         <View testID="agents-loading" style={styles.inset}>
           <ItemRowSkeletons testID="agents-skeleton-row" leadingSize={36} leadingShape="round" />
