@@ -65,7 +65,7 @@ A broken candidate records the failed product step while its healthy pair remain
 available. No auth or private-directory shortcut may substitute for the real path.
 
 - [x] T026 [US3] Add strict scenario-result and build-binding cases in `tests/platform/preview-pair-evidence.test.ts`, then implement bounded evidence/report handling in `packages/platform/src/preview-pair/evidence.ts`.
-- [ ] T027 [US3] Add deterministic first-party journey coverage and required scenario collection in `tests/e2e/desktop/preview-pair-collaboration.e2e.test.ts`, preserving real client/relay/owner routing and marking synthetic provider boundaries.
+- [x] T027 [US3] Add deterministic first-party journey coverage and required scenario collection in `tests/e2e/desktop/preview-pair-collaboration.e2e.test.ts`, preserving real client/relay/owner routing and marking synthetic provider boundaries.
 - [x] T028 [US3] Implement the protected normal-login live acceptance entry in `scripts/preview-pair/qualify.ts`, covering fresh creation opt-in, separate first later Share, member Chat prompt/reopen and outsider denial; no generated peer sessions.
 - [ ] T029 [US3] Capture equivalent Web Desktop and Electron Desktop observations using `specs/2689-collaboration-preview-pair/quickstart.md`; attach exact-build captures outside Git and record failed/not-run cases truthfully.
 
@@ -85,7 +85,7 @@ retains leases and capacity until exact provider absence is proved.
 ## Phase 7: Qualification, documentation and review
 
 - [x] T036 Run focused real-boundary and independent Postgres qualification for `tests/platform/preview-pair-*.test.ts`; record exact results, rollback/race faults and every actual/synthetic boundary in `specs/2689-collaboration-preview-pair/validation.md`.
-- [ ] T037 Run applicable full typecheck, patterns, production shell, Electron production build/E2E and React audit; retain ordinary provisioning/auth/collaboration coverage and record results in `specs/2689-collaboration-preview-pair/validation.md`.
+- [x] T037 Run applicable full typecheck, patterns, production shell, Electron production build/E2E and React audit; retain ordinary provisioning/auth/collaboration coverage and record results in `specs/2689-collaboration-preview-pair/validation.md`.
 - [x] T038 [P] Update `docs/dev/collaboration-preview-pairs.md` and links from `docs/dev/preview-environments.md` with implemented commands, setup gates, login, reset, diagnosis, expiry and cleanup.
 - [ ] T039 Prepare and validate the separate `FinnaAI/matrix-os-site/content/docs/` documentation PR sharing ENG-418 and the native stack reference; do not publish private identities or committed captures.
 - [ ] T040 Publish native stack layers, refresh their concise descriptions, request current-head Greptile once, resolve findings and monitor applicable CI through `docs/dev/stacked-prs.md`; do not merge.
@@ -175,3 +175,7 @@ checks, documentation and review work first.
 Launcher implementation checkpoint: T021–T024/T035 code and focused tests are present; see `launcher-validation.md`. T025 passed its actual Linux three-process fixture lane (production build8e0fd84fb0); protected real-provider and native macOS acceptance remain T041. Public docs PR, protected live collaboration and review gates are separate open deliverables.
 
 Guided evidence export implementation: T026/T028 implemented with 24 focused tests across three suites; actual fixture-producer qualification remains pending for T027. Public docs draft: https://github.com/FinnaAI/matrix-os-site/pull/322 (responsive rendering unqualified). See `qualification-validation.md`; no live/review/Linear completion is implied.
+
+Actual exact-checkout fixture producer: 70 passed assertions across eight retained first-party suites, receipt always fixture/productAcceptance:not_run. T027 complete for deterministic boundaries; protected normal-Clerk/two-VPS/model acceptance remains T041.
+
+Final automated build gates: official `bun run typecheck` passed all eight repository projects after its normal prerequisite builds; canonical production shell build passed with all9 static pages. Parent Electron production/native fixture checks remain recorded at their exact build, with Linux Playwright --no-sandbox limitation; no live/native-macOS qualification is implied.

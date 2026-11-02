@@ -68,10 +68,19 @@ was preserved outside Git and only its generated append was removed after provin
 the original AGENTS prefix unchanged. No captures were committed.
 
 Protected real-Clerk/two-VPS/model journeys, native macOS, live Web Desktop and
-Electron Desktop captures/uploads, Slack evidence, full repository build/typecheck
-qualification and current-head reviews remain open. Earlier Gateway typechecks
+Electron Desktop captures/uploads, Slack evidence, current-head reviews and target/live qualification remain open. Earlier Gateway typechecks
 hit a900s resource bound without diagnostics; no green result is claimed.
 Linear's required GraphQL tool is unavailable; ENG-418 is historically verified,
 and the ticket workpad update is pending. No merge, deployment, cloud activation,
 customer-permission change or external review/Slack comment occurred. Recommend
 platform/collaboration, Electron/UI and developer-docs owner review.
+
+## Actual fixture producer checkpoint
+
+The actual Bun command on clean commit72d3bec44c completed **70 passed assertions / 8 suites** against the task-owned disposable Postgres, with the credential-isolated child environment and temporary HOME. The actual Vitest JSON producer passed the exact-file/assertion collector. Receipt: `/tmp/eng418-qualified-output/fixture-72d3bec44c.json`, outside Git. It explicitly records boundary=fixture and productAcceptance=not_run. This includes directly granted project-contributor inherited Chat prompt/control and current server authorization; no real model response or live VPS result is inferred.
+
+Canonical production shell build passed (webpack compilation2.5min, all9 static pages generated). It used the key read from the public unauthenticated shell sign-in page; no cookies/customer session were used. Build upload credentials were disabled; no deploy or source-map upload occurred. The official full typecheck is retried once with restored kernel/integration prerequisites under a ten-minute process-group/resource bound; its result remains pending, not inferred from affected-project checks.
+
+Official final `bun run typecheck` completed with exit0: all eight repository projects passed after normal Observability/Kernel/Integrations prerequisite builds. This run supersedes the earlier timeout for current-head qualification; no compiler configuration was weakened. Initial missing-Bun-on-PATH setup failure is excluded. The native Linux fixture uses Playwright’s standard --no-sandbox launch flag; this is not full OS-sandbox/keychain/macOS qualification and the production launcher does not add that flag.
+
+The connected Linear app became available during final checks. ENG-418 was reverified through that authenticated app: UUID747bb803-30b4-4a90-aa36-51327b32c694, Engineering, assigned to requester Nima, In Progress, with the stack/launcher links already attached. The Symphony-only raw GraphQL client remains unavailable; final tracking can use the connected application rather than a custom HTTP credential path.
