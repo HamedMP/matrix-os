@@ -1,6 +1,7 @@
 import { claimPreviewProfile } from "./preview-pair-profile-lease";
 import { createPreviewStartupAcknowledgement } from "./preview-pair-startup-ack";
 import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
+import { createPreviewWindowReopener } from "./preview-pair-window";
 import { initializeDesktopPreview } from "./preview-pair-startup";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
 import { join, dirname } from "node:path";
@@ -115,6 +116,7 @@ if (!previewContext && process.env.OPERATOR_USER_DATA_DIR) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let reopenPreviewWindow: (() => Promise<void>) | undefined;
 let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
 let navigationCacheDrained = false;
@@ -237,8 +239,12 @@ if (!gotLock) {
 } else {
   app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
     if (previewContext) {
-      void acknowledgeReopenedPreview(previewContext, additionalData && typeof additionalData === "object" && "previewPair" in additionalData ? additionalData.previewPair : null, readDesktopBuildSource())
-        .then(() => focusMainWindow()).catch((error: unknown) => logMainError("preview reopen refused", error));
+      void acknowledgeReopenedPreview(previewContext,
+        additionalData && typeof additionalData === "object" && "previewPair" in additionalData ? additionalData.previewPair : null,
+        readDesktopBuildSource(), async () => {
+          if (!reopenPreviewWindow) throw new Error("Preview window is unavailable");
+          await reopenPreviewWindow();
+        }).catch((error: unknown) => logMainError("preview reopen refused", error));
       return;
     }
     const deepLink = argv.find(isMatrixOsDeepLink);
@@ -696,6 +702,9 @@ if (!gotLock) {
       };
 
       await openMainWindow();
+      if (previewContext) reopenPreviewWindow = createPreviewWindowReopener({
+        current: () => mainWindow, open: openMainWindow, focus: focusMainWindow,
+      });
       installAppMenu(
         () => mainWindow,
         () => {
@@ -711,7 +720,8 @@ if (!gotLock) {
 
       app.on("activate", () => {
         if (BrowserWindow.getAllWindows().length === 0) {
-          void openMainWindow();
+          void (reopenPreviewWindow ? reopenPreviewWindow() : openMainWindow())
+            .catch((error: unknown) => logMainError("window restore failed", error));
         }
       });
     })
