@@ -7,8 +7,8 @@ Source: [Owen Gretzinger's CI article](https://x.com/owengretzinger/status/21162
 
 Adopt dependency-cache seeding, restore-only refresh reads and the measured
 native platform-fixture opt-in for hosted shards. Preserve compiler choices,
-existing test coverage/isolation, Linux/hosted admission and qualification rules. Pin the
-E2E host version for compatibility. Engineering-owner review of the cache and
+existing test coverage/isolation, Linux/hosted admission and qualification rules. Retain the
+supported E2E host version for compatibility. Engineering-owner review of the cache and
 fixture trust boundaries is recommended.
 
 | Article idea | Matrix assessment |
@@ -70,11 +70,11 @@ checked-in duration manifest until complete passing reports exist. The 921
 unprofiled files in the old manifest account for about 1,887 summed seconds;
 do not train balancing on a failed run or silently omit those files.
 
-Current hosted CI also exposes two setup/contract defects to repair: the pinned
-Playwright rejects Ubuntu 26.04 selected by `ubuntu-latest`, and the backend
-fallback contract treats optional restore-only cache steps as mandatory checks.
-Pin the E2E job to supported Ubuntu 24.04, preserve every fallback validation
-step, and permit optional read-only caching whenever its admitted job runs.
+Profiling also exposed Playwright rejecting Ubuntu 26.04 selected by
+`ubuntu-latest`; main now supplies the supported Ubuntu 24.04 pin and a native
+node-pty build. Retain both. Repair the backend fallback contract that treated
+optional restore-only cache steps as mandatory checks: preserve every fallback
+validation step and permit optional read-only caching when its admitted job runs.
 
 ### Package cache
 

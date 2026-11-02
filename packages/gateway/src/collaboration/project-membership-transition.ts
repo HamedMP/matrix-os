@@ -2,6 +2,8 @@ import {hasCompanyDriveMaterial} from "../chat/drive-sharing-guard.js";
 import type { Transaction } from "kysely";
 import type { OwnerCollaborationDatabase } from "./database.js";
 import { toOutbox, type ChatOutboxEvent } from "../chat/records.js";
+import type { SharedChatExecutionCapability } from "./chat-scope.js";
+import { jsonb } from "./repository-shared.js";
 
 const MAX_PROJECT_RESOURCE_SCOPES = 100_000;
 const MAX_DIRECT_SCOPE_MEMBERS = 8;
@@ -56,6 +58,7 @@ export async function reconcileProjectMembershipAtPublication(
     destinationAuthorityGeneration: number;
     now: Date;
     createEventId: () => string;
+    executionCapability?: SharedChatExecutionCapability | null;
   },
 ): Promise<ChatOutboxEvent[]> {
   const chatEvents: ChatOutboxEvent[] = [];
@@ -140,6 +143,12 @@ export async function reconcileProjectMembershipAtPublication(
       auth_epoch: nextAuthEpoch,
       authority_runtime_id: input.destinationAuthorityRuntimeId,
       authority_generation: input.destinationAuthorityGeneration,
+      ...(child.kind === "chat" ? {
+        execution_generation: input.executionCapability?.executionGeneration ?? null,
+        execution_eligibility: input.executionCapability
+          ? jsonb(input.executionCapability.eligibility)
+          : null,
+      } : {}),
       updated_at: input.now,
     }).where("id", "=", child.id)
       .where("membership_mode", "=", child.membership_mode)
