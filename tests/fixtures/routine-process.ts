@@ -1,3 +1,4 @@
+import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
 /** Built qualification process: real scheduler/Chat/Bot/Pi/PG, synthetic external authority/model. */
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -46,6 +47,7 @@ const dialect = dataDir ? (await KyselyPGlite.create(dataDir)).dialect : new Pos
 const db = new Kysely<OwnerBotDatabase>({ dialect });
 await bootstrapChatDatabase(db);
 await bootstrapBotDatabase(db);
+await bootstrapCollaborationDatabase(db as never);
 if (process.env.MATRIX_ROUTINE_EXPIRE_FIRE) {
   if (!/^fire_[a-f0-9]{24}$/.test(process.env.MATRIX_ROUTINE_EXPIRE_FIRE)) throw new Error("Invalid synthetic fire");
   await db.updateTable("bot_routine_fires").set({ lease_expires_at: new Date(Date.now() - 1000).toISOString() })

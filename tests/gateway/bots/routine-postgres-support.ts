@@ -1,3 +1,4 @@
+import { bootstrapCollaborationDatabase } from "../../../packages/gateway/src/collaboration/database.js";
 /** Real pooled PostgreSQL only. No server, provider, scope worker or model is started here.
  * The existing harness owns a random schema; the external source is a deliberate test double.
  * These helpers are inert until an explicitly enabled PG test invokes them.
@@ -165,6 +166,7 @@ export async function createPgRoutineFixture() {
     }
   });
   try {
+    await bootstrapCollaborationDatabase(db as never);
     await insertChat(db, PG_CHAT);
     await createBotBindingsRepository(db).bindDirect({
       ownerId: OWNER,
