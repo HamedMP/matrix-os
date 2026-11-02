@@ -70,8 +70,7 @@ the original AGENTS prefix unchanged. No captures were committed.
 Protected real-Clerk/two-VPS/model journeys, native macOS, live Web Desktop and
 Electron Desktop captures/uploads, Slack evidence, current-head reviews and target/live qualification remain open. Earlier Gateway typechecks
 hit a900s resource bound without diagnostics; no green result is claimed.
-Linear's required GraphQL tool is unavailable; ENG-418 is historically verified,
-and the ticket workpad update is pending. No merge, deployment, cloud activation,
+The connected Linear app reverified ENG-418 and its requester assignment; its description now links the final PRs and validation, while the issue remains In Progress. No merge, deployment, cloud activation,
 customer-permission change or external review/Slack comment occurred. Recommend
 platform/collaboration, Electron/UI and developer-docs owner review.
 
@@ -84,3 +83,26 @@ Canonical production shell build passed (webpack compilation2.5min, all9 static 
 Official final `bun run typecheck` completed with exit0: all eight repository projects passed after normal Observability/Kernel/Integrations prerequisite builds. This run supersedes the earlier timeout for current-head qualification; no compiler configuration was weakened. Initial missing-Bun-on-PATH setup failure is excluded. The native Linux fixture uses Playwright’s standard --no-sandbox launch flag; this is not full OS-sandbox/keychain/macOS qualification and the production launcher does not add that flag.
 
 The connected Linear app became available during final checks. ENG-418 was reverified through that authenticated app: UUID747bb803-30b4-4a90-aa36-51327b32c694, Engineering, assigned to requester Nima, In Progress, with the stack/launcher links already attached. The Symphony-only raw GraphQL client remains unavailable; final tracking can use the connected application rather than a custom HTTP credential path.
+
+
+## Hosted docs and tracking closure
+
+The existing automatic docs preview was READY at exact commit
+0a005b282c02cd1e4c6feedd0b7eb9370a9df224, verified through the connected Vercel
+app. No deployment/protection change or temporary share link was created. Its
+normal public browser path passed document overflow checks at375,768 and1280:
+scrollWidth equals clientWidth for each. Screenshots and WebM recordings are at
+`/tmp/eng418-site-preview-evidence/`, outside Git. Optional cookies were rejected
+in the isolated browser and third-party browser requests were blocked. This is
+actual hosted docs evidence, not authentication or collaboration qualification.
+The earlier strict heading-locator failure was corrected against rendered headings.
+The hosted docs test check is green; local cold-compiler timeouts are superseded
+for responsive validation. Preview:
+https://matrix-os-www-git-codex-eng-418-collaboration-pr-0582af-finnaai.vercel.app/docs/developer/collaboration-preview-pairs
+
+ENG-418 was updated and re-read through the connected Linear application. It
+remains assigned to requester Nima, Engineering, In Progress, with the native
+stack, launcher#3088, qualification#3096 and public docs#322 linked. Linear
+normalizes GitHub links into its own PR-review references; this is expected.
+Real two-VPS/Clerk/model acceptance, native macOS, required uploaded live runtime
+captures/Slack and current-head Greptile/review/CI gates remain incomplete.

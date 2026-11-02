@@ -87,10 +87,10 @@ retains leases and capacity until exact provider absence is proved.
 - [x] T036 Run focused real-boundary and independent Postgres qualification for `tests/platform/preview-pair-*.test.ts`; record exact results, rollback/race faults and every actual/synthetic boundary in `specs/2689-collaboration-preview-pair/validation.md`.
 - [x] T037 Run applicable full typecheck, patterns, production shell, Electron production build/E2E and React audit; retain ordinary provisioning/auth/collaboration coverage and record results in `specs/2689-collaboration-preview-pair/validation.md`.
 - [x] T038 [P] Update `docs/dev/collaboration-preview-pairs.md` and links from `docs/dev/preview-environments.md` with implemented commands, setup gates, login, reset, diagnosis, expiry and cleanup.
-- [ ] T039 Prepare and validate the separate `FinnaAI/matrix-os-site/content/docs/` documentation PR sharing ENG-418 and the native stack reference; do not publish private identities or committed captures.
+- [x] T039 Prepare and validate the separate `FinnaAI/matrix-os-site/content/docs/` documentation PR sharing ENG-418 and the native stack reference; do not publish private identities or committed captures.
 - [ ] T040 Publish native stack layers, refresh their concise descriptions, request current-head Greptile once, resolve findings and monitor applicable CI through `docs/dev/stacked-prs.md`; do not merge.
 - [ ] T041 Perform the reviewed scoped live pair/actual-target acceptance from `specs/2689-collaboration-preview-pair/quickstart.md` when approved isolation/fixtures/funding and local OS access exist; missing prerequisites remain explicit blockers, never completed tasks.
-- [ ] T042 Update ENG-418 with linked native stack, exact component results/evidence, recommended owner review and residual limitations recorded in `specs/2689-collaboration-preview-pair/validation.md`; keep it In Progress until delivery/acceptance completes.
+- [x] T042 Update ENG-418 with linked native stack, exact component results/evidence, recommended owner review and residual limitations recorded in `specs/2689-collaboration-preview-pair/validation.md`; keep it In Progress until delivery/acceptance completes.
 
 ## Dependencies and execution order
 
@@ -179,3 +179,5 @@ Guided evidence export implementation: T026/T028 implemented with 24 focused tes
 Actual exact-checkout fixture producer: 70 passed assertions across eight retained first-party suites, receipt always fixture/productAcceptance:not_run. T027 complete for deterministic boundaries; protected normal-Clerk/two-VPS/model acceptance remains T041.
 
 Final automated build gates: official `bun run typecheck` passed all eight repository projects after its normal prerequisite builds; canonical production shell build passed with all9 static pages. Parent Electron production/native fixture checks remain recorded at their exact build, with Linux Playwright --no-sandbox limitation; no live/native-macOS qualification is implied.
+
+Final documentation/tracking: public docs #322 hosted test check passed; existing Vercel preview at exact0a005b282c02cd1e4c6feedd0b7eb9370a9df224 passed375/768/1280 document-overflow checks with screenshots/recordings outside Git. ENG-418 reverified and updated through the connected Linear app with final PR/validation links; remains assigned to Nima/In Progress. Remaining T029/T040/T041 are live collaboration/evidence and review gates.
