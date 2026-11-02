@@ -15,7 +15,7 @@ import { showToast } from "@/lib/toast";
 const NO_TASKS: never[] = [];
 
 export default function AgentChatRoute() {
-  const params = useLocalSearchParams<{ agentId?: string | string[] }>();
+  const params = useLocalSearchParams<{ agentId?: string | string[]; scheduleChatId?: string | string[]; scheduleScope?: string | string[] }>();
   const agentId = [params.agentId].flat()[0] ?? "";
   const router = useRouter();
   const library = useAgents();
@@ -31,7 +31,9 @@ export default function AgentChatRoute() {
   const shown = agent ?? (kept?.id === agentId ? kept : null);
   const name = shown?.name ?? "Agent";
 
-  const chat = useAgentChatId(agentId, Object.hasOwn(statuses, agentId) ? statuses[agentId].chatId : null);
+  const savedChat = params.scheduleChatId !== undefined || params.scheduleScope !== undefined
+    ? {chatId: [params.scheduleChatId].flat()[0] ?? "", scope: [params.scheduleScope].flat()[0] ?? ""} : undefined;
+  const chat = useAgentChatId(agentId, Object.hasOwn(statuses, agentId) ? statuses[agentId].chatId : null, savedChat);
   const thread = useAgentThread({ agent: shown, chatId: chat.chatId });
   const { botChat } = thread;
   const fromTemplate = Boolean(shown?.recipeRef);

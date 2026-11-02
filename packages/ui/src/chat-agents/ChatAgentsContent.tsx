@@ -17,6 +17,7 @@ export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrom
   const scopeChanged = previousScope.scopeKey !== scopeKey || previousScope.client !== client;
   const opened = !scopeChanged && navigation?.opened?.client === client ? navigation?.opened : null;
   const close = navigation?.close;
+  const [scheduleIntent, setScheduleIntent] = useState<{client: ChatAgentClient; generation: number} | null>(null);
   const setTitle = navigation?.setTitle, generation = navigation?.generation;
   const onTitleChange = useCallback((title: "Your AI team" | "New agent" | "Edit agent") => {
     if (client && generation !== undefined) setTitle?.(client, generation, title);
@@ -29,7 +30,8 @@ export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrom
       className="min-h-0 min-w-0 flex-1">
       {children}
     </div>
-    {opened?.view === "schedules" ? <ScheduleCenter key={scopeKey} client={opened.client} headerLeading={headerLeading} onOpenBotChat={onOpenBotChat} onClose={() => close?.(true)}/> : opened ? <ChatAgentsPanel client={opened.client} view={opened.view} onStartChat={opened.onStartChat} onSetup={opened.onSetup}
+    {opened?.view === "library" && scheduleIntent?.client === opened.client && scheduleIntent.generation === generation ? <p role="status" className="border-b px-4 py-3 text-sm">Choose a private Bot, then describe your task and timing in Chat. Review its proposal before any scheduled run.</p> : null}
+    {opened?.view === "schedules" ? <ScheduleCenter key={scopeKey} client={opened.client} headerLeading={headerLeading} onOpenBotChat={onOpenBotChat} onNewSchedule={trigger => { navigation?.open({ ...opened, view: "library" }, trigger); if (navigation) setScheduleIntent({client: opened.client, generation: navigation.getGeneration()}); }} onClose={() => close?.(true)}/> : opened ? <ChatAgentsPanel client={opened.client} view={opened.view} onStartChat={opened.onStartChat} onSetup={opened.onSetup}
       requestedRecipeId={opened.requestedRecipeId} onRequestedRecipeResult={opened.onRequestedRecipeResult}
       providerCatalog={providerCatalog}
       hostedChrome={hostedChrome} headerLeading={headerLeading} onTitleChange={onTitleChange} onOpenBotChat={onOpenBotChat} onClose={() => close?.(true)} /> : null}
