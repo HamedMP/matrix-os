@@ -9,6 +9,7 @@ import {
 
 const GCLOUD_TIMEOUT_MS = 60_000;
 const GCLOUD_MAX_BUFFER = 8 * 1024 * 1024;
+const GCLOUD_STDERR_REPORT_LIMIT = 4096;
 const SAFE_CLOUD_RUN_ID = /^[a-z][a-z0-9-]{0,127}$/;
 
 function cloudRunId(value, label) {
@@ -75,12 +76,21 @@ export function removeLegacyPlatformWorkerTags(env = process.env, execute = exec
   return { inspectedRevisions: revisions.length, removedTags: legacyTags.length };
 }
 
+export function formatCleanupError(error) {
+  if (!(error instanceof Error)) return "Legacy worker tag cleanup failed";
+  const stderr = error.cause?.stderr;
+  const detail = Buffer.isBuffer(stderr)
+    ? stderr.subarray(0, GCLOUD_STDERR_REPORT_LIMIT).toString("utf8").trim()
+    : typeof stderr === "string" ? stderr.slice(0, GCLOUD_STDERR_REPORT_LIMIT).trim() : "";
+  return detail ? `${error.message}\ngcloud stderr: ${detail}` : error.message;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const result = removeLegacyPlatformWorkerTags();
     console.log(`Inspected ${result.inspectedRevisions} tagged revisions; removed ${result.removedTags} legacy worker tags.`);
   } catch (error) {
-    console.error(error instanceof Error ? error.message : "Legacy worker tag cleanup failed");
+    console.error(formatCleanupError(error));
     process.exitCode = 1;
   }
 }

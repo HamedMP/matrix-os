@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { removeLegacyPlatformWorkerTags } from "../../scripts/ci/remove-legacy-platform-worker-tags.mjs";
+import { formatCleanupError, removeLegacyPlatformWorkerTags } from "../../scripts/ci/remove-legacy-platform-worker-tags.mjs";
 
 const renderer = resolve("scripts/render-platform-worker-service.mjs");
 const tagSelector = resolve("scripts/select-legacy-platform-worker-tags.mjs");
@@ -154,6 +154,31 @@ describe("platform worker deployment", () => {
     expect(() => removeLegacyPlatformWorkerTags({ CLOUD_RUN_SERVICE: "matrix-platform", GCP_PROJECT_ID: "matrix-test",
       GCP_REGION: "europe-west3", PRODUCTION_REVISION: "production-r1" }, execute))
       .toThrow("Too many tagged Cloud Run revisions");
+  });
+
+  it("reports bounded gcloud stderr when a revision lookup fails", () => {
+    const service = { status: { traffic: [
+      { tag: "legacy-worker", revisionName: "legacy-r1", percent: 0 },
+      { revisionName: "production-r1", percent: 100 },
+    ] } };
+    const execute = (_command: string, args: string[]) => {
+      if (args[1] === "services") return JSON.stringify(service);
+      throw Object.assign(new Error("gcloud exited with status 1"), {
+        stderr: `permission denied for revision legacy-r1 ${"detail ".repeat(1000)}`,
+      });
+    };
+    let failure: unknown;
+    try {
+      removeLegacyPlatformWorkerTags({ CLOUD_RUN_SERVICE: "matrix-platform", GCP_PROJECT_ID: "matrix-test",
+        GCP_REGION: "europe-west3", PRODUCTION_REVISION: "production-r1" }, execute);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    const report = formatCleanupError(failure);
+    expect(report).toContain("Cloud Run revision describe failed");
+    expect(report).toContain("permission denied for revision legacy-r1");
+    expect(report.length).toBeLessThan(4500);
   });
 
   it("fetches only tagged idle revisions, removes warm workers and verifies production traffic", () => {
