@@ -1,4 +1,4 @@
-import { RoutineAuthorizationSchema, type RoutineAuthorization } from "../routine-authorization.js";
+import { findLiveRoutineChatBinding, RoutineAuthorizationSchema, type RoutineAuthorization } from "../routine-authorization.js";
 import cron from "node-cron";
 import { randomBytes } from "node:crypto";
 import { sql, type Selectable } from "kysely";
@@ -66,7 +66,7 @@ export function createBotRoutinesRepository(db: BotExecutor) {
     return row ? routine(row) : undefined;
   }
   async function liveBinding(ownerId: string, botId: string, chatId: string, ex: BotExecutor) {
-    return ex.selectFrom("bot_chat_bindings as binding").innerJoin("chats as chat", "chat.id", "binding.chat_id").select("binding.chat_id").where("binding.owner_id", "=", ownerId).where("binding.bot_id", "=", botId).where("binding.chat_id", "=", chatId).where("binding.kind", "=", "direct").where("binding.removed_at", "is", null).where("chat.owner_type", "=", "personal").where("chat.owner_id", "=", ownerId).where("chat.collaboration", "is", null).where("chat.lifecycle", "=", "active").forUpdate().executeTakeFirst();
+    return findLiveRoutineChatBinding(ex, ownerId, botId, chatId, true);
   }
   async function finish(input: RoutineFinishInput): Promise<boolean | void> {
     if (input.failureCode && !/^[a-z][a-z0-9_]{0,63}$/.test(input.failureCode)) throw new BotStateError("invalid_input");

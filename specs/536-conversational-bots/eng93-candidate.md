@@ -58,3 +58,5 @@ Gateway shutdown closes canonical admission first. Routine shutdown drains start
 ## Effective private authority (pre-merge correction)
 
 Routine approval, admission and output use durable Chat scope authority, including inherited Project sharing. A previously published/archived/deleted scope never becomes private by clearing a legacy field. Project publication and canonical admission serialize on the Chat row; active or queued private routine work blocks publication. Legacy queued work on a shared Chat is cancelled without writing its prompt. Retry checks use the original persisted turn. Background broker frames revalidate current source authority; safe failure settlement remains available. Privacy logic is extracted from the large Chat repositories. The following qualification layer retains the moved lifecycle/capacity tests and new producer/consumer regressions.
+
+Approved edit confirmation and scheduler claims take the Routine before the common binding/Chat fence; other approvals share that same binding/Chat lock order.
