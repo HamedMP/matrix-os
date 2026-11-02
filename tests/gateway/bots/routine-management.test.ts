@@ -2,11 +2,11 @@ import { expect, it } from "vitest";
 import { createBotRoutes } from "../../../packages/gateway/src/bots/routes.js";
 import { createBotRoutineExecution } from "../../../packages/gateway/src/bots/routine-execution.js";
 import { CHAT, binding, data, proposal, setup } from "./routine-authorization-support.js";
-import { OWNER } from "./bot-state-support.js";
+import { NOW, OWNER } from "./bot-state-support.js";
 
 it("lists pending and approved personal schedules through one owner-scoped HTTP entry and provides their history", async () => {
   const context = setup(), pending = await context.service.propose(binding, proposal);
-  const routines = createBotRoutineExecution({ db: data.db, approvals: context.service });
+  const routines = createBotRoutineExecution({ db: data.db, approvals: context.service, now: () => new Date(NOW) });
   const app = (owner: string) => createBotRoutes({ routines, getPrincipal: () => ({ userId: owner, source: "jwt" }) });
   let response = await app(OWNER).request("/api/bot-routines");
   expect(response.status).toBe(200);
@@ -28,7 +28,7 @@ it("reviews edits without applying them, deduplicates retry, then changes only t
   const context = setup(), pending = await context.service.propose(binding, proposal);
   await context.interactions.resolve(OWNER, CHAT, pending.interactionId, { kind: "approval", decision: "approve", baseRevision: 1 });
   const [original] = await context.repo.list(OWNER, binding.botId);
-  const routines = createBotRoutineExecution({ db: data.db, approvals: context.service });
+  const routines = createBotRoutineExecution({ db: data.db, approvals: context.service, now: () => new Date(NOW) });
   const app = createBotRoutes({ routines, getPrincipal: () => ({ userId: OWNER, source: "jwt" }) });
   const request = { baseRevision: original.revision, name: "Revised brief", prompt: "Write a revised private brief", schedule: { kind: "interval", everyMs: 120000 } };
   const review = () => app.request(`/api/bot-routines/${original.routineId}/review`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request) });
@@ -51,7 +51,7 @@ it("reviews edits without applying them, deduplicates retry, then changes only t
 it("denies an edit without changing the old approval and preserves a paused lifecycle when a later edit is approved", async () => {
   const context = setup(), pending = await context.service.propose(binding, proposal);
   await context.interactions.resolve(OWNER, CHAT, pending.interactionId, {kind: "approval", decision: "approve", baseRevision: 1});
-  const execution = createBotRoutineExecution({db: data.db, approvals: context.service});
+  const execution = createBotRoutineExecution({db: data.db, approvals: context.service, now: () => new Date(NOW)});
   const [original] = await context.repo.list(OWNER, binding.botId);
   const request = {baseRevision: original.revision, name: "Revised brief", prompt: "Only revised fixture text", schedule: {kind: "interval", everyMs: 120000}};
   const first = await execution.requestEdit(OWNER, original.routineId, request);
@@ -94,4 +94,20 @@ it("keeps a missing Bot visible as unavailable without hiding another valid owne
   const page = await execution.center(OWNER);
   expect(page.items.find(row => row.botId === binding.botId)).toMatchObject({targetAvailable: true, sourceAvailable: true});
   expect(page.items.find(row => row.botId === missingBot)).toMatchObject({targetAvailable: false, sourceAvailable: false});
+});
+
+it("excludes expired approvals before the pending-page limit and at the exact expiry boundary without a sweep", async () => {
+  const context = setup(), live = await context.service.propose(binding, proposal);
+  let clock = new Date(Date.parse(NOW) + 1000).toISOString();
+  const routines = createBotRoutineExecution({db: data.db, approvals: context.service, now: () => new Date(clock)});
+  const row = await data.db.selectFrom("bot_interactions").selectAll().where("interaction_id", "=", live.interactionId).executeTakeFirstOrThrow();
+  // Persist the state seen before the background expiry sweep: newer stale
+  // approvals must not fill the page and hide the older actionable decision.
+  await data.db.insertInto("bot_interactions").values(Array.from({length: 32}, (_, index) => ({...row,
+    interaction_id: "in_" + (index + 1).toString(16).padStart(32, "0"), blocking: false,
+    created_at: new Date(Date.parse(NOW) + index + 1).toISOString(), expires_at: clock}))).execute();
+  expect((await routines.center(OWNER)).pending.map(item => item.interactionId)).toEqual([live.interactionId]);
+  expect(await data.db.selectFrom("bot_interactions").select("status").where("expires_at", "<=", clock).execute()).toEqual(Array.from({length: 32}, () => ({status: "pending"})));
+  clock = row.expires_at instanceof Date ? row.expires_at.toISOString() : row.expires_at;
+  expect((await routines.center(OWNER)).pending).toEqual([]);
 });

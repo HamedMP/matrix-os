@@ -256,7 +256,7 @@ export function createBotRoutineExecution(deps: {
     connect(value: Canonical) {
       canonical = value;
     },
-    ...createBotRoutineManagement(deps.db, deps.approvals),
+    ...createBotRoutineManagement(deps.db, deps.approvals, now),
     async start(value: Canonical) {
       canonical = value;
       if (scheduler || deps.available?.() === false) return;

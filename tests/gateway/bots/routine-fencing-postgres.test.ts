@@ -46,6 +46,23 @@ describe.skipIf(!pgEnabled)("old routine binding fencing on pooled PostgreSQL (r
     await f?.destroy();
     f = undefined;
   });
+  it("filters expired schedule decisions before pagination on native PostgreSQL without changing their authority", async () => {
+    const fixture = f!, execution = fixture.execution();
+    const pending = await execution.requestEdit(OWNER, fixture.routine.routineId, {
+      baseRevision: fixture.routine.revision, name: "Expiry boundary", prompt: "Return fixture text",
+      schedule: {kind: "interval", everyMs: 120000},
+    });
+    const row = await fixture.db.selectFrom("bot_interactions").selectAll().where("interaction_id", "=", pending.interaction.interactionId).executeTakeFirstOrThrow();
+    await fixture.db.insertInto("bot_interactions").values(Array.from({length: 32}, (_, index) => ({...row,
+      interaction_id: "in_" + (index + 1).toString(16).padStart(32, "0"),
+      created_at: new Date(Date.parse(PG_AT) - 30000 + index).toISOString(), expires_at: PG_AT}))).execute();
+    fixture.setClock(PG_AT);
+    expect((await execution.center(OWNER)).pending.map(item => item.interactionId)).toEqual([row.interaction_id]);
+    fixture.setClock(row.expires_at instanceof Date ? row.expires_at.toISOString() : row.expires_at);
+    expect((await execution.center(OWNER)).pending).toEqual([]);
+    expect((await fixture.db.selectFrom("bot_interactions").select("status").where("interaction_id", "=", row.interaction_id).executeTakeFirstOrThrow()).status).toBe("pending");
+    expect((await fixture.repo.get(OWNER, fixture.routine.routineId))?.revision).toBe(fixture.routine.revision);
+  });
   it.each(["failed", "uncertain"] as const)("rejects a %s scheduled turn at ordinary Retry admission and fences a previously admitted retry", async status => {
     const fixture = f!, fire = await fixture.claim(), run = await fixture.running(fire.fireId);
     const owner = run.input.owner;

@@ -8,7 +8,7 @@ import { projectBotInteraction } from "./interactions.js";
 import type { BotRoutineApprovals } from "./routine-approval.js";
 
 /** Owner-scoped projections over the existing tables; does not own the pool. */
-export function createBotRoutineManagement(db: BotExecutor, approvals: BotRoutineApprovals) {
+export function createBotRoutineManagement(db: BotExecutor, approvals: BotRoutineApprovals, now = () => new Date().toISOString()) {
   const repository = createBotRoutinesRepository(db);
   const fireView = (fire: BotRoutineFire) => ({ fireId: fire.fireId, taskId: fire.taskId, scheduledFor: fire.scheduledFor,
     status: fire.status, attempts: fire.attempts, failureCode: fire.failureCode, updatedAt: fire.updatedAt });
@@ -30,6 +30,7 @@ export function createBotRoutineManagement(db: BotExecutor, approvals: BotRoutin
           .onRef("binding.bot_id", "=", "interaction.bot_id").onRef("binding.chat_id", "=", "interaction.chat_id"))
         .select("interaction.interaction_id").where("interaction.owner_id", "=", ownerId).where("interaction.responder_actor_id", "=", ownerId)
         .where("interaction.kind", "=", "approval").where("interaction.status", "=", "pending")
+        .where("interaction.expires_at", ">", now())
         .where(sql<boolean>`interaction.payload->>'tool' = 'routine.activate'`)
         .where("chat.owner_type", "=", "personal").where("chat.owner_id", "=", ownerId).where("chat.collaboration", "is", null)
         .where("chat.lifecycle", "=", "active").where("binding.kind", "=", "direct").where("binding.removed_at", "is", null)
@@ -38,7 +39,7 @@ export function createBotRoutineManagement(db: BotExecutor, approvals: BotRoutin
       const interactions = createBotInteractionsRepository(db);
       for (const id of ids) {
         const record = await interactions.get({ ownerId, interactionId: id.interaction_id });
-        if (record?.status === "pending") pending.push(projectBotInteraction(record, ownerId));
+        if (record?.status === "pending" && Date.parse(record.expiresAt) > Date.parse(now())) pending.push(projectBotInteraction(record, ownerId));
       }
       const last = page.at(-1);
       return BotRoutineCenterResponseSchema.parse({ items, pending, nextCursor: rows.length > 32 && last
