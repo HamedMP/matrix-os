@@ -28,11 +28,14 @@ export function createPreviewPairPublisher(options: Options): PreviewPairPublish
   const repository = `${profile.region}-docker.pkg.dev/${profile.project}/${profile.imageRepository}/matrix-platform`;
   const resource = previewPairCloudResource(profile.project, profile.region, profile.service);
   const operations = createPreviewPairOperationReader({ ...options, project: profile.project, region: profile.region, service: profile.service });
-  const provider = async (url: string, signal: AbortSignal, init?: RequestInit, beforeSend?: () => void) => {
+  type Mutation = { authorize(): Promise<void>; sent(): void };
+  const provider = async (url: string, signal: AbortSignal, init?: RequestInit, mutation?: Mutation) => {
     const deadline = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
     const token = z.string().min(1).max(16_384).parse(await options.accessToken(deadline));
     deadline.throwIfAborted();
-    beforeSend?.();
+    await mutation?.authorize();
+    deadline.throwIfAborted();
+    mutation?.sent();
     const response = await (options.fetchImpl ?? fetch)(url, { ...init, headers: { authorization: `Bearer ${token}`,
       ...(init?.body ? { "content-type": "application/json" } : {}) }, signal: deadline, redirect: "error" });
     if (!response.ok) {
@@ -41,7 +44,7 @@ export function createPreviewPairPublisher(options: Options): PreviewPairPublish
     }
     return response;
   };
-  const run = (path: string, signal: AbortSignal, init?: RequestInit, beforeSend?: () => void) => provider(`https://run.googleapis.com/v2/${path}`, signal, init, beforeSend);
+  const run = (path: string, signal: AbortSignal, init?: RequestInit, mutation?: Mutation) => provider(`https://run.googleapis.com/v2/${path}`, signal, init, mutation);
   async function inspect(input: PreviewPairPublicationIdentity, signal: AbortSignal) {
     let row = await readOwnedPublication(db, config, input, now());
     if (row.publication_state === "unissued") return { publication: "issuing" as const, ready: false };
@@ -108,12 +111,18 @@ export function createPreviewPairPublisher(options: Options): PreviewPairPublish
         if (!reservation.issue) return inspect(input, signal);
         let sent = false;
         try {
-          const fresh = await readOwnedPublication(db, config, input, now());
-          if (fresh.publication_id !== publicationId || fresh.publication_state !== "issuing"
-            || !await publicationParentAllows(db, input, now())) throw new PreviewPairConflictError();
           signal.throwIfAborted();
           const response = await run(`${resource}?updateMask=template,traffic`, signal,
-            { method: "PATCH", body: JSON.stringify(payload.body) }, () => { sent = true; });
+            { method: "PATCH", body: JSON.stringify(payload.body) }, {
+              // Token acquisition is external and can outlive cancellation.
+              // Recheck canonical ownership/parent after it, directly before send.
+              async authorize() {
+                const fresh = await readOwnedPublication(db, config, input, now());
+                if (fresh.publication_id !== publicationId || fresh.publication_state !== "issuing"
+                  || !await publicationParentAllows(db, input, now())) throw new PreviewPairConflictError();
+              },
+              sent: () => { sent = true; },
+            });
           if (!response.ok) {
             // A definite 4xx rejects this mutation. Transport failures, 5xx and
             // malformed acknowledgements remain issuing; never repeat the effect.

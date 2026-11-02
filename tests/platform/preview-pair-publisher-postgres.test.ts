@@ -44,7 +44,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("source-owned single-effe
       latestReadyRevision: `${resource}/revisions/${profile.service}-baseline`, traffic: [base],
       trafficStatuses: [{ type: "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", percent: 100, revision: `${profile.service}-baseline` }] };
     const operation = { name: `projects/${profile.project}/locations/${profile.region}/operations/publication-test`, done: false };
-    let template: any, patchStatus = 200, loseReply = false, discoverable = false, cancelDuringPatch = false, wrongImage = false, iamTimeout = false;
+    let template: any, patchStatus = 200, loseReply = false, discoverable = false, cancelDuringPatch = false, wrongImage = false, iamTimeout = false, cancelDuringToken = false;
     const saved = () => f.db.executor.selectFrom("preview_pair_cloud_intents").selectAll().where("pair_id", "=", input.pairId).executeTakeFirstOrThrow();
     const fetchImpl = vi.fn<typeof fetch>(async (target, init) => {
       const url = new URL(String(target));
@@ -78,18 +78,22 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("source-owned single-effe
       throw new Error("Unexpected provider endpoint");
     });
     const publisher = createPreviewPairPublisher({ db: f.db, config, profile, accessToken: async () => {
+      if (cancelDuringToken && (await saved()).publication_state === "issuing") {
+        await stopPreviewPairCloudIntent(f.db, input.pairId, input.generation, 42, PAIR_NOW);
+      }
       if (iamTimeout && (await saved()).publication_state === "issuing") throw new DOMException("Selected IAM deadline", "TimeoutError");
       return "iam-fixture";
     }, fetchImpl, now: () => PAIR_NOW });
     if (!publisher) throw new Error("Configured publisher required");
     const patches = () => fetchImpl.mock.calls.filter(([, init]) => init?.method === "PATCH");
     return { publisher, input, identity, profile, config, fetchImpl, saved, patches, operation, service,
-      mode: (options: { status?: number; loseReply?: boolean; discoverable?: boolean; cancel?: boolean; wrongImage?: boolean; iamTimeout?: boolean }) => {
+      mode: (options: { status?: number; loseReply?: boolean; discoverable?: boolean; cancel?: boolean; wrongImage?: boolean; iamTimeout?: boolean; cancelDuringToken?: boolean }) => {
         patchStatus = options.status ?? 200; loseReply = options.loseReply ?? false; discoverable = options.discoverable ?? false;
         cancelDuringPatch = options.cancel ?? false; wrongImage = options.wrongImage ?? false; iamTimeout = options.iamTimeout ?? false;
+        cancelDuringToken = options.cancelDuringToken ?? false;
       } };
   }
-  it.each(["request cancellation", "caller abort", "parent shutdown", "IAM timeout"])("releases an unsent publication after %s through real intent cleanup", async fault => {
+  it.each(["request cancellation", "caller abort", "parent shutdown", "IAM timeout", "cancellation during IAM"])("releases an unsent publication after %s through real intent cleanup", async fault => {
     const s = await setup(fault === "parent shutdown" ? 2 : 1), abort = new AbortController();
     reservationBoundary.after = async () => {
       if (fault === "request cancellation") await stopPreviewPairCloudIntent(f.db, s.input.pairId, s.input.generation, 42, PAIR_NOW);
@@ -97,6 +101,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("source-owned single-effe
       if (fault === "parent shutdown") await requestPreviewPairStop(f.db, f.pair.pair_id, 1, f.pair.revision, PAIR_NOW);
     };
     if (fault === "IAM timeout") s.mode({ iamTimeout: true });
+    if (fault === "cancellation during IAM") s.mode({ cancelDuringToken: true });
     await expect(s.publisher.publish(s.input, abort.signal)).rejects.toThrow();
     expect(s.patches()).toHaveLength(0);
     expect(await s.saved()).toMatchObject({ publication_state: "rejected", operation_name: null });
