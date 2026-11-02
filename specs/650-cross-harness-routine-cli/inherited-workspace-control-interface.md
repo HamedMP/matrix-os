@@ -97,7 +97,13 @@ the role closed after a loss observation.
 Mandatory native assertions include indirect creator binding, copied-writer
 refusal, live-creator control loss with queued bytes, rejection/closure of actual
 automatic SCM_PIDFD, acquired-fd2 cleanup, explicit close and readoption refusal.
-Worker burn, constructor-domain/stdio rejection, shared cost2 capacity and GC,
-creator death with copied endpoints, and relevant named faults remain separate
-qualification gates. Privileged/foreign-UID mutation coverage must never be
-inferred from cap0-only tests.
+The same compiled Linux lane also exercises invalid-call attempt burn, actual
+Worker refusal/exit and shared attempt burn, odd127 cost2 refusal, real GC
+reclamation/alias fencing and wrong-role/getter rejection. Four corresponding
+faults isolate failed-call burn, Worker burn, two-slot reservation and GC
+shutdown, each with one intended failure.
+
+Constructor-domain/stdio variants, creator death with copied endpoints,
+allocation failures, cross-Worker capacity races and protected module/image
+continuity remain separate qualification gates. Privileged/foreign-UID mutation
+coverage must never be inferred from cap0-only tests.
