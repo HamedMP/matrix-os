@@ -16,35 +16,36 @@ describe('pnpm cache reuse without refresh writes', () => {
     expect(lanes.length).toBeGreaterThan(0);
     for (const job of lanes as { steps: Step[] }[]) {
       const setup = job.steps.findIndex(s => s.uses?.startsWith('actions/setup-node@'));
-      const restore = job.steps.findIndex(s => s.uses === './.github/actions/restore-pnpm-store');
+      const restore = job.steps.findIndex(s => s.name === 'Restore exact dependency cache');
       const install = job.steps.findIndex(s => s.run === 'pnpm install --frozen-lockfile');
       expect(restore).toBeGreaterThan(setup);
       expect(restore).toBeLessThan(install);
       expect(job.steps[restore].if).toBe("needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'");
+      expect(job.steps[restore].uses).toBe('actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830');
+      expect(job.steps[restore - 1].name).toBe('Locate pnpm store for read-only refresh');
+      expect(job.steps[restore - 1].if).toBe(job.steps[restore].if);
       expect(job.steps[setup].with?.cache).toBe("${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}");
     }
   });
 
   it('uses setup-node compatible exact keys and a restore-only action', () => {
-    const action = yaml('.github/actions/restore-pnpm-store/action.yml');
-    expect(action.runs.using).toBe('composite');
-    const restores = action.runs.steps.filter((s: Step) => s.uses);
+    const restores = ci.jobs.typecheck.steps.filter((s: Step) => s.name === 'Restore exact dependency cache');
     expect(restores).toHaveLength(1);
     expect(restores[0].uses).toBe('actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830');
     expect(restores[0].with).toEqual({
-      path: '${{ steps.store.outputs.path }}',
-      key: "node-cache-${{ runner.os }}-${{ steps.store.outputs.arch }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}",
+      path: '${{ steps.refresh-store.outputs.path }}',
+      key: "node-cache-${{ runner.os }}-${{ steps.refresh-store.outputs.arch }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}",
     });
   });
 
-  it('discovers the actual pnpm store and Node architecture used by setup-node', () => {
-    const action = yaml('.github/actions/restore-pnpm-store/action.yml');
-    const step = action.runs.steps.find((s: any) => s.id === 'store');
+  it('runs workflow-owned store discovery even when the tested source has no new local action', () => {
+    const step = ci.jobs.typecheck.steps.find((s: any) => s.id === 'refresh-store');
     const dir = mkdtempSync(join(tmpdir(), 'matrix-cache-path-'));
     const output = join(dir, 'outputs');
     try {
-      execFileSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], { env: { ...process.env, GITHUB_OUTPUT: output } });
-      const expected = execFileSync('pnpm', ['store', 'path', '--silent'], { encoding: 'utf8' }).trim();
+      // A historical source need not contain any .github/actions helper.
+      execFileSync('bash', ['-e', '-o', 'pipefail', '-c', step.run], { cwd: dir, env: { ...process.env, GITHUB_OUTPUT: output } });
+      const expected = execFileSync('pnpm', ['store', 'path', '--silent'], { cwd: dir, encoding: 'utf8' }).trim();
       expect(readFileSync(output, 'utf8')).toBe(`path=${expected}\narch=${process.arch}\n`);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });

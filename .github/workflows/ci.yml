@@ -438,9 +438,24 @@ jobs:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
-      - name: Restore dependencies for read-only PR refresh
+      # Workflow-owned anchors also work for historical source checkouts that
+      # predate this optimization; never load a new helper from candidate files.
+      - &refresh-pnpm-store
+        name: Locate pnpm store for read-only refresh
+        id: refresh-store
         if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
-        uses: ./.github/actions/restore-pnpm-store
+        shell: bash
+        run: |
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+          echo "arch=$(node -p process.arch)" >> "$GITHUB_OUTPUT"
+
+      - &restore-pnpm-store
+        name: Restore exact dependency cache
+        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ steps.refresh-store.outputs.path }}
+          key: node-cache-${{ runner.os }}-${{ steps.refresh-store.outputs.arch }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -479,9 +494,8 @@ jobs:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
-      - name: Restore dependencies for read-only PR refresh
-        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
-        uses: ./.github/actions/restore-pnpm-store
+      - *refresh-pnpm-store
+      - *restore-pnpm-store
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -668,9 +682,8 @@ jobs:
           node-version: 20
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
-      - name: Restore dependencies for read-only PR refresh
-        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
-        uses: ./.github/actions/restore-pnpm-store
+      - *refresh-pnpm-store
+      - *restore-pnpm-store
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -713,9 +726,8 @@ jobs:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
-      - name: Restore dependencies for read-only PR refresh
-        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
-        uses: ./.github/actions/restore-pnpm-store
+      - *refresh-pnpm-store
+      - *restore-pnpm-store
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.should_run == 'true'
@@ -770,9 +782,8 @@ jobs:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
-      - name: Restore dependencies for read-only PR refresh
-        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
-        uses: ./.github/actions/restore-pnpm-store
+      - *refresh-pnpm-store
+      - *restore-pnpm-store
 
       - name: Configure git for tests
         if: needs.changes.outputs.should_run == 'true'
@@ -894,9 +905,8 @@ jobs:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
-      - name: Restore dependencies for read-only PR refresh
-        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
-        uses: ./.github/actions/restore-pnpm-store
+      - *refresh-pnpm-store
+      - *restore-pnpm-store
       - run: pnpm install --frozen-lockfile
       - name: Build test prerequisites once
         run: bun run test:prepare
@@ -982,9 +992,8 @@ jobs:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
-      - name: Restore dependencies for read-only PR refresh
-        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
-        uses: ./.github/actions/restore-pnpm-store
+      - *refresh-pnpm-store
+      - *restore-pnpm-store
       - run: pnpm install --frozen-lockfile
       - name: Build test prerequisites once
         run: bun run test:prepare
@@ -1025,9 +1034,8 @@ jobs:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
-      - name: Restore dependencies for read-only PR refresh
-        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
-        uses: ./.github/actions/restore-pnpm-store
+      - *refresh-pnpm-store
+      - *restore-pnpm-store
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.docs_contract_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
@@ -1061,9 +1069,8 @@ jobs:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
-      - name: Restore dependencies for read-only PR refresh
-        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
-        uses: ./.github/actions/restore-pnpm-store
+      - *refresh-pnpm-store
+      - *restore-pnpm-store
 
       - run: pnpm install --frozen-lockfile
         if: needs.changes.outputs.os_view_parity_tests == 'true' || needs.ci-backend.outputs.infrastructure_fallback == 'true'
@@ -1120,9 +1127,8 @@ jobs:
           node-version: 24
           cache: ${{ needs.changes.outputs.cache_write == 'true' && 'pnpm' || '' }}
 
-      - name: Restore dependencies for read-only PR refresh
-        if: needs.changes.outputs.should_run == 'true' && needs.changes.outputs.cache_write == 'false'
-        uses: ./.github/actions/restore-pnpm-store
+      - *refresh-pnpm-store
+      - *restore-pnpm-store
 
       - name: Configure git for tests
         if: needs.changes.outputs.should_run == 'true'

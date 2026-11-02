@@ -174,8 +174,16 @@ OS, Node architecture and lockfile key while retaining the ban on shared-cache
 writes. Every test/build lane still runs its frozen install, including native
 build scripts. Missing or evicted caches download normally. Before reporting a
 speedup, verify a main seed and refresh hit, then compare same-source setup
-durations including restore overhead and unchanged qualification. No routing
-or controller-pin activation is required for these workflow changes.
+durations including restore overhead and unchanged qualification.
+
+Merging starts the main seeder. Isolated refreshes execute the workflow in
+`ci-execution/<controller-sha>`, so enabling their new reads also requires the
+existing reviewed-controller upgrade: after green main, follow the operator
+procedure above to approve the controller on the host, create its tree-identical
+execution ref and advance `MATRIX_CI_CONTROLLER_SHA`. Until then, isolated
+refreshes retain their previous cache behavior. No routing flag changes are
+needed. The workflow owns its restore steps, so older source checkouts do not
+need a newly introduced local action.
 
 ### Comparison protocol
 

@@ -95,7 +95,8 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(workflow.jobs['funded-postgres']['runs-on']).toBe('ubuntu-latest');
     expect(workflow.jobs['funded-host-root']['runs-on']).toBe('ubuntu-latest');
     for (const id of ['shell-production-build', 'e2e']) {
-      const cache = workflow.jobs[id].steps.find(s => s.uses?.startsWith('actions/cache/restore@'));
+      const cache = workflow.jobs[id].steps.find(s => s.uses?.startsWith('actions/cache/restore@')
+        && s.with?.path === (id === 'shell-production-build' ? 'shell/.next/cache' : '~/.cache/ms-playwright'));
       expect(cache?.with?.key).toContain('runner.os');
       expect(cache?.with?.key).toContain('runner.arch');
       expect(cache?.with?.key).toContain('node24-pnpm10.33.4');

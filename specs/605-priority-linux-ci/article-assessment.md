@@ -45,14 +45,19 @@ guarantee a hit or establish a speedup without a matched hosted measurement.
   lifecycle scripts disabled. Do not cache node_modules or claim test coverage.
 - For each hosted lane whose setup-node cache writer is disabled, restore only
   the actual pnpm store using the same OS, Node architecture and lockfile key
-  as setup-node v6. Use the restore-only action with no post-save hook.
+  as setup-node v6. Use the restore-only action with no post-save hook. Share
+  workflow-owned steps through YAML anchors: older accepted source checkouts
+  must not need a new local helper action.
 - Keep existing setup-node writers gated by `cache_write`. Refreshes may run
   PR code in a main-derived execution ref; they must never save shared caches.
 - Keep frozen installs even after hits. Missing/evicted/incompatible caches use
   normal downloads; cache content never qualifies a source or replaces a check.
 - The store-path step runs after pnpm/Node setup and before restore/install.
   GitHub bounds cache retention/eviction; job timeouts bound downloads and setup.
-  No production endpoint, database, credential grant or controller-pin change.
+  No production endpoint, database or credential grant. After merge and green
+  main, isolated refreshes need the existing reviewed-controller upgrade and
+  tree-identical execution-ref procedure before the new workflow takes effect;
+  until then only main seeding is active. Operator activation is deferred.
 
 ## Acceptance and documentation
 
