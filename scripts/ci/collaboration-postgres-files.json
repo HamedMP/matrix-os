@@ -60,6 +60,7 @@
   "tests/platform/preview-pair-intent-cloud-postgres.test.ts",
   "tests/platform/preview-pair-intent-recovery-postgres.test.ts",
   "tests/platform/preview-pair-intents-postgres.test.ts",
+  "tests/platform/preview-pair-launch-routes-postgres.test.ts",
   "tests/platform/preview-pair-lifecycle.test.ts",
   "tests/platform/preview-pair-postgres.test.ts",
   "tests/platform/preview-pair-primary-startup-postgres.test.ts",

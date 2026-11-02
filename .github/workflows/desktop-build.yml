@@ -124,6 +124,11 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm --filter desktop build
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
       - name: Package unsigned portable app
         working-directory: candidate/desktop
         env:
@@ -134,13 +139,13 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$PAIR_PLATFORM" = darwin ]; then
-            pnpm exec electron-builder --mac --dir --"$PAIR_ARCH" --publish never -c.mac.identity=null -c.mac.notarize=false
+            pnpm exec electron-builder --config "$GITHUB_WORKSPACE/controller/desktop/preview-electron-builder.yml" --mac --dir --"$PAIR_ARCH" --publish never
             app_dir=mac
             if [ "$PAIR_ARCH" = arm64 ]; then app_dir=mac-arm64; fi
             test -x "dist/$app_dir/Matrix OS.app/Contents/MacOS/Matrix OS"
             tar -czf "$RUNNER_TEMP/preview-pair-app.tar.gz" -C "dist/$app_dir" 'Matrix OS.app'
           else
-            pnpm exec electron-builder --linux --dir --x64 --publish never
+            pnpm exec electron-builder --config "$GITHUB_WORKSPACE/controller/desktop/preview-electron-builder.yml" --linux --dir --x64 --publish never
             test -x dist/linux-unpacked/desktop
             tar -czf "$RUNNER_TEMP/preview-pair-app.tar.gz" -C dist/linux-unpacked .
           fi

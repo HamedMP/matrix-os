@@ -21,6 +21,8 @@ Use existing Hono auth, strict Zod4 boundary schemas and generic error mapping.
 | GET `/api/preview-pairs/:pairId/manifest` | Same real actor check; live ready generation, current identity/routing/artifact/funding prerequisites; cache disabled | No |
 | GET `/api/preview-pairs` | Real configured maintainer membership; bounded cursor/limit; only permitted reports | No |
 | GET `/api/preview-pairs/setup` | Verified control-issuer reader and current configured maintainer; returns only reviewed controller identity/ref, verified requester and admission flag | No |
+| POST `/api/preview-pairs/:pairId/launch` | Existing verified reader authorization and fresh canonical manifest; strict role/OS/architecture only; returns a short-lived signed non-authorizing launch context, never a user session | No |
+| POST `/api/preview-pairs/launch/verify` | Public bounded verification of a Source-signed context; signature/expiry before any lookup, current canonical generation/machine/slot/source and membership repeated; coarse boolean only, no runtime or user auth granted | Yes |
 | POST `/api/preview-pairs/:pairId/stop` | Verified control issuer and current configured maintainer; strict generation/revision,16KiB body limit; stops only the selected infrastructure generation | No |
 | GET `/preview-pair-updates/:handle/system-bundles/releases/:version.json` | Non-authorizing public bundle metadata; exact active projected Preview handle/slot, empty access list and matching confirmed/target version+digest; reject all channel/list/other-version paths | Yes |
 
@@ -156,3 +158,24 @@ the updater to their projected confirmed bundle. Missing/mismatched internal bin
 fails closed. Ordinary and Private Preview configuration retains its current policy.
 The public metadata route grants no user or runtime capability, never accepts
 caller-selected download URLs, and reserves its whole prefix before owner routing.
+
+
+## Electron boot verification
+
+A launch context contains no local filesystem path or bearer. Source signs a
+strict role/actor/machine/slot/org/host/source/artifact descriptor, nonce and short
+verification lifetime with a domain-separated HMAC derived from its existing
+operator secret. Issuance requires the normal authenticated canonical-manifest
+path. Public verification validates syntax, signature and expiry before bounded
+current-state/membership checks; it returns only a coarse boolean. Invalid proof
+cannot start provider reads. Neither the proof nor verification mints a user or
+runtime session. Mutation routes use streaming16KiB limits and JSON content type;
+verification stays before the authenticated reader subrouter on the reserved
+Source prefix. No new persistence or credential store is introduced.
+
+Electron verifies that proof at the fixed Source origin and matches its embedded
+source/target before any userData/sessionData selection or credential access.
+The local launcher owns separate role directories and markers; Source never
+chooses a local path. Cached and new sessions must match the verified expected
+actor/origin/handle/nonprimary slot and immutable profile binding. Normal test
+login and current server authorization still gate every product operation.

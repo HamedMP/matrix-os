@@ -68,6 +68,7 @@ export default defineConfig({
       "@matrix-os/contracts/slack-bridge": path.resolve(__dirname, "packages/contracts/src/slack-bridge.ts"),
       "@matrix-os/bot-runtime": path.resolve(__dirname, "packages/bot-runtime/src/index.ts"),
       "@matrix-os/contracts/preview-pair-artifact": path.resolve(__dirname, "packages/contracts/src/preview-pair-artifact.ts"),
+      "@matrix-os/contracts/preview-pair-launch": path.resolve(__dirname, "packages/contracts/src/preview-pair-launch.ts"),
       "@matrix-os/contracts/preview-pair-control": path.resolve(__dirname, "packages/contracts/src/preview-pair-control.ts"),
       "@matrix-os/contracts/preview-pair": path.resolve(__dirname, "packages/contracts/src/preview-pair.ts"),
       "@matrix-os/contracts": path.resolve(__dirname, "packages/contracts/src/index.ts"),

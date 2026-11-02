@@ -1,0 +1,11 @@
+# Reviewed overlay for unsigned candidate artifacts; ordinary releases use the
+# base configuration directly. These apps never own global auth callbacks.
+extends: ./electron-builder.yml
+appId: com.matrix-os.preview-pair
+# electron-builder deep-merges arrays; [] retains the base protocols. null
+# explicitly removes them and its packagers treat null as no protocols.
+protocols: null
+generateUpdatesFilesForAllChannels: false
+mac:
+  identity: null
+  notarize: false

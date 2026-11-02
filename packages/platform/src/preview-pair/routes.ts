@@ -1,3 +1,6 @@
+import { createPreviewPairLaunchVerification } from "./launch-routes.js";
+import { issuePreviewPairLaunch } from "./launch-proof.js";
+import { PreviewPairLaunchRequestSchema, type PreviewPairLaunchContext } from "@matrix-os/contracts/preview-pair-launch";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod/v4";
@@ -14,6 +17,8 @@ import { PreviewPairReadinessFailure } from "./readiness.js";
 import { PreviewPairProvenanceError } from "./provenance.js";
 
 export interface PreviewPairHttpService {
+  readonly launchOrigin?: string;
+  launchCurrent?(context: PreviewPairLaunchContext): Promise<boolean>;
   prepareRequest?(input: z.infer<typeof PreviewPairPrepareRequestSchema>): Promise<unknown>;
   stopRequest?(pairId: string, input: z.infer<typeof PreviewPairRequestStopSchema>): Promise<unknown>;
   publishRequest?(pairId: string, input: z.infer<typeof PreviewPairPublishSchema>): Promise<unknown>;
@@ -55,6 +60,7 @@ export function createPreviewPairRoutes(deps: PreviewPairRoutesDeps) {
     console.warn("[preview-pair] request unavailable", error instanceof Error ? error.name : "UnknownError");
     return c.json({ error: "Preview pair is unavailable" }, 503);
   });
+  if (deps.service) app.route("/api/preview-pairs", createPreviewPairLaunchVerification({ secret: deps.operatorSecret, service: deps.service, now }));
   operator.use("*", async (c, next) => {
     if (!deps.operatorSecret || deps.operatorSecret.length < 32) return c.json({ error: "Preview pairs are unavailable" }, 503);
     if (!bearerTokenMatches(c.req.header("Authorization"), deps.operatorSecret)) return c.json({ error: "Unauthorized" }, 401);
@@ -122,6 +128,16 @@ export function createPreviewPairRoutes(deps: PreviewPairRoutesDeps) {
     if (!deps.service!.readerStop) throw new PreviewPairAccessError(503);
     return c.json(await deps.service!.readerStop(PreviewPairIdSchema.parse(c.req.param("pairId")),
       PreviewPairReaderStopSchema.parse(await c.req.json()), c.get("principal")));
+  });
+  reader.post("/:pairId/launch", async (c, next) => {
+    const headers = new Headers(c.req.raw.headers); headers.delete("Content-Length");
+    c.req.raw = new Request(c.req.raw, { headers }); await next();
+  }, bodyLimit({ maxSize: 16 * 1024, onError: c => c.json({ error: "Request body too large" }, 413) }), async c => {
+    if ((c.req.header("Content-Type") ?? "").split(";")[0]!.trim().toLowerCase() !== "application/json") return c.json({ error: "Invalid request" }, 415);
+    const input = PreviewPairLaunchRequestSchema.parse(await c.req.json());
+    if (!deps.service!.launchOrigin) throw new PreviewPairAccessError(503);
+    const manifest = await deps.service!.manifest(PreviewPairIdSchema.parse(c.req.param("pairId")), c.get("principal"));
+    return c.json(issuePreviewPairLaunch({ ...input, manifest, sourceOrigin: deps.service!.launchOrigin }, deps.operatorSecret ?? "", now()));
   });
   reader.get("/:pairId/manifest", async c => c.json(await deps.service!.manifest(PreviewPairIdSchema.parse(c.req.param("pairId")), c.get("principal"))));
   reader.get("/:pairId/requests/:generation", async c => {
