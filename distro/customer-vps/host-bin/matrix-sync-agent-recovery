@@ -12,7 +12,18 @@ resume_update_transaction_services() {
     [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$ ]] || return 1
     update_payload_name_was_added "$name" && continue
     case "$state" in
-      active) [ "$name" = matrix-sync-agent.service ] || sudo systemctl start "$name" >/dev/null || return 1 ;;
+      active)
+        if [ "$name" = matrix-sync-agent.service ]; then
+          continue
+        elif [ "$name" = matrix-hermes.service ]; then
+          # Hermes is an optional installer with its own retry policy. Its
+          # failure must not strand a restored gateway behind transaction proof.
+          sudo systemctl start --no-block "$name" >/dev/null \
+            || log "WARN: optional matrix-hermes.service could not be queued after rollback"
+        else
+          sudo systemctl start "$name" >/dev/null || return 1
+        fi
+        ;;
       inactive) ;;
       *) return 1 ;;
     esac
