@@ -30,7 +30,7 @@ async function parse(file: string, parser: NodeJS.WritableStream) {
  * inner archive before writes; allow framework links but no writes through links.
  * No install hooks, shell invocation, ownership restoration or privileged modes. */
 export async function extractPreviewDesktop(archive: string, executable: string, parent = tmpdir()) {
-  const directory = await mkdtemp(join(parent, "matrix-preview-desktop-")), owner = await lstat(directory);
+  const directory = await realpath(await mkdtemp(join(parent, "matrix-preview-desktop-"))), owner = await lstat(directory);
   let disposal: Promise<void> | undefined;
   const dispose = () => disposal ??= (async () => {
     const current = await lstat(directory);

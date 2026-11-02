@@ -110,3 +110,29 @@ the full changed-file audit includes inherited warnings. No all-repository-green
 claim is made.
 
 Platform qualification: **515 tests / 63 preview-pair suites passed**,485.85s, serial against the task-owned Postgres16 instance. No skipped test was reported. Logical transaction/authority qualification only; disposable database fsync remains off and does not qualify power-loss behavior.
+
+## Launcher review regressions
+
+Four reviewed faults now have focused regression protection:
+
+- A real macOS framework archive under an aliased temporary parent failed
+  extraction before canonicalizing the temporary directory: **1 failed / 11
+  passed**, then **12/12 passed**. Python-spawn sandbox failures are excluded
+  from this red/green evidence.
+- Pausing a real recursive delete after it removes the active lease allowed a
+  concurrent claim before the fix: **1 failed**. Atomic retirement now keeps a
+  fresh replacement, peer and normal profile safe: **10/10 passed** including
+  existing lease/profile tests. One bounded quarantine per role fails closed
+  on crash leftovers; unknown leftovers require inspection.
+- Recreating a window contacted the original closed startup listener and
+  requested app quit: **1 failed**. The acknowledgement now lives in a focused
+  process-scoped helper, keeping the large main entry point to wiring. Initial
+  handshake failures still quit; explicit Source-verified reopen is unchanged.
+- An actual child awaiting readiness survived cancellation past the regression
+  deadline: **1 failed**. Cancellation now reaches that actual owned child;
+  it never targets a PID read from a profile or another launch's reused app.
+
+Combined affected launcher cohort: **49/49 passed across 11 files**. All eight
+native TypeScript targets passed. Stock pattern scan: zero violations and five
+inherited warnings. These results do not establish live provider, Clerk,
+collaboration or native macOS acceptance.

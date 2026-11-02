@@ -1,5 +1,5 @@
 import { claimPreviewProfile } from "./preview-pair-profile-lease";
-import { acknowledgePreviewDesktop } from "./preview-pair-ready";
+import { createPreviewStartupAcknowledgement } from "./preview-pair-startup-ack";
 import { acknowledgeReopenedPreview } from "./preview-pair-reopen";
 import { initializeDesktopPreview } from "./preview-pair-startup";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, screen, session, shell, webContents, type IpcMainInvokeEvent } from "electron";
@@ -103,6 +103,11 @@ const previewContext = process.env.MATRIX_PREVIEW_PAIR_CONTEXT === undefined ? n
     throw new Error("Preview startup is unavailable");
   });
 
+const bindPreviewStartupAcknowledgement = createPreviewStartupAcknowledgement(previewContext,
+  process.env.MATRIX_PREVIEW_PAIR_READY_PORT, (error: unknown) => {
+    logMainError("preview launcher acknowledgement failed", error); app.quit();
+  });
+
 // Test isolation: e2e runs point userData at a temp dir so they never touch
 // the real profile or credential.
 if (!previewContext && process.env.OPERATOR_USER_DATA_DIR) {
@@ -190,10 +195,7 @@ function createWindow(bounds: FittedWindowBounds): BrowserWindow {
   installMainRendererMediaPermissions(win.webContents.session, win.webContents, trustedRendererUrl);
 
   win.once("ready-to-show", () => win.show());
-  if (previewContext) win.webContents.once("did-finish-load", () => {
-    void acknowledgePreviewDesktop(previewContext, process.env.MATRIX_PREVIEW_PAIR_READY_PORT)
-      .catch((error: unknown) => { logMainError("preview launcher acknowledgement failed", error); app.quit(); });
-  });
+  bindPreviewStartupAcknowledgement(win.webContents);
 
   // window.open / target=_blank from the renderer goes to the system browser only.
   win.webContents.setWindowOpenHandler(({ url }) => {

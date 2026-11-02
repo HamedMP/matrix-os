@@ -28,7 +28,7 @@ export async function openPreviewPair(options: { control: Awaited<ReturnType<typ
         || ctx.artifactSha256 !== app.artifact.sha256 || ctx.actorId !== member.actorId || ctx.machineId !== member.machineId
         || ctx.organizationId !== app.manifest.organizationId || ctx.apiOrigin !== app.manifest.apiOrigin) throw new Error("Preview changed during launch; request it again");
       const profile = await createPreviewPairProfile(ctx, options.home);
-      started.push(await startPreviewDesktop({ executable: app.executable, proof, userData: profile.userData }));
+      started.push(await startPreviewDesktop({ executable: app.executable, proof, userData: profile.userData, signal: options.signal }));
       options.signal?.throwIfAborted();
     }
     console.log(`Preview PR #${app.manifest.pr} ${app.manifest.sourceSha.slice(0, 12)}: Owner and Member are open. Sign in with each dedicated test account. Close both apps or interrupt this command to finish; the cloud pair remains available.`);

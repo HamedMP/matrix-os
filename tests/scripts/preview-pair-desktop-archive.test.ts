@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -31,12 +31,14 @@ it("extracts the actual portable Linux layout including leading ./ and strips pr
   expect((await stat(app.executable)).mode & 0o7000).toBe(0);
   await app.dispose(); expect(await readdir(parent)).toEqual(["candidate.tar.gz"]);
 });
-it("preserves a real macOS framework relative symlink without following it for archive writes", async () => {
+it.each([false, true])("preserves macOS framework links with a symlinked temporary parent=%s", async aliased => {
   const file = await archive([{ path: "Matrix OS.app/Contents/MacOS/Matrix OS" },
     { path: "Matrix OS.app/Contents/Frameworks/Framework/Versions/A/Resources/a", text: "framework" },
     { path: "Matrix OS.app/Contents/Frameworks/Framework/Versions/Current", type: "symlink", link: "A" },
     { path: "Matrix OS.app/Contents/Frameworks/Framework/Resources", type: "symlink", link: "Versions/Current/Resources" }]);
-  const app = await extractPreviewDesktop(file, "Matrix OS.app/Contents/MacOS/Matrix OS", parent);
+  const selectedParent = aliased ? join(parent, "temporary-parent-alias") : parent;
+  if (aliased) await symlink(parent, selectedParent);
+  const app = await extractPreviewDesktop(file, "Matrix OS.app/Contents/MacOS/Matrix OS", selectedParent);
   expect(await readFile(join(app.directory, "Matrix OS.app/Contents/Frameworks/Framework/Resources/a"), "utf8")).toBe("framework");
   await app.dispose();
 });

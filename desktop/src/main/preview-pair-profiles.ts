@@ -1,7 +1,7 @@
 import { claimPreviewProfile } from "./preview-pair-profile-lease.js";
 import { PreviewPairIdSchema, PreviewPairGenerationSchema, PreviewPairRoleSchema } from "@matrix-os/contracts/preview-pair";
 import { constants } from "node:fs";
-import { link, lstat, mkdir, open, realpath, unlink, rm } from "node:fs/promises";
+import { link, lstat, mkdir, open, realpath, rename, rmdir, unlink, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -94,6 +94,18 @@ export async function removePreviewPairProfile(id: string, generation: number, r
   if (value.paths.root !== root) throw unavailable();
   sameMarker(marker, value.expected);
   const lease = await claimPreviewProfile(root);
-  try { await rm(root, { recursive: true, force: false }); }
-  finally { await lease.release(); }
+  const quarantine = join(gen, `.${selected.role}-cleanup`), retired = join(quarantine, "profile");
+  let created = false;
+  try {
+    // Keep the locked profile intact until one atomic rename removes its public
+    // path. A concurrent fresh launch then owns a different directory/inode.
+    // One fixed quarantine per role bounds crash leftovers and fails closed.
+    await mkdir(quarantine, { mode: 0o700 }); created = true;
+    await safeDirectory(quarantine, true);
+    await rename(root, retired);
+    await rm(retired, { recursive: true, force: false });
+  } finally {
+    await lease.release();
+    if (created) await rmdir(quarantine); // Never recursively remove unknown leftovers.
+  }
 }

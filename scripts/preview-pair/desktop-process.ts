@@ -19,21 +19,33 @@ export async function stopOwnedPreviewChild(child: ChildProcess) {
   if (timer) clearTimeout(timer);
   if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 }
-export async function startPreviewDesktop(options: { executable: string; proof: PreviewPairLaunchAttestation; userData: string; timeoutMs?: number }) {
+export async function startPreviewDesktop(options: { executable: string; proof: PreviewPairLaunchAttestation; userData: string; timeoutMs?: number; signal?: AbortSignal }) {
+  options.signal?.throwIfAborted();
   const signal = await previewDesktopReady(options.proof.context, options.timeoutMs);
-  const child = spawn(options.executable, [], { env: previewDesktopEnvironment(options.proof, options.userData, signal.port),
-    stdio: "ignore", shell: false });
+  let child: ChildProcess | undefined, cancel: (() => void) | undefined;
   let reused = false;
   try {
-    const died = new Promise<never>((_resolve, reject) => {
-      child.once("error", () => reject(new Error("Preview desktop could not start")));
-      child.once("exit", (code, sig) => { if (code !== 0 || sig) reject(new Error("Preview desktop stopped before startup")); });
+    options.signal?.throwIfAborted();
+    const started = spawn(options.executable, [], { env: previewDesktopEnvironment(options.proof, options.userData, signal.port),
+      stdio: "ignore", shell: false });
+    child = started;
+    const cancelled = new Promise<never>((_resolve, reject) => {
+      cancel = () => reject(new Error("Preview desktop startup cancelled"));
+      options.signal?.addEventListener("abort", cancel, { once: true });
+      if (options.signal?.aborted) cancel();
     });
-    const pid = await Promise.race([signal.ready, died]);
-    reused = pid !== child.pid;
-    return { role: options.proof.context.role, pid, reused, child,
-      closed: child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise<void>(resolve => child.once("close", () => resolve())),
-      async stop() { if (!reused) await stopOwnedPreviewChild(child); } };
-  } catch (error: unknown) { await stopOwnedPreviewChild(child); throw error; }
-  finally { await signal.dispose(); }
+    const died = new Promise<never>((_resolve, reject) => {
+      started.once("error", () => reject(new Error("Preview desktop could not start")));
+      started.once("exit", (code, sig) => { if (code !== 0 || sig) reject(new Error("Preview desktop stopped before startup")); });
+    });
+    const pid = await Promise.race([signal.ready, died, cancelled]);
+    reused = pid !== started.pid;
+    return { role: options.proof.context.role, pid, reused, child: started,
+      closed: started.exitCode !== null || started.signalCode !== null ? Promise.resolve() : new Promise<void>(resolve => started.once("close", () => resolve())),
+      async stop() { if (!reused) await stopOwnedPreviewChild(started); } };
+  } catch (error: unknown) { if (child) await stopOwnedPreviewChild(child); throw error; }
+  finally {
+    if (cancel) options.signal?.removeEventListener("abort", cancel);
+    await signal.dispose();
+  }
 }
