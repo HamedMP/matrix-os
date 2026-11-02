@@ -114,6 +114,10 @@ const actions = createBotBrokerActions({ db, registry, sessions, checkpoints: cr
   runs: taskOrchestrator.runSource, events: taskOrchestrator.eventSink,
   tools: { effectClass: () => "read", dispatch: async () => { throw new BotBrokerActionError("not_granted"); } },
   inference: { homePath: process.env.MATRIX_ROUTINE_PROCESS_HOME, lifetime: lifetime.signal,
+    revalidateBinding: async binding => {
+      try { await execution.assertBinding(binding as BotRuntimeBinding); return true; }
+      catch (error: unknown) { console.warn("Synthetic routine authority refused", error instanceof Error ? error.name : "UnknownError"); return false; }
+    },
     fetchImpl: async () => { throw new Error("External inference prohibited in qualification"); } },
 });
 const broker = createScopeRuntimeBrokerServer({ socketPath, maxConnections: 8,
