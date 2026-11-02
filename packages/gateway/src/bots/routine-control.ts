@@ -15,7 +15,7 @@ export function createBotRoutineControl(deps: {
   return {
     async controlWithin(tx: BotStateTransaction, ownerId: string, botId: string, routineId: string, raw: unknown, chatId?: string) {
       if (!tx.db.isTransaction) throw new BotStateError("invalid_input");
-      const input = BotRoutineControlSchema.parse(raw), repository = createBotRoutinesRepository(tx.db);
+      const input = BotRoutineControlSchema.parse(raw), repository = createBotRoutinesRepository(tx.db, { now: deps.now });
       const existing = await repository.lock(ownerId, routineId, tx.db);
       if (!existing || existing.botId !== botId || chatId !== undefined && existing.chatId !== chatId) throw new BotStateError("not_found");
       if (existing.revision !== input.baseRevision) throw new BotStateError("revision_conflict");
