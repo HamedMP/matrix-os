@@ -7,6 +7,7 @@ import { createChatGptPlanPeers } from "../../../packages/gateway/src/bots/chatg
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerInheritedRoutinePostgresTests } from "./routine-inherited-scope-postgres.js";
+import { registerRoutineEditLockPostgresTests } from "./routine-edit-lock-postgres.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { sql } from "kysely";
 import { createBotInteractionService } from "../../../packages/gateway/src/bots/interactions.js";
@@ -28,6 +29,7 @@ const read: BotToolRequest = {
   }
 };
 registerInheritedRoutinePostgresTests();
+registerRoutineEditLockPostgresTests();
 const write: BotToolRequest = {
   toolCallId: "call_pg_write",
   capability: "artifact.write",
