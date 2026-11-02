@@ -20,12 +20,19 @@ describe('native Gmail message text without attachment collection', () => {
     expect(f.legacy.boundedGmailGet).not.toHaveBeenCalled();
   });
   it('preserves current bounded label IDs from the content read while MIME metadata stays attachment-free', async () => {
-    const f = fixture({ id: 'abc', labelIds: ['INBOX'], payload },
-      { id: 'abc', threadId: 'abc', labelIds: ['INBOX', 'Label_63'],
-        payload: { ...payload, body: { size: 5, data: 'SGVsbG8' } }, unexpected: 'drop' });
+    const f = fixture();
+    f.fetcher.mockReset()
+      .mockResolvedValueOnce(Response.json({ id: 'abc', payload }))
+      .mockImplementationOnce(async (requestedUrl: string) => {
+        const fields = new URL(requestedUrl).searchParams.get('fields')?.split(',') ?? [];
+        return Response.json({ id: 'abc', threadId: 'abc',
+          ...(fields.includes('labelIds') ? { labelIds: ['INBOX', 'Label_63'] } : {}),
+          payload: { ...payload, body: { size: 5, data: 'SGVsbG8' } }, unexpected: 'drop' });
+      });
     const result = await f.read();
     expect(result).toMatchObject({ id: 'abc', threadId: 'abc', labelIds: ['INBOX', 'Label_63'] });
     expect(result).not.toHaveProperty('unexpected');
+    expect(new URL(f.fetcher.mock.calls[1][0]).searchParams.get('fields')?.split(',')).toContain('labelIds');
     expect(f.fetcher).toHaveBeenCalledTimes(2);
     expect(f.beforeSend).toHaveBeenCalledTimes(2);
     expect(new URL(f.fetcher.mock.calls[0][0]).searchParams.get('fields')).not.toMatch(/\bdata\b/);

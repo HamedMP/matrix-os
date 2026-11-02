@@ -51,7 +51,7 @@ export function createNativeGmailClient(options: { legacy: PipedreamConnectClien
         const identity = { externalUserId: input.externalUserId, accountId: input.accountId };
         const metadata = await request({ ...identity, url: target.href }, 'GET', 64 * 1024, boundedSignal, beforeSend);
         messageTextShape(metadata, input.id, true);
-        target.searchParams.set('fields', 'id,threadId,internalDate,snippet,payload(mimeType,filename,headers,body,parts)');
+        target.searchParams.set('fields', 'id,threadId,internalDate,snippet,labelIds,payload(mimeType,filename,headers,body,parts)');
         const content = await request({ ...identity, url: target.href }, 'GET', 128 * 1024, boundedSignal, beforeSend);
         assertMessageTextUnchanged(metadata, content, input.id); boundedSignal.throwIfAborted();
         return projectMessageText(content);
