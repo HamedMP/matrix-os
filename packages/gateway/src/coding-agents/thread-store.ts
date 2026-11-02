@@ -223,6 +223,8 @@ export interface CodingAgentThreadStore {
     validTaskIds: readonly string[],
   ): Promise<CodingAgentProjectThreadProjection>;
   getThread(principal: RequestPrincipal, threadId: string, cursor?: string): Promise<AgentThreadSnapshot>;
+  /** Owner-scoped proof that a retained tail still belongs to the requested latest turn. */
+  latestTurnRequestId(principal: RequestPrincipal, threadId: string): Promise<string>;
   retainedProviderSessions(): Promise<string[]>;
   removeUnreferencedProviderTranscript(sessionId: string, remove: () => Promise<boolean>): Promise<boolean>;
   prepareProviderObservation(principal: RequestPrincipal, threadId: string, sessionId: string, resume: ProviderObservationResume): Promise<{ offset: number; generation: string } | undefined>;
@@ -1574,6 +1576,14 @@ export function createCodingAgentThreadStore(
       const thread = state.threads.find((candidate) => candidate.ownerId === principal.userId && candidate.id === threadId);
       if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
       return snapshotFor(thread, state.events, cursor);
+    },
+    async latestTurnRequestId(principal, threadId) {
+      return inspect((state) => {
+        const thread = state.threads.find((candidate) => candidate.ownerId === principal.userId && candidate.id === threadId);
+        if (!thread) throw new CodingAgentThreadError("thread_not_found", "Thread not found");
+        return state.turns.findLast((turn) => turn.ownerId === principal.userId && turn.threadId === threadId)?.clientRequestId
+          ?? thread.clientRequestId;
+      });
     },
     async retainedProviderSessions() { return retainedProviderSessions(await readState(options.homePath)); },
     async removeUnreferencedProviderTranscript(sessionId, remove) {

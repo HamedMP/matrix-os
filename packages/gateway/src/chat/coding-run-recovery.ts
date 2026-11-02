@@ -1,6 +1,7 @@
 import { z } from "zod/v4";
 import type { AgentThreadEvent, AgentThreadSnapshot } from "@matrix-os/contracts";
 import { CodingAgentProviderResumeStateSchema } from "../coding-agents/provider-adapter.js";
+import { CodingAgentThreadError } from "../coding-agents/thread-store.js";
 
 import { RecoveredControlActivitySchema, type RecoveredControlActivity } from "./provider-adapter.js";
 
@@ -40,6 +41,7 @@ export async function recoverCodingRun(input: {
   signal: AbortSignal;
   includePending?: boolean;
   read: (cursor?: string) => Promise<AgentThreadSnapshot>;
+  latestRequestId?: () => Promise<string>;
 }) {
   // Old clients/states remain valid. Recover only when a durable exact-run
   // boundary exists; never attach another turn's final answer to this run.
@@ -50,14 +52,33 @@ export async function recoverCodingRun(input: {
   const requestId = `req_${input.runId.slice(4)}`;
   for (let page = 0; page < 50; page += 1) {
     input.signal.throwIfAborted();
-    const snapshot = await input.read(cursor);
+    let snapshot: AgentThreadSnapshot;
+    try {
+      snapshot = await input.read(cursor);
+    } catch (error) {
+      if (!cursor || !(error instanceof CodingAgentThreadError) || error.code !== "thread_not_found") throw error;
+      snapshot = await input.read();
+      cursor = undefined;
+    }
     input.signal.throwIfAborted();
     let events = snapshot.events.items;
     if (!cursor) {
       const boundary = events.findIndex((event) =>
         (event.type === "user.message" || event.type === "turn.accepted") && event.clientRequestId === requestId);
-      if (boundary < 0) return null;
-      events = events.slice(boundary + 1);
+      if (boundary >= 0) events = events.slice(boundary + 1);
+      else {
+        // A long run can evict its own boundary from the bounded thread journal.
+        // Recover only when the durable latest-turn identity still names this Run.
+        if (!input.latestRequestId || await input.latestRequestId() !== requestId) return null;
+        if (events[0]?.type === "assistant.text.delta") {
+          // The first retained message may begin before the window. Keep only
+          // complete later messages; an incomplete prefix cannot be merged.
+          const firstMessageId = events[0].messageId;
+          const end = events.findIndex((event) => event.type === "assistant.text.completed" && event.messageId === firstMessageId);
+          events = end < 0 ? events.filter((event) => event.type !== "assistant.text.delta" || event.messageId !== firstMessageId)
+            : events.slice(end + 1);
+        }
+      }
     }
     for (const event of events) {
       if ((event.type === "user.message" || event.type === "turn.accepted") && event.clientRequestId !== requestId) return null;
