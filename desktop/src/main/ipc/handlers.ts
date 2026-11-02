@@ -13,6 +13,7 @@ import { AgentThreadSnapshotSchema } from "@matrix-os/contracts";
 import { clampZoomFactor, DEFAULT_ZOOM_FACTOR } from "../platform/zoom";
 import { AppError, categoryMessage, type AppErrorCategory } from "../../shared/app-error";
 import { BuildSourceSchema, type BuildSource } from "@matrix-os/contracts";
+import { createNativeAppRepairRequester } from "../embeds/native-app-repair";
 
 interface IpcMainLike {
   handle(
@@ -394,6 +395,17 @@ export function registerIpcHandlers(ipcMain: IpcMainLike, ctx: HandlerContext): 
       );
       return { ok: false };
     }
+  });
+  handle("embed:repair", async ({ embedId }) => {
+    const app = ctx.embeds.appIdentityForEmbed(embedId);
+    const status = ctx.auth.getStatus();
+    if (!app || !status.signedIn) throw new Error("Repair chat unavailable");
+    const result = await createNativeAppRepairRequester({ getGatewayOrigin: () => ctx.auth.getGatewayOrigin(), getToken: () => ctx.auth.getToken() })(
+      app, { operation: "startup", message: "App or Matrix surface failed to load" });
+    const current = ctx.auth.getStatus();
+    if (!current.signedIn || current.runtimeSlot !== status.runtimeSlot || current.authGeneration !== status.authGeneration
+      || ctx.embeds.appIdentityForEmbed(embedId) !== app) throw new Error("Repair chat unavailable");
+    return result;
   });
 
   handle("update:check", () => ctx.checkUpdate());

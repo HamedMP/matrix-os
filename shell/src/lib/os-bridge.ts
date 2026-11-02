@@ -1,12 +1,15 @@
 import { isAppGalleryInventoryIdentity } from "@matrix-os/contracts/app-gallery-bridge-policy";
 import { MAX_APP_CAPABILITY_BYTES, MAX_APP_DATABASE_REQUEST_BYTES, MAX_APP_KV_REQUEST_BYTES } from "@matrix-os/contracts";
+import { AppRepairDiagnosticSchema, type AppRepairDiagnostic } from "@matrix-os/contracts";
 
 export type BridgeMessage =
   | { type: "os:generate"; app: string; payload: { context: string } }
   | { type: "os:navigate"; app: string; payload: { route: string; context?: string } }
   | { type: "os:read-data"; app: string; payload: { key: string } }
   | { type: "os:write-data"; app: string; payload: { key: string; value: string } }
-  | { type: "os:open-app"; app: string; payload: { name: string; path: string } };
+  | { type: "os:open-app"; app: string; payload: { name: string; path: string } }
+  | { type: "os:repair"; app: string; payload: AppRepairDiagnostic }
+  | { type: "os:app-error"; app: string; payload: AppRepairDiagnostic };
 
 export interface BridgeHandler {
   sendToKernel: (text: string) => void;
@@ -17,6 +20,8 @@ export interface BridgeHandler {
     value: string | undefined,
   ) => unknown | Promise<unknown>;
   openApp?: (name: string, path: string) => void;
+  repair?: (diagnostic: AppRepairDiagnostic) => Promise<{ chatId: string }>;
+  appError?: (diagnostic: AppRepairDiagnostic) => void;
 }
 
 export interface BridgeMessageValidation {
@@ -172,6 +177,19 @@ export function handleBridgeMessage(
       );
       break;
 
+    case "os:repair":
+      replyToDataRequest(event, () => {
+        if (!handler.repair) throw new Error("Repair chat unavailable");
+        return handler.repair(AppRepairDiagnosticSchema.parse(msg.payload));
+      });
+      break;
+
+    case "os:app-error": {
+      const parsed = AppRepairDiagnosticSchema.safeParse(msg.payload);
+      if (parsed.success) handler.appError?.(parsed.data);
+      break;
+    }
+
     case "os:write-data":
       replyToDataRequest(event, () =>
         handler.fetchData("write", msg.app, msg.payload.key, msg.payload.value),
@@ -248,6 +266,15 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
   var storedValuePrefix = ${JSON.stringify(BRIDGE_STORED_VALUE_PREFIX)};
 
   var pendingFetches = [];
+  var crashReported = false;
+  function reportCrash(reason) {
+    if (crashReported) return;
+    crashReported = true;
+    var message = reason && typeof reason.message === "string" ? reason.message : "Unhandled app error";
+    post("os:app-error", { operation: "runtime", message: message.slice(0, 2000) });
+  }
+  window.addEventListener("error", function(event) { if (event.error) reportCrash(event.error); });
+  window.addEventListener("unhandledrejection", function(event) { reportCrash(event.reason); });
   window.addEventListener("pagehide", function() { pendingFetches.slice().forEach(function(cancel) { cancel(); }); post("os:bridge-dispose", {}); });
 
   function encodeStoredValue(value) {
@@ -356,6 +383,18 @@ export function buildBridgeScript(appName: string, themeVars?: ThemeVars, design
   });
 
   window.MatrixOS = {
+    repair: function(diagnostic) {
+      return new Promise(function(resolve, reject) {
+        var channel = new MessageChannel();
+        var timer = setTimeout(function() { channel.port1.close(); reject(new Error("Repair chat unavailable")); }, 35000);
+        channel.port1.onmessage = function(e) {
+          clearTimeout(timer); channel.port1.close();
+          if (e.data && e.data.ok && e.data.value && typeof e.data.value.chatId === "string") resolve(e.data.value);
+          else reject(new Error("Repair chat unavailable"));
+        };
+        window.parent.postMessage({ type: "os:repair", app: app, payload: diagnostic }, "*", [channel.port2]);
+      });
+    },
     generate: function(context) {
       post("os:generate", { context: context });
     },

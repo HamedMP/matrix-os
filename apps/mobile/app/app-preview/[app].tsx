@@ -1,10 +1,13 @@
-import { ActivityIndicator, Text, View } from "react-native";
+import { ActivityIndicator, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Stack, useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
+import { useCallback } from "react";
+import type { AppRepairDiagnostic } from "@matrix-os/contracts";
 
 import AppRuntimeFrame from "@/components/AppRuntimeFrame";
-import { Spacer } from "@/components/ui";
 import { useComputerAppSession } from "@/lib/queries/use-computer-apps";
+import { useCanonicalChatSession } from "@/lib/canonical-chat-session-context";
+import { MatrixErrorRecovery } from "@/components/MatrixErrorRecovery";
 
 export default function AppPreviewScreen() {
   const params = useLocalSearchParams<{
@@ -16,7 +19,15 @@ export default function AppPreviewScreen() {
   const name = Array.isArray(params.name) ? params.name[0] : params.name;
   const runtimeSlugHint = Array.isArray(params.runtimeSlug) ? params.runtimeSlug[0] : params.runtimeSlug;
   const title = name || app || "App";
-  const { launchUrl, isPending, isError, requestAppBridge, appIdentity, runtimeSlug } = useComputerAppSession(app ?? "", runtimeSlugHint);
+  const { launchUrl, isPending, isError, requestAppBridge, repairApp, retrySession, appIdentity, runtimeSlug } = useComputerAppSession(app ?? "", runtimeSlugHint);
+  const { selectChat } = useCanonicalChatSession();
+  const router = useRouter();
+  const openRepair = useCallback(async (boundApp: string, diagnostic: AppRepairDiagnostic, signal?: AbortSignal) => {
+    const result = await repairApp(boundApp, diagnostic, signal);
+    selectChat(result.chatId);
+    router.push("/(drawer)/(tabs)/(chats)");
+    return result;
+  }, [repairApp, selectChat, router]);
   const { theme } = useUnistyles();
 
   return (
@@ -27,13 +38,12 @@ export default function AppPreviewScreen() {
           <ActivityIndicator color={theme.v2.appColors.ink} />
         </View>
       ) : launchUrl ? (
-        <AppRuntimeFrame url={launchUrl} title={title} app={appIdentity} runtimeSlug={runtimeSlug} requestAppBridge={requestAppBridge} />
+        <AppRuntimeFrame url={launchUrl} title={title} app={appIdentity} runtimeSlug={runtimeSlug} requestAppBridge={requestAppBridge} repairApp={openRepair} />
       ) : (
-        <View style={styles.centered}>
-          <Text style={styles.title}>{isError ? "App session unavailable" : "App unavailable"}</Text>
-          <Spacer size="sm" />
-          <Text style={styles.subtitle}>Close the app and try opening it again.</Text>
-        </View>
+        <MatrixErrorRecovery title={isError ? "App session unavailable" : "App unavailable"}
+          details="The app session could not start on this Matrix computer."
+          onRetry={retrySession}
+          onRepair={() => openRepair("Matrix OS", { operation: "app session", message: "App session could not start" })} />
       )}
     </View>
   );

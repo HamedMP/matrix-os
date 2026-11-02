@@ -117,6 +117,7 @@ export default function App({ app }: { app: Definition }) {
           onImport={() => setImporting(true)}
           canImport={canImport}
           onSave={save}
+          onRetry={reload}
         />
       </div>
       {editor !== undefined && (

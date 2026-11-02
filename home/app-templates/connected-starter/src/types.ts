@@ -91,6 +91,7 @@ declare global {
       db?: Database;
       integrations?: () => Promise<Connection[]>;
       generate?: (context: string) => void;
+      repair?: (diagnostic: { operation: string; message: string }) => Promise<{ chatId: string }>;
       navigate?: (route: string, context?: string) => void;
     };
   }

@@ -252,7 +252,7 @@ export function DesktopWindow({
           <ActivityMonitorApp />
         ) : (
           <AppViewer path={win.path} active={focusedWindowId === win.id && !win.minimized}
-            onOpenApp={onAppOpen} visible={!isHidden && !isMinimizing} />
+            onOpenApp={onAppOpen} onOpenRepairChat={(chatId) => { chat?.switchConversation(chatId); onAppOpen("Chat", "__chat__"); }} visible={!isHidden && !isMinimizing} />
         )}
         {interacting && (
           <div className="absolute inset-0 z-10" />

@@ -7,6 +7,8 @@ import { resolveAppBridgeLaunch } from "@/lib/app-bridge-launch";
 import { prepareBridgeFetchRequest, resolveBridgeFetchUrl } from "./app-viewer-bridge-request";
 import { readAppBridgeResponse, appBridgeTimeoutMs } from "./app-capability-request";
 import { AppSiteButton } from "./app-sites/AppSiteButton";
+import { ErrorRecovery } from "./ErrorRecovery";
+import { openShellRepairChat } from "@/lib/app-repair";
 
 import { useState, useEffect, useRef } from "react";
 import { useFileWatcher } from "@/hooks/useFileWatcher";
@@ -24,6 +26,7 @@ import { capturePostHogEvent } from "@/lib/posthog-client";
 import { createCoalescedBridgeDataHandler, type BridgeDataRequest } from "@/lib/app-data-write-queue";
 import { MATRIX_TELEMETRY_EVENTS } from "@matrix-os/observability/events";
 import { MAX_APP_KV_REQUEST_BYTES } from "@matrix-os/contracts";
+import type { AppRepairDiagnostic } from "@matrix-os/contracts";
 import {
   APP_IFRAME_SANDBOX,
   extractSlug,
@@ -43,6 +46,7 @@ interface AppViewerProps {
   sessionId?: string;
   onOpenApp?: (name: string, path: string) => void;
   visible?: boolean;
+  onOpenRepairChat?: (chatId: string) => void;
 }
 
 function readCurrentTheme(): ThemeVars {
@@ -113,9 +117,11 @@ export function AppViewer(props: AppViewerProps) {
   return <SandboxedAppViewer {...props} />;
 }
 
-function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppViewerProps) {
+function SandboxedAppViewer({ path, sessionId, onOpenApp, onOpenRepairChat, visible = true }: AppViewerProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [iframeHtml, setIframeHtml] = useState<string | null>(null);
+  const [startupFailed, setStartupFailed] = useState(false);
+  const [crashDiagnostic, setCrashDiagnostic] = useState<AppRepairDiagnostic | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const { send, subscribe } = useSocket();
   // react-doctor-disable-next-line react-doctor/no-event-handler -- pure derived value computed from the `path` prop during render, not a DOM event handler or effect-driven side effect.
@@ -210,6 +216,14 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppV
           .catch((error: unknown) => console.warn("[app-viewer] App launch unavailable", error instanceof Error ? error.name : "UnknownError"))
           .finally(() => launches.delete(controller));
       },
+      async repair(diagnostic) {
+        const result = await openShellRepairChat({ app: appName, surface: window.innerWidth < 640 ? "Web Mobile" : "Web Desktop", ...diagnostic });
+        onOpenRepairChat?.(result.chatId);
+        return result;
+      },
+      appError(diagnostic) {
+        setCrashDiagnostic(diagnostic);
+      },
     };
 
     const pending = new Map<MessagePort, AbortController>();
@@ -252,7 +266,7 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppV
       for (const controller of launches) controller.abort();
       launches.clear();
     };
-  }, [send, sessionId, onOpenApp, appName, path, refreshKey]);
+  }, [send, sessionId, onOpenApp, onOpenRepairChat, appName, path, refreshKey]);
 
   // Forward data:change events to iframe for auto-update
   useEffect(() => {
@@ -332,6 +346,7 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppV
       })
       .then((html) => {
         if (!cancelled) {
+          setStartupFailed(false);
           setIframeHtml(injectBridgeIntoAppHtml(html, appName, readCurrentTheme(), baseHref, readCurrentDesign()));
         }
       })
@@ -339,6 +354,7 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppV
         if (cancelled) return;
         console.warn("[app-viewer] app html bootstrap failed:", slug, err instanceof Error ? err.message : String(err));
         setIframeHtml(null);
+        setStartupFailed(true);
       });
 
     return () => {
@@ -388,6 +404,7 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppV
   // fetch (CORS/CSP). Hold on about:blank until the injected srcDoc HTML is ready;
   // never expose the un-bridged document. Legacy file paths keep /files/{path}.
   const iframeSrc = !slug ? `/files/${path}` : "about:blank";
+  const failure = startupFailed ? { operation: "startup", message: "App failed to load" } : crashDiagnostic;
 
   if (!shouldRenderAppIframe(path)) {
     return null;
@@ -396,12 +413,24 @@ function SandboxedAppViewer({ path, sessionId, onOpenApp, visible = true }: AppV
   return (
     <div className="flex h-full w-full flex-col">
       {slug && visible ? <div className="flex items-center justify-end border-b px-3 py-1.5"><AppSiteButton key={slug} appSlug={slug} /></div> : null}
+      {failure ? <div className="flex min-h-0 flex-1 items-center overflow-auto p-4"><ErrorRecovery
+        title={`${appName} ${startupFailed ? "could not start" : "stopped unexpectedly"}`}
+        description="Matrix could not run this app. Retry the launch or send the failure to Matrix."
+        details={`App: ${appName}\nStage: ${failure.operation}`}
+        onRetry={() => { setStartupFailed(false); setCrashDiagnostic(null); setRefreshKey(key => key + 1); }}
+        onRepair={async () => {
+          const result = await openShellRepairChat({ app: appName, surface: window.innerWidth < 640 ? "Web Mobile" : "Web Desktop", ...failure });
+          onOpenRepairChat?.(result.chatId);
+        }}
+      /></div> : null}
       <iframe
         ref={iframeRef}
         key={refreshKey}
         src={iframeSrc}
         srcDoc={slug && iframeHtml ? iframeHtml : undefined}
         className="min-h-0 w-full flex-1 border-0"
+        style={failure ? { display: "none" } : undefined}
+        onError={() => setStartupFailed(true)}
         sandbox={APP_IFRAME_SANDBOX}
         title={path}
       />

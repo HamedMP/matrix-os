@@ -3,9 +3,11 @@ import { ActivityIndicator, Linking, Pressable, Text, View } from "react-native"
 import WebView, { type WebViewMessageEvent } from "react-native-webview";
 
 import { buildMobileAppBridgeScript, createMobileAppCapabilityBroker, type MobileAppBridgeRequest } from "@/lib/app-capability-bridge";
+import type { AppRepairDiagnostic } from "@matrix-os/contracts";
 
 import { appRuntimeNavigation } from "@/lib/app-runtime-navigation";
 import { colors, fonts, radius, spacing } from "@/lib/theme";
+import { MatrixErrorRecovery } from "./MatrixErrorRecovery";
 
 interface AppRuntimeFrameProps {
   url: string;
@@ -15,6 +17,7 @@ interface AppRuntimeFrameProps {
   /** Verified against the authenticated owner catalog before creating this session. */
   runtimeSlug?: string;
   requestAppBridge?: MobileAppBridgeRequest;
+  repairApp?: (app: string, diagnostic: AppRepairDiagnostic, signal?: AbortSignal) => Promise<{ chatId: string }>;
   /** Host-reviewed web destinations only; this does not grant payment permission. */
   canOpenExternalUrl?: (url: string) => boolean;
 }
@@ -29,22 +32,24 @@ export default function AppRuntimeFrame(props: AppRuntimeFrameProps) {
   return <AppRuntimeFrameContent key={launchId} {...props} launchId={launchId} />;
 }
 
-function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl, app, runtimeSlug, requestAppBridge, launchId }: AppRuntimeFrameProps & { launchId: string }) {
+function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl, app, runtimeSlug, requestAppBridge, repairApp, launchId }: AppRuntimeFrameProps & { launchId: string }) {
   const [linkBlocked, setLinkBlocked] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [crashDiagnostic, setCrashDiagnostic] = useState<AppRepairDiagnostic | null>(null);
   const webViewRef = useRef<WebView>(null);
   const brokerRef = useRef<ReturnType<typeof createMobileAppCapabilityBroker> | null>(null);
   const bootstrap = app && requestAppBridge ? buildMobileAppBridgeScript(app, launchId) : undefined;
   useEffect(() => {
     if (!app || !requestAppBridge) return;
     try {
-      const broker = createMobileAppCapabilityBroker({ app, runtimeSlug, runtimeUrl: url, launchId, request: requestAppBridge,
+      const broker = createMobileAppCapabilityBroker({ app, runtimeSlug, runtimeUrl: url, launchId, request: requestAppBridge, repair: repairApp, onCrash: setCrashDiagnostic,
         reply: (script) => webViewRef.current?.injectJavaScript(script) });
       brokerRef.current = broker;
       return () => { broker.dispose(); brokerRef.current = null; };
     } catch (error) {
       console.warn("[mobile] app bridge unavailable", error instanceof Error ? error.name : "UnknownError");
     }
-  }, [app, runtimeSlug, requestAppBridge, url, launchId]);
+  }, [app, runtimeSlug, requestAppBridge, repairApp, url, launchId]);
 
   const shouldStartLoad = useCallback(
     (request: { url?: string; isTopFrame?: boolean }) => {
@@ -76,7 +81,8 @@ function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl, app, 
         ref={webViewRef}
         injectedJavaScriptBeforeContentLoaded={bootstrap}
         injectedJavaScriptBeforeContentLoadedForMainFrameOnly
-        onLoadStart={() => brokerRef.current?.resetDocument()}
+        onLoadStart={() => { brokerRef.current?.resetDocument(); setLoadFailed(false); setCrashDiagnostic(null); }}
+        onError={() => setLoadFailed(true)}
         onMessage={(event: WebViewMessageEvent) => {
           void brokerRef.current?.receive(event.nativeEvent.data, event.nativeEvent.url);
         }}
@@ -96,7 +102,7 @@ function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl, app, 
             <ActivityIndicator color={colors.light.mutedForeground} />
           </View>
         )}
-        renderError={() => <AppRuntimeUnavailable title={title} />}
+        renderError={() => <View />}
         allowsBackForwardNavigationGestures
         allowsInlineMediaPlayback
         // Left on, the WebView puts back the status bar style it found when it
@@ -109,6 +115,11 @@ function AppRuntimeFrameContent({ url, title, headers, canOpenExternalUrl, app, 
         // On Android, route target=_blank/window.open through onOpenWindow too.
         setSupportMultipleWindows
       />
+      {(loadFailed || crashDiagnostic) ? <View style={{ position: "absolute", inset: 0, backgroundColor: colors.light.background }}>
+        <MatrixErrorRecovery title={`${title} ${loadFailed ? "could not load" : "stopped unexpectedly"}`} details={`App: ${app ?? title}\nStage: ${loadFailed ? "startup" : "runtime"}`}
+          onRetry={() => { setLoadFailed(false); setCrashDiagnostic(null); webViewRef.current?.reload(); }}
+          onRepair={async () => { if (!app || !repairApp) throw new Error("Repair chat unavailable"); await repairApp(app, loadFailed ? { operation: "startup", message: "App failed to load" } : crashDiagnostic!); }} />
+      </View> : null}
       {linkBlocked && (
         <View
           testID="app-preview-link-notice"

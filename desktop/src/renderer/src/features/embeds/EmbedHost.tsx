@@ -6,6 +6,7 @@ import { useUi } from "../../stores/ui";
 import { readNativeEmbedBounds } from "./embed-bounds";
 import { nativeBrowserProduct } from "../../../../shared/browser-products";
 import { DesktopAppSiteButton } from "../app-sites/DesktopAppSiteButton";
+import { useTabs } from "../../stores/tabs";
 
 // Hosts a main-process WebContentsView positioned over this element's rect.
 // The remote content renders in an isolated partition with no IPC access.
@@ -56,6 +57,8 @@ export default function EmbedHost({
   const [openedEmbedRevision, setOpenedEmbedRevision] = useState(0);
   const [retryRevision, setRetryRevision] = useState(0);
   const [state, setState] = useState<"loading" | "ready" | "auth-required" | "failed">("loading");
+  const [repairState, setRepairState] = useState<"idle" | "sending" | "failed">("idle");
+  const [showDetails, setShowDetails] = useState(false);
   const [snapshotDataUrl, setSnapshotDataUrl] = useState<string | null>(null);
 
   const reportBounds = useCallback((): void => {
@@ -249,10 +252,23 @@ export default function EmbedHost({
         </div>
       ) : null}
       {state === "failed" ? (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center" role="alert">
           <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
             {product ? `${product.name} is unavailable on this computer.` : "Couldn't load this surface."}
           </span>
+          {(kind === "app" || kind === "hosted-shell") ? <Button variant="primary" disabled={repairState === "sending"}
+            onClick={() => {
+              const embedId = embedIdRef.current;
+              if (!embedId) return;
+              setRepairState("sending");
+              void invoke("embed:repair", { embedId }).then(({ chatId }) => {
+                useTabs.getState().openTab({ kind: "work", title: "Chat", workRoute: "chat", chatId, chatView: "conversation", closable: false });
+                setRepairState("idle");
+              }).catch((error: unknown) => {
+                console.warn("[embed-host] repair unavailable", error instanceof Error ? error.name : "UnknownError");
+                setRepairState("failed");
+              });
+            }}>Fix with Matrix</Button> : null}
           <Button
             variant="primary"
             onClick={() => {
@@ -262,6 +278,11 @@ export default function EmbedHost({
           >
             Try again
           </Button>
+          <Button onClick={() => setShowDetails(value => !value)}>Details</Button>
+          {showDetails ? <p className="max-w-full break-words text-xs" style={{ color: "var(--text-secondary)" }}>
+            {kind === "app" ? `App: ${appIdentity ?? slug}. Stage: startup.` : `Surface: ${kind}. Stage: startup.`}
+          </p> : null}
+          {repairState === "failed" ? <p role="status" className="text-sm">Could not open a repair chat. Try again.</p> : null}
         </div>
       ) : null}
     </div>

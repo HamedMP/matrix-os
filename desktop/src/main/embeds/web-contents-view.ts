@@ -242,6 +242,7 @@ export function createWebContentsView(options: {
     // -3 is ERR_ABORTED (e.g. a redirect); not a real failure.
     if (errorCode !== -3) options.onState("failed");
   });
+  contents.on("render-process-gone", () => options.onState("failed"));
 
   let attached = false;
   const detachFromWindow = () => {

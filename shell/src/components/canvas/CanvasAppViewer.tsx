@@ -24,6 +24,7 @@ function openCanvasApp(name: string, requestedPath: string): void {
 }
 
 /** Keep app bridge launches connected to the Canvas window and viewport stores. */
-export function CanvasAppViewer({ path, active = true }: { path: string; active?: boolean }) {
-  return <AppViewer path={path} active={active} onOpenApp={openCanvasApp} />;
+export function CanvasAppViewer({ path, active = true, onOpenRepairChat }: { path: string; active?: boolean; onOpenRepairChat?: (chatId: string) => void }) {
+  return <AppViewer path={path} active={active} onOpenApp={openCanvasApp}
+    onOpenRepairChat={(chatId) => { onOpenRepairChat?.(chatId); openCanvasApp("Chat", "__chat__"); }} />;
 }

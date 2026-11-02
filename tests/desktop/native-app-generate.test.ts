@@ -17,6 +17,16 @@ it("binds legacy tasks to the registered identity and preserves context", () => 
   bridge.generate(sender, "Read my notes");
   expect(generate).toHaveBeenCalledWith("owner/brain", "Read my notes");
 });
+it("binds repair to the registered app and reports admission", async () => {
+  const repair = vi.fn(async () => ({ chatId: "chat_repair" }));
+  const bridge = new NativeAppBridge({ authGeneration: () => 0, generate: vi.fn(), repair, aiRequest: vi.fn(), request: vi.fn(), gatewayRequest: vi.fn(), gatewayOrigin: () => "https://gateway.test" });
+  bridge.register(1, "owner/brain", "brain");
+  await expect(bridge.repair(sender, { operation: "save", message: "failed" })).resolves.toEqual({ chatId: "chat_repair" });
+  expect(repair).toHaveBeenCalledWith("owner/brain", { operation: "save", message: "failed" }, expect.any(AbortSignal));
+  await expect(bridge.repair({ ...sender, url: "https://gateway.test/apps/other/" }, { operation: "save", message: "failed" })).rejects.toThrow();
+  await expect(bridge.repair(sender, { app: "other", operation: "save", message: "failed" })).rejects.toThrow();
+  expect(repair).toHaveBeenCalledTimes(1);
+});
 it("rejects forged identities, navigated and retired views, and malformed context", () => {
   const { bridge, generate } = fixture();
   for (const context of [null, {}, "", "  ", "x".repeat(32001)]) {

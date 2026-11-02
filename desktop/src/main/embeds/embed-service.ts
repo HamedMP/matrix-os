@@ -173,6 +173,11 @@ export class EmbedService {
     return this.manager.setBounds(embedId, bounds);
   }
 
+  appIdentityForEmbed(embedId: string): string | null {
+    if (this.hostedShellIds.has(embedId) || this.pendingHostedShells.has(embedId)) return "Matrix OS";
+    return this.pendingApps.get(embedId)?.appIdentity ?? this.manager.appIdentityForEmbed(embedId);
+  }
+
   setScale(embedId: string, factor: number): boolean {
     return this.manager.setScale(embedId, factor);
   }
