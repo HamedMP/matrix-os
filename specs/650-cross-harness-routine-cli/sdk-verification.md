@@ -26,8 +26,44 @@ One further run added the production `--include-partial-messages` flag. It obser
 
 Production must correlate its own actual native process, ACK, observed tool-use and callback; labels or model-supplied session/prompt IDs confer no Matrix authority. Native metadata may narrow policy and cannot expand trusted admission ceilings. Unqualified hook/version contexts deny new routine actions.
 
+## Claude 2.1.280 compatibility
+
+The ordinary Chat router accepts only `2.1.240` and `2.1.280`; adjacent or future versions remain denied for routine calls. Unrelated Bash keeps native behavior. This compatibility check does not attest an executable or replace canonical source, exact owner action, private target, routine approval, background authorization or integration policy.
+
+Official `@anthropic-ai/claude-code-linux-{arm64,x64}` **2.1.280** tarballs were verified against their registry SHA512 integrity before extracting the single regular executable:
+
+| Architecture | Executable SHA256 | Qualification |
+| --- | --- | --- |
+| ARM64 | `92f2b4fd05d0bdcf7b9a0d4e0ecef4a1e4b368b290cd8fd07cff9a50013f45a2` | Native Linux ARM64 container |
+| x64 | `1e08503dbdf3c2cb0d706d32f3408277388d1c76ef108673e8fe42c1b322925b` | Linux amd64 container under QEMU on an ARM64 Docker engine; actual x64 host execution remains distinct |
+
+Each architecture passed six separate offline scenarios: rewrite, deny, unanswered callback, interrupt, plan deny and rewrite with production partial messages. Isolation, bounded synthetic loopback SSE, empty HOME/config and cleanup match the earlier lane. Both partial runs observed `hooks_applied: true`, system/init `2.1.280`, stream Bash tool identity before its matching callback and a subsequent actual native API `tool_result` containing only the rewritten marker. The unanswered callback actually produced correlated cancellation and an error tool result with neither marker; this is an observed result, not a universal timeout guarantee. Interrupt ended native execution with exit1/error result while the observation fixture exited0.
+
+A second test bundles the **actual production** `createClaudeRoutineHook` and feeds it the real native frames unchanged. Its execute dependency is explicitly synthetic; an isolated dummy `matrix` prints the original marker if the literal command escapes rewriting. Before the fix, actual initialize/ACK/partial/callback and native wait0 all succeeded, but the router denied `2.1.280`, executed zero times and produced an error tool result. The intended Red is `production_router_version_gate`. After adding only the exact version alternative, native ARM64 and emulated x64 execute once, allow the safe replacement, and return a nonerror native tool result with rewritten marker only. Each run closes its server, removes owned temporary state, observes actual native close0 and leaves zero pending children; containers exit0 without OOM and are removed. This does **not** invoke the real Matrix CLI, backend or account.
+
+The portable production-router suite separately retains `2.1.240` and covers `2.1.280` once-only behavior, cancellation, exact adjacent-version refusal, absent/negative ACK, subagent, mismatched tool identity and missing partial observation. Its initial two `2.1.280` positive tests failed on execute count0; after the predicate change all21 hook/command tests pass without skips.
+
+### Reproduce the native/router boundary
+
+The committed files under `tests/gateway/claude-routine-hook-native/` are required Linux qualification scripts, outside default portable Vitest collection. Use an independently reviewed existing Node24+ Linux image and the matching public native artifact above. Set `NODE24_IMAGE` to its immutable cached image ID, `CLAUDE_PLATFORM` to `linux/arm64` or `linux/amd64`, and `CLAUDE_NATIVE_2280` to the absolute executable path. Cross-architecture emulation must be reported explicitly.
+
+```bash
+pnpm exec esbuild packages/gateway/src/chat/claude-routine-hook.ts --bundle --platform=node --format=esm --outfile=/tmp/matrix-claude-router.mjs
+docker run --rm --pull=never --init --platform "$CLAUDE_PLATFORM" --network none \
+  --user 65534:65534 --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --memory 768m --cpus 1 --pids-limit 96 --tmpfs /tmp:rw,nosuid,nodev,size=96m,mode=1777 \
+  --mount "type=bind,src=$CLAUDE_NATIVE_2280,dst=/fixture/claude,readonly" \
+  --mount "type=bind,src=$PWD/tests/gateway/claude-routine-hook-native/gate.mjs,dst=/fixture/gate.mjs,readonly" \
+  --mount "type=bind,src=$PWD/tests/gateway/claude-routine-hook-native/router-fixture.mjs,dst=/fixture/native-hook-fixture.mjs,readonly" \
+  --mount type=bind,src=/tmp/matrix-claude-router.mjs,dst=/fixture/router.mjs,readonly \
+  "$NODE24_IMAGE" node /fixture/native-hook-fixture.mjs
+rm -- /tmp/matrix-claude-router.mjs
+```
+
+Before running, inspect the image and mounts independently. The gate verifies Linux/architecture, nonroot identity, capability/NNP/network/rootfs conditions, exact executable digest and actual version. Missing prerequisites fail; no empty or skipped native lane counts as qualification. Retain actual structured results and container exit/OOM/cleanup evidence. Replacing the current bundle with the original exact-version predicate reproduces the intended Red without spoofing native metadata. The scripts create no credential/account, schedule, permission grant or documentation MCP service.
+
 ## Evidence tiers and remaining gates
 
-The isolated native probes qualify this precise Linux ARM64 protocol seam. Actual Matrix integration tests separately exercise canonical source admission, published CLI/private IPC, source HTTP, PostgreSQL receipts and canonical Bot handoff; their native/model/auth transports are named fixtures. Neither tier substitutes for a real account, other native versions/architectures, restored runtime acceptance, or combined A/B live validation.
+The isolated probes qualify the precise versions and native/emulated architecture boundaries recorded above. Actual Matrix integration tests separately exercise canonical source admission, published CLI/private IPC, source HTTP, PostgreSQL receipts and canonical Bot handoff; their native/model/auth transports are named fixtures. Neither tier substitutes for a real account, unqualified versions/architectures, actual test-Computer execution, restored runtime acceptance, or combined A/B live validation.
 
 Local detailed commands, bounded logs and inspected provenance are retained under the task research spike `claude-native-hook`, including `linux-hook-{rewrite,deny,timeout,cancel,plan-deny}.log` and `linux-hook-rewrite-partial.log` with paired provenance. They contain synthetic observations only. No unchanged probe was rerun solely to increase test counts.
