@@ -52,7 +52,9 @@ export function assertMessageTextUnchanged(metadata: unknown, content: unknown, 
 /** Release an allowlisted projection, never unexpected provider fields. */
 export function projectMessageText(value: unknown): unknown {
   const message = z.object({ id: z.string(), threadId: z.string().optional(), internalDate: z.string().optional(),
-    snippet: z.string().optional(), payload: z.unknown() }).parse(value);
+    snippet: z.string().optional(),
+    labelIds: z.array(z.string().min(1).max(160)).max(10_000).optional(),
+    payload: z.unknown() }).parse(value);
   function project(raw: unknown): unknown {
     const p = Part.parse(raw);
     return { mimeType: p.mimeType, filename: '', ...(p.headers ? { headers: p.headers } : {}),

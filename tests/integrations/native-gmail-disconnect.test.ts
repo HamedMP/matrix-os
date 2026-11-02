@@ -51,8 +51,11 @@ describe('feature-off native Gmail user disconnect', () => {
 
   it('durably queues consent cleanup in the same transaction that removes the native grant',async()=>{
     await db.googleData!.purgeDelivery.pinRuntime('user_owner','machine-one');
-    const profile=await db.googleData!.repository.reviewProfile({...profileInput(),ownerId:'user_owner'},0);
-    const consent=await db.googleData!.repository.recordConsent(consentInput(profile.id,{ownerId:'user_owner',googleAccountId:connectionId}),0);
+    const reviewedAt = new Date();
+    const expiresAt = new Date(reviewedAt.getTime() + 86400_000).toISOString();
+    const input = profileInput();
+    const profile=await db.googleData!.repository.reviewProfile({...input,ownerId:'user_owner',evidence:{...input.evidence,reviewedAt:reviewedAt.toISOString(),expiresAt}},0);
+    const consent=await db.googleData!.repository.recordConsent(consentInput(profile.id,{ownerId:'user_owner',googleAccountId:connectionId,expiresAt}),0);
     expect((await app.request(`/api/integrations/${connectionId}`,{method:'DELETE',headers:{'x-owner':owner}})).status).toBe(200);
     expect(await db.googleData!.purgeDelivery.poll('user_owner','machine-one')).toMatchObject([{googleAccountId:connectionId,consentId:consent.id}]);
   });

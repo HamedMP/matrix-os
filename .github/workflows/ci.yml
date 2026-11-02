@@ -1031,7 +1031,8 @@ jobs:
     name: E2E Tests (${{ matrix.lane }})
     needs: [changes, ci-backend]
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
-    runs-on: ubuntu-latest
+    # Playwright in this candidate cannot install Chromium on Ubuntu 26.04.
+    runs-on: ubuntu-24.04
     # Cold Chromium setup can exceed10m before required Electron tests start.
     timeout-minutes: 30
     env:

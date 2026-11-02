@@ -8,8 +8,11 @@ describe('Gmail grant and purge delivery composition',()=>{
    await db.googleData!.purgeDelivery.pinRuntime('owner-one','machine-one');
    const user=await db.createUser({clerkId:'owner-one',handle:'owner-one',displayName:'Owner',email:'owner@example.test',containerId:'owner-container'});
    const account=await db.connectService({userId:user.id,service:'gmail',pipedreamAccountId:'apn_synthetic',accountLabel:'Mail',scopes:[]});
-   const profile=await db.googleData!.repository.reviewProfile(profileInput(),0);
-   const consent=await db.googleData!.repository.recordConsent(consentInput(profile.id,{googleAccountId:account.id}),0);
+   const reviewedAt = new Date();
+   const expiresAt = new Date(reviewedAt.getTime() + 86400_000).toISOString();
+   const input = profileInput();
+   const profile=await db.googleData!.repository.reviewProfile({...input,evidence:{...input.evidence,reviewedAt:reviewedAt.toISOString(),expiresAt}},0);
+   const consent=await db.googleData!.repository.recordConsent(consentInput(profile.id,{googleAccountId:account.id,expiresAt}),0);
    const app=createIntegrationRoutes({db,pipedream:{revokeAccount:vi.fn(async()=>undefined)} as never,webhookSecret:'synthetic',resolveUserId:async()=>user.id});
    expect((await app.request(`/${account.id}`,{method:'DELETE'})).status).toBe(200);
    expect(await db.googleData!.purgeDelivery.poll('owner-one','machine-one')).toMatchObject([{googleAccountId:account.id,consentId:consent.id}]);
