@@ -12,7 +12,7 @@ import { createBotInteractionsRepository } from "./repositories/interactions.js"
 import { createBotApprovalsRepository } from "./repositories/approvals.js";
 import { createBotTasksRepository } from "./repositories/tasks.js";
 import { createBotRoutinesRepository, type BotRoutine } from "./repositories/routines.js";
-import { BotStateError, type BotExecutor } from "./repositories/shared.js";
+import { BotStateError, toSafeInteger, type BotExecutor } from "./repositories/shared.js";
 import { nextBotRoutineFire } from "./routine-schedule.js";
 const EnvelopeSchema = z.object({
   proposal: BotRoutineProposalSchema,
@@ -193,6 +193,15 @@ export function createBotRoutineApprovals(deps: {
           approvalId: interaction.interactionId
         }, tx.db);
       if (!approval || approval.botId !== interaction.botId || approval.taskId !== interaction.taskId || approval.tool !== "routine.activate" || approval.argsHash !== argsHash || payload.argsDigest !== argsHash || approval.account !== source.accountId || approval.audience !== "direct" || approval.policyRevision !== source.grantRevision || payload.policyRevision !== source.grantRevision) throw new BotStateError("invalid_input");
+      if (decision === "approve" && source.routineId) {
+        // Claims and edits both take Routine before the shared binding/Chat fence.
+        const target = await tx.db.selectFrom("bot_routines").select(["bot_id", "chat_id", "revision", "status"])
+          .where("owner_id", "=", interaction.ownerId).where("routine_id", "=", source.routineId)
+          .forUpdate().executeTakeFirst();
+        if (!target || target.bot_id !== interaction.botId || target.chat_id !== interaction.chatId) throw new BotStateError("not_found");
+        if (toSafeInteger(target.revision) !== source.baseRoutineRevision) throw new BotStateError("revision_conflict");
+        if (target.status === "archived") throw new BotStateError("invalid_transition");
+      }
       // Registry/source reads do not perform provider I/O. Confirmation and
       // inherited sharing serialize on the Chat lock, using durable scope authority.
       if (decision === "approve" && ((await definitionRevision(interaction.ownerId, interaction.botId)) !== source.definitionRevision
