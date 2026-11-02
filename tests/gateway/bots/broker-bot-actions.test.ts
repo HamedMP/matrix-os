@@ -99,6 +99,19 @@ const tool = (overrides: Partial<BotToolRequest> = {}) => frame({
 });
 
 describe("bot broker actions", () => {
+  it.each([
+    { action: "bot.session.load" },
+    { action: "bot.session.save", session: { baseRevision: 0, messages: [] } },
+    { action: "bot.event", event: { seq: 0, event: { type: "assistant_delta", text: "private output" } } },
+  ])("revalidates background authority before $action, including final delivery", async request => {
+    binding = { ...binding, requestClass: "background" };
+    const revalidateBinding = vi.fn(async () => false);
+    const { actions, events } = setup({ revalidateBinding });
+    await expect(actions.handleFrame(frame(request))).resolves.toMatchObject({ ok: false, code: "not_granted" });
+    expect(revalidateBinding).toHaveBeenCalledOnce();
+    expect(events.publish).not.toHaveBeenCalled();
+    expect(await db.selectFrom("bot_agent_sessions").selectAll().execute()).toEqual([]);
+  });
   it("gives only browser actions a bounded human pause deadline", async () => {
     binding.capabilities = ["browser.action"];
     const timeouts = vi.spyOn(AbortSignal, "timeout");

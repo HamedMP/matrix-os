@@ -1,3 +1,4 @@
+import { assertPrivateRoutineRequest, hasNonPrivateChatScope, cancelNonPrivateRoutineQueue } from "./private-routine-authority.js";
 import { listQueuedChatCandidates } from "./queued-chat-candidates.js";
 import {associateAdmittedDriveChat} from "./drive-project-database.js";
 import { releaseTerminalQueuedSteer } from "./queued-steer-cleanup.js";
@@ -555,6 +556,7 @@ export class ChatQueueRepository {
       if (chat.lifecycle !== "active") {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
+      await assertPrivateRoutineRequest(trx, owner, chatId, clientRequestId);
       if (chat.collaboration !== null) {
         throw new ChatConflictError(chatId, Number(chat.revision));
       }
@@ -948,6 +950,13 @@ export class ChatQueueRepository {
         .orderBy("position")
         .executeTakeFirst();
       if (!candidate) return null;
+      if (candidate.client_request_id.startsWith("req_routine_") && (owner.type !== "personal"
+        || chat.collaboration !== null || await hasNonPrivateChatScope(trx, owner, chatId))) {
+        const revision = await cancelNonPrivateRoutineQueue(trx, { chatId, queuedTurnId: candidate.id,
+          position: Number(candidate.position), baseRevision: Number(chat.revision), at: claimedAt });
+        await this.appendOutbox(trx, owner, chatId, revision, "queue.cancelled", { queuedTurnId: candidate.id, position: Number(candidate.position) });
+        return null;
+      }
       if (candidate.collaboration_scope_id && candidate.id !== sharedCandidateId) return null;
       if (candidate.collaboration_scope_id && sharedAdmission === "allowed") {
         const candidateSelection = CanonicalChatModelSelectionSchema.safeParse(

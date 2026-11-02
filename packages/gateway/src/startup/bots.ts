@@ -1,3 +1,4 @@
+import { bootstrapCollaborationDatabase } from "../collaboration/database.js";
 import {createBotRoutineApprovals} from "../bots/routine-approval.js";
 import {createBotRoutineExecution,type BotRoutineExecution} from "../bots/routine-execution.js";
 import {BotStateError} from "../bots/repositories/shared.js";
@@ -177,6 +178,8 @@ export async function startBots(options: {
   const db = ownerBotExecutor(options.repository.kysely);
   try {
     await bootstrapBotDatabase(db);
+    // Routine privacy depends on durable inherited scopes even when sharing is disabled.
+    await bootstrapCollaborationDatabase(db as never);
   } catch (error: unknown) {
     console.warn("[bots] bot state unavailable:", error instanceof Error ? error.name : "UnknownError");
     return undefined;

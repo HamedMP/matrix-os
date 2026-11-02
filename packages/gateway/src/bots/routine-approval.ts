@@ -56,7 +56,7 @@ export function createBotRoutineApprovals(deps: {
       const at = now().toISOString(),
         expiresAt = new Date(Date.parse(at) + 86400000).toISOString();
       return deps.transact(binding.ownerId, async tx => {
-        if (!(await hasLiveRoutineChat(tx.db, binding.ownerId, binding.botId, binding.chatId))) throw new BotStateError("not_found");
+        if (!(await hasLiveRoutineChat(tx.db, binding.ownerId, binding.botId, binding.chatId, true))) throw new BotStateError("not_found");
         const task = await createBotTasksRepository(tx.db).get({
           ownerId: binding.ownerId,
           taskId: binding.taskId
@@ -128,6 +128,7 @@ export function createBotRoutineApprovals(deps: {
           approvalId: interaction.interactionId
         }, tx.db);
       if (!approval || approval.botId !== interaction.botId || approval.taskId !== interaction.taskId || approval.tool !== "routine.activate" || approval.argsHash !== argsHash || payload.argsDigest !== argsHash || approval.account !== source.accountId || approval.audience !== "direct" || approval.policyRevision !== source.grantRevision || payload.policyRevision !== source.grantRevision) throw new BotStateError("invalid_input");
+      if (decision === "approve" && !await hasLiveRoutineChat(tx.db, interaction.ownerId, interaction.botId, interaction.chatId, true)) throw new BotStateError("not_found");
       const at = now().toISOString();
       await approvals.decide({
         ownerId: interaction.ownerId,

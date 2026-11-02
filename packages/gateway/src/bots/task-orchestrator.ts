@@ -530,6 +530,10 @@ export function createBotTaskOrchestrator(deps: {
         || run.runtime?.runtimeHandle !== binding.runtimeHandle || run.runtime.executionGeneration !== binding.executionGeneration) {
         throw new BotBrokerActionError("stale_generation");
       }
+      if (binding.requestClass === "background") {
+        await deps.assertSource?.(binding, run.signal);
+        if (active.get(binding.runId) !== run || run.stopping || run.finished) throw new BotBrokerActionError("stale_generation");
+      }
       run.queue.push({ kind: "event", event: event.event });
     },
   };

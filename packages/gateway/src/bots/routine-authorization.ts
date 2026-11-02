@@ -1,3 +1,4 @@
+import { hasNonPrivateChatScope } from "../chat/private-routine-authority.js";
 import type { BotExecutor } from "./repositories/shared.js";
 import { createHash } from "node:crypto";
 import { z } from "zod/v4";
@@ -32,7 +33,9 @@ export function routineSelection(proposal: BotRoutineProposal, source: RoutineAu
     }]
   };
 }
-export async function hasLiveRoutineChat(executor: BotExecutor, ownerId: string, botId: string, chatId: string): Promise<boolean> {
-  const row = await executor.selectFrom("bot_chat_bindings as binding").innerJoin("chats as chat", "chat.id", "binding.chat_id").select("binding.chat_id").where("binding.owner_id", "=", ownerId).where("binding.bot_id", "=", botId).where("binding.chat_id", "=", chatId).where("binding.kind", "=", "direct").where("binding.removed_at", "is", null).where("chat.owner_type", "=", "personal").where("chat.owner_id", "=", ownerId).where("chat.collaboration", "is", null).where("chat.lifecycle", "=", "active").executeTakeFirst();
-  return Boolean(row);
+export async function hasLiveRoutineChat(executor: BotExecutor, ownerId: string, botId: string, chatId: string, lock = false): Promise<boolean> {
+  let query = executor.selectFrom("bot_chat_bindings as binding").innerJoin("chats as chat", "chat.id", "binding.chat_id").select("binding.chat_id").where("binding.owner_id", "=", ownerId).where("binding.bot_id", "=", botId).where("binding.chat_id", "=", chatId).where("binding.kind", "=", "direct").where("binding.removed_at", "is", null).where("chat.owner_type", "=", "personal").where("chat.owner_id", "=", ownerId).where("chat.collaboration", "is", null).where("chat.lifecycle", "=", "active");
+  if (lock) query = query.forUpdate("chat");
+  const row = await query.executeTakeFirst();
+  return Boolean(row) && !await hasNonPrivateChatScope(executor as never, { type: "personal", ownerId }, chatId);
 }

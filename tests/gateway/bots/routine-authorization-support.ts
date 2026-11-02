@@ -33,7 +33,7 @@ export const proposal = {
 };
 export let data: Awaited<ReturnType<typeof createBotStateDatabase>>, binding: BotRuntimeBinding;
 beforeEach(async () => {
-  data = await createBotStateDatabase();
+  data = await createBotStateDatabase({ routineAuthority: true });
   await insertChat(data.db, CHAT);
   await createBotBindingsRepository(data.db).bindDirect({
     ownerId: OWNER,

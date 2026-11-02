@@ -171,6 +171,13 @@ export function createBotBrokerActions(deps: {
   }
 
   async function reauthorize(binding: PiRuntimeBinding, childSignal?: AbortSignal, finalDelivery = false): Promise<void> {
+    if (!isManagedPiBinding(binding) && binding.requestClass === "background") {
+      const signal = AbortSignal.any([deps.inference.lifetime, AbortSignal.timeout(AUTHORIZATION_TIMEOUT_MS), ...(childSignal ? [childSignal] : [])]);
+      if (signal.aborted || !deps.inference.revalidateBinding
+        || !await untilAborted(Promise.resolve(deps.inference.revalidateBinding(binding)), signal)) {
+        throw new BotBrokerActionError("not_granted");
+      }
+    }
     if (!binding.group) return;
     const runSignal = deps.registry.inferenceSignal(binding);
     if (!runSignal || (!finalDelivery && runSignal.aborted) || childSignal?.aborted) throw new BotBrokerActionError("stale_generation");

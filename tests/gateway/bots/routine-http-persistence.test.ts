@@ -16,7 +16,7 @@ let service: ReturnType<typeof createBotRoutineExecution>;
 let repo: ReturnType<typeof createBotRoutinesRepository>;
 const CHAT = "chat_routine_http";
 beforeAll(async () => {
-  data = await createBotStateDatabase();
+  data = await createBotStateDatabase({ routineAuthority: true });
   await insertChat(data.db, CHAT);
   await createBotBindingsRepository(data.db).bindDirect({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: NOW });
   const transact = createBotStateTransactions(new ChatRepository(data.db as unknown as Kysely<ChatDatabase>));
