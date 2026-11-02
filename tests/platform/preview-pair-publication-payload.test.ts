@@ -24,7 +24,7 @@ function setup() {
       revision: `${profile.service}-baseline` }, other],
     template: { containers: [{ env: [{ name: "HETZNER_API_TOKEN", value: "source-only-never-copy" }] }] } };
   const image = `europe-west1-docker.pkg.dev/matrix-test/matrix-preview-pairs/matrix-platform@sha256:${"e".repeat(64)}`;
-  const build = () => buildPreviewPairPublication(service, { input, image, profile, config });
+  const build = (raw: unknown = service) => buildPreviewPairPublication(raw, { input, image, profile, config });
   return { fixture, config, profile, input, service, latest, other, image, build };
 }
 
@@ -51,9 +51,11 @@ describe("actual candidate publication payload producer", () => {
     }
     expect(body.template.serviceAccount).toBe(s.config.serviceAccount);
   });
-  it("lets the real cloud authority consumer verify the exact selected image and secret bindings", async () => {
-    const s = setup(), built = s.build(), resource = s.service.name;
-    const live = { ...s.service, trafficStatuses: built.body.traffic.map(entry => ({ ...entry,
+  it.each([false, true])("lets the real cloud authority verify image/bindings when false fields are omitted=%s", async omitted => {
+    const s = setup(), { reconciling: _omitted, ...withoutReconciling } = s.service;
+    const response = omitted ? withoutReconciling : s.service;
+    const built = s.build(response), resource = s.service.name;
+    const live = { ...response, trafficStatuses: built.body.traffic.map(entry => ({ ...entry,
       uri: entry.tag === "cp-44444444-g1-ui" ? built.browserOrigin : entry.tag === "cp-44444444-g1-api" ? built.apiOrigin : undefined })) };
     const revision = { name: `${resource}/revisions/${built.body.template.revision}`, service: resource,
       conditions: [{ type: "Ready", state: "CONDITION_SUCCEEDED" }], ...built.body.template };

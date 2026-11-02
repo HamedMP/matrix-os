@@ -10,7 +10,7 @@ const Traffic = z.object({ type: z.enum(["TRAFFIC_TARGET_ALLOCATION_TYPE_UNSPECI
   tag: z.string().max(63).optional(), percent: z.number().int().min(0).max(100).default(0) });
 const Service = z.object({ name: z.string().max(256), etag: z.string().min(1).max(256),
   generation: z.string().regex(/^[1-9][0-9]*$/).max(20), observedGeneration: z.string().regex(/^[1-9][0-9]*$/).max(20),
-  reconciling: z.literal(false), terminalCondition: z.object({ type: z.literal("Ready"), state: z.literal("CONDITION_SUCCEEDED") }),
+  reconciling: z.literal(false).optional(), terminalCondition: z.object({ type: z.literal("Ready"), state: z.literal("CONDITION_SUCCEEDED") }),
   latestReadyRevision: z.string().max(256), uri: z.string().max(512), urls: z.array(z.string().max(512)).max(128).default([]),
   traffic: z.array(Traffic).min(1).max(126), trafficStatuses: z.array(Traffic).min(1).max(128) });
 const Identity = z.strictObject({ pairId: PreviewPairIdSchema, generation: PreviewPairGenerationSchema,
