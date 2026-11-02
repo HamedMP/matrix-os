@@ -25,11 +25,24 @@ export async function assertPrivateRoutineRequest(executor: Executor, owner: Cha
   }
 }
 
-/** Use the persisted original turn, including for retries whose run request ID changes. */
+/** Preserve source identity when a routine queue is steered into an ordinary turn or retried. */
+export async function assertPrivateRoutineTurn(executor: Executor, owner: ChatOwner, chatId: string, turnId: string): Promise<void> {
+  const turn = await executor.selectFrom("chat_turns").select("client_request_id")
+    .where("id", "=", turnId).where("chat_id", "=", chatId).executeTakeFirst();
+  if (turn?.client_request_id.startsWith("req_routine_")) {
+    return assertPrivateRoutineRequest(executor, owner, chatId, turn.client_request_id);
+  }
+  const queued = await executor.selectFrom("chat_queued_turns").select("client_request_id")
+    .where("chat_id", "=", chatId).where("claimed_turn_id", "=", turnId)
+    .where("client_request_id", "like", "req\\_routine\\_%").limit(1).executeTakeFirst();
+  if (queued) await assertPrivateRoutineRequest(executor, owner, chatId, queued.client_request_id);
+}
+
+/** Use the persisted turn, including retries whose run request ID changes. */
 export async function assertPrivateRoutineRun(executor: Executor, owner: ChatOwner, chatId: string, runId: string): Promise<void> {
-  const turn = await executor.selectFrom("chat_runs as run").innerJoin("chat_turns as turn", "turn.id", "run.turn_id")
-    .select("turn.client_request_id").where("run.id", "=", runId).where("run.chat_id", "=", chatId).executeTakeFirst();
-  if (turn) await assertPrivateRoutineRequest(executor, owner, chatId, turn.client_request_id);
+  const run = await executor.selectFrom("chat_runs").select("turn_id")
+    .where("id", "=", runId).where("chat_id", "=", chatId).executeTakeFirst();
+  if (run) await assertPrivateRoutineTurn(executor, owner, chatId, run.turn_id);
 }
 
 /** Terminalize a legacy queue under its caller's Chat lock, without publishing its private input. */

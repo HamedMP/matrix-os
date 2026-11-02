@@ -1,3 +1,4 @@
+import { assertPrivateRoutineRequest } from "./private-routine-authority.js";
 import {
   CanonicalChatIdSchema,
   CanonicalChatMessageSchema,
@@ -163,6 +164,10 @@ export class ChatSteeringRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!chat) throw new ChatNotFoundError(chatId);
+      const source = await trx.selectFrom("chat_queued_turns").select("client_request_id")
+        .where("id", "=", queuedTurnId).where("chat_id", "=", chatId).executeTakeFirst();
+      if (!source) throw new ChatConflictError(chatId, Number(chat.revision));
+      await assertPrivateRoutineRequest(trx, owner, chatId, source.client_request_id);
       const duplicate = await trx.selectFrom("chat_run_steers").selectAll()
         .where("chat_id", "=", chatId)
         .where("client_request_id", "=", clientRequestId)
@@ -327,6 +332,12 @@ export class ChatSteeringRepository {
         .forUpdate()
         .executeTakeFirst();
       if (!chat) throw new ChatNotFoundError(chatId);
+      if (input.queuedTurnId && input.outcome === "accepted") {
+        const source = await trx.selectFrom("chat_queued_turns").select("client_request_id")
+          .where("id", "=", input.queuedTurnId).where("chat_id", "=", chatId).executeTakeFirst();
+        if (!source) throw new ChatConflictError(chatId, Number(chat.revision));
+        await assertPrivateRoutineRequest(trx, owner, chatId, source.client_request_id);
+      }
       const steer = await trx.selectFrom("chat_run_steers").selectAll()
         .where("chat_id", "=", chatId)
         .where("run_id", "=", runId)

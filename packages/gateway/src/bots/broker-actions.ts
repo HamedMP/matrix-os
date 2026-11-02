@@ -178,6 +178,7 @@ export function createBotBrokerActions(deps: {
         throw new BotBrokerActionError("not_granted");
       }
     }
+    if (!deps.registry.lookupRun(binding)) throw new BotBrokerActionError("stale_generation");
     if (!binding.group) return;
     const runSignal = deps.registry.inferenceSignal(binding);
     if (!runSignal || (!finalDelivery && runSignal.aborted) || childSignal?.aborted) throw new BotBrokerActionError("stale_generation");
