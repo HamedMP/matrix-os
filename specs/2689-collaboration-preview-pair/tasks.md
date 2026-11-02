@@ -64,9 +64,9 @@ member activation, inherited prompt persistence and outsider denial on exact bui
 A broken candidate records the failed product step while its healthy pair remains
 available. No auth or private-directory shortcut may substitute for the real path.
 
-- [ ] T026 [US3] Add strict scenario-result and build-binding cases in `tests/platform/preview-pair-evidence.test.ts`, then implement bounded evidence/report handling in `packages/platform/src/preview-pair/evidence.ts`.
+- [x] T026 [US3] Add strict scenario-result and build-binding cases in `tests/platform/preview-pair-evidence.test.ts`, then implement bounded evidence/report handling in `packages/platform/src/preview-pair/evidence.ts`.
 - [ ] T027 [US3] Add deterministic first-party journey coverage and required scenario collection in `tests/e2e/desktop/preview-pair-collaboration.e2e.test.ts`, preserving real client/relay/owner routing and marking synthetic provider boundaries.
-- [ ] T028 [US3] Implement the protected normal-login live acceptance entry in `scripts/preview-pair/qualify.ts`, covering fresh creation opt-in, separate first later Share, member Chat prompt/reopen and outsider denial; no generated peer sessions.
+- [x] T028 [US3] Implement the protected normal-login live acceptance entry in `scripts/preview-pair/qualify.ts`, covering fresh creation opt-in, separate first later Share, member Chat prompt/reopen and outsider denial; no generated peer sessions.
 - [ ] T029 [US3] Capture equivalent Web Desktop and Electron Desktop observations using `specs/2689-collaboration-preview-pair/quickstart.md`; attach exact-build captures outside Git and record failed/not-run cases truthfully.
 
 ## Phase 6: US4 — Update, diagnose and retire pairs (P2)
@@ -173,3 +173,5 @@ checks, documentation and review work first.
   without a diagnostic; seven other repository projects passed and T037 stays open.
 
 Launcher implementation checkpoint: T021–T024/T035 code and focused tests are present; see `launcher-validation.md`. T025 passed its actual Linux three-process fixture lane (production build8e0fd84fb0); protected real-provider and native macOS acceptance remain T041. Public docs PR, protected live collaboration and review gates are separate open deliverables.
+
+Guided evidence export implementation: T026/T028 implemented with 24 focused tests across three suites; actual fixture-producer qualification remains pending for T027. Public docs draft: https://github.com/FinnaAI/matrix-os-site/pull/322 (responsive rendering unqualified). See `qualification-validation.md`; no live/review/Linear completion is implied.
