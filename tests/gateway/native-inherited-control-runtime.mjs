@@ -17,6 +17,8 @@ const setterPath = resolve(process.argv[setterIndex + 1]);
 const relayPath = fileURLToPath(new URL("./native-inherited-control-fixtures/relay.mjs", import.meta.url));
 const servicePath = fileURLToPath(new URL("./native-inherited-control-fixtures/service.mjs", import.meta.url));
 const writerPath = fileURLToPath(new URL("./native-inherited-control-fixtures/copied-writer.mjs", import.meta.url));
+const guardPath = fileURLToPath(new URL("./native-inherited-control-fixtures/guard-service.mjs", import.meta.url));
+const workerPath = fileURLToPath(new URL("./native-inherited-control-fixtures/adoption-worker.mjs", import.meta.url));
 const results = [], evidence = [], cleanups = new Set(); let native;
 async function until(predicate, label) {
   const end = process.hrtime.bigint() + 3_000_000_000n;
@@ -45,7 +47,7 @@ function stableFixtureFDs() {
     try { fstatSync(fd); return true; } catch (error) { if (error.code === "EBADF") return false; throw error; }
   }));
 }
-async function fixture({ pidfdAncillary = false, closedStderr = false, copiedWriter = false } = {}) {
+async function fixture({ pidfdAncillary = false, closedStderr = false, copiedWriter = false, guardMode = null } = {}) {
   const beforePair = copiedWriter ? stableFixtureFDs() : null;
   const pair = native.controlPair(), messages = [], writerMessages = [];
   let relay, birth, exited, writer, writerBirth, writerExited, fault, stderrBytes = 0;
@@ -84,8 +86,9 @@ async function fixture({ pidfdAncillary = false, closedStderr = false, copiedWri
       assert.equal(candidates.length, 1, "exact one opposite parent endpoint, no guessed fd");
       parentFixtureFD = candidates[0]; assert.equal(fstatSync(parentFixtureFD).isSocket(), true);
     }
-    assert.ok(!(pidfdAncillary && closedStderr));
-    const extra = pidfdAncillary ? ["--pidfd-ancillary", setterPath] : closedStderr ? ["--closed-stderr"] : [];
+    assert.ok([pidfdAncillary, closedStderr, copiedWriter, !!guardMode].filter(Boolean).length <= 1);
+    assert.ok(guardMode === null || ["invalid-argument", "worker-attempt", "capacity127", "gc-role"].includes(guardMode));
+    const extra = pidfdAncillary ? ["--pidfd-ancillary", setterPath] : closedStderr ? ["--closed-stderr"] : guardMode ? ["--guard-mode", guardMode] : [];
     try { relay = spawn(process.execPath, [relayPath, addonPath, ...extra], { stdio: [fd, fd, "pipe", "ipc"], detached: true, env: process.env }); }
     finally { native.close(pair.child); }
     exited = new Promise((resolveExit, reject) => { relay.once("error", reject); relay.once("close", (code, signal) => resolveExit({ code, signal })); });
@@ -257,9 +260,45 @@ try {
     await f.send("exit"); const serviceExit = await f.wait(m => m.event === "service-exit");
     assert.equal(serviceExit.code, 0); assert.equal(serviceExit.retainedServiceAlive, false); await f.cleanup();
   });
+  for (const mode of ["invalid-argument", "worker-attempt", "capacity127", "gc-role"]) if (results[0]?.ok) {
+    await check(`process-local inherited guard: ${mode}`, async () => {
+      const f = await fixture({ guardMode: mode }), spawned = await f.wait(m => m.event === "spawned");
+      const observed = await f.wait(m => m.event === "service" && m.message.event === "guard-result" && m.message.mode === mode);
+      const value = observed.message.result; evidence.push({ case: mode, ...value });
+      await f.send("ping"); const pong = await f.wait(m => m.event === "service" && m.message.event === "pong");
+      assert.equal(pong.message.servicePID, spawned.actualServicePID); assert.equal(pong.retainedServiceAlive, true);
+      assert.equal(observed.retainedServiceAlive, true); assert.equal(native.childAlive(f.birth), true);
+      if (mode === "invalid-argument") {
+        assert.equal(value.first.nativeUnavailable, true); assert.equal(value.first.unexpectedSuccess, false);
+        assert.equal(value.retry.nativeUnavailable, true, "invalid call atomically burned process-wide adoption"); assert.equal(value.retry.unexpectedSuccess, false);
+        assert.equal(value.afterFds, value.beforeFds); assert.equal(value.wrongRolesRejected, true);
+      } else if (mode === "worker-attempt") {
+        assert.equal(value.worker.nativeUnavailable, true); assert.equal(value.worker.unexpectedSuccess, false); assert.equal(value.worker.cleanupError, false);
+        assert.ok(value.actualThreadId > 0); assert.equal(value.worker.threadId, value.actualThreadId);
+        assert.equal(value.workerExit, 0); assert.equal(value.exitObserved, true, "actual owned Worker exit, not a PID label");
+        assert.equal(value.retry.nativeUnavailable, true, "off-main-thread attempt must burn the same global admission"); assert.equal(value.retry.unexpectedSuccess, false);
+      } else if (mode === "capacity127") {
+        assert.equal(value.pairs, 63); assert.equal(value.listenerHeld, true); assert.equal(value.chargedSlots, 127);
+        assert.equal(value.first.nativeUnavailable, true, "new inherited role requires two shared slots at127"); assert.equal(value.first.unexpectedSuccess, false);
+        assert.equal(value.afterFds, value.beforeFds, "capacity refusal installs no leaked descriptors");
+        assert.equal(value.retryAfterRelease.nativeUnavailable, true); assert.equal(value.retryAfterRelease.unexpectedSuccess, false); assert.equal(value.temporaryRootRemoved, true);
+      } else if (mode === "gc-role") {
+        assert.equal(value.duringFds, value.beforeFds + 2, "opaque inherited owner holds socket duplicate and creator pidfd");
+        assert.equal(value.afterFds, value.beforeFds, "actual GC finalizer releases exactly2 without process death");
+        assert.ok(value.iterations > 0 && value.iterations <= 64); assert.equal(value.stdioOpen, true);
+        assert.equal(value.aliasWriteError, "EPIPE", "actual GC shutdown fences copied endpoint aliases");
+        assert.equal(value.aliasReadBytes, 0); assert.equal(value.aliasReadError, null); // No incoming bytes queued in this case.
+        assert.equal(value.retry.nativeUnavailable, true); assert.equal(value.retry.unexpectedSuccess, false); assert.equal(value.legacyGettersRejected, true);
+        const ready = await f.receive(); assert.equal(ready.data.toString(), "native-ready"); assert.equal(ready.writer.pid, spawned.actualServicePID);
+        assert.equal(observed.relayAliasesOpen, true); assert.equal(await f.receive(), false, "outer EOF while service/relay aliases remain owned");
+      }
+      await f.send("exit"); const exit = await f.wait(m => m.event === "service-exit");
+      assert.equal(exit.code, 0); assert.equal(exit.retainedServiceAlive, false); await f.cleanup();
+    });
+  }
 } catch (error) { results.push({ name: "setup", ok: false, error: String(error.stack ?? error) }); }
 finally { for (const cleanup of [...cleanups]) { try { await cleanup(); } catch (error) { results.push({ name: "cleanup", ok: false, error: String(error) }); } } }
-const paths = [addonPath, setterPath, fileURLToPath(import.meta.url), relayPath, servicePath, writerPath, fileURLToPath(new URL("./native-inherited-control-fixtures/enable-pidfd.c", import.meta.url))];
+const paths = [addonPath, setterPath, fileURLToPath(import.meta.url), relayPath, servicePath, writerPath, guardPath, workerPath, fileURLToPath(new URL("./native-inherited-control-fixtures/enable-pidfd.c", import.meta.url))];
 const artifacts = await Promise.all(paths.map(async path => ({ path, sha256: createHash("sha256").update(await readFile(path)).digest("hex") })));
 console.log(JSON.stringify({ platform: process.platform, arch: process.arch, node: process.version, scope: "actual inherited-control transport slices; fixture IPC is not product proof", sourceEnabled: false, accountQualified: false, artifacts, results, evidence, cleanupPending: cleanups.size, passed: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length }, null, 2));
 process.exitCode = results.some(r => !r.ok) || cleanups.size ? 1 : 0;
