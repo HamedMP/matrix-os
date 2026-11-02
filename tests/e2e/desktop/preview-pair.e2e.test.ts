@@ -17,7 +17,7 @@ const root = resolve(__dirname, "../../.."), main = join(root, "desktop/out/main
 /** Required lane: never skip. Real Electron/main/preload/renderer/AuthService and
  * owned sessions, explicit synthetic Source/provider transport. No live Clerk,
  * provisioning, model call or real collaboration acceptance is implied. */
-it("isolates sessions, restores a closed preview window on reopen and preserves the peer at sign-out", async () => {
+it("isolates sessions, recovers missing/crashed preview windows and preserves the peer at sign-out", async () => {
   await readFile(main); // Missing production build is a required-lane failure.
   const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", timeout: 10_000 }).trim();
   const home = await mkdtemp(join(tmpdir(), "eng418-native-pair-")), applications: ElectronApplication[] = [];
@@ -116,10 +116,30 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
     opened.owner.page = restored.page;
     await restored.page.getByRole("status").filter({ hasText: "Collaboration preview · Owner" }).waitFor();
     expect(await restored.page.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: manifest.members.owner.actorId });
-    await opened.owner.page.evaluate(() => window.operator.invoke("auth:sign-out", {}));
+    expect(await opened.owner.app.evaluate(async ({ BrowserWindow }) => {
+      const contents = BrowserWindow.getAllWindows()[0].webContents;
+      const gone = new Promise<void>(resolve => contents.once("render-process-gone", () => resolve()));
+      contents.forcefullyCrashRenderer(); await gone;
+      return contents.isCrashed();
+    })).toBe(true);
+    const afterCrash = issuePreviewPairLaunch({ manifest, role: "owner", platform: process.platform as "linux", arch: process.arch as "x64", sourceOrigin: "https://app.matrix-os.com" }, secret, Date.now());
+    const recovered = await startPreviewDesktop({ executable: wrapper, proof: afterCrash, userData: paths.userData });
+    expect(recovered.reused).toBe(true); await recovered.stop();
+    expect(await opened.owner.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.isCrashed()),
+      "Verified reopen must recover a crashed renderer before acknowledging success").toBe(false);
+    // Playwright's old Page retains its crash marker. Inspect the actual reloaded
+    // renderer through Electron instead; preload, normal IPC and AuthService stay real.
+    await expect.poll(async () => opened.owner.app.evaluate(async ({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('document.body.textContent.includes("Collaboration preview")'))).toBe(true);
+    expect(await opened.owner.app.evaluate(async ({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('window.operator.invoke("auth:status", {})')))
+      .toMatchObject({ signedIn: true, userId: manifest.members.owner.actorId });
+    await opened.owner.app.evaluate(async ({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('window.operator.invoke("auth:sign-out", {})'));
     expect(await opened.member.page.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: manifest.members.member.actorId });
     expect(await normalPage.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: "user_normal_fixture", runtimeSlot: "primary" });
-    expect(await opened.owner.page.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: false });
+    expect(await opened.owner.app.evaluate(async ({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('window.operator.invoke("auth:status", {})'))).toMatchObject({ signedIn: false });
   } finally {
     for (const app of applications.reverse()) await app.close();
     await new Promise<void>(resolve => server.close(() => resolve()));
