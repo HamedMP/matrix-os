@@ -3,6 +3,7 @@
  * This suite has not been run in the database-free preparation phase.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { registerInheritedRoutinePostgresTests } from "./routine-inherited-scope-postgres.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { sql } from "kysely";
 import { createBotInteractionService } from "../../../packages/gateway/src/bots/interactions.js";
@@ -22,6 +23,7 @@ const read: BotToolRequest = {
     relPath: "fixture.txt"
   }
 };
+registerInheritedRoutinePostgresTests();
 const write: BotToolRequest = {
   toolCallId: "call_pg_write",
   capability: "artifact.write",
