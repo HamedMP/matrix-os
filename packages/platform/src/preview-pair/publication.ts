@@ -28,9 +28,11 @@ export function createPreviewPairPublisher(options: Options): PreviewPairPublish
   const repository = `${profile.region}-docker.pkg.dev/${profile.project}/${profile.imageRepository}/matrix-platform`;
   const resource = previewPairCloudResource(profile.project, profile.region, profile.service);
   const operations = createPreviewPairOperationReader({ ...options, project: profile.project, region: profile.region, service: profile.service });
-  const provider = async (url: string, signal: AbortSignal, init?: RequestInit) => {
+  const provider = async (url: string, signal: AbortSignal, init?: RequestInit, beforeSend?: () => void) => {
     const deadline = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
     const token = z.string().min(1).max(16_384).parse(await options.accessToken(deadline));
+    deadline.throwIfAborted();
+    beforeSend?.();
     const response = await (options.fetchImpl ?? fetch)(url, { ...init, headers: { authorization: `Bearer ${token}`,
       ...(init?.body ? { "content-type": "application/json" } : {}) }, signal: deadline, redirect: "error" });
     if (!response.ok) {
@@ -39,7 +41,7 @@ export function createPreviewPairPublisher(options: Options): PreviewPairPublish
     }
     return response;
   };
-  const run = (path: string, signal: AbortSignal, init?: RequestInit) => provider(`https://run.googleapis.com/v2/${path}`, signal, init);
+  const run = (path: string, signal: AbortSignal, init?: RequestInit, beforeSend?: () => void) => provider(`https://run.googleapis.com/v2/${path}`, signal, init, beforeSend);
   async function inspect(input: PreviewPairPublicationIdentity, signal: AbortSignal) {
     let row = await readOwnedPublication(db, config, input, now());
     if (row.publication_state === "unissued") return { publication: "issuing" as const, ready: false };
@@ -104,20 +106,30 @@ export function createPreviewPairPublisher(options: Options): PreviewPairPublish
         if (existing.status !== 404) { if (existing.ok) await existing.body?.cancel(); throw new PreviewPairConflictError(); }
         const reservation = await beginPreviewPairPublication(db, config, input, now(), publicationId);
         if (!reservation.issue) return inspect(input, signal);
-        const fresh = await readOwnedPublication(db, config, input, now());
-        if (fresh.publication_id !== publicationId || fresh.publication_state !== "issuing"
-          || !await publicationParentAllows(db, input, now())) throw new PreviewPairConflictError();
-        signal.throwIfAborted();
-        const response = await run(`${resource}?updateMask=template,traffic`, signal, { method: "PATCH", body: JSON.stringify(payload.body) });
-        if (!response.ok) {
-          // A definite 4xx rejects this mutation. Transport failures, 5xx and
-          // malformed acknowledgements remain issuing; never repeat the effect.
-          if (response.status >= 400 && response.status < 500) await recordPreviewPairPublication(db, input, publicationId, { rejected: true }, now());
-          throw new PreviewPairUpstreamError();
+        let sent = false;
+        try {
+          const fresh = await readOwnedPublication(db, config, input, now());
+          if (fresh.publication_id !== publicationId || fresh.publication_state !== "issuing"
+            || !await publicationParentAllows(db, input, now())) throw new PreviewPairConflictError();
+          signal.throwIfAborted();
+          const response = await run(`${resource}?updateMask=template,traffic`, signal,
+            { method: "PATCH", body: JSON.stringify(payload.body) }, () => { sent = true; });
+          if (!response.ok) {
+            // A definite 4xx rejects this mutation. Transport failures, 5xx and
+            // malformed acknowledgements remain issuing; never repeat the effect.
+            if (response.status >= 400 && response.status < 500) await recordPreviewPairPublication(db, input, publicationId, { rejected: true }, now());
+            throw new PreviewPairUpstreamError();
+          }
+          const operation = z.object({ name: z.string().max(256) }).parse(await readPreviewPairJson(response, 256 * 1024));
+          await recordPreviewPairPublication(db, input, publicationId, { operationName: operations.validateName(operation.name) }, now());
+          return { publication: "accepted" as const, ready: false };
+        } catch (error: unknown) {
+          // Only this reservation winner can prove it exited before invoking
+          // the mutation transport. Token/deadline/authority failures cannot
+          // leave recovery waiting for an operation that was never sent.
+          if (!sent) await recordPreviewPairPublication(db, input, publicationId, { rejected: true }, now());
+          throw error;
         }
-        const operation = z.object({ name: z.string().max(256) }).parse(await readPreviewPairJson(response, 256 * 1024));
-        await recordPreviewPairPublication(db, input, publicationId, { operationName: operations.validateName(operation.name) }, now());
-        return { publication: "accepted" as const, ready: false };
       });
     },
   };

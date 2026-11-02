@@ -6,18 +6,34 @@ import { loadPreviewPairConfig } from "../../packages/platform/src/preview-pair/
 import { loadPreviewPairSourceProfile, previewPairSourceFingerprint } from "../../packages/platform/src/preview-pair/source-profile.js";
 import { preparePreviewPairCloudIntent, stopPreviewPairCloudIntent } from "../../packages/platform/src/preview-pair/cloud-intents.js";
 import { createPreviewPairPublisher } from "../../packages/platform/src/preview-pair/publication.js";
+import { createPreviewPairIntentRecovery } from "../../packages/platform/src/preview-pair/intent-recovery.js";
+import { createPreviewPairIntentCloudCleanup } from "../../packages/platform/src/preview-pair/intent-cloud.js";
+import { requestPreviewPairStop } from "../../packages/platform/src/preview-pair/lifecycle.js";
+
+const reservationBoundary = vi.hoisted(() => ({ after: undefined as (() => Promise<void>) | undefined }));
+vi.mock("../../packages/platform/src/preview-pair/publication-journal.js", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../packages/platform/src/preview-pair/publication-journal.js")>();
+  return { ...actual, async beginPreviewPairPublication(...args: Parameters<typeof actual.beginPreviewPairPublication>) {
+    const result = await actual.beginPreviewPairPublication(...args);
+    // Select the race immediately after the actual committed reservation; all
+    // journal writes, caller/parent checks and recovery remain production code.
+    if (result.issue) await reservationBoundary.after?.();
+    return result;
+  } };
+});
 
 describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("source-owned single-effect publication", () => {
   let f: Awaited<ReturnType<typeof createSeededPreviewPair>>;
-  beforeEach(async () => { f = await createSeededPreviewPair(); }, 30_000);
-  afterEach(async () => { await f?.destroy(); });
-  async function setup() {
+  beforeEach(async () => { reservationBoundary.after = undefined; f = await createSeededPreviewPair(); }, 30_000);
+  afterEach(async () => { reservationBoundary.after = undefined; await f?.destroy(); });
+  async function setup(generation = 1) {
     const fixture = createPreviewPairSourceFixture();
     fixture.env.MATRIX_PREVIEW_PAIR_SOURCE_PROFILE = JSON.stringify({ ...fixture.profile, imageRepository: "matrix-preview-pairs" });
     const loaded = loadPreviewPairConfig(fixture.env); if (!loaded.enabled) throw new Error("Enabled fixture required");
     const profile = loadPreviewPairSourceProfile(fixture.env, loaded)!;
     const config = { ...loaded, sourceProfileFingerprint: previewPairSourceFingerprint(profile, loaded) };
-    const identity = { pairId: "44444444-4444-4444-8444-444444444444", generation: 1, pr: 3023,
+    const identity = { pairId: generation === 1 ? "44444444-4444-4444-8444-444444444444" : f.pair.pair_id,
+      generation, pr: generation === 1 ? 3023 : f.pair.pr,
       requesterId: "user_requester", sourceSha: f.pair.source_sha, controllerRunId: 42, profileFingerprint: config.sourceProfileFingerprint };
     await preparePreviewPairCloudIntent(f.db, config, identity, PAIR_NOW);
     const input = { ...identity, imageSha256: "e".repeat(64) }, resource = `projects/${profile.project}/locations/${profile.region}/services/${profile.service}`;
@@ -28,7 +44,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("source-owned single-effe
       latestReadyRevision: `${resource}/revisions/${profile.service}-baseline`, traffic: [base],
       trafficStatuses: [{ type: "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", percent: 100, revision: `${profile.service}-baseline` }] };
     const operation = { name: `projects/${profile.project}/locations/${profile.region}/operations/publication-test`, done: false };
-    let template: any, patchStatus = 200, loseReply = false, discoverable = false, cancelDuringPatch = false, wrongImage = false;
+    let template: any, patchStatus = 200, loseReply = false, discoverable = false, cancelDuringPatch = false, wrongImage = false, iamTimeout = false;
     const saved = () => f.db.executor.selectFrom("preview_pair_cloud_intents").selectAll().where("pair_id", "=", input.pairId).executeTakeFirstOrThrow();
     const fetchImpl = vi.fn<typeof fetch>(async (target, init) => {
       const url = new URL(String(target));
@@ -61,15 +77,40 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("source-owned single-effe
         containers: template.containers.map((container: any) => ({ ...container, image: wrongImage ? image.replace(input.imageSha256, "d".repeat(64)) : container.image })) }) : new Response(null, { status: 404 });
       throw new Error("Unexpected provider endpoint");
     });
-    const publisher = createPreviewPairPublisher({ db: f.db, config, profile, accessToken: async () => "iam-fixture", fetchImpl, now: () => PAIR_NOW });
+    const publisher = createPreviewPairPublisher({ db: f.db, config, profile, accessToken: async () => {
+      if (iamTimeout && (await saved()).publication_state === "issuing") throw new DOMException("Selected IAM deadline", "TimeoutError");
+      return "iam-fixture";
+    }, fetchImpl, now: () => PAIR_NOW });
     if (!publisher) throw new Error("Configured publisher required");
     const patches = () => fetchImpl.mock.calls.filter(([, init]) => init?.method === "PATCH");
     return { publisher, input, identity, profile, config, fetchImpl, saved, patches, operation, service,
-      mode: (options: { status?: number; loseReply?: boolean; discoverable?: boolean; cancel?: boolean; wrongImage?: boolean }) => {
+      mode: (options: { status?: number; loseReply?: boolean; discoverable?: boolean; cancel?: boolean; wrongImage?: boolean; iamTimeout?: boolean }) => {
         patchStatus = options.status ?? 200; loseReply = options.loseReply ?? false; discoverable = options.discoverable ?? false;
-        cancelDuringPatch = options.cancel ?? false; wrongImage = options.wrongImage ?? false;
+        cancelDuringPatch = options.cancel ?? false; wrongImage = options.wrongImage ?? false; iamTimeout = options.iamTimeout ?? false;
       } };
   }
+  it.each(["request cancellation", "caller abort", "parent shutdown", "IAM timeout"])("releases an unsent publication after %s through real intent cleanup", async fault => {
+    const s = await setup(fault === "parent shutdown" ? 2 : 1), abort = new AbortController();
+    reservationBoundary.after = async () => {
+      if (fault === "request cancellation") await stopPreviewPairCloudIntent(f.db, s.input.pairId, s.input.generation, 42, PAIR_NOW);
+      if (fault === "caller abort") abort.abort();
+      if (fault === "parent shutdown") await requestPreviewPairStop(f.db, f.pair.pair_id, 1, f.pair.revision, PAIR_NOW);
+    };
+    if (fault === "IAM timeout") s.mode({ iamTimeout: true });
+    await expect(s.publisher.publish(s.input, abort.signal)).rejects.toThrow();
+    expect(s.patches()).toHaveLength(0);
+    expect(await s.saved()).toMatchObject({ publication_state: "rejected", operation_name: null });
+    await stopPreviewPairCloudIntent(f.db, s.input.pairId, s.input.generation, 42, PAIR_NOW);
+    const retire = createPreviewPairIntentCloudCleanup({ db: f.db, project: s.profile.project, region: s.profile.region,
+      service: s.profile.service, profileFingerprint: s.config.sourceProfileFingerprint, now: () => PAIR_NOW,
+      accessToken: async () => "iam-fixture", fetchImpl: s.fetchImpl });
+    const recover = createPreviewPairIntentRecovery({ db: f.db, admissionEnabled: true,
+      profileFingerprint: s.config.sourceProfileFingerprint, now: () => PAIR_NOW,
+      inspectRequest: async () => ({ open: false, requested: false, sourceSha: s.input.sourceSha }), retire });
+    await recover(1);
+    expect(await s.saved()).toMatchObject({ state: "stopped", publication_state: "rejected" });
+    expect(s.patches()).toHaveLength(0);
+  });
   it("journals before its one effect and only becomes ready after successful operation and immutable-image proof", async () => {
     const s = await setup();
     expect(await s.publisher.publish(s.input, AbortSignal.timeout(5000))).toMatchObject({ publication: "accepted", ready: false });
