@@ -16,6 +16,8 @@ import { z } from "zod/v4";
 import { safeHttpStatus } from "../safe-http-status.js";
 import { botCreationFailureReason, type BotCreationFailureReason } from "../creation-error.js";
 
+import { createBotRoutineClient, type BotRoutineClient } from "./routine-client.js";
+
 type BotRequest = (path: string, method: "GET" | "POST" | "DELETE", body?: unknown, options?: { signal?: AbortSignal }) => Promise<unknown>;
 
 const safeMessages: Record<number, string> = {
@@ -45,6 +47,7 @@ function safeError(error: unknown): BotClientError {
 
 export interface BotClient extends Partial<BotConnectionClient> {
   routineDestination?: RoutineDestinationClient;
+  routines?: BotRoutineClient;
   ensureDirectChat(agentId: string): Promise<string | null>;
   directChat(agentId: string): Promise<string | null>;
   directBot(chatId: string): Promise<string | null>;
@@ -78,6 +81,7 @@ export function createBotClient(request: BotRequest): BotClient {
       reset: (input, signal) => call(`${ROUTINE_DESTINATION_PATH}/reset`, "POST", RoutineDestinationViewSchema, RoutineCliResetTargetSchema.parse(input), signal),
     },
     ...createBotConnectionClient((path, method, body) => request(path, method, body)),
+    routines: createBotRoutineClient((path, method, body) => call(path, method, z.unknown(), body)),
     ensureDirectChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "POST", BotChatBindingResponseSchema, {})).chatId,
     directChat: async (agentId) => (await call(`${agentPath(agentId)}/direct-chat`, "GET", BotChatBindingResponseSchema)).chatId,
     directBot: async (chatId) => (await call(`${chatPath(chatId)}/bot`, "GET", BotDirectChatResponseSchema)).agentId,

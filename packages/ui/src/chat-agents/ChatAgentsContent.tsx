@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { ScheduleCenter } from "./bots/ScheduleCenter.js";
 import { ChatAgentsPanel } from "./ChatAgentsEntry.js";
 import { useChatAgentsNavigation } from "./ChatAgentsNavigation.js";
 import type { ChatAgentClient } from "./client.js";
@@ -28,7 +29,7 @@ export function ChatAgentsContent({ client, scopeKey, onOpenBotChat, hostedChrom
       className="min-h-0 min-w-0 flex-1">
       {children}
     </div>
-    {opened ? <ChatAgentsPanel client={opened.client} view={opened.view} onStartChat={opened.onStartChat} onSetup={opened.onSetup} providerCatalog={providerCatalog}
+    {opened?.view === "schedules" ? <ScheduleCenter key={scopeKey} client={opened.client} headerLeading={headerLeading} onOpenBotChat={onOpenBotChat} onClose={() => close?.(true)}/> : opened ? <ChatAgentsPanel client={opened.client} view={opened.view} onStartChat={opened.onStartChat} onSetup={opened.onSetup} providerCatalog={providerCatalog}
       hostedChrome={hostedChrome} headerLeading={headerLeading} onTitleChange={onTitleChange} onOpenBotChat={onOpenBotChat} onClose={() => close?.(true)} /> : null}
   </>;
 }

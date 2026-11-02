@@ -6,8 +6,8 @@ export type OpenAgents = {
   client: ChatAgentClient;
   onSetup?: () => void;
   onStartChat?: StartAgentChat;
-  view?: "library" | "recipes";
-  title?: "Your AI team" | "New agent" | "Edit agent";
+  view?: "library" | "recipes" | "schedules";
+  title?: "Your AI team" | "New agent" | "Edit agent" | "Schedules";
 };
 type BotDetailsRequest = {client: ChatAgentClient; chatId: string; agentId: string; sequence: number};
 type Navigation = {
@@ -41,7 +41,7 @@ function LocalWorkspace({ children }: { children: ReactNode }) {
     generationRef.current += 1; setGeneration(generationRef.current);
     setDetailsRequest(null);
     trigger.current = element;
-    setOpened({ ...value, title: value.view === "recipes" ? "New agent" : "Your AI team" });
+    setOpened({ ...value, title: value.view === "schedules" ? "Schedules" : value.view === "recipes" ? "New agent" : "Your AI team" });
   }, []);
   const setTitle = useCallback((client: ChatAgentClient, ownerGeneration: number, title: NonNullable<OpenAgents["title"]>) => {
     if (generationRef.current !== ownerGeneration) return;
