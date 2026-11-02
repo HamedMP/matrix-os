@@ -109,6 +109,8 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(builder).toContain("require.resolve('node-gyp/bin/node-gyp.js'");
     expect(builder).toContain("join(nodePtyRoot, 'build', 'Release', 'pty.node')");
     expect(builder).toContain("require('node-pty')");
+    expect(builder).toContain('} catch (error) {');
+    expect(builder).toContain('error instanceof Error ? error.stack ?? error.message : error');
   });
 
   it('retains frozen installs and keyed Next and browser caches', () => {

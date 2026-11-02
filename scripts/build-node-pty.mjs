@@ -31,8 +31,11 @@ if (!existsSync(nativeModulePath)) {
 
 try {
   require('node-pty');
-} catch {
-  console.error('[build-node-pty] rebuilt native module failed to load');
+} catch (error) {
+  console.error(
+    '[build-node-pty] rebuilt native module failed to load',
+    error instanceof Error ? error.stack ?? error.message : error,
+  );
   process.exit(1);
 }
 
