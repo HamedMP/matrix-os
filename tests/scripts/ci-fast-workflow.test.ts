@@ -96,6 +96,17 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(workflow.jobs.e2e['runs-on']).toBe('ubuntu-24.04');
   });
 
+  it('builds node-pty from source before E2E prerequisites', () => {
+    const steps = workflow.jobs.e2e.steps;
+    const install = steps.findIndex(step => step.run === 'pnpm install --frozen-lockfile');
+    const rebuild = steps.findIndex(step => step.run === 'pnpm rebuild node-pty');
+    const prepare = steps.findIndex(step => step.run === 'bun run test:prepare');
+
+    expect(rebuild).toBeGreaterThan(install);
+    expect(rebuild).toBeLessThan(prepare);
+    expect(steps[rebuild]?.env?.npm_config_build_from_source).toBe('true');
+  });
+
   it('retains frozen installs and keyed Next and browser caches', () => {
     expect(source).not.toContain('runs-on: ${{');
     expect(workflow.jobs['funded-postgres']['runs-on']).toBe('ubuntu-latest');
