@@ -1051,7 +1051,9 @@ jobs:
     name: E2E Tests (${{ matrix.lane }})
     needs: [changes, ci-backend]
     if: always() && needs.changes.result == 'success' && needs.changes.outputs.should_run == 'true' && (needs.changes.outputs.dedicated_eligible != 'true' || needs.ci-backend.outputs.provider == 'hosted')
-    runs-on: ubuntu-latest
+    # Playwright 1.60 cannot install Chromium on the Ubuntu 26.04 image now
+    # selected by ubuntu-latest. Keep browser-dependent lanes on 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       LANG: C.UTF-8

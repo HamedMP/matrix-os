@@ -90,6 +90,12 @@ describe('fast CI preserves validation while removing serialized work', () => {
     expect(workflow.jobs.e2e['timeout-minutes']).toBe(30);
   });
 
+  it('keeps Playwright E2E on a supported hosted Ubuntu image', () => {
+    // Playwright 1.60 rejects Chromium installation on the Ubuntu 26.04 image
+    // currently selected by ubuntu-latest, so this lane must remain explicit.
+    expect(workflow.jobs.e2e['runs-on']).toBe('ubuntu-24.04');
+  });
+
   it('retains frozen installs and keyed Next and browser caches', () => {
     expect(source).not.toContain('runs-on: ${{');
     expect(workflow.jobs['funded-postgres']['runs-on']).toBe('ubuntu-latest');
