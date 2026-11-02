@@ -6,7 +6,7 @@ export async function previewDesktopReady(context: PreviewPairLaunchContext, tim
   let settle: ((value: number) => void) | undefined, fail: ((reason: Error) => void) | undefined, connections = 0;
   const ready = new Promise<number>((resolve, reject) => { settle = resolve; fail = reject; });
   // A caller may still be spawning while an early socket/server error occurs.
-  void ready.catch(() => undefined);
+  void ready.catch((error: unknown) => { console.warn("[preview-pair] local startup unavailable", error instanceof Error ? error.name : "UnknownError"); });
   const server = createServer(socket => {
     if (++connections > 4) { socket.destroy(); fail?.(new Error("Preview startup is unavailable")); return; }
     sockets.add(socket); socket.setTimeout(5_000); let text = "";

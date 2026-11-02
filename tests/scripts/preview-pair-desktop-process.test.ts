@@ -11,8 +11,8 @@ afterEach(async () => { await rm(parent, { recursive: true, force: true }); });
 const proof = () => issuePreviewPairLaunch({ manifest: previewPairManifestFixture(), role: "owner", platform: "darwin", arch: "arm64", sourceOrigin: "https://app.matrix-os.com" }, "s".repeat(40), PAIR_NOW);
 it("does not inherit cloud/control tokens, development overrides or Node preload into candidate execution", () => {
   const value = previewDesktopEnvironment(proof(), "/owned/profile", "1234", { HOME: parent, PATH: process.env.PATH,
-    GITHUB_TOKEN: "private", MATRIX_PLATFORM_SECRET: "private", NODE_OPTIONS: "--require /private", OPERATOR_GATEWAY_URL: "https://root.invalid", ELECTRON_RENDERER_URL: "https://wrong.invalid" });
-  expect(value.HOME).toBe(parent); for (const key of ["GITHUB_TOKEN", "MATRIX_PLATFORM_SECRET", "NODE_OPTIONS", "OPERATOR_GATEWAY_URL", "ELECTRON_RENDERER_URL"]) expect(value).not.toHaveProperty(key);
+    XAUTHORITY: "/owned/xauthority", GITHUB_TOKEN: "private", MATRIX_PLATFORM_SECRET: "private", NODE_OPTIONS: "--require /private", OPERATOR_GATEWAY_URL: "https://root.invalid", ELECTRON_RENDERER_URL: "https://wrong.invalid" });
+  expect(value.HOME).toBe(parent); expect(value.XAUTHORITY).toBe("/owned/xauthority"); for (const key of ["GITHUB_TOKEN", "MATRIX_PLATFORM_SECRET", "NODE_OPTIONS", "OPERATOR_GATEWAY_URL", "ELECTRON_RENDERER_URL"]) expect(value).not.toHaveProperty(key);
 });
 async function executable(text: string) {
   const path = join(parent, "fixture-app"); await writeFile(path, '#!/usr/bin/node\n' + text); await chmod(path, 0o755); return path;

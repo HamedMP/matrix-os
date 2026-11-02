@@ -5,7 +5,7 @@ import { previewDesktopReady } from "./desktop-ready.js";
  * dev renderer URL, Root gateway override or cloud/provider environment. */
 export function previewDesktopEnvironment(proof: PreviewPairLaunchAttestation, userData: string, port: string, env = process.env) {
   const selected: NodeJS.ProcessEnv = {};
-  for (const name of ["HOME", "PATH", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "TMPDIR", "SYSTEMROOT"]) {
+  for (const name of ["HOME", "PATH", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "TMPDIR", "SYSTEMROOT"]) {
     if (env[name]) selected[name] = env[name];
   }
   return { ...selected, OPERATOR_USER_DATA_DIR: userData, MATRIX_PREVIEW_PAIR_CONTEXT: JSON.stringify(proof), MATRIX_PREVIEW_PAIR_READY_PORT: port };

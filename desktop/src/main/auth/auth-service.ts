@@ -217,7 +217,7 @@ export class AuthService {
     if (this.flowState === "pending" && this.pendingDeviceCode) {
       return this.pendingDeviceCode;
     }
-    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
+    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(10_000) }));
     const baseUrl = this.getGatewayOrigin();
     const nonce = ++this.flowNonce;
     this.flowFailureReason = undefined;
@@ -364,7 +364,7 @@ export class AuthService {
   ): Promise<StoredCredential> {
     const request = RuntimeSelectionRequestSchema.parse({ slot });
     const endpoint = new URL("/api/auth/runtime-selection", this.deps.runtimeSelectionOrigin);
-    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
+    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(10_000) }));
     const requestInit = (): RequestInit => ({
       method: "POST",
       headers: {
@@ -467,7 +467,7 @@ export class AuthService {
     if (!currentCredential) throw new Error("Runtime computers unavailable");
 
     const endpoint = new URL("/api/auth/computers", this.deps.platformHost);
-    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, init));
+    const fetchFn = this.deps.fetchFn ?? ((input: string, init?: RequestInit) => fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(10_000) }));
     try {
       const response = await fetchFn(endpoint.toString(), {
         method: "GET",

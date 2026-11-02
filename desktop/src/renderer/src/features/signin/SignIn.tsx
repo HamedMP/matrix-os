@@ -70,12 +70,14 @@ export default function SignIn() {
               setPhase(result.reason === "preview_account_mismatch" ? "wrong-account" : "expired");
             }
           })
-          .catch(() => {
+          .catch((error: unknown) => {
+            console.warn("[signin] poll failed", error instanceof Error ? error.name : "UnknownError");
             stopPolling();
             setPhase("error");
           });
       }, POLL_INTERVAL_MS);
-    } catch {
+    } catch (error: unknown) {
+      console.warn("[signin] request failed", error instanceof Error ? error.name : "UnknownError");
       setPhase("error");
     }
   }, [openBrowser, refresh, stopPolling]);

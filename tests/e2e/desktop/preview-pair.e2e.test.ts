@@ -58,7 +58,7 @@ if(u.href===c.sourceOrigin+'/api/preview-pairs/launch/verify')return actualFetch
 if(u.origin===c.apiOrigin)return actualFetch(${JSON.stringify(base)}+'/'+c.role+u.pathname+u.search,init);
 return Promise.reject(new Error('Explicit native fixture endpoint unavailable'));};
 await import(${JSON.stringify(pathToFileURL(main).href)});`);
-    const normal = await _electron.launch({ executablePath: electron, args: [main], env: { HOME: home, PATH: process.env.PATH ?? "/usr/bin:/bin", DISPLAY: process.env.DISPLAY ?? "", OPERATOR_USER_DATA_DIR: join(home, "normal") } }); applications.push(normal);
+    const normal = await _electron.launch({ executablePath: electron, args: [main], env: { HOME: home, PATH: process.env.PATH ?? "/usr/bin:/bin", DISPLAY: process.env.DISPLAY ?? "", XAUTHORITY: process.env.XAUTHORITY ?? "", OPERATOR_USER_DATA_DIR: join(home, "normal") } }); applications.push(normal);
     const normalPage = await normal.firstWindow(); await normalPage.getByRole("button", { name: "Sign in", exact: true }).waitFor();
     expect(await normalPage.locator('[role="status"]').filter({ hasText: "Collaboration preview" }).count()).toBe(0);
     const opened: Record<string, { app: ElectronApplication; page: Awaited<ReturnType<ElectronApplication["firstWindow"]>> }> = {};

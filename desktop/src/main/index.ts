@@ -137,8 +137,9 @@ function isMatrixOsDeepLink(value: string): boolean {
   try {
     const url = new URL(value);
     return url.protocol === "matrixos:" || url.protocol === "matrix-os:";
-  } catch {
-    return false;
+  } catch (error: unknown) {
+    if (error instanceof TypeError) return false;
+    throw error;
   }
 }
 

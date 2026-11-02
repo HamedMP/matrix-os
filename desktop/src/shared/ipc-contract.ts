@@ -137,7 +137,8 @@ const BoundedJsonValue = z.unknown().refine(
   (value) => {
     try {
       return JSON.stringify(value).length <= MAX_STATE_VALUE_BYTES;
-    } catch {
+    } catch (error: unknown) {
+      if (!(error instanceof TypeError)) console.warn("[ipc] state value validation failed", error instanceof Error ? error.name : "UnknownError");
       return false;
     }
   },
@@ -475,8 +476,9 @@ export const INVOKE_CHANNELS = {
           .refine((value) => {
             try {
               return new URL(value).protocol === "https:";
-            } catch {
-              return false;
+            } catch (error: unknown) {
+              if (error instanceof TypeError) return false;
+              throw error;
             }
           }, "https urls only"),
       })
