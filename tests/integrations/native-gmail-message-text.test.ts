@@ -19,6 +19,31 @@ describe('native Gmail message text without attachment collection', () => {
     expect(first.pathname).toBe('/gmail/v1/users/me/messages/abc');
     expect(f.legacy.boundedGmailGet).not.toHaveBeenCalled();
   });
+  it('preserves current bounded label IDs from the content read while MIME metadata stays attachment-free', async () => {
+    const f = fixture({ id: 'abc', labelIds: ['INBOX'], payload },
+      { id: 'abc', threadId: 'abc', labelIds: ['INBOX', 'Label_63'],
+        payload: { ...payload, body: { size: 5, data: 'SGVsbG8' } }, unexpected: 'drop' });
+    const result = await f.read();
+    expect(result).toMatchObject({ id: 'abc', threadId: 'abc', labelIds: ['INBOX', 'Label_63'] });
+    expect(result).not.toHaveProperty('unexpected');
+    expect(f.fetcher).toHaveBeenCalledTimes(2);
+    expect(f.beforeSend).toHaveBeenCalledTimes(2);
+    expect(new URL(f.fetcher.mock.calls[0][0]).searchParams.get('fields')).not.toMatch(/\bdata\b/);
+    expect(f.legacy.boundedGmailGet).not.toHaveBeenCalled();
+  });
+  it.each([null, [''], [1], ['x'.repeat(161)], Array.from({ length: 10_001 }, () => 'INBOX')])(
+    'refuses malformed or excessive label IDs instead of returning an unreliable label set', async labelIds => {
+      const f = fixture(undefined,
+        { id: 'abc', labelIds, payload: { ...payload, body: { size: 5, data: 'SGVsbG8' } } });
+      await expect(f.read()).rejects.toThrow();
+      expect(f.fetcher).toHaveBeenCalledTimes(2);
+    });
+  it('preserves an explicit empty label set and leaves an omitted set unknown', async () => {
+    const empty = fixture(undefined,
+      { id: 'abc', labelIds: [], payload: { ...payload, body: { size: 5, data: 'SGVsbG8' } } });
+    expect(await empty.read()).toHaveProperty('labelIds', []);
+    expect(await fixture().read()).not.toHaveProperty('labelIds');
+  });
   it.each([
     { ...payload, filename: 'private.txt' },
     { ...payload, body: { size: 5, attachmentId: 'attachment-one' } },
