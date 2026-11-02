@@ -1,4 +1,5 @@
 import type {ChatProviderCatalogService} from "../../../packages/gateway/src/chat/provider-catalog.js";
+import { bootstrapCollaborationDatabase } from "../../../packages/gateway/src/collaboration/database.js";
 import { createBotContinuationAdmitter } from "../../../packages/gateway/src/bots/continuations.js";
 import { withChatGptPlanProviderInstance } from "../../../packages/gateway/src/bots/chatgpt-plan-provider-instance.js";
 import type { CanonicalChatModelSelection } from "@matrix-os/contracts";
@@ -27,6 +28,7 @@ let started: Array<{ selection: unknown; permissionMode: string }>;
 beforeEach(async () => {
   repository = new ChatRepository((await KyselyPGlite.create()).dialect);
   await repository.bootstrap();
+  await bootstrapCollaborationDatabase(repository.kysely as never);
   started = [];
   savedSelection = { instanceId: "matrix_bot_default", model: "auto" };
   finishBlockedRun = undefined;
