@@ -80,6 +80,21 @@ function runSyncAgentFunction(source: string, invocation: string, setup: string)
 }
 
 describe('customer VPS host bundle', () => {
+  it('builds on the customer Ubuntu ABI and checks the staged native payload before publish', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+    const buildJob = workflow.split('\n  build:\n')[1]?.split(/\n  [a-z][a-z-]*:\n/)[0];
+    expect(buildJob).toBeDefined();
+    expect(buildJob).toMatch(/^    runs-on: ubuntu-24\.04$/m);
+
+    const script = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
+    const stageCopy = script.indexOf('cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"');
+    const nativeCheck = script.indexOf('verify-host-native-abi.mjs');
+    const bundlePack = script.indexOf('tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME"');
+    expect(nativeCheck).toBeGreaterThan(stageCopy);
+    expect(bundlePack).toBeGreaterThan(nativeCheck);
+  });
+
   it('build script packages the systemd entrypoint binaries', () => {
     const root = process.cwd();
     const script = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
