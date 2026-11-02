@@ -19,7 +19,7 @@ beforeEach(() => {
 afterEach(cleanup);
 it("carries the exact saved Chat and owner/Computer scope into the read-only Bot Chat path", async () => {
   render(<SchedulesRoute/>);
-  await act(async () => mockProps.onOpenChat!("chat_saved", "bot_saved"));
-  expect(mockPush).toHaveBeenCalledWith({pathname: "/agents/[agentId]", params: {agentId: "bot_saved", scheduleChatId: "chat_saved", scheduleScope: "owner:preview"}});
+  await act(async () => mockProps.onOpenChat!("chat_saved", "bot_saved001"));
+  expect(mockPush).toHaveBeenCalledWith({pathname: "/agents/[agentId]", params: {agentId: "bot_saved001", scheduleChatId: "chat_saved", scheduleScope: "owner:preview"}});
   expect(fetchAgentDirectChat).not.toHaveBeenCalled();
 });

@@ -62,12 +62,12 @@ it("retains details and shows a safe error if opening the saved Chat fails", asy
   expect(screen.getByRole("region", {name: "Schedule details"})).toBeTruthy();
   expect(close).not.toHaveBeenCalled();
 });
-it("does not offer Chat navigation when the saved target is unavailable", async () => {
+it("keeps read-only Chat navigation available when its Bot execution target is unavailable", async () => {
   const {client} = setup({targetAvailable: false});
   render(<ScheduleCenter client={client} onClose={vi.fn()} onOpenBotChat={vi.fn()}/>);
   fireEvent.click(await screen.findByRole("button", {name: "View Morning brief"}));
   await screen.findByRole("region", {name: "Schedule details"});
-  expect(screen.queryByRole("button", {name: "View history in Chat"})).toBeNull();
+  expect(screen.getByRole("button", {name: "View history in Chat"})).toBeTruthy();
 });
 
 it("routes New schedule through existing Bot selection and does not turn ordinary Agents into a schedule wizard", async () => {

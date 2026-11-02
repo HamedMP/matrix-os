@@ -34,7 +34,7 @@ export default function AgentChatRoute() {
   const savedChat = params.scheduleChatId !== undefined || params.scheduleScope !== undefined
     ? {chatId: [params.scheduleChatId].flat()[0] ?? "", scope: [params.scheduleScope].flat()[0] ?? ""} : undefined;
   const chat = useAgentChatId(agentId, Object.hasOwn(statuses, agentId) ? statuses[agentId].chatId : null, savedChat);
-  const thread = useAgentThread({ agent: shown, chatId: chat.chatId });
+  const thread = useAgentThread({ agent: shown, chatId: chat.chatId, showRoutineHistory: Boolean(savedChat), readOnly: Boolean(savedChat) && !agent });
   const { botChat } = thread;
   const fromTemplate = Boolean(shown?.recipeRef);
   // The status is read after every change, so its copy of the model is the newer one.

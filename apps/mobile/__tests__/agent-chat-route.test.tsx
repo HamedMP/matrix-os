@@ -20,8 +20,9 @@ jest.mock("@/lib/canonical-chat-session-context", () => mockRoute.sessionModule(
 jest.mock("@/components/agents/use-agent-chat-sync", () => ({
   useAgentChatSync: (chatId: string | null) => mockRoute.shell.sync(chatId),
 }));
+const mockGatewaySession = async () => ({token: "fixture", gatewayUrl: "https://preview.test"});
 jest.mock("@/lib/queries/use-active-gateway", () => ({
-  useActiveGateway: () => ({ ready: true, isComputerError: false }),
+  useActiveGateway: () => ({ ready: true, isComputerError: false, userId: "user_a", computerKey: "preview", session: mockGatewaySession }),
 }));
 jest.mock("@/lib/queries/use-agents", () => mockRoute.agentsModule());
 jest.mock("@/lib/queries/use-agent-statuses", () => mockRoute.agentStatusesModule());
@@ -43,6 +44,9 @@ jest.mock("@/lib/queries/use-computer-apps", () => ({
   useComputerApps: () => ({ apps: [] }),
   installedAppSlug: (app: { slug: string }) => app.slug,
 }));
+
+const mockSavedIdentity = jest.fn(async (..._args: unknown[]) => "bot_research1");
+jest.mock("@/lib/requests/bot-chat-identity", () => ({fetchSavedBotChatIdentity: (...args: unknown[]) => mockSavedIdentity(...args)}));
 
 const { router, shell, bot, state, managed, approval, snapshot, chatDetail, runningRun, customStatuses } = mockRoute;
 
@@ -266,4 +270,16 @@ describe("agent chat route", () => {
       openURL.mockRestore();
     });
   });
+});
+
+
+it("retains read-only scheduled history when its Bot definition is unavailable", async () => {
+  mockRoute.reset();
+  state.scheduleParams = {scheduleChatId: "chat_research", scheduleScope: "user_a:preview"};
+  state.agents = []; state.statuses = {};
+  render(<AgentChatRoute/>);
+  expect(await screen.findByRole("button", {name: "Scheduled task history"})).toBeTruthy();
+  expect(shell.ensure).not.toHaveBeenCalled();
+  expect(screen.getByLabelText("Message Matrix").props.editable).toBe(false);
+  cleanup();
 });

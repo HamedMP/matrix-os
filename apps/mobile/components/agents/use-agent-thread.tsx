@@ -24,6 +24,7 @@ import { HOSTED_GATEWAY_URL } from "@/lib/storage";
 import { useChatComposer } from "@/lib/use-chat-composer";
 import { useSessionTokenWarmup } from "@/lib/use-session-token-warmup";
 
+import { NativeRoutineChatHistory } from "./schedules/RoutineChatHistory";
 import { PendingInteractions } from "./interactions/PendingInteractions";
 import { useAgentChatSync } from "./use-agent-chat-sync";
 
@@ -57,7 +58,7 @@ export function agentTurnSetup({ agent, fromTemplate, detail, catalog }: {
  * An agent's chat, read and sent to by its id. Nothing here reads or changes
  * the Chats tab's active chat. `chatId` is null until the chat is found.
  */
-export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; chatId: string | null }) {
+export function useAgentThread({ agent, chatId, showRoutineHistory = false, readOnly = false }: { agent: ChatAgent | null; chatId: string | null; showRoutineHistory?: boolean; readOnly?: boolean }) {
   const { isSignedIn, userId } = useAuth();
   const warmSessionToken = useSessionTokenWarmup();
   const { detail, computer, refresh, isError: chatReadFailed, reload: reloadChat } = useCanonicalChatDetail(chatId);
@@ -85,7 +86,7 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
     // Without a chat id a send would start a new chat, which is not this
     // agent's; a chat is sent to at the revision it was read at; and the
     // computer refuses a turn while another runs.
-    disabled: chatId === null || !detail || activeChatRun(detail) !== undefined,
+    disabled: readOnly || chatId === null || !detail || activeChatRun(detail) !== undefined,
   });
 
   const { messages, running, onStop, renderRequest, renderResults, renderComputerPhoto } = useChatThread({
@@ -129,7 +130,7 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
     /** What a message that was not sent offers. */
     unsentActions,
     /** What the agent is waiting on the person for, drawn after the newest message. */
-    footer: interactions.length > 0 ? (
+    footer: interactions.length > 0 || chatId && (showRoutineHistory || agent?.recipeRef) ? <> {interactions.length > 0 ? (
       <PendingInteractions
         interactions={interactions}
         actionsAvailable={!botChat.isError}
@@ -137,13 +138,13 @@ export function useAgentThread({ agent, chatId }: { agent: ChatAgent | null; cha
         onRefresh={botChat.refresh}
         onConnectUrl={openConsentPage}
       />
-    ) : null,
+    ) : null}{chatId && (showRoutineHistory || agent?.recipeRef) ? <NativeRoutineChatHistory chatId={chatId}/> : null}</> : null,
     composer: {
       draft,
       onChangeDraft: handleDraftChange,
-      editable: signedIn,
+      editable: signedIn && !readOnly,
       onFocus: warmSessionToken,
-      canSend: canSend && signedIn,
+      canSend: canSend && signedIn && !readOnly,
       onSend: send,
       running: busy,
       onStop,

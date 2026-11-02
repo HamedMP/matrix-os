@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { CanonicalChatIdSchema } from "@matrix-os/contracts";
 import type { useActiveGateway } from "@/lib/queries/use-active-gateway";
-import { fetchAgentDirectChat } from "@/lib/requests/bots";
+import { fetchSavedBotChatIdentity } from "@/lib/requests/bot-chat-identity";
 
 export type SavedAgentChat = {chatId: string; scope: string};
 
@@ -22,8 +22,8 @@ export function useSavedAgentChat(agentId: string, target: SavedAgentChat | unde
         const auth = await session();
         if (!current) return;
         if (!auth) throw new Error("Chat unavailable");
-        const bound = await fetchAgentDirectChat(auth.token, auth.gatewayUrl, agentId);
-        if (current) setResult({key, chatId: bound === chatId ? chatId : null, failed: bound !== chatId});
+        const bound = await fetchSavedBotChatIdentity(auth.token, auth.gatewayUrl, chatId);
+        if (current) setResult({key, chatId: bound === agentId ? chatId : null, failed: bound !== agentId});
       } catch (failure: unknown) {
         console.warn("[mobile-schedules] Saved Chat unavailable", failure instanceof Error ? failure.name : "UnknownError");
         if (current) setResult({key, chatId: null, failed: true});

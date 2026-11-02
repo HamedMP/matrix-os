@@ -143,7 +143,7 @@ export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedul
           actionsAvailable={fresh && !busy} pending={data.pending} pendingRead={pendingRead} getReadSequence={() => listRead.current}
           onRefresh={refreshAll} onDone={() => { if (alive.current) setEditing(false); }} /> : null}
         <Text style={styles.note}>Results and run history stay in this task’s Chat.</Text>
-        {onOpenChat && current.targetAvailable ? <Button label="View history in Chat" disabled={busy} onPress={() => { void openHistory(current.chatId, current.botId); }} /> : null}
+        {onOpenChat ? <Button label="View history in Chat" disabled={busy} onPress={() => { void openHistory(current.chatId, current.botId); }} /> : null}
       </View> : null}
     </> : <>
       {loading ? <Text style={styles.note}>Loading schedules…</Text> : null}
