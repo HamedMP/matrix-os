@@ -13,6 +13,10 @@ import { jsonb, OPERATION_RETENTION_MS, parseJson, PRESET_POLICY_VERSION } from 
 import { MAX_GRANTS_PER_SCOPE } from "./capability-repository.js";
 import type { ChatOutboxEvent } from "../chat/records.js";
 import { publishProjectChatRoutes } from "./project-chat-routes.js";
+import type {
+  CollaborationChatScopeService,
+  SharedChatExecutionCapability,
+} from "./chat-scope.js";
 
 const MAX_RECOVERY_BATCH = 100;
 /** `CollaborationDirectoryEventSchema` carries at most eight recipients per event. */
@@ -257,6 +261,7 @@ export function createProjectTransitionJournal(options: {
   recoveryTimeoutMs?: number;
   recoveryBatchSize?: number;
   onChatShared?: (ownerId: string, event: ChatOutboxEvent) => void;
+  chatScope?: Pick<CollaborationChatScopeService, "withCurrentExecutionCapability">;
 }) {
   const now = options.now ?? (() => new Date());
   const createTransitionId = options.createTransitionId ?? randomUUID;
@@ -548,7 +553,8 @@ export function createProjectTransitionJournal(options: {
     try {
       let committedChatEvents: ChatOutboxEvent[] = [];
       let committedOwnerId = "";
-      const result = await lockTransition(options.db, transitionId, async (trx, row, scope) => {
+      const activateWithCapability = (executionCapability: SharedChatExecutionCapability | null) =>
+        lockTransition(options.db, transitionId, async (trx, row, scope) => {
         if (row.status === "active") return rowToTransition(row);
         committedOwnerId = scope.owner_id;
         if (!(["committing", "recovering"] as ProjectTransitionStatus[]).includes(row.status)
@@ -574,6 +580,7 @@ export function createProjectTransitionJournal(options: {
             destinationAuthorityGeneration: Number(row.destination_authority_generation),
             now: now(),
             createEventId,
+            executionCapability,
           });
         } catch (error: unknown) {
           if (error instanceof ProjectMembershipTransitionError) {
@@ -767,7 +774,10 @@ export function createProjectTransitionJournal(options: {
           created_at: now(),
         }).execute();
         return rowToTransition(updated);
-      });
+        });
+      const result = options.chatScope
+        ? await options.chatScope.withCurrentExecutionCapability(activateWithCapability)
+        : await activateWithCapability(null);
       for (const event of committedChatEvents) {
         try { options.onChatShared?.(committedOwnerId, event); }
         catch (error: unknown) {
