@@ -10,7 +10,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("pre-admission recovery u
   let f: Awaited<ReturnType<typeof createSeededPreviewPair>>;
   beforeEach(async () => { f = await createSeededPreviewPair(); }, 30_000);
   afterEach(async () => { await f?.destroy(); });
-  async function setup(admissionEnabled = true) {
+  async function setup(admissionEnabled = true, sourceProfileFingerprint = "f".repeat(64)) {
     let now = PAIR_NOW;
     const config = { ...f.config, sourceProfileFingerprint: "f".repeat(64) }, pairId = "44444444-4444-4444-8444-444444444444";
     const row = await preparePreviewPairCloudIntent(f.db, config, { pairId, generation: 1, pr: 3023,
@@ -18,7 +18,7 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("pre-admission recovery u
       profileFingerprint: config.sourceProfileFingerprint }, now);
     const requested = { open: true, requested: true, sourceSha: row.source_sha };
     const inspectRequest = vi.fn(async () => requested), retireCloudIntent = vi.fn(async () => false), activate = vi.fn(async () => false);
-    const service = createPreviewPairService({ db: f.db, config: { ...config, admissionEnabled }, source: previewPairProvenanceFixture().source,
+    const service = createPreviewPairService({ db: f.db, config: { ...config, admissionEnabled, sourceProfileFingerprint }, source: previewPairProvenanceFixture().source,
       prepare: f.prepare, resolveController: async () => null, isMaintainer: async () => true, verifyFixtures: async () => true,
       inspectRequest, activate, readiness: previewPairReadinessAdapters(f), now: () => now,
       cleanup: { retire: async () => undefined, proveAbsent: async member => ({ machineId: member.machineId,
@@ -49,6 +49,26 @@ describe.skipIf(!process.env.MATRIX_TEST_POSTGRES_URL)("pre-admission recovery u
     await s.service.reconcile({ limit: 1 });
     expect(s.retireCloudIntent).toHaveBeenCalledOnce();
     expect((await s.saved()).attempt).toBe(1);
+  });
+  it("backs off expired requests after profile rotation so newer cancellations still progress", async () => {
+    const fingerprint = "e".repeat(64), s = await setup(true, fingerprint), expiredAt = Date.parse(s.row.expires_at);
+    await f.db.executor.updateTable("preview_pair_cloud_intents").set({ next_attempt_at: new Date(expiredAt + 60_000).toISOString() })
+      .where("pair_id", "=", s.pairId).execute();
+    s.time(expiredAt);
+    await s.service.reconcile({ limit: 1 }); // Hard expiry overrides the old backoff once.
+    const freshId = "55555555-5555-4555-8555-555555555555";
+    await preparePreviewPairCloudIntent(f.db, { ...f.config, sourceProfileFingerprint: fingerprint }, {
+      pairId: freshId, generation: 1, pr: 3024, requesterId: "user_requester", controllerRunId: 43,
+      sourceSha: f.pair.source_sha, profileFingerprint: fingerprint,
+    }, expiredAt);
+    s.requested.requested = false;
+    await s.service.reconcile({ limit: 1 });
+    expect(s.inspectRequest).toHaveBeenCalledWith({ pairId: freshId, generation: 1, pr: 3024 }, expect.any(AbortSignal));
+    expect(s.retireCloudIntent).toHaveBeenCalledOnce();
+    expect(s.retireCloudIntent.mock.calls[0][0].pair_id).toBe(freshId);
+    expect(await s.saved()).toMatchObject({ state: "cleanup_pending", attempt: 1, failure_code: "authority" });
+    expect((await f.db.executor.selectFrom("preview_pair_cloud_intents").selectAll().where("pair_id", "=", freshId)
+      .executeTakeFirstOrThrow()).state).toBe("cleanup_pending");
   });
   it("keeps canonical pair work progressing while an independent cloud check waits", async () => {
     const s = await setup(); await stopPreviewPairCloudIntent(f.db, s.pairId, 1, 42, PAIR_NOW);

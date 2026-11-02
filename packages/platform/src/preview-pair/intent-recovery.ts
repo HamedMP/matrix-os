@@ -50,6 +50,9 @@ export function createPreviewPairIntentRecovery(options: { db: PlatformDB; admis
       checked++;
       const claimId = randomUUID();
       const row = await db.executor.updateTable("preview_pair_cloud_intents").set({ claim_id: claimId,
+        // Expiry retires admission even if changed credentials prevent a cloud
+        // check. Persist that transition with the claim so backoff applies next pass.
+        state: sql<PreviewPairIntentRow["state"]>`CASE WHEN expires_at <= ${time(now())} THEN 'cleanup_pending' ELSE state END`,
         claim_expires_at: time(now() + 120_000), revision: sql`revision + 1`, attempt: sql`attempt + 1` })
         .where("pair_id", "=", old.pair_id).where("generation", "=", old.generation).where("revision", "=", old.revision)
         .where("state", "in", ["prepared", "cleanup_pending"])
