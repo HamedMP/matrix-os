@@ -57,7 +57,7 @@ export function createPreviewQualification(options: { manifest: PreviewPairManif
       platformSource: manifest.platformSource, desktopArtifacts: manifest.desktopArtifacts,
       runtimeBuilds: Object.values(manifest.members).map(member => ({ role: member.role, installedVersion: member.installedVersion,
         runningVersion: member.runningVersion, installedSha: member.installedSha, runningSha: member.runningSha })) },
-    currentState: current.state, observations: input.observations,
+    currentState: current.state, outdated: current.outdated, observations: input.observations,
     summary: { required: 16, liveReportedPasses, fixtureReportedPasses: input.observations.filter(row => row.boundary === "fixture" && row.result === "pass").length,
       failed: input.observations.filter(row => row.result === "fail").length, pending: 16 - liveReportedPasses, requiresReview: true as const } };
 }

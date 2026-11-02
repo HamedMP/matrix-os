@@ -5,6 +5,44 @@ Tracking: [ENG-418](https://linear.app/matrix-os/issue/ENG-418). Native stack ba
 No cloud provisioning, production deployment or live collaboration acceptance
 has been performed by this feature implementation yet.
 
+## Current completion boundary
+
+The checklist remains **39/42**: T029 real per-surface captures, T040 final
+Greptile 5/5 plus required CI, and T041 the first actual-target pair/journey are
+open. Local fixture success does not complete those tasks. The first-use setup
+probe returned 404 and protected workflow/configuration are absent. Dedicated
+test Clerk configuration and reviewed Source/controller bootstrap remain needed.
+No real test VPS has been created. Slack posting is excluded by the requester.
+
+### Review corrections
+
+- Signing separation: actual keyring/signer consumers prove alternate accepted
+  encodings represent the same control key. Three regressions failed before
+  correction; credential/profile cohort **30/30 passed** afterward.
+- Expiry recovery: a real PostgreSQL single-slot case reproduced an expired
+  obsolete-profile request bypassing backoff and starving a newer cancellation.
+  One regression failed; recovery/intent-cloud cohort **22/22 passed**. The
+  atomic claim now records expiry before profile inspection, retaining capacity.
+- Cloud publication: omitted protobuf `false` rejected a healthy service. One
+  regression failed; publication/authority cohort **31/31 passed**. Explicit
+  reconciliation/unhealthy service observations remain denied.
+- Release aliases: real PostgreSQL routes returned 200 for two pair-only JSON
+  aliases on the ordinary router. Both failed before correction; ordinary and
+  pair bundle-route cohort **41/41 passed**. Scoped updater metadata and required
+  downloads remain available; channel promotion remains blocked for pair builds.
+- Four launcher regressions and **49/49 passing** focused assertions are recorded
+  in [launcher-validation.md](launcher-validation.md).
+- Qualification exports lost the Source `outdated` flag, and two actual temporary
+  checkouts changed during their real child process yet still produced receipts.
+  Three regressions failed; strict evidence/export/collector/checkout cohort
+  **28/28 passed** after correction. The child report is synthetic only in the
+  source-fence cases; Git, source edits, checkout, child execution and receipt I/O
+  stay real. The separate actual collaboration fixture lane remains required.
+
+These are regression assertions, not live Clerk, provider/model, sharing or
+native macOS qualification. Required CI and current reviewed heads are tracked
+in the PRs; pending checks are not recorded as passing.
+
 ## Planning/tooling phase
 
 - Named fault: the branch-creation hook permits four-digit feature numbers, but

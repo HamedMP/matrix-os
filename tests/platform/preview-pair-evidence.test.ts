@@ -19,6 +19,12 @@ describe("bound manual preview qualification exports never turn infrastructure/f
     expect(report.summary).toMatchObject({ required: 16, liveReportedPasses: 1, pending: 15, requiresReview: true });
     expect(report).not.toHaveProperty("acceptance"); expect(report.provenance.sourceSha).toBe(f.manifest.sourceSha);
   });
+  it("preserves the current outdated flag when reproducing an older pinned PR build", () => {
+    const f = fixture(); f.current.outdated = true;
+    const report = createPreviewQualification(f);
+    expect(report.provenance.sourceSha).toBe(f.manifest.sourceSha);
+    expect(report).toMatchObject({ outdated: true, currentState: "ready" });
+  });
   it("never counts all fixture successes as a live pass", () => {
     const f = fixture(); f.input.observations = Object.keys(PREVIEW_QUALIFICATION_SCENARIOS).flatMap(s => ["electron_desktop", "web_desktop"].map(surface => f.observation(s, surface, "fixture")));
     expect(createPreviewQualification(f).summary).toMatchObject({ liveReportedPasses: 0, fixtureReportedPasses: 16, pending: 16 });

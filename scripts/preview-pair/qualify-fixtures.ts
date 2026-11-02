@@ -40,8 +40,13 @@ export function collectPreviewFixtureReport(root: string, raw: unknown) {
 /** Exact checkout, actual first-party client/relay/owner-route/UI test lane.
  * Its real Postgres dependency must be an explicitly selected disposable server.
  * Candidate tests receive no control, cloud, GitHub or provider credentials. */
-export async function qualifyPreviewFixtures(options: { expectedSha: string; output: string; databaseUrl: string }) {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+type FixtureOptions = { expectedSha: string; output: string; databaseUrl: string };
+export async function qualifyPreviewFixtures(options: FixtureOptions) {
+  return qualifyPreviewFixtureCheckout(resolve(dirname(fileURLToPath(import.meta.url)), "../.."), options);
+}
+/** Explicit checkout boundary for the local fixture runner; the CLI always uses
+ * this repository. No provider/control credentials are passed to its child. */
+export async function qualifyPreviewFixtureCheckout(root: string, options: FixtureOptions) {
   const source = readBuildSource(root, options.expectedSha); if (!source) throw unavailable();
   const database = new URL(options.databaseUrl);
   if (!["postgres:", "postgresql:"].includes(database.protocol) || !["127.0.0.1", "localhost", "[::1]"].includes(database.hostname)) throw unavailable();
@@ -61,6 +66,9 @@ export async function qualifyPreviewFixtures(options: { expectedSha: string; out
       raw = JSON.parse(bytes.subarray(0, read.bytesRead).toString("utf8"));
     } finally { await file.close(); }
     const summary = collectPreviewFixtureReport(root, raw);
+    // The child may run for 30 minutes. Refuse to bind its results to the old
+    // commit if an operator edited or switched this checkout while it ran.
+    if (!readBuildSource(root, source.commit)) throw unavailable();
     const result = { schemaVersion: 1, sourceSha: source.commit, ...summary };
     await writeQualificationExport(options.output, result); return result;
   } finally { await rm(temporary, { recursive: true, force: true }); }
