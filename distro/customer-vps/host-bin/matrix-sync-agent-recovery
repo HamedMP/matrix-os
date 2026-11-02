@@ -15,11 +15,13 @@ resume_update_transaction_services() {
       active)
         if [ "$name" = matrix-sync-agent.service ]; then
           continue
-        elif [ "$name" = matrix-hermes.service ]; then
-          # Hermes is an optional installer with its own retry policy. Its
-          # failure must not strand a restored gateway behind transaction proof.
+        elif [[ "$name" = matrix-hermes.service \
+          || "$name" = matrix-hermes-dashboard.service \
+          || "$name" = matrix-integrations-agents.service ]]; then
+          # The dashboard and integration agent wait for Hermes. Queue the
+          # optional chain without delaying core rollback or transaction proof.
           sudo systemctl start --no-block "$name" >/dev/null \
-            || log "WARN: optional matrix-hermes.service could not be queued after rollback"
+            || log "WARN: optional $name could not be queued after rollback"
         else
           sudo systemctl start "$name" >/dev/null || return 1
         fi

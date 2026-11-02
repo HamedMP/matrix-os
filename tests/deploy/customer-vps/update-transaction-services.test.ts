@@ -7,7 +7,13 @@ import { describe, expect, it } from 'vitest';
 function restoreWithFailure(failedService: string) {
   const root = mkdtempSync(join(tmpdir(), 'matrix-rollback-services-'));
   try {
-    writeFileSync(join(root, 'systemd.activity'), 'matrix-hermes.service:active\nmatrix-gateway.service:active\n');
+    writeFileSync(join(root, 'systemd.activity'), [
+      'matrix-hermes.service:active',
+      'matrix-hermes-dashboard.service:active',
+      'matrix-integrations-agents.service:active',
+      'matrix-gateway.service:active',
+      '',
+    ].join('\n'));
     const recovery = readFileSync('distro/customer-vps/host-bin/matrix-sync-agent-recovery', 'utf8');
     const functionSource = recovery.match(/resume_update_transaction_services\(\) \{[\s\S]*?\n\}/)?.[0];
     expect(functionSource).toBeDefined();
@@ -34,12 +40,22 @@ resume_update_transaction_services
 }
 
 describe('update transaction service recovery', () => {
-  it('restores the gateway even if optional Hermes installation fails', () => {
-    const result = restoreWithFailure('matrix-hermes.service');
+  it.each([
+    'matrix-hermes.service',
+    'matrix-hermes-dashboard.service',
+    'matrix-integrations-agents.service',
+  ])('restores the gateway even if optional %s fails to start', (service) => {
+    const result = restoreWithFailure(service);
     expect(result.status).toBe(0);
-    expect(result.events).toContain('systemctl start --no-block matrix-hermes.service');
+    for (const optionalService of [
+      'matrix-hermes.service',
+      'matrix-hermes-dashboard.service',
+      'matrix-integrations-agents.service',
+    ]) {
+      expect(result.events).toContain(`systemctl start --no-block ${optionalService}`);
+    }
     expect(result.events).toContain('systemctl start matrix-gateway.service');
-    expect(result.logs).toContain('matrix-hermes.service');
+    expect(result.logs).toContain(service);
   });
 
   it('retains the transaction when a core service cannot start', () => {
