@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootstrapChatDatabase } from "../../packages/gateway/src/chat/database.js";
 import { bootstrapCollaborationDatabase } from "../../packages/gateway/src/collaboration/database.js";
+import { CollaborationChatScopeService } from "../../packages/gateway/src/collaboration/chat-scope.js";
 import { sql } from "kysely";
 import {
   ProjectTransitionError,
@@ -15,6 +16,7 @@ import { createPlatformCollaborationTestDatabase, destroyPlatformCollaborationTe
 import {
   createCollaborationTestDatabase,
   createRealCollaborationTestDatabase,
+  collaborationExecutionEligibility,
   type CollaborationTestDatabase,
 } from "./collaboration-test-support.js";
 
@@ -244,6 +246,87 @@ describe("project collaboration transition journal", () => {
       .where("scope_id", "=", SCOPE_ID)
       .where("event_type", "=", "project.transition.active")
       .executeTakeFirstOrThrow()).toEqual({ count: 1 });
+  });
+
+  it("activates inherited Chats with the current owner-runtime execution capability", async () => {
+    const executionEligibility = collaborationExecutionEligibility();
+    const chatScope = new CollaborationChatScopeService(fixture.db, {
+      runtimeId: DESTINATION_RUNTIME,
+      preflightSecret: "0123456789abcdef0123456789abcdef",
+      now: () => NOW,
+    });
+    await chatScope.reconcileExecutionEligibility({
+      executionGeneration: 9,
+      eligibility: executionEligibility,
+    });
+    const transitions = createProjectTransitionJournal({
+      db: fixture.db,
+      now: () => NOW,
+      createTransitionId: () => TRANSITION_ID,
+      chatScope,
+    });
+    await prepare();
+    const childScopeId = "10000000-0000-4000-8000-000000000054";
+    await fixture.db.insertInto("collaboration_scopes").values({
+      id: childScopeId,
+      owner_type: "personal",
+      owner_id: OWNER_ID,
+      kind: "chat",
+      organization_id: "org_matrix_team",
+      resource_id: "chat_project_execution",
+      parent_scope_id: SCOPE_ID,
+      membership_mode: "inherited",
+      lifecycle: "preparing",
+      revision: 1,
+      auth_epoch: 0,
+      authority_runtime_id: DESTINATION_RUNTIME,
+      authority_generation: 1,
+      execution_generation: null,
+      execution_eligibility: null,
+      created_at: NOW,
+      updated_at: NOW,
+      deleted_at: null,
+    }).execute();
+    await fixture.db.insertInto("collaboration_resource_bindings").values({
+      id: "30000000-0000-4000-8000-000000000054",
+      project_scope_id: SCOPE_ID,
+      resource_scope_id: childScopeId,
+      resource_kind: "chat",
+      resource_id: "chat_project_execution",
+      authority_runtime_id: DESTINATION_RUNTIME,
+      authority_generation: 1,
+      revision: 1,
+      readiness: "ready",
+      blocker: null,
+      incarnation: null,
+      created_at: NOW,
+      updated_at: NOW,
+    }).execute();
+    await transitions.beginStaging(TRANSITION_ID);
+    await transitions.recordStagedManifest(TRANSITION_ID, "manifest_11111111111111111111111111111111");
+    await transitions.markFenced({
+      transitionId: TRANSITION_ID,
+      sourceFenceEpoch: 8,
+      currentInventoryRevision: 7,
+      currentInventoryHash: INVENTORY_HASH,
+      currentMembershipHash: MEMBERSHIP_HASH,
+    });
+    await transitions.beginCommit(TRANSITION_ID);
+    await transitions.recordPublication(TRANSITION_ID, "publication_11111111111111111111111111111111");
+
+    await transitions.activate(TRANSITION_ID);
+
+    const child = await fixture.db.selectFrom("collaboration_scopes")
+      .select(["execution_generation", "execution_eligibility"])
+      .where("id", "=", childScopeId)
+      .executeTakeFirstOrThrow();
+    expect({
+      executionGeneration: Number(child.execution_generation),
+      executionEligibility: child.execution_eligibility,
+    }).toEqual({
+      executionGeneration: 9,
+      executionEligibility,
+    });
   });
 
   it("atomically revokes inherited Chat reveals and notifies the owner at project publication", async () => {

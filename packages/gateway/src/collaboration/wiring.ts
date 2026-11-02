@@ -263,6 +263,7 @@ export async function createGatewayCollaboration(options: {
   });
   const projectTransitions = createProjectTransitionJournal({
     db: options.db,
+    chatScope,
     onChatShared: (ownerId, event) => options.chatRepository.publishCommittedExternalOutbox(
       { type: "personal", ownerId }, event),
   });
@@ -655,6 +656,7 @@ export async function createGatewayCollaboration(options: {
       projectChatAssignments = createProjectChatAssignmentCoordinator({
         db: options.db,
         chatRepository: options.chatRepository,
+        chatScope,
         shouldContinue: () => !closing,
         onScopeEnded: (scopeId) => { directSessions.revoke({ scopeId }); },
       });
