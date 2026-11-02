@@ -11,6 +11,17 @@ const scripts = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'ut
 const runs = (job: Job) => job.steps.map(step => step.run ?? '').join('\n');
 
 describe('fast CI preserves validation while removing serialized work', () => {
+  it('installs browsers on a pinned Ubuntu release supported by the locked Playwright toolchain', () => {
+    // Playwright 1.60.0 rejects Ubuntu 26.04 during dependency installation.
+    // Keep both real browser-install steps and the full E2E matrix on a stable
+    // supported image instead of allowing ubuntu-latest to change underneath it.
+    const browserJobs = Object.values(workflow.jobs).filter(job =>
+      job.steps.some(step => step.run?.includes('playwright install')),
+    );
+    expect(browserJobs).toContain(workflow.jobs.e2e);
+    for (const job of browserJobs) expect(['ubuntu-22.04', 'ubuntu-24.04']).toContain(job['runs-on']);
+  });
+
   it('bootstraps every Bun lane with the exact qualified version without API tag discovery', () => {
     const setups = Object.values(workflow.jobs).flatMap(job =>
       job.steps.filter(step => step.uses?.startsWith('oven-sh/setup-bun@')),
