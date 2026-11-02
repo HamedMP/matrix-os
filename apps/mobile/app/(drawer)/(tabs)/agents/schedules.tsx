@@ -15,7 +15,7 @@ export default function SchedulesRoute() {
   const scope = `${gateway.userId}:${gateway.computerKey}`;
   if (!gateway.ready) return <TabScreen><Text>{gateway.isComputerPending ? "Loading Computer…" : "Schedules unavailable. Select a Computer and try again."}</Text><Button label="Back" onPress={() => router.back()} /></TabScreen>;
   return <SchedulesScreen key={scope} api={api} onBack={() => router.back()}
-    onNewSchedule={() => router.push("/agents" as never)}
+    onNewSchedule={() => router.push({pathname: "/agents", params: {schedule: "1"}} as never)}
     onOpenChat={(chatId, botId) => router.push({ ...agentChatRoute(botId), params: {agentId: botId, scheduleChatId: chatId, scheduleScope: scope} } as never)}
     resolve={async (interaction, input) => {
       const auth = await gateway.session();

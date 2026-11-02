@@ -7,7 +7,7 @@ import { ChatAgentsRailSection } from "../../../packages/ui/src/chat-agents/Chat
 import { ChatAgentsWorkspace, useChatAgentsNavigation } from "../../../packages/ui/src/chat-agents/ChatAgentsNavigation.js";
 import { ScheduleCenter } from "../../../packages/ui/src/chat-agents/bots/ScheduleCenter.js";
 import type { ChatAgentClient } from "../../../packages/ui/src/chat-agents/client.js";
-import { clientFixture } from "../../desktop/chat-agents-fixture";
+import { clientFixture, saved } from "../../desktop/chat-agents-fixture";
 
 afterEach(cleanup);
 const routine = { routineId: "rt_0123456789abcdef01234567", botId: "bot_fixture", chatId: "chat_exact_owner",
@@ -97,4 +97,19 @@ it("preserves Chat creation and setup recovery capabilities when starting a sche
   capabilities!.opened!.onStartChat!("Plan a task");
   expect(setupProvider).toHaveBeenCalledTimes(1);
   expect(start).toHaveBeenCalledExactlyOnceWith("Plan a task");
+});
+
+it("selects an existing Bot for a new schedule by opening its Chat, never its editor", async () => {
+  const {client} = setup(), open = vi.fn();
+  vi.spyOn(client, "list").mockResolvedValue({enabled: true, agents: [{...saved, recipeRef: {recipeId: "writer", version: "1"}}]});
+  const ensure = vi.fn(async () => "chat_existing_bot");
+  client.bots!.ensureDirectChat = ensure;
+  render(<ChatAgentsWorkspace><ChatAgentsRailSection client={client}/><ChatAgentsContent client={client} scopeKey="owner" onOpenBotChat={open}><p>Existing transcript</p></ChatAgentsContent></ChatAgentsWorkspace>);
+  fireEvent.click(await screen.findByRole("button", {name: "Schedules"}));
+  fireEvent.click(await screen.findByRole("button", {name: "New schedule"}));
+  fireEvent.click(await screen.findByRole("button", {name: "Schedule with Meeting helper"}));
+  await waitFor(() => expect(open).toHaveBeenCalledExactlyOnceWith("chat_existing_bot"));
+  expect(ensure).toHaveBeenCalledExactlyOnceWith(saved.id);
+  expect(screen.queryByRole("dialog", {name: "Edit Agent"})).toBeNull();
+  expect(client.update).not.toHaveBeenCalled();
 });
