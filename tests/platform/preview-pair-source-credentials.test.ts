@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { readPreviewPairSourceCredentials } from "../../packages/platform/src/preview-pair/source-credentials.js";
 import type { PreviewPairSourceProfile } from "../../packages/platform/src/preview-pair/source-profile.js";
+import { loadTicketSigningKeyring } from "../../packages/platform/src/collaboration/ticket-issuer.js";
+import { ed25519PrivateKeyFromSeed, ed25519PublicKeyRaw } from "../../packages/platform/src/collaboration/ticket-crypto.js";
 
 const seed = (byte: number) => Buffer.alloc(32, byte).toString("base64url");
 const profile: PreviewPairSourceProfile = { project: "matrix-test", projectNumber: "123456789012", region: "europe-west1",
@@ -19,6 +21,22 @@ function setup() {
   return { values, read };
 }
 describe("resolved Preview credentials cannot reuse control authority", () => {
+  it.each(["padded URL", "standard base64", "embedded whitespace"])("rejects equivalent %s signer material in either keyring", async encoding => {
+    const bytes = Buffer.alloc(32, 251), canonical = bytes.toString("base64url");
+    const encoded = encoding === "padded URL" ? canonical + "=" : encoding === "standard base64"
+      ? bytes.toString("base64") : canonical.slice(0, 20) + "\n" + canonical.slice(20);
+    for (const [previewSeed, controlSeed] of [[encoded, canonical], [canonical, encoded]]) {
+      const { values, read } = setup();
+      values["preview-tickets"] = JSON.stringify({ "preview-a": previewSeed });
+      const currentControl = { ...control, MATRIX_COLLABORATION_TICKET_KEYS: JSON.stringify({ "control-a": controlSeed }) };
+      expect(loadTicketSigningKeyring({ MATRIX_COLLABORATION_TICKET_ACTIVE_KEY_ID: "preview-a",
+        MATRIX_COLLABORATION_TICKET_KEYS: values["preview-tickets"] })).not.toBeNull();
+      expect(loadTicketSigningKeyring(currentControl)).not.toBeNull();
+      expect(ed25519PublicKeyRaw(ed25519PrivateKeyFromSeed(previewSeed)))
+        .toBe(ed25519PublicKeyRaw(ed25519PrivateKeyFromSeed(controlSeed)));
+      await expect(readPreviewPairSourceCredentials(profile, currentControl, read)).rejects.toThrow("unavailable");
+    }
+  });
   it("loads exactly the six pinned versions with bounded signals", async () => {
     const { read } = setup(), result = await readPreviewPairSourceCredentials(profile, control, read);
     expect(result.PLATFORM_SECRET).toBe("h".repeat(40));

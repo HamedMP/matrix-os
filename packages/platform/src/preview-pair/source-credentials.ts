@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { timingSafeEqual } from "node:crypto";
 import type { PreviewPairSourceProfile, PreviewPairSecretBinding } from "./source-profile.js";
 import { PreviewPairConfigurationError } from "./config.js";
 import { previewPairOperation } from "./operation.js";
@@ -6,8 +7,12 @@ import { loadTicketSigningKeyring } from "../collaboration/ticket-issuer.js";
 export type PreviewPairSourceCredentials = Record<keyof PreviewPairSourceProfile["bindings"], string>;
 function unavailable(): never { throw new PreviewPairConfigurationError(); }
 function sameMaterial(left: string, right: string): boolean {
-  return left === right || /^[A-Za-z0-9_-]{43}$/.test(left) && /^[A-Za-z0-9_-]{43}$/.test(right)
-    && Buffer.from(left, "base64url").equals(Buffer.from(right, "base64url"));
+  const literalLeft = Buffer.from(left), literalRight = Buffer.from(right);
+  if (literalLeft.length === literalRight.length && timingSafeEqual(literalLeft, literalRight)) return true;
+  // Match the production keyring/signer decoder, including padding, standard
+  // base64 and ignored whitespace; different spellings can be the same seed.
+  const seedLeft = Buffer.from(left, "base64url"), seedRight = Buffer.from(right, "base64url");
+  return seedLeft.length === 32 && seedRight.length === 32 && timingSafeEqual(seedLeft, seedRight);
 }
 
 /** Resolve before admission, never inside its transaction. These values stay in
