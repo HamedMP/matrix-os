@@ -2,10 +2,9 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Alert, ScrollView, Text, View } from "react-native";
 import type { BotInteraction, BotRoutineCenterItem, BotRoutineCenterResponse, BotRoutineDetailResponse, ResolveBotInteractionRequest, ResolveBotInteractionResponse } from "@matrix-os/contracts";
 import type { BotRoutineClient } from "@matrix-os/ui/bot-routine-client";
-import { routineApprovalPreview, routineScheduleCopy, routineStatusLabel as status, routineNextRun } from "@matrix-os/ui/bot-routine-presentation";
+import { routineScheduleCopy, routineStatusLabel as status, routineNextRun } from "@matrix-os/ui/bot-routine-presentation";
 import { TabScreen } from "@/components/shell/TabScreen";
 import { Button } from "@/components/ui";
-import { PendingInteraction } from "../interactions/PendingInteraction";
 import { ScheduleEditor } from "./ScheduleEditor";
 import { scheduleStyles as styles } from "./styles";
 
@@ -16,7 +15,7 @@ const date = (value: string) => new Date(value).toLocaleString();
 
 
 /** Keyed by owner + Computer in the route; every read also has a view-generation fence. */
-export function SchedulesScreen({ api, resolve, onBack }: { api: BotRoutineClient; resolve: ResolveSchedule; onBack(): void }) {
+export function SchedulesScreen({ api, resolve, onBack, onOpenChat, onNewSchedule }: { api: BotRoutineClient; resolve: ResolveSchedule; onBack(): void; onOpenChat?: (chatId: string, botId: string) => void | Promise<void>; onNewSchedule?: () => void }) {
   const [archived, setArchived] = useState(false), [data, setData] = useState(EMPTY);
   const [loading, setLoading] = useState(true), [fresh, setFresh] = useState(false), [error, setError] = useState("");
   const [detail, setDetail] = useState<BotRoutineDetailResponse | null>(null), [selected, setSelected] = useState<string | null>(null);
@@ -105,11 +104,21 @@ export function SchedulesScreen({ api, resolve, onBack }: { api: BotRoutineClien
       if (alive.current) { setFresh(false); setError("The schedule could not be changed. Refresh its current revision before trying again."); }
     } finally { mutation.current = false; if (alive.current) setBusy(false); }
   }
+  async function openHistory(chatId: string, botId: string) {
+    if (!onOpenChat || mutation.current || !alive.current) return;
+    mutation.current = true; setBusy(true); setError("");
+    try { await onOpenChat(chatId, botId); }
+    catch (failure: unknown) {
+      console.warn("[mobile-schedules] Chat unavailable", failure instanceof Error ? failure.name : "UnknownError");
+      if (alive.current) setError("This task’s Chat could not be opened. Try again.");
+    } finally { mutation.current = false; if (alive.current) setBusy(false); }
+  }
   const current = detail?.routine;
   return <TabScreen testID="schedules-screen"><ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
     <Button label="Back" variant="text" onPress={onBack} />
     <Text accessibilityRole="header" style={styles.title}>Schedules</Text>
-    <Text style={styles.note}>Your tasks on the selected Computer. Approve new schedules in a private Bot Chat. No Settings switch is required.</Text>
+    <Text style={styles.note}>Your tasks on the selected Computer. Create and approve new schedules in a private Bot Chat.</Text>
+    {onNewSchedule ? <Button label="New schedule" disabled={busy} onPress={onNewSchedule} /> : null}
     <View style={styles.row}><Button label={archived ? "Show current" : "Show archived"} variant="outline" disabled={busy} onPress={() => setArchived(value => !value)} />
       <Button label="Refresh" variant="outline" disabled={busy} onPress={() => { setError(""); void refreshAll(); }} /></View>
     {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
@@ -119,6 +128,7 @@ export function SchedulesScreen({ api, resolve, onBack }: { api: BotRoutineClien
         <Text accessibilityRole="header" style={styles.heading}>{current.proposal.name}</Text>
         <Text style={styles.text}>{current.proposal.prompt}</Text>
         <Text style={styles.note}>{`${status(current)} · Revision ${current.revision}`}</Text>
+        {onOpenChat?<Button label="Open task Chat" variant="text" disabled={busy} onPress={()=>{void openHistory(current.chatId,current.botId);}}/>:null}
         <Text style={styles.note}>{`Bot: ${current.botId} · Computer: ${current.computerId ?? "Unavailable"}`}</Text>
         <Text style={styles.text}>{`${routineScheduleCopy(current.proposal.schedule).frequency} · ${routineScheduleCopy(current.proposal.schedule).timezone}`}</Text>
         <Text style={styles.note}>{`Next run: ${routineNextRun(current)}`}</Text>
@@ -133,12 +143,6 @@ export function SchedulesScreen({ api, resolve, onBack }: { api: BotRoutineClien
         {editing && current.status !== "archived" ? <ScheduleEditor key={current.routineId} routine={current} api={api} resolve={resolve}
           actionsAvailable={fresh && !busy} pending={data.pending} pendingRead={pendingRead} getReadSequence={() => listRead.current}
           onRefresh={refreshAll} onDone={() => { if (alive.current) setEditing(false); }} /> : null}
-        <Text accessibilityRole="header" style={styles.heading}>Recent runs</Text>
-        {!detail.history.length ? <Text style={styles.note}>No runs yet.</Text> : detail.history.map(fire => <View key={fire.fireId} style={styles.card}>
-          <Text style={styles.text}>{`${fire.status} · ${date(fire.scheduledFor)}`}</Text>
-          <Text style={styles.note}>{`Attempts: ${fire.attempts} · ${fire.fireId}`}</Text>
-          {fire.failureCode ? <Text style={styles.note}>This run could not complete. Review the task before retrying; uncertain work is not replayed automatically.</Text> : null}
-        </View>)}
       </View> : null}
     </> : <>
       {loading ? <Text style={styles.note}>Loading schedules…</Text> : null}
@@ -151,13 +155,6 @@ export function SchedulesScreen({ api, resolve, onBack }: { api: BotRoutineClien
         {item.lastFire ? <Text style={styles.note}>{`Last run: ${item.lastFire.status} · ${date(item.lastFire.scheduledFor)}`}</Text> : null}
       </View>)}
       {data.nextCursor && data.items.length < MAX_VISIBLE ? <Button label="Load more" disabled={loading} onPress={() => void load(data.nextCursor!)} /> : null}
-      {!archived && data.pending.length ? <Text accessibilityRole="header" style={styles.heading}>Needs your review</Text> : null}
-      {!archived ? data.pending.map(interaction => {
-        const payload = interaction.payload, preview = payload?.kind === "approval" ? routineApprovalPreview(payload.preview) : null;
-        const revision = preview?.source.routineId ? data.items.find(item => item.routineId === preview.source.routineId)?.revision ?? null : undefined;
-        return <PendingInteraction key={`${interaction.interactionId}:${interaction.revision}`} interaction={interaction} currentRoutineRevision={revision}
-          actionsAvailable={fresh && !busy} onResolve={(_id, input) => resolve(interaction, input)} onRefresh={refreshAll} />;
-      }) : null}
     </>}
   </ScrollView></TabScreen>;
 }
