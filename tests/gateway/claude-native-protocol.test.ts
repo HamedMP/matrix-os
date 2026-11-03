@@ -24,8 +24,9 @@ it.each(["2.1.317 (Claude Code)\n", "2.1.318 (Claude Code)\n", "unknown\n"])("qu
 it("waits for the aborted version child to close and never reports an ordinary fallback", async () => {
   const c = child(); const controller = new AbortController();
   const pending = resolveClaudeNativeProtocol({ ...scope, signal: controller.signal, spawnFn: () => c });
+  const rejected = expect(pending).rejects.toMatchObject({ kind: "aborted" });
   await vi.waitFor(() => expect(c.listenerCount("exit")).toBe(1)); controller.abort();
-  await expect(pending).rejects.toMatchObject({ kind: "aborted" }); expect(c.kill).toHaveBeenCalledWith("SIGTERM");
+  await rejected; expect(c.kill).toHaveBeenCalledWith("SIGTERM");
 });
 it("pins a bare command through exactly the supplied launch PATH", async () => {
   const directory = await mkdtemp(join(tmpdir(), "claude-version-"));
