@@ -56,6 +56,18 @@ No B branch is rewritten and no parallel routines hook/scheduler is introduced.
   Covers native pool, source identity, admission, ordinary/framed/streamed
   Claude, input/approval/Steer/cancel, B hooks/commands and Pi/OpenCode paths.
 - Full typecheck and pattern gate passed; diff whitespace check passed.
+- Compatibility follow-up: **126/126 passed** across eight related files;
+  full typecheck passed after the exact-version transport gate and single
+  initial MCP configuration changes. Unknown-version behavior is simulated;
+  no real unsupported CLI version was qualified.
+- Broad canonical suite was bounded to 600 seconds and exited 124 without
+  final Vitest counts. It is **incomplete**, not a pass. Git failure output
+  matched intentional negative remote/rebase fixtures; no standalone assertion
+  failure summary was emitted. No broad rerun was substituted for that result.
+- Real PostgreSQL 16: **5/5 passed**, two files, no skips. Concurrent duplicate
+  occurrences commit one input/run/outbox; an ordinary-turn race has one winner;
+  selection/checkpoint drift is rejected after an observed database lock wait
+  with no partial writes. The bounded task-owned container was removed.
 - Root shell lint failed in unchanged files: 50 errors / 97 warnings.
 - Real native offline control qualification: arm64 direct MCP replacement and
   reinitialization negative scenario passed. See the reproducible fixture at
@@ -65,6 +77,9 @@ No B branch is rewritten and no parallel routines hook/scheduler is introduced.
   across next deadline, screenshots and head-specific CI/Greptile: **pending**.
 - No exact matching Linear issue confirmed; unrelated scheduling issues were
   not inferred to be this defect.
+- Companion public documentation: private site Draft PR
+  [#327](https://github.com/FinnaAI/matrix-os-site/pull/327), documentation
+  commit `b4f19013a59ff25a408f04ddd14268c1020b9188`; 532 site tests passed.
 
 ## Independent display/lifecycle limits
 
