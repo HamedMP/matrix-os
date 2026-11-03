@@ -1,0 +1,81 @@
+# Evidence and acceptance ledger
+
+## Red behavior, before implementation
+
+Observed installed Host `v2026.10.30-1921`, source provenance
+`fe208411f62dc41d0d8b3ddef0df19a9b9d4f771`, and Claude Code **2.1.317**,
+Linux x64 executable SHA-256
+`eb224419e344575faa4a1f39b290b649425a10cd5ee2ef1d003480cd9ae57eb0`.
+The relevant per-turn adapter/transport source was unchanged between that
+provenance and investigated main `71f6e8637b1ac65707255026a852cc828ea1a5e6`.
+This comparison does not equate the installed bundle with a newer source head.
+
+All following times are observed UTC on 2026-11-03:
+
+| Observation | Evidence |
+| --- | --- |
+| Actual ordinary Chat launches native child | PID 1518993 started 10:54:42 with stream-json print/stdio permission transport |
+| Creation really succeeds | Native transcript records CronCreate task `a2ed88fb` at 10:54:50.341; CronList confirms at 10:54:50.414 |
+| Process ends before due time | Child absent by 10:54:53; canonical run completed 10:54:53.375, before displayed 10:55 due time |
+| Result absent from intended Chat | Authenticated readback remains the original three messages through approximately 10:59 |
+| Absence does not prove permanent loss | Later resume successfully deletes that same recurring task at 11:00:35.682; CronList reports empty |
+| Controlled same-version process stays alive | PID 1523198 creates task `ddb73081` at 11:07:48 with stdin retained |
+| Native scheduler really submits work | UserPromptSubmit observed 11:08:26, output/result at 11:08:29–30; second output at 11:09:28 |
+| Native cancellation really succeeds | CronDelete receipt and empty CronList at 11:09:32; no further fire across 11:10 boundary |
+| Owned probe actually terminates | EOF at 11:10:44, exit zero, owned native/MCP children absent and temporary directory removed |
+
+The adapter's EOF after terminal result explains the measured process lifetime;
+the retained-input control establishes that print/stream-json itself supports
+native firing. Existing Chat projection also terminates with its canonical run,
+so a safe repair requires both bounded physical-session ownership and fresh
+canonical admission/result persistence. It cannot be delivered by merely
+retaining stdin or exposing tools.
+
+Terminal foreground welcome-screen observations remain inconclusive: no
+request echo, task ID or actual execution was captured for that mode.
+
+## Schedule B relationship
+
+Reviewed #3097 (`0614dcb99a672b152fda5ed3fe961a6b0b30d889`), its parent
+#3090 (`203bb805fe0127d6b0a5a1d27540b01265aa05f1`), #3104
+(`300bdbf1d06aee4ff0143f737afd61f653ecb87f`) and #3105
+(`aac369d3fd3c627eabeb1c44a68279e7ac8265a9`). They provide Matrix routines
+authority/hook and host ABI/version qualification; they do not provide native
+Cron cross-phase lifetime or a due-result admission channel.
+
+Build composition additionally depends on #3106's premerge host builder.
+Its builder files are disjoint from this repair. The shared adapter/server
+composition preserves B's terminal-result, settlement and finally revocation.
+Native initialize occurs once; subsequent phase registration remains host-local,
+and fresh MCP replacement is acknowledged before the held prompt is released.
+No B branch is rewritten and no parallel routines hook/scheduler is introduced.
+
+## Verification status
+
+- Independent integrated regression: **491/491 passed**, 21 files, no skips.
+  Covers native pool, source identity, admission, ordinary/framed/streamed
+  Claude, input/approval/Steer/cancel, B hooks/commands and Pi/OpenCode paths.
+- Full typecheck and pattern gate passed; diff whitespace check passed.
+- Root shell lint failed in unchanged files: 50 errors / 97 warnings.
+- Real native offline control qualification: arm64 direct MCP replacement and
+  reinitialization negative scenario passed. See the reproducible fixture at
+  `tests/gateway/claude-native-cron/`. Live x64 diagnostic observed the same
+  control behavior. These are not final product acceptance.
+- Exact repaired-head installed Chat, real due-result readback, cancellation
+  across next deadline, screenshots and head-specific CI/Greptile: **pending**.
+- No exact matching Linear issue confirmed; unrelated scheduling issues were
+  not inferred to be this defect.
+
+## Independent display/lifecycle limits
+
+The host used UTC; the observing user's display timezone was Asia/Shanghai.
+Native next-run text omitted a timezone. One model-generated timestamp used
+the nominal due time instead of the observed output time. Neither display
+issue is evidence of a scheduler failure or an authoritative execution clock.
+
+Closing a terminal/browser, ending a native process, restarting Gateway and
+rebooting a machine are distinct actions. The control above proves an owned
+native process can fire after its initial interaction completes and stops after
+explicit cancellation/EOF. Final repaired Chat closure, process-kill, service
+restart and machine-reboot acceptance remain unverified. No automatic recovery
+is promised from transcript persistence alone.
