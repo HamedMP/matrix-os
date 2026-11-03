@@ -95,7 +95,11 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
     }
     const wrapper = join(home, "preview-fixture-app");
     const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
-    await writeFile(wrapper, "#!/bin/sh\nexec " + quote(electron) + " " + quote(bootstrap) + "\n"); await chmod(wrapper, 0o755);
+    // Match Playwright's Linux fixture launch policy for this secondary process
+    // too: hosted runners may deny Chromium's unprivileged user namespace.
+    // This wrapper is test-only; the production launcher retains its sandbox.
+    const fixtureFlags = process.platform === "linux" ? " --no-sandbox" : "";
+    await writeFile(wrapper, "#!/bin/sh\nexec " + quote(electron) + fixtureFlags + " " + quote(bootstrap) + "\n"); await chmod(wrapper, 0o755);
     const again = issuePreviewPairLaunch({ manifest, role: "owner", platform: process.platform as "linux", arch: process.arch as "x64", sourceOrigin: "https://app.matrix-os.com" }, secret, Date.now());
     const paths = await createPreviewPairProfile(again.context, home);
     // macOS naturally leaves the app alive after its last window closes. On

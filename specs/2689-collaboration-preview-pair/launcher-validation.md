@@ -164,3 +164,25 @@ Source/harness provenance, owner capabilities and cleanup checks are unchanged.
 This qualifies runner orchestration with explicit subprocess doubles and receipt
 validation; real native app execution is qualified separately. No cloud/user
 permission changes, merge, deployment or Slack post occurred.
+
+
+## Hosted native namespace regression — 2026-11-03
+
+Hosted run `41643675599`, Electron job `125943424426`, failed during the
+secondary-instance reopen with `Preview desktop stopped before startup`.
+The initial Owner/Member windows had already produced captures. Playwright
+1.60.0 adds `--no-sandbox` to Linux fixture launches, but the secondary test
+wrapper launched Electron directly without that flag.
+
+A process-local seccomp probe denied user-namespace creation without changing
+host settings: raw Electron exited 133, while the Playwright-equivalent fixture
+flag exited 0. With the same restriction applied to the full native test process
+tree, the original journey failed with the hosted error at the actual secondary
+launch. The fix applies the Linux fixture policy to that test wrapper only.
+Production process arguments, authorization, profile isolation and readiness
+acknowledgements are unchanged. This does not qualify Chromium sandbox behavior
+or live collaboration. The fixed real native journey passed **1/1**, with zero
+skips, under the same process-local namespace restriction (23.80s). This used a
+production build of `c752204a7348eda0e868733b48f3a4aec5eb3979` with only the
+working-tree fixture flag changed. A clean final-head build is checked separately.
+Captures remain outside Git in `/tmp/eng418-native-namespace-green/`.
