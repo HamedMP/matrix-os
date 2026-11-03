@@ -147,8 +147,29 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
     await ownerWindow.dispose();
     expect(ownerWindowId).toBeGreaterThan(0);
     await stage("owner-renderer-crash");
+    const rendererPid = await opened.owner.app.evaluate(({ BrowserWindow }, id) =>
+      BrowserWindow.fromId(id)!.webContents.getOSProcessId(), ownerWindowId);
+    expect(Number.isSafeInteger(rendererPid) && rendererPid > 0).toBe(true);
+    const recordRenderer = async (point: string, nativeCrashed: boolean | null) => {
+      if (process.platform !== "linux") return;
+      try {
+        const procFile = async (file: string) => readFile(`/proc/${rendererPid}/${file}`, "utf8").catch((error: unknown) => {
+          if (error instanceof Error && "code" in error && error.code === "ENOENT") return "exited";
+          throw error;
+        });
+        const status = await procFile("status"), limits = await procFile("limits");
+        const report = { point, nativeCrashed, rendererPid, windowId: ownerWindowId,
+          status: status.split("\n").filter(line => /^(State|CoreDumping|TracerPid|VmRSS|Threads|Seccomp):/.test(line)),
+          coreLimit: limits.split("\n").find(line => line.startsWith("Max core file size")) ?? limits };
+        console.info("[preview-pair-e2e] renderer", JSON.stringify(report));
+        const directory = process.env.MATRIX_PREVIEW_PAIR_EVIDENCE_DIR;
+        if (directory) await appendFile(join(directory, "native-renderer.jsonl"), JSON.stringify(report) + "\n", { mode: 0o600 });
+      } catch (error: unknown) {
+        console.warn("[preview-pair-e2e] renderer diagnostics unavailable", error instanceof Error ? error.name : "UnknownError");
+      }
+    };
+    await recordRenderer("before", false);
     const crashSession = await restored.page.context().newCDPSession(restored.page);
-    const crashed = restored.page.waitForEvent("crash", { timeout: 10_000 });
     // Crash the actual page's renderer IO thread, without Electron's native
     // widget-view precondition. The target cannot acknowledge its own crash;
     // its outstanding command is drained when our owned app context closes.
@@ -158,11 +179,23 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
         || error.message.includes("Target page, context or browser has been closed"))) return;
       throw error instanceof Error ? error : new Error("Native renderer crash request failed");
     });
+    let lastCrashState: boolean | null = null;
+    const crashed = (async () => {
+      try {
+        await expect.poll(async () => {
+          lastCrashState = await opened.owner.app.evaluate(({ BrowserWindow }, id) =>
+            BrowserWindow.fromId(id)!.webContents.isCrashed(), ownerWindowId);
+          return lastCrashState;
+        }, { timeout: 10_000, message: "The owner renderer must actually crash before recovery" }).toBe(true);
+        await recordRenderer("crashed", true);
+      } catch (error: unknown) {
+        await recordRenderer("not-observed", lastCrashState);
+        throw error instanceof Error ? error : new Error("Native renderer crash observation failed");
+      }
+    })();
+    // Electron state is the original recovery precondition. An auxiliary
+    // Playwright notification cannot substitute for, or gate, that state.
     await Promise.race([crashed, rendererCrashCommand.then(() => crashed)]);
-    await expect.poll(() => opened.owner.app.evaluate(({ BrowserWindow }, id) =>
-      BrowserWindow.fromId(id)!.webContents.isCrashed(), ownerWindowId), {
-      timeout: 10_000, message: "The owner renderer must actually crash before recovery",
-    }).toBe(true);
     const afterCrash = issuePreviewPairLaunch({ manifest, role: "owner", platform: process.platform as "linux", arch: process.arch as "x64", sourceOrigin: "https://app.matrix-os.com" }, secret, Date.now());
     await stage("owner-renderer-reopen");
     const recovered = await startPreviewDesktop({ executable: wrapper, proof: afterCrash, userData: paths.userData });
