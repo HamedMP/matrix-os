@@ -1,3 +1,4 @@
+import { assertPrivateRoutineTurn } from "./private-routine-authority.js";
 import { readChatImportSource } from "./import-source.js";
 import { listChats, updateChat, renameChat } from "./metadata-repository.js";
 import { ownerSharedProjection, sharedBindingScopeId } from "./owner-shared-projection.js";
@@ -1202,6 +1203,7 @@ export class ChatRepository {
     return this.transact(async (trx) => {
       const current = await selectOwnedChat(trx, owner, chatId, true);
       if (!current) throw new ChatNotFoundError(chatId);
+      await assertPrivateRoutineTurn(trx, owner, chatId, turnId);
       const existing = await trx.selectFrom("chat_runs").selectAll()
         .where("turn_id", "=", turnId)
         .where("client_request_id", "=", clientRequestId)
