@@ -9,14 +9,16 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { writeParityState } from "./local-production-parity/state.mjs";
 import { runCommand, runCommandSync } from "./local-production-parity/commands.mjs";
+import { prepareBaseImage } from "./local-production-parity/image-cache.mjs";
+export { prepareBaseImage };
 import {
   root, stateDirectory, statePath, cloudInitPath, bundlePath, bundleChecksumPath,
   machineName, launcherLockPath, runtimeDirectory, runtimeDiskPath, runtimeSeedPath,
   runtimeLogPath, runtimeSshKeyPath, storageTlsDirectory, storageTlsCertificatePath,
-  storageTlsKeyPath, baseImagePath, baseImageChecksumPath, artifactPort, platformPort,
+  storageTlsKeyPath, baseImagePath, artifactPort, platformPort,
   storageTlsPort, guestHostAddress, fixturePublicAddress, localPlatformUrl,
   platformTlsPort, platformTlsProxyName, localPlatformTlsOrigin,
-  localArtifactUrl, ubuntuImageUrl, fixtureRouterName, storageTlsProxyName,
+  localArtifactUrl, fixtureRouterName, storageTlsProxyName,
   platformContainerName, platformImageName, LOCAL_PARITY_OWNER_LABEL,
   resolveParityStateDirectory,
 } from "./local-production-parity/config.mjs";
@@ -306,25 +308,6 @@ function prepareStorageTlsCertificate() {
   ]);
 }
 
-async function prepareBaseImage(signal) {
-  if (existsSync(baseImagePath) && existsSync(baseImageChecksumPath)) {
-    run("shasum", ["-a", "256", "-c", baseImageChecksumPath]);
-    return;
-  }
-  mkdirSync(stateDirectory, { recursive: true });
-  const sumsPath = resolve(stateDirectory, "SHA256SUMS");
-  if (!existsSync(baseImagePath)) {
-    await runAbortableCommand("curl", ["--fail", "--location", "--retry", "3", "--connect-timeout", "10", "--max-time", "1800", ubuntuImageUrl, "-o", baseImagePath], { signal, timeoutMs: 30 * 60_000 });
-  }
-  await runAbortableCommand("curl", ["--fail", "--location", "--retry", "3", "--connect-timeout", "10", "--max-time", "120", `${new URL(".", ubuntuImageUrl)}SHA256SUMS`, "-o", sumsPath], { signal, timeoutMs: 5 * 60_000 });
-  const imageName = new URL(ubuntuImageUrl).pathname.split("/").at(-1);
-  const checksumLine = readFileSync(sumsPath, "utf8").split("\n").find((line) => line.trim().endsWith(`*${imageName}`));
-  if (!checksumLine) throw new Error(`Ubuntu checksum manifest did not contain ${imageName}`);
-  const checksum = checksumLine.trim().split(/\s+/)[0];
-  writeFileSync(baseImageChecksumPath, `${checksum}  ${baseImagePath}\n`);
-  run("shasum", ["-a", "256", "-c", baseImageChecksumPath]);
-}
-
 function prepareRuntimeFiles(renderedCloudInit, instanceId) {
   rmSync(runtimeDirectory, { recursive: true, force: true });
   mkdirSync(runtimeDirectory, { recursive: true });
@@ -445,7 +428,7 @@ export async function cleanupLocalParityResources(options = {}) {
       errors.push(error);
     }
   }
-  if (runtimeStopped) removeRuntime();
+  if (runtimeStopped && options.preserveRuntime === false) removeRuntime();
   if (errors.length > 0) throw new AggregateError(errors, "Failed to clean up local parity resources safely");
 }
 
@@ -897,7 +880,7 @@ export async function down(options = {}) {
     errors.push(error);
   }
   try {
-    await cleanupResources();
+    await cleanupResources({ preserveRuntime: false });
   } catch (error) {
     errors.push(error);
   }

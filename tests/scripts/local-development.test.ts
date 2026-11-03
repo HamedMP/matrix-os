@@ -547,6 +547,7 @@ describe("local development contracts", () => {
   it("cleans all owned resources after failure but preserves a live runtime disk", async () => {
     const events: string[] = [];
     await cleanupLocalParityResources({
+      preserveRuntime: false,
       stopRuntime: async () => events.push("runtime"),
       stopContainers: [
         () => events.push("router"),
