@@ -74,6 +74,39 @@ async function collectArtifacts(source, target, expected, signal) {
   }
 }
 
+async function prepareCiPnpmStore(root, env) {
+  // setup-node's trusted post action still expects its host store path to exist.
+  // The build used a separate fresh store; never copy or install anything here.
+  const { stdout } = await exec("pnpm", ["store", "path", "--silent"], {
+    cwd: root, env, encoding: "utf8", timeout: 10_000, maxBuffer: 4096,
+  });
+  const store = stdout.trim();
+  if (!isAbsolute(store) || resolve(store) !== store || /[\0\r\n]/.test(store)) throw new Error("Host pnpm returned an invalid cache path");
+  const anchor = [env.HOME, env.RUNNER_TEMP].find(value => {
+    if (!value || !isAbsolute(value) || resolve(value) !== value || /[\0\r\n]/.test(value)) return false;
+    const within = relative(value, store);
+    return within && !isAbsolute(within) && within !== ".." && !within.startsWith("../");
+  });
+  if (!anchor) throw new Error("Host pnpm cache must stay within owned CI HOME or RUNNER_TEMP");
+  const components = relative(anchor, store).split("/");
+  if (components.length > 64 || components.some(value => value.length > 255 || !/^[A-Za-z0-9._-]+$/.test(value))) throw new Error("Host pnpm cache contains unsafe path components");
+  const ownedDirectory = async path => {
+    const info = await lstat(path);
+    if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid() || (info.mode & 0o002)) {
+      throw new Error("Host pnpm cache path must contain only owned real directories without world write");
+    }
+  };
+  await ownedDirectory(anchor);
+  let current = await realpath(anchor);
+  for (const component of components) {
+    current = join(current, component);
+    try { await mkdir(current, { mode: 0o700 }); }
+    catch (error) { if (error.code !== "EEXIST") throw error; }
+    await ownedDirectory(current);
+  }
+  console.log("Host pnpm cache path is ready for the trusted post-cache action; no build data imported");
+}
+
 export async function buildInBaseline({ root = rootDefault, env = process.env, deadlineMs = 25 * 60_000 } = {}) {
   root = await realpath(root);
   const destination = await safeDestination(root, env.HOST_BUNDLE_DIST_DIR);
@@ -175,6 +208,8 @@ export async function buildInBaseline({ root = rootDefault, env = process.env, d
     if (cleanupFailure) throw new AggregateError([failure, cleanupFailure].filter(Boolean),
       `${failure ? failure.message + "; " : ""}container cleanup unconfirmed: ${name}`);
   }
+  // Only successful artifact production AND confirmed container cleanup reach this point.
+  if (env.GITHUB_ACTIONS === "true") await prepareCiPnpmStore(root, env);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
