@@ -42,7 +42,7 @@ const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const PromptInput = z.object({ hook_event_name: z.literal("UserPromptSubmit"), session_id: nativeRef, prompt_id: nativeRef,
   prompt: z.string().min(1).max(128 * 1024), agent_id: z.undefined().optional() }).passthrough();
 const ToolInput = z.object({ hook_event_name: z.literal("PreToolUse"), session_id: nativeRef, prompt_id: nativeRef,
-  tool_name: nativeRef, tool_use_id: nativeRef, tool_input: z.unknown(), agent_id: z.undefined().optional() }).passthrough();
+  tool_name: nativeRef, tool_use_id: nativeRef, tool_input: z.unknown(), agent_id: nativeRef.optional() }).passthrough();
 const ScheduledWakeupStatus = z.object({ type: z.literal("command_lifecycle"), command_uuid: z.uuid(),
   state: z.literal("started"), wakeup_source: z.literal("schedule_wakeup"), uuid: z.uuid(), session_id: nativeRef }).strict();
 const ScheduledCompletionStatus = z.object({ type: z.literal("command_lifecycle"), command_uuid: z.uuid(),
@@ -243,6 +243,16 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
         }
       }
       const request = nativeRecord(frame.request);
+      if (frame.type === "control_request" && request?.subtype === "can_use_tool") {
+        const id = nativeRef.safeParse(frame.request_id), toolId = nativeRef.safeParse(request.tool_use_id), name = nativeRef.safeParse(request.tool_name);
+        const agent = nativeRef.optional().safeParse(request.agent_id), phase = this.phase;
+        if (id.success && phase?.promptId && toolId.success && name.success && agent.success
+          && this.jobs.ownsTool(toolId.data, name.data, this.sessionId!, agent.data)) { this.deliver(frame); return; }
+        if (id.success) void this.control.respond(id.data, { behavior: "deny", message: "Native tool phase unavailable." })
+          .finally(() => { if (!phase) return this.stop(new CanonicalCliError("invalid_output")); }).catch(reportNativeSessionFailure);
+        else void this.stop(new CanonicalCliError("invalid_output")).catch(reportNativeSessionFailure);
+        return;
+      }
       if (frame.type === "control_request" && request?.subtype === "hook_callback") {
         const id = nativeRef.safeParse(frame.request_id);
         if (!id.success) throw new Error("Native callback unavailable");
@@ -253,16 +263,6 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
         void this.control.respond(id.data, { decision: "block", reason: "Native callback registration unavailable." }).catch(reportNativeSessionFailure); return;
       }
       if (!this.phase) {
-        // Idle has no current Run authority. Answer permission requests before stopping so native
-        // permission timeout/default behavior cannot approve work outside canonical admission.
-        if (frame.type === "control_request" && request?.subtype === "can_use_tool") {
-          const id = nativeRef.safeParse(frame.request_id);
-          if (id.success) {
-            void this.control.respond(id.data, { behavior: "deny", message: "Native tool phase unavailable." })
-              .finally(() => this.stop(new CanonicalCliError("invalid_output"))).catch(reportNativeSessionFailure);
-            return;
-          }
-        }
         // Native status notifications and duplicate terminal receipts carry no model work.
         // Assistant/tool output (including unknown protocol frames) must have an admitted phase.
         if (!["system", "rate_limit_event", "result"].includes(frame.type as string)) {
@@ -270,7 +270,9 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
         }
         return;
       }
-      this.jobs.handle(frame);
+      if (["assistant", "stream_event", "user"].includes(frame.type as string)
+        && (!this.phase.promptId || !this.jobs.acceptsFrame(frame, this.sessionId!))) return;
+      if (this.phase.promptId) this.jobs.handle(frame);
       if (frame.type === "result") this.phase.result = frame.is_error !== true && frame.subtype === "success";
       this.deliver(frame);
     }
@@ -303,13 +305,18 @@ export function createClaudeNativeSessionPool(options: PoolOptions = {}) {
     private tool(frame: NativeRecord, id: string) {
       const request = nativeRecord(frame.request), parsed = ToolInput.safeParse(request?.input), phase = this.phase;
       const deny = () => this.control.respond(id, { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Native tool phase unavailable." } });
-      if (!parsed.success || !phase || parsed.data.session_id !== this.sessionId || parsed.data.prompt_id !== phase.promptId
-        || request?.tool_use_id !== parsed.data.tool_use_id || !this.jobs.observes(parsed.data.tool_use_id, parsed.data.tool_name)) { void deny().catch(reportNativeSessionFailure); return; }
+      if (!parsed.success || !phase?.promptId || parsed.data.session_id !== this.sessionId || parsed.data.prompt_id !== phase.promptId
+        || request?.tool_use_id !== parsed.data.tool_use_id || !this.jobs.ownsTool(parsed.data.tool_use_id, parsed.data.tool_name, this.sessionId!, parsed.data.agent_id)) { void deny().catch(reportNativeSessionFailure); return; }
       if (request.callback_id === this.control.bashCallbackId) {
+        if (parsed.data.tool_name !== "Bash" || parsed.data.agent_id !== undefined
+          && !this.jobs.observesDelegatedBash(parsed.data.tool_use_id, parsed.data.agent_id, parsed.data.session_id, parsed.data.tool_input)) { void deny().catch(reportNativeSessionFailure); return; }
         const mapped = this.control.remapBash(frame);
         if (mapped) this.deliver(mapped); else void this.control.respond(id, {}).catch(reportNativeSessionFailure); return;
       }
-      if (!["CronCreate", "CronDelete", "CronList"].includes(parsed.data.tool_name)) { void deny().catch(reportNativeSessionFailure); return; }
+      if (!["CronCreate", "CronDelete", "CronList"].includes(parsed.data.tool_name)) {
+        void this.control.respond(id, {}).catch(reportNativeSessionFailure); return; // Keep native permission handling; this is no tool approval.
+      }
+      if (parsed.data.agent_id !== undefined) { void deny().catch(reportNativeSessionFailure); return; }
       const tool = this.jobs.toolInput(parsed.data.tool_use_id);
       if (!tool || JSON.stringify(tool.input) !== JSON.stringify(parsed.data.tool_input)) { void deny().catch(reportNativeSessionFailure); return; }
       if (parsed.data.tool_name === "CronCreate" && (!this.eligible() || !capacity(this) || !this.jobs.authorizeCreate(parsed.data.tool_use_id))) { void deny().catch(reportNativeSessionFailure); return; }
