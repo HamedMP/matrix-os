@@ -852,11 +852,21 @@ jobs:
             --arg slot "$(jq -r .runtimeSlot <<< "$machine")" \
             --argjson epoch "$(jq -r .runtimeTokenEpoch <<< "$machine")" \
             '{ownerId:$owner,machineId:$machine,runtimeSlot:$slot,expectedRuntimeTokenEpoch:$epoch}')"
-          code="$(curl -sS --max-time 180 -o /tmp/preview-access.json -w '%{http_code}' \
-            -X POST "${PLATFORM_PUBLIC_URL}/vps/preview/access/activate" \
-            -H "authorization: Bearer ${PLATFORM_SECRET}" \
-            -H "content-type: application/json" \
-            --data-binary "$body")"
+          activate() {
+            curl -sS --max-time 180 -o /tmp/preview-access.json -w '%{http_code}' \
+              -X POST "${PLATFORM_PUBLIC_URL}/vps/preview/access/activate" \
+              -H "authorization: Bearer ${PLATFORM_SECRET}" \
+              -H "content-type: application/json" \
+              --data-binary "$body"
+          }
+          code=""
+          for attempt in 1 2 3; do
+            code="$(activate)"
+            if [ "$code" = "200" ]; then break; fi
+            if [ "$code" != "503" ] || [ "$attempt" = "3" ]; then break; fi
+            echo "Preview access activation is temporarily unavailable; retrying (${attempt}/3)." >&2
+            sleep 15
+          done
           if [ "$code" != "200" ] || ! jq -e '
             .status == "ready"
             and .fundedAiConfigured == true

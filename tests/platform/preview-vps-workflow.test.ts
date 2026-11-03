@@ -131,6 +131,9 @@ describe('Preview VPS provisioning workflow', () => {
     expect(run).toContain('.activationState == "authorized"');
     expect(run).toContain('expectedRuntimeTokenEpoch:$epoch');
     expect(run).toContain('/vps/preview/access/activate');
+    expect(run).toContain('for attempt in 1 2 3');
+    expect(run).toContain('[ "$code" != "503" ]');
+    expect(run).toContain('sleep 15');
     expect(run).toContain('.allocation.ai.requestsRemaining > 0');
     expect(run).toContain('.allocation.speech.requestsRemaining > 0');
     expect(run).not.toContain('MATRIX_PREVIEW_RUNTIME_SECRET');
