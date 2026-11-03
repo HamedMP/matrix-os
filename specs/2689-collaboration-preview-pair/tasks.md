@@ -110,7 +110,9 @@ edits to the same composition, schema or tasks file.
 
 ## GitHub Stack Plan
 
-All layers share ENG-418 and the native GitHub stack rooted at spec PR #3022.
+All layers share ENG-418 and [native stack #3112](https://github.com/HamedMP/matrix-os/stack/3112), rooted at spec PR #3022.
+The requester approved recreating metadata to insert helper #3107; all 26 PR
+numbers and published commits were preserved without rebasing or updating main.
 Use official `gh stack init/add/rebase/submit`; never hand-retarget or flatten.
 
 | Layer | Scope | Suggested branch | Dependency |

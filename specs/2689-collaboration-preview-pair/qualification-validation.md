@@ -134,3 +134,24 @@ preserving published ancestry. No rebase or update from main was performed.
 Remote current-head review and full CI must pass before this repair is declared
 complete. T029/T041 live acceptance remains separate; no Slack post, cloud
 activation, customer modification, merge or deployment is part of this repair.
+
+## Native stack recreation and hosted follow-up — 2026-11-03
+
+The requester approved metadata-only recreation of native stack #3026 as
+[#3112](https://github.com/HamedMP/matrix-os/stack/3112). All 26 PR numbers and
+published source heads were verified unchanged; only launcher's parent changes
+to helper #3107, reducing its diff from 60 to 49 files. Every PR still links
+ENG-418. No rebase, main update, branch deletion or PR closure occurred.
+
+Hosted native run `41643675599` failed in the secondary Electron launch after
+the initial Owner/Member sessions opened. The wrapper omitted Playwright's
+Linux test-only sandbox flag. Denying user namespaces in the native test's
+process tree reproduced the exact startup error; applying the same fixture
+policy to the wrapper passed the full journey **1/1**, zero skips. Four focused
+process/environment/readiness/cancellation/artifact suites passed **13/13**.
+Production launch flags and authorization remain unchanged.
+
+The separate revocation job `125943366778` failed on an authenticated GitHub
+`GET /repos/HamedMP/matrix-os/pulls/3096` with HTTP 503. That is an API failure,
+not a candidate assertion; source gates remain fail-closed. New-head CI must
+qualify the published fix. Live Clerk/two-VPS/model acceptance stays pending.
