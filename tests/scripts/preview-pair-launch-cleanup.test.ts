@@ -7,7 +7,7 @@ import { issuePreviewPairLaunch } from "../../packages/platform/src/preview-pair
 it("a real Member process failure stops the newly opened Owner and disposes only this launch's artifact", async () => {
   const home = await mkdtemp(join(tmpdir(), "eng418-partial-launch-")), executable = join(home, "fixture-app");
   try {
-    await writeFile(executable, `#!/usr/bin/node
+    await writeFile(executable, `#!/usr/bin/env node
 const net=require('node:net'),fs=require('node:fs'); const c=JSON.parse(process.env.MATRIX_PREVIEW_PAIR_CONTEXT).context;
 if(c.role==='member')process.exit(5);
 fs.writeFileSync(process.env.OPERATOR_USER_DATA_DIR+'/fixture-pid',String(process.pid));

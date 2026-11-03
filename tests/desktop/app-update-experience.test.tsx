@@ -25,6 +25,7 @@ describe("App desktop update experience", () => {
   it("keeps the workspace mounted beneath a dismissible compatibility reminder", async () => {
     vi.stubGlobal("operator", {
       invoke: vi.fn(async (channel: string) => {
+        if (channel === "app:get-preview") return null;
         if (channel === "update:get-state") return { status: "disabled" };
         if (channel === "update:get-whats-new") return { release: null, shouldOpen: false };
         return { ok: true };
@@ -51,6 +52,7 @@ describe("App desktop update experience", () => {
     const listeners = new Map<string, (payload: unknown) => void>();
     vi.stubGlobal("operator", {
       invoke: vi.fn(async (channel: string) => {
+        if (channel === "app:get-preview") return null;
         if (channel === "update:get-state") return { status: "disabled" };
         if (channel === "update:get-whats-new") return { release: null, shouldOpen: false };
         if (channel === "embed:suspend-all") return { ok: true };

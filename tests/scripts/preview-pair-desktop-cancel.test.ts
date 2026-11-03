@@ -21,7 +21,7 @@ it("interrupting startup terminates its actual unacknowledged child promptly", a
   let child: ChildProcess | undefined, outcome: Promise<unknown> | undefined;
   try {
     const executable = join(parent, "waiting-app");
-    await writeFile(executable, "#!/usr/bin/node\nsetInterval(()=>{},1000);\n"); await chmod(executable, 0o755);
+    await writeFile(executable, "#!/usr/bin/env node\nsetInterval(()=>{},1000);\n"); await chmod(executable, 0o755);
     const spawned = new Promise<ChildProcess>(resolve => { observer.spawned = resolve; });
     const proof = issuePreviewPairLaunch({ manifest: previewPairManifestFixture(), role: "owner", platform: "darwin",
       arch: "arm64", sourceOrigin: "https://app.matrix-os.com" }, "s".repeat(40), PAIR_NOW);
