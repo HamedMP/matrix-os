@@ -269,3 +269,23 @@ This distinguishes an automation notification failure from a renderer that has
 not exited without exposing credentials or private content. A separate local
 run with an unlimited core limit passed; that limit alone is not a reproduced
 cause, and no host-wide or CI core-dump setting is changed.
+
+## Diagnosed hosted core-dump stall — 2026-11-03
+
+Hosted job `126012392862` supplied the missing native evidence: after the crash
+command the owned renderer remained present with `CoreDumping: 1`, while Electron
+still reported `isCrashed() === false`. The [actual diagnostic artifact](https://github.com/HamedMP/matrix-os/actions/runs/41663384327/artifacts/13242998409)
+records both before/after states and the lifecycle trace. Linux documents that
+[this flag means a core dump is in progress](https://man7.org/linux/man-pages/man5/proc_pid_status.5.html).
+The process had not completed exit; which core handler delayed it is unproven.
+
+On Linux only, the fixture now sends `SIGKILL` once from its owned Electron main
+process to the renderer PID obtained from the actual BrowserWindow, after
+rechecking that identity in the same call. [SIGKILL terminates without producing
+a core dump](https://man7.org/linux/man-pages/man7/signal.7.html). A disposable
+Electron spike confirmed this reaches the real `isCrashed()` state. The full
+test still requires that state within ten seconds and then exercises production
+reload, authentication and peer/session isolation. This matches Electron's
+[documented killed-or-crashed renderer termination contract](https://www.electronjs.org/docs/latest/api/web-contents#contentsforcefullycrashrenderer).
+Other hosts retain the page-targeted CDP injection. There is no global process
+matching, host setting change, simulated event/state, retry or timeout increase.
