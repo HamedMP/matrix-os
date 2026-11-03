@@ -1,85 +1,9 @@
 import { EventEmitter } from "node:events";
-import { afterEach, expect, it, vi } from "vitest";
-import { createClaudeNativeSessionPool, type ClaudeNativeSessionPool } from "../../packages/gateway/src/chat/claude-native-session.js";
+import { expect, it, vi } from "vitest";
+import { createClaudeRoutineHook } from "../../packages/gateway/src/chat/claude-routine-hook.js";
 import { createClaudeChatProviderAdapter } from "../../packages/gateway/src/chat/claude-provider-adapter.js";
 import type { CanonicalCliSpawn } from "../../packages/gateway/src/chat/cli-process.js";
-import type { CanonicalProviderRunInput } from "../../packages/gateway/src/chat/provider-adapter.js";
-
-const input = (runId = "run_1", chatId = "chat_1"): CanonicalProviderRunInput => ({
-  owner: { type: "personal", ownerId: "owner_1" }, chatId, turnId: `cturn_${runId}`, runId,
-  prompt: "create a native task", parts: [{ type: "text", text: "create a native task" }],
-  selection: { instanceId: "claude_code_default", model: "haiku", options: [] },
-  interactionMode: "default", permissionMode: "supervised", signal: new AbortController().signal,
-});
-class NativeChild extends EventEmitter {
-  stdout = new EventEmitter(); stderr = new EventEmitter(); frames: any[] = []; ended = false;
-  initialized = false; autoMcpAck = true; version = "2.1.317";
-  promptId = "";
-  stdin = Object.assign(new EventEmitter(), {
-    write: (raw: string, callback?: (error?: Error | null) => void) => {
-      const frame = JSON.parse(raw); this.frames.push(frame); callback?.();
-      if (frame.type === "control_request" && frame.request.subtype === "initialize") queueMicrotask(() => {
-        this.emitFrame({ type: "control_response", response: { subtype: "success", request_id: frame.request_id,
-          response: { hooks_applied: true, claude_code_version: this.version } } });
-        if (!this.initialized) { this.initialized = true; this.emitFrame({ type: "system", subtype: "init", session_id: "native_1", claude_code_version: this.version, tools: ["Bash", "CronCreate", "CronList", "CronDelete"] }); }
-      });
-      if (frame.type === "control_request" && frame.request.subtype === "mcp_set_servers" && this.autoMcpAck) queueMicrotask(() => this.ack(frame.request_id));
-      if (frame.type === "user") queueMicrotask(() => {
-        const init = this.frames.find(f => f.request?.subtype === "initialize");
-        this.promptId = `foreground_${this.frames.filter(f => f.type === "user").length}`;
-        this.prompt(`request_${this.promptId}`, this.promptId, frame.message.content);
-      });
-      return true;
-    },
-    end: () => { this.ended = true; queueMicrotask(() => this.exit()); },
-  });
-  kill = vi.fn((_signal: NodeJS.Signals) => { queueMicrotask(() => this.exit(null, "SIGTERM")); });
-  emitFrame(frame: unknown) { this.stdout.emit("data", Buffer.from(`${JSON.stringify(frame)}\n`)); }
-  ack(requestId: string) { this.emitFrame({ type: "control_response", response: { subtype: "success", request_id: requestId, response: { added: ["matrix-integrations"], removed: [], errors: {} } } }); }
-  exit(code: number | null = 0, signal: NodeJS.Signals | null = null) { this.emit("exit", code, signal); this.emit("close", code, signal); }
-  createJob() {
-    this.emitFrame({ type: "assistant", message: { content: [{ type: "tool_use", id: "tool_cron", name: "CronCreate", input: { cron: "* * * * *", prompt: "native scheduled prompt", recurring: true } }] } });
-    this.emitFrame({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "tool_cron", content: "Scheduled recurring job abcdef01 (Every minute). Session-only." }] } });
-  }
-  result() { this.emitFrame({ type: "result", session_id: "native_1", subtype: "success", result: "done" }); }
-  prompt(requestId = "tick_1", promptId = "prompt_1", prompt = "native scheduled prompt") {
-    const init = [...this.frames].reverse().find(f => f.request?.subtype === "initialize");
-    const callback = init.request.hooks.UserPromptSubmit.at(-1).hookCallbackIds[0];
-    this.emitFrame({ type: "control_request", request_id: requestId, request: { subtype: "hook_callback", callback_id: callback,
-      tool_use_id: `hook_${promptId}`, input: { hook_event_name: "UserPromptSubmit", session_id: "native_1", prompt_id: promptId, prompt } } });
-  }
-  toolHook(toolName: string, toolId: string, toolInput: unknown, promptId = this.promptId) {
-    const init = this.frames.find(f => f.request?.subtype === "initialize");
-    const hook = init.request.hooks.PreToolUse.find((h: any) => toolName === "Bash" ? h.matcher === "Bash" : h.matcher.includes("CronCreate"));
-    this.emitFrame({ type: "control_request", request_id: `callback_${toolId}_${promptId}`, request: { subtype: "hook_callback", callback_id: hook.hookCallbackIds[0],
-      tool_use_id: toolId, input: { hook_event_name: "PreToolUse", session_id: "native_1", prompt_id: promptId, tool_name: toolName, tool_use_id: toolId, tool_input: toolInput } } });
-  }
-}
-const pools: ClaudeNativeSessionPool[] = [];
-afterEach(async () => { await Promise.allSettled(pools.splice(0).map(p => p.close())); vi.useRealTimers(); });
-function setup(options: Parameters<typeof createClaudeNativeSessionPool>[0] = {}) {
-  const children: NativeChild[] = [];
-  const spawnFn = vi.fn<CanonicalCliSpawn>(() => { const child = new NativeChild(); children.push(child); return child; });
-  const scheduled = vi.fn(async () => undefined);
-  const pool = createClaudeNativeSessionPool({ protocolQualified: true, onScheduledPhase: scheduled, ...options }); pools.push(pool);
-  function turn(i = input(), overrides: Record<string, unknown> = {}, routineCallback?: string) {
-    const output: any[] = []; const settled = vi.fn(); let end: (() => void) | undefined;
-    let writeFrame: ((raw: string) => Promise<void>) | undefined;
-    const user = () => { void writeFrame?.(`${JSON.stringify({ type: "user", session_id: "", message: { role: "user", content: i.prompt } })}\n`).catch(() => undefined); };
-    const promise = pool.runTurn({ input: i, sourceFingerprint: "source_a", command: "claude", args: ["--print", "--mcp-config", JSON.stringify({ mcpServers: { "matrix-integrations": { command: "matrix-integrations-mcp", args: ["--require-scoped-capability"] } } })],
-      cwd: "/safe", env: { HOME: "/owner", MATRIX_AGENT_INTEGRATIONS_TOKEN: i.runId }, replaceEnv: true,
-      signal: i.signal, maxStdoutBytes: 1024 * 1024, spawnFn,
-      onStart(write, finish) { end = finish; writeFrame = write; if (routineCallback) {
-        void write(`${JSON.stringify({ type: "control_request", request_id: `routine_init_${i.runId}`, request: { subtype: "initialize", hooks: { PreToolUse: [{ matcher: "Bash", hookCallbackIds: [routineCallback], timeout: 120 }] } } })}\n`).catch(() => undefined);
-      } else user(); },
-      onStdout(chunk) { const d = JSON.parse(chunk.toString()); output.push(d); if (d.response?.request_id === `routine_init_${i.runId}`) user(); if (d.type === "result") end?.(); },
-      onSettled: settled, ...overrides });
-    void promise.catch(() => undefined);
-    return { promise, output, settled };
-  }
-  return { children, spawnFn, scheduled, pool, turn };
-}
-const ready = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
+import { input, setup, ready, type NativeChild } from "./claude-native-session-fixture.js";
 
 it("finishes an ordinary turn only after the actual child closes", async () => {
   const { children, turn } = setup(); const phase = turn(); await ready();
@@ -410,4 +334,68 @@ it("clears wakeup correlation when completion is observed during an admitted pha
   const next = turn({ ...input("run_next"), resumeState: { sessionId: "native_1" } }); await ready();
   children[0]!.emitFrame(scheduledCompletion); children[0]!.result(); await next.promise;
   children[0]!.emitFrame(scheduledCompletion); await ready(); expect(children[0]!.kill).toHaveBeenCalledOnce();
+});
+
+function delegatedTool(child: NativeChild, command = "git status --short", overrides: Record<string, unknown> = {}, taskStarted = true) {
+  child.emitFrame({ type: "assistant", session_id: "native_1", parent_tool_use_id: null,
+    message: { content: [{ type: "tool_use", id: "delegate_parent", name: "Agent", input: {} }] } });
+  if (taskStarted) child.emitFrame({ type: "system", subtype: "task_started", session_id: "native_1", task_type: "local_agent", task_id: "owned_agent", tool_use_id: "delegate_parent" });
+  child.emitFrame({ type: "assistant", session_id: "native_1", parent_tool_use_id: "delegate_parent",
+    message: { content: [{ type: "tool_use", id: "delegate_bash", name: "Bash", input: { command } }] } });
+  const init = child.frames.find(f => f.request?.subtype === "initialize");
+  child.emitFrame({ type: "control_request", request_id: "delegated_request", request: { subtype: "hook_callback",
+    callback_id: init.request.hooks.PreToolUse.find((h: any) => h.matcher === "Bash").hookCallbackIds[0], tool_use_id: "delegate_bash",
+    input: { hook_event_name: "PreToolUse", session_id: "native_1", prompt_id: child.promptId, agent_id: "owned_agent",
+      tool_name: "Bash", tool_use_id: "delegate_bash", tool_input: { command }, ...overrides } } });
+}
+it.each(["git status --short", "matrix routines list"])("delegated %s reaches the unchanged B policy with its agent identity", async command => {
+  const frames: any[] = [], execute = vi.fn(async () => "unexpected");
+  const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async raw => { frames.push(JSON.parse(raw)); },
+    startInput: async () => {}, fail: () => { throw new Error("unexpected hook failure"); }, execute });
+  await hook.start(); const init = frames[0];
+  const { children, turn } = setup(); const phase = turn(input(), {}, init.request.hooks.PreToolUse[0].hookCallbackIds[0], init.request_id); await ready();
+  delegatedTool(children[0]!, command); await ready();
+  const mapped = phase.output.find(f => f.request_id === "delegated_request");
+  expect(mapped?.request.input.agent_id).toBe("owned_agent");
+  for (const frame of phase.output) hook.handle(frame); await ready();
+  const response = frames.find(f => f.response?.request_id === "delegated_request")?.response.response;
+  if (command.startsWith("git")) expect(response).toEqual({});
+  else expect(response.hookSpecificOutput.permissionDecision).toBe("deny");
+  expect(execute).not.toHaveBeenCalled(); children[0]!.result(); await phase.promise; await hook.close();
+});
+it.each([{ agent_id: "foreign_agent" }, { prompt_id: "stale_prompt" }, { session_id: "foreign_session" },
+  { tool_use_id: "unobserved_tool" }, { tool_input: { command: "different command" } }])("denies unproven delegated Bash: %j", async fault => {
+  const { children, turn } = setup(); const phase = turn(input(), {}, "current_bash"); await ready();
+  delegatedTool(children[0]!, "git status --short", fault); await ready();
+  expect(phase.output.some(f => f.request_id === "delegated_request")).toBe(false);
+  expect(children[0]!.frames.find(f => f.response?.request_id === "delegated_request").response.response.hookSpecificOutput.permissionDecision).toBe("deny");
+  children[0]!.result(); await phase.promise;
+});
+
+it("requires native task_started provenance and clears old delegated proof at the next phase", async () => {
+  const { children, turn } = setup(); const first = turn(input(), {}, "phase_a"); await ready();
+  delegatedTool(children[0]!, "git status --short", {}, false); await ready();
+  expect(first.output.some(f => f.request_id === "delegated_request")).toBe(false);
+  const denied = children[0]!.frames.find(f => f.response?.request_id === "delegated_request");
+  expect(denied.response.response.hookSpecificOutput.permissionDecision).toBe("deny");
+  delegatedTool(children[0]!); await ready(); // Establish valid old-phase proof before the lifecycle fence.
+  children[0]!.createJob(); children[0]!.result(); await first.promise;
+  const next = turn({ ...input("run_next"), resumeState: { sessionId: "native_1" } }, {}, "phase_b"); await ready();
+  children[0]!.emitFrame({ type: "system", subtype: "task_started", session_id: "native_1", task_type: "local_agent", task_id: "owned_agent", tool_use_id: "delegate_parent" });
+  children[0]!.emitFrame({ type: "control_request", request_id: "late_delegated", request: { subtype: "hook_callback", callback_id: "phase_a", tool_use_id: "delegate_bash",
+    input: { hook_event_name: "PreToolUse", session_id: "native_1", prompt_id: children[0]!.promptId, agent_id: "owned_agent", tool_name: "Bash", tool_use_id: "delegate_bash", tool_input: { command: "git status --short" } } } }); await ready();
+  expect(next.output.some(f => f.request_id === "late_delegated")).toBe(false);
+  expect(children[0]!.frames.find(f => f.response?.request_id === "late_delegated").response.response.hookSpecificOutput.permissionDecision).toBe("deny");
+  children[0]!.result(); await next.promise;
+});
+it("denies delegated native Cron and cannot gain task ownership from its nested success receipt", async () => {
+  const { children, turn } = setup(); const phase = turn(input(), {}, "phase_a"); await ready();
+  const args = { cron: "* * * * *", prompt: "delegated native task" };
+  children[0]!.emitFrame({ type: "assistant", session_id: "native_1", parent_tool_use_id: "delegate_parent", message: { content: [{ type: "tool_use", id: "delegated_cron", name: "CronCreate", input: args }] } });
+  const init = children[0]!.frames.find(f => f.request?.subtype === "initialize");
+  children[0]!.emitFrame({ type: "control_request", request_id: "delegated_cron_request", request: { subtype: "hook_callback", callback_id: init.request.hooks.PreToolUse.find((h: any) => h.matcher === ".*").hookCallbackIds[0], tool_use_id: "delegated_cron",
+    input: { hook_event_name: "PreToolUse", session_id: "native_1", prompt_id: children[0]!.promptId, agent_id: "owned_agent", tool_name: "CronCreate", tool_use_id: "delegated_cron", tool_input: args } } }); await ready();
+  expect(children[0]!.frames.find(f => f.response?.request_id === "delegated_cron_request").response.response.hookSpecificOutput.permissionDecision).toBe("deny");
+  children[0]!.emitFrame({ type: "user", parent_tool_use_id: "delegate_parent", message: { content: [{ type: "tool_result", tool_use_id: "delegated_cron", content: "Scheduled recurring job abcdef01 (Every minute)." }] } });
+  children[0]!.result(); await phase.promise; expect(children[0]!.ended).toBe(true);
 });
