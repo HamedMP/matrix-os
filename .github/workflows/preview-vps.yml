@@ -332,7 +332,8 @@ jobs:
     name: Build preview bundle
     needs: [execution_origin, gate]
     if: needs.execution_origin.result == 'success' && needs.execution_origin.outputs.allowed == 'true' && (needs.gate.outputs.action == 'deploy' || needs.gate.outputs.action == 'bundle')
-    runs-on: ubuntu-latest
+    # Match the Ubuntu 24.04 customer ABI and the canonical host-bundle build.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
