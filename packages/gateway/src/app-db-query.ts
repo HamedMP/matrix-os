@@ -7,6 +7,29 @@ function qualifiedTable(schema: string, table: string): string {
   return `"${schema}"."${table}"`;
 }
 
+async function writeValueSerializer(
+  db: AppDb,
+  schema: string,
+  table: string,
+  rows: Record<string, unknown>[],
+): Promise<(column: string, value: unknown) => unknown> {
+  if (!rows.some((row) => Object.values(row).some(Array.isArray))) {
+    return (_column, value) => value;
+  }
+  // node-postgres encodes JS arrays as SQL arrays. Only JSON destinations need
+  // explicit JSON text; genuine SQL-array columns must retain driver handling.
+  // Read current metadata per statement rather than caching across app migrations.
+  const result = await db.raw(
+    `SELECT column_name FROM information_schema.columns
+     WHERE table_schema = $1 AND table_name = $2 AND data_type IN ('json', 'jsonb')`,
+    [schema, table],
+  );
+  const jsonColumns = new Set(result.rows.map((row) => String(row.column_name)));
+  return (column, value) => jsonColumns.has(column) && Array.isArray(value)
+    ? JSON.stringify(value)
+    : value;
+}
+
 export interface FindOptions {
   filter?: Record<string, FilterValue>;
   orderBy?: Record<string, "asc" | "desc">;
@@ -134,7 +157,8 @@ export function createQueryEngine(db: AppDb): QueryEngine {
         return true;
       });
       if (cols.length === 0) throw new Error("insert: data must have at least one column");
-      const vals = cols.map((c) => data[c]);
+      const serialize = await writeValueSerializer(db, schema, table, [data]);
+      const vals = cols.map((c) => serialize(c, data[c]));
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
       const colNames = cols.map((c) => `"${c}"`).join(", ");
 
@@ -173,6 +197,10 @@ export function createQueryEngine(db: AppDb): QueryEngine {
         return `(${placeholders.join(", ")})`;
       });
       const colNames = cols.map((col) => `"${col}"`).join(", ");
+      const serialize = await writeValueSerializer(db, schema, table, rows);
+      for (let i = 0; i < params.length; i++) {
+        params[i] = serialize(cols[i % cols.length], params[i]);
+      }
       const result = await db.raw(
         `INSERT INTO ${qualifiedTable(schema, table)} (${colNames})
          VALUES ${valueGroups.join(", ")}
@@ -192,7 +220,8 @@ export function createQueryEngine(db: AppDb): QueryEngine {
       });
       if (cols.length === 0) throw new Error("update: data must have at least one column");
       const sets = cols.map((c, i) => `"${c}" = $${i + 1}`).join(", ");
-      const vals = [...cols.map((c) => data[c]), id];
+      const serialize = await writeValueSerializer(db, schema, table, [data]);
+      const vals = [...cols.map((c) => serialize(c, data[c])), id];
 
       await db.raw(
         `UPDATE ${qualifiedTable(schema, table)} SET ${sets}, updated_at = now() WHERE id = $${vals.length}`,
@@ -207,7 +236,8 @@ export function createQueryEngine(db: AppDb): QueryEngine {
       for (const col of cols) parseSafeName(col, "column");
       if (cols.length === 0) throw new Error("compareAndSwap: data must have at least one column");
       const sets = cols.map((col, index) => `"${col}" = $${index + 1}`).join(", ");
-      const values = [...cols.map((col) => data[col]), id, JSON.stringify(expectedPayload)];
+      const serialize = await writeValueSerializer(db, schema, table, [data]);
+      const values = [...cols.map((col) => serialize(col, data[col])), id, JSON.stringify(expectedPayload)];
       // The snapshot predicate is part of the write, so competing edits cannot
       // both succeed even under PostgreSQL READ COMMITTED isolation.
       const result = await db.raw(
@@ -248,12 +278,13 @@ export function createQueryEngine(db: AppDb): QueryEngine {
         }
       }
 
+      const serialize = await writeValueSerializer(db, schema, table, updates.map((update) => update.data));
       const params: unknown[] = [];
       const setClauses = cols.map((col) => {
         const cases: string[] = [];
         for (const update of updates) {
           if (Object.prototype.hasOwnProperty.call(update.data, col)) {
-            params.push(update.id, update.data[col]);
+            params.push(update.id, serialize(col, update.data[col]));
             cases.push(`WHEN $${params.length - 1} THEN $${params.length}`);
           }
         }

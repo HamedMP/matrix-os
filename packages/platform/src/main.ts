@@ -5,6 +5,7 @@ import { createPreviewDriveRoutes, type PreviewDriveIntegration } from './previe
 import { createAccountDeletionRoutes } from './account-deletion/routes.js';
 import type { AccountDeletionRuntime } from './account-deletion/wiring.js';
 import { registerInternalIntegrationRoutes } from './internal-integration-route-registration.js';
+import { registerGetStartedBotNameRoutes } from './get-started-bot-names.js';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
@@ -141,6 +142,7 @@ import {
   checkCustomerVpsPrimaryStorageEnv,
   checkHomeMirrorS3Env,
   checkHostBundleStorageEnv,
+  checkPublicSitesEnv,
   checkUnsafeDefaultSecrets,
   collectTenantPublicTelemetryEnv,
 } from './platform-startup-env.js';
@@ -153,6 +155,7 @@ export {
   checkCustomerVpsPrimaryStorageEnv,
   checkHomeMirrorS3Env,
   checkHostBundleStorageEnv,
+  checkPublicSitesEnv,
   checkUnsafeDefaultSecrets,
 } from './platform-startup-env.js';
 export {
@@ -291,6 +294,7 @@ export function createApp(deps: {
   hostBundleObjectStore?: CustomerVpsObjectStore;
   sitesObjectStore?: CustomerVpsObjectStore;
   assertPrimaryStorageReady?: (options?: { force?: boolean }) => Promise<void>;
+  assertSitesStorageReady?: (options?: { force?: boolean }) => Promise<void>;
   env?: NodeJS.ProcessEnv;
 }) {
   const { db, docker, orchestrator, clerkAuth, matrixProvisioner } = deps;
@@ -693,7 +697,8 @@ export function createApp(deps: {
   }
 
   registerSiteRoutes(app, { db, platformSecret, storage: deps.sitesObjectStore,
-    edgeSecret: appEnv.SITES_EDGE_SECRET, dispatcher: customerVpsProxyDispatcher, env: appEnv });
+    edgeSecret: appEnv.SITES_EDGE_SECRET, edgePreviousSecret: appEnv.SITES_EDGE_SECRET_PREVIOUS,
+    dispatcher: customerVpsProxyDispatcher, env: appEnv });
 
   // Session-based routing:
   // - app.matrix-os.com -> Clerk session -> Matrix OS shell/gateway
@@ -741,6 +746,7 @@ export function createApp(deps: {
     internalIntegrationRoutes: deps.internalIntegrationRoutes,
     privatePreviewEligibility,
   });
+  registerGetStartedBotNameRoutes(app, { db, platformSecret, env: appEnv });
 
   if (deps.internalSyncRoutes) {
     app.route('/internal/containers/:handle/sync', deps.internalSyncRoutes);
@@ -807,6 +813,7 @@ export function createApp(deps: {
       recordRuntimeMetrics: platformMetricsRoutes.recordRuntimeMetrics,
       captureEvent: captureFunnelEvent,
       assertPrimaryStorageReady: deps.assertPrimaryStorageReady,
+      assertSitesStorageReady: deps.assertSitesStorageReady,
     }));
   }
 
@@ -1009,6 +1016,7 @@ if (process.argv[1]?.endsWith('main.ts') || process.argv[1]?.endsWith('main.js')
     checkCustomerVpsPrimaryStorageEnv,
     checkHomeMirrorS3Env,
     checkHostBundleStorageEnv,
+    checkPublicSitesEnv,
     collectTenantPublicTelemetryEnv,
     stripeBillingEntitlementsEnabled,
     resolveEffectiveBillingEntitlement,

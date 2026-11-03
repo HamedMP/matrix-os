@@ -19,6 +19,7 @@ function unavailable(c: Context, error: unknown) {
 export function createSitePublicRoutes(options: {
     service: SitesService;
     edgeSecret?: string;
+    edgePreviousSecret?: string;
     submit: (site: SiteRecord, trx: PlatformDB, formId: string, input: z.infer<typeof SiteFormSubmissionSchema>) => Promise<{
         accepted: true;
     }>;
@@ -37,10 +38,18 @@ export function createSitePublicRoutes(options: {
         c.header('Cloudflare-CDN-Cache-Control', 'no-store');
         c.header('X-Content-Type-Options', 'nosniff');
         c.header('Referrer-Policy', 'no-referrer');
-        if (!options.edgeSecret || options.edgeSecret.trim().length < 32)
+        const configuredSecrets = [options.edgeSecret, options.edgePreviousSecret]
+            .filter((secret): secret is string => Boolean(secret && secret.length >= 32 && secret === secret.trim()));
+        if (!options.edgeSecret || configuredSecrets.length === 0)
             return c.json({ error: 'Site unavailable' }, 503);
-        if (!timingSafeTokenEquals(c.req.header('x-matrix-sites-edge'), options.edgeSecret))
+        const proof = c.req.header('x-matrix-sites-edge');
+        let accepted = false;
+        for (const secret of configuredSecrets)
+            accepted = timingSafeTokenEquals(proof, secret) || accepted;
+        if (!accepted)
             return c.json({ error: 'Site unavailable' }, 404);
+        if (c.req.path === '/_edge-health' || c.req.path === '/public/sites/_edge-health')
+            return c.json({ status: 'ok' });
         if (!SiteReferenceSchema.safeParse(c.req.path.replace(/^\/public\/sites/, '').split('/')[1]).success)
             return c.json({ error: 'Site unavailable' }, 404);
         try {
@@ -50,6 +59,7 @@ export function createSitePublicRoutes(options: {
             return unavailable(c, error);
         }
     });
+    app.get('/_edge-health', (c) => c.json({ status: 'ok' }));
     app.use('*', async (c, next) => {
         if (c.req.method !== 'GET') return next();
         const source = c.req.header('x-matrix-sites-source') ?? 'unknown';

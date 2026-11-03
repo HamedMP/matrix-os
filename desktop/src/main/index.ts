@@ -6,7 +6,9 @@ import { readDriveUploadFile, saveDriveDownloadFile } from "./files/organization
 import { registerTerminalClipboardIpc } from "./files/terminal-clipboard";
 import { pathToFileURL } from "node:url";
 import { createNativeChatgptPlanService } from "./chatgpt-plan/service";
+import { fetchNativePlan } from "./chatgpt-plan/transport";
 import { createPlanVault } from "./chatgpt-plan/vault";
+import { createPlanDiagnosticStore, planDiagnosticDirectory } from "./chatgpt-plan/diagnostic-store";
 import { createNavigationCache } from "./persistence/navigation-cache";
 import { registerNavigationCacheIpc } from "./ipc/navigation-cache";
 import { registerChatgptPlanIpc } from "./ipc/chatgpt-plan";
@@ -77,6 +79,7 @@ import { EVENT_CHANNELS, type EventChannel, type EventPayload } from "../shared/
 import { createNativeAppCapabilityRequester, createNativeAppAiRoutesRequester } from "./embeds/native-app-capabilities";
 import { createNativeAppOpenResolver } from "./embeds/native-app-open";
 import { installBrowserProductSessionCookie } from "./embeds/browser-product-session";
+import { createNativeAppChatNavigationBroker, registerNativeAppChatCompletionIpc } from "./embeds/native-app-chat-navigation";
 
 const DEFAULT_PLATFORM_HOST = "https://app.matrix-os.com";
 const DESKTOP_APP_NAME = "Matrix OS";
@@ -98,11 +101,15 @@ let navigationCache: ReturnType<typeof createNavigationCache> | null = null;
 let chatgptPlan: ReturnType<typeof createNativeChatgptPlanService> | null = null;
 let navigationCacheDrained = false;
 let drainingNavigationCache = false;
+let planDiagnostics: ReturnType<typeof createPlanDiagnosticStore> | null = null;
+let planDiagnosticsDrained = false;
+let drainingPlanDiagnostics = false;
 let planDrained = false;
 let drainingPlan = false;
 let updateCheckTimer: ReturnType<typeof setInterval> | null = null;
 let fileDownloads: ReturnType<typeof createFileDownloadService> | null = null;
 let localChatImports:ReturnType<typeof createNativeChatImportService>|null=null;
+let nativeAppChatNavigation: ReturnType<typeof createNativeAppChatNavigationBroker> | null = null;
 let importsDrained=false;
 let drainingImports=false;
 let organizationDriveTransfers: ReturnType<typeof createOrganizationDriveTransferService> | null = null;
@@ -257,6 +264,7 @@ if (!gotLock) {
         clearProfile: () => store.delete("profile"),
         onAuthChanged: (status) => {
           invalidateAppCapabilities?.();
+          nativeAppChatNavigation?.cancelAll();
           navigationCache?.observe(status);
           chatgptPlan?.cancelAll();
           chatgptPlan?.resume();
@@ -282,8 +290,16 @@ if (!gotLock) {
         return !!contents && !contents.isDestroyed() && event.sender === contents
           && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
       });
+      // Failure-only metadata stays in this app/profile's logs; no credential
+      // profile files or other applications' logs are read by the recorder.
+      try {
+        planDiagnostics = createPlanDiagnosticStore({ directory: planDiagnosticDirectory(app.getPath("logs"), userData) });
+      } catch (error: unknown) {
+        console.warn("[chatgpt-plan] diagnostic_start_failed");
+      }
       chatgptPlan = createNativeChatgptPlanService({
         auth, vault: createPlanVault({ dir: userData, safeStorage }),
+        fetchFn: fetchNativePlan,
         openBrowser: async url => {
           const authorizationUrl = safeChatgptAuthorizationUrl(url);
           if (!authorizationUrl) throw new Error("invalid authorization URL");
@@ -319,6 +335,18 @@ if (!gotLock) {
         (detail) => sendEvent("analytics:capture", detail),
       );
 
+      nativeAppChatNavigation = createNativeAppChatNavigationBroker({
+        emit: (event) => sendEvent("app:open-chat", event),
+        cancel: (event) => sendEvent("app:open-chat-cancel", event),
+      });
+      registerNativeAppChatCompletionIpc(ipcMain, nativeAppChatNavigation, rawEvent => {
+        const event = rawEvent as IpcMainInvokeEvent;
+        const contents = mainWindow?.webContents;
+        const rendererUrl = desktopRendererUrl ?? pathToFileURL(join(__dirname, "../renderer/index.html")).toString();
+        return !!contents && !contents.isDestroyed() && event.sender === contents
+          && event.senderFrame === contents.mainFrame && contents.getURL() === rendererUrl;
+      });
+
       const nativeAppBridge = new NativeAppBridge({
         getSenderLifecycle: (senderId) => webContents.fromId(senderId) ?? undefined,
         resolveApp: createNativeAppOpenResolver({ getGatewayOrigin: () => auth.getGatewayOrigin(), getToken: () => auth.getToken() }),
@@ -326,6 +354,17 @@ if (!gotLock) {
           const status = auth.getStatus();
           if (!status.signedIn || !mainWindow || mainWindow.isDestroyed()) throw new Error("App launch is unavailable");
           sendEvent("app:open", { ...app, runtimeSlot: status.runtimeSlot, authGeneration: status.authGeneration });
+        },
+        openChat: async (request, signal) => {
+          const status = auth.getStatus();
+          if (!status.signedIn || !mainWindow || mainWindow.isDestroyed() || !nativeAppChatNavigation) {
+            throw new Error("Chat navigation is unavailable");
+          }
+          focusMainWindow();
+          await nativeAppChatNavigation.request(request, {
+            runtimeSlot: status.runtimeSlot,
+            authGeneration: status.authGeneration,
+          }, signal);
         },
         authGeneration: () => auth.getStatus().authGeneration,
         generate: (app, context) => {
@@ -511,6 +550,7 @@ if (!gotLock) {
           downloads.cancelAll();
           driveTransfers.cancelAll();
           localChatImports?.cancelAll();
+          nativeAppChatNavigation?.cancelAll();
           // Switching runtime invalidates embed cookies/tokens; tear them down so
           // they re-handshake against the new slot (Integration Wiring rule).
           embeds.closeAll();
@@ -616,6 +656,7 @@ if (!gotLock) {
           if (boundsSaveTimer) clearTimeout(boundsSaveTimer);
           embeds.closeAll();
           codingAgentThreadEvents.closeAll();
+          nativeAppChatNavigation?.cancelAll();
           mainWindow = null;
         });
       };
@@ -646,6 +687,7 @@ if (!gotLock) {
 
   app.on("before-quit", (event) => {
     organizationDriveTransfers?.cancelAll();
+    nativeAppChatNavigation?.cancelAll();
     if (handleAnalyticsBeforeQuit?.(event)) return;
     if (!navigationCacheDrained && navigationCache) {
       event.preventDefault();
@@ -662,6 +704,18 @@ if (!gotLock) {
         drainingPlan = true;
         void chatgptPlan.dispose().catch((error: unknown) => logMainError("subscription cleanup failed", error))
           .finally(() => { planDrained = true; app.quit(); });
+      }
+      return;
+    }
+    // Dispose the subscription first so peer shutdown failures can still be
+    // recorded, then drain diagnostics for at most the store's one-second cap.
+    if (!planDiagnosticsDrained && planDiagnostics) {
+      event.preventDefault();
+      if (!drainingPlanDiagnostics) {
+        drainingPlanDiagnostics = true;
+        void planDiagnostics.close().catch((error: unknown) => {
+          console.warn("[chatgpt-plan] diagnostic_close_failed");
+        }).finally(() => { planDiagnosticsDrained = true; app.quit(); });
       }
       return;
     }

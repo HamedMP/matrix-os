@@ -158,7 +158,7 @@ export function createBotIntegrationTools(deps: {
     try {
       const { interaction, expired } = await interactions.create({
         ownerId: binding.ownerId, botId: binding.botId, chatId: binding.chatId, taskId: binding.taskId,
-        kind: payload.kind, payload, responderActorId: binding.ownerId, blocking: true,
+        sourceRunId: binding.runId, kind: payload.kind, payload, responderActorId: binding.ownerId, blocking: true,
         expiresAt: expiresAt(payload.kind === "connect_request" ? CONNECT_LIFETIME_MS : REQUEST_LIFETIME_MS), now: at.toISOString(),
       }, tx.db);
       for (const overdue of expired) {
@@ -204,7 +204,7 @@ export function createBotIntegrationTools(deps: {
             kind: "approval", tool: APPROVAL_TOOL, argsDigest: argsHash,
             account: { service: args.service, label: grant.accountLabel }, audience: audienceFor(binding), preview, policyRevision: grant.revision,
           },
-          responderActorId: binding.ownerId, blocking: true,
+          sourceRunId: binding.runId, responderActorId: binding.ownerId, blocking: true,
           expiresAt: new Date(at.getTime() + REQUEST_LIFETIME_MS).toISOString(), now: at.toISOString(),
         }, tx.db);
         await approvals.create({

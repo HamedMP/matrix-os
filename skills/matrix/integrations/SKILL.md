@@ -95,7 +95,7 @@ even when only one account is connected. Only actions marked `read` by
 
 Use the injected `window.MatrixOS` bridge in all five supported app surfaces. Web apps use sandboxed iframes; Electron and Native Mobile use host brokers. Call `capabilities()` first, then `integrations()` and `describeService(service)` before `service(service, action, params, accountLabel)`. The runtime catalog is authoritative; the common actions below are examples only.
 
-Owner app permissions live in `system/app-capabilities.json` and allow exact service/action IDs. A connected account alone does not grant an app access. Never self-authorize through a manifest or modify this policy without owner instruction. The host stamps app identity and holds authentication; no direct gateway or provider requests from app code. Missing methods are a host version problem, not a reason to rebuild the same app repeatedly. See the source repository’s `docs/dev/app-capabilities.md` for the grant format and supported AI routes.
+Visible personal owner-built apps with `listingTrust: "first_party"` receive owner-connected integrations by default. `system/app-capabilities.json` is an optional owner restriction/explicit grant and allows exact service/action IDs; an empty services object revokes access. Never modify this policy from app code or relabel an imported app to gain access. The host stamps app identity and holds authentication; no direct gateway or provider requests from app code. Missing methods are a host version problem, not a reason to rebuild the same app repeatedly. See the source repository’s `docs/dev/app-capabilities.md` for policy format and supported AI routes.
 
 ```ts
 async function listServices() {

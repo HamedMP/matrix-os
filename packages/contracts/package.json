@@ -23,7 +23,9 @@
     "./command-preview-policy": "./src/command-preview-policy.mjs"
   },
   "imports": {
+    "#inference-response-limits": "./src/inference-response-limits.ts",
     "#chatgpt-plan-peer": "./src/chatgpt-plan-peer.ts",
+    "#chatgpt-plan-poll-delivery": "./src/chatgpt-plan-poll-delivery.ts",
     "#chatgpt-plan-wire": "./src/chatgpt-plan-wire.ts",
     "#canonical-chat-import-parts": "./src/canonical-chat-import-parts.ts",
     "#local-chat-import/*": "./src/local-chat-import/*.ts",
@@ -38,6 +40,7 @@
     "#release-alignment": "./src/release-alignment.ts",
     "#runtime-compatibility": "./src/runtime-compatibility.ts",
     "#chat-message-wire": "./src/chat-message-wire.ts",
+    "#chat-legacy-assistant-text": "./src/chat-legacy-assistant-text.ts",
     "#chat-links": "./src/chat-links.ts",
     "#chat-artifacts": "./src/chat-artifacts.ts",
     "#file-preview": "./src/file-preview.ts",
@@ -94,6 +97,7 @@
     "#get-started": "./src/get-started.ts",
     "#get-started-arrival": "./src/get-started-arrival.ts",
     "#get-started-bot": "./src/get-started-bot.ts",
+    "#get-started-bot-names": "./src/get-started-bot-names.ts",
     "#get-started-recipe-bots": "./src/get-started-recipe-bots.ts",
     "#get-started-connect": "./src/get-started-connect.ts",
     "#get-started-wizard": "./src/get-started-wizard.ts",
@@ -134,7 +138,7 @@
   "dependencies": {
     "micromark": "^4.0.2",
     "micromark-extension-gfm": "^3.0.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

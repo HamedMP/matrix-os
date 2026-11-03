@@ -72,7 +72,8 @@ describe("run-owned broker inference cancellation", () => {
     });
     const snapshot = makeAiProviderSnapshot();
     const runtime = createManagedPiRuntime({
-      admission: { admit: async () => binding, release: async (handle) => fixture.registry.release(handle), workspace: async () => "/owned/chat" },
+      admission: { admit: async () => binding, release: async (handle) => fixture.registry.release(handle), workspace: async () => "/owned/chat",
+        startRenewal: () => ({ stop: async () => undefined }) },
       host: { client: { runBot } } as unknown as ScopeRuntimeHost,
       providers: { getSnapshot: async () => snapshot }, lifetime: fixture.lifetime.signal,
       forgetRun: (runId) => fixture.actions.forgetRun(runId), cancelInference: (current) => fixture.registry.cancelInference(current),

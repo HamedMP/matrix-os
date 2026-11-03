@@ -113,7 +113,7 @@ it("transports four 2MiB images from the installed Pi worker over Unix/EOF broke
   const { createScopeRuntimeBrokerServer } = await import("../../../packages/gateway/src/collaboration/scope-runtime-broker.js");
   const { ScopeRuntimeBotInferenceRequestSchema } = await import("../../../packages/scope-runtime/src/broker-protocol.js");
   const { createPlanNativePeer } = await import("../../../desktop/src/main/chatgpt-plan/peer.js");
-  const { requestPlanResponse } = await import("../../../desktop/src/main/chatgpt-plan/responses.js");
+  const { requestPlanResponse, requestPlanResponseStream } = await import("../../../desktop/src/main/chatgpt-plan/responses.js");
   const { runBotTurn } = await import("../../../packages/bot-runtime/src/loop.js");
   const { insertChat } = await import("./bot-state-support.js");
   const { createBotSessionsRepository } = await import("../../../packages/gateway/src/bots/repositories/sessions.js");
@@ -127,6 +127,16 @@ it("transports four 2MiB images from the installed Pi worker over Unix/EOF broke
     models: [{ id: modelId, displayName: "Account vision model", input: ["text", "image"] as ("text" | "image")[], contextWindow: 128000, maxOutputTokens: 8192 }] };
   const image = Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), Buffer.alloc(2 * 1024 * 1024 - 8, 7)]).toString("base64");
   let nativeCalls = 0; let current = true; let frames = 0;
+  const inferInput = (request: Extract<ChatGptPlanPeerRequest, { action: "infer" }>, signal: AbortSignal) => ({
+    model: modelId, body: request.body, signal,
+    accessToken: async () => "synthetic-subscription-token", validate: () => { expect(current).toBe(true); },
+    fetchFn: async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)); const user = [...body.input].reverse().find((item: { role?: string }) => item.role === "user");
+      expect((Array.isArray(user.content) ? user.content : []).filter((part: { type: string }) => part.type === "input_image")).toEqual(nativeCalls === 0 ? Array.from({ length: 4 }, () => expect.objectContaining({ image_url: `data:image/png;base64,${image}` })) : []);
+      nativeCalls++;
+      return new Response(response({ type: "message", id: "msg_image", role: "assistant", status: "completed", content: [{ type: "output_text", text: "PIXELS_TRANSFERRED", annotations: [] }] }), { headers: { "content-type": "text/event-stream" } });
+    },
+  });
   const native = createPlanNativePeer({ connected: () => undefined, current: () => current,
     fetchFn: async (url, init) => {
       const path = new URL(String(url)).pathname.split("/").at(-1); const body = JSON.parse(String(init?.body));
@@ -134,18 +144,11 @@ it("transports four 2MiB images from the installed Pi worker over Unix/EOF broke
       if (path === "challenge") return Response.json(peers.challenge("owner"));
       if (path === "connect") return Response.json(await peers.connect("owner", body));
       if (path === "poll") return Response.json(await peers.poll("owner", body));
-      if (path === "reply") { peers.reply("owner", body); return Response.json({ ok: true }); }
+      if (path === "reply") return Response.json(await peers.reply("owner", body));
       if (path === "disconnect") { peers.disconnect("owner", body); return Response.json({ ok: true }); }
       throw new Error("Unknown peer route");
-    }, infer: async (request, signal) => requestPlanResponse({ model: modelId, body: request.body, signal,
-      accessToken: async () => "synthetic-subscription-token", validate: () => { expect(current).toBe(true); },
-      fetchFn: async (_url, init) => {
-        const body = JSON.parse(String(init?.body)); const user = [...body.input].reverse().find((item: { role?: string }) => item.role === "user");
-        expect((Array.isArray(user.content) ? user.content : []).filter((part: { type: string }) => part.type === "input_image")).toEqual(nativeCalls === 0 ? Array.from({ length: 4 }, () => expect.objectContaining({ image_url: `data:image/png;base64,${image}` })) : []);
-        nativeCalls++;
-        return new Response(response({ type: "message", id: "msg_image", role: "assistant", status: "completed", content: [{ type: "output_text", text: "PIXELS_TRANSFERRED", annotations: [] }] }), { headers: { "content-type": "text/event-stream" } });
-      },
-    }),
+    }, infer: (request, signal) => requestPlanResponse(inferInput(request, signal)),
+    inferStream: (request, signal) => requestPlanResponseStream(inferInput(request, signal)),
   });
   let server: ReturnType<typeof createScopeRuntimeBrokerServer> | undefined;
   let bridge: Awaited<ReturnType<typeof startInferenceBridge>> | undefined;

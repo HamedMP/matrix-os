@@ -25,7 +25,7 @@ import {
 import { calculateCost } from "../../packages/proxy/src/cost.js";
 
 describe("production Agent SDK upgrade", () => {
-  it("pins the newest package version eligible under the seven-day hold", () => {
+  it("keeps the reviewed Agent SDK pins and patched MCP dependency floor", () => {
     const kernelPackage = JSON.parse(
       readFileSync("packages/kernel/package.json", "utf8"),
     ) as { dependencies: Record<string, string> };
@@ -38,7 +38,7 @@ describe("production Agent SDK upgrade", () => {
 
     expect(kernelPackage.dependencies["@anthropic-ai/claude-agent-sdk"]).toBe("0.3.240");
     expect(browserPackage.dependencies["@anthropic-ai/claude-agent-sdk"]).toBe("0.3.240");
-    expect(integrationsPackage.dependencies["@modelcontextprotocol/sdk"]).toBe("^1.29.0");
+    expect(integrationsPackage.dependencies["@modelcontextprotocol/sdk"]).toBe("^1.32.0");
   });
 
   it("uses the current first-party Claude catalog without rewriting legacy IDs", () => {

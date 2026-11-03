@@ -500,7 +500,34 @@
 .matrix-web-chat-row-more { position: absolute; right: 7px; top: 3px; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 8px; background: none; display: grid; place-items: center; color: var(--matrix-chat-rail-muted, var(--text-secondary, var(--muted-foreground))); opacity: 0; pointer-events: none; }
 .matrix-web-chat-row-item:hover .matrix-web-chat-row-more, .matrix-web-chat-row-item:focus-within .matrix-web-chat-row-more, .matrix-web-chat-row-item[data-menu-open="true"] .matrix-web-chat-row-more { opacity: 1; pointer-events: auto; }
 .matrix-web-chat-row-more:focus-visible { outline: 2px solid var(--accent, var(--ring)); outline-offset: -2px; }
+.matrix-web-chat-row-started { flex-shrink: 0; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--matrix-chat-rail-muted, var(--text-secondary, var(--muted-foreground))); }
+.matrix-web-chat-row-item:hover .matrix-web-chat-row-started, .matrix-web-chat-row-item:focus-within .matrix-web-chat-row-started, .matrix-web-chat-row-item[data-menu-open="true"] .matrix-web-chat-row-started { display: none; }
 .matrix-web-chat-search { border: 1px solid transparent; }
+/* Web project rows use the Electron Desktop rail geometry: 32px rows, chevron on hover, chats indented under the title. */
+.matrix-web-project { position: relative; display: flex; align-items: center; min-width: 0; height: 32px; box-sizing: border-box; padding: 0 7px 0 9px; border: 1px solid transparent; border-radius: 8px; color: var(--matrix-chat-rail-text, var(--text-primary, var(--foreground))); }
+.matrix-web-project:hover, .matrix-web-project:focus-within { background: var(--matrix-chat-rail-hover, var(--bg-hover, var(--secondary))); }
+.matrix-web-project-select { display: flex; align-items: center; flex: 0 1 auto; min-width: 0; height: 30px; gap: 10px; padding: 0; border: 0; background: none; text-align: left; font: inherit; font-size: 14px; line-height: 18.2px; font-weight: 400; color: inherit; cursor: pointer; }
+.matrix-web-project-select > svg { flex: 0 0 15px; }
+.matrix-web-project-disclosure { display: grid; place-items: center; flex: 0 0 0; width: 0; height: 24px; overflow: hidden; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--matrix-chat-rail-muted, var(--text-secondary, var(--muted-foreground))); opacity: 0; pointer-events: none; cursor: pointer; }
+.matrix-web-project:hover .matrix-web-project-disclosure, .matrix-web-project:focus-within .matrix-web-project-disclosure, .matrix-web-project[data-mobile="true"] .matrix-web-project-disclosure { flex-basis: 24px; width: 24px; opacity: 1; pointer-events: auto; }
+.matrix-web-project-select:focus-visible, .matrix-web-project-disclosure:focus-visible, .matrix-web-project-more:focus-visible, .matrix-web-project-back:focus-visible { outline: 2px solid var(--accent, var(--ring)); outline-offset: -2px; }
+.matrix-web-project-chats { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+.matrix-web-project-chats .matrix-web-chat-row-item .matrix-web-chat-row { padding-left: 23px; }
+.matrix-web-project-more { display: block; width: 100%; padding: 4px 10px; border: 0; border-radius: 8px; background: none; text-align: left; font-size: 12px; line-height: 16px; color: var(--matrix-chat-rail-muted, var(--text-secondary, var(--muted-foreground))); cursor: pointer; }
+.matrix-web-project-more:hover { background: var(--matrix-chat-rail-hover, var(--bg-hover, var(--secondary))); }
+.matrix-web-project-note { padding: 6px 12px; font-size: 12px; line-height: 16px; color: var(--matrix-chat-rail-count, var(--text-tertiary, var(--muted-foreground))); }
+.matrix-web-project-note-title { color: var(--matrix-chat-rail-muted, var(--text-secondary, var(--muted-foreground))); }
+.matrix-web-project-note .matrix-web-project-more { width: auto; margin: 2px 0 0 -10px; }
+.matrix-web-project-chats .matrix-web-project-more, .matrix-web-project-chats > .matrix-web-project-note { padding-left: 24px; }
+.matrix-web-project-chats .matrix-web-project-note .matrix-web-project-more { padding-left: 10px; }
+.matrix-web-project-header { display: flex; align-items: center; gap: 4px; min-width: 0; height: 32px; padding: 0 7px 0 3px; margin-bottom: 4px; }
+.matrix-web-project-header > h2 { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 14px; line-height: 18px; font-weight: 600; color: var(--matrix-chat-rail-text, var(--text-primary, var(--foreground))); }
+.matrix-web-project-back { display: grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--matrix-chat-rail-muted, var(--text-secondary, var(--muted-foreground))); cursor: pointer; }
+.matrix-web-project-back:hover { background: var(--matrix-chat-rail-hover, var(--bg-hover, var(--secondary))); }
+.matrix-web-project[data-mobile="true"], .matrix-web-project-header[data-mobile="true"] { height: 44px; }
+.matrix-web-project[data-mobile="true"] .matrix-web-project-disclosure, .matrix-web-project-header[data-mobile="true"] .matrix-web-project-back { width: 44px; height: 44px; flex-basis: 44px; }
+.matrix-web-project-more[data-mobile="true"] { min-height: 44px; }
+@media (hover: none) { .matrix-web-project-disclosure { flex-basis: 24px; width: 24px; opacity: 1; pointer-events: auto; } }
 @media (hover: none) { .matrix-web-chat-row-item .matrix-web-chat-row { padding-right: 38px; } .matrix-web-chat-row-more { opacity: 1; pointer-events: auto; } .matrix-chat-agents-count { right: 38px; } }
 .matrix-drive-rail-disclosure { opacity: 0; pointer-events: none; }
 .matrix-drive-rail-item:hover .matrix-drive-rail-disclosure, .matrix-drive-rail-item:focus-within .matrix-drive-rail-disclosure { opacity: 1; pointer-events: auto; }

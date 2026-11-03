@@ -323,6 +323,8 @@ export function WebDesktopSurface({
     );
   };
 
+  // Electron Desktop hides its taskbar and desktop icons while an app is maximized.
+  const appMaximized = fullscreenWindowId !== null && windows.some((windowRecord) => windowRecord.id === fullscreenWindowId);
   const surfaceStyle = {
     "--web-desktop-taskbar-bg": "color-mix(in srgb, var(--card) 72%, transparent)",
   } as CSSProperties;
@@ -345,7 +347,7 @@ export function WebDesktopSurface({
         rightActions={headerActions}
       />
 
-      <nav
+      {appMaximized ? null : <nav
         aria-label="Desktop apps"
         className="pointer-events-auto absolute inset-0 overflow-auto"
         style={{ zIndex: SHELL_Z_INDEX.desktopIcons }}
@@ -366,11 +368,11 @@ export function WebDesktopSurface({
             }}
           />
         ))}
-      </nav>
+      </nav>}
 
       {children ? <div className="pointer-events-auto absolute inset-0">{children}</div> : null}
 
-      <nav
+      {appMaximized ? null : <nav
         aria-label="Running apps"
         className="pointer-events-auto absolute bottom-3 left-1/2 inline-flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1.5 rounded-2xl border border-white/15 bg-[var(--web-desktop-taskbar-bg)] px-1.5 pt-1.5 shadow-[0_0_2px_rgba(0,0,0,.05),0_0_40px_rgba(0,0,0,.08)] backdrop-blur-[68px]"
         style={{ zIndex: SHELL_Z_INDEX.taskbar }}
@@ -429,7 +431,7 @@ export function WebDesktopSurface({
             </div>
           </>
         ) : null}
-      </nav>
+      </nav>}
     </section>
   );
 }

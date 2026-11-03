@@ -26,3 +26,54 @@ it("does not dispatch from a canceled or obsolete Computer", async () => {
   await expect(client.connect({ purpose: "personal_local" }, controller.signal)).rejects.toThrow();
   expect(invoke).not.toHaveBeenCalled();
 });
+
+const connected = { ...status, state: "connected", account: { id: "11111111-1111-4111-8111-111111111111", label: "Synthetic owner" },
+  grant: { revision: 1, enabled: true, background: false }, bridgeConnected: true };
+it("notifies once when an existing connection attempt gains qualified device authority", async () => {
+  const changed = vi.fn();
+  const invoke = vi.fn().mockResolvedValueOnce(status).mockResolvedValueOnce({ ...status, state: "connecting" }).mockResolvedValue(connected);
+  const client = createDesktopChatgptPlanClient({ runtimeSlot: "primary", authGeneration: 3 }, () => true, invoke, changed);
+  const signal = new AbortController().signal;
+  await client.status(signal);
+  await client.connect({ purpose: "personal_local" }, signal);
+  expect(changed).not.toHaveBeenCalled();
+  await client.status(signal);
+  await client.status(signal);
+  expect(changed).toHaveBeenCalledOnce();
+});
+it("does not refresh catalog discovery for initial status, failed login or cancellation", async () => {
+  const changed = vi.fn();
+  const invoke = vi.fn().mockResolvedValueOnce(connected).mockResolvedValueOnce({ ...status, state: "connecting" })
+    .mockResolvedValueOnce({ ...status, state: "error" }).mockResolvedValueOnce(status);
+  const client = createDesktopChatgptPlanClient({ runtimeSlot: "primary", authGeneration: 3 }, () => true, invoke, changed);
+  const signal = new AbortController().signal;
+  await client.status(signal);
+  expect(changed).not.toHaveBeenCalled();
+  await client.connect({ purpose: "personal_local" }, signal);
+  // Losing a previously usable connection must fence its old catalog authority.
+  expect(changed).toHaveBeenCalledOnce();
+  await client.status(signal); await client.cancel(signal);
+  expect(changed).toHaveBeenCalledOnce();
+});
+it("does not let an older status overwrite post-mutation notification state", async () => {
+  let release!: (value: unknown) => void;
+  const changed = vi.fn();
+  const invoke = vi.fn().mockResolvedValueOnce(status)
+    .mockImplementationOnce(() => new Promise(resolve => { release = resolve; })).mockResolvedValue(connected);
+  const client = createDesktopChatgptPlanClient({ runtimeSlot: "primary", authGeneration: 3 }, () => true, invoke, changed);
+  const signal = new AbortController().signal;
+  await client.status(signal);
+  const old = client.status(signal);
+  await client.connect({ purpose: "personal_local" }, signal);
+  release(status); await old;
+  await client.status(signal);
+  expect(changed).toHaveBeenCalledOnce();
+});
+it("does not notify a new Computer from a late successful device receipt", async () => {
+  let current = true;
+  const changed = vi.fn();
+  const invoke = vi.fn(async () => { current = false; return connected; });
+  const client = createDesktopChatgptPlanClient({ runtimeSlot: "primary", authGeneration: 3 }, () => current, invoke, changed);
+  await expect(client.connect({ purpose: "personal_local" }, new AbortController().signal)).rejects.toThrow();
+  expect(changed).not.toHaveBeenCalled();
+});

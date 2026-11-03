@@ -1,3 +1,4 @@
+import { estimateContextTokens, estimateMessageTokens } from "@earendil-works/pi-ai/utils/estimate";
 import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import { normalizeContext, type Api, type ImageContent, type Model, type Provider } from "@earendil-works/pi-ai";
 import type { BotRunCommand, BotRunOutcome, BotSessionSnapshot, BotToolErrorCode } from "@matrix-os/contracts";
@@ -7,11 +8,12 @@ import { BROKER_PLACEHOLDER_KEY, createBridgeModel } from "./providers.js";
 import {
   BotSessionError,
   compactSession,
+  contextTextBytes,
+  fitInferenceContext,
+  SESSION_COMPACT_AT_BYTES,
   decodeSession,
   encodeSession,
   fitForStorage,
-  fitsWithToolPayloadCaps,
-  needsCompaction,
   withoutDerivedSummaries,
   withoutImages,
 } from "./session.js";
@@ -24,7 +26,7 @@ const SUMMARY_MAX_TOKENS = 2_048;
 
 /** Steering handle for the active turn; it refuses once the turn stops taking input. */
 export interface BotTurnControl {
-  steer(text: string): boolean;
+  steer(text: string, images?: readonly import("@matrix-os/contracts").BotImageInput[]): boolean;
 }
 
 export interface RunBotTurnInput {
@@ -97,6 +99,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   // itself: tool rounds, a final response and at most two session summaries.
   const maxInferenceCalls = isolated ? 1 : Math.min(command.limits.maxToolActions + 3, command.limits.maxInferenceCalls ?? 63);
   let inferenceCalls = 0;
+  let summaryCalls = 0;
   const tools: BotToolsState = { waitingForPerson: false, effectUnknown: false };
   let toolActions = 0;
   let budgetExhausted = false;
@@ -104,7 +107,27 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   let eventFailure: BotToolErrorCode | undefined;
   let runFailed = false;
 
-  const agent = new Agent({
+  const summarize = async (transcript: string, signal?: AbortSignal): Promise<string> => {
+    // Retain the existing two-summary ceiling and leave one ordinary call.
+    if (signal?.aborted || input.signal?.aborted || summaryCalls >= 2 || inferenceCalls + 1 >= maxInferenceCalls) return "";
+    summaryCalls += 1;
+    inferenceCalls += 1;
+    const maxChars = Math.max(256, Math.floor(Math.min(SESSION_COMPACT_AT_BYTES,
+      command.route.contextWindow * 4 * 0.8) / 4));
+    try {
+      const reply = await provider.streamSimple(model, normalizeContext({
+        systemPrompt: SUMMARY_PROMPT,
+        messages: [{ role: "user", content: transcript.slice(-maxChars), timestamp: now() }],
+      }), { apiKey: BROKER_PLACEHOLDER_KEY, maxTokens: Math.min(SUMMARY_MAX_TOKENS, command.route.maxOutputTokens), maxRetries: 0,
+        ...(signal ? { signal } : input.signal ? { signal: input.signal } : {}) }).result();
+      return reply.stopReason === "error" || reply.stopReason === "aborted" ? "" : textOf(reply);
+    } catch (error: unknown) {
+      console.warn("[bot-runtime] session summary failed:", error instanceof Error ? error.name : "UnknownError");
+      return "";
+    }
+  };
+
+  const agent: Agent = new Agent({
     initialState: {
       systemPrompt: command.systemPrompt,
       model,
@@ -113,6 +136,7 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
       messages: history,
     },
     streamFn: (streamModel, context, options) => {
+      if (budgetExhausted || options?.signal?.aborted || input.signal?.aborted) throw new Error("Run stopped before inference");
       if (inferenceCalls >= maxInferenceCalls) throw new Error("Model action budget ended");
       inferenceCalls += 1;
       return provider.streamSimple(streamModel, context, {
@@ -124,9 +148,42 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
       maxRetries: 0,
       ...(isolated ? { reasoning: undefined } : {}),
     }); },
+    prepareRequest: async ({ context }, signal) => {
+      if (isolated || signal?.aborted || input.signal?.aborted) return;
+      // Pi invokes this after all tool results and queued corrections are appended.
+      for (const pending of steered) if (context.messages.includes(pending.message)) pending.consumed = true;
+      const overhead = new TextEncoder().encode(JSON.stringify({ systemPrompt: command.systemPrompt, tools: context.tools })).byteLength;
+      const imageTokens = context.messages.reduce((total, message) => {
+        if ((message.role !== "user" && message.role !== "toolResult") || !Array.isArray(message.content)) return total;
+        const images = message.content.filter((part): part is ImageContent => part.type === "image");
+        return total + (images.length ? estimateMessageTokens({ role: "user", content: images, timestamp: now() }) : 0);
+      }, 0);
+      const maxTextBytes = Math.min(SESSION_COMPACT_AT_BYTES,
+        Math.floor((command.route.contextWindow - command.route.maxOutputTokens) * 4 * 0.8) - overhead - imageTokens * 4);
+      if (maxTextBytes <= 0) { budgetExhausted = true; agent.abort(); return; }
+      if (estimateContextTokens(context.messages).tokens <= command.route.contextWindow * 0.8
+        && contextTextBytes(context.messages) <= maxTextBytes) return;
+      // Corrections belong to this active turn, not historical user turns:
+      // keep its initial prompt (including images) and every injected steer.
+      const keepRecentUserTurns = 1 + steered.filter(pending => pending.consumed).length;
+      const compacted = await compactSession({ messages: context.messages, now, keepRecentUserTurns, summarize: transcript => summarize(transcript, signal) });
+      if (signal?.aborted || input.signal?.aborted) return;
+      // Hysteresis leaves room for the next tool result instead of retrying
+      // an unavailable summary on every small message.
+      const fitted = fitInferenceContext(compacted, Math.floor(maxTextBytes * 0.75));
+      if (contextTextBytes(fitted) > maxTextBytes) {
+        budgetExhausted = true;
+        agent.abort();
+        return;
+      }
+      agent.state.messages = fitted;
+      return { context: { ...context, messages: fitted } };
+    },
     toolExecution: "sequential",
-    // A blocking question or a spent budget ends the turn even if a steer is queued; the steer is saved instead.
-    finishTurn: () => isolated || tools.waitingForPerson || budgetExhausted ? { action: "end" } : undefined,
+    // Already-ACKed corrections drain at the next safe boundary before a
+    // question releases the worker. They do not answer or authorize it.
+    finishTurn: () => isolated || input.signal?.aborted || eventFailure || budgetExhausted
+      || (tools.waitingForPerson && !agent.hasQueuedMessages()) ? { action: "end" } : undefined,
     // Fail closed: the hook cannot throw, and anything past the budget is blocked.
     beforeToolCall: async () => {
       if (isolated || toolActions >= command.limits.maxToolActions) {
@@ -155,19 +212,23 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
   input.signal?.addEventListener("abort", onAbort, { once: true });
 
   // Steering is accepted until the turn stops; anything Pi did not inject is saved as a person message.
-  const steered: AgentMessage[] = [];
+  const steered: Array<{ message: AgentMessage; consumed: boolean }> = [];
   let steeringOpen = true;
   input.onControl?.({
-    steer(text) {
-      if (isolated || !steeringOpen) return false;
-      const message: AgentMessage = { role: "user", content: text, timestamp: now() };
-      steered.push(message);
+    steer(text, images) {
+      if (isolated || !steeringOpen || tools.askingPerson || tools.waitingForPerson || budgetExhausted
+        || inferenceCalls >= maxInferenceCalls || input.signal?.aborted || eventFailure || agent.state.errorMessage) return false;
+      if (images?.length && !command.route.input.includes("image")) return false;
+      const message: AgentMessage = { role: "user", content: images?.length
+        ? [{ type: "text", text }, ...images.map(image => ({ type: "image" as const, data: image.data, mimeType: image.mimeType }))]
+        : text, timestamp: now() };
+      steered.push({ message, consumed: false });
       agent.steer(message);
       return true;
     },
   });
   const stopped = () => Boolean(eventFailure) || input.signal?.aborted === true || budgetExhausted
-    || tools.waitingForPerson || Boolean(agent.state.errorMessage);
+    || Boolean(agent.state.errorMessage);
 
   try {
     if (command.turn.kind === "prompt") {
@@ -211,34 +272,11 @@ export async function runBotTurn(input: RunBotTurnInput): Promise<BotRunOutcome>
     return { status: "completed" as const };
   })();
 
-  const unanswered = steered.filter((message) => !agent.state.messages.includes(message));
+  const unanswered = steered.filter(pending => !pending.consumed && !agent.state.messages.includes(pending.message)).map(pending => pending.message);
   let messages: AgentMessage[] = withoutImages([...agent.state.messages, ...unanswered]);
   try {
-    // Summaries are best effort: a cancelled run skips them, and a failed call
-    // falls back to storage fitting so the turn is still saved.
-    const summarize = async (transcript: string) => {
-      if (input.signal?.aborted || inferenceCalls >= maxInferenceCalls) return "";
-      try {
-        inferenceCalls += 1;
-        const reply = await provider.streamSimple(model, normalizeContext({
-          systemPrompt: SUMMARY_PROMPT,
-          messages: [{ role: "user", content: transcript, timestamp: now() }],
-        }), { apiKey: BROKER_PLACEHOLDER_KEY, maxTokens: Math.min(SUMMARY_MAX_TOKENS, command.route.maxOutputTokens), maxRetries: 0,
-          ...(input.signal ? { signal: input.signal } : {}) }).result();
-        return reply.stopReason === "error" || reply.stopReason === "aborted" ? "" : textOf(reply);
-      } catch (error: unknown) {
-        console.warn("[bot-runtime] session summary failed:", error instanceof Error ? error.name : "UnknownError");
-        return "";
-      }
-    };
-    if (!isolated && needsCompaction(messages, command.route.contextWindow)) {
-      messages = await compactSession({ messages, now, summarize });
-    }
-    // Summarize down to the latest turn before storage would have to drop earlier turns.
-    // A cancelled run never drops turns: if it cannot save whole, the previous session stays.
-    if (!isolated && !fitsWithToolPayloadCaps(messages)) {
-      messages = await compactSession({ messages, now, summarize, keepRecentUserTurns: 1 });
-    }
+    // No model request after final text. Context maintenance happens before
+    // ordinary requests; terminal persistence uses bounded deterministic fitting.
     const saved = await broker.saveSession({
       baseRevision: snapshot.revision,
       ...(snapshot.needsRecompaction ? { recompactionHandled: true as const } : {}),

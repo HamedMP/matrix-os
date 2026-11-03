@@ -40,7 +40,7 @@ describe("canonical Chat funding wire compatibility", () => {
     registerCanonicalChatEventHttpRoute({ app, getPrincipal: () => ({ userId: "owner", source: "jwt" }),
       stream: { open: async ({ sink }) => { sink.send(frame); sink.close(); return { onClose: () => undefined, touch: () => undefined }; } },
       setIntervalFn: vi.fn(), clearIntervalFn: vi.fn() });
-    const response = await app.request(`/api/chats/events?messageVersion=2&inputVersion=1${rich ? "&fundingVersion=1" : ""}`, { headers: { accept: "text/event-stream", "x-matrix-chat-protocol": "2" } });
+    const response = await app.request(`/api/chats/events?messageVersion=2&inputVersion=1&assistantTextVersion=1${rich ? "&fundingVersion=1" : ""}`, { headers: { accept: "text/event-stream", "x-matrix-chat-protocol": "2" } });
     expect(response.status).toBe(200);
     const data = (await response.text()).split("data: ")[1]!.trim();
     expect(JSON.parse(data).content.activities[0].error.code).toBe(rich ? "insufficient_credit" : "run_failed");

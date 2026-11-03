@@ -3,7 +3,7 @@ import { safeHttpStatus } from "./safe-http-status.js";
 import { botCreationFailureMessage } from "./creation-error.js";
 import { agentEditorValidation } from "./agent-editor-validation.js";
 import { agentDraftMatchesSaved, recoverSavedFundedBot, savedAgentRecoveryBaseRevision } from "./saved-agent-recovery.js";
-import { useAgentProviderCatalog } from "./use-agent-provider-catalog.js";
+import { useAgentProviderCatalog, type AgentProviderCatalogSource } from "./use-agent-provider-catalog.js";
 import {configureCreatedExecutor} from "./bots/configure-created-executor.js";
 import type {BotExecutorSelection} from "./bots/BotTaskExecutorField.js";
 import { Dialog } from "../Dialog.js";
@@ -147,8 +147,12 @@ function AgentLibraryBody({ state, client, models, retainedCreation, recover, ed
 
 type ChatAgentsPanelProps = {
   hostedChrome?: boolean; onTitleChange?: (title: "Your AI team" | "New agent" | "Edit agent") => void;
+  headerLeading?: ReactNode;
   client: ChatAgentClient; view?: "library" | "recipes"; onClose(): void; onSetup?: () => void;
   onStartChat?: StartAgentChat; onOpenBotChat?: (chatId: string) => void;
+  requestedRecipeId?: string;
+  onRequestedRecipeResult?: (result: { ok: true } | { ok: false; error: "recipe_unavailable" | "navigation_unavailable" }) => void;
+  providerCatalog?: AgentProviderCatalogSource;
 };
 
 export function ChatAgentsPanel(props: ChatAgentsPanelProps) {
@@ -164,7 +168,8 @@ export function ChatAgentsPanel(props: ChatAgentsPanelProps) {
   return <ChatAgentsPanelBody key={current.key} {...props}/>;
 }
 
-function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onStartChat, onOpenBotChat, hostedChrome = false, onTitleChange }: ChatAgentsPanelProps) {
+function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onStartChat, onOpenBotChat, hostedChrome = false, onTitleChange,
+  headerLeading, requestedRecipeId, onRequestedRecipeResult, providerCatalog }: ChatAgentsPanelProps) {
   const heading = useRef<HTMLHeadingElement>(null);
   const scratchTrigger = useRef<HTMLButtonElement | null>(null);
   const [creationView, setCreationView] = useState(view === "recipes");
@@ -180,7 +185,7 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
   const [library, setState] = useState<Library>({ agents: [], catalog: null, enabled: true,
     loading: true, pending: false, error: "", notice: "", editing: null, draft: null,
     recipeCatalog: null, connections: [], recipeLoading: true, recipeError: "", connectionError: "" });
-  const modelCatalog = useAgentProviderCatalog(client);
+  const modelCatalog = useAgentProviderCatalog(client, providerCatalog);
   const state = { ...library, catalog: modelCatalog.catalog, catalogLoading: modelCatalog.loading };
   const [setupPaused, setSetupPaused] = useState(false);
   const [botRecipeAttempt, setBotRecipeAttempt] = useState(0);
@@ -435,7 +440,10 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
   useEffect(() => { onTitleChange?.(title); }, [onTitleChange, title]);
   return <section aria-label={recipes ? "Agent recipes" : "Agents"} data-agent-surface={recipes ? "recipes" : "library"} className="matrix-chat-agents-panel ph-no-capture flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={chatAgentSurfaceStyle}>
     <header className={hostedChrome ? "sr-only" : "flex h-12 shrink-0 items-center justify-between gap-3 px-4 sm:px-6"} style={{ borderColor: "var(--border-default,var(--border))" }}>
-      <h2 ref={heading} tabIndex={-1} className="text-sm font-semibold outline-none">{title}</h2>
+      <div className="flex min-w-0 items-center gap-2">
+        {headerLeading}
+        <h2 ref={heading} tabIndex={-1} className="text-sm font-semibold outline-none">{title}</h2>
+      </div>
       {!hostedChrome ? <button type="button" aria-label="Close Agents" className={`${button} shrink-0`} disabled={state.pending} onClick={onClose}>×</button> : null}
     </header>
     {dailyRecipe?.client === client && client.bots && onOpenBotChat ? <DailyBriefCreation onRefreshCatalog={modelCatalog.refresh} onSetup={onSetup} recipe={dailyRecipe.recipe} client={client} models={botModels} catalog={state.catalog} catalogLoading={state.catalogLoading}
@@ -451,6 +459,7 @@ function ChatAgentsPanelBody({ client, view = "library", onClose, onSetup, onSta
     </div> : null}
     <div hidden={setupPaused} className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-8 sm:px-6">
     {recipes ? <div hidden={Boolean(state.editing)} inert={Boolean(state.editing)}><AgentRecipesPanel
+      requestedRecipeId={requestedRecipeId} onRequestedRecipeResult={onRequestedRecipeResult}
       onStartFromScratch={trigger => { scratchTrigger.current = trigger; edit("new"); }}
       scratchDisabled={scratchBlocked || !state.catalog} scratchRetryDisabled={scratchBlocked} catalogError={modelCatalog.error}
       onRefreshCatalog={modelCatalog.refresh} onSetup={onSetup} botClient={client.bots} onStartChat={onStartChat ? (text) => { onClose(); onStartChat(text); } : undefined}

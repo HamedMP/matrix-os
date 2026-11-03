@@ -258,6 +258,9 @@ suite("large canonical Chat viewport recovery", () => {
     await worked.waitFor();
     if (await worked.getAttribute("aria-expanded") !== "true") await worked.click();
     await page.getByText("Step 500", { exact: true }).waitFor();
+    const previousActivities = page.getByRole("button", { name: "499 previous activities", exact: true });
+    if (await previousActivities.getAttribute("aria-expanded") !== "true") await previousActivities.click();
+    await page.getByText("Step 1", { exact: true }).waitFor();
     await page.screenshot({ path: join(output, "expanded-500.png") });
     const viewport = page.locator('[data-slot="message-scroller-viewport"]');
     const maximum = await viewport.evaluate((element) => {

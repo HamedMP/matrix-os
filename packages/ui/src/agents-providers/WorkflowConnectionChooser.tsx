@@ -19,7 +19,7 @@ export function WorkflowConnectionChooser({state}: {state: HarnessWorkflowContro
        return <div key={option.id}>
          <ConnectionMethodCard method={key ? "key" : "account"}
            title={key ? `${keyNames[option.providerId]} API key` : `${providerNames[option.providerId]} account · ${option.method ? methodNames[option.method] : "Sign in"}`}
-           description={key ? "Billed per request by your provider" : "Uses your subscription for this agent on this computer"}
+           description={key ? "Billed per request by your provider" : harness.harness === "hermes" ? "Sign in with your account in Terminal" : "Uses your subscription for this agent on this computer"}
            selected={selectedOption?.id === option.id} loading={startingLogin && selectedOption?.id === option.id} disabled={disabled || pending || connecting || state.reconciling || !available}
            onClick={() => {
              pendingStartRef.current = null; setSelectedOption(option); setProviderId(option.providerId);

@@ -10,7 +10,8 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
         const url = new URL(request.url);
         if (url.pathname === '/' && (request.method === 'GET' || request.method === 'HEAD'))
             return new Response(null, { status: 302, headers: { Location: 'https://matrix-os.com', 'Cache-Control': 'no-store' } });
-        const valid = request.method === 'GET' ? read.test(url.pathname) : request.method === 'POST' && write.test(url.pathname);
+        const edgeHealth = request.method === 'GET' && url.pathname === '/_edge-health';
+        const valid = edgeHealth || (request.method === 'GET' ? read.test(url.pathname) : request.method === 'POST' && write.test(url.pathname));
         if (!valid || blocked.has(url.pathname.split('/')[1]!))
             return new Response('Site unavailable', { status: 404 });
         let origin: URL;
@@ -65,8 +66,10 @@ async function handleSiteRequest(request: Request, env: SitesWorkerEnv): Promise
             }
         }
         try {
-            const upstream = new Request(`${origin.origin}/public/sites${url.pathname}`, { method: request.method, headers, body, redirect: 'error', signal: AbortSignal.timeout(request.method === 'POST' ? 10000 : 30000) });
+            const upstream = new Request(`${origin.origin}/public/sites${url.pathname}`, { method: request.method, headers, body, redirect: 'manual', signal: AbortSignal.timeout(request.method === 'POST' ? 10000 : 30000) });
             const response = await fetch(upstream, { signal: upstream.signal });
+            if (response.status >= 300 && response.status < 400)
+                throw new TypeError('Upstream redirect rejected');
             const result = new Response(response.body, { status: response.status, headers: response.headers });
             result.headers.delete('set-cookie');
             result.headers.set('Cache-Control', 'no-store');

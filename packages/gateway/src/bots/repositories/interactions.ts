@@ -36,6 +36,7 @@ export interface BotInteractionRecord {
   botId: string;
   chatId: string;
   taskId: string;
+  sourceRunId?: string | null;
   kind: BotInteractionKind;
   payload: Record<string, unknown>;
   responderActorId: string;
@@ -60,6 +61,7 @@ function fromRow(row: Selectable<BotInteractionsTable>): BotInteractionRecord {
     botId: row.bot_id,
     chatId: row.chat_id,
     taskId: row.task_id,
+    sourceRunId: row.source_run_id,
     kind: row.kind,
     payload: parseJson(row.payload) ?? {},
     responderActorId: row.responder_actor_id,
@@ -100,6 +102,7 @@ export function createBotInteractionsRepository(db: BotExecutor) {
       blocking: boolean;
       expiresAt: string;
       now: string;
+      sourceRunId?: string;
     }, executor: BotExecutor = db): Promise<{ interaction: BotInteractionRecord; expired: BotInteractionRecord[] }> {
       const lifetime = Date.parse(input.expiresAt) - Date.parse(input.now);
       if (!(lifetime > 0) || lifetime > (input.kind === "connect_request" ? MAX_CONNECT_LIFETIME_MS : MAX_LIFETIME_MS)) {
@@ -129,6 +132,7 @@ export function createBotInteractionsRepository(db: BotExecutor) {
             bot_id: input.botId,
             chat_id: input.chatId,
             task_id: input.taskId,
+            ...(input.sourceRunId ? { source_run_id: input.sourceRunId } : {}),
             kind: input.kind,
             payload,
             responder_actor_id: input.responderActorId,
@@ -158,11 +162,13 @@ export function createBotInteractionsRepository(db: BotExecutor) {
       baseRevision: number;
       responderActorId: string;
       resolution: Record<string, unknown>;
+      sourceRunId?: string;
       now: string;
     }, executor: BotExecutor = db): Promise<BotInteractionRecord> {
       const resolution = boundedJson(input.resolution);
       const row = await executor.updateTable("bot_interactions")
-        .set({ status: "resolved", resolution, resolved_at: input.now, revision: sql<number>`revision + 1` })
+        .set({ status: "resolved", resolution, resolved_at: input.now, revision: sql<number>`revision + 1`,
+          ...(input.sourceRunId ? { source_run_id: input.sourceRunId } : {}) })
         .where("owner_id", "=", input.ownerId).where("interaction_id", "=", input.interactionId)
         .where("status", "=", "pending").where("revision", "=", input.baseRevision)
         .where("responder_actor_id", "=", input.responderActorId).where("expires_at", ">", input.now)
@@ -202,6 +208,38 @@ export function createBotInteractionsRepository(db: BotExecutor) {
         .returningAll()
         .execute();
       return rows.map(fromRow);
+    },
+    async hasContinuationAdmission(input: { chatId: string; interactionId: string; requestHash: string }, executor: BotExecutor = db): Promise<boolean> {
+      const requestId = `req_answer_${input.interactionId}`;
+      const admitted = await executor.selectFrom("chat_runs").select("id").where("chat_id", "=", input.chatId)
+        .where("client_request_id", "=", requestId).where("request_hash", "=", input.requestHash).executeTakeFirst();
+      if (admitted) return true;
+      return Boolean(await executor.selectFrom("chat_queued_turns").select("id").where("chat_id", "=", input.chatId)
+        .where("client_request_id", "=", requestId).where("request_hash", "=", input.requestHash).executeTakeFirst());
+    },
+    /** Saved question recovery is bounded, owner-bound and never resurrects a task. */
+    async listRecoverable(input: { ownerId: string; chatId: string; now: string }, executor: BotExecutor = db): Promise<BotInteractionRecord[]> {
+      const rows = await executor.selectFrom("bot_interactions")
+        .innerJoin("bot_tasks as task", join => join.onRef("task.task_id", "=", "bot_interactions.task_id")
+          .onRef("task.owner_id", "=", "bot_interactions.owner_id").onRef("task.bot_id", "=", "bot_interactions.bot_id")
+          .onRef("task.chat_id", "=", "bot_interactions.chat_id"))
+        .innerJoin("bot_chat_bindings as binding", join => join.onRef("binding.chat_id", "=", "bot_interactions.chat_id")
+          .onRef("binding.owner_id", "=", "bot_interactions.owner_id").onRef("binding.bot_id", "=", "bot_interactions.bot_id"))
+        .selectAll("bot_interactions")
+        .where("bot_interactions.owner_id", "=", input.ownerId).where("bot_interactions.responder_actor_id", "=", input.ownerId)
+        .where("bot_interactions.chat_id", "=", input.chatId).where("bot_interactions.status", "=", "resolved")
+        .where("bot_interactions.kind", "=", "question").where("bot_interactions.blocking", "=", true)
+        .where("bot_interactions.expires_at", ">", input.now).where("task.status", "=", "waiting_person")
+        .whereRef("bot_interactions.source_run_id", "=", "task.run_id")
+        .where("binding.kind", "=", "direct").where("binding.removed_at", "is", null)
+        .where(eb => eb.not(eb.exists(eb.selectFrom("chat_turns").select("id")
+          .whereRef("chat_turns.chat_id", "=", "bot_interactions.chat_id")
+          .where("client_request_id", "=", sql<string>`'req_answer_' || bot_interactions.interaction_id`))))
+        .where(eb => eb.not(eb.exists(eb.selectFrom("chat_queued_turns").select("id")
+          .whereRef("chat_queued_turns.chat_id", "=", "bot_interactions.chat_id")
+          .where("client_request_id", "=", sql<string>`'req_answer_' || bot_interactions.interaction_id`))))
+        .orderBy("bot_interactions.created_at", "asc").limit(MAX_PENDING_INTERACTIONS_PER_OWNER).execute();
+      return rows.map(fromRow).filter(item => typeof item.resolution?.continuation === "string");
     },
     /** Pending, unexpired interactions for a conversation, oldest first. */
     async listPending(input: { ownerId: string; chatId: string; now: string }, executor: BotExecutor = db): Promise<BotInteractionRecord[]> {

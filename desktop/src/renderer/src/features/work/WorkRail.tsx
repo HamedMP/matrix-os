@@ -35,6 +35,7 @@ import { WorkRailScrollArea } from "./work-rail/WorkRailScrollArea";
 import { DESKTOP_Z_INDEX } from "../../design/layering";
 import { useWorkRailDisclosure } from "./work-rail/use-work-rail-disclosure";
 import { useWorkRailOrder } from "./work-rail/use-work-rail-order";
+import { FocusedProjectRail, focusedProjectRecords } from "./work-rail/FocusedProjectRail";
 import { WorkRailOrderContext, WorkRailOrderItem } from "./work-rail/WorkRailOrderItem";
 import { resolveCanonicalChatLifecycleGroup } from "@matrix-os/ui";
 import { WorkRailChatRow } from "./work-rail/WorkRailChatRow";
@@ -179,6 +180,7 @@ export function WorkRail({
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<Project | null>(null);
   const [sourceFilter, setSourceFilter] = useState<ChatImportSourceFilterValue>("all");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [focusedProjectId, setFocusedProjectId] = useState<string | null>(null);
   const openSearch = useCallback(() => { if (authorityCurrent()) setSearchOpen(true); }, [authorityCurrent]);
   useChatSearchShortcut(searchShortcutActive && Boolean(client), openSearch);
   const [sharedWithMeOpen, setSharedWithMeOpen] = useState(false);
@@ -235,6 +237,15 @@ export function WorkRail({
     () => [...model.pinnedProjects, ...model.projects],
     [model],
   );
+  // A deleted or unavailable Project simply ends focus.
+  const focusedGroup = focusedProjectId ? projectGroups.find((group) => group.id === focusedProjectId) : undefined;
+  const focusedRecords = useMemo(() => focusedGroup ? focusedProjectRecords(sourceRecords, focusedGroup) : null, [focusedGroup, sourceRecords]);
+  const projectGroupFor = (reference?: string) => reference ? projectGroups.find((group) => group.id === reference || group.slug === reference) : undefined;
+  // Opening a Project from the rail or from search focuses the sidebar on it.
+  const focusProject = (project: Project) => {
+    setFocusedProjectId(projectGroupFor(project.id)?.id ?? projectGroupFor(project.slug)?.id ?? null);
+    onSelectProject(project);
+  };
   const discoveredSharedProjects = useSharedProjects();
   const sharedProjects = useMemo(
     () => partitionSharedProjects(
@@ -443,7 +454,7 @@ export function WorkRail({
           ...current,
           [group.id]: !current[group.id],
         }))}
-        onSelect={onSelectProject}
+        onSelect={focusProject}
         onNewChat={onNewProjectChat}
         onDeleteProject={setDeleteProjectTarget}
         onSelectChat={onSelectChat}
@@ -492,6 +503,8 @@ export function WorkRail({
       <div className="mx-3 my-1.5 shrink-0"><ChatImportSourceFilter value={sourceFilter} onChange={setSourceFilter}/></div>
       {sourceFilter !== "all" && sourceRecords.length === 0 && status === "ready" ? <p className="px-3 py-2 text-xs" style={{ color: "var(--text-tertiary)" }}>No chats match this source.</p> : null}
       <WorkRailScrollArea>
+      {focusedGroup && focusedRecords ? <FocusedProjectRail group={focusedGroup} records={focusedRecords} sections={sections} onToggle={toggleSection}
+        renderChat={renderChatRow} onBack={() => setFocusedProjectId(null)} onNewChat={onNewProjectChat} /> : <>
       <SharedWithMeRailRow onOpen={() => setSharedWithMeOpen(true)} />
       <ChatAgentsRailSection menuZIndex={DESKTOP_Z_INDEX.popover} expanded={sections.agents} onExpandedChange={(expanded) => setExpanded("agents", expanded)} activeAgentId={agentsNavigation?.opened ? null : botSummaries.conversations.find(bot => bot.chatId === activeChatId)?.agentId ?? null} visible={visible} activeChatId={activeChatId} client={authorityReady ? client?.agents : undefined} summaryClient={agentAuthority.client} isCurrent={authorityCurrent} onSelectionIntent={invalidateSelection} onOpen={onOpenAgents} onStartChat={onStartAgentChat} onOpenBotChat={onOpenBotChat} onSetup={() => { useUi.getState().requestSettingsSection("agents-providers"); useTabs.getState().openTab({ kind: "settings", title: "Settings" }); }} />
       <WorkRailGroups model={model} activeChatId={activeChatId} sections={sections} onToggle={toggleSection} onCreateProject={onCreateProject}
@@ -500,6 +513,7 @@ export function WorkRail({
         onOpenBotChat={onOpenBotChat ? (chatId) => { if (!authorityCurrent()) return; invalidateSelection(); agentsNavigation?.close(); onOpenBotChat(chatId); } : undefined}
         revealSharedProjectRequest={sharedProjectRevealRequest}
         organizationDrives={<OrganizationDrivesRail active={active} chats={sourceRecords} client={client?.agents} onNewChat={onStartAgentChat ? (text, resources) => { invalidateSelection(); if (resources) onStartAgentChat(text, resources); else onStartAgentChat(text); } : undefined} onSelectChat={onSelectChat} activeChatId={activeChatId} />} />
+      </>}
         {status === "loading" && records.length === 0 ? (
           <p role="status" className="px-2 py-3 text-xs" style={{ color: "var(--text-tertiary)" }}>Loading chats…</p>
         ) : null}
@@ -546,11 +560,13 @@ export function WorkRail({
         records={sourceRecords}
         projects={projects}
         status={status}
-        onSelectProject={(project) => { setSearchOpen(false); onSelectProject(project); }}
+        onSelectProject={(project) => { setSearchOpen(false); focusProject(project); }}
         onClose={() => setSearchOpen(false)}
         onOpenShared={() => setSharedWithMeOpen(true)}
         onSelect={(record) => {
           setSearchOpen(false);
+          // A Chat found outside the focused Project moves focus to its own Project, or back to all chats.
+          if (focusedGroup) setFocusedProjectId(projectGroupFor(record.projectId)?.id ?? null);
           onSelectChat(record);
         }}
       />

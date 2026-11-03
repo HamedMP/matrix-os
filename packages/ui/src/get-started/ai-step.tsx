@@ -1,6 +1,6 @@
 import {
   GET_STARTED_BOT_LANGUAGES,
-  GET_STARTED_BOT_NAMES,
+  GET_STARTED_BOT_NAME_SUGGESTION_COUNT,
   GET_STARTED_BOT_STYLE,
   GET_STARTED_PERSONALITIES,
   getStartedBotFromWizard,
@@ -13,6 +13,8 @@ import {
 } from "@matrix-os/contracts";
 import { useId, useState, type ReactNode } from "react";
 import { RabbitAvatar, ToggleChip } from "../onboarding-widget/parts.js";
+import { useBotNameSuggestions } from "./bot-name-suggestions.js";
+import type { GetStartedPort } from "./use-get-started.js";
 
 const STYLE_FIELDS = Object.keys(GET_STARTED_BOT_STYLE) as GetStartedBotStyleField[];
 
@@ -26,11 +28,38 @@ function ChoiceRow({ title, children }: { title: string; children: ReactNode }) 
   );
 }
 
+/** Spec 636, Part B: five suggested names with emojis and a refresh; placeholders hold their place while loading. */
+function SuggestedNames({ bot, goals, suggestBotNames, onPick }: {
+  bot: GetStartedBot;
+  goals: GetStartedAnswers["goals"];
+  suggestBotNames: GetStartedPort["suggestBotNames"] | null;
+  onPick(name: string): void;
+}) {
+  const titleId = useId();
+  const { names, loading, refresh } = useBotNameSuggestions(suggestBotNames ?? null, { goals, personality: bot.personality });
+  return (
+    <section aria-labelledby={titleId}>
+      <div className="mxo-gs__names-head">
+        <h3 id={titleId} className="mxo-muted">Suggested names</h3>
+        <button type="button" className="mxo-link" aria-label="Suggest new names" disabled={loading} onClick={() => refresh({ goals, personality: bot.personality })}>
+          <span aria-hidden="true">🔄</span> New names
+        </button>
+      </div>
+      <div className="mxo-chips" role="group" aria-labelledby={titleId} aria-busy={loading}>
+        {names
+          ? names.map((item) => <ToggleChip key={item.name} icon={item.emoji} label={item.name} pressed={bot.name === item.name} onToggle={() => onPick(item.name)} />)
+          : Array.from({ length: GET_STARTED_BOT_NAME_SUGGESTION_COUNT }, (_, index) => <span key={index} className="mxo-chip mxo-chip--placeholder" aria-hidden="true" />)}
+      </div>
+    </section>
+  );
+}
+
 /** Spec 635, Section 7: the AI's name and style. Everything here only shapes SOUL; it grants nothing. */
-export function GetStartedAiStep({ bot, answers, dispatch }: {
+export function GetStartedAiStep({ bot, answers, dispatch, suggestBotNames = null }: {
   bot: GetStartedBot;
   answers: GetStartedAnswers;
   dispatch(event: GetStartedWizardEvent): void;
+  suggestBotNames?: GetStartedPort["suggestBotNames"] | null;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [soulOpen, setSoulOpen] = useState(false);
@@ -38,11 +67,7 @@ export function GetStartedAiStep({ bot, answers, dispatch }: {
   const preview = getStartedBotFromWizard(bot);
   return (
     <>
-      <ChoiceRow title="Name">
-        {GET_STARTED_BOT_NAMES.map((name) => (
-          <ToggleChip key={name} label={name} pressed={bot.name === name} onToggle={() => set({ name })} />
-        ))}
-      </ChoiceRow>
+      <SuggestedNames bot={bot} goals={answers.goals} suggestBotNames={suggestBotNames} onPick={(name) => set({ name })} />
       <input
         className="mxo-gs__input"
         aria-label="AI name"

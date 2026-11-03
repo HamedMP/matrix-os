@@ -11,6 +11,8 @@ import { JevInboxInputSchema } from "#jev-inbox";
 export const BOT_ARTIFACT_MAX_BYTES = 192 * 1024;
 /** Binary imports stay in the workspace; each explicit read returns at most 32 KiB. */
 export const BOT_ARTIFACT_BINARY_MAX_BYTES = 1024 * 1024;
+/** Explicitly submitted uploads have their own bound; workspace/integration imports stay unchanged. */
+export const BOT_INPUT_FILE_MAX_BYTES = 10 * 1024 * 1024;
 export const BOT_ARTIFACT_CHUNK_MAX_BYTES = 32 * 1024;
 const MAX_INTEGRATION_PARAMS_BYTES = 32 * 1024;
 /** Saved bot transcripts; the runtime compacts well before this cap. */
@@ -89,7 +91,7 @@ const BotToolRequestUnionSchema = z.discriminatedUnion("capability", [
   capability("artifact.read", z.object({
     relPath: ArtifactPathSchema,
     chunk: z.object({
-      offset: z.number().int().min(0).max(BOT_ARTIFACT_BINARY_MAX_BYTES),
+      offset: z.number().int().min(0).max(BOT_INPUT_FILE_MAX_BYTES),
       length: z.number().int().min(1).max(BOT_ARTIFACT_CHUNK_MAX_BYTES),
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
     }).strict().optional(),

@@ -27,10 +27,11 @@ describe('customer VPS bootstrap configuration', () => {
     })).toThrow('Funded AI runtime is misconfigured');
   });
 
-  it('keeps the Get started wizard off for new computers unless explicitly enabled', () => {
-    expect(loadCustomerVpsConfig({}).getStartedEnabled).toBe(false);
-    expect(loadCustomerVpsConfig({ MATRIX_GET_STARTED_ENABLED: '1' }).getStartedEnabled).toBe(false);
+  it('seeds the Get started wizard on new computers unless the kill switch is set (the PostHog flag decides who sees it)', () => {
+    expect(loadCustomerVpsConfig({}).getStartedEnabled).toBe(true);
     expect(loadCustomerVpsConfig({ MATRIX_GET_STARTED_ENABLED: 'true' }).getStartedEnabled).toBe(true);
+    expect(loadCustomerVpsConfig({ MATRIX_GET_STARTED_ENABLED: '1' }).getStartedEnabled).toBe(true);
+    expect(loadCustomerVpsConfig({ MATRIX_GET_STARTED_ENABLED: 'false' }).getStartedEnabled).toBe(false);
   });
 
   it('keeps managed speech disabled unless runtime provisioning explicitly enables it', () => {

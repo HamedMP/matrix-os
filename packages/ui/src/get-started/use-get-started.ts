@@ -1,6 +1,7 @@
 import {
   GetStartedResponseSchema,
   type GetStartedAnswers,
+  type GetStartedBotNamesRequest,
   getStartedAnswersFromWizard,
   getStartedDraftFromWizard,
   initialGetStartedWizard,
@@ -15,6 +16,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 export interface GetStartedPort {
   load(signal: AbortSignal): Promise<unknown>;
   save(update: GetStartedUpdate): Promise<unknown>;
+  /** Spec 636: bot name suggestions from the computer's gateway; the wizard falls back to built-in names. */
+  suggestBotNames?(request: GetStartedBotNamesRequest, signal: AbortSignal): Promise<unknown>;
 }
 
 export type GetStartedPhase = "loading" | "active" | "done";

@@ -90,6 +90,7 @@ export * from "#jev-inbox";
 export * from "#get-started";
 export * from "#get-started-arrival";
 export * from "#get-started-bot";
+export * from "#get-started-bot-names";
 export * from "#get-started-recipe-bots";
 export * from "#get-started-connect";
 export * from "#get-started-wizard";
@@ -1475,6 +1476,8 @@ export { AiCreditHistoryQuerySchema, AiCreditHistoryEntrySchema, AiCreditHistory
 
 export * from "#provider-workflows";
 export * from '#chatgpt-plan-peer';
+export * from '#chatgpt-plan-poll-delivery';
+export * from '#inference-response-limits';
 export * from '#chatgpt-plan-wire';
 export * from '#matrix-anthropic-connection';
 

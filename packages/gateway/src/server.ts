@@ -4,6 +4,7 @@ import { composePhaseCatalog } from "./chat/phase-catalog-composition.js";
 import { createCanonicalPhaseDiscovery } from "./server/canonical-phase-discovery.js";
 import { codexNativeEnvironment } from "./ai-providers/codex-native-environment.js";
 import { createNativeCodexRuntime } from "./server/native-codex-runtime.js";
+import { createCodexExecutionIdleProof } from "./coding-agents/codex-execution-observation.js";
 import { registerAppIntegrationCapabilities, registerAppAiCapabilities, createAppAiSubscriptionObservation, closeAppAiCapabilities } from "./server/app-capabilities.js";
 import { withMatrixAnthropicProviderInstances } from "./bots/matrix-anthropic-provider-instance.js";
 import { createMatrixAnthropicRuntime } from "./server/matrix-anthropic-runtime.js";
@@ -596,6 +597,8 @@ export async function createGateway(config: GatewayConfig) {
       ? createCodexEventBridge({
         homePath,
         codexExecutable,
+        isExecutionIdle: createCodexExecutionIdleProof({ sessions: () => codingAgentWorkspaceRuntime,
+          control: createCodexControlClient({ homePath }), backgroundRuntime: backgroundAgentRuntime }),
         isRuntimeAlive: (sessionId: string) => {
           const sessions = codingAgentWorkspaceRuntime;
           return sessions
@@ -609,6 +612,7 @@ export async function createGateway(config: GatewayConfig) {
       runtime: codingAgentWorkspaceRuntime,
       homePath,
       codexEvents: codexEventBridge,
+      backgroundRuntime: backgroundAgentRuntime,
       codexAdmission: nativeCodexRuntime.admission,
       codexControl: codexExecutable ? createCodexControlClient({ homePath }) : undefined,
       sharedBrowserEnabled: !!sharedBrowserRuntime && !!codexExecutable,
@@ -1558,7 +1562,7 @@ export async function createGateway(config: GatewayConfig) {
   app.route("/",chatDriveContext.routes);
   app.route("/", await createChatDriveProjectRoutes({repository:chatRepository,drives:chatDriveContext.service,resolveOwner: c => ({type:"personal",ownerId:requireRequestPrincipal(c).userId})}));
   const {
-    catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch,
+    catalog: baseCanonicalChatProviderCatalog, resolveClaudeCredentialLaunch, invalidateNativeLoginCatalog,
   } = createGatewayChatProviderCatalog({
     canRecoverNativeConnection: principal => codingAgentOwnerIds.includes(principal.userId),
     observationScope: canonicalPhaseDiscovery.observationScope,
@@ -1783,6 +1787,7 @@ export async function createGateway(config: GatewayConfig) {
     ownerId: terminalRuntimeOwnerId ?? (!process.env.MATRIX_AUTH_TOKEN && process.env.NODE_ENV !== "production" ? "default" : null),
     getPrincipal: getOptionalRequestPrincipal,
     inventory: () => aiProviderService.getSnapshot(),
+    invalidateNativeLoginCatalog,
   });
   const lookupJevGmailAccounts = createJevGmailAccountLookup({ db: platformDb,
     internalBaseUrl: internalIntegrationBaseUrl, machineToken: internalPlatformToken });

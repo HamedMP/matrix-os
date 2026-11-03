@@ -194,12 +194,12 @@ it("fails closed when native acceptance changes the browser-bound run or session
   expect(broker.closeRun).toHaveBeenCalledWith(input.runId);
 });
 
-it("allows bounded human pauses within browser native runs without widening ordinary runs or explicit overrides", async () => {
+it("keeps the browser lease bounded independently of ordinary busy turns and explicit overrides", async () => {
   const browser = setup(); await collect(browser.adapter.start(input));
   const native = browser.rpc.call.mock.calls.find(call => call[0] === "agent")!;
   expect(native[1]).toMatchObject({ timeout: 1800 }); expect(native[3]).toMatchObject({ timeoutMs: 1_800_000 });
   const supervised = setup(); await collect(supervised.adapter.start({ ...input, permissionMode: "supervised" }));
-  expect(supervised.rpc.call.mock.calls.find(call => call[0] === "agent")![1]).toMatchObject({ timeout: 120 });
+  expect(supervised.rpc.call.mock.calls.find(call => call[0] === "agent")![1]).toMatchObject({ timeout: 0 });
   const override = setup(false, 5000); await collect(override.adapter.start(input));
   expect(override.rpc.call.mock.calls.find(call => call[0] === "agent")![1]).toMatchObject({ timeout: 5 });
 });

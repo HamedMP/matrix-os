@@ -73,7 +73,7 @@ describe("canonical shell Chat state", () => {
     };
     let detailCalls = 0;
     const fetchFn = vi.fn(async (url: string) => {
-      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&commandPreviewVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1&importSourceVersion=1")) return streamResponse;
+      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1&importSourceVersion=1")) return streamResponse;
       if (url.includes("/api/chats?")) return Response.json({ items: [runningRecord] });
       if (url.includes("/api/chats/chat_stream?")) {
         detailCalls += 1;
@@ -139,7 +139,7 @@ describe("canonical shell Chat state", () => {
     };
     let detailCalls = 0;
     stubLegacyChatFetch( vi.fn(async (url: string) => {
-      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&commandPreviewVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1&importSourceVersion=1")) return streamResponse;
+      if (url.endsWith("/api/chats/events?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&readStateVersion=1&eventVersion=1&fundingVersion=1&importSourceVersion=1")) return streamResponse;
       if (url.includes("/api/chats?")) return Response.json({ items: [runningRecord] });
       if (url.includes("/api/chats/chat_fallback?")) {
         detailCalls += 1;
@@ -188,6 +188,50 @@ describe("canonical shell Chat state", () => {
 
     expect(result.current.conversations[0]?.title).toBe("New title");
     expect(result.current.activeConversationTitle).toBe("New title");
+  });
+
+  it("deletes a Chat and leaves it when it was the active Chat", async () => {
+    let deleteUrl: string | undefined;
+    stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?") && init?.method === undefined) {
+        return Response.json({ items: deleteUrl ? [record("chat_b", "Keep")] : [record("chat_a", "Remove"), record("chat_b", "Keep")] });
+      }
+      if (url.includes("/api/chats/chat_a?") && init?.method === undefined) return Response.json(detail("chat_a", "Remove"));
+      if (url.includes("/api/chats/chat_a?clientRequestId=req_") && init?.method === "DELETE") {
+        deleteUrl = url;
+        return Response.json({ chatId: "chat_a", deletedAt: "2026-08-31T00:00:01.000Z" });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.conversations).toHaveLength(2));
+    act(() => result.current.switchConversation("chat_a"));
+    await act(async () => {
+      await expect(result.current.deleteConversation?.("chat_a")).resolves.toBe(true);
+    });
+
+    expect(deleteUrl).toBeDefined();
+    expect(result.current.conversations.map((conversation) => conversation.id)).toEqual(["chat_b"]);
+    expect(result.current.sessionId).toBeUndefined();
+  });
+
+  it("keeps a Chat listed when deletion fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    stubLegacyChatFetch(vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("/api/chats?") && init?.method === undefined) return Response.json({ items: [record("chat_a", "Busy")] });
+      if (url.includes("/api/chats/chat_a?") && init?.method === undefined) return Response.json(detail("chat_a", "Busy"));
+      if (init?.method === "DELETE") return Response.json({ error: { code: "chat_busy" } }, { status: 409 });
+      throw new Error(`Unexpected request: ${url}`);
+    }));
+
+    const { result } = renderHook(() => useCanonicalChatState());
+    await waitFor(() => expect(result.current.conversations).toHaveLength(1));
+    await act(async () => {
+      await expect(result.current.deleteConversation?.("chat_a")).resolves.toBe(false);
+    });
+
+    expect(result.current.conversations.map((conversation) => conversation.id)).toEqual(["chat_a"]);
   });
 
   it("does not let an older rename response regress a newer canonical refresh", async () => {
@@ -356,7 +400,7 @@ describe("canonical shell Chat state", () => {
         const path = parsed.searchParams.get("path")!;
         return Response.json({ ok: true, path, size: 5 });
       }
-      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&commandPreviewVersion=1&readStateVersion=1&fundingVersion=1&importSourceVersion=1")) {
+      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&readStateVersion=1&fundingVersion=1&importSourceVersion=1")) {
         return Response.json({ error: { code: "provider_unavailable", safeMessage: "Do not render upstream details", retryable: true } }, { status: 409 });
       }
       if (url.includes("/api/files/blob?") && init?.method === "DELETE") {
@@ -429,7 +473,7 @@ describe("canonical shell Chat state", () => {
 
     await waitFor(() => expect(fetchFn.mock.calls.filter(([, init]) =>
       (init as RequestInit | undefined)?.method === "DELETE")).toHaveLength(1));
-    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&commandPreviewVersion=1&readStateVersion=1&fundingVersion=1&importSourceVersion=1"))).toBe(false);
+    expect(fetchFn.mock.calls.some(([url]) => String(url).endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&readStateVersion=1&fundingVersion=1&importSourceVersion=1"))).toBe(false);
   });
 
   it("keeps uploaded files when admission outcome is ambiguous", async () => {
@@ -443,7 +487,7 @@ describe("canonical shell Chat state", () => {
         const path = new URL(url).searchParams.get("path")!;
         return Response.json({ ok: true, path, size: 5 });
       }
-      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&commandPreviewVersion=1&readStateVersion=1&fundingVersion=1&importSourceVersion=1")) {
+      if (url.endsWith("/api/chats/chat_a/turns?messageVersion=2&inputVersion=1&commandPreviewVersion=1&assistantTextVersion=1&readStateVersion=1&fundingVersion=1&importSourceVersion=1")) {
         return Response.json({ error: "unavailable" }, { status: 503 });
       }
       if (url.includes("/api/files/blob?") && init?.method === "DELETE") {
@@ -464,7 +508,7 @@ describe("canonical shell Chat state", () => {
     }));
 
     await waitFor(() => expect(result.current.messages.at(-1)?.content)
-      .toBe("Message could not be sent. Try again."));
+      .toBe("Message status is unconfirmed. You can retry safely."));
     expect(fetchFn.mock.calls.some(([, init]) =>
       (init as RequestInit | undefined)?.method === "DELETE")).toBe(false);
   });

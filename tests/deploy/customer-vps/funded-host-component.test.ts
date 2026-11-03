@@ -37,6 +37,7 @@ describe("protected funded host repair delivery", () => {
     expect(readFileSync(agent, "utf8")).toContain("sudo /usr/bin/python3 -I -");
     expect(built).toContain("REPAIR_SOURCE = ");
     const reseal = readFileSync(join(root, "matrix-reseal-funded-speech.py"), "utf8");
+    expect(readFileSync(join(root, "matrix-reseal-funded-config.py"), "utf8")).toBe(reseal);
     const resealSyntax = spawnSync("python3", ["-I", "-c", "import sys;compile(sys.stdin.read(),'<reseal>','exec')"], {
       input: reseal, encoding: "utf8", timeout: 10_000,
     });

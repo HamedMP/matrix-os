@@ -20,6 +20,8 @@ import {
   type BotToolResult,
   type ResolveBotInteractionResponse,
 } from "@matrix-os/contracts";
+import { chatContextRequestHash } from "../chat/agent-context.js";
+import { MATRIX_BOT_SELECTION } from "./selection.js";
 import { BotBrokerActionError } from "./broker-actions.js";
 import type { BotStateTransaction, BotStateTransactions } from "./events.js";
 import { createBotInteractionsRepository, type BotInteractionRecord } from "./repositories/interactions.js";
@@ -120,6 +122,7 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
           const { interaction, expired } = await createBotInteractionsRepository(tx.db).create({
             ownerId: binding.ownerId, botId: binding.botId, chatId: binding.chatId, taskId: binding.taskId,
             kind: "question", payload: args.payload, responderActorId: binding.ownerId, blocking: args.blocking,
+            ...(binding.runId ? { sourceRunId: binding.runId } : {}),
             expiresAt: new Date(at.getTime() + QUESTION_LIFETIME_MS).toISOString(), now: at.toISOString(),
           }, tx.db);
           for (const overdue of expired) await tx.publish(overdue.chatId, "interaction.resolved", event(overdue));
@@ -149,12 +152,17 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
     },
 
     /** Pending questions in one chat, as the viewer may see them. */
-    async listPending(viewerId: string, chatIdValue: string): Promise<BotInteraction[]> {
+    async listPending(viewerId: string, chatIdValue: string, options: { includeRecovery?: boolean } = {}): Promise<BotInteraction[]> {
       const chatId = CanonicalChatIdSchema.safeParse(chatIdValue);
       if (!chatId.success) throw new BotInteractionError("invalid_request");
-      const pending = await deps.transact(viewerId, (tx) =>
-        createBotInteractionsRepository(tx.db).listPending({ ownerId: viewerId, chatId: chatId.data, now: now().toISOString() }, tx.db));
-      return pending.map((interaction) => project(interaction, viewerId));
+      return deps.transact(viewerId, async (tx) => {
+        const repository = createBotInteractionsRepository(tx.db);
+        const input = { ownerId: viewerId, chatId: chatId.data, now: now().toISOString() };
+        const pending = await repository.listPending(input, tx.db);
+        const recoverable = options.includeRecovery ? await repository.listRecoverable(input, tx.db) : [];
+        return [...pending.map(interaction => project(interaction, viewerId)),
+          ...recoverable.map(interaction => ({ ...project(interaction, viewerId), recoveryAvailable: true as const }))].slice(0, 32);
+      });
     },
 
     /**
@@ -172,6 +180,29 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
       const request = ResolveBotInteractionRequestSchema.safeParse(body);
       if (!chatId.success || !interactionId.success || !request.success) throw new BotInteractionError("invalid_request");
       const input = request.data;
+      if (input.kind === "resume") {
+        return deps.transact(responderId, async (tx) => {
+          const repository = createBotInteractionsRepository(tx.db);
+          const current = await repository.get({ ownerId: responderId, interactionId: interactionId.data }, tx.db);
+          if (!current || current.chatId !== chatId.data || current.responderActorId !== responderId) throw new BotInteractionError("not_found");
+          if (Date.parse(current.expiresAt) <= now().getTime()) throw new BotInteractionError("expired");
+          if (current.revision !== input.baseRevision) throw new BotInteractionError("conflict");
+          if (current.kind !== "question" || current.status !== "resolved" || !current.blocking) throw new BotInteractionError("conflict");
+          if (typeof current.resolution?.continuation === "string" && await repository.hasContinuationAdmission({
+            chatId: chatId.data, interactionId: interactionId.data,
+            requestHash: chatContextRequestHash({ parts: [{ type: "text", text: current.resolution.continuation }], selection: MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" }),
+          }, tx.db)) {
+            return { response: ResolveBotInteractionResponseSchema.parse({ interaction: { interactionId: current.interactionId, status: current.status, revision: current.revision } }) };
+          }
+          const recoverable = await repository.listRecoverable({ ownerId: responderId, chatId: chatId.data, now: now().toISOString() }, tx.db);
+          const saved = recoverable.find(item => item.interactionId === interactionId.data);
+          if (!saved || typeof saved.resolution?.continuation !== "string") throw new BotInteractionError("conflict");
+          return {
+            response: ResolveBotInteractionResponseSchema.parse({ interaction: { interactionId: saved.interactionId, status: saved.status, revision: saved.revision } }),
+            continuation: { chatId: saved.chatId, clientRequestId: `req_answer_${saved.interactionId}`, text: saved.resolution.continuation },
+          };
+        });
+      }
       // Starting a connection runs its network step before any transaction (L9c).
       if (input.kind === "connect_request" && input.action === "start") {
         if (!deps.handlers?.startConnect) throw new BotInteractionError("invalid_request");
@@ -193,7 +224,22 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
           ...(interaction.blocking && text ? { continuation: { chatId: interaction.chatId, clientRequestId: `req_answer_${interaction.interactionId}`, text } } : {}),
         });
         const { continuation: storedText, ...stored } = current.resolution ?? {};
+        const task = current.blocking && current.kind === "question"
+          ? await tx.db.selectFrom("bot_tasks").select(["run_id", "status"]).where("owner_id", "=", responderId)
+            .where("task_id", "=", current.taskId).where("bot_id", "=", current.botId).where("chat_id", "=", current.chatId)
+            .forUpdate().executeTakeFirst() : undefined;
+        // New questions carry their asking run. Older pending rows may bind
+        // only after that run settled; never guess during another busy run.
+        const sourceRunId = current.sourceRunId
+          ?? (current.status === "pending" && task?.status === "waiting_person" ? task.run_id : undefined);
         if (current.status === "resolved" && current.revision === input.baseRevision + 1 && JSON.stringify(stored) === JSON.stringify(requested)) {
+          if (current.blocking && Date.parse(current.expiresAt) <= Date.parse(at)) throw new BotInteractionError("expired");
+          if (current.kind === "question" && current.blocking) {
+            if (typeof storedText === "string" && await repository.hasContinuationAdmission({ chatId: current.chatId,
+              interactionId: current.interactionId, requestHash: chatContextRequestHash({ parts: [{ type: "text", text: storedText }],
+                selection: MATRIX_BOT_SELECTION, interactionMode: "default", permissionMode: "default" }) }, tx.db)) return respond(current, undefined);
+            if (!sourceRunId || task?.run_id !== sourceRunId || !["running", "waiting_person"].includes(task.status)) throw new BotInteractionError("conflict");
+          }
           const replayText = typeof storedText === "string" ? storedText
             : current.kind === "question" ? renderAnswer(current.payload as QuestionPayload, requested as QuestionAnswer) : undefined;
           return respond(current, replayText);
@@ -205,6 +251,7 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
         if (current.revision !== input.baseRevision) throw new BotInteractionError("conflict");
         let text: string;
         if (input.kind === "question") {
+          if (current.blocking && (!sourceRunId || task?.run_id !== sourceRunId || !["running", "waiting_person"].includes(task.status))) throw new BotInteractionError("conflict");
           const payload = current.payload as QuestionPayload;
           const known = new Set(payload.questions.map((question) => question.questionId));
           if (Object.keys(input.structuredAnswers ?? {}).some((id) => !known.has(id))) throw new BotInteractionError("invalid_request");
@@ -224,6 +271,7 @@ export function createBotInteractionService(deps: { transact: BotStateTransactio
           resolved = await repository.resolve({
             ownerId: responderId, interactionId: current.interactionId, baseRevision: input.baseRevision,
             responderActorId: responderId, resolution: { ...requested, continuation: text }, now: at,
+            ...(sourceRunId ? { sourceRunId } : {}),
           }, tx.db);
         } catch (error: unknown) {
           return mapStateError(error);

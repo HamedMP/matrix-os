@@ -54,7 +54,7 @@ describe('fast CI preserves validation while removing serialized work', () => {
   it('builds prerequisites once in each funded and E2E job before direct test execution', () => {
     expect(scripts['test:prepare']).toContain('@matrix-os/integrations-mcp');
     expect(scripts['test:prepare'].match(/node packages\/gateway\/native\/build\.mjs/g)).toHaveLength(1);
-    expect(scripts['test:e2e:run']).toBe('vitest run --config vitest.e2e.config.ts');
+    expect(scripts['test:e2e:run']).toBe('NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--no-experimental-webstorage" node node_modules/vitest/vitest.mjs run --config vitest.e2e.config.ts');
     for (const id of ['e2e', 'funded-postgres']) {
       const commands = runs(workflow.jobs[id]);
       expect(commands.match(/bun run test:prepare/g)).toHaveLength(1);
@@ -88,6 +88,29 @@ describe('fast CI preserves validation while removing serialized work', () => {
     // The current lane exhausted its old 15-minute budget after over 11 minutes
     // of browser setup, cancelling tests about 2.5 minutes into their execution.
     expect(workflow.jobs.e2e['timeout-minutes']).toBe(30);
+  });
+
+  it('keeps Playwright E2E on a supported hosted Ubuntu image', () => {
+    // Playwright 1.60 rejects Chromium installation on the Ubuntu 26.04 image
+    // currently selected by ubuntu-latest, so this lane must remain explicit.
+    expect(workflow.jobs.e2e['runs-on']).toBe('ubuntu-24.04');
+  });
+
+  it('builds node-pty from source before E2E prerequisites', () => {
+    const steps = workflow.jobs.e2e.steps;
+    const install = steps.findIndex(step => step.run === 'pnpm install --frozen-lockfile');
+    const rebuild = steps.findIndex(step => step.run === 'node scripts/build-node-pty.mjs');
+    const prepare = steps.findIndex(step => step.run === 'bun run test:prepare');
+
+    expect(rebuild).toBeGreaterThan(install);
+    expect(rebuild).toBeLessThan(prepare);
+
+    const builder = readFileSync(join(process.cwd(), 'scripts/build-node-pty.mjs'), 'utf8');
+    expect(builder).toContain("require.resolve('node-gyp/bin/node-gyp.js'");
+    expect(builder).toContain("join(nodePtyRoot, 'build', 'Release', 'pty.node')");
+    expect(builder).toContain("require('node-pty')");
+    expect(builder).toContain('} catch (error) {');
+    expect(builder).toContain('error instanceof Error ? error.stack ?? error.message : error');
   });
 
   it('retains frozen installs and keyed Next and browser caches', () => {

@@ -37,7 +37,21 @@ describe("platform-owned shell assets", () => {
     const customerDockerfile = readFileSync(join(process.cwd(), "Dockerfile"), "utf8");
 
     expect(platformDockerfile).toContain("ENV MATRIX_PLATFORM_AUTH_SHELL=1");
+    expect(platformDockerfile).toContain("ARG MATRIX_BUILD_SHA");
+    expect(platformDockerfile).toContain("NEXT_PUBLIC_MATRIX_BUILD_SHA=$MATRIX_BUILD_SHA");
     expect(customerDockerfile).not.toContain("MATRIX_PLATFORM_AUTH_SHELL");
+  });
+
+  it("passes the immutable source SHA into platform auth-shell telemetry", () => {
+    const cloudBuild = readFileSync(join(process.cwd(), "cloudbuild.platform.yaml"), "utf8");
+    const workflow = readFileSync(
+      join(process.cwd(), ".github/workflows/platform-cloud-run.yml"),
+      "utf8",
+    );
+
+    expect(cloudBuild).toContain("_MATRIX_BUILD_SHA:");
+    expect(cloudBuild).toContain("MATRIX_BUILD_SHA=${_MATRIX_BUILD_SHA}");
+    expect(workflow).toContain("_MATRIX_BUILD_SHA=$GITHUB_SHA");
   });
 
   it("allows only static chunks and exact runtime images inside the public namespace", () => {

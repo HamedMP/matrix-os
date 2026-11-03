@@ -30,6 +30,10 @@ beforeEach(async () => {
   await insertChat(db, CHAT);
   await createBotBindingsRepository(db).bindDirect({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: "2026-09-28T09:00:00.000Z" });
   const task = await createBotTasksRepository(db).create({ ownerId: OWNER, botId: BOT, chatId: CHAT, now: "2026-09-28T09:00:00.000Z" });
+  const running = await createBotTasksRepository(db).transition({ ownerId: OWNER, taskId: task.taskId,
+    baseRevision: task.revision, to: "running", runId: "run_ask1", now: "2026-09-28T09:00:01.000Z" });
+  await createBotTasksRepository(db).transition({ ownerId: OWNER, taskId: task.taskId,
+    baseRevision: running.revision, to: "waiting_person", now: "2026-09-28T09:00:02.000Z" });
   binding = {
     runtimeHandle: `runtime_${"a".repeat(32)}`, executionGeneration: "1", ownerId: OWNER, botId: BOT, chatId: CHAT, taskId: task.taskId,
     runId: "run_ask1", rootFingerprint: "f".repeat(64),
@@ -96,12 +100,12 @@ describe("bot questions", () => {
     expect((await events()).map((event) => event.type)).toEqual(["interaction.requested", "interaction.resolved"]);
   });
 
-  it("reconstructs a blocking question continuation for older resolved rows", async () => {
+  it("refuses replay of older resolved rows whose asking-run identity cannot be proved", async () => {
     const pending = await ask();
     const body = { kind: "question", baseRevision: 1, answer: "Keep it short." };
-    const first = await service().resolve(OWNER, CHAT, pending.interactionId, body);
-    await db.updateTable("bot_interactions").set({ resolution: { answer: "Keep it short." } }).where("interaction_id", "=", pending.interactionId).execute();
-    expect((await service().resolve(OWNER, CHAT, pending.interactionId, body)).continuation).toEqual(first.continuation);
+    await service().resolve(OWNER, CHAT, pending.interactionId, body);
+    await db.updateTable("bot_interactions").set({ source_run_id: null, resolution: { answer: "Keep it short." } }).where("interaction_id", "=", pending.interactionId).execute();
+    await expect(service().resolve(OWNER, CHAT, pending.interactionId, body)).rejects.toEqual(new BotInteractionError("conflict"));
   });
 
   it("refuses the wrong responder, chat, kind, or question, and answers after expiry as expired", async () => {

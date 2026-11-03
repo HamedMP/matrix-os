@@ -8,7 +8,7 @@ import type {
 import { ProviderWorkflowClientError } from "./provider-workflow-client.js";
 import { keyFailureMessage } from "./key-format.js";
 import { hasConfiguredConnection, hasStaleHermesConnection } from "./harness-connection.js";
-import { isCodexNativeLoginOption, managedConnectionCapability } from "./managed-connection-capability.js";
+import { isHermesTerminalOption, isCodexNativeLoginOption, managedConnectionCapability } from "./managed-connection-capability.js";
 import { useWorkflowPolling } from "./use-workflow-polling.js";
 import { useDialogFocus } from "./use-dialog-focus.js";
 import type { ProviderWorkflowClient, ProviderWorkflowUICapability, ProviderWorkflowUIOperation } from "./types.js";
@@ -27,7 +27,7 @@ export type HarnessWorkflowPanelProps = {
   client: ProviderWorkflowClient;
   disabled: boolean;
   onRefresh: () => void | Promise<void>;
-  onRefreshAfterLogin?: () => Promise<void>;
+  onRefreshAfterLogin?: (receipt: ProviderWorkflow) => Promise<void>;
   onOpenTerminal: (reference: string) => void;
   onOpenAuthorizationUrl?: (url: string) => void;
   onConnectSaved?: () => Promise<void>;
@@ -67,8 +67,12 @@ export function useHarnessWorkflowController({
   renderAccountActions,
   advancedConfiguration,
   connectRequest = 0,
+  terminalAvailable = true,
 }: HarnessWorkflowPanelProps) {
-  const capability = managedConnectionCapability(advertisedCapability);
+  const managedCapability = managedConnectionCapability(advertisedCapability);
+  const capability = harness.harness === "hermes" && !terminalAvailable ? {...managedCapability,
+    loginMethods: [], connectionOptions: managedCapability.connectionOptions?.filter(option=>option.method !== "terminal"),
+  } : managedCapability;
   const [operation, setOperation] = useState<ProviderWorkflowUIOperation | null>(null);
   const [selectedOption, setSelectedOption] = useState<ProviderWorkflowConnectionOption | null>(null);
   const [method, setMethod] = useState<"key" | "account" | null>(null);
@@ -106,9 +110,10 @@ export function useHarnessWorkflowController({
   }, [connectRequest, method, operation, pending]);
   const scope = useRef<AbortController | null>(null);
   const completionRefresh = useRef<object | null>(null);
-  const refreshAfterLogin = async () => {
+  const refreshAfterLogin = async (receipt: ProviderWorkflow) => {
     const controller = scope.current;
-    if (!controller || controller.signal.aborted) return;
+    if (!controller || controller.signal.aborted || receipt.kind !== "login"
+      || receipt.state !== "succeeded" || receipt.harnessInstanceId !== harness.id) return;
     // Poll recovery and a manual status check can complete the same receipt.
     // Only the latest account read may settle foreground feedback.
     const refresh = {};
@@ -126,7 +131,7 @@ export function useHarnessWorkflowController({
     try {
       await Promise.race([
         cancelled,
-        Promise.resolve(onRefreshAfterLogin ? onRefreshAfterLogin() : onRefresh()),
+        Promise.resolve(onRefreshAfterLogin ? onRefreshAfterLogin(receipt) : onRefresh()),
         new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("refresh timeout")), 30_000); }),
       ]);
       if (current()) setFailure(value => value === completionRefreshFailure ? null : value);
@@ -207,8 +212,8 @@ export function useHarnessWorkflowController({
         if (value.kind === "login" && active(value)) setMethod("account");
         if (["succeeded", "cancelled"].includes(value.state)) {
           onOperationId?.(null);
-          if (value.kind === "login" && value.state === "succeeded") void refreshAfterLogin();
-          else onRefresh();
+          if (value.kind === "login" && value.state === "succeeded") void refreshAfterLogin(value);
+          else if (value.kind !== "login") onRefresh();
         }
       })
       .catch((caught) => {
@@ -284,7 +289,8 @@ export function useHarnessWorkflowController({
         setCodeSubmitted(false);
       }
       const exactOption = option ?? (kind === "login" ? selectedOption ?? operation?.connectionOption ?? undefined : undefined);
-      if (kind === "login" && harness.harness !== "claude" && !(harness.harness === "codex" && isCodexNativeLoginOption(exactOption))) throw new Error("connection unavailable");
+      if (kind === "login" && harness.harness !== "claude" && !(harness.harness === "codex" && isCodexNativeLoginOption(exactOption))
+        && !(harness.harness === "hermes" && isHermesTerminalOption(exactOption))) throw new Error("connection unavailable");
       if (kind === "login" && capability.connectionOptions && (!exactOption || !client.startConnection
         || !capability.connectionOptions.some(item => item.id === exactOption.id && item.availability === "available" && item.authKind === "subscription")))
         throw new Error("connection unavailable");
@@ -315,6 +321,7 @@ export function useHarnessWorkflowController({
         : await client.start({harnessInstanceId: harness.id, kind, method: loginMethod,
           idempotencyKey: pendingStart.current.idempotencyKey}, signal);
       if (kind === "login" && harness.harness === "codex" && !isCodexNativeLoginOption(result.connectionOption)) throw new Error("workflow scope mismatch");
+      if (kind === "login" && harness.harness === "hermes" && (!isHermesTerminalOption(result.connectionOption) || result.connectionOption?.providerId !== exactOption?.providerId)) throw new Error("workflow scope mismatch");
       if (exactOption && result.connectionOption?.id !== exactOption.id) throw new Error("workflow scope mismatch");
       if (result.harnessInstanceId !== harness.id || result.kind !== kind)
         throw new Error("workflow scope mismatch");
@@ -325,7 +332,7 @@ export function useHarnessWorkflowController({
         if (kind === "login") setMethod(result.state === "succeeded" ? null : "account");
         if (result.state === "succeeded") {
           onOperationId?.(null);
-          if (kind === "login") void refreshAfterLogin();
+          if (kind === "login") void refreshAfterLogin(result);
           else onRefresh();
         }
         if (
@@ -382,7 +389,7 @@ export function useHarnessWorkflowController({
         onOperationId?.(null);
         setMethod(null);
         setApiKey("");
-        if (next.kind === "login") void refreshAfterLogin();
+        if (next.kind === "login") void refreshAfterLogin(next);
         else onRefresh();
       }
     },

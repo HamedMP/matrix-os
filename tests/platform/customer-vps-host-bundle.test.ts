@@ -80,6 +80,21 @@ function runSyncAgentFunction(source: string, invocation: string, setup: string)
 }
 
 describe('customer VPS host bundle', () => {
+  it('builds on the customer Ubuntu ABI and checks the staged native payload before publish', () => {
+    const root = process.cwd();
+    const workflow = readFileSync(join(root, '.github/workflows/host-bundle-release.yml'), 'utf8');
+    const buildJob = workflow.split('\n  build:\n')[1]?.split(/\n  [a-z][a-z-]*:\n/)[0];
+    expect(buildJob).toBeDefined();
+    expect(buildJob).toMatch(/^    runs-on: ubuntu-24\.04$/m);
+
+    const script = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
+    const stageCopy = script.indexOf('cp -a "$ROOT_DIR/node_modules" "$STAGE_DIR/app/node_modules"');
+    const nativeCheck = script.indexOf('verify-host-native-abi.mjs');
+    const bundlePack = script.indexOf('tar -C "$STAGE_DIR" -czf "$DIST_DIR/$BUNDLE_NAME"');
+    expect(nativeCheck).toBeGreaterThan(stageCopy);
+    expect(bundlePack).toBeGreaterThan(nativeCheck);
+  });
+
   it('build script packages the systemd entrypoint binaries', () => {
     const root = process.cwd();
     const script = readFileSync(join(root, 'scripts/build-host-bundle.sh'), 'utf8');
@@ -214,6 +229,10 @@ describe('customer VPS host bundle', () => {
     expect(script).not.toContain('"$STAGE_DIR/runtime/node/bin/npm" install -g --prefix "$STAGE_DIR/runtime/node"');
     expect(installer).toContain('install_coding_agents()');
     expect(installer).toContain('finish_agent_install()');
+    expect(installer).toContain('reconcile_agent_npm_prefix()');
+    expect(hermesInstaller).toContain('$MATRIX_APP_DIR/scripts/reconcile-agent-npm-prefix.mjs');
+    expect(script).toContain('\"$ROOT_DIR/scripts/reconcile-agent-npm-prefix.mjs\"');
+    expect(script).not.toContain('$STAGE_DIR/runtime/node/etc/npmrc');
     expect(installer).toContain('install_code_server()');
     expect(installer).toContain('install_hermes()');
     expect(installer).toContain('"@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"');
@@ -240,7 +259,7 @@ describe('customer VPS host bundle', () => {
     expect(installer).toContain('install_codex_package()');
     expect(installer).toContain('install_opencode_package()');
     expect(installer).toContain('install_pi_package()');
-    expect(installer).toMatch(/install_coding_agents\(\) \{\n  log "installing coding agent CLIs"\n  install_claude_code_package\n  install_codex_package\n  install_opencode_package\n  install_pi_package\n  finish_agent_install\n  log "coding agent CLIs installed"\n\}/);
+    expect(installer).toMatch(/install_coding_agents\(\) \{\n  log "installing coding agent CLIs"\n  install_claude_code_package\n  install_codex_package\n  install_opencode_package\n  install_pi_package\n  reconcile_agent_npm_prefix\n  finish_agent_install\n  log "coding agent CLIs installed"\n\}/);
     expect(installer).toContain('curl --fail --location --retry 3 --retry-delay 5 --retry-all-errors');
     expect(installer).toContain('sync-matrix-agent-skills.sh');
     expect(installer).toContain('claude-code|codex|opencode|pi|coding-agents|code-server|hermes|linux-tools|all');
