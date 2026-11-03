@@ -69,8 +69,9 @@ it("awaits the exact abort-started browser drain before closing the execution le
   const started=new Promise<void>(resolve=>{entered=resolve;});const work=new Promise<void>(resolve=>{finish=resolve;});
   const broker=createSharedBrowserBroker({ownerId:"owner",driver:{execute:async()=>{entered();await work;return{success:true,observationId:"obs",content:"Page"};},detach:async()=>{},invalidateObservation(){}},setHumanControl:async()=>{}});brokers.push(broker);
   const controller=new AbortController();const run=openNativeSharedBrowserRun({broker,gatewayPort:4000,harness:"codex"},{owner:{type:"personal",ownerId:"owner"},chatId:"chat",runId:"run",permissionMode:"full_access",interactionMode:"default",signal:controller.signal})!;
-  const action=broker.execute(broker.resolveCapability(run.token)!,{action:"snapshot"},controller.signal).catch(()=>undefined);
+  const action=broker.execute(broker.resolveCapability(run.token)!,{action:"snapshot"},controller.signal);
+  const rejected=expect(action).rejects.toMatchObject({name:"SharedBrowserError",code:"browser_changed"});
   await started;controller.abort();expect(run.isLive()).toBe(false);
   let closed=false;const close=run.close().then(()=>{closed=true;});await Promise.resolve();expect(closed).toBe(false);
-  finish();await action;await close;expect(closed).toBe(true);
+  finish();await rejected;await close;expect(closed).toBe(true);
 });

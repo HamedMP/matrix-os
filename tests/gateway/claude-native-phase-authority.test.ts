@@ -66,7 +66,8 @@ it("preserves proven ordinary delegated Bash when no B routines source is regist
   children[0]!.result(); await phase.promise;
 });
 it("stops malformed permission request identities even when their tool proof is valid", async () => {
-  const { children, turn } = setup(); const phase = turn(); await ready(); tool(children[0]!, "valid", "Write");
+  const { children, turn } = setup(); const phase = turn(); const rejected = expect(phase.promise).rejects.toMatchObject({ kind: "invalid_output" });
+  await ready(); tool(children[0]!, "valid", "Write");
   children[0]!.emitFrame({ type: "control_request", request_id: 3, request: { subtype: "can_use_tool", tool_use_id: "valid", tool_name: "Write", input: {} } }); await ready();
-  expect(children[0]!.kill).toHaveBeenCalledOnce(); await expect(phase.promise).rejects.toMatchObject({ kind: "invalid_output" });
+  expect(children[0]!.kill).toHaveBeenCalledOnce(); await rejected;
 });
