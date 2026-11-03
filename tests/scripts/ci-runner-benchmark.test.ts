@@ -9,6 +9,7 @@ const sha = "a".repeat(40);
 const scripts = JSON.parse(readFileSync("package.json", "utf8")).scripts;
 const electronSuites = [
   "tests/e2e/desktop/account-organization-picker.e2e.test.ts",
+  "tests/e2e/desktop/preview-pair.e2e.test.ts",
   "tests/e2e/desktop/file-download.e2e.test.ts",
   "tests/e2e/desktop/canonical-input.e2e.test.ts",
   "tests/e2e/desktop/chat-large-transcript.e2e.test.ts",
@@ -26,6 +27,7 @@ const electronSuites = [
   "tests/e2e/desktop/chat-title-layout.e2e.test.ts",
 ];
 const clipboardSuite = "tests/e2e/desktop/terminal-clipboard.e2e.test.ts";
+const previewSuite = "tests/e2e/desktop/preview-pair.e2e.test.ts";
 
 function buildGatedElectronSuites() {
   return readdirSync("tests/e2e/desktop").filter((file) => file.endsWith(".e2e.test.ts")).flatMap((file) => {
@@ -193,6 +195,10 @@ if [[ "$*" == *"exec vitest run"* ]]; then
       printf 'general-selection %s\\n' "$selection" >> "$CALLS"
       [[ "$FAIL_LANE" != general ]] || exit 42
     else
+      if [[ "$*" == *"tests/e2e/desktop/preview-pair.e2e.test.ts"* ]]; then
+        [[ "\${MATRIX_DESKTOP_E2E_REQUIRED:-}" == 1 ]] || exit 43
+        [[ "$FAIL_LANE" != preview-pair ]] || exit 42
+      fi
       if [[ "$*" == *"tests/e2e/desktop/terminal-clipboard.e2e.test.ts"* ]]; then
         [[ "$FAIL_LANE" != clipboard ]] || exit 42
       fi
@@ -227,6 +233,22 @@ fi`);
 }
 
 describe("isolated cold and warm benchmark execution", () => {
+  it.each(["", "preview-pair"])("retains a separate required preview-pair native phase and propagates %s failure", failure => {
+    const { result, calls, displays, timings } = invoke("e2e-electron", failure);
+    expect(result.status, result.stderr).toBe(failure ? 1 : 0);
+    const preview = "tests/e2e/desktop/preview-pair.e2e.test.ts";
+    const runs = displays.filter(call => call.includes(preview) && !call.includes("--exclude="));
+    expect(runs).toHaveLength(2);
+    for (const [index, pass] of ["cold", "warm"].entries()) {
+      expect(runs[index]).toContain("--maxWorkers=1");
+      expect(runs[index].match(/tests\/e2e\/\S+\.e2e\.test\.ts/g)).toEqual([preview]);
+      const build = timings.findIndex(([label]) => label === `desktop-build-${pass}`);
+      const journey = timings.findIndex(([label]) => label === `e2e-preview-pair-${pass}`);
+      expect(journey).toBeGreaterThan(build);
+      expect(timings[journey]).toEqual([`e2e-preview-pair-${pass}`, expect.any(String), failure ? "42" : "0"]);
+    }
+    expect(calls.filter(call => call.includes(preview) && !call.includes("--exclude="))).toHaveLength(2);
+  });
   it("preserves hosted general selection after Desktop builds on both full passes", () => {
     const { result, calls, timings } = invoke("full");
     expect(result.status, result.stderr).toBe(0);
@@ -263,8 +285,10 @@ describe("isolated cold and warm benchmark execution", () => {
     expect(hosted).toEqual(electronSuites);
     const clipboard = calls.filter((call) => call.includes(clipboardSuite) && !call.includes("--exclude="));
     expect(clipboard).toHaveLength(2);
+    const previews = calls.filter((call) => call.includes(previewSuite) && !call.includes("--exclude="));
+    expect(previews).toHaveLength(2);
     for (const [index, call] of electron.entries()) {
-      const files = [call, clipboard[index]].flatMap(command => command.match(/tests\/e2e\/\S+\.e2e\.test\.ts/g) ?? []);
+      const files = [call, clipboard[index], previews[index]].flatMap(command => command.match(/tests\/e2e\/\S+\.e2e\.test\.ts/g) ?? []);
       expect(files.sort()).toEqual([...hosted].sort());
       expect(call).not.toContain("operator.e2e.test.ts");
       expect(call).not.toContain("hermes-conversations.e2e.test.ts");
@@ -288,8 +312,9 @@ describe("isolated cold and warm benchmark execution", () => {
     const electron = calls.filter((call) => call.includes("tests/e2e/desktop/file-download.e2e.test.ts"));
     expect(electron).toHaveLength(2);
     const clipboard = calls.filter((call) => call.includes(clipboardSuite));
+    const previews = calls.filter((call) => call.includes(previewSuite) && !call.includes("--exclude="));
     for (const [index, call] of electron.entries()) {
-      const files = [call, clipboard[index]].flatMap(command => command.match(/tests\/e2e\/\S+\.e2e\.test\.ts/g) ?? []);
+      const files = [call, clipboard[index], previews[index]].flatMap(command => command.match(/tests\/e2e\/\S+\.e2e\.test\.ts/g) ?? []);
       expect(files.sort()).toEqual([...electronSuites].sort());
     }
     expect(timings.filter(([label]) => label.startsWith("terminal-grid-"))).toHaveLength(2);
@@ -299,6 +324,7 @@ describe("isolated cold and warm benchmark execution", () => {
     const { result, displays, timings } = invoke(suite);
     expect(result.status, result.stderr).toBe(0);
     const clipboard = displays.filter(call => call.includes(clipboardSuite) && !call.includes("--exclude="));
+    const previews = displays.filter(call => call.includes(previewSuite) && !call.includes("--exclude="));
     const common = displays.filter(call => call.includes(electronSuites[0]) && !call.includes("--exclude="));
     expect(clipboard).toHaveLength(2); expect(common).toHaveLength(2);
     for (const [index, pass] of ["cold", "warm"].entries()) {
@@ -306,7 +332,7 @@ describe("isolated cold and warm benchmark execution", () => {
       expect(clipboard[index].match(/tests\/e2e\/\S+\.e2e\.test\.ts/g)).toEqual([clipboardSuite]);
       expect(common[index]).toContain("--maxWorkers=2");
       expect(common[index]).not.toContain(clipboardSuite);
-      const files = [common[index], clipboard[index]].flatMap(call => call.match(/tests\/e2e\/\S+\.e2e\.test\.ts/g) ?? []);
+      const files = [common[index], clipboard[index], previews[index]].flatMap(call => call.match(/tests\/e2e\/\S+\.e2e\.test\.ts/g) ?? []);
       expect(files.sort()).toEqual([...electronSuites].sort());
       const commonTiming = timings.findIndex(([label]) => label === `e2e-electron-${pass}`);
       const clipboardTiming = timings.findIndex(([label]) => label === `e2e-clipboard-${pass}`);

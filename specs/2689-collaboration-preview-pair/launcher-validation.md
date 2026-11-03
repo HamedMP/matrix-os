@@ -136,3 +136,31 @@ Combined affected launcher cohort: **49/49 passed across 11 files**. All eight
 native TypeScript targets passed. Stock pattern scan: zero violations and five
 inherited warnings. These results do not establish live provider, Clerk,
 collaboration or native macOS acceptance.
+
+## Dedicated CI review follow-up — 2026-11-03
+
+Greptile identified that hosted-only native selection left the dedicated Linux
+runner without required preview-pair execution. Three focused regressions failed
+for the missing runner phase, root report scope and controller receipt scope;
+two benchmark cases also failed when the original omitted phase was restored.
+
+The immutable qualification contract now includes `electron-preview-pair` after
+the production Electron build, with a separate single-worker display and JSON
+report. The benchmark path also runs the journey separately on both passes.
+The frozen manifest includes its exact file; root validation and the controller
+require its report, all 57 phases and the expanded 16-file Electron scope.
+Missing, all-skipped and partially skipped preview evidence is rejected. Other
+native suites retain their explicit platform-specific assertion skips.
+
+Validation: seven TypeScript suites passed 216 checks, including all 127 Python
+harness tests; five additional receipt/host/source-gate suites passed 319 checks.
+All eight typechecks passed, shell syntax checks passed and the pattern scan
+reported zero violations/five inherited warnings. The local harness used CI's
+`0022` umask for its existing strict ownership/mode fixtures.
+
+The reviewed harness/controller contract must advance together: old 56-phase
+receipts remain invalid. No dedicated runner/image configuration was deployed.
+Source/harness provenance, owner capabilities and cleanup checks are unchanged.
+This qualifies runner orchestration with explicit subprocess doubles and receipt
+validation; real native app execution is qualified separately. No cloud/user
+permission changes, merge, deployment or Slack post occurred.
