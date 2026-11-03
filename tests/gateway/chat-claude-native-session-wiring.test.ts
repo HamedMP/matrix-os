@@ -25,11 +25,23 @@ function pool(run = async (o: Turn) => {
   o.onStdout(frame({ type: "result", subtype: "success", result: "streamed reply", session_id: "session_a" }));
   o.onSettled?.();
 }) {
-  return { runTurn: vi.fn(run), setScheduledHandler: vi.fn(), cancel: vi.fn(async () => {}), close: vi.fn(async () => {}) };
+  return { runTurn: vi.fn(run), setScheduledHandler: vi.fn(), retireIdle: vi.fn(async () => {}), cancel: vi.fn(async () => {}), close: vi.fn(async () => {}) };
 }
 async function collect(events: AsyncIterable<unknown>) { const out = []; for await (const e of events) out.push(e); return out; }
 
 describe("Claude per-phase adapter wiring", () => {
+  it("reports owner cancellation during a held protocol probe as aborted", async () => {
+    const nativeSessions = pool(); const fallbackSpawn = vi.fn(spawnFn);
+    let release!: () => void;
+    const qualify = vi.fn(async () => { await new Promise<void>(done => { release = done; }); return { command: "/old/claude", qualified: false }; });
+    const adapter = createClaudeChatProviderAdapter({ homePath: "/owner", spawnFn: fallbackSpawn, nativeSessions,
+      resolveNativeProtocol: qualify, resolveCredentialEnv: async () => ({ HOME: "/owner", ANTHROPIC_API_KEY: "key" }) });
+    const completion = collect(adapter.start(input));
+    await vi.waitFor(() => expect(qualify).toHaveBeenCalledOnce());
+    await adapter.cancel!({ owner: input.owner, chatId: input.chatId, runId: input.runId }); release();
+    expect((await completion).at(-1)).toEqual({ type: "run.completed", outcome: "aborted" });
+    expect(fallbackSpawn).not.toHaveBeenCalled(); expect(nativeSessions.runTurn).not.toHaveBeenCalled();
+  });
   it("preserves B's ordinary input after a negative hook ACK on an unqualified version", async () => {
     const nativeSessions = pool();
     const fallbackSpawn: CanonicalCliSpawn = () => {
