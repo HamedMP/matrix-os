@@ -34,6 +34,59 @@ Functional PR approval is requested after its validation evidence is available. 
 
 No full artifact, publication, test-Computer installation or real routine lifecycle is claimed by these preparation results.
 
+## First full build and archive capacity
+
+The unchanged trusted [execution 41620628116](https://github.com/HamedMP/matrix-os/actions/runs/41620628116) checked out exact `b8186dfb9cdce3f344d9a0075de453ce844eac67`, built in the Ubuntu baseline sandbox and passed the staged native ABI/loader gate. Its final archive check rejected a structural predicate before upload; publication was skipped. That candidate must not be installed. The failed tar was removed during owned cleanup, so its exact entry count was not observed.
+
+Measured representative preparation already contains 292,801 dependency entries, 4,284 tracked source entries and 5,693 entries in the actual shipped Node 24.18.0 header/npm trees: 302,778 combined, before compiled outputs and the terminal generation. These measurements span the ARM development dependency tree and the real x64 Node distribution; they establish inadequate capacity in the old 300,000-entry bound, not the exact failed Linux archive inventory.
+
+The bounded entry capacity is now 500,000. Real tar regressions accept 300,001 structurally valid entries and reject 500,001; duplicate paths and oversized individual entries have distinct safe diagnostic codes. Keep the 1 GiB individual-file, 20 GiB expanded-data and 4 GiB compressed-archive limits, all path/link/mode checks, timeouts and native probes. Successful extraction reports only entry count, expanded bytes and maximum file bytes, including when a later probe fails. The next actual archive receipt must establish the produced bytes' inventory and native result; this capacity correction does not close the full-artifact or live gates.
+
+The corrected snapshot passed the same six focused suites: 127 tests, zero skips. Independent archive-capacity review and current syntax/pattern checks passed. These remain source and orchestration evidence.
+
+## Executable build contract
+
+### Scope / trigger
+
+This is the build-time native artifact boundary for premerge register-only validation, not a new routine execution or authorization interface. It applies before host installation/staging and after final tar creation.
+
+### Signatures
+
+- `./scripts/build-host-bundle.sh`: preserve pure Zellij argument validation, then choose the actual baseline or isolated builder.
+- `node scripts/host-bundle-baseline-builder.mjs --check`: exit 0 only for actual Linux x64 / glibc 2.39; no environment override.
+- `node scripts/smoke-host-bundle-native.mjs <bundle.tar.gz>`: exactly one archive argument; success exits 0, failed validation exits 1, incorrect usage exits 2.
+
+### Contracts
+
+The isolated route requires `HOST_BUNDLE_CHANNEL=none`, a validated `HOST_BUNDLE_VERSION`, full exact `MATRIX_BUILD_SHA` and `MATRIX_BUILD_REF`. Forward only the explicitly named public frontend and release-metadata keys in the helper. `HOST_BUNDLE_DIST_DIR`, when supplied, must resolve under real checkout `dist/` directories. Source-pinned toolchain overrides and shell-build skips are rejected. Private HOME/cache and sibling scratch are owned temporary inputs; expose scratch as `/scratch`, never beneath `/work` in the container.
+
+The smoke emits one JSON result. Success includes `ok:true`, version 1, kind `host-bundle-native-smoke`, `buildVersion`, `gitCommit`, `archive:{entries,expandedBytes,maxFileBytes}`, actual `native` checks and `pinned` generation/runtime checks. Failure includes `ok:false`, a stable `code`, optional integer-only `archive` facts and bounded fixed-probe diagnostics. No database or owner-permission mutation is performed.
+
+### Validation / error matrix
+
+| Condition | Result |
+| --- | --- |
+| Unsupported host with invalid source/channel/output or inherited toolchain override | Fail before Docker/output mutation; no host build fallback |
+| Duplicate path / more than 500,000 entries / individual file larger than 1 GiB | `artifact_archive_duplicate_entry` / `artifact_archive_entry_limit` / `artifact_archive_file_size`; allowlisted integer facts only |
+| Unsafe path/link/mode, aggregate size or parser failure | `artifact_archive_rejected`; no payload execution |
+| Missing required copied files | `artifact_payload_incomplete`; no native success claim |
+| ABI, consumer/PTY or generation mismatch | Corresponding `artifact_native_abi_failed`, `artifact_native_consumer_failed` or generation/pinned-runtime failure; nonzero exit |
+| Interrupted container client or uncertain cleanup | Attempt exact owned-container removal; unconfirmed cleanup remains failure |
+
+### Good / base / bad cases
+
+- Good: exact clean premerge source builds on the pinned baseline and its copied artifact passes every native/runtime check with independently rooted scratch.
+- Base: native Linux x64 / glibc 2.39 runs the original build path, preserving existing Zellij preflight diagnostics and native checks.
+- Bad: newer-libc host builds directly, stale shell/native output is copied, archive rejection is suppressed, or dependency resolution falls back into the build store.
+
+### Tests required
+
+Keep the production-entry install/staging tripwires, strict provenance and cleanup cases, actual tar boundary/mode/link tests and original packaging/portability contracts. Required assertions distinguish metadata acceptance from native success. Actual full archive, trusted publication, installed services and live routine gates remain the separate evidence sequence above.
+
+### Wrong vs correct
+
+Wrong: treat a parsed manifest, successful `require` from the build checkout, or a reviewer score as artifact acceptance. Correct: run `node scripts/smoke-host-bundle-native.mjs "$DIST_DIR/matrix-host-bundle.tar.gz"` with independent `/scratch`, copied executables and a clean child environment; retain its actual inventory/runtime result, then verify installation and the real routine lifecycle separately.
+
 ## Dependencies and limits
 
 This build adaptation starts at Draft #3105, commit `aac369d3fd3c627eabeb1c44a68279e7ac8265a9`, including the qualified Claude 2.1.317 predicate and the #3101 native ABI verifier. #3103 remains a separate Preview-runner correction; adopting its workflow through the controller is not a technical prerequisite for this source-only path.

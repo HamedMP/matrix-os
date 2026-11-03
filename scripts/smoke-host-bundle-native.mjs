@@ -8,9 +8,16 @@ import { fileURLToPath } from "node:url";
 // Inspect the entire archive before extracting a bounded native-relevant subset.
 // No regular file is ever written through an archive-provided link.
 const extract = String.raw`
-import os,pathlib,posixpath,shutil,sys,tarfile
+import json,os,pathlib,posixpath,shutil,sys,tarfile
 archive_path,destination=sys.argv[1:]
-def reject(): raise ValueError('artifact archive rejected')
+MAX_ENTRIES=500000
+def diagnostic(code='artifact_archive_rejected',**facts):
+    print(json.dumps({'code':code,**facts}),file=sys.stderr)
+def reject(code='artifact_archive_rejected',**facts):
+    diagnostic(code,**facts)
+    raise SystemExit(1)
+# Parser/filesystem exceptions never echo archive names or contents into logs.
+sys.excepthook=lambda *_:diagnostic()
 def safe(name):
     if not name or name.startswith('/') or '\\' in name or '\x00' in name: reject()
     parts=name.rstrip('/').split('/')
@@ -19,15 +26,19 @@ def safe(name):
 def selected(name):
     return name in ('release.json','app/package.json','app/TERMINAL_RUNTIME_GENERATION','bin/matrix-terminal-generation-id') or any(name==prefix or name.startswith(prefix+'/') for prefix in ('app/node_modules','app/packages','runtime/node','terminal-runtime'))
 with tarfile.open(archive_path,'r:gz') as archive:
-    members={}; total=0
+    members={}; total=0; entries_seen=0; max_file_bytes=0
     for item in archive:
+        entries_seen+=1
         name=safe(item.name)
-        if name in members or len(members)>=300000 or item.size<0 or item.size>1024**3: reject()
+        if name in members: reject('artifact_archive_duplicate_entry',entriesSeen=entries_seen,uniqueEntries=len(members))
+        if len(members)>=MAX_ENTRIES: reject('artifact_archive_entry_limit',entriesSeen=entries_seen,entryLimit=MAX_ENTRIES)
+        if item.size<0 or item.size>1024**3: reject('artifact_archive_file_size',entriesSeen=entries_seen,size=item.size,fileSizeLimit=1024**3)
         if not (item.isdir() or item.isreg() or item.issym() or item.islnk()): reject()
         # The unchanged bundler marks runtime tool directories g+s. Extraction
         # recreates directories 0755; setuid/sticky and setgid files stay refused.
         if item.mode & 0o5000 or (item.mode & 0o2000 and not item.isdir()): reject()
         total+=item.size
+        max_file_bytes=max(max_file_bytes,item.size)
         if total>20*1024**3: reject()
         members[name]=item
     for name,item in members.items():
@@ -59,6 +70,7 @@ with tarfile.open(archive_path,'r:gz') as archive:
     base=os.path.realpath(destination)+os.sep
     for name,item in members.items():
         if selected(name) and item.issym() and not os.path.realpath(os.path.join(destination,name)).startswith(base): reject()
+    print(json.dumps({'entries':entries_seen,'expandedBytes':total,'maxFileBytes':max_file_bytes}))
 `;
 
 const nativeProbe = String.raw`
@@ -104,9 +116,27 @@ console.log(JSON.stringify({generation,pinnedRuntime:true,pty:true,writer:true,r
 `;
 
 function failure(code, cause) { const error = new Error(code, { cause }); error.code = code; return error; }
+function archiveFailure(stderr) {
+  const fields = {
+    artifact_archive_rejected: [],
+    artifact_archive_duplicate_entry: ["entriesSeen", "uniqueEntries"],
+    artifact_archive_entry_limit: ["entriesSeen", "entryLimit"],
+    artifact_archive_file_size: ["entriesSeen", "size", "fileSizeLimit"],
+  };
+  let value;
+  try { value = JSON.parse(stderr); }
+  catch (error) { if (error instanceof SyntaxError) return failure("artifact_archive_rejected"); throw error; }
+  if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.code !== "string" || !Object.hasOwn(fields, value.code)) return failure("artifact_archive_rejected");
+  const error = failure(value.code);
+  error.archive = Object.fromEntries(fields[value.code].filter(key => Number.isSafeInteger(value[key])).map(key => [key, value[key]]));
+  return error;
+}
 function run(command, args, options, code) {
   const result = spawnSync(command, args, { encoding: "utf8", timeout: 30_000, maxBuffer: 65_536, ...options });
-  if (result.error || result.status !== 0) throw failure(code, result.error ?? new Error(result.stderr || `exit ${result.status}`));
+  if (result.error || result.status !== 0) {
+    if (code === "artifact_archive_rejected") throw archiveFailure(result.stderr);
+    throw failure(code, result.error ?? new Error(result.stderr || `exit ${result.status}`));
+  }
   return result.stdout.trim();
 }
 async function regular(path) {
@@ -117,20 +147,31 @@ async function metadata(path, limit) {
   if ((await stat(path)).size > limit) throw failure("artifact_provenance_invalid");
   return readFile(path, "utf8");
 }
+function archiveInventory(stdout) {
+  const value = JSON.parse(stdout);
+  const keys = ["entries", "expandedBytes", "maxFileBytes"];
+  if (!value || typeof value !== "object" || Object.keys(value).sort().join(",") !== [...keys].sort().join(",")
+    || keys.some(key => !Number.isSafeInteger(value[key]) || value[key] < 0)) throw failure("artifact_archive_rejected");
+  return value;
+}
 
 export async function smokeHostBundleNative(bundlePath) {
   const info = await stat(bundlePath);
   if (!info.isFile() || info.size > 4 * 1024 ** 3) throw failure("artifact_archive_rejected");
   const work = await realpath(await mkdtemp(join(tmpdir(), "matrix-host-native-smoke-")));
   const env = { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: work, NODE_ENV: "production" };
+  let archive;
   try {
-    run("python3", ["-c", extract, resolve(bundlePath), work], { env, timeout: 180_000 }, "artifact_archive_rejected");
+    archive = archiveInventory(run("python3", ["-c", extract, resolve(bundlePath), work], { env, timeout: 180_000 }, "artifact_archive_rejected"));
     const app = join(work, "app"), node = join(work, "runtime/node/bin/node");
     try {
       for (const file of [node, join(work, "release.json"), join(app, "package.json"), join(app, "TERMINAL_RUNTIME_GENERATION"),
         join(app, "packages/terminal-runtime/dist/zellij-adapter.js"), join(app, "packages/gateway/dist/collaboration/filesystem-identity.node"),
         join(app, "packages/gateway/dist/terminal/terminal-writer.node"), join(work, "bin/matrix-terminal-generation-id")]) await regular(file);
-    } catch (error) { throw failure("artifact_payload_incomplete", error); }
+    } catch (error) {
+      if (error instanceof Error && ["ENOENT", "ENOTDIR", "EACCES", "artifact_payload_incomplete"].includes(error.code)) throw failure("artifact_payload_incomplete");
+      throw error;
+    }
     const release = JSON.parse(await metadata(join(work, "release.json"), 16_384));
     if (!/^[a-f0-9]{40}$/.test(release.gitCommit) || typeof release.version !== "string" || release.version.length > 160
       || (process.env.MATRIX_BUILD_SHA && release.gitCommit !== process.env.MATRIX_BUILD_SHA)) throw failure("artifact_provenance_invalid");
@@ -149,7 +190,10 @@ export async function smokeHostBundleNative(bundlePath) {
     const pinned = JSON.parse(run(join(directory, "node"), ["--input-type=module", "-e", generationProbe, directory, generation],
       { cwd: directory, env }, "artifact_pinned_runtime_failed"));
     if (["version", "modules", "napi", "platform", "arch", "libc"].some(key => native[key] !== pinned.runtime[key])) throw failure("artifact_pinned_runtime_failed");
-    return { version: 1, kind: "host-bundle-native-smoke", buildVersion: release.version, gitCommit: release.gitCommit, native, pinned };
+    return { version: 1, kind: "host-bundle-native-smoke", buildVersion: release.version, gitCommit: release.gitCommit, archive, native, pinned };
+  } catch (error) {
+    if (!error.archive && archive) error.archive = archive;
+    throw error;
   } finally { await rm(work, { recursive: true, force: true }); }
 }
 
@@ -160,7 +204,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     try { console.log(JSON.stringify({ ok: true, ...await smokeHostBundleNative(process.argv[2]) })); }
     catch (error) {
       // Build diagnostics only, from the fixed probes and a credential-free child env.
-      console.error(JSON.stringify({ ok: false, code: error.code ?? "artifact_native_smoke_failed", detail: error.cause?.message?.slice(0, 4096) })); process.exitCode = 1;
+      console.error(JSON.stringify({ ok: false, code: error.code ?? "artifact_native_smoke_failed", archive: error.archive, detail: error.cause?.message?.slice(0, 4096) })); process.exitCode = 1;
     }
   }
 }
