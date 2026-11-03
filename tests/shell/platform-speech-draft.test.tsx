@@ -140,6 +140,65 @@ describe("platform speech draft recording", () => {
     expect(hook.result.current.previewQuota?.requestsRemaining).toBe(0);
   });
 
+  it("refreshes the Preview quota after a cancelled transcription settles", async () => {
+    const previewReady = {
+      ...ready,
+      previewQuota: {
+        mode: "preview" as const,
+        requestLimit: 1,
+        requestsUsed: 0,
+        requestsRemaining: 1,
+        maxConcurrency: 1 as const,
+        expiresAt: "2026-10-20T16:00:00.000Z",
+      },
+    };
+    const exhausted = {
+      ...previewReady,
+      previewQuota: {
+        ...previewReady.previewQuota,
+        requestsUsed: 1,
+        requestsRemaining: 0,
+      },
+    };
+    const cancellation = Promise.withResolvers<Awaited<ReturnType<BrowserSpeechClient["cancel"]>>>();
+    const capabilities = vi.fn()
+      .mockResolvedValueOnce(previewReady)
+      .mockResolvedValueOnce(exhausted);
+    const speech = client({
+      capabilities,
+      transcribe: vi.fn(({ signal }) => new Promise((_, reject) => {
+        signal.addEventListener("abort", () => reject(new DOMException("Cancelled", "AbortError")), { once: true });
+      })),
+      cancel: vi.fn(() => cancellation.promise),
+    });
+    const hook = renderHook(() => usePlatformSpeechDraft({
+      scopeKey: "chat-preview-cancel",
+      client: speech,
+      captureAdapter: captureAdapter(),
+      onDraft: vi.fn(),
+      requestIdFactory: () => requestId,
+    }));
+    await waitFor(() => expect(hook.result.current.phase).toBe("idle"));
+    await act(async () => hook.result.current.start());
+    act(() => hook.result.current.stop());
+    await waitFor(() => expect(hook.result.current.phase).toBe("transcribing"));
+
+    act(() => hook.result.current.cancel());
+    expect(hook.result.current.phase).toBe("loading");
+    expect(capabilities).toHaveBeenCalledTimes(1);
+    await act(async () => cancellation.resolve({
+      contractVersion: 1,
+      requestId,
+      executionState: "cancelled",
+      cancellationRequested: true,
+      executionStarted: true,
+    }));
+
+    await waitFor(() => expect(capabilities).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(hook.result.current.phase).toBe("unavailable"));
+    expect(hook.result.current.previewQuota?.requestsRemaining).toBe(0);
+  });
+
   it("makes exhausted Preview dictation unavailable while preserving the quota", async () => {
     const exhausted = {
       ...ready,

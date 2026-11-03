@@ -175,13 +175,13 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
   const captureStartRef = useRef<AbortController | null>(null);
   const quotaRefreshRef = useRef<AbortController | null>(null);
 
-  const cancelRemote = (requestId: string) => {
-    void client.cancel(requestId).catch((caught: unknown) => {
+  const cancelRemote = async (requestId: string): Promise<void> => {
+    await client.cancel(requestId).catch((caught: unknown) => {
       console.warn("[speech-draft] cancellation failed", caught instanceof Error ? caught.name : "UnknownError");
     });
   };
 
-  const disposeActive = (notifyRemote: boolean) => {
+  const disposeActive = (notifyRemote: boolean): Promise<void> | null => {
     setInputMeter({ level: 0, sequence: 0 });
     captureStartRef.current?.abort();
     captureStartRef.current = null;
@@ -198,8 +198,9 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
     requestRef.current = null;
     if (request) {
       request.controller.abort();
-      if (notifyRemote) cancelRemote(request.requestId);
+      if (notifyRemote) return cancelRemote(request.requestId);
     }
+    return null;
   };
 
   useEffect(() => {
@@ -382,11 +383,31 @@ export function usePlatformSpeechDraft<TRecording extends PlatformSpeechRecordin
   }
 
   function cancel(): void {
-    generationRef.current += 1;
-    disposeActive(true);
+    const cancelledRequest = requestRef.current !== null;
+    const generation = ++generationRef.current;
+    const cancellation = disposeActive(true);
     setError(null);
     setElapsedMs(0);
     setInputMeter({ level: 0, sequence: 0 });
+    if (cancelledRequest && cancellation) {
+      const controller = new AbortController();
+      quotaRefreshRef.current = controller;
+      setPhase("loading");
+      void cancellation.then(() => client.capabilities(controller.signal)).then((value) => {
+        if (controller.signal.aborted || generationRef.current !== generation) return;
+        setCapabilities(value);
+        setCapabilitiesStale(false);
+        setPhase(supportedMediaType(value, options.captureAdapter) ? "idle" : "unavailable");
+      }).catch((caught: unknown) => {
+        if (controller.signal.aborted || generationRef.current !== generation) return;
+        console.warn("[speech-draft] quota refresh failed", caught instanceof Error ? caught.name : "UnknownError");
+        setCapabilitiesStale(true);
+        setPhase("unavailable");
+      }).finally(() => {
+        if (quotaRefreshRef.current === controller) quotaRefreshRef.current = null;
+      });
+      return;
+    }
     setPhase(supportedMediaType(capabilities, options.captureAdapter) ? "idle" : "unavailable");
   }
 

@@ -57,7 +57,7 @@ export function platformHealthProbeScript() {
   if (response.status !== 200 || (await response.json())?.status !== "ok") process.exitCode = 1;`;
 }
 
-const startServices = `set -euo pipefail
+export const localParityStartServices = `set -euo pipefail
 wait_http() {
   local url="$1" deadline=$((SECONDS + $2))
   until curl -fsS --max-time 5 -o /dev/null "$url" 2>/dev/null; do
@@ -65,7 +65,7 @@ wait_http() {
     sleep 5
   done
 }
-test -f /opt/matrix/register-complete
+test -f /var/lib/matrix-vps-registration/register-complete
 systemctl start nginx matrix-scope-runtime matrix-terminal-runtime matrix-gateway
 wait_http http://127.0.0.1:4000/health 420
 systemctl start matrix-shell
@@ -155,7 +155,7 @@ export async function recoverLocalParity({ root = projectRoot, saved = resolvePa
       remote("set -e\nsystemctl stop matrix-shell matrix-gateway\n");
       run("docker", ["restart", platform, ...proxies.map(([name]) => name)]);
     }
-    remote(startServices);
+    remote(localParityStartServices);
     restoreServices = false;
     await waitForCommand("Platform HTTP", "docker", ["exec", "-i", platform, "node", "--input-type=module"], {
       timeout: 8000,
