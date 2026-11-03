@@ -10,6 +10,7 @@ Make the existing customer Support chat easy to find in the signed-in Web and El
 - Activating it opens the existing PostHog Conversations panel through the current client configuration and platform relay. Closing and reopening remain supported.
 - Help keeps its Support chat entry. PostHog's default floating launcher stays suppressed so it does not cover desktop content.
 - If chat configuration or the widget is unavailable, the action shows a bounded message with the support email address instead of silently doing nothing.
+- Electron keeps the email fallback above native app views until its toast closes, then releases the renderer overlay.
 - Web Mobile and Native Mobile are unchanged.
 
 ## Acceptance

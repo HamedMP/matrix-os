@@ -213,6 +213,27 @@ describe("shell PostHog same-origin proxy", () => {
     });
   });
 
+  it("gives the same contact path when a configured chat throws while opening", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false })));
+    posthogMock.conversations.show.mockImplementationOnce(() => {
+      throw new Error("private provider failure");
+    });
+    const { openShellSupport } = await import("../../shell/src/lib/posthog-client");
+
+    await expect(openShellSupport({
+      token: "phc_test",
+      apiHost: "/relay",
+      uiHost: "https://eu.posthog.com",
+    })).resolves.toBe(false);
+
+    expect(warning).toHaveBeenCalledWith("[posthog] Failed to open support chat:", "Error");
+    expect(toastMock.error).toHaveBeenCalledWith("Support chat is unavailable", {
+      description: "Email support@matrix-os.com for help.",
+    });
+    warning.mockRestore();
+  });
+
   it("defaults the shell api host to the /relay same-origin proxy", () => {
     // Source-level invariant: the env read must fall back to "/relay" so host
     // bundles built without NEXT_PUBLIC_POSTHOG_API_HOST stay un-blockable.

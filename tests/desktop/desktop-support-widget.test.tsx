@@ -12,7 +12,15 @@ import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-desktop-mode";
 import { DesktopHelpMenu } from "@matrix-os/ui";
 
-const toastMock = vi.hoisted(() => ({ error: vi.fn() }));
+const toastMock = vi.hoisted(() => ({
+  error: vi.fn((_message: string, _options?: {
+    description: string;
+    id?: string;
+    onDismiss?: () => void;
+    onAutoClose?: () => void;
+  }) => undefined),
+  dismiss: vi.fn(),
+}));
 vi.mock("sonner", () => ({ toast: toastMock }));
 
 const operatorEventListeners = vi.hoisted(() => ({
@@ -195,9 +203,12 @@ describe("Desktop support widget", () => {
     await act(async () => Promise.resolve());
     expect(useTabs.getState().tabs).toEqual([]);
     expect(useBrowserNavigation.getState().pending).toBeNull();
-    expect(toastMock.error).toHaveBeenCalledWith("Support chat is unavailable", {
+    expect(toastMock.error).toHaveBeenCalledWith("Support chat is unavailable", expect.objectContaining({
       description: "Email support@matrix-os.com for help.",
-    });
+    }));
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+    act(() => toastMock.error.mock.lastCall?.[1]?.onDismiss?.());
+    expect(useUi.getState().rendererOverlayCount).toBe(0);
   });
 
   it("loads PostHog Conversations through the first-party relay without broad Desktop capture", async () => {
@@ -281,6 +292,55 @@ describe("Desktop support widget", () => {
       posthogClient.reset.mock.invocationCallOrder[0]!,
     );
     expect(posthogClient.reset).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the configured failure email above native apps until the toast closes", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    posthogClient.conversations.show.mockImplementationOnce(() => {
+      throw new Error("private provider failure");
+    });
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+
+    await expect(openDesktopSupport()).resolves.toBe(false);
+
+    expect(warning).toHaveBeenCalledWith("[desktop-support] Support chat unavailable:", "Error");
+    expect(toastMock.error).toHaveBeenCalledWith("Support chat is unavailable", expect.objectContaining({
+      description: "Email support@matrix-os.com for help.",
+    }));
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+    act(() => toastMock.error.mock.lastCall?.[1]?.onAutoClose?.());
+    expect(useUi.getState().rendererOverlayCount).toBe(0);
+  });
+
+  it("releases only the fallback lease when a later Support attempt opens", async () => {
+    posthogClient.conversations.show
+      .mockImplementationOnce(() => { throw new Error("provider failure"); })
+      .mockImplementationOnce(renderPostHogLauncher);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    render(<DesktopSupportWidget />);
+    await waitFor(() => expect(posthogClient.identify).toHaveBeenCalled());
+
+    await expect(openDesktopSupport()).resolves.toBe(false);
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+    await expect(openDesktopSupport()).resolves.toBe(true);
+
+    expect(toastMock.dismiss).toHaveBeenCalledWith("desktop-support-unavailable");
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+    act(() => closeDesktopSupport());
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
+  });
+
+  it("releases the fallback overlay when the user signs out before dismissing the toast", async () => {
+    vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "");
+    render(<DesktopSupportWidget />);
+    await openDesktopSupport();
+    expect(useUi.getState().rendererOverlayCount).toBe(1);
+
+    act(() => useConnection.setState({ status: "signed-out" }));
+
+    await waitFor(() => expect(useUi.getState().rendererOverlayCount).toBe(0));
+    expect(toastMock.dismiss).toHaveBeenCalled();
   });
 
   it("reports the open support panel so the onboarding widget can step aside", async () => {
