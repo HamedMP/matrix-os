@@ -151,6 +151,9 @@ importers:
       react-dom:
         specifier: ^19.2.6
         version: 19.2.6(react@19.2.6)
+      tar:
+        specifier: 7.5.21
+        version: 7.5.21
       tsx:
         specifier: ^4.21.0
         version: 4.21.0

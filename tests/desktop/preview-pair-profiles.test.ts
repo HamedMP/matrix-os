@@ -1,8 +1,8 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createPreviewPairProfile, verifyPreviewPairProfile } from "@desktop/main/preview-pair-profiles";
+import { createPreviewPairProfile, verifyPreviewPairProfile, removePreviewPairProfile } from "@desktop/main/preview-pair-profiles";
 import { verifiedPreviewPairTestContext } from "./preview-pair-test-context.js";
 let home: string;
 beforeEach(async () => { home = await mkdtemp(join(tmpdir(), "eng418-preview-home-")); });
@@ -41,4 +41,18 @@ describe("pair role profiles are owned, stable and separate from normal Electron
     const context = await verifiedPreviewPairTestContext(), paths = await createPreviewPairProfile(context, home);
     expect(await createPreviewPairProfile({ ...context, authorityGeneration: context.authorityGeneration + 1 }, home)).toEqual(paths);
   });
+});
+
+it("cleans only an explicitly selected inactive owned role and refuses active profiles", async () => {
+  const home = await mkdtemp(join(tmpdir(), "eng418-profile-cleanup-"));
+  try {
+    const owner = await verifiedPreviewPairTestContext("owner"), member = await verifiedPreviewPairTestContext("member");
+    const a = await createPreviewPairProfile(owner, home), b = await createPreviewPairProfile(member, home);
+    const { claimPreviewProfile } = await import("@desktop/main/preview-pair-profile-lease");
+    const lease = await claimPreviewProfile(a.root);
+    await expect(removePreviewPairProfile(owner.pairId, owner.generation, "owner", home)).rejects.toThrow();
+    await lease.release(); await removePreviewPairProfile(owner.pairId, owner.generation, "owner", home);
+    await expect(lstat(a.root)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await lstat(b.root)).isDirectory()).toBe(true);
+  } finally { await rm(home, { recursive: true, force: true }); }
 });
