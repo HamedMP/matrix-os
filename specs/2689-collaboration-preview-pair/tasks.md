@@ -138,7 +138,8 @@ Use official `gh stack init/add/rebase/submit`; never hand-retarget or flatten.
 | 3l4a | Authenticated control transport, existing-pair reuse, fenced adoption/stop, controller completion recovery and bounded artifact reader (part of T016/T033) | `codex/eng-418-preview-pair-control` | Layer3l3 |
 | 3l4b | Pair-only host bundle namespace, protected build/publish workflow and user command (complete T016/T033) | `codex/eng-418-preview-pair-control-workflow` | Layer3l4a |
 | 4a | Source-verified Electron startup, owned profiles, account/runtime pinning and callback/OTA isolation (T018–T020; startup portion T025) | `codex/eng-418-preview-pair-desktop` | Layer3l4b |
-| 4b | Artifact launcher, process reuse/cleanup and visible role (T021–T025, T035) | `codex/eng-418-preview-pair-launcher` | Layer4a |
+| 4b | Reviewed artifact extraction/client and owned profile/retirement primitives (parts of T021–T022) | `codex/eng-418-preview-pair-local-artifacts` | Layer4a |
+| 4c | Artifact launcher, process reuse/cleanup, visible role and required hosted/dedicated native CI (T021–T025, T035) | `codex/eng-418-preview-pair-launcher` | Layer4b |
 | 5 if needed | Evidence runner, acceptance and internal docs (T026–T029, T036–T042) | `codex/eng-418-preview-pair-qualification` | Layer4 |
 
 Target <1000 additions/<20 files where practical; split a layer before exceeding
