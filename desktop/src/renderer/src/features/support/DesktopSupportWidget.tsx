@@ -14,6 +14,7 @@ import {
 import type { ApiClient } from "../../lib/api";
 import { invoke, onEvent } from "../../lib/operator";
 import { useEffect } from "react";
+import { toast } from "sonner";
 import { useConnection } from "../../stores/connection";
 import { useUi } from "../../stores/ui";
 import "@matrix-os/ui/onboarding-support-dock.css";
@@ -312,7 +313,10 @@ async function openSupportPanel(generation: number): Promise<boolean> {
 }
 
 export function openDesktopSupport(): Promise<boolean> {
-  if (!isDesktopSupportConfigured()) return Promise.resolve(false);
+  if (!isDesktopSupportConfigured()) {
+    reportSupportUnavailable();
+    return Promise.resolve(false);
+  }
   if (!openSupportPromise) {
     acquireSupportOverlay();
     const generation = supportLifecycleGeneration;
@@ -327,6 +331,9 @@ export function openDesktopSupport(): Promise<boolean> {
           captureActive({ name: "desktop_support_opened" });
         } else {
           releaseSupportOverlay();
+          if (generation === supportLifecycleGeneration && useConnection.getState().status === "signed-in") {
+            reportSupportUnavailable();
+          }
         }
         return opened;
       })
@@ -336,6 +343,12 @@ export function openDesktopSupport(): Promise<boolean> {
     openSupportPromise = promise;
   }
   return openSupportPromise;
+}
+
+function reportSupportUnavailable(): void {
+  toast.error("Support chat is unavailable", {
+    description: "Email support@matrix-os.com for help.",
+  });
 }
 
 export function closeDesktopSupport(): void {

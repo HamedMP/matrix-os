@@ -13,9 +13,6 @@ import { useUi } from "@desktop/renderer/src/stores/ui";
 vi.mock("@desktop/renderer/src/features/runtime/RuntimeComputerMenu", () => ({
   default: () => <button type="button">Main computer</button>,
 }));
-vi.mock("@desktop/renderer/src/features/support/DesktopSupportButton", () => ({
-  default: () => <button type="button">Support</button>,
-}));
 
 describe("Desktop mode controls", () => {
   beforeEach(() => {

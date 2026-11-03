@@ -19,6 +19,8 @@ const posthogMock = vi.hoisted(() => ({
   reset: vi.fn(),
   captureException: vi.fn(),
 }));
+const toastMock = vi.hoisted(() => ({ error: vi.fn() }));
+vi.mock("sonner", () => ({ toast: toastMock }));
 
 vi.mock("posthog-js", () => ({
   default: posthogMock,
@@ -38,6 +40,7 @@ describe("shell PostHog same-origin proxy", () => {
     document.getElementById("ph-conversations-widget-container")?.remove();
     document.getElementById("unrelated-close")?.remove();
     posthogMock.conversations.show.mockReset();
+    toastMock.error.mockClear();
     vi.unstubAllGlobals();
   });
 
@@ -198,6 +201,15 @@ describe("shell PostHog same-origin proxy", () => {
     expect(posthogMock.unregister).toHaveBeenCalledWith("matrix_desktop_version");
     expect(posthogMock.capture).toHaveBeenCalledWith("shell_support_chat_opened", {
       matrix_client: "web",
+    });
+  });
+
+  it("gives a contact path when Support chat has no client configuration", async () => {
+    const { openShellSupport } = await import("../../shell/src/lib/posthog-client");
+
+    await expect(openShellSupport(null)).resolves.toBe(false);
+    expect(toastMock.error).toHaveBeenCalledWith("Support chat is unavailable", {
+      description: "Email support@matrix-os.com for help.",
     });
   });
 

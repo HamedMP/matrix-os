@@ -12,6 +12,9 @@ import { useUi } from "@desktop/renderer/src/stores/ui";
 import { useNativeDesktopMode } from "@desktop/renderer/src/stores/native-desktop-mode";
 import { DesktopHelpMenu } from "@matrix-os/ui";
 
+const toastMock = vi.hoisted(() => ({ error: vi.fn() }));
+vi.mock("sonner", () => ({ toast: toastMock }));
+
 const operatorEventListeners = vi.hoisted(() => ({
   analyticsCapture: null as null | ((payload: unknown) => void),
   flushRequested: null as null | ((payload: unknown) => void),
@@ -183,7 +186,7 @@ describe("Desktop support widget", () => {
     );
   });
 
-  it("keeps Support available through Help without redirecting an unconfigured chat action to docs", async () => {
+  it("offers the support email through Help when chat is unconfigured", async () => {
     vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "");
 
     render(<DesktopModeControls />);
@@ -192,6 +195,9 @@ describe("Desktop support widget", () => {
     await act(async () => Promise.resolve());
     expect(useTabs.getState().tabs).toEqual([]);
     expect(useBrowserNavigation.getState().pending).toBeNull();
+    expect(toastMock.error).toHaveBeenCalledWith("Support chat is unavailable", {
+      description: "Email support@matrix-os.com for help.",
+    });
   });
 
   it("loads PostHog Conversations through the first-party relay without broad Desktop capture", async () => {
@@ -774,6 +780,7 @@ describe("Desktop support widget", () => {
 
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open chat" })).toBeNull());
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    expect(toastMock.error).not.toHaveBeenCalled();
   });
 
   it("honors a support click while the widget is still initializing", async () => {
