@@ -142,12 +142,16 @@ await import(${JSON.stringify(pathToFileURL(main).href)});`);
     await restored.page.getByRole("status").filter({ hasText: "Collaboration preview · Owner" }).waitFor();
     expect(await restored.page.evaluate(() => window.operator.invoke("auth:status", {}))).toMatchObject({ signedIn: true, userId: manifest.members.owner.actorId });
     await stage("owner-renderer-crash");
-    expect(await opened.owner.app.evaluate(async ({ BrowserWindow }) => {
+    await opened.owner.app.evaluate(({ BrowserWindow }) => {
       const contents = BrowserWindow.getAllWindows()[0].webContents;
-      const gone = new Promise<void>(resolve => contents.once("render-process-gone", () => resolve()));
-      contents.forcefullyCrashRenderer(); await gone;
-      return contents.isCrashed();
-    })).toBe(true);
+      contents.forcefullyCrashRenderer();
+    });
+    // Let the native message loop deliver the crash outside the inspector RPC.
+    // Require the actual crashed state; a missing crash still fails this check.
+    await expect.poll(() => opened.owner.app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].webContents.isCrashed()), {
+      timeout: 10_000, message: "The owner renderer must actually crash before recovery",
+    }).toBe(true);
     const afterCrash = issuePreviewPairLaunch({ manifest, role: "owner", platform: process.platform as "linux", arch: process.arch as "x64", sourceOrigin: "https://app.matrix-os.com" }, secret, Date.now());
     await stage("owner-renderer-reopen");
     const recovered = await startPreviewDesktop({ executable: wrapper, proof: afterCrash, userData: paths.userData });

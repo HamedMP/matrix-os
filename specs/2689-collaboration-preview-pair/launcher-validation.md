@@ -223,3 +223,17 @@ The test now records fixed lifecycle stage names in `native-lifecycle.txt` besid
 its uploaded recordings, including renderer crash, reopen, readiness and auth.
 This diagnostic changes no assertion, authorization path or timeout. Failure to
 write a teardown checkpoint cannot bypass owned fixture/server/home cleanup.
+
+## Diagnosed hosted renderer-crash waiter — 2026-11-03
+
+Hosted diagnostic run `41655370078`, job `125984276043`, artifact `13239327777`
+records `owner-renderer-crash` followed only by teardown. The exact blocked
+operation is the Playwright main-process evaluation that creates a
+`render-process-gone` promise, crashes the renderer and awaits that event inside
+the same inspector RPC. It never reaches `owner-renderer-reopen` before timeout.
+
+The fixture now issues the real crash once, returns from that RPC, then requires
+Electron's actual `isCrashed()` state within ten seconds before starting recovery.
+This follows the [documented crash/state APIs](https://www.electronjs.org/docs/latest/api/web-contents#contentsforcefullycrashrenderer)
+and preserves the real-crash and subsequent recovery assertions. No production
+event handling, authorization, source verification or global test timeout changes.
