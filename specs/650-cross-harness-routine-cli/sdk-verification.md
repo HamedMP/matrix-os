@@ -28,7 +28,7 @@ Production must correlate its own actual native process, ACK, observed tool-use 
 
 ## Claude 2.1.280 compatibility
 
-The ordinary Chat router accepts only `2.1.240` and `2.1.280`; adjacent or future versions remain denied for routine calls. Unrelated Bash keeps native behavior. This compatibility check does not attest an executable or replace canonical source, exact owner action, private target, routine approval, background authorization or integration policy.
+This lane added `2.1.280` alongside `2.1.240`. The current exact list also includes `2.1.317`, qualified separately below; adjacent or future versions remain denied for routine calls. Unrelated Bash keeps native behavior. This compatibility check does not attest an executable or replace canonical source, exact owner action, private target, routine approval, background authorization or integration policy.
 
 Official `@anthropic-ai/claude-code-linux-{arm64,x64}` **2.1.280** tarballs were verified against their registry SHA512 integrity before extracting the single regular executable:
 
@@ -43,21 +43,39 @@ A second test bundles the **actual production** `createClaudeRoutineHook` and fe
 
 The portable production-router suite separately retains `2.1.240` and covers `2.1.280` once-only behavior, cancellation, exact adjacent-version refusal, absent/negative ACK, subagent, mismatched tool identity and missing partial observation. Its initial two `2.1.280` positive tests failed on execute count0; after the predicate change all21 hook/command tests pass without skips.
 
-### Reproduce the native/router boundary
+## Claude 2.1.317 compatibility
 
-The committed files under `tests/gateway/claude-routine-hook-native/` are required Linux qualification scripts, outside default portable Vitest collection. Use an independently reviewed existing Node24+ Linux image and the matching public native artifact above. Set `NODE24_IMAGE` to its immutable cached image ID, `CLAUDE_PLATFORM` to `linux/arm64` or `linux/amd64`, and `CLAUDE_NATIVE_2280` to the absolute executable path. Cross-architecture emulation must be reported explicitly.
+Official `@anthropic-ai/claude-code-linux-{arm64,x64}` **2.1.317** tarballs were verified against their registry SHA512 integrity before extracting their single regular executable. The offline fixture selects the expected version only from its pinned artifact digest and then checks the executable's actual `--version`; there is no version override.
+
+| Architecture | Executable SHA256 | Qualification |
+| --- | --- | --- |
+| ARM64 | `563a0d60ad0c223d9415768210997acb0f7134ea51dc3c238e88bc2e18ddeefa` | Native Linux ARM64 container |
+| x64 | `eb224419e344575faa4a1f39b290b649425a10cd5ee2ef1d003480cd9ae57eb0` | Linux amd64 container under QEMU on an ARM64 Docker engine; actual x64 host execution remains distinct |
+
+Both architectures pass the same six offline native scenarios described above. The protocol fixture body is unchanged; empty HOME/config, network isolation, bounds and cleanup remain enforced. The modified artifact gate and router fixture also retain passing actual-router 2.1.280 runs on both architecture boundaries. The portable hook suite first failed only its two new 2.1.317 positive cases (19 passed, 2 failed).
+
+The actual bundled production router also reproduces the intended Red on both architectures: matching ACK with hooks applied, system-init 2.1.317, Bash partial/tool identity and correlated callback succeed, but execution count is zero and native receives an error tool result. Adding only the exact 2.1.317 predicate alternative makes the same fixture execute once and return a nonerror native tool result containing the rewritten marker only. Actual native exit is zero; servers close, owned state is removed, pending children are zero, and containers exit zero without OOM and are removed. The focused portable hook/command suites pass all 25 cases with zero skips, including explicit rejection of adjacent 2.1.316 and 2.1.318 versions.
+
+These are native protocol and actual-router observations with explicitly synthetic execution. A matching installed candidate digest or successful native authentication does not establish actual Chat selection, source admission, published CLI/backend integration or a real account lifecycle. Those remain separate acceptance gates.
+
+## Reproduce the native/router boundary
+
+The committed files under `tests/gateway/claude-routine-hook-native/` are required Linux qualification scripts, outside default portable Vitest collection. Use an independently reviewed existing Node24+ Linux image and a matching public 2.1.280 or 2.1.317 native artifact above. Set `NODE24_IMAGE` to its immutable cached image ID, `CLAUDE_PLATFORM` to `linux/arm64` or `linux/amd64`, and `CLAUDE_NATIVE` to the absolute executable path. Cross-architecture emulation must be reported explicitly.
 
 ```bash
-pnpm exec esbuild packages/gateway/src/chat/claude-routine-hook.ts --bundle --platform=node --format=esm --outfile=/tmp/matrix-claude-router.mjs
+set -eu
+ROUTER_DIR="$(mktemp -d)"
+trap 'rm -rf -- "$ROUTER_DIR"' EXIT
+pnpm exec esbuild packages/gateway/src/chat/claude-routine-hook.ts --bundle --platform=node --format=esm --target=node24 --conditions=development --outfile="$ROUTER_DIR/router.mjs"
+chmod 0644 "$ROUTER_DIR/router.mjs"
 docker run --rm --pull=never --init --platform "$CLAUDE_PLATFORM" --network none \
   --user 65534:65534 --read-only --cap-drop ALL --security-opt no-new-privileges \
   --memory 768m --cpus 1 --pids-limit 96 --tmpfs /tmp:rw,nosuid,nodev,size=96m,mode=1777 \
-  --mount "type=bind,src=$CLAUDE_NATIVE_2280,dst=/fixture/claude,readonly" \
+  --mount "type=bind,src=$CLAUDE_NATIVE,dst=/fixture/claude,readonly" \
   --mount "type=bind,src=$PWD/tests/gateway/claude-routine-hook-native/gate.mjs,dst=/fixture/gate.mjs,readonly" \
   --mount "type=bind,src=$PWD/tests/gateway/claude-routine-hook-native/router-fixture.mjs,dst=/fixture/native-hook-fixture.mjs,readonly" \
-  --mount type=bind,src=/tmp/matrix-claude-router.mjs,dst=/fixture/router.mjs,readonly \
+  --mount "type=bind,src=$ROUTER_DIR/router.mjs,dst=/fixture/router.mjs,readonly" \
   "$NODE24_IMAGE" node /fixture/native-hook-fixture.mjs
-rm -- /tmp/matrix-claude-router.mjs
 ```
 
 Before running, inspect the image and mounts independently. The gate verifies Linux/architecture, nonroot identity, capability/NNP/network/rootfs conditions, exact executable digest and actual version. Missing prerequisites fail; no empty or skipped native lane counts as qualification. Retain actual structured results and container exit/OOM/cleanup evidence. Replacing the current bundle with the original exact-version predicate reproduces the intended Red without spoofing native metadata. The scripts create no credential/account, schedule, permission grant or documentation MCP service.
