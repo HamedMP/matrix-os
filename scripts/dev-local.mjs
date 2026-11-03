@@ -34,6 +34,7 @@ const localServiceProcesses = [
       "shell/node_modules/next/dist/bin/next",
       "dev",
       "shell",
+      "--webpack",
       "-H",
       "127.0.0.1",
       "-p",

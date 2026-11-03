@@ -193,6 +193,7 @@ describe("source development lifecycle", () => {
     expect(orchestrator).toContain('detached: process.platform !== "win32"');
     expect(orchestrator).toContain("process.kill(-child.pid, signal)");
     expect(orchestrator).toContain("spawn(process.execPath, service.args");
+    expect(orchestrator).toMatch(/"dev",\s*"shell",\s*"--webpack"/);
     expect(orchestrator).not.toContain('spawn("pnpm", ["--filter", service');
   });
 
