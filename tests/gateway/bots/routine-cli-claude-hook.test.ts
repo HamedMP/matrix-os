@@ -27,7 +27,7 @@ const partial = () => ({ type: "stream_event", event: { type: "content_block_sta
   content_block: { type: "tool_use", name: "Bash", id: "tool-one", input: {} } } });
 function callback(cb: string, id = "request-one", tool = "tool-one", command = "matrix routines list") { return { type: "control_request", request_id: id, request: { subtype: "hook_callback", callback_id: cb, tool_use_id: tool,
   input: { hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: tool, tool_input: { command, run_in_background: true }, permission_mode: "bypassPermissions" } } }; }
-it.each(["2.1.240", "2.1.280"])("%s ACK before input; matching partial tool executes once and cancellation never sends a late allow", async version => {
+it.each(["2.1.240", "2.1.280", "2.1.317"])("%s ACK before input; matching partial tool executes once and cancellation never sends a late allow", async version => {
   const frames: WrittenFrame[] = []; let prompts = 0, executions = 0, cancelled = false, nativeMode: string | undefined;
   let complete!: (command: string) => void;
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async frame => { frames.push(JSON.parse(frame)); },
@@ -43,7 +43,7 @@ it.each(["2.1.240", "2.1.280"])("%s ACK before input; matching partial tool exec
   complete("/bin/cat -- '/tmp/safe-result'"); await new Promise(resolve => setTimeout(resolve, 0));
   expect(frames.filter(frame => frame.response?.response?.hookSpecificOutput?.permissionDecision === "allow")).toEqual([]);
 });
-it.each(["2.1.279", "2.1.281", "9.0.0"])("unsupported exact version %s denies routines while unrelated Bash remains native", async version => {
+it.each(["2.1.279", "2.1.281", "2.1.316", "2.1.318", "9.0.0"])("unsupported exact version %s denies routines while unrelated Bash remains native", async version => {
   const frames: WrittenFrame[] = []; let executions = 0;
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async frame => { frames.push(JSON.parse(frame)); }, startInput: async () => {}, fail: () => {}, execute: async () => { executions++; return "unsafe"; } });
   closers.push(hook.close); await hook.start(); const request = frames[0]; const cb = request.request.hooks.PreToolUse[0].hookCallbackIds[0];
@@ -77,7 +77,7 @@ it("cleans only expired owned crash directories and never traverses an abandoned
   await symlink(external, join(abandoned, "a".repeat(48) + ".json")); await store.sweep(); expect((await stat(external)).isDirectory()).toBe(true); expect((await stat(abandoned)).isDirectory()).toBe(true);
   await rm(join(abandoned, "a".repeat(48) + ".json")); await store.sweep(); await expect(stat(abandoned)).rejects.toMatchObject({ code: "ENOENT" });
 });
-it.each(["2.1.240", "2.1.280"])("%s literal rewrite preserves unrelated native Bash and cannot repeat a callback/tool effect", async version => {
+it.each(["2.1.240", "2.1.280", "2.1.317"])("%s literal rewrite preserves unrelated native Bash and cannot repeat a callback/tool effect", async version => {
   const frames: WrittenFrame[] = []; let executions = 0;
   const hook = createClaudeRoutineHook({ signal: new AbortController().signal, write: async frame => { frames.push(JSON.parse(frame)); }, startInput: async () => {}, fail: () => {}, execute: async () => { executions++; return "/bin/cat -- '/tmp/display'"; } });
   closers.push(hook.close); await hook.start(); const initialize = frames[0], cb = initialize.request.hooks.PreToolUse[0].hookCallbackIds[0];

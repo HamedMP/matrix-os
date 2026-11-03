@@ -51,7 +51,7 @@ export function createClaudeRoutineHook(options: { signal: AbortSignal; write(fr
         return true;
       }
       if (frame.type === "control_cancel_request" && frame.request_id && pending.has(frame.request_id)) { pending.get(frame.request_id)!.controller.abort(); return true; }
-      if (frame.type === "system" && frame.subtype === "init") supported = (frame.claude_code_version === "2.1.240" || frame.claude_code_version === "2.1.280") && frame.tools?.includes("Bash") === true;
+      if (frame.type === "system" && frame.subtype === "init") supported = (frame.claude_code_version === "2.1.240" || frame.claude_code_version === "2.1.280" || frame.claude_code_version === "2.1.317") && frame.tools?.includes("Bash") === true;
       if (frame.type === "stream_event" && frame.event?.type === "content_block_start" && frame.event.content_block?.type === "tool_use") {
         const block = frame.event.content_block;
         if (tools.size >= 512) supported = false;
