@@ -1,6 +1,6 @@
 # Premerge host-baseline validation
 
-Status: implementation and isolated qualification in progress. No compatible new artifact or real routine lifecycle is accepted yet.
+Status: build integration in progress. The exact a246976 archive passed native qualification; trusted version registration, installation and the real routine lifecycle remain pending.
 
 The selected test Computer uses Ubuntu 24.04 / glibc 2.39. The previous Preview artifact was built on glibc 2.43; its retained node-pty requires GLIBC_2.42 and fails with the bundled Node on the selected Computer. The canonical updater rolled back. Reusing those bytes is not a validation path.
 
@@ -40,9 +40,19 @@ The unchanged trusted [execution 41620628116](https://github.com/HamedMP/matrix-
 
 Measured representative preparation already contains 292,801 dependency entries, 4,284 tracked source entries and 5,693 entries in the actual shipped Node 24.18.0 header/npm trees: 302,778 combined, before compiled outputs and the terminal generation. These measurements span the ARM development dependency tree and the real x64 Node distribution; they establish inadequate capacity in the old 300,000-entry bound, not the exact failed Linux archive inventory.
 
-The bounded entry capacity is now 500,000. Real tar regressions accept 300,001 structurally valid entries and reject 500,001; duplicate paths and oversized individual entries have distinct safe diagnostic codes. Keep the 1 GiB individual-file, 20 GiB expanded-data and 4 GiB compressed-archive limits, all path/link/mode checks, timeouts and native probes. Successful extraction reports only entry count, expanded bytes and maximum file bytes, including when a later probe fails. The next actual archive receipt must establish the produced bytes' inventory and native result; this capacity correction does not close the full-artifact or live gates.
+The bounded entry capacity is now 500,000. Real tar regressions accept 300,001 structurally valid entries and reject 500,001; duplicate paths and oversized individual entries have distinct safe diagnostic codes. Keep the 1 GiB individual-file, 20 GiB expanded-data and 4 GiB compressed-archive limits, all path/link/mode checks, timeouts and native probes. Successful extraction reports only entry count, expanded bytes and maximum file bytes, including when a later probe fails. Capacity tests do not close the actual artifact or live gates.
 
 The corrected snapshot passed the same six focused suites: 127 tests, zero skips. Independent archive-capacity review and current syntax/pattern checks passed. These remain source and orchestration evidence.
+
+## Actual native archive and trusted post-cache integration
+
+[Execution 41624458027](https://github.com/HamedMP/matrix-os/actions/runs/41624458027), exact source `a2469764a0e6cce7a23fd2e1387531aac8e31c6b`, produced and uploaded its archive. Its actual smoke reported 310,969 entries, 4,183,701,749 expanded bytes and a maximum file of 342,636,848 bytes. The old entry cap would reject these actual bytes. Copied Node 24.18.0 / modules 137 / N-API 10 / Linux x64 / glibc 2.39 passed the actual compiled terminal consumer, both addons, real PTY marker/exit and pinned generation checks. Generation: `gen_0c02eaeff06cd55f45276ffe87dc9486508b3b40d67a0c96bc8fde71bc0a1cfc`.
+
+The build job nevertheless failed in the unchanged setup-node post-cache action: its host pnpm store did not exist because the real install used the isolated container store. Thus publication was skipped and nothing was installed. Uploaded bytes and native Green do not substitute for a successfully registered version.
+
+After successful artifact production and confirmed owned-container cleanup only, the helper handles this existing CI contract when `GITHUB_ACTIONS=true`: query the existing host `pnpm store path --silent`, validate a normalized absolute real path strictly within owned HOME/RUNNER_TEMP, and create missing empty directories with mode 0700. Preserve existing owned directory modes and contents, including normal group-writable 0775 paths; refuse world-writable paths, symlinks, foreign owners and unsafe/outside paths. No host install, dependency/cache copy, cache-action override, workflow change or runtime authorization follows. Failed artifacts/cleanup and non-CI calls never query the host store. The next exact-head workflow must verify the real post-cache action and trusted registration.
+
+Final host-cache source preparation passed six focused suites, 142 tests with zero skips; the independent helper review passed 33 cases. These checks do not establish the actual post-cache or publication outcome.
 
 ## Executable build contract
 
@@ -60,6 +70,8 @@ This is the build-time native artifact boundary for premerge register-only valid
 
 The isolated route requires `HOST_BUNDLE_CHANNEL=none`, a validated `HOST_BUNDLE_VERSION`, full exact `MATRIX_BUILD_SHA` and `MATRIX_BUILD_REF`. Forward only the explicitly named public frontend and release-metadata keys in the helper. `HOST_BUNDLE_DIST_DIR`, when supplied, must resolve under real checkout `dist/` directories. Source-pinned toolchain overrides and shell-build skips are rejected. Private HOME/cache and sibling scratch are owned temporary inputs; expose scratch as `/scratch`, never beneath `/work` in the container.
 
+`GITHUB_ACTIONS` selects only the bounded host post-cache compatibility step after success; it never changes the actual native baseline check or gets forwarded as authority to the container. Host HOME/RUNNER_TEMP are containment anchors for that empty directory preparation, not input dependency stores.
+
 The smoke emits one JSON result. Success includes `ok:true`, version 1, kind `host-bundle-native-smoke`, `buildVersion`, `gitCommit`, `archive:{entries,expandedBytes,maxFileBytes}`, actual `native` checks and `pinned` generation/runtime checks. Failure includes `ok:false`, a stable `code`, optional integer-only `archive` facts and bounded fixed-probe diagnostics. No database or owner-permission mutation is performed.
 
 ### Validation / error matrix
@@ -72,6 +84,7 @@ The smoke emits one JSON result. Success includes `ok:true`, version 1, kind `ho
 | Missing required copied files | `artifact_payload_incomplete`; no native success claim |
 | ABI, consumer/PTY or generation mismatch | Corresponding `artifact_native_abi_failed`, `artifact_native_consumer_failed` or generation/pinned-runtime failure; nonzero exit |
 | Interrupted container client or uncertain cleanup | Attempt exact owned-container removal; unconfirmed cleanup remains failure |
+| CI host store missing after successful artifact/cleanup | Read-only host store-path query and safe empty-directory preparation; invalid cache paths fail without changing existing data |
 
 ### Good / base / bad cases
 
