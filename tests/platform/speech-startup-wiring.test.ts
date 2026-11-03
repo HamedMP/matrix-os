@@ -43,8 +43,13 @@ describe("platform speech process wiring", () => {
     expect(setup).toContain("await managedFeatureReconciliationWorker?.drain()");
     const shutdown = source.slice(source.indexOf("const shutdown = (signal:"));
     expect(shutdown).toContain("managedFeatureReconciliationWorker?.stop()");
+    expect(shutdown).toContain("await managedFeatureReconciliationWorker?.drain()");
+    // The owned primary pool now closes through the idempotent startup helper.
+    // Keep checking the actual shutdown order, rather than a removed inline call.
+    expect(source).toContain("const closePrimaryDb = () => primaryDbClosing ??= db.destroy()");
+    expect(shutdown).toContain("closePrimaryDb()");
     expect(shutdown.indexOf("managedFeatureReconciliationWorker?.drain()")).toBeLessThan(shutdown.indexOf("customerVpsProxyDispatcher.close()"));
-    expect(shutdown.indexOf("managedFeatureReconciliationWorker?.drain()")).toBeLessThan(shutdown.indexOf("db.destroy()"));
+    expect(shutdown.indexOf("managedFeatureReconciliationWorker?.drain()")).toBeLessThan(shutdown.indexOf("closePrimaryDb()"));
   });
 
 });
