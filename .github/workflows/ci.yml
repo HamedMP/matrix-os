@@ -841,7 +841,8 @@ jobs:
     needs: changes
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Retain the measured qualification budget, including evidence upload and cleanup.
+    timeout-minutes: 14
     services:
       postgres:
         # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
@@ -908,6 +909,11 @@ jobs:
           : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
           pnpm exec vitest run tests/gateway/browser-approval-repository.test.ts --maxWorkers=1 --no-file-parallelism
 
+      - name: Routine migration and deployed-history PostgreSQL contracts
+        run: |
+          : "${MATRIX_TEST_POSTGRES_URL:?Disposable PostgreSQL test URL required}"
+          pnpm exec vitest run tests/gateway/bots/deployed-v9-schema-postgres.test.ts tests/gateway/bots/routine-migration-postgres.test.ts tests/gateway/bots/v9-dual-history-postgres.test.ts tests/gateway/bots/v9-dual-history-upgrade.test.ts --maxWorkers=1 --no-file-parallelism
+
       - name: Qualify remaining real PostgreSQL suites
         run: node scripts/ci/remaining-postgres.mjs
 
@@ -925,7 +931,8 @@ jobs:
     needs: changes
     if: always() && !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.should_run == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Retain the measured qualification budget, including evidence upload and cleanup.
+    timeout-minutes: 12
     services:
       postgres:
         # ECR Public anonymous pulls hit "toomanyrequests: Data limit exceeded" on shared runner IPs,
